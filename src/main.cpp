@@ -37,6 +37,8 @@ static void print_usage() {
               << "  --ai-test          AI ARMY_2: pgens + factory + engineers + guard assist\n"
               << "  --reclaim-test     Create prop, engineer reclaims it, verify mass gained\n"
               << "  --platoon-test     Platoon system: create, assign, move, fork, disband\n"
+              << "  --threat-test      Threat queries, platoon targeting, command tracking\n"
+              << "  --combat-test      AI produces army, forms platoons, attacks enemy\n"
               << "  --help             Show this help message\n";
 }
 
@@ -148,6 +150,8 @@ int main(int argc, char* argv[]) {
     bool ai_test = parse_flag(argc, argv, "--ai-test");
     bool reclaim_test = parse_flag(argc, argv, "--reclaim-test");
     bool platoon_test = parse_flag(argc, argv, "--platoon-test");
+    bool threat_test = parse_flag(argc, argv, "--threat-test");
+    bool combat_test = parse_flag(argc, argv, "--combat-test");
 
     if (config.fa_path.empty()) {
         spdlog::error("FA installation path not found. Use --fa-path or "
@@ -246,7 +250,7 @@ int main(int argc, char* argv[]) {
     // Phase 4: Session lifecycle
     if (!map_path.empty()) {
         osc::lua::SessionManager session_mgr;
-        if (ai_test || platoon_test) {
+        if (ai_test || platoon_test || threat_test || combat_test) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
         auto session_result = session_mgr.start_session(
@@ -856,6 +860,353 @@ int main(int argc, char* argv[]) {
     }
 
     // Platoon test: create platoon, assign units, move, fork thread, disband
+    if (threat_test && !map_path.empty()) {
+        spdlog::info("=== THREAT TEST: Threat queries, targeting, command tracking ===");
+
+        auto tt_result = state.do_string(R"(
+            ForkThread(function()
+                WaitTicks(30) -- let session stabilize
+
+                local brain1 = ArmyBrains[1] -- ARMY_1 (human)
+                local brain2 = ArmyBrains[2] -- ARMY_2 (AI)
+                if not brain1 or not brain2 then
+                    LOG('THREAT TEST FAILED: missing brains')
+                    return
+                end
+
+                -- Find ARMY_1 ACU and ARMY_2 ACU
+                local catCmd = ParseEntityCategory('COMMAND')
+                local units1 = brain1:GetListOfUnits(catCmd, true)
+                local units2 = brain2:GetListOfUnits(catCmd, true)
+                if not units1 or not units1[1] or not units2 or not units2[1] then
+                    LOG('THREAT TEST FAILED: no ACUs found')
+                    return
+                end
+                local acu1 = units1[1]
+                local acu2 = units2[1]
+                local pos1 = acu1:GetPosition()
+                local pos2 = acu2:GetPosition()
+                LOG('Threat test: ACU1 at (' .. string.format('%.0f,%.0f,%.0f', pos1[1], pos1[2], pos1[3]) .. ')')
+                LOG('Threat test: ACU2 at (' .. string.format('%.0f,%.0f,%.0f', pos2[1], pos2[2], pos2[3]) .. ')')
+
+                -- 1) GetThreatAtPosition — enemy threat at ACU2 pos from brain1's perspective
+                local enemy_threat = brain1:GetThreatAtPosition(pos2, 16, false, 'Overall')
+                LOG('Threat test: enemy threat at ACU2 pos = ' .. tostring(enemy_threat))
+                if enemy_threat <= 0 then
+                    LOG('THREAT TEST FAILED: GetThreatAtPosition returned 0 for enemy ACU')
+                    return
+                end
+                LOG('Threat test: GetThreatAtPosition OK')
+
+                -- 2) GetThreatAtPosition — own army should return 0 (no enemies at own base)
+                local own_threat = brain1:GetThreatAtPosition(pos1, 1, false, 'Overall')
+                LOG('Threat test: enemy threat at ACU1 pos (radius 1) = ' .. tostring(own_threat))
+                -- (could be 0 if only own army there, or non-zero if enemy is close)
+
+                -- 3) GetHighestThreatPosition
+                local hpos, hthreat = brain1:GetHighestThreatPosition(16, false, 'Overall')
+                LOG('Threat test: highest threat pos = (' ..
+                    string.format('%.0f,%.0f,%.0f', hpos[1], hpos[2], hpos[3]) ..
+                    ') threat = ' .. tostring(hthreat))
+                if hthreat <= 0 then
+                    LOG('THREAT TEST FAILED: GetHighestThreatPosition returned 0')
+                    return
+                end
+                LOG('Threat test: GetHighestThreatPosition OK')
+
+                -- 4) GetThreatsAroundPosition
+                local threats = brain1:GetThreatsAroundPosition(pos2, 16, false, 'Overall')
+                LOG('Threat test: GetThreatsAroundPosition returned ' ..
+                    tostring(table.getn(threats)) .. ' cell(s)')
+                if table.getn(threats) == 0 then
+                    LOG('THREAT TEST FAILED: GetThreatsAroundPosition returned empty')
+                    return
+                end
+                for i, t in threats do
+                    LOG('  cell ' .. i .. ': (' ..
+                        string.format('%.0f, %.0f', t[1], t[2]) ..
+                        ') threat=' .. tostring(t[3]))
+                end
+                LOG('Threat test: GetThreatsAroundPosition OK')
+
+                -- 5) Create platoon + CalculatePlatoonThreat
+                local platoon = brain2:MakePlatoon('ThreatTestPlatoon', 'none')
+                brain2:AssignUnitsToPlatoon(platoon, {acu2}, 'Attack', 'none')
+                local pt = platoon:CalculatePlatoonThreat('Overall', ParseEntityCategory('ALLUNITS'))
+                LOG('Threat test: CalculatePlatoonThreat = ' .. tostring(pt))
+                if pt <= 0 then
+                    LOG('THREAT TEST FAILED: CalculatePlatoonThreat returned 0')
+                    return
+                end
+                LOG('Threat test: CalculatePlatoonThreat OK')
+
+                -- 6) FindClosestUnit — platoon should find ARMY_1's ACU as enemy
+                local closest = platoon:FindClosestUnit('Attack', 'Enemy', true,
+                    ParseEntityCategory('ALLUNITS'))
+                if not closest then
+                    LOG('THREAT TEST FAILED: FindClosestUnit returned nil')
+                    return
+                end
+                local cid = closest:GetEntityId()
+                LOG('Threat test: FindClosestUnit found entity #' .. tostring(cid))
+                LOG('Threat test: FindClosestUnit OK')
+
+                -- 7) MoveToLocation returns command ID
+                local cmd_id = platoon:MoveToLocation({pos2[1] + 20, pos2[2], pos2[3]})
+                LOG('Threat test: MoveToLocation returned cmd_id=' .. tostring(cmd_id))
+                if not cmd_id or cmd_id == 0 then
+                    LOG('THREAT TEST FAILED: MoveToLocation did not return command ID')
+                    return
+                end
+                LOG('Threat test: command ID system OK')
+
+                -- 8) IsCommandsActive (should be true while moving)
+                WaitTicks(1)
+                local active = platoon:IsCommandsActive(cmd_id)
+                LOG('Threat test: IsCommandsActive(cmd_id) = ' .. tostring(active))
+                if not active then
+                    LOG('THREAT TEST FAILED: IsCommandsActive false while unit should be moving')
+                    return
+                end
+
+                -- 9) Stop, then IsCommandsActive should be false
+                platoon:Stop()
+                WaitTicks(1)
+                local still_active = platoon:IsCommandsActive(cmd_id)
+                LOG('Threat test: IsCommandsActive after Stop = ' .. tostring(still_active))
+                if still_active then
+                    LOG('THREAT TEST FAILED: IsCommandsActive still true after Stop')
+                    return
+                end
+                LOG('Threat test: IsCommandsActive OK')
+
+                -- 10) FindPrioritizedUnit
+                local pri = platoon:FindPrioritizedUnit('Attack', 'Enemy', true,
+                    pos2, 4096)
+                if not pri then
+                    LOG('THREAT TEST FAILED: FindPrioritizedUnit returned nil')
+                    return
+                end
+                LOG('Threat test: FindPrioritizedUnit found entity #' ..
+                    tostring(pri:GetEntityId()))
+                LOG('Threat test: FindPrioritizedUnit OK')
+
+                -- Cleanup
+                brain2:DisbandPlatoon(platoon)
+
+                LOG('THREAT TEST: ALL PASSED')
+            end)
+        )");
+        if (!tt_result) {
+            spdlog::warn("Threat test injection error: {}",
+                         tt_result.error().message);
+        }
+
+        spdlog::info("Running threat test ticks...");
+        for (int i = 0; i < 50; i++) {
+            sim_state.tick();
+        }
+
+        spdlog::info("Threat test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    if (combat_test && !map_path.empty()) {
+        spdlog::info("=== COMBAT TEST: AI produces army, forms platoons, attacks ===");
+
+        auto ct_result = state.do_string(R"(
+            ForkThread(function()
+                WaitTicks(30) -- let session stabilize
+
+                local brain = ArmyBrains[2] -- ARMY_2 (AI)
+                if not brain then
+                    LOG('COMBAT TEST FAILED: no ARMY_2 brain')
+                    return
+                end
+
+                local catCmd = ParseEntityCategory('COMMAND')
+                local catFac = ParseEntityCategory('FACTORY')
+                local catLand = ParseEntityCategory('TECH1 MOBILE LAND DIRECTFIRE')
+
+                -- Find ACU
+                local units = brain:GetListOfUnits(catCmd, true)
+                if not units or not units[1] then
+                    LOG('COMBAT TEST FAILED: no ACU')
+                    return
+                end
+                local acu = units[1]
+                LOG('Combat test: found ACU #' .. acu:GetEntityId())
+
+                -- Build 2 pgens
+                for i = 1, 2 do
+                    local pos = brain:FindPlaceToBuild('T1EnergyProduction', 'ueb1101', nil, false, acu)
+                    if pos then brain:BuildStructure(acu, 'ueb1101', pos, false) end
+                    while not acu:IsIdleState() do WaitTicks(10) end
+                end
+                LOG('Combat test: 2 pgens built')
+
+                -- Build factory
+                local pos = brain:FindPlaceToBuild('T1LandFactory', 'ueb0101', nil, false, acu)
+                if pos then brain:BuildStructure(acu, 'ueb0101', pos, false) end
+                while not acu:IsIdleState() do WaitTicks(10) end
+                LOG('Combat test: factory built')
+
+                -- Queue 4 assault bots (uel0201 = Mech Marine)
+                local facs = brain:GetListOfUnits(catFac, true)
+                if not facs or not facs[1] then
+                    LOG('COMBAT TEST FAILED: no factory found')
+                    return
+                end
+                for i = 1, 4 do
+                    brain:BuildUnit(facs[1], 'uel0201')
+                end
+                LOG('Combat test: queued 4 assault bots')
+
+                -- Wait for 3+ assault bots
+                local ready = 0
+                for i = 1, 150 do
+                    WaitTicks(10)
+                    local bots = brain:GetListOfUnits(catLand, true)
+                    ready = 0
+                    if bots then
+                        for _, u in bots do
+                            if not u:IsUnitState('BeingBuilt') then
+                                ready = ready + 1
+                            end
+                        end
+                    end
+                    if ready >= 3 then break end
+                end
+                LOG('Combat test: ' .. ready .. ' assault bots ready')
+                if ready < 3 then
+                    LOG('COMBAT TEST FAILED: only ' .. ready .. ' bots produced')
+                    return
+                end
+
+                -- 1) SetCurrentEnemy / GetCurrentEnemy
+                brain:SetCurrentEnemy(ArmyBrains[1])
+                local enemy = brain:GetCurrentEnemy()
+                if not enemy then
+                    LOG('COMBAT TEST FAILED: GetCurrentEnemy returned nil')
+                    return
+                end
+                LOG('Combat test: enemy set to army ' .. enemy:GetArmyIndex())
+                LOG('Combat test: GetCurrentEnemy OK')
+
+                -- 2) GetNumUnitsAroundPoint
+                local startPos = acu:GetPosition()
+                local numEnemy = brain:GetNumUnitsAroundPoint(
+                    ParseEntityCategory('ALLUNITS'),
+                    startPos, 4096, 'Enemy')
+                LOG('Combat test: ' .. numEnemy .. ' enemy units on map')
+                if numEnemy <= 0 then
+                    LOG('COMBAT TEST FAILED: GetNumUnitsAroundPoint returned 0')
+                    return
+                end
+                LOG('Combat test: GetNumUnitsAroundPoint OK')
+
+                -- 3) Create attack platoon
+                local platoon = brain:MakePlatoon('AttackForce', 'HuntAI')
+                if not platoon then
+                    LOG('COMBAT TEST FAILED: MakePlatoon returned nil')
+                    return
+                end
+
+                -- Verify plan name
+                local planName = platoon:GetPlan()
+                LOG('Combat test: platoon plan = ' .. tostring(planName))
+                if planName ~= 'HuntAI' then
+                    LOG('COMBAT TEST FAILED: GetPlan returned wrong plan')
+                    return
+                end
+                LOG('Combat test: GetPlan OK')
+
+                -- Assign ready bots to platoon
+                local readyBots = {}
+                local bots = brain:GetListOfUnits(catLand, true)
+                if bots then
+                    for _, u in bots do
+                        if not u:IsUnitState('BeingBuilt') then
+                            table.insert(readyBots, u)
+                        end
+                    end
+                end
+                brain:AssignUnitsToPlatoon(platoon, readyBots, 'Attack', 'none')
+                LOG('Combat test: assigned ' .. table.getn(readyBots) .. ' bots to platoon')
+
+                -- 4) GetPlatoonsList
+                local platoons = brain:GetPlatoonsList()
+                LOG('Combat test: ' .. table.getn(platoons) .. ' platoons total')
+                if table.getn(platoons) < 1 then
+                    LOG('COMBAT TEST FAILED: GetPlatoonsList empty')
+                    return
+                end
+                LOG('Combat test: GetPlatoonsList OK')
+
+                -- 5) GetBlip
+                if readyBots[1] then
+                    local blip = readyBots[1]:GetBlip(brain:GetArmyIndex())
+                    if not blip then
+                        LOG('COMBAT TEST FAILED: GetBlip returned nil')
+                        return
+                    end
+                    local bpos = blip:GetPosition()
+                    LOG('Combat test: GetBlip pos = (' ..
+                        string.format('%.0f, %.0f, %.0f', bpos[1], bpos[2], bpos[3]) .. ')')
+                    LOG('Combat test: GetBlip OK')
+                end
+
+                -- 6) HuntAI loop: find enemy, move toward them
+                for round = 1, 10 do
+                    if not brain:PlatoonExists(platoon) then
+                        LOG('Combat test: platoon disbanded at round ' .. round)
+                        break
+                    end
+
+                    local target = platoon:FindClosestUnit('Attack', 'Enemy', true,
+                        ParseEntityCategory('ALLUNITS'))
+                    if target then
+                        local tpos = target:GetPosition()
+                        platoon:Stop()
+                        platoon:AggressiveMoveToLocation({tpos[1], tpos[2], tpos[3]})
+                        LOG('Combat test: round ' .. round ..
+                            ' attacking toward (' .. string.format('%.0f, %.0f', tpos[1], tpos[3]) .. ')')
+                    else
+                        LOG('Combat test: round ' .. round .. ' no target found')
+                    end
+                    WaitTicks(50)
+
+                    local ppos = platoon:GetPlatoonPosition()
+                    if ppos then
+                        LOG('Combat test: platoon at (' ..
+                            string.format('%.0f, %.0f', ppos[1], ppos[3]) .. ')')
+                    end
+                end
+
+                -- Cleanup
+                if brain:PlatoonExists(platoon) then
+                    brain:DisbandPlatoon(platoon)
+                end
+
+                LOG('COMBAT TEST: ALL PASSED')
+            end)
+        )");
+        if (!ct_result) {
+            spdlog::warn("Combat test injection error: {}",
+                         ct_result.error().message);
+        }
+
+        spdlog::info("Running combat test ticks...");
+        for (int i = 0; i < 2000; i++) {
+            sim_state.tick();
+        }
+
+        spdlog::info("Combat test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
     if (platoon_test && !map_path.empty()) {
         spdlog::info("=== PLATOON TEST: Platoon system ===");
 

@@ -37,6 +37,10 @@ public:
     // Compute centroid position of all living units
     Vector3 get_position(const EntityRegistry& registry) const;
 
+    // Plan name
+    const std::string& plan_name() const { return plan_name_; }
+    void set_plan_name(const std::string& p) { plan_name_ = p; }
+
     // Squad tracking (simplified: just store squad name per unit)
     void set_unit_squad(u32 entity_id, const std::string& squad);
     const std::string& get_unit_squad(u32 entity_id) const;
@@ -47,6 +51,7 @@ private:
     std::string name_;
     int lua_table_ref_ = -2; // LUA_NOREF
     bool destroyed_ = false;
+    std::string plan_name_;
     std::vector<u32> unit_ids_;
     std::unordered_map<u32, std::string> squad_map_;
 };

@@ -61,6 +61,9 @@ public:
 
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
+    /// Monotonically increasing command ID for IsCommandsActive tracking.
+    u32 next_command_id() { return ++next_command_id_; }
+
 private:
     void update_economies();
     void update_entities();
@@ -72,6 +75,7 @@ private:
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
+    u32 next_command_id_ = 0;
 };
 
 } // namespace osc::sim

@@ -295,6 +295,39 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
             lua_pop(L, 2);
         }
+
+        // Defense threat levels (cached for threat queries)
+        {
+            store->push_lua_table(*entry);
+            lua_pushstring(L, "Defense");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "SurfaceThreatLevel");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_surface_threat(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "AirThreatLevel");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_air_threat(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "SubThreatLevel");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_sub_threat(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "EconomyThreatLevel");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_economy_threat(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2);
+        }
     }
 
     u32 id = sim->entity_registry().register_entity(std::move(unit));

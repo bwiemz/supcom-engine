@@ -152,6 +152,52 @@ static int stub_return_empty_string(lua_State* L) {
 }
 
 // ====================================================================
+// Threat helper
+// ====================================================================
+
+/// Map a threat type string to the appropriate cached threat value on a unit.
+/// Returns 0 if the type doesn't apply (e.g. "Commander" for a non-COMMAND unit).
+static f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type) {
+    if (!type || !unit) return 0;
+
+    if (std::strcmp(type, "AntiSurface") == 0 ||
+        std::strcmp(type, "Surface") == 0 ||
+        std::strcmp(type, "Land") == 0) {
+        return unit->surface_threat();
+    }
+    if (std::strcmp(type, "AntiAir") == 0 ||
+        std::strcmp(type, "Air") == 0) {
+        return unit->air_threat();
+    }
+    if (std::strcmp(type, "Sub") == 0 ||
+        std::strcmp(type, "SubSurface") == 0) {
+        return unit->sub_threat();
+    }
+    if (std::strcmp(type, "Economy") == 0) {
+        return unit->economy_threat();
+    }
+    if (std::strcmp(type, "Commander") == 0) {
+        return unit->has_category("COMMAND") ? unit->surface_threat() : 0;
+    }
+    if (std::strcmp(type, "Structures") == 0) {
+        return unit->has_category("STRUCTURE") ? unit->surface_threat() : 0;
+    }
+    if (std::strcmp(type, "StructuresNotMex") == 0) {
+        return (unit->has_category("STRUCTURE") &&
+                !unit->has_category("MASSEXTRACTION"))
+                   ? unit->surface_threat()
+                   : 0;
+    }
+    if (std::strcmp(type, "Overall") == 0) {
+        return unit->surface_threat() + unit->air_threat() +
+               unit->sub_threat() + unit->economy_threat();
+    }
+    // Unknown type — return overall as fallback
+    return unit->surface_threat() + unit->air_threat() +
+           unit->sub_threat() + unit->economy_threat();
+}
+
+// ====================================================================
 // entity_methods — real implementations
 // ====================================================================
 
@@ -794,6 +840,53 @@ static int unit_GetCommandQueue(lua_State* L) {
     return 1;
 }
 
+// unit:GetBlip(armyIndex) → blip table or nil
+// No fog of war — returns a thin wrapper around the entity itself.
+static int unit_GetBlip(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Create blip table: { _c_object = lightuserdata(entity) }
+    lua_newtable(L);
+    int blip_tbl = lua_gettop(L);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, e);
+    lua_rawset(L, blip_tbl);
+
+    // Set cached __osc_blip_mt metatable
+    lua_pushstring(L, "__osc_blip_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        // Build it: { __index = methods_table }
+        lua_newtable(L); // metatable
+        lua_pushstring(L, "__index");
+        // Get moho.blip_methods
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "blip_methods");
+            lua_rawget(L, -2);
+            lua_remove(L, -2); // remove moho table
+        } else {
+            lua_pop(L, 1);     // pop the non-table
+            lua_pushnil(L);    // explicit nil — no methods
+        }
+        lua_settable(L, -3); // metatable.__index = blip_methods
+        // Cache it
+        lua_pushstring(L, "__osc_blip_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, blip_tbl);
+
+    return 1;
+}
+
 // ====================================================================
 // Navigator methods
 // ====================================================================
@@ -1221,6 +1314,7 @@ static const MethodEntry unit_methods[] = {
     {"GetGuardedUnit",               unit_GetGuardedUnit},
     {"PlayFxRollOffEnd",             stub_noop},
     {"SetupBuildBones",              stub_noop},
+    {"GetBlip",                      unit_GetBlip},
     {nullptr, nullptr},
 };
 
@@ -1953,6 +2047,342 @@ static int brain_SetArmyColor(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Brain threat methods
+// ====================================================================
+
+// brain:GetThreatAtPosition(pos, rings, checkVis, threatType[, armyIdx])
+// Returns total threat of enemies (or specific army) within radius.
+static int brain_GetThreatAtPosition(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    // Extract position from arg 2
+    f32 px = 0, pz = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        px = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        pz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    // rings → radius (rings=0 means pinpoint query)
+    i32 rings = static_cast<i32>(lua_tonumber(L, 3));
+    f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
+
+    // arg 4 = checkVis (ignored)
+    const char* threat_type = lua_isstring(L, 5) ? lua_tostring(L, 5) : "Overall";
+
+    // Optional armyIdx (arg 6) — filter to specific army instead of enemies
+    bool filter_specific = lua_isnumber(L, 6);
+    i32 specific_army = filter_specific
+                            ? static_cast<i32>(lua_tonumber(L, 6)) - 1 // Lua 1-based
+                            : -1;
+
+    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+
+    f32 total = 0;
+    for (u32 eid : ids) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        if (filter_specific) {
+            if (unit->army() != specific_army) continue;
+        } else {
+            if (!sim->is_enemy(brain->index(), unit->army())) continue;
+        }
+
+        total += get_unit_threat_for_type(unit, threat_type);
+    }
+
+    lua_pushnumber(L, total);
+    return 1;
+}
+
+// brain:GetThreatsAroundPosition(pos, rings, checkVis, threatType)
+// Returns table of {cellX, cellZ, threatValue} entries bucketed into 32x32 cells.
+static int brain_GetThreatsAroundPosition(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    f32 px = 0, pz = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        px = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        pz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    i32 rings = static_cast<i32>(lua_tonumber(L, 3));
+    f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
+    const char* threat_type = lua_isstring(L, 5) ? lua_tostring(L, 5) : "Overall";
+
+    // Optional armyIdx (arg 6) — filter to specific army instead of enemies
+    bool filter_specific = lua_isnumber(L, 6);
+    i32 specific_army = filter_specific
+                            ? static_cast<i32>(lua_tonumber(L, 6)) - 1
+                            : -1;
+
+    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+
+    // Bucket threats into 32x32 cells using a map keyed by (cellX, cellZ)
+    constexpr f32 CELL_SIZE = 32.0f;
+    struct CellKey {
+        i32 cx, cz;
+        bool operator==(const CellKey& o) const { return cx == o.cx && cz == o.cz; }
+    };
+    struct CellHash {
+        size_t operator()(const CellKey& k) const {
+            return std::hash<i64>()(static_cast<i64>(k.cx) << 32 | static_cast<u32>(k.cz));
+        }
+    };
+    std::unordered_map<CellKey, f32, CellHash> cells;
+
+    for (u32 eid : ids) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        if (filter_specific) {
+            if (unit->army() != specific_army) continue;
+        } else {
+            if (!sim->is_enemy(brain->index(), unit->army())) continue;
+        }
+
+        f32 threat = get_unit_threat_for_type(unit, threat_type);
+        if (threat <= 0) continue;
+
+        CellKey key{
+            static_cast<i32>(std::floor(unit->position().x / CELL_SIZE)),
+            static_cast<i32>(std::floor(unit->position().z / CELL_SIZE))};
+        cells[key] += threat;
+    }
+
+    // Return table of {cellX, cellZ, threatValue}
+    lua_newtable(L);
+    int idx = 1;
+    for (const auto& [key, threat] : cells) {
+        lua_pushnumber(L, idx++);
+        lua_newtable(L);
+        lua_pushnumber(L, 1);
+        lua_pushnumber(L, key.cx * CELL_SIZE + CELL_SIZE * 0.5f);
+        lua_rawset(L, -3);
+        lua_pushnumber(L, 2);
+        lua_pushnumber(L, key.cz * CELL_SIZE + CELL_SIZE * 0.5f);
+        lua_rawset(L, -3);
+        lua_pushnumber(L, 3);
+        lua_pushnumber(L, threat);
+        lua_rawset(L, -3);
+        lua_rawset(L, -3); // result[idx] = entry
+    }
+    return 1;
+}
+
+// brain:GetHighestThreatPosition(rings, checkVis, threatType[, armyIdx])
+// Returns position, threat (2 return values). Iterates ALL entities.
+static int brain_GetHighestThreatPosition(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
+        push_vector3(L, {0, 0, 0});
+        lua_pushnumber(L, 0);
+        return 2;
+    }
+
+    // arg 2 = rings (unused — we scan whole map)
+    // arg 3 = checkVis (ignored)
+    const char* threat_type = lua_isstring(L, 4) ? lua_tostring(L, 4) : "Overall";
+
+    bool filter_specific = lua_isnumber(L, 5);
+    i32 specific_army = filter_specific
+                            ? static_cast<i32>(lua_tonumber(L, 5)) - 1
+                            : -1;
+
+    f32 best_threat = 0;
+    sim::Vector3 best_pos{0, 0, 0};
+
+    sim->entity_registry().for_each([&](const sim::Entity& e) {
+        if (!e.is_unit() || e.destroyed()) return;
+        auto* unit = static_cast<const sim::Unit*>(&e);
+
+        if (filter_specific) {
+            if (unit->army() != specific_army) return;
+        } else {
+            if (!sim->is_enemy(brain->index(), unit->army())) return;
+        }
+
+        f32 t = get_unit_threat_for_type(unit, threat_type);
+        if (t > best_threat) {
+            best_threat = t;
+            best_pos = unit->position();
+        }
+    });
+
+    push_vector3(L, best_pos);
+    lua_pushnumber(L, best_threat);
+    return 2;
+}
+
+// ====================================================================
+// Brain enemy & counting methods
+// ====================================================================
+
+// brain:GetCurrentEnemy() → enemy brain Lua table or nil
+static int brain_GetCurrentEnemy(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim || brain->current_enemy_index() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    auto* enemy = sim->get_army(brain->current_enemy_index());
+    if (!enemy || enemy->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, enemy->lua_table_ref());
+    return 1;
+}
+
+// brain:SetCurrentEnemy(other_brain_or_nil)
+static int brain_SetCurrentEnemy(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain) return 0;
+
+    if (lua_isnil(L, 2) || !lua_istable(L, 2)) {
+        brain->set_current_enemy_index(-1);
+        return 0;
+    }
+
+    auto* enemy = check_brain(L, 2);
+    if (enemy) {
+        brain->set_current_enemy_index(enemy->index());
+    } else {
+        brain->set_current_enemy_index(-1);
+    }
+    return 0;
+}
+
+// brain:GetNumUnitsAroundPoint(cat, pos, radius, team) → number
+// Same arg parsing as brain_GetUnitsAroundPoint but returns count.
+static int brain_GetNumUnitsAroundPoint(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    // Find category arg: first table arg after self
+    int cat_arg = 0;
+    for (int i = 2; i <= lua_gettop(L); i++) {
+        if (lua_istable(L, i)) { cat_arg = i; break; }
+    }
+    bool has_category = (cat_arg > 0);
+
+    // Position table: next table after category
+    int pos_arg = 0;
+    if (cat_arg > 0) {
+        for (int i = cat_arg + 1; i <= lua_gettop(L); i++) {
+            if (lua_istable(L, i)) { pos_arg = i; break; }
+        }
+    } else {
+        for (int i = 2; i <= lua_gettop(L); i++) {
+            if (lua_istable(L, i)) { pos_arg = i; break; }
+        }
+    }
+
+    f32 px = 0, pz = 0;
+    if (pos_arg > 0) {
+        lua_rawgeti(L, pos_arg, 1);
+        bool is_position = lua_isnumber(L, -1);
+        lua_pop(L, 1);
+        if (!is_position) pos_arg = 0;
+    }
+    if (pos_arg > 0) {
+        lua_rawgeti(L, pos_arg, 1);
+        px = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, pos_arg, 3);
+        pz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    int radius_arg = (pos_arg > 0) ? pos_arg + 1 : 4;
+    f32 radius = static_cast<f32>(lua_tonumber(L, radius_arg));
+    if (radius <= 0) radius = 1.0f;
+
+    int team_arg = radius_arg + 1;
+    const char* team_filter = lua_isstring(L, team_arg)
+                                  ? lua_tostring(L, team_arg) : "";
+
+    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+
+    int count = 0;
+    for (u32 eid : ids) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        i32 my_army = brain->index();
+        i32 their_army = unit->army();
+        if (std::strcmp(team_filter, "Enemy") == 0) {
+            if (!sim->is_enemy(my_army, their_army)) continue;
+        } else if (std::strcmp(team_filter, "Ally") == 0) {
+            if (!sim->is_ally(my_army, their_army) &&
+                their_army != my_army) continue;
+        } else {
+            if (their_army != my_army) continue;
+        }
+
+        if (unit->lua_table_ref() < 0) continue;
+
+        if (has_category &&
+            !osc::lua::unit_matches_category(L, cat_arg, unit->categories()))
+            continue;
+
+        count++;
+    }
+
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+// brain:GetPlatoonsList() → table of platoon Lua tables
+static int brain_GetPlatoonsList(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+    int idx = 1;
+    for (size_t i = 0; i < brain->platoon_count(); i++) {
+        auto* p = brain->platoon_at(i);
+        if (!p || p->destroyed() || p->lua_table_ref() < 0) continue;
+        lua_pushnumber(L, idx++);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, p->lua_table_ref());
+        lua_rawset(L, -3);
+    }
+    return 1;
+}
+
 // FindPlaceToBuild(type, structureName, buildingTypes, relative, builder,
 //                  optIgnoreAlliance, optOverridePosX, optOverridePosZ, optIgnoreThreatOver)
 // Returns {x, z, dist} or false. Uses a grid offset from the reference
@@ -2107,6 +2537,7 @@ static int brain_MakePlatoon(lua_State* L) {
     const char* plan = lua_isstring(L, 3) ? lua_tostring(L, 3) : "";
 
     auto* platoon = brain->create_platoon(name);
+    platoon->set_plan_name(plan);
 
     // Create Lua table: { _c_object = lightuserdata(Platoon*) }
     lua_newtable(L);
@@ -2114,6 +2545,11 @@ static int brain_MakePlatoon(lua_State* L) {
 
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, platoon);
+    lua_rawset(L, plat_tbl);
+
+    // Set PlanName on the Lua table
+    lua_pushstring(L, "PlanName");
+    lua_pushstring(L, plan);
     lua_rawset(L, plat_tbl);
 
     // Set metatable: try __platoon_class, fallback to __osc_platoon_mt
@@ -2136,6 +2572,9 @@ static int brain_MakePlatoon(lua_State* L) {
                 lua_pushstring(L, "platoon_methods");
                 lua_rawget(L, -2);
                 lua_remove(L, -2); // remove moho table
+            } else {
+                lua_pop(L, 1);     // pop the non-table
+                lua_pushnil(L);    // explicit nil — no methods
             }
             lua_settable(L, -3); // metatable.__index = platoon_methods
             // Cache it
@@ -2405,7 +2844,10 @@ static int platoon_Stop(lua_State* L) {
 static int platoon_MoveToLocation(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
-    if (!platoon || !sim || !lua_istable(L, 2)) return 0;
+    if (!platoon || !sim || !lua_istable(L, 2)) {
+        lua_pushnil(L);
+        return 1;
+    }
 
     // Extract position from arg 2
     sim::Vector3 pos{};
@@ -2419,22 +2861,28 @@ static int platoon_MoveToLocation(lua_State* L) {
     if (lua_isnumber(L, -1)) pos.z = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
 
+    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = pos;
+    cmd.command_id = cmd_id;
 
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit())
             static_cast<sim::Unit*>(e)->push_command(cmd, true);
     }
-    return 0;
+    lua_pushnumber(L, cmd_id);
+    return 1;
 }
 
 static int platoon_Patrol(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
-    if (!platoon || !sim || !lua_istable(L, 2)) return 0;
+    if (!platoon || !sim || !lua_istable(L, 2)) {
+        lua_pushnil(L);
+        return 1;
+    }
 
     sim::Vector3 pos{};
     lua_rawgeti(L, 2, 1);
@@ -2447,58 +2895,67 @@ static int platoon_Patrol(lua_State* L) {
     if (lua_isnumber(L, -1)) pos.z = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
 
+    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = pos;
+    cmd.command_id = cmd_id;
 
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit())
             static_cast<sim::Unit*>(e)->push_command(cmd, false); // append
     }
-    return 0;
+    lua_pushnumber(L, cmd_id);
+    return 1;
 }
 
 static int platoon_AttackTarget(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
-    if (!platoon || !sim) return 0;
+    if (!platoon || !sim) { lua_pushnil(L); return 1; }
 
     // Extract target entity from arg 2
     auto* target = check_entity(L, 2);
-    if (!target || target->destroyed()) return 0;
+    if (!target || target->destroyed()) { lua_pushnil(L); return 1; }
 
+    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
+    cmd.command_id = cmd_id;
 
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit())
             static_cast<sim::Unit*>(e)->push_command(cmd, true);
     }
-    return 0;
+    lua_pushnumber(L, cmd_id);
+    return 1;
 }
 
 static int platoon_GuardTarget(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
-    if (!platoon || !sim) return 0;
+    if (!platoon || !sim) { lua_pushnil(L); return 1; }
 
     auto* target = check_entity(L, 2);
-    if (!target || target->destroyed()) return 0;
+    if (!target || target->destroyed()) { lua_pushnil(L); return 1; }
 
+    u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
+    cmd.command_id = cmd_id;
 
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (e && !e->destroyed() && e->is_unit())
             static_cast<sim::Unit*>(e)->push_command(cmd, true);
     }
-    return 0;
+    lua_pushnumber(L, cmd_id);
+    return 1;
 }
 
 static int platoon_ForkThread(lua_State* L) {
@@ -2516,6 +2973,49 @@ static int platoon_ForkThread(lua_State* L) {
     lua_insert(L, 1);    // move fn from top to pos 1
     // Stack is now: [1]=fn, [2]=self, [3..n]=extra args
     return sim->thread_manager().fork_thread(L);
+}
+
+// platoon:SetAIPlan(planName)
+static int platoon_SetAIPlan(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    if (!platoon) return 0;
+
+    const char* plan = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
+    platoon->set_plan_name(plan);
+
+    // Also set PlanName on the Lua table for FA compatibility
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "PlanName");
+        lua_pushstring(L, plan);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
+// platoon:GetPlan() → plan name string or nil
+static int platoon_GetPlan(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    if (!platoon) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Try C++ first
+    if (!platoon->plan_name().empty()) {
+        lua_pushstring(L, platoon->plan_name().c_str());
+        return 1;
+    }
+
+    // Fallback: check Lua table PlanName field
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "PlanName");
+        lua_rawget(L, 1);
+        if (lua_isstring(L, -1)) return 1;
+        lua_pop(L, 1);
+    }
+
+    lua_pushnil(L);
+    return 1;
 }
 
 static int platoon_Destroy(lua_State* L) {
@@ -2573,6 +3073,198 @@ static int platoon_Destroy(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Platoon targeting / threat methods
+// ====================================================================
+
+// platoon:FindClosestUnit(squad, allyStatus, isUnit, category)
+// Returns closest matching unit Lua table, or nil.
+static int platoon_FindClosestUnit(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim) { lua_pushnil(L); return 1; }
+
+    // arg 2 = squad (string, currently unused for position — we use platoon center)
+    // arg 3 = allyStatus ("Enemy", "Ally", etc.)
+    const char* ally_status = lua_isstring(L, 3) ? lua_tostring(L, 3) : "Enemy";
+    // arg 4 = isUnit (boolean, ignored — we only have units)
+    // arg 5 = category (Lua table)
+    int cat_idx = lua_istable(L, 5) ? 5 : 0;
+
+    // Get platoon center
+    auto center = platoon->get_position(sim->entity_registry());
+
+    // Find the brain for this platoon's army
+    auto* brain = sim->get_army(platoon->army_index());
+    if (!brain) { lua_pushnil(L); return 1; }
+    i32 my_army = brain->index();
+
+    f32 best_dist = 1e30f;
+    sim::Entity* best = nullptr;
+
+    sim->entity_registry().for_each([&](const sim::Entity& e) {
+        if (!e.is_unit() || e.destroyed()) return;
+        auto* unit = static_cast<const sim::Unit*>(&e);
+
+        // Filter by team relationship
+        if (std::strcmp(ally_status, "Enemy") == 0) {
+            if (!sim->is_enemy(my_army, unit->army())) return;
+        } else if (std::strcmp(ally_status, "Ally") == 0) {
+            if (!sim->is_ally(my_army, unit->army()) &&
+                unit->army() != my_army) return;
+        } else {
+            if (unit->army() != my_army) return;
+        }
+
+        // Filter by category
+        if (cat_idx > 0 &&
+            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
+            return;
+
+        f32 dx = unit->position().x - center.x;
+        f32 dz = unit->position().z - center.z;
+        f32 dist = dx * dx + dz * dz;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = const_cast<sim::Entity*>(&e);
+        }
+    });
+
+    if (best && best->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, best->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// platoon:FindPrioritizedUnit(squad, allyStatus, isUnit, pos, radius)
+// Like FindClosestUnit but centered on given position within radius.
+static int platoon_FindPrioritizedUnit(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim) { lua_pushnil(L); return 1; }
+
+    const char* ally_status = lua_isstring(L, 3) ? lua_tostring(L, 3) : "Enemy";
+    // arg 4 = isUnit (ignored)
+
+    // arg 5 = position table
+    f32 px = 0, pz = 0;
+    if (lua_istable(L, 5)) {
+        lua_rawgeti(L, 5, 1);
+        px = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 5, 3);
+        pz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    // arg 6 = radius
+    f32 radius = lua_isnumber(L, 6) ? static_cast<f32>(lua_tonumber(L, 6)) : 512.0f;
+
+    auto* brain = sim->get_army(platoon->army_index());
+    if (!brain) { lua_pushnil(L); return 1; }
+    i32 my_army = brain->index();
+
+    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+
+    f32 best_dist = 1e30f;
+    sim::Entity* best = nullptr;
+
+    for (u32 eid : ids) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        if (std::strcmp(ally_status, "Enemy") == 0) {
+            if (!sim->is_enemy(my_army, unit->army())) continue;
+        } else if (std::strcmp(ally_status, "Ally") == 0) {
+            if (!sim->is_ally(my_army, unit->army()) &&
+                unit->army() != my_army) continue;
+        } else {
+            if (unit->army() != my_army) continue;
+        }
+
+        f32 dx = unit->position().x - px;
+        f32 dz = unit->position().z - pz;
+        f32 dist = dx * dx + dz * dz;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = entity;
+        }
+    }
+
+    if (best && best->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, best->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+// platoon:IsCommandsActive(cmdId)
+// Returns true if any unit in the platoon still has a command with this ID.
+static int platoon_IsCommandsActive(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    u32 cmd_id = static_cast<u32>(lua_tonumber(L, 2));
+    if (cmd_id == 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    for (u32 id : platoon->unit_ids()) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+
+        for (const auto& cmd : unit->command_queue()) {
+            if (cmd.command_id == cmd_id) {
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+        }
+    }
+
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// platoon:CalculatePlatoonThreat(threatType, category)
+// Sum threat of all platoon units matching category for given threat type.
+static int platoon_CalculatePlatoonThreat(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    const char* threat_type = lua_isstring(L, 2) ? lua_tostring(L, 2) : "Overall";
+    int cat_idx = lua_istable(L, 3) ? 3 : 0;
+
+    f32 total = 0;
+    for (u32 id : platoon->unit_ids()) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+
+        if (cat_idx > 0 &&
+            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
+            continue;
+
+        total += get_unit_threat_for_type(unit, threat_type);
+    }
+
+    lua_pushnumber(L, total);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry aibrain_methods[] = {
     // Real implementations
@@ -2614,7 +3306,8 @@ static const MethodEntry aibrain_methods[] = {
     {"PlatoonExists",               brain_PlatoonExists},
     {"DisbandPlatoon",              brain_DisbandPlatoon},
     {"SetResourceSharing",          stub_noop},
-    {"GetThreatAtPosition",         stub_return_zero},
+    {"GetThreatAtPosition",         brain_GetThreatAtPosition},
+    {"GetThreatsAroundPosition",    brain_GetThreatsAroundPosition},
     {"IsAnyEngineerBuilding",       stub_return_false},
     {"SetCurrentPlan",              stub_noop},
     {"PBMRemoveBuildLocation",      stub_noop},
@@ -2627,9 +3320,13 @@ static const MethodEntry aibrain_methods[] = {
     {"DecideWhatToBuild",           brain_DecideWhatToBuild},
     {"MakePlatoon",                 brain_MakePlatoon},
     {"GetPlatoonUniquelyNamed",     brain_GetPlatoonUniquelyNamed},
-    {"GetHighestThreatPosition",    stub_return_nil},
+    {"GetHighestThreatPosition",    brain_GetHighestThreatPosition},
     {"SetGreaterOf",                stub_noop},
     {"GetArmySkinName",             stub_return_empty_string},
+    {"GetCurrentEnemy",             brain_GetCurrentEnemy},
+    {"SetCurrentEnemy",             brain_SetCurrentEnemy},
+    {"GetNumUnitsAroundPoint",      brain_GetNumUnitsAroundPoint},
+    {"GetPlatoonsList",             brain_GetPlatoonsList},
     {nullptr, nullptr},
 };
 // clang-format on
@@ -2660,6 +3357,8 @@ static const MethodEntry blip_methods[] = {
     {"GetPosition",         entity_GetPosition},
     {"GetArmy",             stub_return_zero},
     {"BeenDestroyed",       stub_return_false},
+    {"IsKnownFake",         stub_return_false},
+    {"IsMaybeDead",         stub_return_false},
     {nullptr, nullptr},
 };
 
@@ -2671,7 +3370,9 @@ static const MethodEntry platoon_methods[] = {
     {"UniquelyNamePlatoon",         platoon_UniquelyNamePlatoon},
     {"GetPlatoonPosition",          platoon_GetPlatoonPosition},
     {"ForkThread",                  platoon_ForkThread},
-    {"SetAIPlan",                   stub_noop},
+    {"SetAIPlan",                   platoon_SetAIPlan},
+    {"GetPlan",                     platoon_GetPlan},
+    {"SetPlatoonFormationOverride", stub_noop},
     {"Stop",                        platoon_Stop},
     {"MoveToLocation",              platoon_MoveToLocation},
     {"MoveToTarget",                platoon_MoveToLocation},
@@ -2680,11 +3381,11 @@ static const MethodEntry platoon_methods[] = {
     {"AttackTarget",                platoon_AttackTarget},
     {"GuardTarget",                 platoon_GuardTarget},
     {"IsOpponentAIRunning",         stub_return_false},
-    {"FindClosestUnit",             stub_return_nil},
-    {"FindPrioritizedUnit",         stub_return_nil},
+    {"FindClosestUnit",             platoon_FindClosestUnit},
+    {"FindPrioritizedUnit",         platoon_FindPrioritizedUnit},
     {"SetPrioritizedTargetList",    stub_noop},
-    {"IsCommandsActive",            stub_return_false},
-    {"CalculatePlatoonThreat",      stub_return_zero},
+    {"IsCommandsActive",            platoon_IsCommandsActive},
+    {"CalculatePlatoonThreat",      platoon_CalculatePlatoonThreat},
     {nullptr, nullptr},
 };
 

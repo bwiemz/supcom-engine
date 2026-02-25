@@ -105,10 +105,18 @@ public:
     // --- Build placement counter (for grid offset in FindPlaceToBuild) ---
     i32 next_build_place_index() { return build_place_counter_++; }
 
+    // --- Current enemy ---
+    i32 current_enemy_index() const { return current_enemy_index_; }
+    void set_current_enemy_index(i32 idx) { current_enemy_index_ = idx; }
+
     // --- Platoons ---
     Platoon* create_platoon(const std::string& name);
     Platoon* find_platoon_by_name(const std::string& name);
     void destroy_platoon(Platoon* p);
+    size_t platoon_count() const { return platoons_.size(); }
+    Platoon* platoon_at(size_t i) const {
+        return i < platoons_.size() ? platoons_[i].get() : nullptr;
+    }
 
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {
@@ -133,6 +141,7 @@ private:
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
     i32 build_place_counter_ = 0;
+    i32 current_enemy_index_ = -1; // -1 = no current enemy
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;

@@ -23,6 +23,7 @@ struct UnitCommand {
     Vector3 target_pos;
     u32 target_id = 0;          // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)
+    u32 command_id = 0;         // unique ID for IsCommandsActive tracking
 };
 
 } // namespace osc::sim

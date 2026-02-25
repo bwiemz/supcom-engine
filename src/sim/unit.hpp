@@ -111,6 +111,16 @@ public:
     i32 fire_state() const { return fire_state_; }
     void set_fire_state(i32 s) { fire_state_ = s; }
 
+    // Threat levels (cached from blueprint Defense at creation time)
+    f32 surface_threat() const { return surface_threat_; }
+    f32 air_threat() const { return air_threat_; }
+    f32 sub_threat() const { return sub_threat_; }
+    f32 economy_threat() const { return economy_threat_; }
+    void set_surface_threat(f32 t) { surface_threat_ = t; }
+    void set_air_threat(f32 t) { air_threat_ = t; }
+    void set_sub_threat(f32 t) { sub_threat_ = t; }
+    void set_economy_threat(f32 t) { economy_threat_ = t; }
+
     // Command queue
     const std::deque<UnitCommand>& command_queue() const {
         return command_queue_;
@@ -163,6 +173,10 @@ private:
     bool busy_ = false;
     bool block_command_queue_ = false;
     i32 fire_state_ = 0;         // 0=ReturnFire, 1=HoldFire, 2=HoldGround
+    f32 surface_threat_ = 0;
+    f32 air_threat_ = 0;
+    f32 sub_threat_ = 0;
+    f32 economy_threat_ = 0;
 };
 
 } // namespace osc::sim
