@@ -1,1 +1,4 @@
 /.serena
+/build/
+/build-release/
+*.log
