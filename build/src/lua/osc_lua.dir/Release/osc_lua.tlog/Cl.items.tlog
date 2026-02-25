@@ -1,0 +1,8 @@
+C:\Users\bwiem\projects\supcom engine\src\lua\lua_state.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\lua_state.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\init_loader.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\init_loader.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\engine_bindings.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\engine_bindings.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\blueprint_bindings.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\blueprint_bindings.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\moho_bindings.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\moho_bindings.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\sim_bindings.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\sim_bindings.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\sim_loader.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\sim_loader.obj
+C:\Users\bwiem\projects\supcom engine\src\lua\scenario_loader.cpp;C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.dir\Release\scenario_loader.obj

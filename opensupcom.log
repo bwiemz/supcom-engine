@@ -1,0 +1,394 @@
+[2026-02-24 20:31:02.418] [info] OpenSupCom v0.1.0
+[2026-02-24 20:31:02.419] [info] FA path:   C:/Program Files (x86)/Steam/steamapps/common/Supreme Commander Forged Alliance
+[2026-02-24 20:31:02.419] [info] Init file: C:/ProgramData/FAForever/bin/init_faf.lua
+[2026-02-24 20:31:02.419] [info] FAF data:  C:/ProgramData/FAForever
+[2026-02-24 20:31:02.419] [info] Executing init file: C:/ProgramData/FAForever/bin/init_faf.lua
+[2026-02-24 20:31:02.420] [info] Client version: 2026.1.0
+[2026-02-24 20:31:02.420] [info] Game version: 3830
+[2026-02-24 20:31:02.420] [info] Game type: fafdevelop
+[2026-02-24 20:31:02.420] [info] Process - priority set to: 'high'
+[2026-02-24 20:31:02.420] [info] Process - affinity set to: 252
+[2026-02-24 20:31:02.433] [info] Loading custom vault path: E:/Gas Powered Games
+[2026-02-24 20:31:02.433] [info] Prevented loading an invalid mod: buildrangepreview does not have an info file: E:/Gas Powered Games/mods/buildrangepreview
+[2026-02-24 20:31:02.433] [info] Prevented loading an invalid mod: improved graphics 2024 - extreme quality does not have an info file: E:/Gas Powered Games/mods/improved graphics 2024 - extreme quality
+[2026-02-24 20:31:02.433] [info] Prevented loading an invalid mod: redux acu icons does not have an info file: E:/Gas Powered Games/mods/redux acu icons
+[2026-02-24 20:31:02.433] [info] Prevented loading an invalid mod: supremescoreboard does not have an info file: E:/Gas Powered Games/mods/supremescoreboard
+[2026-02-24 20:31:02.433] [info] mounting content: effects.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: env.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: etc.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: loc.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: lua.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: meshes.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: projectiles.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: textures.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: units.nx2
+[2026-02-24 20:31:02.433] [info] mounting content: effects.scd
+[2026-02-24 20:31:02.433] [info] mounting content: env.scd
+[2026-02-24 20:31:02.433] [info] mounting content: loc_US.scd
+[2026-02-24 20:31:02.433] [info] mounting content: meshes.scd
+[2026-02-24 20:31:02.433] [info] mounting content: mods.scd
+[2026-02-24 20:31:02.433] [info] mounting content: objects.scd
+[2026-02-24 20:31:02.433] [info] mounting content: projectiles.scd
+[2026-02-24 20:31:02.433] [info] mounting content: props.scd
+[2026-02-24 20:31:02.433] [info] mounting content: skins.scd
+[2026-02-24 20:31:02.433] [info] mounting content: textures.scd
+[2026-02-24 20:31:02.433] [info] mounting content: units.scd
+[2026-02-24 20:31:02.458] [debug] ZIP mount effects.nx2: 3169 files indexed
+[2026-02-24 20:31:02.458] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.471] [debug] ZIP mount env.nx2: 1483 files indexed
+[2026-02-24 20:31:02.471] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.471] [debug] ZIP mount etc.nx2: 1 files indexed
+[2026-02-24 20:31:02.471] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.471] [debug] ZIP mount loc.nx2: 12 files indexed
+[2026-02-24 20:31:02.471] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.480] [debug] ZIP mount lua.nx2: 1265 files indexed
+[2026-02-24 20:31:02.480] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.481] [debug] ZIP mount meshes.nx2: 54 files indexed
+[2026-02-24 20:31:02.481] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.487] [debug] ZIP mount projectiles.nx2: 629 files indexed
+[2026-02-24 20:31:02.487] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.516] [debug] ZIP mount textures.nx2: 3801 files indexed
+[2026-02-24 20:31:02.516] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.539] [debug] ZIP mount units.nx2: 1848 files indexed
+[2026-02-24 20:31:02.539] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.568] [debug] ZIP mount effects.scd: 3046 files indexed
+[2026-02-24 20:31:02.568] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.591] [debug] ZIP mount env.scd: 3490 files indexed
+[2026-02-24 20:31:02.591] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.592] [debug] ZIP mount loc_US.scd: 1 files indexed
+[2026-02-24 20:31:02.592] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.593] [debug] ZIP mount meshes.scd: 187 files indexed
+[2026-02-24 20:31:02.593] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.594] [debug] ZIP mount mods.scd: 13 files indexed
+[2026-02-24 20:31:02.594] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.594] [debug] ZIP mount objects.scd: 10 files indexed
+[2026-02-24 20:31:02.594] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.601] [debug] ZIP mount projectiles.scd: 728 files indexed
+[2026-02-24 20:31:02.601] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.601] [debug] ZIP mount props.scd: 7 files indexed
+[2026-02-24 20:31:02.601] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.601] [debug] ZIP mount skins.scd: 0 files indexed
+[2026-02-24 20:31:02.601] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.664] [debug] ZIP mount textures.scd: 8956 files indexed
+[2026-02-24 20:31:02.664] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.715] [debug] ZIP mount units.scd: 6046 files indexed
+[2026-02-24 20:31:02.715] [debug] VFS: mounting at '/'
+[2026-02-24 20:31:02.715] [debug] VFS: mounting at '/preferences'
+[2026-02-24 20:31:02.716] [debug] VFS: mounting at '/movies'
+[2026-02-24 20:31:02.716] [debug] VFS: mounting at '/sounds'
+[2026-02-24 20:31:02.716] [debug] VFS: mounting at '/maps'
+[2026-02-24 20:31:02.716] [debug] VFS: mounting at '/fonts'
+[2026-02-24 20:31:02.716] [info] VFS: 25 mount points active
+[2026-02-24 20:31:02.716] [info] Loading system Lua files...
+[2026-02-24 20:31:02.723] [info]   Loaded: /lua/system/repr.lua
+[2026-02-24 20:31:02.729] [info]   Loaded: /lua/system/config.lua
+[2026-02-24 20:31:02.735] [info]   Loaded: /lua/system/utils.lua
+[2026-02-24 20:31:02.742] [info]   Loaded: /lua/system/class.lua
+[2026-02-24 20:31:02.748] [info]   Loaded: /lua/system/import.lua
+[2026-02-24 20:31:02.788] [info]   Loaded: /lua/system/Blueprints.lua
+[2026-02-24 20:31:02.788] [info] Calling LoadBlueprints()...
+[2026-02-24 20:31:02.788] [info] Blueprints Loading... '*.bp' files
+[2026-02-24 20:31:02.813] [info] Blueprints Loading: original files from /effects directory
+[2026-02-24 20:31:24.564] [info] Blueprints Loading: original files from /env directory
+[2026-02-24 20:31:26.215] [info] Blueprints Loading: original files from /meshes directory
+[2026-02-24 20:31:26.225] [info] Blueprints Loading: original files from /projectiles directory
+[2026-02-24 20:31:26.892] [info] Blueprints Loading: original files from /props directory
+[2026-02-24 20:31:26.897] [info] Blueprints Loading: original files from /units directory
+[2026-02-24 20:31:30.299] [info] Blueprints Extracting mesh...
+[2026-02-24 20:31:30.343] [info] Blueprints Modding...
+[2026-02-24 20:31:30.446] [warning] Overriding the x axis of collision box of unit ( xss0203 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.447] [warning] Overriding the x axis of collision box of unit ( urs0103 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.454] [warning] Overriding the x axis of collision box of unit ( ues0103 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.456] [warning] Overriding the x axis of collision box of unit ( uas0103 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.457] [warning] Overriding the x axis of collision box of unit ( uas0203 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.457] [warning] Overriding the x axis of collision box of unit ( urs0203 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.459] [warning] Overriding the x axis of collision box of unit ( ues0203 ), it should be atleast 10 percent ( 0.6 ) of the maximum speed ( 6 ) to guarantee proper functioning beam weapons
+[2026-02-24 20:31:30.467] [info] Blueprints Loading... completed: 606 original, 0 modded, and 72 preset units
+[2026-02-24 20:31:30.467] [info] Blueprints Loading... completed: 393 original and 0 modded projectiles
+[2026-02-24 20:31:30.467] [info] Blueprints Registering...
+[2026-02-24 20:31:30.562] [info] Exposed 8260 blueprints as __blueprints global
+[2026-02-24 20:31:30.562] [info] Blueprint loading complete:
+[2026-02-24 20:31:30.563] [info]   Units:        678
+[2026-02-24 20:31:30.563] [info]   Projectiles:  393
+[2026-02-24 20:31:30.563] [info]   Meshes:       3701
+[2026-02-24 20:31:30.563] [info]   Props:        565
+[2026-02-24 20:31:30.563] [info]   Emitters:     2623
+[2026-02-24 20:31:30.563] [info]   Beams:        115
+[2026-02-24 20:31:30.563] [info]   Trails:       185
+[2026-02-24 20:31:30.563] [info]   Total:        8260
+[2026-02-24 20:31:30.563] [info] Spot check: uel0001 found (<LOC uel0001_desc>Armored Command Unit)
+[2026-02-24 20:31:30.563] [info] OpenSupCom initialization complete.
+[2026-02-24 20:31:30.564] [info] Loading scenario: /maps/SCMP_009/SCMP_009_scenario.lua
+[2026-02-24 20:31:30.564] [info]   Map: Seton's Clutch (1024x1024), type: skirmish
+[2026-02-24 20:31:30.564] [info]   Armies: 8
+[2026-02-24 20:31:30.573] [info]   Heightmap: 1025x1025, scale: 0.0078125, water: 17.5
+[2026-02-24 20:31:30.575] [info] Booting simulation environment...
+[2026-02-24 20:31:30.576] [info] Registered moho bindings
+[2026-02-24 20:31:30.576] [info] Registered sim bindings
+[2026-02-24 20:31:30.691] [debug] Lua sim environment initialized with game version 3831, game type FAF and at commit hash 53f5c7b5c7edaf99adf500eb7e23a24fa66a7fcd
+[2026-02-24 20:31:30.854] [info]   Loaded: /lua/simInit.lua
+[2026-02-24 20:31:30.939] [info] Unit.lua import: Unit class available
+[2026-02-24 20:31:30.939] [info] Sim environment ready.
+[2026-02-24 20:31:30.939] [info] Terrain test:
+[2026-02-24 20:31:30.939] [info]   Center (512, 512): terrain=18.5, surface=18.5
+[2026-02-24 20:31:30.939] [info] Starting session...
+[2026-02-24 20:31:30.939] [info]   Calling SetupSession()...
+[2026-02-24 20:31:30.953] [info] RestrictedCategories { }
+[2026-02-24 20:31:30.958] [info] Loading save file: /maps/SCMP_009/SCMP_009_save.lua
+[2026-02-24 20:31:30.969] [info] Loading script file: /maps/SCMP_009/SCMP_009_script.lua
+[2026-02-24 20:31:30.970] [debug]   ARMY_5 start pos: (662, 18.7, 168)
+[2026-02-24 20:31:30.970] [debug]   ARMY_8 start pos: (100, 25.7, 914)
+[2026-02-24 20:31:30.970] [debug]   ARMY_1 start pos: (672, 18.7, 346)
+[2026-02-24 20:31:30.970] [debug]   ARMY_7 start pos: (926, 25.7, 102)
+[2026-02-24 20:31:30.970] [debug]   ARMY_3 start pos: (856, 20.9, 434)
+[2026-02-24 20:31:30.970] [debug]   ARMY_6 start pos: (366, 18.7, 864)
+[2026-02-24 20:31:30.970] [debug]   ARMY_2 start pos: (358, 18.7, 674)
+[2026-02-24 20:31:30.970] [debug]   ARMY_4 start pos: (172, 20.9, 600)
+[2026-02-24 20:31:30.970] [info]   Creating army brains (8 armies)...
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_1'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_2'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_3'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_4'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_5'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_6'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_7'
+[2026-02-24 20:31:30.994] [info] InitializeArmyAI: OnCreateHuman for 'ARMY_8'
+[2026-02-24 20:31:30.994] [info]   Calling BeginSession()...
+[2026-02-24 20:31:31.014] [info] Initialize Armies brain nickname is ARMY_1
+[2026-02-24 20:31:31.014] [info] CreateArmy group ARMY_1
+[2026-02-24 20:31:31.014] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.014] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.014] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.014] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.014] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.014] [debug] Created unit uel0001 (entity #1) at (672.5, 0, 346.5)
+[2026-02-24 20:31:31.014] [debug] GiveInitialResources: army=0 mass=650 energy=3900
+[2026-02-24 20:31:31.014] [info] Initialize Armies brain nickname is ARMY_2
+[2026-02-24 20:31:31.014] [info] CreateArmy group ARMY_2
+[2026-02-24 20:31:31.014] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.014] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.014] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.014] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.014] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.014] [debug] Created unit uel0001 (entity #2) at (357.5, 0, 673.5)
+[2026-02-24 20:31:31.014] [debug] GiveInitialResources: army=1 mass=650 energy=3900
+[2026-02-24 20:31:31.014] [info] Initialize Armies brain nickname is ARMY_3
+[2026-02-24 20:31:31.014] [info] CreateArmy group ARMY_3
+[2026-02-24 20:31:31.014] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.014] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.014] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.014] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.014] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.014] [debug] Created unit uel0001 (entity #3) at (856.5, 0, 433.5)
+[2026-02-24 20:31:31.014] [debug] GiveInitialResources: army=2 mass=650 energy=3900
+[2026-02-24 20:31:31.014] [info] Initialize Armies brain nickname is ARMY_4
+[2026-02-24 20:31:31.014] [info] CreateArmy group ARMY_4
+[2026-02-24 20:31:31.014] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.014] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.014] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.014] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.014] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.014] [debug] Created unit uel0001 (entity #4) at (172.5, 0, 600.5)
+[2026-02-24 20:31:31.014] [debug] GiveInitialResources: army=3 mass=650 energy=3900
+[2026-02-24 20:31:31.014] [info] Initialize Armies brain nickname is ARMY_5
+[2026-02-24 20:31:31.014] [info] CreateArmy group ARMY_5
+[2026-02-24 20:31:31.014] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.014] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.014] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.014] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.014] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.014] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.015] [debug] Created unit uel0001 (entity #5) at (661.5, 0, 167.5)
+[2026-02-24 20:31:31.015] [debug] GiveInitialResources: army=4 mass=650 energy=3900
+[2026-02-24 20:31:31.015] [info] Initialize Armies brain nickname is ARMY_6
+[2026-02-24 20:31:31.015] [info] CreateArmy group ARMY_6
+[2026-02-24 20:31:31.015] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.015] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.015] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.015] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.015] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.015] [debug] Created unit uel0001 (entity #6) at (366.5, 0, 863.5)
+[2026-02-24 20:31:31.015] [debug] GiveInitialResources: army=5 mass=650 energy=3900
+[2026-02-24 20:31:31.015] [info] Initialize Armies brain nickname is ARMY_7
+[2026-02-24 20:31:31.015] [info] CreateArmy group ARMY_7
+[2026-02-24 20:31:31.015] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.015] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.015] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.015] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.015] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.015] [debug] Created unit uel0001 (entity #7) at (925.5, 0, 101.5)
+[2026-02-24 20:31:31.015] [debug] GiveInitialResources: army=6 mass=650 energy=3900
+[2026-02-24 20:31:31.015] [info] Initialize Armies brain nickname is ARMY_8
+[2026-02-24 20:31:31.015] [info] CreateArmy group ARMY_8
+[2026-02-24 20:31:31.015] [debug]   Weapon[0]: RightZephyr range=22 dmg=100 rof=1 vel=35
+[2026-02-24 20:31:31.015] [debug]   Weapon[1]: OverCharge range=22 dmg=15000 rof=0.3030303 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[2]: AutoOverCharge range=22 dmg=15000 rof=0.2 vel=25
+[2026-02-24 20:31:31.015] [debug]   Weapon[3]: TacMissile range=256 dmg=6000 rof=5 vel=3
+[2026-02-24 20:31:31.015] [debug]   Weapon[4]: TacNukeMissile range=256 dmg=0 rof=1 vel=5
+[2026-02-24 20:31:31.015] [debug]   Weapon[5]: DeathWeapon range=1 dmg=0 rof=1 vel=0
+[2026-02-24 20:31:31.015] [debug]   Weapon[6]: TeleportWeapon range=1 dmg=100 rof=1 vel=25
+[2026-02-24 20:31:31.015] [debug] Created unit uel0001 (entity #8) at (99.5, 0, 913.5)
+[2026-02-24 20:31:31.015] [debug] GiveInitialResources: army=7 mass=650 energy=3900
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #9 at (346.5, 18.7, 678.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #10 at (680.5, 18.7, 350.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #11 at (368.5, 18.6, 561.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #12 at (902.5, 27.2, 80.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #13 at (64.5, 22.1, 568.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #14 at (155.5, 18.6, 659.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #15 at (429.5, 18.7, 570.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #16 at (306.5, 18.7, 866.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #17 at (661.5, 18.7, 303.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #18 at (357.5, 18.7, 863.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #19 at (99.5, 25.7, 902.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #20 at (886.5, 30.7, 48.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #21 at (668.5, 18.6, 110.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #22 at (103.5, 18.4, 732.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #23 at (40.5, 20.6, 305.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #24 at (308.5, 19.0, 695.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #25 at (727.5, 20.4, 334.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #26 at (362.5, 18.7, 662.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #27 at (919.5, 21.6, 432.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.015] [debug] CreatePropHPR: entity #28 at (650.5, 18.7, 167.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #29 at (653.5, 18.6, 463.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #30 at (935.5, 20.5, 201.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #31 at (729.5, 18.6, 58.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #32 at (687.5, 19.3, 390.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #33 at (463.5, 23.7, 989.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #34 at (983.5, 20.6, 718.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #35 at (501.5, 18.2, 529.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #36 at (1018.5, 25.7, 734.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #37 at (885.5, 28.3, 73.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #38 at (661.5, 18.7, 177.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #39 at (366.5, 18.7, 853.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #40 at (87.5, 20.5, 813.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #41 at (847.5, 20.8, 434.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #42 at (865.5, 18.5, 504.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #43 at (909.5, 21.5, 373.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #44 at (366.5, 18.7, 873.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #45 at (920.5, 18.4, 305.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #46 at (161.5, 21.0, 600.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #47 at (420.5, 18.6, 892.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #48 at (88.5, 25.8, 912.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #49 at (969.5, 20.5, 734.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #50 at (336.5, 18.7, 798.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #51 at (111.5, 25.7, 912.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #52 at (900.5, 21.5, 391.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #53 at (960.5, 21.9, 452.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #54 at (666.5, 18.7, 337.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #55 at (300.5, 18.6, 969.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #56 at (97.5, 21.3, 669.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #57 at (925.5, 25.8, 90.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #58 at (356.5, 18.7, 617.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #59 at (863.5, 21.4, 388.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #60 at (84.5, 23.5, 854.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #61 at (726.5, 19.6, 284.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #62 at (360.5, 18.7, 684.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #63 at (936.5, 26.3, 101.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #64 at (935.5, 23.5, 168.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #65 at (6.5, 25.5, 291.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #66 at (6.5, 25.5, 300.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #67 at (403.5, 18.5, 625.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #68 at (902.5, 18.7, 231.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #69 at (804.5, 18.5, 156.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #70 at (100.5, 25.7, 923.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #71 at (46.5, 20.0, 521.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #72 at (172.5, 20.8, 588.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #73 at (925.5, 25.7, 111.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #74 at (51.5, 20.5, 293.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #75 at (310.5, 18.7, 716.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #76 at (775.5, 18.7, 157.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #77 at (563.5, 23.7, 33.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #78 at (938.5, 22.2, 423.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #79 at (464.5, 23.1, 1008.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #80 at (49.5, 20.7, 321.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #81 at (352.5, 18.7, 657.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #82 at (603.5, 18.6, 128.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #83 at (324.5, 18.7, 847.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #84 at (650.5, 18.7, 386.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #85 at (551.5, 23.1, 17.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #86 at (1018.5, 25.5, 724.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #87 at (968.5, 20.5, 701.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #88 at (150.5, 29.2, 970.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #89 at (351.5, 18.7, 898.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #90 at (88.5, 21.8, 581.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #91 at (796.5, 18.6, 127.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #92 at (678.5, 18.7, 335.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.016] [debug] CreatePropHPR: entity #93 at (671.5, 18.7, 166.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #94 at (124.5, 27.3, 945.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #95 at (489.5, 23.7, 994.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #96 at (563.5, 22.7, 16.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #97 at (247.5, 18.7, 867.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #98 at (603.5, 18.8, 465.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #99 at (667.5, 18.7, 357.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #100 at (345.5, 19.3, 733.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #101 at (172.5, 21.0, 612.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #102 at (857.5, 20.9, 424.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #103 at (175.5, 18.3, 531.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #104 at (994.5, 24.3, 266.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #105 at (113.5, 21.5, 607.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #106 at (377.5, 18.7, 863.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #107 at (34.5, 22.5, 672.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #108 at (865.5, 21.0, 433.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #109 at (140.5, 21.5, 636.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #110 at (220.5, 18.5, 867.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #111 at (913.5, 25.9, 101.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #112 at (661.5, 18.7, 156.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #113 at (830.5, 18.8, 227.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #114 at (123.5, 21.5, 639.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #115 at (716.5, 19.5, 188.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #116 at (694.5, 18.7, 175.5) bp=/env/common/props/hydrocarbonDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #117 at (856.5, 20.8, 441.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #118 at (682.5, 18.7, 231.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #119 at (228.5, 18.5, 896.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #120 at (145.5, 27.8, 945.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #121 at (193.5, 18.8, 796.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #122 at (184.5, 20.9, 600.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #123 at (984.5, 18.5, 523.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.017] [debug] CreatePropHPR: entity #124 at (538.5, 19.3, 485.5) bp=/env/common/props/massDeposit01_prop.bp
+[2026-02-24 20:31:31.023] [info] Session started.
+[2026-02-24 20:31:31.023] [info] Running 50 sim ticks (5.0s game time)...
+[2026-02-24 20:31:31.035] [info] === CHAIN TEST: ACU -> Factory -> Engineer -> PGen ===
+[2026-02-24 20:31:31.035] [info] --- Phase 1: ACU builds T1 Land Factory (ueb0101) ---
+[2026-02-24 20:31:31.035] [info] Chain Phase 1: ACU building ueb0101
+[2026-02-24 20:31:31.042] [debug] Created unit ueb0101 (entity #125) at (687.5, 0, 346.5)
+[2026-02-24 20:31:31.042] [info] start_build: entity #1 building ueb0101 (target #125), BuildTime=300 BuildRate=10.0 CostMass=240 CostEnergy=2100
+[2026-02-24 20:31:31.048] [info]   tick 100: target #125 frac=15.7%
+[2026-02-24 20:31:31.060] [info]   tick 200: target #125 frac=49.0%
+[2026-02-24 20:31:31.072] [info]   tick 300: target #125 frac=82.3%
+[2026-02-24 20:31:31.078] [info] Phase 1 done: factory = entity #125
+[2026-02-24 20:31:31.078] [info] --- Phase 2: Factory builds T1 Engineer (uel0105) ---
+[2026-02-24 20:31:31.078] [info] Chain Phase 2: Factory building uel0105
+[2026-02-24 20:31:31.078] [debug] Created unit uel0105 (entity #126) at (687.5, 0, 346.5)
+[2026-02-24 20:31:31.078] [info] start_build: entity #125 building uel0105 (target #126), BuildTime=260 BuildRate=20.0 CostMass=52 CostEnergy=260
+[2026-02-24 20:31:31.079] [info] finish_build: entity #1 completed building target #125
+[2026-02-24 20:31:31.081] [info]   tick 25: target #126 frac=19.2%
+[2026-02-24 20:31:31.084] [info]   tick 50: target #126 frac=38.5%
+[2026-02-24 20:31:31.087] [info]   tick 75: target #126 frac=57.7%
+[2026-02-24 20:31:31.091] [info]   tick 100: target #126 frac=76.9%
+[2026-02-24 20:31:31.091] [info] Phase 2 done: engineer = entity #126
+[2026-02-24 20:31:31.091] [info] --- Phase 3: Engineer builds T1 PGen (ueb1101) ---
+[2026-02-24 20:31:31.091] [info] Chain Phase 3: Engineer building ueb1101
+[2026-02-24 20:31:31.094] [debug]   Weapon[0]: DeathWeapon range=0 dmg=250 rof=1 vel=25
+[2026-02-24 20:31:31.094] [debug] Created unit ueb1101 (entity #127) at (697.5, 0, 346.5)
+[2026-02-24 20:31:31.094] [info] start_build: entity #126 building ueb1101 (target #127), BuildTime=125 BuildRate=5.0 CostMass=75 CostEnergy=750
+[2026-02-24 20:31:31.095] [info] finish_build: entity #125 completed building target #126
+[2026-02-24 20:31:31.103] [info]   tick 100: target #127 frac=31.2%
+[2026-02-24 20:31:31.116] [info]   tick 200: target #127 frac=71.2%
+[2026-02-24 20:31:31.126] [info] finish_build: entity #126 completed building target #127
+[2026-02-24 20:31:31.129] [info]   tick 300: not building
+[2026-02-24 20:31:31.129] [info] Phase 3 done: pgen = entity #127, frac=100.0%, health=600/600
+[2026-02-24 20:31:31.130] [info] Chain test: 127 entities total
+[2026-02-24 20:31:31.130] [info] Sim: 8 armies, 127 entities, 33 active threads, 800 ticks (80.0s game time)

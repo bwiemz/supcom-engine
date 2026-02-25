@@ -1,0 +1,510 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PreferredToolArchitecture>x64</PreferredToolArchitecture>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="MinSizeRel|x64">
+      <Configuration>MinSizeRel</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="RelWithDebInfo|x64">
+      <Configuration>RelWithDebInfo</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{6E9DC3FF-3275-3898-9049-F916F4D9C36F}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <VcpkgEnabled>false</VcpkgEnabled>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <Platform>x64</Platform>
+    <ProjectName>osc_tests</ProjectName>
+    <VCProjectUpgraderObjectName>NoUpgrade</VCProjectUpgraderObjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <CharacterSet>MultiByte</CharacterSet>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="do_not_import_user.props" Condition="exists('do_not_import_user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <_ProjectFileVersion>10.0.20506.1</_ProjectFileVersion>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\Debug\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">osc_tests.dir\Debug\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">osc_tests</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\Release\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">osc_tests.dir\Release\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='Release|x64'">osc_tests</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='Release|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\MinSizeRel\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">osc_tests.dir\MinSizeRel\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">osc_tests</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">true</GenerateManifest>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\RelWithDebInfo\</OutDir>
+    <IntDir Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">osc_tests.dir\RelWithDebInfo\</IntDir>
+    <TargetName Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">osc_tests</TargetName>
+    <TargetExt Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">.exe</TargetExt>
+    <LinkIncremental Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</LinkIncremental>
+    <GenerateManifest Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">true</GenerateManifest>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/include" /utf-8</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4251;4275</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>Disabled</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>Disabled</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR="Debug"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_DEBUG;_WINDOWS;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR=\"Debug\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file C:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary "C:/Users/bwiem/projects/supcom engine/build/tests/Debug/osc_tests.exe" -installedDir "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/debug/bin" -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe -D TEST_TARGET=osc_tests -D "TEST_EXECUTABLE=C:/Users/bwiem/projects/supcom engine/build/tests/Debug/osc_tests.exe" -D TEST_EXECUTOR= -D "TEST_WORKING_DIR=C:/Users/bwiem/projects/supcom engine/build/tests" -D TEST_SPEC= -D TEST_EXTRA_ARGS= -D "TEST_PROPERTIES=SKIP_RETURN_CODE";"4" -D TEST_PREFIX= -D TEST_SUFFIX= -D TEST_LIST=osc_tests_TESTS -D TEST_REPORTER= -D TEST_OUTPUT_DIR= -D TEST_OUTPUT_PREFIX= -D TEST_OUTPUT_SUFFIX= -D TEST_DL_PATHS= -D TEST_DL_FRAMEWORK_PATHS= -D "CTEST_FILE=C:/Users/bwiem/projects/supcom engine/build/tests/osc_tests-b12d07c_tests.cmake" -D ADD_TAGS_AS_LABELS=FALSE -P "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/share/catch2/CatchAddTests.cmake"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>..\vcpkg_installed\x64-windows\debug\lib\manual-link\Catch2Maind.lib;..\src\core\Debug\osc_core.lib;..\src\vfs\Debug\osc_vfs.lib;..\src\map\Debug\osc_map.lib;..\src\lua\Debug\osc_lua.lib;..\src\blueprints\Debug\osc_blueprints.lib;..\vcpkg_installed\x64-windows\debug\lib\Catch2d.lib;..\src\lua\Debug\osc_lua.lib;..\src\vfs\Debug\osc_vfs.lib;..\vcpkg_installed\x64-windows\debug\lib\minizip.lib;..\vcpkg_installed\x64-windows\debug\lib\zlibd.lib;..\src\sim\Debug\osc_sim.lib;..\src\map\Debug\osc_map.lib;..\src\core\Debug\osc_core.lib;..\vcpkg_installed\x64-windows\debug\lib\spdlogd.lib;..\vcpkg_installed\x64-windows\debug\lib\fmtd.lib;..\third_party\lua-5.0\Debug\lua50.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/bwiem/projects/supcom engine/build/tests/Debug/osc_tests.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/bwiem/projects/supcom engine/build/tests/Debug/osc_tests.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/include" /utf-8</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DisableSpecificWarnings>4251;4275</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR="Release"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR=\"Release\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file C:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary "C:/Users/bwiem/projects/supcom engine/build/tests/Release/osc_tests.exe" -installedDir "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/bin" -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe -D TEST_TARGET=osc_tests -D "TEST_EXECUTABLE=C:/Users/bwiem/projects/supcom engine/build/tests/Release/osc_tests.exe" -D TEST_EXECUTOR= -D "TEST_WORKING_DIR=C:/Users/bwiem/projects/supcom engine/build/tests" -D TEST_SPEC= -D TEST_EXTRA_ARGS= -D "TEST_PROPERTIES=SKIP_RETURN_CODE";"4" -D TEST_PREFIX= -D TEST_SUFFIX= -D TEST_LIST=osc_tests_TESTS -D TEST_REPORTER= -D TEST_OUTPUT_DIR= -D TEST_OUTPUT_PREFIX= -D TEST_OUTPUT_SUFFIX= -D TEST_DL_PATHS= -D TEST_DL_FRAMEWORK_PATHS= -D "CTEST_FILE=C:/Users/bwiem/projects/supcom engine/build/tests/osc_tests-b12d07c_tests.cmake" -D ADD_TAGS_AS_LABELS=FALSE -P "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/share/catch2/CatchAddTests.cmake"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>..\vcpkg_installed\x64-windows\lib\manual-link\Catch2Main.lib;..\src\core\Release\osc_core.lib;..\src\vfs\Release\osc_vfs.lib;..\src\map\Release\osc_map.lib;..\src\lua\Release\osc_lua.lib;..\src\blueprints\Release\osc_blueprints.lib;..\vcpkg_installed\x64-windows\lib\Catch2.lib;..\src\lua\Release\osc_lua.lib;..\src\vfs\Release\osc_vfs.lib;..\vcpkg_installed\x64-windows\lib\minizip.lib;..\vcpkg_installed\x64-windows\lib\zlib.lib;..\src\sim\Release\osc_sim.lib;..\src\map\Release\osc_map.lib;..\src\core\Release\osc_core.lib;..\vcpkg_installed\x64-windows\lib\spdlog.lib;..\vcpkg_installed\x64-windows\lib\fmt.lib;..\third_party\lua-5.0\Release\lua50.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/bwiem/projects/supcom engine/build/tests/Release/osc_tests.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/bwiem/projects/supcom engine/build/tests/Release/osc_tests.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/include" /utf-8</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DisableSpecificWarnings>4251;4275</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MinSpace</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR="MinSizeRel"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <DebugInformationFormat>
+      </DebugInformationFormat>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR=\"MinSizeRel\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file C:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary "C:/Users/bwiem/projects/supcom engine/build/tests/MinSizeRel/osc_tests.exe" -installedDir "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/bin" -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe -D TEST_TARGET=osc_tests -D "TEST_EXECUTABLE=C:/Users/bwiem/projects/supcom engine/build/tests/MinSizeRel/osc_tests.exe" -D TEST_EXECUTOR= -D "TEST_WORKING_DIR=C:/Users/bwiem/projects/supcom engine/build/tests" -D TEST_SPEC= -D TEST_EXTRA_ARGS= -D "TEST_PROPERTIES=SKIP_RETURN_CODE";"4" -D TEST_PREFIX= -D TEST_SUFFIX= -D TEST_LIST=osc_tests_TESTS -D TEST_REPORTER= -D TEST_OUTPUT_DIR= -D TEST_OUTPUT_PREFIX= -D TEST_OUTPUT_SUFFIX= -D TEST_DL_PATHS= -D TEST_DL_FRAMEWORK_PATHS= -D "CTEST_FILE=C:/Users/bwiem/projects/supcom engine/build/tests/osc_tests-b12d07c_tests.cmake" -D ADD_TAGS_AS_LABELS=FALSE -P "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/share/catch2/CatchAddTests.cmake"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>..\vcpkg_installed\x64-windows\lib\manual-link\Catch2Main.lib;..\src\core\MinSizeRel\osc_core.lib;..\src\vfs\MinSizeRel\osc_vfs.lib;..\src\map\MinSizeRel\osc_map.lib;..\src\lua\MinSizeRel\osc_lua.lib;..\src\blueprints\MinSizeRel\osc_blueprints.lib;..\vcpkg_installed\x64-windows\lib\Catch2.lib;..\src\lua\MinSizeRel\osc_lua.lib;..\src\vfs\MinSizeRel\osc_vfs.lib;..\vcpkg_installed\x64-windows\lib\minizip.lib;..\vcpkg_installed\x64-windows\lib\zlib.lib;..\src\sim\MinSizeRel\osc_sim.lib;..\src\map\MinSizeRel\osc_map.lib;..\src\core\MinSizeRel\osc_core.lib;..\vcpkg_installed\x64-windows\lib\spdlog.lib;..\vcpkg_installed\x64-windows\lib\fmt.lib;..\third_party\lua-5.0\MinSizeRel\lua50.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/bwiem/projects/supcom engine/build/tests/MinSizeRel/osc_tests.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/bwiem/projects/supcom engine/build/tests/MinSizeRel/osc_tests.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">
+    <ClCompile>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /external:I "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/include" /utf-8</AdditionalOptions>
+      <AssemblerListingLocation>$(IntDir)</AssemblerListingLocation>
+      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BufferSecurityCheck></BufferSecurityCheck>
+      <CallingConvention></CallingConvention>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <DisableSpecificWarnings>4251;4275</DisableSpecificWarnings>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <ExternalWarningLevel>TurnOffAllWarnings</ExternalWarningLevel>
+      <FloatingPointModel></FloatingPointModel>
+      <ForceConformanceInForLoopScope></ForceConformanceInForLoopScope>
+      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <MinimalRebuild></MinimalRebuild>
+      <Optimization>MaxSpeed</Optimization>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <RemoveUnreferencedCodeData></RemoveUnreferencedCodeData>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
+      <SupportJustMyCode></SupportJustMyCode>
+      <TreatWChar_tAsBuiltInType></TreatWChar_tAsBuiltInType>
+      <UseFullPaths>false</UseFullPaths>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR="RelWithDebInfo"</PreprocessorDefinitions>
+      <ObjectFileName>$(IntDir)</ObjectFileName>
+      <ScanSourceForModuleDependencies>false</ScanSourceForModuleDependencies>
+    </ClCompile>
+    <ResourceCompile>
+      <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;SPDLOG_SHARED_LIB;SPDLOG_COMPILED_LIB;SPDLOG_FMT_EXTERNAL;FMT_SHARED;CMAKE_INTDIR=\"RelWithDebInfo\"</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+    <Midl>
+      <AdditionalIncludeDirectories>C:\Users\bwiem\projects\supcom engine\src\core\..;C:\Users\bwiem\projects\supcom engine\third_party\lua-5.0;C:\Users\bwiem\projects\supcom engine\src\vfs\..;C:\Users\bwiem\projects\supcom engine\src\map\..;C:\Users\bwiem\projects\supcom engine\src\lua\..;C:\Users\bwiem\projects\supcom engine\src\sim\..;C:\Users\bwiem\projects\supcom engine\src\blueprints\..;C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <OutputDirectory>$(ProjectDir)/$(IntDir)</OutputDirectory>
+      <HeaderFileName>%(Filename).h</HeaderFileName>
+      <TypeLibraryName>%(Filename).tlb</TypeLibraryName>
+      <InterfaceIdentifierFileName>%(Filename)_i.c</InterfaceIdentifierFileName>
+      <ProxyFileName>%(Filename)_p.c</ProxyFileName>
+    </Midl>
+    <PostBuildEvent>
+      <Message>	</Message>
+      <Command>setlocal
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -noprofile -executionpolicy Bypass -file C:/vcpkg/scripts/buildsystems/msbuild/applocal.ps1 -targetBinary "C:/Users/bwiem/projects/supcom engine/build/tests/RelWithDebInfo/osc_tests.exe" -installedDir "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/bin" -OutVariable out
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
+setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe -D TEST_TARGET=osc_tests -D "TEST_EXECUTABLE=C:/Users/bwiem/projects/supcom engine/build/tests/RelWithDebInfo/osc_tests.exe" -D TEST_EXECUTOR= -D "TEST_WORKING_DIR=C:/Users/bwiem/projects/supcom engine/build/tests" -D TEST_SPEC= -D TEST_EXTRA_ARGS= -D "TEST_PROPERTIES=SKIP_RETURN_CODE";"4" -D TEST_PREFIX= -D TEST_SUFFIX= -D TEST_LIST=osc_tests_TESTS -D TEST_REPORTER= -D TEST_OUTPUT_DIR= -D TEST_OUTPUT_PREFIX= -D TEST_OUTPUT_SUFFIX= -D TEST_DL_PATHS= -D TEST_DL_FRAMEWORK_PATHS= -D "CTEST_FILE=C:/Users/bwiem/projects/supcom engine/build/tests/osc_tests-b12d07c_tests.cmake" -D ADD_TAGS_AS_LABELS=FALSE -P "C:/Users/bwiem/projects/supcom engine/build/vcpkg_installed/x64-windows/share/catch2/CatchAddTests.cmake"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+    </PostBuildEvent>
+    <Link>
+      <AdditionalDependencies>..\vcpkg_installed\x64-windows\lib\manual-link\Catch2Main.lib;..\src\core\RelWithDebInfo\osc_core.lib;..\src\vfs\RelWithDebInfo\osc_vfs.lib;..\src\map\RelWithDebInfo\osc_map.lib;..\src\lua\RelWithDebInfo\osc_lua.lib;..\src\blueprints\RelWithDebInfo\osc_blueprints.lib;..\vcpkg_installed\x64-windows\lib\Catch2.lib;..\src\lua\RelWithDebInfo\osc_lua.lib;..\src\vfs\RelWithDebInfo\osc_vfs.lib;..\vcpkg_installed\x64-windows\lib\minizip.lib;..\vcpkg_installed\x64-windows\lib\zlib.lib;..\src\sim\RelWithDebInfo\osc_sim.lib;..\src\map\RelWithDebInfo\osc_map.lib;..\src\core\RelWithDebInfo\osc_core.lib;..\vcpkg_installed\x64-windows\lib\spdlog.lib;..\vcpkg_installed\x64-windows\lib\fmt.lib;..\third_party\lua-5.0\RelWithDebInfo\lua50.lib;kernel32.lib;user32.lib;gdi32.lib;winspool.lib;shell32.lib;ole32.lib;oleaut32.lib;uuid.lib;comdlg32.lib;advapi32.lib</AdditionalDependencies>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>%(AdditionalOptions) /machine:x64</AdditionalOptions>
+      <DataExecutionPrevention></DataExecutionPrevention>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <IgnoreSpecificDefaultLibraries>%(IgnoreSpecificDefaultLibraries)</IgnoreSpecificDefaultLibraries>
+      <ImageHasSafeExceptionHandlers></ImageHasSafeExceptionHandlers>
+      <ImportLibrary>C:/Users/bwiem/projects/supcom engine/build/tests/RelWithDebInfo/osc_tests.lib</ImportLibrary>
+      <LinkErrorReporting></LinkErrorReporting>
+      <ProgramDataBaseFile>C:/Users/bwiem/projects/supcom engine/build/tests/RelWithDebInfo/osc_tests.pdb</ProgramDataBaseFile>
+      <RandomizedBaseAddress></RandomizedBaseAddress>
+      <SubSystem>Console</SubSystem>
+    </Link>
+    <ProjectReference>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
+    </ProjectReference>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\bwiem\projects\supcom engine\tests\CMakeLists.txt">
+      <UseUtf8Encoding>Always</UseUtf8Encoding>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Building Custom Rule C:/Users/bwiem/projects/supcom engine/tests/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe "-SC:/Users/bwiem/projects/supcom engine" "-BC:/Users/bwiem/projects/supcom engine/build" --check-stamp-file "C:/Users/bwiem/projects/supcom engine/build/tests/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\share\catch2\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Building Custom Rule C:/Users/bwiem/projects/supcom engine/tests/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe "-SC:/Users/bwiem/projects/supcom engine" "-BC:/Users/bwiem/projects/supcom engine/build" --check-stamp-file "C:/Users/bwiem/projects/supcom engine/build/tests/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\share\catch2\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='Release|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">Building Custom Rule C:/Users/bwiem/projects/supcom engine/tests/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe "-SC:/Users/bwiem/projects/supcom engine" "-BC:/Users/bwiem/projects/supcom engine/build" --check-stamp-file "C:/Users/bwiem/projects/supcom engine/build/tests/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\share\catch2\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='MinSizeRel|x64'">false</LinkObjects>
+      <Message Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">Building Custom Rule C:/Users/bwiem/projects/supcom engine/tests/CMakeLists.txt</Message>
+      <Command Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe "-SC:/Users/bwiem/projects/supcom engine" "-BC:/Users/bwiem/projects/supcom engine/build" --check-stamp-file "C:/Users/bwiem/projects/supcom engine/build/tests/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal &amp; call :cmErrorLevel %errorlevel% &amp; goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd</Command>
+      <AdditionalInputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\bwiem\projects\supcom engine\build\vcpkg_installed\x64-windows\share\catch2\Catch.cmake;%(AdditionalInputs)</AdditionalInputs>
+      <Outputs Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">C:\Users\bwiem\projects\supcom engine\build\tests\CMakeFiles\generate.stamp</Outputs>
+      <LinkObjects Condition="'$(Configuration)|$(Platform)'=='RelWithDebInfo|x64'">false</LinkObjects>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="C:\Users\bwiem\projects\supcom engine\tests\test_vfs.cpp" />
+    <ClCompile Include="C:\Users\bwiem\projects\supcom engine\tests\test_lua_state.cpp" />
+    <ClCompile Include="C:\Users\bwiem\projects\supcom engine\tests\test_init_loader.cpp" />
+    <ClCompile Include="C:\Users\bwiem\projects\supcom engine\tests\test_blueprint_loading.cpp" />
+    <ClCompile Include="C:\Users\bwiem\projects\supcom engine\tests\test_map.cpp" />
+  </ItemGroup>
+  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\ZERO_CHECK.vcxproj">
+      <Project>{9998CD56-5DE3-32EB-93B0-9AECDC4A6E26}</Project>
+      <Name>ZERO_CHECK</Name>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\third_party\lua-5.0\lua50.vcxproj">
+      <Project>{6D5F2600-53A9-314B-898C-6A0A56E465D0}</Project>
+      <Name>lua50</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\blueprints\osc_blueprints.vcxproj">
+      <Project>{F9464A32-3040-3A5C-85A8-A15E08FB2443}</Project>
+      <Name>osc_blueprints</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\core\osc_core.vcxproj">
+      <Project>{E0931F60-2866-35FE-84E1-D55C12908CB9}</Project>
+      <Name>osc_core</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\lua\osc_lua.vcxproj">
+      <Project>{B28EE9CF-073C-30A2-AEE8-422F383D5688}</Project>
+      <Name>osc_lua</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\map\osc_map.vcxproj">
+      <Project>{6A160636-FBCD-35EC-B1E3-6662579635C9}</Project>
+      <Name>osc_map</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\sim\osc_sim.vcxproj">
+      <Project>{A2F284D2-0959-37AE-8221-8BBD15E8DD69}</Project>
+      <Name>osc_sim</Name>
+    </ProjectReference>
+    <ProjectReference Include="C:\Users\bwiem\projects\supcom engine\build\src\vfs\osc_vfs.vcxproj">
+      <Project>{F5C06D86-C781-3526-8D08-31F38A94A979}</Project>
+      <Name>osc_vfs</Name>
+    </ProjectReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

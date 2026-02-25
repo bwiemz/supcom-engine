@@ -1,0 +1,10 @@
+^C:\USERS\BWIEM\PROJECTS\SUPCOM ENGINE\SRC\MAP\CMAKELISTS.TXT
+setlocal
+C:\Users\bwiem\AppData\Local\Programs\Python\Python314\Lib\site-packages\cmake\data\bin\cmake.exe "-SC:/Users/bwiem/projects/supcom engine" "-BC:/Users/bwiem/projects/supcom engine/build" --check-stamp-file "C:/Users/bwiem/projects/supcom engine/build/src/map/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

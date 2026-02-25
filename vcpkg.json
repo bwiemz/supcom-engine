@@ -1,0 +1,16 @@
+{
+  "name": "opensupcom",
+  "version-string": "0.1.0",
+  "description": "Open-source engine reimplementation for Supreme Commander: Forged Alliance",
+  "builtin-baseline": "78b7c910015e9c9d61c47d054cab5d41934e4e28",
+  "dependencies": [
+    "zlib",
+    "minizip",
+    "spdlog",
+    "fmt",
+    {
+      "name": "catch2",
+      "version>=": "3.0.1"
+    }
+  ]
+}
