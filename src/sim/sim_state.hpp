@@ -4,7 +4,9 @@
 #include "sim/entity_registry.hpp"
 #include "sim/thread_manager.hpp"
 
+#include <array>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 struct lua_State;
@@ -17,6 +19,7 @@ namespace osc::map {
 class Terrain;
 class PathfindingGrid;
 class Pathfinder;
+class VisibilityGrid;
 }
 
 namespace osc::sim {
@@ -28,6 +31,7 @@ struct SimContext {
     const map::Terrain* terrain;
     const map::Pathfinder* pathfinder;
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
+    const map::VisibilityGrid* visibility_grid;
 };
 
 class SimState {
@@ -48,6 +52,8 @@ public:
     void build_pathfinding_grid();
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
+    void build_visibility_grid();
+    map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
 
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
@@ -82,6 +88,10 @@ public:
 private:
     void update_economies();
     void update_entities();
+    void update_visibility();
+    void fire_on_intel_change(u32 entity_id, u32 army_idx,
+                              const char* recon_type, bool val);
+
     lua_State* L_;
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;
@@ -89,10 +99,22 @@ private:
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     std::unique_ptr<map::Pathfinder> pathfinder_;
+    std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
     u32 next_command_id_ = 0;
+
+    // Per-entity per-army previous visibility for OnIntelChange detection
+    struct EntityVisSnapshot {
+        bool vision = false;
+        bool radar = false;
+        bool sonar = false;
+        bool omni = false;
+    };
+    static constexpr u32 MAX_VIS_ARMIES = 16;
+    std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
+        prev_entity_vis_;
 };
 
 } // namespace osc::sim

@@ -4,6 +4,7 @@ add_library(osc_map STATIC
     pathfinder.cpp
     scmap_parser.cpp
     terrain.cpp
+    visibility_grid.cpp
 )
 add_library(osc::map ALIAS osc_map)
 

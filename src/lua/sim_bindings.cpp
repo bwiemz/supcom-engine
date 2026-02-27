@@ -6,6 +6,7 @@
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prop.hpp"
+#include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
@@ -106,9 +107,9 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         auto* entry = store->find(bp_id);
         if (entry) {
             // Health — try top-level MaxHealth, fall back to Defense.MaxHealth
-            auto hp = store->get_number_field(*entry, "MaxHealth");
+            auto hp = store->get_number_field(*entry, "MaxHealth", L);
             if (!hp) {
-                store->push_lua_table(*entry);
+                store->push_lua_table(*entry, L);
                 lua_pushstring(L, "Defense");
                 lua_gettable(L, -2);
                 if (lua_istable(L, -1)) {
@@ -125,7 +126,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
 
             // Physics.MaxSpeed
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Physics");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -138,7 +139,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 2);
 
             // Weapons
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Weapon");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -218,7 +219,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
         // Economy
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Economy");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -264,7 +265,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
         // Categories
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "CategoriesHash");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -283,7 +284,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
         // Read BuildRate from blueprint Economy.BuildRate
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Economy");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -298,7 +299,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
         // Defense threat levels (cached for threat queries)
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Defense");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -331,7 +332,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
         // Footprint.SizeX / SizeZ (for pathfinding obstacle marking)
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Footprint");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -349,9 +350,64 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 2);
         }
 
+        // Transport.Class1Capacity / TransportClass (for cargo tracking)
+        // NOTE: Using lua_rawget to avoid triggering metamethods on blueprint tables
+        {
+            store->push_lua_table(*entry, L);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Transport");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "Class1Capacity");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_transport_capacity(static_cast<i32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+
+                    lua_pushstring(L, "TransportClass");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_transport_class(static_cast<i32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1); // pop Transport (or nil)
+            }
+            lua_pop(L, 1); // pop bp table
+        }
+
+        // Intel radii from blueprint (VisionRadius, RadarRadius, etc.)
+        {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Intel");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                struct IntelField {
+                    const char* bp_field;
+                    const char* intel_type;
+                };
+                static const IntelField fields[] = {
+                    {"VisionRadius", "Vision"},
+                    {"WaterVisionRadius", "WaterVision"},
+                    {"RadarRadius", "Radar"},
+                    {"SonarRadius", "Sonar"},
+                    {"OmniRadius", "Omni"},
+                };
+                for (auto& f : fields) {
+                    lua_pushstring(L, f.bp_field);
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1)) {
+                        f32 r = static_cast<f32>(lua_tonumber(L, -1));
+                        if (r > 0.0f) unit->init_intel(f.intel_type, r);
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 2); // pop Intel (or nil) + bp table
+        }
+
         // Physics.MotionType → layer override (for pathfinding)
         {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Physics");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
@@ -643,7 +699,7 @@ static int l_CreateInitialArmyUnit(lua_State* L) {
     auto* store = sim->blueprint_store();
     auto* entry = store ? store->find(bp_id) : nullptr;
     if (entry) {
-        store->push_lua_table(*entry);
+        store->push_lua_table(*entry, L);
         lua_pushstring(L, "Economy");
         lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
@@ -1382,7 +1438,7 @@ static int l_EntityCategoryGetUnitList(lua_State* L) {
     auto* store = sim->blueprint_store();
     auto entries = store->get_all(blueprints::BlueprintType::Unit);
     for (const auto* entry : entries) {
-        store->push_lua_table(*entry);
+        store->push_lua_table(*entry, L);
         int bp_tbl = lua_gettop(L);
 
         // Read CategoriesHash from this blueprint
@@ -2489,7 +2545,7 @@ static int l_CreateProp(lua_State* L) {
         auto* entry = store->find(bp_path);
         if (entry) {
             // Blueprint found — store ref for GetBlueprint
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Blueprint");
             lua_pushvalue(L, -2);
             lua_rawset(L, -4); // set prop_table.Blueprint = bp_table
@@ -2512,6 +2568,115 @@ static int l_CreateProp(lua_State* L) {
     }
 
     return 1; // prop Lua table on stack
+}
+
+// _c_CreateShield(self, spec) — creates C++ Shield entity and wires to Lua table
+// Called from ClassShield.__init in shield.lua. self is the already-constructed
+// Shield Lua table, spec has shield params + Owner (the owning unit Lua table).
+static int l_CreateShield(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+
+    // arg 1 = self (shield Lua table), arg 2 = spec table
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
+        spdlog::warn("_c_CreateShield: expected (self_table, spec_table)");
+        return 0;
+    }
+
+    // Read spec.Owner to get the owning unit
+    lua_pushstring(L, "Owner");
+    lua_rawget(L, 2);
+    if (!lua_istable(L, -1)) {
+        spdlog::warn("_c_CreateShield: spec.Owner is not a table");
+        lua_pop(L, 1);
+        return 0;
+    }
+    int owner_tbl = lua_gettop(L);
+
+    // Get owner's _c_object
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, owner_tbl);
+    auto* owner_entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!owner_entity || !owner_entity->is_unit()) {
+        spdlog::warn("_c_CreateShield: spec.Owner has no valid _c_object unit");
+        lua_pop(L, 1); // pop owner table
+        return 0;
+    }
+
+    auto* owner = static_cast<sim::Unit*>(owner_entity);
+
+    // Read spec.Size
+    lua_pushstring(L, "Size");
+    lua_rawget(L, 2);
+    f32 size = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 10.0f;
+    lua_pop(L, 1);
+
+    // Read spec.ShieldMaxHealth
+    lua_pushstring(L, "ShieldMaxHealth");
+    lua_rawget(L, 2);
+    f32 max_hp = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 250.0f;
+    lua_pop(L, 1);
+
+    // Read shield type from spec flags
+    std::string shield_type = "Bubble"; // default
+    lua_pushstring(L, "PersonalShield");
+    lua_rawget(L, 2);
+    if (lua_toboolean(L, -1)) shield_type = "Personal";
+    lua_pop(L, 1);
+    if (shield_type != "Personal") {
+        lua_pushstring(L, "PersonalBubble");
+        lua_rawget(L, 2);
+        if (lua_toboolean(L, -1)) shield_type = "Personal";
+        lua_pop(L, 1);
+    }
+
+    lua_pop(L, 1); // pop owner table
+
+    // Create Shield C++ entity
+    auto shield = std::make_unique<sim::Shield>();
+    shield->set_army(owner->army());
+    shield->set_position(owner->position());
+    shield->set_blueprint_id("shield");
+    shield->owner_id = owner->entity_id();
+    shield->size = size;
+    shield->shield_type = shield_type;
+    shield->set_max_health(max_hp);
+    shield->set_health(max_hp);
+    shield->set_fraction_complete(1.0f);
+
+    u32 id = sim->entity_registry().register_entity(std::move(shield));
+    auto* shield_ptr = static_cast<sim::Shield*>(sim->entity_registry().find(id));
+    if (!shield_ptr) {
+        spdlog::warn("_c_CreateShield: failed to register shield entity");
+        lua_pop(L, 1); // pop owner table
+        return 0;
+    }
+
+    // Set _c_object on self table (arg 1)
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, shield_ptr);
+    lua_rawset(L, 1);
+
+    // Set EntityId on self table
+    lua_pushstring(L, "EntityId");
+    lua_pushnumber(L, id);
+    lua_rawset(L, 1);
+
+    // Store Lua table ref on the C++ entity
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    shield_ptr->set_lua_table_ref(ref);
+
+    spdlog::info("_c_CreateShield: entity #{} for owner #{} (army {}), size={:.1f}, maxHP={:.0f}",
+                 id, owner->entity_id(), owner->army(), size, max_hp);
+
+    // NOTE: Do NOT call OnCreate from here! Entity.__post_init (inherited by Shield)
+    // calls self:OnCreate(spec) after __init returns. Calling it here too would
+    // invoke OnCreate twice, causing ForkThread(self.RegenThread) to fail on the
+    // second call (self.RegenThread already set to thread wrapper from first call).
+
+    return 0; // _c_CreateShield returns nothing (self is already on caller's stack)
 }
 
 // CreatePropHPR(blueprint_path, x, y, z, heading, pitch, roll) -> prop Lua table
@@ -2574,7 +2739,7 @@ static int l_CreatePropHPR(lua_State* L) {
     if (store) {
         auto* entry = store->find(bp_path);
         if (entry) {
-            store->push_lua_table(*entry);
+            store->push_lua_table(*entry, L);
             lua_pushstring(L, "Blueprint");
             lua_pushvalue(L, -2);
             lua_rawset(L, -4);
@@ -2656,6 +2821,42 @@ static int l_IssuePatrol(lua_State* L) {
 }
 
 // Stub for unimplemented order types — just does nothing
+// IssueTransportLoad(units_table, transport_unit_table)
+// Ground units → load into transport
+static int l_IssueTransportLoad(lua_State* L) {
+    // arg 1 = table of ground units to load
+    // arg 2 = transport unit (single unit table)
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) return 0;
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::TransportLoad;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+
+    return 0;
+}
+
+// IssueTransportUnload(transports_table, position)
+// Transports → unload all cargo at position
+static int l_IssueTransportUnload(lua_State* L) {
+    auto target_pos = extract_position(L, 2);
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::TransportUnload;
+    cmd.target_pos = target_pos;
+
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+
+    return 0;
+}
+
 static int l_IssueCommand(lua_State*) { return 0; }
 
 // ====================================================================
@@ -2702,7 +2903,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IsUnit", l_IsUnit);
     state.register_function("IsEntity", l_IsEntity);
     state.register_function("ArmyGetHandicap", l_ArmyGetHandicap);
-    state.register_function("_c_CreateShield", stub_nil);
+    state.register_function("_c_CreateShield", l_CreateShield);
 
     // Terrain
     state.register_function("GetTerrainHeight", l_GetTerrainHeight);
@@ -2849,9 +3050,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueMoveOffFactory", l_IssueMoveOffFactory);
     state.register_function("IssueFactoryRallyPoint", l_IssueFactoryRallyPoint);
     state.register_function("IssueClearFactoryCommands", l_IssueClearFactoryCommands);
-    state.register_function("IssueTransportLoad", l_IssueCommand);
-    state.register_function("IssueTransportUnload", l_IssueCommand);
-    state.register_function("IssueTransportUnloadSpecific", l_IssueCommand);
+    state.register_function("IssueTransportLoad", l_IssueTransportLoad);
+    state.register_function("IssueTransportUnload", l_IssueTransportUnload);
+    state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnload);
     state.register_function("IssueFerry", l_IssueCommand);
     state.register_function("IssueNuke", l_IssueCommand);
     state.register_function("IssueTactical", l_IssueCommand);

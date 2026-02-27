@@ -13,22 +13,22 @@ This is **not** a compatibility layer or wrapper around the original binary. It 
 The original Moho engine is closed-source, 32-bit, single-threaded, and increasingly difficult to maintain. A clean reimplementation opens the door to:
 
 - **64-bit and cross-platform support** (Windows first, Linux/macOS later)
-- **Modern C++ performance** (C++20, no legacy COM/DirectX constraints in the sim)
+- **Modern C++ performance** (C++17, no legacy COM/DirectX constraints in the sim)
 - **Debuggability** (full source, structured logging, deterministic replay)
 - **Community extension** (open codebase for FAForever and modders)
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, and intel tracking.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, and fog of war.
 
-**What works today (Milestones 1-28):**
+**What works today (Milestones 1-31):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
-- Entity system: units, props, projectiles with full Lua lifecycle callbacks
+- Entity system: units, props, projectiles, shields with full Lua lifecycle callbacks
 - Economy: per-unit production/consumption, army aggregation, storage
 - Construction: building placement, build progress, factory production, engineer assist
-- Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build with command queues
+- Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build, Enhance, Dive with command queues
 - Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
 - AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops
 - Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following
@@ -36,8 +36,11 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Capture: engineer captures enemy units, army transfer
 - Toggle system: script bits (shield/weapon/intel/stealth/cloak toggles), dive command, layer changes
 - Enhancement system: ACU/SACU self-upgrades (AdvancedEngineering etc.), OnWorkBegin/OnWorkEnd Lua callbacks
-- Intel system: per-unit radar/sonar/omni/stealth/cloak state tracking, enable/disable/radius queries
-- 22 unit tests, 18 integration test flags (`--ai-test`, `--combat-test`, `--path-test`, etc.)
+- Intel system: per-unit radar/sonar/omni/vision state tracking, enable/disable/radius queries
+- Shield system: personal shields with health, regen, energy drain, toggle on/off
+- Transport system: air transport load/unload, cargo tracking, attach/detach lifecycle, capacity limits
+- Fog of war: per-army visibility grid, Vision/Radar/Sonar/Omni paint from unit intel radii, alliance sharing, OnIntelChange callbacks, real blip methods, GetBlip fog-of-war filtering
+- 22 unit tests, 20 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, etc.)
 
 **What's not yet implemented:**
 
@@ -45,9 +48,9 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Networking and multiplayer sync
 - Audio
 - Full UI and input handling
-- Fog of war / radar grid visualization
-- Shield system
-- Transport system
+- Terrain line-of-sight occlusion (vision is pure radius check)
+- Radar jamming and dead-reckoning (IsMaybeDead/IsKnownFake)
+- Economy stalling (resource rationing when demand exceeds supply)
 - Many moho binding stubs (90+ unit methods, entity methods, etc.)
 
 ## Prerequisites
@@ -106,6 +109,10 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
   --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 2000 --combat-test
 
+# Run the fog of war test (visibility grid, blip methods, OnIntelChange)
+MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
+  --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 200 --fow-test
+
 # Run unit tests
 ./build/tests/Debug/osc_tests.exe
 ```
@@ -132,6 +139,9 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--toggle-test` | Script bits, toggle caps, and dive command |
 | `--enhance-test` | ACU enhancement (AdvancedEngineering) |
 | `--intel-test` | Intel system (init, enable, disable, radius) |
+| `--shield-test` | Shield system (create, health, regen, toggle) |
+| `--transport-test` | Transport load/unload, cargo tracking, speed mult |
+| `--fow-test` | Fog of war visibility grid and OnIntelChange callbacks |
 
 ## Project Structure
 
@@ -139,8 +149,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 src/
   core/        # Fundamental types (Vector3, numeric aliases)
   vfs/         # Virtual filesystem (.scd/.nx2 archive mounting)
-  map/         # Map loading (.scmap terrain, scenario files, A* pathfinding)
-  sim/         # Simulation (Entity, Unit, Projectile, Platoon, ArmyBrain, economy, intel)
+  map/         # Map loading (.scmap terrain, scenario files, A* pathfinding, visibility grid)
+  sim/         # Simulation (Entity, Unit, Projectile, Shield, Platoon, ArmyBrain, economy, intel)
   lua/         # Lua↔C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   main.cpp     # Entry point, CLI flags, test harnesses

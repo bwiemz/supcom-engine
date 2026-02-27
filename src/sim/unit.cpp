@@ -45,6 +45,22 @@ void Unit::update(f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    // Cargo position following: if loaded on a transport, skip all processing
+    if (transport_id_ != 0) {
+        auto* transport_entity = registry.find(transport_id_);
+        if (transport_entity && !transport_entity->destroyed()) {
+            set_position(transport_entity->position());
+        } else {
+            // Transport gone — auto-detach and clean up stale cargo entry
+            if (transport_entity && transport_entity->is_unit()) {
+                static_cast<Unit*>(transport_entity)->remove_cargo(entity_id());
+            }
+            transport_id_ = 0;
+            set_unit_state("Attached", false);
+        }
+        return; // Skip commands and weapons while loaded
+    }
+
     // Process head command
     while (!command_queue_.empty()) {
         auto& cmd = command_queue_.front();
@@ -61,7 +77,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.goal().z != cmd.target_pos.z) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, max_speed_, dt, ctx.terrain)) {
+            if (!navigator_.update(*this, effective_speed(), dt, ctx.terrain)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -100,7 +116,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != target->position().z) {
                     navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
             }
@@ -121,7 +137,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                         navigator_.goal().z != cmd.target_pos.z) {
                         navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
                     }
-                    navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                    navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                     goto done_commands;
                 }
                 navigator_.abort_move();
@@ -161,7 +177,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.goal().z != cmd.target_pos.z) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, max_speed_, dt, ctx.terrain)) {
+            if (!navigator_.update(*this, effective_speed(), dt, ctx.terrain)) {
                 // Reached patrol point — cycle to back of queue
                 auto finished = cmd;
                 command_queue_.pop_front();
@@ -195,7 +211,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != target->position().z) {
                     navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
             }
             navigator_.abort_move();
@@ -308,7 +324,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != rtarget->position().z) {
                     navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
             }
             navigator_.abort_move();
@@ -361,7 +377,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != ctarget->position().z) {
                     navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
             }
             navigator_.abort_move();
@@ -413,7 +429,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != target->position().z) {
                     navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
             }
@@ -572,6 +588,88 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
             goto done_commands;
+        }
+
+        case CommandType::TransportLoad: {
+            // Cargo unit loads into transport (target_id = transport entity)
+            if (cmd.target_id == 0 || transport_id_ != 0) {
+                set_unit_state("TransportLoading", false);
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* target = registry.find(cmd.target_id);
+            if (!target || target->destroyed() || !target->is_unit()) {
+                set_unit_state("TransportLoading", false);
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* transport = static_cast<Unit*>(target);
+
+            // Check capacity before moving
+            if (transport->transport_capacity() > 0 &&
+                static_cast<i32>(transport->cargo_ids().size()) >=
+                    transport->transport_capacity()) {
+                set_unit_state("TransportLoading", false);
+                command_queue_.pop_front();
+                continue;
+            }
+
+            // Move toward transport
+            set_unit_state("TransportLoading", true);
+            constexpr f32 load_range = 5.0f;
+            f32 ldx = transport->position().x - position().x;
+            f32 ldz = transport->position().z - position().z;
+            f32 ldist2 = ldx * ldx + ldz * ldz;
+            if (ldist2 > load_range * load_range) {
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != transport->position().x ||
+                    navigator_.goal().z != transport->position().z) {
+                    navigator_.set_goal(transport->position(), ctx.pathfinder,
+                                        position(), layer_);
+                }
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+                goto done_commands;
+            }
+            navigator_.abort_move();
+
+            // Attach to transport
+            attach_to_transport(transport, registry, L);
+            set_unit_state("TransportLoading", false);
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::TransportUnload: {
+            // Transport drops all cargo at target position
+            if (cargo_ids_.empty()) {
+                set_unit_state("TransportUnloading", false);
+                command_queue_.pop_front();
+                continue;
+            }
+
+            // Move to drop position
+            constexpr f32 unload_range = 5.0f;
+            f32 udx = cmd.target_pos.x - position().x;
+            f32 udz = cmd.target_pos.z - position().z;
+            f32 udist2 = udx * udx + udz * udz;
+            if (udist2 > unload_range * unload_range) {
+                set_unit_state("TransportUnloading", true);
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != cmd.target_pos.x ||
+                    navigator_.goal().z != cmd.target_pos.z) {
+                    navigator_.set_goal(cmd.target_pos, ctx.pathfinder,
+                                        position(), layer_);
+                }
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+                goto done_commands;
+            }
+            navigator_.abort_move();
+
+            // Detach all cargo
+            detach_all_cargo(registry, L);
+            set_unit_state("TransportUnloading", false);
+            command_queue_.pop_front();
+            continue;
         }
 
         default:
@@ -1781,7 +1879,7 @@ f32 Unit::get_intel_radius(const std::string& type) const {
 }
 
 void Unit::init_intel(const std::string& type, f32 radius) {
-    intel_states_[type] = IntelState{radius, false};
+    intel_states_[type] = IntelState{radius, true};
 }
 
 void Unit::enable_intel(const std::string& type) {
@@ -1796,6 +1894,102 @@ void Unit::disable_intel(const std::string& type) {
 
 void Unit::set_intel_radius(const std::string& type, f32 radius) {
     intel_states_[type].radius = radius;
+}
+
+// ---------------------------------------------------------------------------
+// Transport system
+// ---------------------------------------------------------------------------
+
+void Unit::remove_cargo(u32 id) {
+    cargo_ids_.erase(std::remove(cargo_ids_.begin(), cargo_ids_.end(), id),
+                     cargo_ids_.end());
+}
+
+void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
+                               lua_State* L) {
+    // Capacity guard — reject if transport is full
+    if (transport->transport_capacity() > 0 &&
+        static_cast<i32>(transport->cargo_ids().size()) >=
+            transport->transport_capacity()) {
+        spdlog::warn("Transport #{} is full (capacity {}), cannot attach #{}",
+                     transport->entity_id(), transport->transport_capacity(),
+                     entity_id());
+        return;
+    }
+
+    transport_id_ = transport->entity_id();
+    transport->add_cargo(entity_id());
+    set_unit_state("Attached", true);
+    navigator_.abort_move();
+    set_position(transport->position());
+
+    spdlog::info("Transport: entity #{} loaded onto transport #{}",
+                 entity_id(), transport->entity_id());
+
+    // Lua callback: transport:OnTransportAttach(bone, cargo)
+    // FA Lua chains to cargo:OnAttachedToTransport internally
+    if (transport->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, transport->lua_table_ref());
+        int transport_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnTransportAttach");
+        lua_gettable(L, transport_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, transport_tbl); // self (transport)
+            lua_pushstring(L, "Attachpoint");  // bone placeholder
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref()); // cargo
+            if (lua_pcall(L, 3, 0, 0) != 0) {
+                spdlog::warn("OnTransportAttach error: {}",
+                             lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1); // non-function
+        }
+        lua_pop(L, 1); // transport_tbl
+    }
+}
+
+void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L) {
+    // Snapshot IDs (safety against modification during Lua callbacks)
+    std::vector<u32> snapshot = cargo_ids_;
+    cargo_ids_.clear();
+
+    for (u32 cargo_id : snapshot) {
+        auto* cargo_entity = registry.find(cargo_id);
+        if (!cargo_entity || cargo_entity->destroyed() ||
+            !cargo_entity->is_unit())
+            continue;
+        auto* cargo = static_cast<Unit*>(cargo_entity);
+
+        cargo->set_transport_id(0);
+        cargo->set_unit_state("Attached", false);
+        cargo->set_position(position()); // drop at transport position
+
+        spdlog::info("Transport: entity #{} unloaded from transport #{}",
+                     cargo_id, entity_id());
+
+        // Lua callback: transport:OnTransportDetach(bone, cargo)
+        // FA Lua chains to cargo:OnDetachedFromTransport internally
+        if (lua_table_ref() >= 0 && cargo->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            int transport_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnTransportDetach");
+            lua_gettable(L, transport_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, transport_tbl); // self (transport)
+                lua_pushstring(L, "Attachpoint");  // bone placeholder
+                lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
+                if (lua_pcall(L, 3, 0, 0) != 0) {
+                    spdlog::warn("OnTransportDetach error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1); // non-function
+            }
+            lua_pop(L, 1); // transport_tbl
+        }
+    }
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {

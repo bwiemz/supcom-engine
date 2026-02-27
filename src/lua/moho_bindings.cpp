@@ -5,10 +5,12 @@
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_state.hpp"
+#include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
 #include "sim/platoon.hpp"
 #include "sim/projectile.hpp"
+#include "sim/shield.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -37,6 +39,7 @@ static sim::SimState* get_sim(lua_State* L) {
 }
 
 static sim::Entity* check_entity(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
@@ -52,6 +55,7 @@ static sim::Unit* check_unit(lua_State* L, int idx = 1) {
 }
 
 static sim::ArmyBrain* check_brain(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     auto* brain = static_cast<sim::ArmyBrain*>(lua_touserdata(L, -1));
@@ -85,6 +89,13 @@ static sim::Projectile* check_projectile(lua_State* L, int idx = 1) {
     auto* e = check_entity(L, idx);
     if (e && e->is_projectile())
         return static_cast<sim::Projectile*>(e);
+    return nullptr;
+}
+
+static sim::Shield* check_shield(lua_State* L, int idx = 1) {
+    auto* e = check_entity(L, idx);
+    if (e && e->is_shield())
+        return static_cast<sim::Shield*>(e);
     return nullptr;
 }
 
@@ -356,7 +367,7 @@ static int entity_GetBlueprint(lua_State* L) {
         return 1;
     }
 
-    store->push_lua_table(*entry);
+    store->push_lua_table(*entry, L);
     return 1;
 }
 
@@ -546,6 +557,12 @@ static int unit_IsUnitState(lua_State* L) {
             result = u->layer() == "Sub" || u->layer() == "Seabed";
         else if (std::strcmp(state, "Enhancing") == 0)
             result = u->is_enhancing();
+        else if (std::strcmp(state, "Attached") == 0)
+            result = u->is_loaded();
+        else if (std::strcmp(state, "TransportLoading") == 0)
+            result = u->has_unit_state("TransportLoading");
+        else if (std::strcmp(state, "TransportUnloading") == 0)
+            result = u->has_unit_state("TransportUnloading");
         else
             result = u->has_unit_state(state);
     }
@@ -705,16 +722,113 @@ static int unit_SetCapturable(lua_State* L) {
     return 0;
 }
 
-// GetParent(): returns self (no transport system yet)
-// FA's TransferUnitsOwnership checks unit:GetParent() ~= unit to skip attached
+// GetParent(): returns transport if loaded, otherwise self
 static int unit_GetParent(lua_State* L) {
     auto* u = check_unit(L);
     if (!u || u->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
     }
+    if (u->transport_id() != 0) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            auto* transport = sim->entity_registry().find(u->transport_id());
+            if (transport && !transport->destroyed() &&
+                transport->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, transport->lua_table_ref());
+                return 1;
+            }
+        }
+    }
+    // Not loaded — return self
     lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
     return 1;
+}
+
+static int unit_GetCargo(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    if (!u || !sim) return 1;
+    int idx = 1;
+    for (u32 cargo_id : u->cargo_ids()) {
+        auto* cargo = sim->entity_registry().find(cargo_id);
+        if (cargo && !cargo->destroyed() && cargo->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
+            lua_rawseti(L, -2, idx++);
+        }
+    }
+    return 1;
+}
+
+static int unit_TransportHasSpaceFor(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    // Simplified: check cargo count vs transport_capacity
+    // (Full FA slot math with TransportClass can be added later)
+    bool has_space = u->transport_capacity() > 0 &&
+                     static_cast<i32>(u->cargo_ids().size()) < u->transport_capacity();
+    lua_pushboolean(L, has_space ? 1 : 0);
+    return 1;
+}
+
+static int unit_AddUnitToStorage(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* cargo_entity = check_entity(L, 2);
+    auto* sim = get_sim(L);
+    if (!u || !cargo_entity || !cargo_entity->is_unit() || !sim) return 0;
+    auto* cargo = static_cast<sim::Unit*>(cargo_entity);
+    // Route through attach_to_transport for consistent behavior
+    cargo->attach_to_transport(u, sim->entity_registry(), L);
+    return 0;
+}
+
+static int unit_TransportDetachAllUnits(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!u || !sim) return 0;
+    bool destroy = lua_toboolean(L, 2) != 0;
+    if (destroy) {
+        // Kill all cargo via Lua Kill pipeline (same as FA's KillCargo)
+        std::vector<u32> snapshot = u->cargo_ids();
+        u->clear_cargo();
+        for (u32 id : snapshot) {
+            auto* cargo = sim->entity_registry().find(id);
+            if (!cargo || cargo->destroyed()) continue;
+            if (cargo->is_unit())
+                static_cast<sim::Unit*>(cargo)->set_transport_id(0);
+            // Use Lua Kill for proper death pipeline (OnKilled → DeathThread)
+            if (cargo->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
+                lua_pushstring(L, "Kill");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2); // self
+                    if (lua_pcall(L, 1, 0, 0) != 0) {
+                        spdlog::warn("TransportDetachAllUnits Kill error: {}",
+                                     lua_tostring(L, -1));
+                        lua_pop(L, 1);
+                    }
+                } else {
+                    lua_pop(L, 1); // non-function
+                }
+                lua_pop(L, 1); // cargo table
+            } else {
+                cargo->mark_destroyed(); // fallback if no Lua table
+            }
+        }
+    } else {
+        u->detach_all_cargo(sim->entity_registry(), L);
+    }
+    return 0;
+}
+
+static int unit_SetSpeedMult(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    f32 mult = static_cast<f32>(luaL_checknumber(L, 2));
+    u->set_speed_mult(mult);
+    return 0;
 }
 
 // ====================================================================
@@ -879,12 +993,35 @@ static int unit_GetCommandQueue(lua_State* L) {
 }
 
 // unit:GetBlip(armyIndex) → blip table or nil
-// No fog of war — returns a thin wrapper around the entity itself.
+// Returns nil if the entity has never been seen by the requesting army.
 static int unit_GetBlip(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) {
         lua_pushnil(L);
         return 1;
+    }
+
+    // Get requesting army (1-based Lua → 0-based C++)
+    int req_army = -1;
+    if (lua_isnumber(L, 2))
+        req_army = static_cast<int>(lua_tonumber(L, 2)) - 1;
+
+    // Fog-of-war check: if requesting army != own army, must have any intel
+    if (req_army >= 0 && req_army != e->army()) {
+        auto* sim = get_sim(L);
+        auto* vg = sim ? sim->visibility_grid() : nullptr;
+        if (vg) {
+            auto& pos = e->position();
+            auto ra = static_cast<osc::u32>(req_army);
+            bool can_see = vg->ever_seen(pos.x, pos.z, ra) ||
+                           vg->has_radar(pos.x, pos.z, ra) ||
+                           vg->has_sonar(pos.x, pos.z, ra) ||
+                           vg->has_omni(pos.x, pos.z, ra);
+            if (!can_see) {
+                lua_pushnil(L);
+                return 1;
+            }
+        }
     }
 
     // Create blip table: { _c_object = lightuserdata(entity) }
@@ -1484,6 +1621,21 @@ static int unit_DisableIntel(lua_State* L) {
     return 0;
 }
 
+// Shield ratio — real implementations (UpdateShieldRatio calls SetShieldRatio)
+static int unit_GetShieldRatio(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? u->shield_ratio() : 1.0);
+    return 1;
+}
+static int unit_SetShieldRatio(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) {
+        f32 ratio = static_cast<f32>(luaL_checknumber(L, 2));
+        u->set_shield_ratio(ratio);
+    }
+    return 0;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -1541,12 +1693,14 @@ static const MethodEntry unit_methods[] = {
     {"SetIntelRadius",              unit_SetIntelRadius},
     {"EnableIntel",                 unit_EnableIntel},
     {"DisableIntel",                unit_DisableIntel},
-    // Stubs — shield
+    // Shield — EnableShield/DisableShield/ShieldIsOn are FA Lua overrides (stubs fine)
     {"EnableShield",                stub_noop},
     {"DisableShield",               stub_noop},
     {"ShieldIsOn",                  stub_return_false},
-    {"GetShieldRatio",              stub_return_one},
-    {"SetShieldRatio",              stub_noop},
+    {"GetShieldRatio",              unit_GetShieldRatio},
+    {"SetShieldRatio",              unit_SetShieldRatio},
+    {"SetFocusEntity",              stub_noop},
+    {"ClearFocusEntity",            stub_noop},
     // Stubs — collision
     {"SetCollisionShape",           stub_noop},
     {"RevertCollisionShape",        stub_noop},
@@ -1556,7 +1710,7 @@ static const MethodEntry unit_methods[] = {
     {"IsMobile",                    unit_IsMobile},
     {"IsMoving",                    unit_IsMoving},
     {"GetNavigator",                unit_GetNavigator},
-    {"SetSpeedMult",                stub_noop},
+    {"SetSpeedMult",                unit_SetSpeedMult},
     {"SetAccMult",                  stub_noop},
     {"SetTurnMult",                 stub_noop},
     {"SetBreakOffDistanceMult",     stub_noop},
@@ -1564,10 +1718,10 @@ static const MethodEntry unit_methods[] = {
     {"GetCurrentMoveLocation",      entity_GetPosition},
     {"GetHeading",                  stub_return_zero},
     // Stubs — transport / cargo
-    {"GetCargo",                    stub_return_empty_table},
-    {"TransportHasSpaceFor",        stub_return_false},
-    {"AddUnitToStorage",            stub_noop},
-    {"TransportDetachAllUnits",     stub_noop},
+    {"GetCargo",                    unit_GetCargo},
+    {"TransportHasSpaceFor",        unit_TransportHasSpaceFor},
+    {"AddUnitToStorage",            unit_AddUnitToStorage},
+    {"TransportDetachAllUnits",     unit_TransportDetachAllUnits},
     // Stubs — missiles
     {"GetNukeSiloAmmoCount",        stub_return_zero},
     {"GetTacticalSiloAmmoCount",    stub_return_zero},
@@ -2015,6 +2169,7 @@ static const MethodEntry weapon_methods[] = {
     {"PlaySound",                   stub_noop},
     {"SetValidTargetsForCurrentLayer", stub_noop},
     {"SetWeaponPriorities",         stub_noop},
+    {"SetOnTransport",              stub_noop},
     {nullptr, nullptr},
 };
 
@@ -3658,34 +3813,228 @@ static const MethodEntry aibrain_methods[] = {
 };
 // clang-format on
 
+// ====================================================================
+// Shield methods — real implementations
+// ====================================================================
 // Shield-specific methods only — GetHealth, SetHealth, GetMaxHealth, Destroy,
 // BeenDestroyed are inherited from entity_methods via the base class chain.
 // DO NOT re-declare them here or ClassShield(moho.shield_methods, Entity) will
 // error with "field 'X' is ambiguous between the bases" because the flattened
 // closures differ from the Entity class's copies.
+
+static int shield_TurnOn(lua_State* L) {
+    auto* s = check_shield(L);
+    if (s) s->is_on = true;
+    return 0;
+}
+static int shield_TurnOff(lua_State* L) {
+    auto* s = check_shield(L);
+    if (s) s->is_on = false;
+    return 0;
+}
+static int shield_IsOn(lua_State* L) {
+    auto* s = check_shield(L);
+    lua_pushboolean(L, (s && s->is_on) ? 1 : 0);
+    return 1;
+}
+static int shield_GetOmni(lua_State* L) {
+    // No fog of war / omni detection yet
+    lua_pushboolean(L, 0);
+    return 1;
+}
+static int shield_GetType(lua_State* L) {
+    auto* s = check_shield(L);
+    if (s && !s->shield_type.empty()) {
+        lua_pushstring(L, s->shield_type.c_str());
+    } else {
+        lua_pushstring(L, "");
+    }
+    return 1;
+}
+static int shield_SetSize(lua_State* L) {
+    auto* s = check_shield(L);
+    if (s) {
+        s->size = static_cast<f32>(luaL_checknumber(L, 2));
+    }
+    return 0;
+}
+
 static const MethodEntry shield_methods[] = {
-    {"GetOmni",                     stub_return_false},
-    {"TurnOn",                      stub_noop},
-    {"TurnOff",                     stub_noop},
-    {"IsOn",                        stub_return_false},
-    {"GetType",                     stub_return_empty_string},
-    {"SetSize",                     stub_noop},
+    {"GetOmni",                     shield_GetOmni},
+    {"TurnOn",                      shield_TurnOn},
+    {"TurnOff",                     shield_TurnOff},
+    {"IsOn",                        shield_IsOn},
+    {"GetType",                     shield_GetType},
+    {"SetSize",                     shield_SetSize},
     {nullptr, nullptr},
 };
 
+// ---------------------------------------------------------------------------
+// Blip methods — real implementations using visibility grid
+// ---------------------------------------------------------------------------
+
+// Helper: extract entity from blip table (same _c_object pattern as check_entity)
+static sim::Entity* check_blip_entity(lua_State* L) {
+    if (!lua_istable(L, 1)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* entity = lua_isuserdata(L, -1)
+                       ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                       : nullptr;
+    lua_pop(L, 1);
+    return entity;
+}
+
+static int blip_IsSeenNow(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->has_vision(pos.x, pos.z,
+                                                  static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_IsOnRadar(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->has_radar(pos.x, pos.z,
+                                                 static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_IsOnSonar(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->has_sonar(pos.x, pos.z,
+                                                 static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_IsOnOmni(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->has_omni(pos.x, pos.z,
+                                                static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_IsSeenEver(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->ever_seen(pos.x, pos.z,
+                                                 static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_GetSource(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed() || e->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+    return 1;
+}
+
+static int blip_GetBlueprint(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, e->blueprint_id().c_str());
+        lua_rawget(L, -2);
+        lua_remove(L, -2); // remove __blueprints table
+    }
+    return 1;
+}
+
+static int blip_GetArmy(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushnumber(L, -1); return 1; }
+    lua_pushnumber(L, e->army() >= 0 ? e->army() + 1 : -1); // 1-based for Lua
+    return 1;
+}
+
+static int blip_GetAIBrain(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
+    auto* sim = get_sim(L);
+    if (sim) {
+        auto* brain = sim->get_army(e->army());
+        if (brain && brain->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
+            return 1;
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+static int blip_BeenDestroyed(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    lua_pushboolean(L, (!e || e->destroyed()) ? 1 : 0);
+    return 1;
+}
+
 static const MethodEntry blip_methods[] = {
-    {"GetSource",           stub_return_nil},
-    {"IsOnRadar",           stub_return_false},
-    {"IsOnSonar",           stub_return_false},
-    {"IsOnOmni",            stub_return_false},
-    {"IsSeenEver",          stub_return_false},
-    {"IsSeenNow",           stub_return_false},
-    {"GetBlueprint",        stub_return_nil},
-    {"GetPosition",         entity_GetPosition},
-    {"GetArmy",             stub_return_zero},
-    {"BeenDestroyed",       stub_return_false},
-    {"IsKnownFake",         stub_return_false},
-    {"IsMaybeDead",         stub_return_false},
+    {"GetSource",        blip_GetSource},
+    {"IsOnRadar",        blip_IsOnRadar},
+    {"IsOnSonar",        blip_IsOnSonar},
+    {"IsOnOmni",         blip_IsOnOmni},
+    {"IsSeenEver",       blip_IsSeenEver},
+    {"IsSeenNow",        blip_IsSeenNow},
+    {"GetBlueprint",     blip_GetBlueprint},
+    {"GetPosition",      entity_GetPosition},
+    {"GetArmy",          blip_GetArmy},
+    {"GetAIBrain",       blip_GetAIBrain},
+    {"BeenDestroyed",    blip_BeenDestroyed},
+    {"IsKnownFake",      stub_return_false},
+    {"IsMaybeDead",      stub_return_false},
     {nullptr, nullptr},
 };
 

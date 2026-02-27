@@ -5,6 +5,7 @@ add_library(osc_sim STATIC
     unit.cpp
     weapon.cpp
     projectile.cpp
+    shield.cpp
     navigator.cpp
     entity_registry.cpp
     thread_manager.cpp

@@ -235,6 +235,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
 
     sim.set_terrain(std::move(terrain));
     sim.build_pathfinding_grid();
+    sim.build_visibility_grid();
 
     return meta;
 }

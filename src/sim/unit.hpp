@@ -229,6 +229,32 @@ public:
         else   unit_states_.erase(state);
     }
 
+    // Shield ratio (health bar, set by shield's UpdateShieldRatio)
+    f32 shield_ratio() const { return shield_ratio_; }
+    void set_shield_ratio(f32 r) { shield_ratio_ = r; }
+
+    // Transport system
+    const std::vector<u32>& cargo_ids() const { return cargo_ids_; }
+    void add_cargo(u32 id) { cargo_ids_.push_back(id); }
+    void remove_cargo(u32 id);
+    void clear_cargo() { cargo_ids_.clear(); }
+
+    u32 transport_id() const { return transport_id_; }
+    void set_transport_id(u32 id) { transport_id_ = id; }
+    bool is_loaded() const { return transport_id_ != 0; }
+
+    f32 speed_mult() const { return speed_mult_; }
+    void set_speed_mult(f32 m) { speed_mult_ = m; }
+    f32 effective_speed() const { return max_speed_ * speed_mult_; }
+
+    i32 transport_class() const { return transport_class_; }
+    void set_transport_class(i32 c) { transport_class_ = c; }
+    i32 transport_capacity() const { return transport_capacity_; }
+    void set_transport_capacity(i32 c) { transport_capacity_ = c; }
+
+    void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
+    void detach_all_cargo(EntityRegistry& registry, lua_State* L);
+
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
     f32 get_intel_radius(const std::string& type) const;
@@ -285,8 +311,15 @@ private:
     std::string enhance_name_;
     bool immobile_ = false;
     std::unordered_set<std::string> unit_states_; // generic string-based states
+    f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Intel system
     std::unordered_map<std::string, IntelState> intel_states_;
+    // Transport system
+    std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
+    u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
+    f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
+    i32 transport_class_ = 0;        // cargo TransportClass (1=small, 2=medium, 3=large)
+    i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
 };
 
 } // namespace osc::sim

@@ -125,29 +125,43 @@ void BlueprintStore::push_lua_table(const BlueprintEntry& entry) const {
     lua_rawgeti(L_, LUA_REGISTRYINDEX, entry.lua_ref);
 }
 
+void BlueprintStore::push_lua_table(const BlueprintEntry& entry, lua_State* L) const {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, entry.lua_ref);
+}
+
 std::optional<std::string> BlueprintStore::get_string_field(
     const BlueprintEntry& entry, const char* field) const {
-    push_lua_table(entry);
-    lua_pushstring(L_, field);
-    lua_gettable(L_, -2);
+    return get_string_field(entry, field, L_);
+}
+
+std::optional<std::string> BlueprintStore::get_string_field(
+    const BlueprintEntry& entry, const char* field, lua_State* L) const {
+    push_lua_table(entry, L);
+    lua_pushstring(L, field);
+    lua_gettable(L, -2);
     std::optional<std::string> result;
-    if (lua_isstring(L_, -1)) {
-        result = lua_tostring(L_, -1);
+    if (lua_isstring(L, -1)) {
+        result = lua_tostring(L, -1);
     }
-    lua_pop(L_, 2); // pop value and table
+    lua_pop(L, 2); // pop value and table
     return result;
 }
 
 std::optional<double> BlueprintStore::get_number_field(
     const BlueprintEntry& entry, const char* field) const {
-    push_lua_table(entry);
-    lua_pushstring(L_, field);
-    lua_gettable(L_, -2);
+    return get_number_field(entry, field, L_);
+}
+
+std::optional<double> BlueprintStore::get_number_field(
+    const BlueprintEntry& entry, const char* field, lua_State* L) const {
+    push_lua_table(entry, L);
+    lua_pushstring(L, field);
+    lua_gettable(L, -2);
     std::optional<double> result;
-    if (lua_isnumber(L_, -1)) {
-        result = lua_tonumber(L_, -1);
+    if (lua_isnumber(L, -1)) {
+        result = lua_tonumber(L, -1);
     }
-    lua_pop(L_, 2);
+    lua_pop(L, 2);
     return result;
 }
 

@@ -63,6 +63,7 @@ void ThreadManager::register_in_registry(lua_State* L) {
 
 int ThreadManager::fork_thread(lua_State* L) {
     // Stack: [1]=function, [2..n]=args
+    // No extra diagnostics needed — just the standard check
     luaL_checktype(L, 1, LUA_TFUNCTION);
     int nargs = lua_gettop(L) - 1;
 

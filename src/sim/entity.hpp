@@ -52,6 +52,7 @@ public:
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
+    virtual bool is_shield() const { return false; }
 
 private:
     u32 entity_id_ = 0;

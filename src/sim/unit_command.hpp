@@ -21,6 +21,8 @@ enum class CommandType : u8 {
     Capture = 40,      // engineer captures enemy unit
     Dive = 45,         // submarine submerge/surface toggle
     Enhance = 50,      // ACU/SACU self-enhancement (same unit)
+    TransportLoad = 60,    // ground unit → load into transport (target_id = transport)
+    TransportUnload = 61,  // transport → unload all cargo at position
 };
 
 struct UnitCommand {

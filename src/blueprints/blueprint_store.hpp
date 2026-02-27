@@ -55,15 +55,27 @@ public:
     size_t total_count() const { return blueprints_.size(); }
 
     /// Push the Lua table for a blueprint onto the stack.
+    /// Uses the main lua_State (L_). For coroutine safety, use the overload
+    /// that takes an explicit lua_State*.
     void push_lua_table(const BlueprintEntry& entry) const;
 
-    /// Read a string field from a blueprint's Lua table.
+    /// Push the Lua table for a blueprint onto a specific lua_State's stack.
+    /// Use this when called from a coroutine context.
+    void push_lua_table(const BlueprintEntry& entry, lua_State* L) const;
+
+    /// Read a string field from a blueprint's Lua table (uses main L_).
     std::optional<std::string> get_string_field(
         const BlueprintEntry& entry, const char* field) const;
+    /// Read a string field — coroutine-safe overload.
+    std::optional<std::string> get_string_field(
+        const BlueprintEntry& entry, const char* field, lua_State* L) const;
 
-    /// Read a number field from a blueprint's Lua table.
+    /// Read a number field from a blueprint's Lua table (uses main L_).
     std::optional<double> get_number_field(
         const BlueprintEntry& entry, const char* field) const;
+    /// Read a number field — coroutine-safe overload.
+    std::optional<double> get_number_field(
+        const BlueprintEntry& entry, const char* field, lua_State* L) const;
 
     /// Log statistics about loaded blueprints.
     void log_statistics() const;
