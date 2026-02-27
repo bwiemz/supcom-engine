@@ -1,5 +1,7 @@
 #include "sim/unit.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/sim_state.hpp"
+#include "map/pathfinding_grid.hpp"
 
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -38,8 +40,10 @@ void Unit::clear_commands() {
     navigator_.abort_move();
 }
 
-void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
+void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) return;
+    auto& registry = ctx.registry;
+    auto* L = ctx.L;
 
     // Process head command
     while (!command_queue_.empty()) {
@@ -55,9 +59,9 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
             if (!navigator_.is_moving() ||
                 navigator_.goal().x != cmd.target_pos.x ||
                 navigator_.goal().z != cmd.target_pos.z) {
-                navigator_.set_goal(cmd.target_pos);
+                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, max_speed_, dt)) {
+            if (!navigator_.update(*this, max_speed_, dt, ctx.terrain)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -94,9 +98,9 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != target->position().x ||
                     navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position());
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, max_speed_, dt);
+                navigator_.update(*this, max_speed_, dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
             }
@@ -112,8 +116,12 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
                 f32 build_range = 6.0f;
 
                 if (dist2 > build_range * build_range) {
-                    navigator_.set_goal(cmd.target_pos);
-                    navigator_.update(*this, max_speed_, dt);
+                    if (!navigator_.is_moving() ||
+                        navigator_.goal().x != cmd.target_pos.x ||
+                        navigator_.goal().z != cmd.target_pos.z) {
+                        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
+                    }
+                    navigator_.update(*this, max_speed_, dt, ctx.terrain);
                     goto done_commands;
                 }
                 navigator_.abort_move();
@@ -125,7 +133,7 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
                 }
             }
             // Phase 3: Progress the build
-            if (!progress_build(dt, registry, L)) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -140,7 +148,7 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
                     continue;
                 }
             }
-            if (!progress_build(dt, registry, L)) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -151,9 +159,9 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
             if (!navigator_.is_moving() ||
                 navigator_.goal().x != cmd.target_pos.x ||
                 navigator_.goal().z != cmd.target_pos.z) {
-                navigator_.set_goal(cmd.target_pos);
+                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, max_speed_, dt)) {
+            if (!navigator_.update(*this, max_speed_, dt, ctx.terrain)) {
                 // Reached patrol point — cycle to back of queue
                 auto finished = cmd;
                 command_queue_.pop_front();
@@ -182,8 +190,12 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
             f32 rdz = target->position().z - position().z;
             f32 rdist2 = rdx * rdx + rdz * rdz;
             if (rdist2 > reclaim_range * reclaim_range) {
-                navigator_.set_goal(target->position());
-                navigator_.update(*this, max_speed_, dt);
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != target->position().x ||
+                    navigator_.goal().z != target->position().z) {
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
+                }
+                navigator_.update(*this, max_speed_, dt, ctx.terrain);
                 goto done_commands;
             }
             navigator_.abort_move();
@@ -250,6 +262,127 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
             goto done_commands;
         }
 
+        case CommandType::Upgrade: {
+            // Upgrade: structure builds its replacement at own position
+            // Reuses start_build/progress_build/finish_build with "Upgrade" order
+            if (build_target_id_ == 0) {
+                if (!start_build(cmd, registry, L)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+            }
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
+                command_queue_.pop_front();
+                continue;
+            }
+            goto done_commands;
+        }
+
+        case CommandType::Repair: {
+            if (cmd.target_id == 0) {
+                if (is_repairing()) stop_repairing(L, registry);
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* rtarget = registry.find(cmd.target_id);
+            if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) {
+                if (is_repairing()) stop_repairing(L, registry);
+                command_queue_.pop_front();
+                continue;
+            }
+            // Already at full health? Done.
+            if (rtarget->health() >= rtarget->max_health()) {
+                if (is_repairing()) stop_repairing(L, registry);
+                command_queue_.pop_front();
+                continue;
+            }
+
+            // Move to target if out of range
+            constexpr f32 repair_range = 6.0f;
+            f32 rdx = rtarget->position().x - position().x;
+            f32 rdz = rtarget->position().z - position().z;
+            f32 rdist2 = rdx * rdx + rdz * rdz;
+            if (rdist2 > repair_range * repair_range) {
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != rtarget->position().x ||
+                    navigator_.goal().z != rtarget->position().z) {
+                    navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_);
+                }
+                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                goto done_commands;
+            }
+            navigator_.abort_move();
+
+            // Start repair if not already repairing this target
+            if (repair_target_id_ != cmd.target_id) {
+                if (is_repairing()) stop_repairing(L, registry);
+                if (!start_repair(cmd, registry, L)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+            }
+
+            // Progress repair
+            if (!progress_repair(dt, registry, L)) {
+                command_queue_.pop_front();
+                continue;
+            }
+            goto done_commands;
+        }
+
+        case CommandType::Capture: {
+            if (cmd.target_id == 0) {
+                if (is_capturing()) stop_capturing(L, registry, true);
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* ctarget = registry.find(cmd.target_id);
+            if (!ctarget || ctarget->destroyed() || !ctarget->is_unit()) {
+                if (is_capturing()) stop_capturing(L, registry, true);
+                command_queue_.pop_front();
+                continue;
+            }
+            // Already same army (captured by someone else)
+            if (ctarget->is_unit() &&
+                static_cast<Unit*>(ctarget)->army() == army()) {
+                if (is_capturing()) stop_capturing(L, registry, false);
+                command_queue_.pop_front();
+                continue;
+            }
+
+            // Move to target if out of range
+            constexpr f32 capture_range = 6.0f;
+            f32 cdx = ctarget->position().x - position().x;
+            f32 cdz = ctarget->position().z - position().z;
+            f32 cdist2 = cdx * cdx + cdz * cdz;
+            if (cdist2 > capture_range * capture_range) {
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != ctarget->position().x ||
+                    navigator_.goal().z != ctarget->position().z) {
+                    navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_);
+                }
+                navigator_.update(*this, max_speed_, dt, ctx.terrain);
+                goto done_commands;
+            }
+            navigator_.abort_move();
+
+            // Start capture if not already capturing this target
+            if (capture_target_id_ != cmd.target_id) {
+                if (is_capturing()) stop_capturing(L, registry, true);
+                if (!start_capture(cmd, registry, L)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+            }
+
+            // Progress capture
+            if (!progress_capture(dt, registry, L)) {
+                command_queue_.pop_front();
+                continue;
+            }
+            goto done_commands;
+        }
+
         case CommandType::Guard: {
             if (cmd.target_id == 0) {
                 if (is_building()) stop_assisting();
@@ -275,8 +408,12 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
             f32 gdz = target->position().z - position().z;
             f32 gdist2 = gdx * gdx + gdz * gdz;
             if (gdist2 > guard_range * guard_range) {
-                navigator_.set_goal(target->position());
-                navigator_.update(*this, max_speed_, dt);
+                if (!navigator_.is_moving() ||
+                    navigator_.goal().x != target->position().x ||
+                    navigator_.goal().z != target->position().z) {
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
+                }
+                navigator_.update(*this, max_speed_, dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
             }
@@ -386,9 +523,55 @@ void Unit::update(f64 dt, EntityRegistry& registry, lua_State* L) {
                 // Target not building/reclaiming — stop if we were
                 if (is_building()) stop_assisting();
                 if (is_reclaiming()) stop_reclaiming();
+
+                // Auto-repair: if target is damaged and we have build_rate
+                if (target_unit->health() < target_unit->max_health() &&
+                    build_rate_ > 0) {
+                    if (repair_target_id_ != cmd.target_id) {
+                        if (is_repairing()) stop_repairing(L, registry);
+                        UnitCommand repair_cmd;
+                        repair_cmd.type = CommandType::Repair;
+                        repair_cmd.target_id = cmd.target_id;
+                        repair_cmd.target_pos = target->position();
+                        start_repair(repair_cmd, registry, L);
+                    }
+                    if (repair_target_id_ != 0) {
+                        progress_repair(dt, registry, L);
+                    }
+                } else {
+                    if (is_repairing()) stop_repairing(L, registry);
+                }
             }
 
             goto done_commands; // Guard is persistent
+        }
+
+        case CommandType::Dive: {
+            // Toggle submarine layer: Water ↔ Sub
+            if (layer_ == "Water") {
+                set_layer_with_callback("Sub", L);
+                spdlog::debug("Unit #{} diving: Water → Sub", entity_id());
+            } else if (layer_ == "Sub" || layer_ == "Seabed") {
+                std::string from = layer_;
+                set_layer_with_callback("Water", L);
+                spdlog::debug("Unit #{} surfacing: {} → Water", entity_id(), from);
+            }
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::Enhance: {
+            if (!enhancing_) {
+                if (!start_enhance(cmd, L)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+            }
+            if (!progress_enhance(dt, L)) {
+                command_queue_.pop_front();
+                continue;
+            }
+            goto done_commands;
         }
 
         default:
@@ -417,8 +600,10 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
 
     lua_pushstring(L, cmd.blueprint_id.c_str());
     lua_pushnumber(L, army() + 1); // 1-based for Lua
-    f32 bx = (cmd.type == CommandType::BuildFactory) ? position().x : cmd.target_pos.x;
-    f32 bz = (cmd.type == CommandType::BuildFactory) ? position().z : cmd.target_pos.z;
+    bool build_at_self = (cmd.type == CommandType::BuildFactory ||
+                          cmd.type == CommandType::Upgrade);
+    f32 bx = build_at_self ? position().x : cmd.target_pos.x;
+    f32 bz = build_at_self ? position().z : cmd.target_pos.z;
     lua_pushnumber(L, bx);
     lua_pushnumber(L, 0); // y = 0 (terrain height not queried yet)
     lua_pushnumber(L, bz);
@@ -503,14 +688,18 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
         lua_pushvalue(L, target_tbl);
         lua_rawset(L, btbl);
         lua_pushstring(L, "UnitBuildOrder");
-        lua_pushstring(L, (cmd.type == CommandType::BuildFactory)
-                              ? "UnitBuild"
-                              : "MobileBuild");
+        const char* build_order = "MobileBuild";
+        if (cmd.type == CommandType::BuildFactory) build_order = "UnitBuild";
+        else if (cmd.type == CommandType::Upgrade) build_order = "Upgrade";
+        lua_pushstring(L, build_order);
         lua_rawset(L, btbl);
         lua_pop(L, 1); // btbl
     }
 
-    // Call builder:OnStartBuild(target, 'UnitBuild')
+    // Call builder:OnStartBuild(target, order_type)
+    const char* order_str = "UnitBuild";
+    if (cmd.type == CommandType::BuildMobile) order_str = "MobileBuild";
+    else if (cmd.type == CommandType::Upgrade) order_str = "Upgrade";
     if (lua_table_ref() >= 0) {
         lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
         int builder_tbl = lua_gettop(L);
@@ -519,7 +708,7 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, builder_tbl); // self
             lua_pushvalue(L, target_tbl);  // target
-            lua_pushstring(L, "UnitBuild");
+            lua_pushstring(L, order_str);
             if (lua_pcall(L, 3, 0, 0) != 0) {
                 spdlog::warn("OnStartBuild error: {}", lua_tostring(L, -1));
                 lua_pop(L, 1);
@@ -554,21 +743,22 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
     return true;
 }
 
-bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L) {
+bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
+                          map::PathfindingGrid* grid) {
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed()) {
-        finish_build(registry, L, false);
+        finish_build(registry, L, false, grid);
         return false;
     }
 
     // Guard: if an assister already pushed fraction to 1.0 this tick
     if (target->fraction_complete() >= 1.0f) {
-        finish_build(registry, L, true);
+        finish_build(registry, L, true, grid);
         return false;
     }
 
     if (build_time_ <= 0 || build_rate_ <= 0) {
-        finish_build(registry, L, false);
+        finish_build(registry, L, false, grid);
         return false;
     }
 
@@ -579,13 +769,14 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L) {
     work_progress_ = new_frac;
 
     if (new_frac >= 1.0f) {
-        finish_build(registry, L, true);
+        finish_build(registry, L, true, grid);
         return false; // command done
     }
     return true; // still building
 }
 
-void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success) {
+void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
+                        map::PathfindingGrid* grid) {
     if (success && build_target_id_ != 0) {
         auto* target = registry.find(build_target_id_);
         if (target && target->is_unit()) {
@@ -626,6 +817,17 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success) {
         // Re-validate target after OnStopBeingBuilt callback
         // (Lua callback may have destroyed the entity)
         target = registry.find(build_target_id_);
+
+        // Mark completed structure as obstacle on pathfinding grid
+        // (after re-validation — only if target survived OnStopBeingBuilt)
+        if (grid && target && !target->destroyed() && target->is_unit()) {
+            auto* tu = static_cast<Unit*>(target);
+            if (tu->has_category("STRUCTURE") && tu->footprint_size_x() > 0) {
+                grid->mark_obstacle(
+                    target->position().x, target->position().z,
+                    tu->footprint_size_x(), tu->footprint_size_z());
+            }
+        }
 
         // Call builder:OnStopBuild(target)
         if (lua_table_ref() >= 0 && target && !target->destroyed() &&
@@ -826,6 +1028,805 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
     target->set_fraction_complete(new_frac);
 
     return new_frac > 0.0f;
+}
+
+bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
+                        lua_State* L) {
+    auto* target = registry.find(cmd.target_id);
+    if (!target || target->destroyed() || !target->is_unit()) return false;
+    auto* target_unit = static_cast<Unit*>(target);
+
+    // Don't repair units that are being built (use build-assist instead)
+    if (target_unit->is_being_built()) return false;
+    // Don't repair units already at full health
+    if (target->health() >= target->max_health()) return false;
+    if (build_rate_ <= 0) return false;
+
+    // Read BuildTime/BuildCostMass/BuildCostEnergy from target's blueprint
+    repair_build_time_ = 0;
+    repair_cost_mass_ = 0;
+    repair_cost_energy_ = 0;
+
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, target_unit->unit_id().c_str());
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Economy");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "BuildTime");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    repair_build_time_ = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "BuildCostMass");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    repair_cost_mass_ = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "BuildCostEnergy");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    repair_cost_energy_ = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // Economy
+        }
+        lua_pop(L, 1); // blueprint entry
+    }
+    lua_pop(L, 1); // __blueprints
+
+    if (repair_build_time_ <= 0) return false;
+
+    repair_target_id_ = cmd.target_id;
+
+    // Set economy consumption (same formula as build)
+    economy_.consumption_mass =
+        repair_cost_mass_ * static_cast<f64>(build_rate_) / repair_build_time_;
+    economy_.consumption_energy =
+        repair_cost_energy_ * static_cast<f64>(build_rate_) / repair_build_time_;
+    economy_.consumption_active = true;
+
+    spdlog::info("start_repair: entity #{} repairing #{} "
+                 "(BuildTime={:.0f} BuildRate={:.1f})",
+                 entity_id(), cmd.target_id, repair_build_time_, build_rate_);
+
+    // Call builder:OnStartBuild(target, "Repair")
+    // FA Lua detects order=="Repair" and routes to OnStartRepair internally
+    if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int builder_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnStartBuild");
+        lua_gettable(L, builder_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, builder_tbl); // self
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+            lua_pushstring(L, "Repair");
+            if (lua_pcall(L, 3, 0, 0) != 0) {
+                spdlog::warn("OnStartBuild(Repair) error: {}",
+                             lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); // builder_tbl
+    }
+
+    // Re-validate target after lua_pcall
+    target = registry.find(repair_target_id_);
+    if (!target || target->destroyed()) {
+        stop_repairing(L, registry);
+        return false;
+    }
+
+    return true;
+}
+
+bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L) {
+    auto* target = registry.find(repair_target_id_);
+    if (!target || target->destroyed()) {
+        stop_repairing(L, registry);
+        return false;
+    }
+
+    if (repair_build_time_ <= 0 || build_rate_ <= 0) {
+        stop_repairing(L, registry);
+        return false;
+    }
+
+    // heal_per_tick = (build_rate / build_time) * max_health * dt
+    f32 heal_rate = build_rate_ / static_cast<f32>(repair_build_time_);
+    f32 heal_amount = heal_rate * target->max_health() * static_cast<f32>(dt);
+    f32 new_health = std::min(target->max_health(),
+                              target->health() + heal_amount);
+    target->set_health(new_health);
+
+    if (new_health >= target->max_health()) {
+        spdlog::info("repair complete: entity #{} finished repairing #{}",
+                     entity_id(), repair_target_id_);
+        stop_repairing(L, registry);
+        return false; // repair done
+    }
+    return true; // still repairing
+}
+
+void Unit::stop_repairing(lua_State* L, EntityRegistry& registry) {
+    u32 target_id = repair_target_id_;
+
+    // Zero repair state BEFORE lua_pcall to prevent re-entrant double-callback
+    repair_target_id_ = 0;
+    repair_build_time_ = 0;
+    repair_cost_mass_ = 0;
+    repair_cost_energy_ = 0;
+
+    // Clear economy drain
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+
+    // Call builder:OnStopBuild(target) — FA handles OnStopRepair inside
+    if (target_id != 0 && lua_table_ref() >= 0) {
+        auto* target = registry.find(target_id);
+        if (target && !target->destroyed() && target->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            int builder_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnStopBuild");
+            lua_gettable(L, builder_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, builder_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnStopBuild(repair) error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // builder_tbl
+        }
+    }
+}
+
+bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
+                         lua_State* L) {
+    auto* target = registry.find(cmd.target_id);
+    if (!target || target->destroyed() || !target->is_unit()) return false;
+    auto* target_unit = static_cast<Unit*>(target);
+
+    // Don't capture own or allied units, units being built, or uncapturable
+    if (target_unit->army() == army()) return false;
+    if (target_unit->is_being_built()) return false;
+    if (!target_unit->capturable()) return false;
+    if (build_rate_ <= 0) return false;
+
+    // Read BuildTime and BuildCostEnergy from target's blueprint
+    f64 build_time = 0;
+    f64 build_cost_energy = 0;
+
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, target_unit->unit_id().c_str());
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Economy");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "BuildTime");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    build_time = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+
+                lua_pushstring(L, "BuildCostEnergy");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    build_cost_energy = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // Economy
+        }
+        lua_pop(L, 1); // blueprint entry
+    }
+    lua_pop(L, 1); // __blueprints
+
+    if (build_time <= 0) return false;
+
+    // Capture time = (BuildTime / BuildRate) / 2  (FA formula: half build time)
+    capture_time_ = (build_time / static_cast<f64>(build_rate_)) / 2.0;
+    if (capture_time_ <= 0) capture_time_ = 0.01;
+    capture_energy_cost_ = build_cost_energy;
+    capture_target_id_ = cmd.target_id;
+    work_progress_ = 0.0f;
+
+    // Set economy: energy-only drain (zero mass to clear any stale value)
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = capture_energy_cost_ / capture_time_;
+    economy_.consumption_active = true;
+
+    spdlog::info("start_capture: entity #{} capturing #{} "
+                 "(BuildTime={:.0f} BuildRate={:.1f} captureTime={:.1f}s energy={:.0f})",
+                 entity_id(), cmd.target_id, build_time, build_rate_,
+                 capture_time_, capture_energy_cost_);
+
+    // Call self:OnStartCapture(target)
+    if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnStartCapture");
+        lua_gettable(L, self_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self_tbl);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnStartCapture error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); // self_tbl
+    }
+
+    // Re-validate target after pcall
+    target = registry.find(capture_target_id_);
+    if (!target || target->destroyed()) {
+        stop_capturing(L, registry, true);
+        return false;
+    }
+
+    // Call target:OnStartBeingCaptured(self)
+    if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+        int target_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnStartBeingCaptured");
+        lua_gettable(L, target_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, target_tbl);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnStartBeingCaptured error: {}",
+                             lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); // target_tbl
+    }
+
+    // Re-validate target after pcall
+    target = registry.find(capture_target_id_);
+    if (!target || target->destroyed()) {
+        stop_capturing(L, registry, true);
+        return false;
+    }
+
+    return true;
+}
+
+bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L) {
+    auto* target = registry.find(capture_target_id_);
+    if (!target || target->destroyed()) {
+        stop_capturing(L, registry, true);
+        return false;
+    }
+
+    if (capture_time_ <= 0) {
+        stop_capturing(L, registry, true);
+        return false;
+    }
+
+    f32 progress_per_tick = static_cast<f32>(dt / capture_time_);
+    work_progress_ = std::min(1.0f, work_progress_ + progress_per_tick);
+
+    if (work_progress_ >= 1.0f) {
+        // Capture complete
+        u32 target_id = capture_target_id_;
+        i32 target_old_army = -1;
+        if (target->is_unit())
+            target_old_army = static_cast<Unit*>(target)->army();
+
+        // Zero capture state BEFORE lua_pcall (re-entrancy protection)
+        capture_target_id_ = 0;
+        capture_time_ = 0;
+        capture_energy_cost_ = 0;
+        economy_.consumption_mass = 0;
+        economy_.consumption_energy = 0;
+        economy_.consumption_active = false;
+        work_progress_ = 0.0f;
+
+        spdlog::info("capture complete: entity #{} captured #{}",
+                     entity_id(), target_id);
+
+        // Call self:OnStopCapture(target)
+        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            int self_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnStopCapture");
+            lua_gettable(L, self_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, self_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnStopCapture error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // self_tbl
+        }
+
+        // Re-validate target
+        target = registry.find(target_id);
+        if (!target || target->destroyed()) return false;
+
+        // Call target:OnCaptured(self) — FA Lua handles ownership transfer
+        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+            int target_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnCaptured");
+            lua_gettable(L, target_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, target_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnCaptured error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // target_tbl
+        }
+
+        // Re-validate target
+        target = registry.find(target_id);
+        if (!target || target->destroyed()) return false;
+
+        // C++ fallback: if OnCaptured didn't change army, do it directly
+        if (target->is_unit()) {
+            auto* tu = static_cast<Unit*>(target);
+            if (tu->army() == target_old_army) {
+                spdlog::info("capture C++ fallback: transferring #{} "
+                             "from army {} to army {}",
+                             target_id, target_old_army, army());
+                tu->set_army(army());
+                // Update Army field on Lua table
+                if (target->lua_table_ref() >= 0) {
+                    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                    lua_pushstring(L, "Army");
+                    lua_pushnumber(L, army() + 1); // 1-based for Lua
+                    lua_rawset(L, -3);
+                    lua_pop(L, 1);
+                }
+            }
+        }
+
+        return false; // capture done
+    }
+
+    return true; // still capturing
+}
+
+void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
+    u32 target_id = capture_target_id_;
+
+    // Zero capture state BEFORE lua_pcall (re-entrancy protection)
+    capture_target_id_ = 0;
+    capture_time_ = 0;
+    capture_energy_cost_ = 0;
+
+    // Clear economy drain
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+    work_progress_ = 0.0f;
+
+    if (target_id == 0) return;
+
+    auto* target = registry.find(target_id);
+    if (!target || target->destroyed()) return;
+
+    if (failed) {
+        // Call self:OnFailedCapture(target)
+        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            int self_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnFailedCapture");
+            lua_gettable(L, self_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, self_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnFailedCapture error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // self_tbl
+        }
+
+        // Re-validate target
+        target = registry.find(target_id);
+        if (!target || target->destroyed()) return;
+
+        // Call target:OnFailedBeingCaptured(self)
+        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+            int target_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnFailedBeingCaptured");
+            lua_gettable(L, target_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, target_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnFailedBeingCaptured error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // target_tbl
+        }
+    } else {
+        // Normal stop/interrupt
+        // Call self:OnStopCapture(target)
+        if (lua_table_ref() >= 0 && target->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+            int self_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnStopCapture");
+            lua_gettable(L, self_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, self_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnStopCapture error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // self_tbl
+        }
+
+        // Re-validate target
+        target = registry.find(target_id);
+        if (!target || target->destroyed()) return;
+
+        // Call target:OnStopBeingCaptured(self)
+        if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+            int target_tbl = lua_gettop(L);
+            lua_pushstring(L, "OnStopBeingCaptured");
+            lua_gettable(L, target_tbl);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, target_tbl);
+                lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+                if (lua_pcall(L, 2, 0, 0) != 0) {
+                    spdlog::warn("OnStopBeingCaptured error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // target_tbl
+        }
+    }
+}
+
+// --- Enhancement system ---
+
+bool Unit::has_enhancement(const std::string& enh) const {
+    for (auto& [slot, name] : enhancements_) {
+        if (name == enh) return true;
+    }
+    return false;
+}
+
+void Unit::add_enhancement(const std::string& slot, const std::string& enh) {
+    enhancements_[slot] = enh;
+}
+
+void Unit::remove_enhancement(const std::string& enh) {
+    for (auto it = enhancements_.begin(); it != enhancements_.end(); ++it) {
+        if (it->second == enh) {
+            enhancements_.erase(it);
+            return;
+        }
+    }
+}
+
+bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
+    enhance_name_ = cmd.blueprint_id;
+
+    // Read enhancement BP from self.Blueprint.Enhancements[name]
+    f64 enh_build_time = 0, enh_cost_mass = 0, enh_cost_energy = 0;
+
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+
+        lua_pushstring(L, "Blueprint");
+        lua_rawget(L, self_tbl);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Enhancements");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, enhance_name_.c_str());
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "BuildTime");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) enh_build_time = lua_tonumber(L, -1);
+                    lua_pop(L, 1);
+
+                    lua_pushstring(L, "BuildCostMass");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) enh_cost_mass = lua_tonumber(L, -1);
+                    lua_pop(L, 1);
+
+                    lua_pushstring(L, "BuildCostEnergy");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) enh_cost_energy = lua_tonumber(L, -1);
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1); // enh entry
+            }
+            lua_pop(L, 1); // Enhancements
+        }
+        lua_pop(L, 1); // Blueprint
+        lua_pop(L, 1); // self_tbl
+    }
+
+    if (enh_build_time <= 0 || build_rate_ <= 0) {
+        spdlog::warn("start_enhance: invalid BuildTime ({}) or BuildRate ({}) "
+                     "for enhancement '{}' on entity #{}",
+                     enh_build_time, build_rate_, enhance_name_, entity_id());
+        enhance_name_.clear();
+        return false;
+    }
+
+    enhance_build_time_ = enh_build_time;
+    work_progress_ = 0.0f;
+
+    // Set economy drain
+    economy_.consumption_mass =
+        enh_cost_mass * static_cast<f64>(build_rate_) / enhance_build_time_;
+    economy_.consumption_energy =
+        enh_cost_energy * static_cast<f64>(build_rate_) / enhance_build_time_;
+    economy_.consumption_active = true;
+
+    // Call self:OnWorkBegin(enhancement_name)
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnWorkBegin");
+        lua_gettable(L, self_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self_tbl); // self
+            lua_pushstring(L, enhance_name_.c_str());
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnWorkBegin error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+                lua_pop(L, 1); // self_tbl
+                // Cancel on error
+                economy_.consumption_mass = 0;
+                economy_.consumption_energy = 0;
+                economy_.consumption_active = false;
+                enhance_build_time_ = 0;
+                enhance_name_.clear();
+                return false;
+            }
+        } else {
+            lua_pop(L, 1); // non-function
+        }
+        lua_pop(L, 1); // self_tbl
+    }
+
+    enhancing_ = true;
+    spdlog::info("start_enhance: entity #{} enhancing '{}' "
+                 "(BuildTime={:.0f} BuildRate={:.1f} CostMass={:.0f} CostEnergy={:.0f})",
+                 entity_id(), enhance_name_, enhance_build_time_, build_rate_,
+                 enh_cost_mass, enh_cost_energy);
+    return true;
+}
+
+bool Unit::progress_enhance(f64 dt, lua_State* L) {
+    if (enhance_build_time_ <= 0 || build_rate_ <= 0) {
+        cancel_enhance(L);
+        return false;
+    }
+
+    work_progress_ = std::min(1.0f, work_progress_ + static_cast<f32>(
+        static_cast<f64>(build_rate_) / enhance_build_time_ * dt));
+
+    // Update WorkProgress on Lua table
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        lua_pushstring(L, "WorkProgress");
+        lua_pushnumber(L, work_progress_);
+        lua_rawset(L, -3);
+        lua_pop(L, 1);
+    }
+
+    if (work_progress_ >= 1.0f) {
+        finish_enhance(L);
+        return false; // done
+    }
+    return true; // still in progress
+}
+
+void Unit::finish_enhance(lua_State* L) {
+    work_progress_ = 1.0f;
+
+    // Clear economy drain
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+
+    // Call self:OnWorkEnd(enhancement_name)
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnWorkEnd");
+        lua_gettable(L, self_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self_tbl); // self
+            lua_pushstring(L, enhance_name_.c_str());
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnWorkEnd error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); // self_tbl
+    }
+
+    // Also add to C++ enhancement map by reading Slot from blueprint
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "Blueprint");
+        lua_rawget(L, self_tbl);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Enhancements");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, enhance_name_.c_str());
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "Slot");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string slot = lua_tostring(L, -1);
+                        enhancements_[slot] = enhance_name_;
+                    }
+                    lua_pop(L, 1); // Slot
+                }
+                lua_pop(L, 1); // enh entry
+            }
+            lua_pop(L, 1); // Enhancements
+        }
+        lua_pop(L, 1); // Blueprint
+        lua_pop(L, 1); // self_tbl
+    }
+
+    spdlog::info("finish_enhance: entity #{} completed enhancement '{}'",
+                 entity_id(), enhance_name_);
+    enhancing_ = false;
+    enhance_build_time_ = 0;
+    work_progress_ = 0.0f;
+    enhance_name_.clear();
+}
+
+void Unit::cancel_enhance(lua_State* L) {
+    // Call self:OnWorkFail(enhancement_name)
+    if (lua_table_ref() >= 0 && !enhance_name_.empty()) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnWorkFail");
+        lua_gettable(L, self_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self_tbl);
+            lua_pushstring(L, enhance_name_.c_str());
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("OnWorkFail error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1); // self_tbl
+    }
+
+    // Clear economy drain
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+
+    enhancing_ = false;
+    enhance_build_time_ = 0;
+    work_progress_ = 0.0f;
+    enhance_name_.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Intel system
+// ---------------------------------------------------------------------------
+
+bool Unit::is_intel_enabled(const std::string& type) const {
+    auto it = intel_states_.find(type);
+    return it != intel_states_.end() && it->second.enabled;
+}
+
+f32 Unit::get_intel_radius(const std::string& type) const {
+    auto it = intel_states_.find(type);
+    return it != intel_states_.end() ? it->second.radius : 0.0f;
+}
+
+void Unit::init_intel(const std::string& type, f32 radius) {
+    intel_states_[type] = IntelState{radius, false};
+}
+
+void Unit::enable_intel(const std::string& type) {
+    intel_states_[type].enabled = true;
+}
+
+void Unit::disable_intel(const std::string& type) {
+    auto it = intel_states_.find(type);
+    if (it != intel_states_.end())
+        it->second.enabled = false;
+}
+
+void Unit::set_intel_radius(const std::string& type, f32 radius) {
+    intel_states_[type].radius = radius;
+}
+
+void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
+    std::string old_layer = layer_;
+    set_layer(new_layer);
+
+    // Update self.Layer on the Lua table
+    if (lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        int tbl = lua_gettop(L);
+
+        lua_pushstring(L, "Layer");
+        lua_pushstring(L, new_layer.c_str());
+        lua_rawset(L, tbl);
+
+        // Call self:OnLayerChange(new, old)
+        lua_pushstring(L, "OnLayerChange");
+        lua_gettable(L, tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, tbl); // self
+            lua_pushstring(L, new_layer.c_str());
+            lua_pushstring(L, old_layer.c_str());
+            if (lua_pcall(L, 3, 0, 0) != 0) {
+                spdlog::warn("OnLayerChange error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1); // non-function
+        }
+        lua_pop(L, 1); // tbl
+    }
 }
 
 } // namespace osc::sim

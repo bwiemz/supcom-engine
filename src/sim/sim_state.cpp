@@ -1,16 +1,36 @@
 #include "sim/sim_state.hpp"
+#include "map/pathfinder.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/unit.hpp"
+
+#include <spdlog/spdlog.h>
 
 namespace osc::sim {
 
 SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     : L_(L), thread_manager_(L), blueprint_store_(store) {}
 
+SimState::~SimState() = default;
+
 void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     terrain_ = std::move(terrain);
+}
+
+void SimState::build_pathfinding_grid() {
+    if (!terrain_) return;
+    // Reset pathfinder first — it holds a reference to the old grid
+    pathfinder_.reset();
+    pathfinding_grid_ = std::make_unique<map::PathfindingGrid>(
+        terrain_->heightmap(), terrain_->water_elevation(),
+        terrain_->has_water());
+    pathfinder_ = std::make_unique<map::Pathfinder>(*pathfinding_grid_);
+    spdlog::info("Built pathfinding grid: {}x{} cells (cell_size={})",
+                 pathfinding_grid_->grid_width(),
+                 pathfinding_grid_->grid_height(),
+                 pathfinding_grid_->cell_size());
 }
 
 ArmyBrain& SimState::add_army(const std::string& name,
@@ -77,12 +97,15 @@ void SimState::update_entities() {
     entity_registry_.for_each([&](Entity& e) {
         ids.push_back(e.entity_id());
     });
+
+    SimContext ctx{entity_registry_, L_, terrain_.get(),
+                   pathfinder_.get(), pathfinding_grid_.get()};
+
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
         if (e->is_unit()) {
-            static_cast<Unit*>(e)->update(SECONDS_PER_TICK,
-                                          entity_registry_, L_);
+            static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
                                                  entity_registry_, L_);

@@ -16,6 +16,11 @@ enum class CommandType : u8 {
     BuildMobile = 20,  // engineer builds structure/unit at position
     BuildFactory = 21, // factory produces unit at own position
     Reclaim = 25,      // engineer reclaims prop/wreckage/unit
+    Repair = 30,       // engineer repairs damaged unit
+    Upgrade = 35,      // structure upgrades to next tier
+    Capture = 40,      // engineer captures enemy unit
+    Dive = 45,         // submarine submerge/surface toggle
+    Enhance = 50,      // ACU/SACU self-enhancement (same unit)
 };
 
 struct UnitCommand {

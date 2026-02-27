@@ -500,7 +500,8 @@ static int unit_IsIdleState(lua_State* L) {
     bool idle = false;
     if (u) {
         idle = u->command_queue().empty() && !u->is_building() &&
-               !u->is_being_built();
+               !u->is_being_built() && !u->is_repairing() &&
+               !u->is_capturing();
     }
     lua_pushboolean(L, idle ? 1 : 0);
     return 1;
@@ -523,19 +524,30 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Reclaiming") == 0)
             result = u->is_reclaiming();
         else if (std::strcmp(state, "Repairing") == 0)
-            result = false; // Repair command not yet implemented
+            result = u->is_repairing();
         else if (std::strcmp(state, "Busy") == 0)
             result = u->busy();
         else if (std::strcmp(state, "BlockCommandQueue") == 0)
             result = u->block_command_queue();
         else if (std::strcmp(state, "Upgrading") == 0)
-            result = false; // Upgrade command not yet implemented
+            result = !u->command_queue().empty() &&
+                     u->command_queue().front().type == sim::CommandType::Upgrade;
         else if (std::strcmp(state, "Patrolling") == 0)
             result = !u->command_queue().empty() &&
                      u->command_queue().front().type == sim::CommandType::Patrol;
         else if (std::strcmp(state, "Attacking") == 0)
             result = !u->command_queue().empty() &&
                      u->command_queue().front().type == sim::CommandType::Attack;
+        else if (std::strcmp(state, "Capturing") == 0)
+            result = u->is_capturing();
+        else if (std::strcmp(state, "BeingCaptured") == 0)
+            result = false; // TODO: track being_captured state if needed
+        else if (std::strcmp(state, "Diving") == 0)
+            result = u->layer() == "Sub" || u->layer() == "Seabed";
+        else if (std::strcmp(state, "Enhancing") == 0)
+            result = u->is_enhancing();
+        else
+            result = u->has_unit_state(state);
     }
     lua_pushboolean(L, result ? 1 : 0);
     return 1;
@@ -648,16 +660,18 @@ static int unit_GetGuardedUnit(lua_State* L) {
     return 1;
 }
 
-// GetFocusUnit(): return the unit this unit is actively building/assisting
+// GetFocusUnit(): return the unit this unit is actively building/assisting/capturing
 static int unit_GetFocusUnit(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || u->build_target_id() == 0) {
-        lua_pushnil(L);
-        return 1;
-    }
+    if (!u) { lua_pushnil(L); return 1; }
+
+    u32 focus_id = u->build_target_id();
+    if (focus_id == 0) focus_id = u->capture_target_id();
+    if (focus_id == 0) { lua_pushnil(L); return 1; }
+
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
-    auto* target = sim->entity_registry().find(u->build_target_id());
+    auto* target = sim->entity_registry().find(focus_id);
     if (!target || target->destroyed() || target->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
@@ -677,6 +691,30 @@ static int unit_SetWorkProgress(lua_State* L) {
     auto* u = check_unit(L);
     if (u) u->set_work_progress(static_cast<f32>(lua_tonumber(L, 2)));
     return 0;
+}
+
+static int unit_IsCapturable(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u ? (u->capturable() ? 1 : 0) : 0);
+    return 1;
+}
+
+static int unit_SetCapturable(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_capturable(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+// GetParent(): returns self (no transport system yet)
+// FA's TransferUnitsOwnership checks unit:GetParent() ~= unit to skip attached
+static int unit_GetParent(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
+    return 1;
 }
 
 // ====================================================================
@@ -1162,6 +1200,290 @@ static int unit_SetRallyPoint(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Toggle / Script Bit helpers
+// ====================================================================
+
+/// Map RULEUTC_* toggle cap name to script bit index (0-8). Returns -1 if unknown.
+static i32 toggle_cap_to_bit(const char* name) {
+    if (std::strcmp(name, "RULEUTC_ShieldToggle") == 0) return 0;
+    if (std::strcmp(name, "RULEUTC_WeaponToggle") == 0) return 1;
+    if (std::strcmp(name, "RULEUTC_JammingToggle") == 0) return 2;
+    if (std::strcmp(name, "RULEUTC_IntelToggle") == 0) return 3;
+    if (std::strcmp(name, "RULEUTC_ProductionToggle") == 0) return 4;
+    if (std::strcmp(name, "RULEUTC_StealthToggle") == 0) return 5;
+    if (std::strcmp(name, "RULEUTC_GenericToggle") == 0) return 6;
+    if (std::strcmp(name, "RULEUTC_SpecialToggle") == 0) return 7;
+    if (std::strcmp(name, "RULEUTC_CloakToggle") == 0) return 8;
+    return -1;
+}
+
+/// Fire OnScriptBitSet(bit) or OnScriptBitClear(bit) Lua callback on a unit.
+static void fire_script_bit_callback(lua_State* L, sim::Unit* u, i32 bit, bool set) {
+    if (!u || u->lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, set ? "OnScriptBitSet" : "OnScriptBitClear");
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl); // self
+        lua_pushnumber(L, static_cast<lua_Number>(bit));
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            spdlog::warn("{} error: {}",
+                         set ? "OnScriptBitSet" : "OnScriptBitClear",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1); // non-function
+    }
+    lua_pop(L, 1); // tbl
+}
+
+// SetScriptBit(self, capNameOrBit, value)
+static int unit_SetScriptBit(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+
+    // Arg 2: string (RULEUTC_* name) or number (bit index)
+    // Use lua_type() not lua_isstring/lua_isnumber — Lua 5.0 coerces numbers↔strings
+    i32 bit = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        bit = static_cast<i32>(lua_tonumber(L, 2));
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        bit = toggle_cap_to_bit(lua_tostring(L, 2));
+    }
+    if (bit < 0 || bit > 8) return 0;
+
+    bool value = lua_toboolean(L, 3) != 0;
+    bool old_value = u->get_script_bit(bit);
+    u->set_script_bit(bit, value);
+
+    // Only fire callback if state actually changed (prevents infinite recursion)
+    if (value != old_value) {
+        fire_script_bit_callback(L, u, bit, value);
+    }
+    return 0;
+}
+
+// GetScriptBit(self, capNameOrBit)
+static int unit_GetScriptBit(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+
+    // Use lua_type() not lua_isstring/lua_isnumber — Lua 5.0 coerces numbers↔strings
+    i32 bit = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        bit = static_cast<i32>(lua_tonumber(L, 2));
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        bit = toggle_cap_to_bit(lua_tostring(L, 2));
+    }
+
+    lua_pushboolean(L, u->get_script_bit(bit) ? 1 : 0);
+    return 1;
+}
+
+// ToggleScriptBit(self, bit)
+static int unit_ToggleScriptBit(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+
+    // Use lua_type() — Lua 5.0 coerces numbers↔strings
+    i32 bit = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        bit = static_cast<i32>(lua_tonumber(L, 2));
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        bit = toggle_cap_to_bit(lua_tostring(L, 2));
+    }
+    if (bit < 0 || bit > 8) return 0;
+
+    u->toggle_script_bit(bit);
+    bool new_value = u->get_script_bit(bit);
+    fire_script_bit_callback(L, u, bit, new_value);
+    return 0;
+}
+
+// AddToggleCap(self, capName)
+static int unit_AddToggleCap(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
+        u->add_toggle_cap(lua_tostring(L, 2));
+    }
+    return 0;
+}
+
+// RemoveToggleCap(self, capName)
+static int unit_RemoveToggleCap(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
+        u->remove_toggle_cap(lua_tostring(L, 2));
+    }
+    return 0;
+}
+
+// TestToggleCaps(self, capName)
+static int unit_TestToggleCaps(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || lua_type(L, 2) != LUA_TSTRING) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, u->has_toggle_cap(lua_tostring(L, 2)) ? 1 : 0);
+    return 1;
+}
+
+// --- Enhancement methods ---
+
+// HasEnhancement(self, enhancementName) → bool
+static int unit_HasEnhancement(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    const char* name = luaL_checkstring(L, 2);
+    lua_pushboolean(L, u->has_enhancement(name) ? 1 : 0);
+    return 1;
+}
+
+// CreateEnhancement(self, enhancementName)
+// moho fallback — FA Lua's CreateEnhancement method handles bones + AddUnitEnhancement
+static int unit_CreateEnhancement(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* name = luaL_checkstring(L, 2);
+
+    // Read Slot from self.Blueprint.Enhancements[name]
+    if (u->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
+        int self_tbl = lua_gettop(L);
+        lua_pushstring(L, "Blueprint");
+        lua_rawget(L, self_tbl);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Enhancements");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, name);
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "Slot");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string slot = lua_tostring(L, -1);
+                        u->add_enhancement(slot, name);
+                    }
+                    lua_pop(L, 1); // Slot
+                }
+                lua_pop(L, 1); // enh entry
+            }
+            lua_pop(L, 1); // Enhancements
+        }
+        lua_pop(L, 1); // Blueprint
+        lua_pop(L, 1); // self_tbl
+    }
+    return 0;
+}
+
+// RemoveSpecifiedEnhancement(self, enhancementName)
+static int unit_RemoveSpecifiedEnhancement(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* name = luaL_checkstring(L, 2);
+    u->remove_enhancement(name);
+    return 0;
+}
+
+// GetResourceConsumed(self) → {mass_fraction, energy_fraction}
+// Returns 1.0 for both (economy stalling not yet implemented)
+static int unit_GetResourceConsumed(lua_State* L) {
+    lua_newtable(L);
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, 1.0);
+    lua_rawset(L, -3);
+    lua_pushnumber(L, 2);
+    lua_pushnumber(L, 1.0);
+    lua_rawset(L, -3);
+    return 1;
+}
+
+// SetImmobile(self, bool)
+static int unit_SetImmobile(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_immobile(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+// IsMobile(self) → bool
+static int unit_IsMobile(lua_State* L) {
+    auto* u = check_unit(L);
+    bool result = false;
+    if (u) result = !u->immobile() && u->max_speed() > 0;
+    lua_pushboolean(L, result ? 1 : 0);
+    return 1;
+}
+
+// SetUnitState(self, stateName, bool)
+static int unit_SetUnitState(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* state = luaL_checkstring(L, 2);
+    bool value = lua_toboolean(L, 3) != 0;
+    u->set_unit_state(state, value);
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Intel system
+// ---------------------------------------------------------------------------
+
+static int unit_InitIntel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    // Args: self, army (ignored — unit knows its army), intel_type, radius
+    const char* intel_type = luaL_checkstring(L, 3);
+    f32 radius = static_cast<f32>(luaL_checknumber(L, 4));
+    u->init_intel(intel_type, radius);
+    return 0;
+}
+
+static int unit_IsIntelEnabled(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    const char* intel_type = luaL_checkstring(L, 2);
+    lua_pushboolean(L, u->is_intel_enabled(intel_type) ? 1 : 0);
+    return 1;
+}
+
+static int unit_GetIntelRadius(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushnumber(L, 0); return 1; }
+    const char* intel_type = luaL_checkstring(L, 2);
+    lua_pushnumber(L, u->get_intel_radius(intel_type));
+    return 1;
+}
+
+static int unit_SetIntelRadius(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* intel_type = luaL_checkstring(L, 2);
+    f32 radius = static_cast<f32>(luaL_checknumber(L, 3));
+    u->set_intel_radius(intel_type, radius);
+    return 0;
+}
+
+static int unit_EnableIntel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* intel_type = luaL_checkstring(L, 2);
+    u->enable_intel(intel_type);
+    return 0;
+}
+
+static int unit_DisableIntel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* intel_type = luaL_checkstring(L, 2);
+    u->disable_intel(intel_type);
+    return 0;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -1187,7 +1509,7 @@ static const MethodEntry unit_methods[] = {
     {"SetBuildRate",                    unit_SetBuildRate},
     // Stubs — state
     {"IsUnitState",                 unit_IsUnitState},
-    {"SetUnitState",                stub_noop},
+    {"SetUnitState",                unit_SetUnitState},
     {"IsIdleState",                 unit_IsIdleState},
     {"GetFireState",                unit_GetFireState},
     {"SetFireState",                unit_SetFireState},
@@ -1209,14 +1531,16 @@ static const MethodEntry unit_methods[] = {
     {"HasValidTeleportDest",        stub_return_false},
     {"GetWorkProgress",             unit_GetWorkProgress},
     {"SetWorkProgress",             unit_SetWorkProgress},
-    // Stubs — intel
-    // NOTE: EnableUnitIntel and DisableUnitIntel are NOT listed here.
-    // They are defined by IntelComponent (defaultcomponents.lua) and would
-    // cause "field is ambiguous between the bases" in ClassUnit if duplicated.
-    {"InitIntel",                   stub_noop},
-    {"IsIntelEnabled",              stub_return_false},
-    {"GetIntelRadius",              stub_return_zero},
-    {"SetIntelRadius",              stub_noop},
+    // Intel — real implementations
+    // NOTE: EnableUnitIntel/DisableUnitIntel (FA Lua IntelComponent methods)
+    // are NOT listed here — they would cause ClassUnit ambiguity.
+    // These are the moho engine methods (EnableIntel/DisableIntel etc.).
+    {"InitIntel",                   unit_InitIntel},
+    {"IsIntelEnabled",              unit_IsIntelEnabled},
+    {"GetIntelRadius",              unit_GetIntelRadius},
+    {"SetIntelRadius",              unit_SetIntelRadius},
+    {"EnableIntel",                 unit_EnableIntel},
+    {"DisableIntel",                unit_DisableIntel},
     // Stubs — shield
     {"EnableShield",                stub_noop},
     {"DisableShield",               stub_noop},
@@ -1229,7 +1553,7 @@ static const MethodEntry unit_methods[] = {
     {"RevertElevation",             stub_noop},
     {"SetElevation",                stub_noop},
     // Stubs — movement
-    {"IsMobile",                    stub_return_true},
+    {"IsMobile",                    unit_IsMobile},
     {"IsMoving",                    unit_IsMoving},
     {"GetNavigator",                unit_GetNavigator},
     {"SetSpeedMult",                stub_noop},
@@ -1262,8 +1586,8 @@ static const MethodEntry unit_methods[] = {
     // Stubs — misc
     {"IsValidTarget",               stub_return_true},
     {"SetIsValidTarget",            stub_noop},
-    {"SetScriptBit",                stub_noop},
-    {"GetScriptBit",                stub_return_false},
+    {"SetScriptBit",                unit_SetScriptBit},
+    {"GetScriptBit",                unit_GetScriptBit},
     {"AddBuildRestriction",         stub_noop},
     {"RemoveBuildRestriction",      stub_noop},
     {"AddOnGivenCallback",          stub_noop},
@@ -1279,17 +1603,21 @@ static const MethodEntry unit_methods[] = {
     {"CanPathToCell",               stub_return_true},
     {"GetAttacker",                 stub_return_nil},
     {"SetReclaimable",              stub_noop},
-    {"SetCapturable",               stub_noop},
+    {"SetCapturable",               unit_SetCapturable},
+    {"IsCapturable",                unit_IsCapturable},
+    {"GetParent",                   unit_GetParent},
     {"SetCanTakeDamage",            stub_noop},
     {"SetCanBeKilled",              stub_noop},
     {"SetUnSelectable",             stub_noop},
     {"SetAutoOvercharge",           stub_noop},
-    {"ToggleScriptBit",             stub_noop},
+    {"ToggleScriptBit",             unit_ToggleScriptBit},
     {"GetAutoOvercharge",           stub_return_false},
     {"SetOverchargePaused",         stub_noop},
-    {"RemoveSpecifiedEnhancement",  stub_noop},
-    {"HasEnhancement",              stub_return_false},
-    {"CreateEnhancement",           stub_noop},
+    {"RemoveSpecifiedEnhancement",  unit_RemoveSpecifiedEnhancement},
+    {"HasEnhancement",              unit_HasEnhancement},
+    {"CreateEnhancement",           unit_CreateEnhancement},
+    {"GetResourceConsumed",         unit_GetResourceConsumed},
+    {"SetImmobile",                 unit_SetImmobile},
     {"GetNumBuildOrders",           unit_GetNumBuildOrders},
     {"SetBuildingUnit",             stub_noop},
     {"GetUnitBeingBuilt",           unit_GetUnitBeingBuilt},
@@ -1298,12 +1626,11 @@ static const MethodEntry unit_methods[] = {
     {"GetFocusUnit",                unit_GetFocusUnit},
     {"RestoreBuildRestrictions",    stub_noop},
     {"SetCreator",                  stub_noop},
-    {"DisableIntel",                stub_noop},
-    {"EnableIntel",                 stub_noop},
     {"OccupyGround",               stub_return_true},
     {"ResetSpeedAndAccel",          stub_noop},
-    {"AddToggleCap",                stub_noop},
-    {"RemoveToggleCap",             stub_noop},
+    {"AddToggleCap",                unit_AddToggleCap},
+    {"RemoveToggleCap",             unit_RemoveToggleCap},
+    {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
     {"SetAmbientSound",             stub_noop},

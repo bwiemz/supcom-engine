@@ -19,28 +19,36 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with unit movement and weapons fire.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, and intel tracking.
 
-**What works today (Milestones 1-22):**
+**What works today (Milestones 1-28):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
 - Entity system: units, props, projectiles with full Lua lifecycle callbacks
 - Economy: per-unit production/consumption, army aggregation, storage
 - Construction: building placement, build progress, factory production, engineer assist
-- Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Build with command queues
+- Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build with command queues
 - Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
 - AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops
-- 22 unit tests, 10 integration test flags (`--ai-test`, `--combat-test`, etc.)
+- Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following
+- Structure upgrades: T1→T2 structure upgrade via build system
+- Capture: engineer captures enemy units, army transfer
+- Toggle system: script bits (shield/weapon/intel/stealth/cloak toggles), dive command, layer changes
+- Enhancement system: ACU/SACU self-upgrades (AdvancedEngineering etc.), OnWorkBegin/OnWorkEnd Lua callbacks
+- Intel system: per-unit radar/sonar/omni/stealth/cloak state tracking, enable/disable/radius queries
+- 22 unit tests, 18 integration test flags (`--ai-test`, `--combat-test`, `--path-test`, etc.)
 
 **What's not yet implemented:**
 
 - Rendering (simulation-only for now — headless tick execution)
-- Pathfinding (units move in straight lines)
 - Networking and multiplayer sync
 - Audio
 - Full UI and input handling
-- Many moho binding stubs (99+ unit methods, entity methods, etc.)
+- Fog of war / radar grid visualization
+- Shield system
+- Transport system
+- Many moho binding stubs (90+ unit methods, entity methods, etc.)
 
 ## Prerequisites
 
@@ -112,11 +120,18 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--economy-test` | Resource income, consumption, storage |
 | `--build-test` | Construction and build progress |
 | `--chain-test` | ACU builds factory, factory builds engineer, engineer builds pgen |
-| `--ai-test` | Full AI base building (16 entities) |
+| `--ai-test` | Full AI base building with guard/assist (16+ entities) |
 | `--reclaim-test` | Prop reclaim system |
 | `--platoon-test` | Platoon creation, commands, disbanding |
 | `--threat-test` | Threat queries and platoon targeting |
 | `--combat-test` | AI army production and HuntAI attack loop |
+| `--repair-test` | Build, damage, and repair a structure |
+| `--upgrade-test` | T1 mex → T2 mex structure upgrade |
+| `--capture-test` | Capture enemy unit and verify army transfer |
+| `--path-test` | A* pathfinding around obstacles |
+| `--toggle-test` | Script bits, toggle caps, and dive command |
+| `--enhance-test` | ACU enhancement (AdvancedEngineering) |
+| `--intel-test` | Intel system (init, enable, disable, radius) |
 
 ## Project Structure
 
@@ -124,8 +139,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 src/
   core/        # Fundamental types (Vector3, numeric aliases)
   vfs/         # Virtual filesystem (.scd/.nx2 archive mounting)
-  map/         # Map loading (.scmap terrain, scenario files)
-  sim/         # Simulation (Entity, Unit, Projectile, Platoon, ArmyBrain, economy)
+  map/         # Map loading (.scmap terrain, scenario files, A* pathfinding)
+  sim/         # Simulation (Entity, Unit, Projectile, Platoon, ArmyBrain, economy, intel)
   lua/         # Lua↔C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   main.cpp     # Entry point, CLI flags, test harnesses

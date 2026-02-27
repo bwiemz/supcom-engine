@@ -1,5 +1,7 @@
 add_library(osc_map STATIC
     heightmap.cpp
+    pathfinding_grid.cpp
+    pathfinder.cpp
     scmap_parser.cpp
     terrain.cpp
 )

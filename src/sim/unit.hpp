@@ -8,14 +8,25 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 struct lua_State;
 
+namespace osc::map {
+class PathfindingGrid;
+}
+
 namespace osc::sim {
 
+struct SimContext;
 class EntityRegistry;
+
+struct IntelState {
+    f32 radius = 0;
+    bool enabled = false;
+};
 
 struct UnitEconomy {
     f64 production_mass = 0.0;
@@ -111,6 +122,30 @@ public:
     i32 fire_state() const { return fire_state_; }
     void set_fire_state(i32 s) { fire_state_ = s; }
 
+    // Script bits (9 toggles, bits 0-8)
+    bool get_script_bit(i32 bit) const {
+        return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
+    }
+    void set_script_bit(i32 bit, bool value) {
+        if (bit < 0 || bit > 8) return;
+        if (value) script_bits_ |= static_cast<u16>(1u << bit);
+        else       script_bits_ &= static_cast<u16>(~(1u << bit));
+    }
+    void toggle_script_bit(i32 bit) {
+        if (bit >= 0 && bit <= 8)
+            script_bits_ ^= static_cast<u16>(1u << bit);
+    }
+
+    // Toggle caps (which RULEUTC_* toggles this unit supports)
+    bool has_toggle_cap(const std::string& cap) const {
+        return toggle_caps_.count(cap) > 0;
+    }
+    void add_toggle_cap(const std::string& cap) { toggle_caps_.insert(cap); }
+    void remove_toggle_cap(const std::string& cap) { toggle_caps_.erase(cap); }
+
+    // Layer change with Lua OnLayerChange(new, old) callback
+    void set_layer_with_callback(const std::string& new_layer, lua_State* L);
+
     // Threat levels (cached from blueprint Defense at creation time)
     f32 surface_threat() const { return surface_threat_; }
     f32 air_threat() const { return air_threat_; }
@@ -128,14 +163,21 @@ public:
     void push_command(const UnitCommand& cmd, bool clear_existing);
     void clear_commands();
 
+    // Footprint (from blueprint, for pathfinding obstacle marking)
+    f32 footprint_size_x() const { return footprint_size_x_; }
+    f32 footprint_size_z() const { return footprint_size_z_; }
+    void set_footprint_size(f32 sx, f32 sz) { footprint_size_x_ = sx; footprint_size_z_ = sz; }
+
     /// Per-tick update: process command queue + movement + weapons.
-    void update(f64 dt, EntityRegistry& registry, lua_State* L);
+    void update(f64 dt, SimContext& ctx);
 
     /// Build helpers called from update()
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
-    bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L);
-    void finish_build(EntityRegistry& registry, lua_State* L, bool success);
+    bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
+                         map::PathfindingGrid* grid = nullptr);
+    void finish_build(EntityRegistry& registry, lua_State* L, bool success,
+                      map::PathfindingGrid* grid = nullptr);
 
     /// Assist helpers (Guard command)
     void stop_assisting();
@@ -147,6 +189,53 @@ public:
     void stop_reclaiming();
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
     bool progress_reclaim_assist(f64 dt, EntityRegistry& registry);
+
+    /// Repair helpers
+    u32 repair_target_id() const { return repair_target_id_; }
+    bool is_repairing() const { return repair_target_id_ != 0; }
+    bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
+    bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L);
+    void stop_repairing(lua_State* L, EntityRegistry& registry);
+
+    /// Capture helpers
+    u32 capture_target_id() const { return capture_target_id_; }
+    bool is_capturing() const { return capture_target_id_ != 0; }
+    bool capturable() const { return capturable_; }
+    void set_capturable(bool c) { capturable_ = c; }
+    bool start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
+    bool progress_capture(f64 dt, EntityRegistry& registry, lua_State* L);
+    void stop_capturing(lua_State* L, EntityRegistry& registry, bool failed);
+
+    /// Enhancement helpers
+    bool has_enhancement(const std::string& enh) const;
+    void add_enhancement(const std::string& slot, const std::string& enh);
+    void remove_enhancement(const std::string& enh);
+    const std::unordered_map<std::string, std::string>& enhancements() const { return enhancements_; }
+    bool is_enhancing() const { return enhancing_; }
+    const std::string& enhance_name() const { return enhance_name_; }
+    bool start_enhance(const UnitCommand& cmd, lua_State* L);
+    bool progress_enhance(f64 dt, lua_State* L);
+    void finish_enhance(lua_State* L);
+    void cancel_enhance(lua_State* L);
+
+    // Immobile flag (set during enhancement)
+    bool immobile() const { return immobile_; }
+    void set_immobile(bool b) { immobile_ = b; }
+
+    // Unit states (generic string-based state tracking)
+    bool has_unit_state(const std::string& state) const { return unit_states_.count(state) > 0; }
+    void set_unit_state(const std::string& state, bool v) {
+        if (v) unit_states_.insert(state);
+        else   unit_states_.erase(state);
+    }
+
+    // Intel system (per-type enabled/disabled + radius)
+    bool is_intel_enabled(const std::string& type) const;
+    f32 get_intel_radius(const std::string& type) const;
+    void init_intel(const std::string& type, f32 radius);
+    void enable_intel(const std::string& type);
+    void disable_intel(const std::string& type);
+    void set_intel_radius(const std::string& type, f32 radius);
 
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
@@ -170,13 +259,34 @@ private:
     f32 work_progress_ = 0.0f;
     u32 reclaim_target_id_ = 0;   // entity ID being reclaimed
     f32 reclaim_rate_ = 0;        // fraction_complete decrease per second
+    u32 repair_target_id_ = 0;    // entity ID of unit being repaired
+    f64 repair_build_time_ = 0;   // target's Economy.BuildTime
+    f64 repair_cost_mass_ = 0;    // target's Economy.BuildCostMass
+    f64 repair_cost_energy_ = 0;  // target's Economy.BuildCostEnergy
+    u32 capture_target_id_ = 0;   // entity ID of unit being captured
+    f64 capture_time_ = 0;        // total seconds to capture
+    f64 capture_energy_cost_ = 0; // total energy drain
+    bool capturable_ = true;      // can this unit be captured?
+    f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
+    f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
     bool busy_ = false;
     bool block_command_queue_ = false;
     i32 fire_state_ = 0;         // 0=ReturnFire, 1=HoldFire, 2=HoldGround
+    u16 script_bits_ = 0;        // 9 toggle bits (0-8)
+    std::unordered_set<std::string> toggle_caps_; // RULEUTC_* toggle capabilities
     f32 surface_threat_ = 0;
     f32 air_threat_ = 0;
     f32 sub_threat_ = 0;
     f32 economy_threat_ = 0;
+    // Enhancement system
+    std::unordered_map<std::string, std::string> enhancements_; // slot → enh name
+    bool enhancing_ = false;
+    f64 enhance_build_time_ = 0;
+    std::string enhance_name_;
+    bool immobile_ = false;
+    std::unordered_set<std::string> unit_states_; // generic string-based states
+    // Intel system
+    std::unordered_map<std::string, IntelState> intel_states_;
 };
 
 } // namespace osc::sim

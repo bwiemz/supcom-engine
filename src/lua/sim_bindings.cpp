@@ -328,6 +328,49 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
             lua_pop(L, 2);
         }
+
+        // Footprint.SizeX / SizeZ (for pathfinding obstacle marking)
+        {
+            store->push_lua_table(*entry);
+            lua_pushstring(L, "Footprint");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                f32 sx = 0, sz = 0;
+                lua_pushstring(L, "SizeX");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) sx = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "SizeZ");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) sz = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                unit->set_footprint_size(sx, sz);
+            }
+            lua_pop(L, 2);
+        }
+
+        // Physics.MotionType → layer override (for pathfinding)
+        {
+            store->push_lua_table(*entry);
+            lua_pushstring(L, "Physics");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "MotionType");
+                lua_gettable(L, -2);
+                if (lua_isstring(L, -1)) {
+                    std::string mt = lua_tostring(L, -1);
+                    if (mt == "RULEUMT_Air") unit->set_layer("Air");
+                    else if (mt == "RULEUMT_Water" || mt == "RULEUMT_SurfacingSub"
+                             || mt == "RULEUMT_Hover")
+                        unit->set_layer("Water");
+                    else if (mt == "RULEUMT_Amphibious" || mt == "RULEUMT_AmphibiousFloating")
+                        unit->set_layer("Land"); // amphibious defaults to Land
+                    // else keep default "Land"
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2);
+        }
     }
 
     u32 id = sim->entity_registry().register_entity(std::move(unit));
@@ -2166,6 +2209,130 @@ static int l_IssueGuard(lua_State* L) {
     return 0;
 }
 
+// IssueRepair(units_table, target_entity)
+static int l_IssueRepair(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) return 0;
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Repair;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueCapture(units_table, target)
+static int l_IssueCapture(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) return 0;
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Capture;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+static int l_IssueDive(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Dive;
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// ChangeUnitArmy(unit, toArmy [, noRestrictions])
+static int l_ChangeUnitArmy(lua_State* L) {
+    // Arg 1: unit Lua table
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return 0; }
+    auto* unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!unit || unit->destroyed()) return 0;
+
+    // Arg 2: toArmy (1-based Lua army index)
+    int to_army_lua = static_cast<int>(luaL_checknumber(L, 2));
+    int to_army_cpp = to_army_lua - 1; // 0-based for C++
+
+    spdlog::info("ChangeUnitArmy: entity #{} from army {} to army {}",
+                 unit->entity_id(), unit->army(), to_army_cpp);
+
+    // Change army on C++ side
+    unit->set_army(to_army_cpp);
+
+    // Update Army field on Lua table
+    lua_pushstring(L, "Army");
+    lua_pushnumber(L, to_army_lua);
+    lua_rawset(L, 1);
+
+    // Update Brain field: ArmyBrains[toArmy]
+    lua_pushstring(L, "ArmyBrains");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_rawgeti(L, -1, to_army_lua);
+        if (!lua_isnil(L, -1)) {
+            lua_pushstring(L, "Brain");
+            lua_pushvalue(L, -2); // brain table
+            lua_rawset(L, 1);    // unit_table.Brain = brain
+        }
+        lua_pop(L, 1); // brain
+    }
+    lua_pop(L, 1); // ArmyBrains
+
+    // Return the unit's Lua table (same entity, new army)
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// IssueUpgrade(units_table, blueprintId)
+static int l_IssueUpgrade(lua_State* L) {
+    const char* bp_id = luaL_checkstring(L, 2);
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Upgrade;
+    cmd.blueprint_id = bp_id;
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueEnhancement(units_table, enhancementName)
+static int l_IssueEnhancement(lua_State* L) {
+    const char* enh_name = luaL_checkstring(L, 2);
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Enhance;
+    cmd.blueprint_id = enh_name;
+
+    struct Ctx { sim::UnitCommand cmd; lua_State* L; };
+    Ctx ctx{cmd, L};
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        auto* ec = static_cast<Ctx*>(c);
+        // Cancel any in-progress enhancement before clearing queue
+        if (u->is_enhancing()) {
+            u->cancel_enhance(ec->L);
+        }
+        u->push_command(ec->cmd, true);
+    }, &ctx);
+    return 0;
+}
+
 // IssueBuildMobile(units_table, position, blueprintId, {})
 static int l_IssueBuildMobile(lua_State* L) {
     auto target_pos = extract_position(L, 2);
@@ -2655,7 +2822,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyOutOfGame", l_SetArmyOutOfGame);
     state.register_function("SetArmyEconomy", l_SetArmyEconomy);
     state.register_function("SetArmyColor", l_SetArmyColor);
-    state.register_function("ChangeUnitArmy", stub_noop);
+    state.register_function("ChangeUnitArmy", l_ChangeUnitArmy);
     state.register_function("AddBuildRestriction", stub_noop);
     state.register_function("RemoveBuildRestriction", stub_noop);
     state.register_function("SetArmyShowScore", stub_noop);
@@ -2671,9 +2838,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssuePatrol", l_IssuePatrol);
     state.register_function("IssueAttack", l_IssueAttack);
     state.register_function("IssueGuard", l_IssueGuard);
-    state.register_function("IssueCapture", l_IssueCommand);
+    state.register_function("IssueCapture", l_IssueCapture);
     state.register_function("IssueReclaim", l_IssueReclaim);
-    state.register_function("IssueRepair", l_IssueCommand);
+    state.register_function("IssueRepair", l_IssueRepair);
     state.register_function("IssueBuildFactory", l_IssueBuildFactory);
     state.register_function("IssueBuildMobile", l_IssueBuildMobile);
     state.register_function("IssueBuildAllMobile", l_IssueBuildMobile);
@@ -2691,9 +2858,11 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueOvercharge", l_IssueCommand);
     state.register_function("IssueSacrifice", l_IssueCommand);
     state.register_function("IssueTeleport", l_IssueCommand);
-    state.register_function("IssueUpgrade", l_IssueCommand);
+    state.register_function("IssueUpgrade", l_IssueUpgrade);
     state.register_function("IssuePause", l_IssueCommand);
     state.register_function("IssueScript", l_IssueCommand);
+    state.register_function("IssueDive", l_IssueDive);
+    state.register_function("IssueEnhancement", l_IssueEnhancement);
 
     // Spatial queries
     state.register_function("GetUnitsInRect", l_GetUnitsInRect);

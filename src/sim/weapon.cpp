@@ -18,6 +18,8 @@ void Weapon::update(f64 dt, Unit& owner, EntityRegistry& registry,
                     lua_State* L) {
     if (!enabled || fire_on_death || manual_fire) return;
     if (max_range <= 0 || damage <= 0) return;
+    // HoldFire (1) = don't auto-target or fire at all
+    if (owner.fire_state() == 1) return;
 
     // Tick cooldown
     fire_cooldown = std::max(0.0f, fire_cooldown - static_cast<f32>(dt));

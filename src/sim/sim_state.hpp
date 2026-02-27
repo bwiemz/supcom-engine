@@ -15,13 +15,25 @@ class BlueprintStore;
 
 namespace osc::map {
 class Terrain;
+class PathfindingGrid;
+class Pathfinder;
 }
 
 namespace osc::sim {
 
+/// Lightweight context passed to Unit::update() each tick.
+struct SimContext {
+    EntityRegistry& registry;
+    lua_State* L;
+    const map::Terrain* terrain;
+    const map::Pathfinder* pathfinder;
+    map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
+};
+
 class SimState {
 public:
     SimState(lua_State* L, blueprints::BlueprintStore* store);
+    ~SimState();
 
     EntityRegistry& entity_registry() { return entity_registry_; }
     const EntityRegistry& entity_registry() const { return entity_registry_; }
@@ -30,9 +42,12 @@ public:
 
     blueprints::BlueprintStore* blueprint_store() { return blueprint_store_; }
 
-    // Terrain
+    // Terrain & Pathfinding
     void set_terrain(std::unique_ptr<map::Terrain> terrain);
     map::Terrain* terrain() const { return terrain_.get(); }
+    void build_pathfinding_grid();
+    map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
+    const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
 
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
@@ -72,6 +87,8 @@ private:
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;
     std::unique_ptr<map::Terrain> terrain_;
+    std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
+    std::unique_ptr<map::Pathfinder> pathfinder_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;

@@ -234,6 +234,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
         std::move(heightmap), water_elev, scmap.has_water);
 
     sim.set_terrain(std::move(terrain));
+    sim.build_pathfinding_grid();
 
     return meta;
 }
