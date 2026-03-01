@@ -77,6 +77,7 @@ public:
     f64 get_economy_requested(const std::string& resource_type) const;
     f64 get_economy_stored(const std::string& resource_type) const;
     f64 get_economy_stored_ratio(const std::string& resource_type) const;
+    f64 get_economy_usage(const std::string& resource_type) const;
     f64 get_economy_trend(const std::string& resource_type) const;
 
     /// Per-tick economy update: sum unit production/consumption, update stored.

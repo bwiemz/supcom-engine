@@ -175,13 +175,15 @@ public:
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
     bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                         map::PathfindingGrid* grid = nullptr);
+                         map::PathfindingGrid* grid = nullptr,
+                         f32 efficiency = 1.0f);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
 
     /// Assist helpers (Guard command)
     void stop_assisting();
-    bool progress_build_assist(f64 dt, EntityRegistry& registry);
+    bool progress_build_assist(f64 dt, EntityRegistry& registry,
+                                f32 efficiency = 1.0f);
 
     /// Reclaim helpers
     u32 reclaim_target_id() const { return reclaim_target_id_; }
@@ -194,7 +196,8 @@ public:
     u32 repair_target_id() const { return repair_target_id_; }
     bool is_repairing() const { return repair_target_id_ != 0; }
     bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
-    bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L);
+    bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
+                          f32 efficiency = 1.0f);
     void stop_repairing(lua_State* L, EntityRegistry& registry);
 
     /// Capture helpers
@@ -203,7 +206,8 @@ public:
     bool capturable() const { return capturable_; }
     void set_capturable(bool c) { capturable_ = c; }
     bool start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
-    bool progress_capture(f64 dt, EntityRegistry& registry, lua_State* L);
+    bool progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
+                           f32 efficiency = 1.0f);
     void stop_capturing(lua_State* L, EntityRegistry& registry, bool failed);
 
     /// Enhancement helpers
@@ -214,7 +218,7 @@ public:
     bool is_enhancing() const { return enhancing_; }
     const std::string& enhance_name() const { return enhance_name_; }
     bool start_enhance(const UnitCommand& cmd, lua_State* L);
-    bool progress_enhance(f64 dt, lua_State* L);
+    bool progress_enhance(f64 dt, lua_State* L, f32 efficiency = 1.0f);
     void finish_enhance(lua_State* L);
     void cancel_enhance(lua_State* L);
 

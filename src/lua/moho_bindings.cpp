@@ -994,45 +994,8 @@ static int unit_GetCommandQueue(lua_State* L) {
 
 // unit:GetBlip(armyIndex) → blip table or nil
 // Returns nil if the entity has never been seen by the requesting army.
-static int unit_GetBlip(lua_State* L) {
-    auto* e = check_entity(L);
-    if (!e || e->destroyed()) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    // Get requesting army (1-based Lua → 0-based C++)
-    int req_army = -1;
-    if (lua_isnumber(L, 2))
-        req_army = static_cast<int>(lua_tonumber(L, 2)) - 1;
-
-    // Fog-of-war check: if requesting army != own army, must have any intel
-    if (req_army >= 0 && req_army != e->army()) {
-        auto* sim = get_sim(L);
-        auto* vg = sim ? sim->visibility_grid() : nullptr;
-        if (vg) {
-            auto& pos = e->position();
-            auto ra = static_cast<osc::u32>(req_army);
-            bool can_see = vg->ever_seen(pos.x, pos.z, ra) ||
-                           vg->has_radar(pos.x, pos.z, ra) ||
-                           vg->has_sonar(pos.x, pos.z, ra) ||
-                           vg->has_omni(pos.x, pos.z, ra);
-            if (!can_see) {
-                lua_pushnil(L);
-                return 1;
-            }
-        }
-    }
-
-    // Create blip table: { _c_object = lightuserdata(entity) }
-    lua_newtable(L);
-    int blip_tbl = lua_gettop(L);
-
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, e);
-    lua_rawset(L, blip_tbl);
-
-    // Set cached __osc_blip_mt metatable
+/// Helper: set cached __osc_blip_mt metatable on a blip table at stack top.
+static void set_blip_metatable(lua_State* L, int blip_tbl) {
     lua_pushstring(L, "__osc_blip_mt");
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
@@ -1058,7 +1021,89 @@ static int unit_GetBlip(lua_State* L) {
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     lua_setmetatable(L, blip_tbl);
+}
 
+/// Helper: build a blip table with _c_object, _c_entity_id, _c_req_army.
+static void push_blip_table(lua_State* L, sim::Entity* e, osc::u32 entity_id,
+                             osc::i32 req_army) {
+    lua_newtable(L);
+    int blip_tbl = lua_gettop(L);
+
+    if (e) {
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, e);
+        lua_rawset(L, blip_tbl);
+    }
+    lua_pushstring(L, "_c_entity_id");
+    lua_pushnumber(L, static_cast<lua_Number>(entity_id));
+    lua_rawset(L, blip_tbl);
+    lua_pushstring(L, "_c_req_army");
+    lua_pushnumber(L, static_cast<lua_Number>(req_army));
+    lua_rawset(L, blip_tbl);
+
+    set_blip_metatable(L, blip_tbl);
+}
+
+static int unit_GetBlip(lua_State* L) {
+    auto* e = check_entity(L);
+
+    // Get requesting army (1-based Lua → 0-based C++)
+    int req_army = -1;
+    if (lua_isnumber(L, 2))
+        req_army = static_cast<int>(lua_tonumber(L, 2)) - 1;
+
+    // --- Case 1: entity alive and not destroyed ---
+    if (e && !e->destroyed()) {
+        // Own army always gets blip
+        if (req_army < 0 || req_army == e->army()) {
+            push_blip_table(L, e, e->entity_id(), req_army);
+            return 1;
+        }
+
+        auto* sim = get_sim(L);
+        auto ra = static_cast<osc::u32>(req_army);
+
+        // Check if army has any current intel or blip cache entry
+        if (sim && sim->visibility_grid()) {
+            bool has_intel = sim->has_any_intel(e, ra);
+            // Blip cache entry means this entity was previously visible
+            // (dead-reckoning — blip methods return cached position)
+            bool has_cache = sim->get_blip_snapshot(e->entity_id(), ra) != nullptr;
+
+            if (has_intel || has_cache) {
+                // Return blip — blip methods handle dead-reckoning position
+                push_blip_table(L, e, e->entity_id(), req_army);
+                return 1;
+            }
+        }
+
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // --- Case 2: entity destroyed — check blip cache for dead-reckoning ---
+    if (req_army < 0) { lua_pushnil(L); return 1; }
+
+    // Read EntityId from the Lua table (arg 1) since C++ entity is gone
+    osc::u32 entity_id = 0;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "EntityId");
+        lua_rawget(L, 1);
+        if (lua_isnumber(L, -1))
+            entity_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    if (entity_id == 0) { lua_pushnil(L); return 1; }
+
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    auto* snap = sim->get_blip_snapshot(entity_id,
+                                         static_cast<osc::u32>(req_army));
+    if (!snap) { lua_pushnil(L); return 1; }
+
+    // Return dead-reckoning blip (no live entity pointer)
+    push_blip_table(L, nullptr, entity_id, req_army);
     return 1;
 }
 
@@ -1527,16 +1572,27 @@ static int unit_RemoveSpecifiedEnhancement(lua_State* L) {
     return 0;
 }
 
-// GetResourceConsumed(self) → {mass_fraction, energy_fraction}
-// Returns 1.0 for both (economy stalling not yet implemented)
+// GetResourceConsumed(self) → number
+// Returns min(mass_efficiency, energy_efficiency) for the unit's army.
+// FA Lua does arithmetic on this value (e.g. `obtained * SecondsPerTick()`).
 static int unit_GetResourceConsumed(lua_State* L) {
-    lua_newtable(L);
-    lua_pushnumber(L, 1);
-    lua_pushnumber(L, 1.0);
-    lua_rawset(L, -3);
-    lua_pushnumber(L, 2);
-    lua_pushnumber(L, 1.0);
-    lua_rawset(L, -3);
+    auto* u = check_unit(L);
+    if (!u || u->army() < 0) {
+        lua_pushnumber(L, 1.0);
+        return 1;
+    }
+    auto* sim = get_sim(L);
+    if (!sim) {
+        lua_pushnumber(L, 1.0);
+        return 1;
+    }
+    auto* brain = sim->get_army(u->army());
+    if (!brain) {
+        lua_pushnumber(L, 1.0);
+        return 1;
+    }
+    f64 eff = std::min(brain->mass_efficiency(), brain->energy_efficiency());
+    lua_pushnumber(L, eff);
     return 1;
 }
 
@@ -2246,12 +2302,11 @@ static int brain_GetEconomyRequested(lua_State* L) {
     return 1;
 }
 
-// GetEconomyUsage = actual consumption (capped to income when stalling).
-// For now without stalling logic, return same as requested.
+// GetEconomyUsage = actual consumption (capped by available resources).
 static int brain_GetEconomyUsage(lua_State* L) {
     auto* brain = check_brain(L);
     const char* res = luaL_checkstring(L, 2);
-    lua_pushnumber(L, brain ? brain->get_economy_requested(res) : 0.0);
+    lua_pushnumber(L, brain ? brain->get_economy_usage(res) : 0.0);
     return 1;
 }
 
@@ -3885,6 +3940,69 @@ static sim::Entity* check_blip_entity(lua_State* L) {
     return entity;
 }
 
+/// Read _c_entity_id from blip table (arg 1).
+static u32 get_blip_entity_id(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_c_entity_id");
+    lua_rawget(L, 1);
+    u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+    return id;
+}
+
+/// Read _c_req_army from blip table (arg 1). Returns 0-based army, -1 if absent.
+static i32 get_blip_req_army(lua_State* L) {
+    if (!lua_istable(L, 1)) return -1;
+    lua_pushstring(L, "_c_req_army");
+    lua_rawget(L, 1);
+    i32 army = lua_isnumber(L, -1) ? static_cast<i32>(lua_tonumber(L, -1)) : -1;
+    lua_pop(L, 1);
+    return army;
+}
+
+// --- Blip methods (dead-reckoning + stealth-aware) ---
+
+static int blip_GetPosition(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (e && !e->destroyed()) {
+        // Entity alive — check if requesting army has current intel
+        i32 req_army = get_blip_req_army(L);
+        if (req_army >= 0 && req_army != e->army()) {
+            auto* sim = get_sim(L);
+            if (sim && sim->has_any_intel(e, static_cast<u32>(req_army))) {
+                push_vector3(L, e->position());
+            } else {
+                // Dead-reckoning: return cached position
+                u32 eid = e->entity_id();
+                auto* snap = sim ? sim->get_blip_snapshot(
+                    eid, static_cast<u32>(req_army)) : nullptr;
+                if (snap)
+                    push_vector3(L, snap->last_known_position);
+                else
+                    push_vector3(L, e->position()); // fallback
+            }
+        } else {
+            push_vector3(L, e->position()); // own army sees real position
+        }
+    } else {
+        // Entity destroyed — use blip cache
+        u32 eid = get_blip_entity_id(L);
+        i32 req_army = get_blip_req_army(L);
+        auto* sim = get_sim(L);
+        if (sim && req_army >= 0) {
+            auto* snap = sim->get_blip_snapshot(eid,
+                                                 static_cast<u32>(req_army));
+            if (snap)
+                push_vector3(L, snap->last_known_position);
+            else
+                push_vector3(L, {0, 0, 0});
+        } else {
+            push_vector3(L, {0, 0, 0});
+        }
+    }
+    return 1;
+}
+
 static int blip_IsSeenNow(lua_State* L) {
     auto* e = check_blip_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
@@ -3908,11 +4026,10 @@ static int blip_IsOnRadar(lua_State* L) {
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
+    if (sim && army >= 0) {
+        // Stealth-aware: RadarStealth negates radar unless observer has Omni
         lua_pushboolean(
-            L, sim->visibility_grid()->has_radar(pos.x, pos.z,
-                                                 static_cast<u32>(army)) ? 1 : 0);
+            L, sim->has_effective_radar(e, static_cast<u32>(army)) ? 1 : 0);
     } else {
         lua_pushboolean(L, 0);
     }
@@ -3925,11 +4042,10 @@ static int blip_IsOnSonar(lua_State* L) {
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
+    if (sim && army >= 0) {
+        // Stealth-aware: SonarStealth negates sonar unless observer has Omni
         lua_pushboolean(
-            L, sim->visibility_grid()->has_sonar(pos.x, pos.z,
-                                                 static_cast<u32>(army)) ? 1 : 0);
+            L, sim->has_effective_sonar(e, static_cast<u32>(army)) ? 1 : 0);
     } else {
         lua_pushboolean(L, 0);
     }
@@ -3955,7 +4071,20 @@ static int blip_IsOnOmni(lua_State* L) {
 
 static int blip_IsSeenEver(lua_State* L) {
     auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    if (!e || e->destroyed()) {
+        // Destroyed entity — if we have a blip cache entry, it was seen
+        u32 eid = get_blip_entity_id(L);
+        i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                      : -1;
+        auto* sim = get_sim(L);
+        if (sim && army >= 0) {
+            auto* snap = sim->get_blip_snapshot(eid, static_cast<u32>(army));
+            lua_pushboolean(L, snap ? 1 : 0);
+        } else {
+            lua_pushboolean(L, 0);
+        }
+        return 1;
+    }
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
@@ -3964,6 +4093,56 @@ static int blip_IsSeenEver(lua_State* L) {
         lua_pushboolean(
             L, sim->visibility_grid()->ever_seen(pos.x, pos.z,
                                                  static_cast<u32>(army)) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int blip_IsMaybeDead(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed()) {
+        lua_pushboolean(L, 1); // entity dead → definitely maybe dead
+        return 1;
+    }
+    // Entity alive — check if requesting army has current intel
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    if (army >= 0 && army == e->army()) {
+        lua_pushboolean(L, 0); // own army always knows
+        return 1;
+    }
+    auto* sim = get_sim(L);
+    if (sim && army >= 0) {
+        bool has_intel = sim->has_any_intel(e, static_cast<u32>(army));
+        lua_pushboolean(L, has_intel ? 0 : 1);
+    } else {
+        lua_pushboolean(L, 1);
+    }
+    return 1;
+}
+
+static int blip_IsKnownFake(lua_State* L) {
+    auto* e = check_blip_entity(L);
+    if (!e || e->destroyed() || !e->is_unit()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    // A unit is "known fake" if it has Jammer intel enabled AND the
+    // requesting army has Omni coverage at the unit's position
+    auto* unit = static_cast<sim::Unit*>(e);
+    if (!unit->is_intel_enabled("Jammer")) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
+                                  : -1;
+    auto* sim = get_sim(L);
+    if (sim && sim->visibility_grid() && army >= 0) {
+        auto& pos = e->position();
+        lua_pushboolean(
+            L, sim->visibility_grid()->has_omni(pos.x, pos.z,
+                                                static_cast<u32>(army)) ? 1 : 0);
     } else {
         lua_pushboolean(L, 0);
     }
@@ -3982,42 +4161,95 @@ static int blip_GetSource(lua_State* L) {
 
 static int blip_GetBlueprint(lua_State* L) {
     auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
+    std::string bp_id;
+    if (e && !e->destroyed()) {
+        bp_id = e->blueprint_id();
+    } else {
+        // Entity destroyed — use blip cache
+        u32 eid = get_blip_entity_id(L);
+        i32 req_army = get_blip_req_army(L);
+        auto* sim = get_sim(L);
+        if (sim && req_army >= 0) {
+            auto* snap = sim->get_blip_snapshot(eid,
+                                                 static_cast<u32>(req_army));
+            if (snap) bp_id = snap->blueprint_id;
+        }
+    }
+    if (bp_id.empty()) { lua_pushnil(L); return 1; }
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
-        lua_pushstring(L, e->blueprint_id().c_str());
+        lua_pushstring(L, bp_id.c_str());
         lua_rawget(L, -2);
         lua_remove(L, -2); // remove __blueprints table
+    } else {
+        lua_pop(L, 1);
+        lua_pushnil(L);
     }
     return 1;
 }
 
 static int blip_GetArmy(lua_State* L) {
     auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushnumber(L, -1); return 1; }
-    lua_pushnumber(L, e->army() >= 0 ? e->army() + 1 : -1); // 1-based for Lua
+    if (e && !e->destroyed()) {
+        lua_pushnumber(L, e->army() >= 0 ? e->army() + 1 : -1);
+        return 1;
+    }
+    // Entity destroyed — use blip cache
+    u32 eid = get_blip_entity_id(L);
+    i32 req_army = get_blip_req_army(L);
+    auto* sim = get_sim(L);
+    if (sim && req_army >= 0) {
+        auto* snap = sim->get_blip_snapshot(eid, static_cast<u32>(req_army));
+        if (snap && snap->entity_army >= 0) {
+            lua_pushnumber(L, snap->entity_army + 1);
+            return 1;
+        }
+    }
+    lua_pushnumber(L, -1);
     return 1;
 }
 
 static int blip_GetAIBrain(lua_State* L) {
     auto* e = check_blip_entity(L);
-    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
-    auto* sim = get_sim(L);
-    if (sim) {
-        auto* brain = sim->get_army(e->army());
-        if (brain && brain->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
-            return 1;
+    i32 army = -1;
+    if (e && !e->destroyed()) {
+        army = e->army();
+    } else {
+        u32 eid = get_blip_entity_id(L);
+        i32 req_army = get_blip_req_army(L);
+        auto* sim = get_sim(L);
+        if (sim && req_army >= 0) {
+            auto* snap = sim->get_blip_snapshot(eid,
+                                                 static_cast<u32>(req_army));
+            if (snap) army = snap->entity_army;
         }
     }
-    lua_pushnil(L);
+    if (army < 0) { lua_pushnil(L); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* brain = sim->get_army(army);
+    if (!brain || brain->lua_table_ref() < 0) { lua_pushnil(L); return 1; }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
     return 1;
 }
 
 static int blip_BeenDestroyed(lua_State* L) {
     auto* e = check_blip_entity(L);
-    lua_pushboolean(L, (!e || e->destroyed()) ? 1 : 0);
+    if (e && !e->destroyed()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    // Entity pointer gone — check blip cache
+    u32 eid = get_blip_entity_id(L);
+    i32 req_army = get_blip_req_army(L);
+    auto* sim = get_sim(L);
+    if (sim && req_army >= 0) {
+        auto* snap = sim->get_blip_snapshot(eid, static_cast<u32>(req_army));
+        lua_pushboolean(L, (snap && snap->entity_dead) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 1); // no data → assume dead
+    }
     return 1;
 }
 
@@ -4029,12 +4261,12 @@ static const MethodEntry blip_methods[] = {
     {"IsSeenEver",       blip_IsSeenEver},
     {"IsSeenNow",        blip_IsSeenNow},
     {"GetBlueprint",     blip_GetBlueprint},
-    {"GetPosition",      entity_GetPosition},
+    {"GetPosition",      blip_GetPosition},
     {"GetArmy",          blip_GetArmy},
     {"GetAIBrain",       blip_GetAIBrain},
     {"BeenDestroyed",    blip_BeenDestroyed},
-    {"IsKnownFake",      stub_return_false},
-    {"IsMaybeDead",      stub_return_false},
+    {"IsKnownFake",      blip_IsKnownFake},
+    {"IsMaybeDead",      blip_IsMaybeDead},
     {nullptr, nullptr},
 };
 

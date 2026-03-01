@@ -7,6 +7,8 @@
 
 namespace osc::map {
 
+class Terrain;
+
 /// Bit flags for per-army per-cell visibility state.
 enum class VisFlag : u8 {
     None     = 0,
@@ -38,6 +40,7 @@ class VisibilityGrid {
 public:
     static constexpr u32 CELL_SIZE = 16;
     static constexpr u32 MAX_ARMIES = 16;
+    static constexpr f32 EYE_OFFSET = 2.0f;
 
     VisibilityGrid(u32 map_width, u32 map_height);
 
@@ -54,6 +57,14 @@ public:
     /// Paint a circle of the given flag for the given army.
     /// If flag includes Vision, also sets EverSeen on affected cells.
     void paint_circle(u32 army, f32 wx, f32 wz, f32 radius, VisFlag flag);
+
+    /// Paint Vision with terrain line-of-sight occlusion.
+    /// eye_height = terrain_height(unit_pos) + EYE_OFFSET.
+    void paint_circle_los(u32 army, f32 wx, f32 wz, f32 radius, f32 eye_height);
+
+    /// Pre-compute terrain height at each grid cell center.
+    /// Must be called once after construction, before paint_circle_los.
+    void build_height_grid(const Terrain& terrain);
 
     /// OR all flags from army src into army dst (for alliance sharing).
     void merge_armies(u32 dst, u32 src);
@@ -74,8 +85,15 @@ private:
     u32 map_width_;
     u32 map_height_;
 
+    /// Bresenham LOS check: returns true if target cell is visible from source.
+    bool check_los(u32 src_gx, u32 src_gz, u32 tgt_gx, u32 tgt_gz,
+                   f32 eye_height) const;
+
     // cells_[army][gz * grid_width_ + gx]
     std::array<std::vector<VisFlag>, MAX_ARMIES> cells_;
+
+    // Pre-sampled terrain height at each cell center
+    std::vector<f32> height_grid_;
 };
 
 } // namespace osc::map

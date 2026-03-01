@@ -61,6 +61,13 @@ void Unit::update(f64 dt, SimContext& ctx) {
         return; // Skip commands and weapons while loaded
     }
 
+    // Compute economy efficiency for this unit's army
+    f32 econ_eff = 1.0f;
+    if (army() >= 0 && static_cast<u32>(army()) < SimContext::MAX_EFFICIENCY_ARMIES) {
+        const auto& ae = ctx.army_efficiency[static_cast<u32>(army())];
+        econ_eff = static_cast<f32>(std::min(ae.mass, ae.energy));
+    }
+
     // Process head command
     while (!command_queue_.empty()) {
         auto& cmd = command_queue_.front();
@@ -149,7 +156,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 }
             }
             // Phase 3: Progress the build
-            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -164,7 +171,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     continue;
                 }
             }
-            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -287,7 +294,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     continue;
                 }
             }
-            if (!progress_build(dt, registry, L, ctx.pathfinding_grid)) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -339,7 +346,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             }
 
             // Progress repair
-            if (!progress_repair(dt, registry, L)) {
+            if (!progress_repair(dt, registry, L, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -392,7 +399,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             }
 
             // Progress capture
-            if (!progress_capture(dt, registry, L)) {
+            if (!progress_capture(dt, registry, L, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -466,7 +473,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
                 // Progress the build with our own build rate
                 if (build_target_id_ != 0) {
-                    if (!progress_build_assist(dt, registry)) {
+                    if (!progress_build_assist(dt, registry, econ_eff)) {
                         stop_assisting();
                     }
                 }
@@ -552,7 +559,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                         start_repair(repair_cmd, registry, L);
                     }
                     if (repair_target_id_ != 0) {
-                        progress_repair(dt, registry, L);
+                        progress_repair(dt, registry, L, econ_eff);
                     }
                 } else {
                     if (is_repairing()) stop_repairing(L, registry);
@@ -583,7 +590,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     continue;
                 }
             }
-            if (!progress_enhance(dt, L)) {
+            if (!progress_enhance(dt, L, econ_eff)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -842,7 +849,7 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
 }
 
 bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                          map::PathfindingGrid* grid) {
+                          map::PathfindingGrid* grid, f32 efficiency) {
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed()) {
         finish_build(registry, L, false, grid);
@@ -861,7 +868,8 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     }
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
-    f32 new_frac = std::min(1.0f, target->fraction_complete() + progress_rate * static_cast<f32>(dt));
+    f32 new_frac = std::min(1.0f, target->fraction_complete() +
+                            progress_rate * static_cast<f32>(dt) * efficiency);
     target->set_fraction_complete(new_frac);
     target->set_health(new_frac * target->max_health());
     work_progress_ = new_frac;
@@ -1007,7 +1015,8 @@ void Unit::stop_assisting() {
     work_progress_ = 0.0f;
 }
 
-bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry) {
+bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry,
+                                  f32 efficiency) {
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed())
         return false;
@@ -1020,7 +1029,7 @@ bool Unit::progress_build_assist(f64 dt, EntityRegistry& registry) {
 
     f32 progress_rate = build_rate_ / static_cast<f32>(build_time_);
     f32 new_frac = std::min(1.0f,
-        target->fraction_complete() + progress_rate * static_cast<f32>(dt));
+        target->fraction_complete() + progress_rate * static_cast<f32>(dt) * efficiency);
     target->set_fraction_complete(new_frac);
     target->set_health(new_frac * target->max_health());
     work_progress_ = new_frac;
@@ -1225,7 +1234,8 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
     return true;
 }
 
-bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L) {
+bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
+                            f32 efficiency) {
     auto* target = registry.find(repair_target_id_);
     if (!target || target->destroyed()) {
         stop_repairing(L, registry);
@@ -1237,9 +1247,9 @@ bool Unit::progress_repair(f64 dt, EntityRegistry& registry, lua_State* L) {
         return false;
     }
 
-    // heal_per_tick = (build_rate / build_time) * max_health * dt
+    // heal_per_tick = (build_rate / build_time) * max_health * dt * efficiency
     f32 heal_rate = build_rate_ / static_cast<f32>(repair_build_time_);
-    f32 heal_amount = heal_rate * target->max_health() * static_cast<f32>(dt);
+    f32 heal_amount = heal_rate * target->max_health() * static_cast<f32>(dt) * efficiency;
     f32 new_health = std::min(target->max_health(),
                               target->health() + heal_amount);
     target->set_health(new_health);
@@ -1409,7 +1419,8 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
     return true;
 }
 
-bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L) {
+bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
+                             f32 efficiency) {
     auto* target = registry.find(capture_target_id_);
     if (!target || target->destroyed()) {
         stop_capturing(L, registry, true);
@@ -1421,7 +1432,7 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L) {
         return false;
     }
 
-    f32 progress_per_tick = static_cast<f32>(dt / capture_time_);
+    f32 progress_per_tick = static_cast<f32>(dt / capture_time_) * efficiency;
     work_progress_ = std::min(1.0f, work_progress_ + progress_per_tick);
 
     if (work_progress_ >= 1.0f) {
@@ -1744,14 +1755,14 @@ bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
     return true;
 }
 
-bool Unit::progress_enhance(f64 dt, lua_State* L) {
+bool Unit::progress_enhance(f64 dt, lua_State* L, f32 efficiency) {
     if (enhance_build_time_ <= 0 || build_rate_ <= 0) {
         cancel_enhance(L);
         return false;
     }
 
     work_progress_ = std::min(1.0f, work_progress_ + static_cast<f32>(
-        static_cast<f64>(build_rate_) / enhance_build_time_ * dt));
+        static_cast<f64>(build_rate_) / enhance_build_time_ * dt) * efficiency);
 
     // Update WorkProgress on Lua table
     if (lua_table_ref() >= 0) {

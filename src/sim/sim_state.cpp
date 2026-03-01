@@ -86,10 +86,71 @@ void SimState::build_visibility_grid() {
     if (!terrain_) return;
     visibility_grid_ = std::make_unique<map::VisibilityGrid>(
         terrain_->map_width(), terrain_->map_height());
+    visibility_grid_->build_height_grid(*terrain_);
     spdlog::info("Built visibility grid: {}x{} cells (cell_size={})",
                  visibility_grid_->grid_width(),
                  visibility_grid_->grid_height(),
                  visibility_grid_->cell_size());
+}
+
+// --- Blip cache helpers ---
+
+const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
+                                                 u32 army) const {
+    auto it = blip_cache_.find(entity_id);
+    if (it == blip_cache_.end()) return nullptr;
+    if (army >= MAX_VIS_ARMIES) return nullptr;
+    auto& snap = it->second[army];
+    // A snapshot is valid if entity_army has been set (>= 0)
+    return snap.entity_army >= 0 ? &snap : nullptr;
+}
+
+void SimState::mark_entity_dead_in_cache(u32 entity_id) {
+    auto it = blip_cache_.find(entity_id);
+    if (it == blip_cache_.end()) return;
+    for (auto& snap : it->second)
+        snap.entity_dead = true;
+}
+
+// --- Stealth-aware intel query helpers ---
+
+bool SimState::has_effective_radar(const Entity* entity,
+                                    u32 req_army) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    if (!visibility_grid_->has_radar(pos.x, pos.z, req_army)) return false;
+    // RadarStealth negates radar unless observer has Omni
+    if (entity->is_unit()) {
+        auto* unit = static_cast<const Unit*>(entity);
+        if (unit->is_intel_enabled("RadarStealth") &&
+            !visibility_grid_->has_omni(pos.x, pos.z, req_army))
+            return false;
+    }
+    return true;
+}
+
+bool SimState::has_effective_sonar(const Entity* entity,
+                                    u32 req_army) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    if (!visibility_grid_->has_sonar(pos.x, pos.z, req_army)) return false;
+    // SonarStealth negates sonar unless observer has Omni
+    if (entity->is_unit()) {
+        auto* unit = static_cast<const Unit*>(entity);
+        if (unit->is_intel_enabled("SonarStealth") &&
+            !visibility_grid_->has_omni(pos.x, pos.z, req_army))
+            return false;
+    }
+    return true;
+}
+
+bool SimState::has_any_intel(const Entity* entity, u32 req_army) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    return visibility_grid_->has_vision(pos.x, pos.z, req_army) ||
+           has_effective_radar(entity, req_army) ||
+           has_effective_sonar(entity, req_army) ||
+           visibility_grid_->has_omni(pos.x, pos.z, req_army);
 }
 
 void SimState::tick() {
@@ -117,7 +178,11 @@ void SimState::update_entities() {
 
     SimContext ctx{entity_registry_, L_, terrain_.get(),
                    pathfinder_.get(), pathfinding_grid_.get(),
-                   visibility_grid_.get()};
+                   visibility_grid_.get(), {}};
+    for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
+        ctx.army_efficiency[i] = {armies_[i]->mass_efficiency(),
+                                  armies_[i]->energy_efficiency()};
+    }
 
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);
@@ -149,19 +214,36 @@ void SimState::update_visibility() {
         auto& pos = unit->position();
         u32 ua = static_cast<u32>(army);
 
+        // Vision: terrain LOS occlusion
+        if (unit->is_intel_enabled("Vision")) {
+            f32 r = unit->get_intel_radius("Vision");
+            if (r > 0.0f) {
+                f32 eye_h = terrain_->get_terrain_height(pos.x, pos.z) +
+                            map::VisibilityGrid::EYE_OFFSET;
+                visibility_grid_->paint_circle_los(ua, pos.x, pos.z, r,
+                                                    eye_h);
+            }
+        }
+
+        // WaterVision maps to Vision flag but no terrain LOS (underwater sensing)
+        if (unit->is_intel_enabled("WaterVision")) {
+            f32 r = unit->get_intel_radius("WaterVision");
+            if (r > 0.0f)
+                visibility_grid_->paint_circle(ua, pos.x, pos.z, r,
+                                               map::VisFlag::Vision);
+        }
+
+        // Radar/Sonar/Omni: simple circle (not blocked by terrain)
         struct IntelMapping {
             const char* type;
             map::VisFlag flag;
         };
-        static const IntelMapping mappings[] = {
-            {"Vision", map::VisFlag::Vision},
-            {"WaterVision", map::VisFlag::Vision},
+        static const IntelMapping non_los[] = {
             {"Radar", map::VisFlag::Radar},
             {"Sonar", map::VisFlag::Sonar},
             {"Omni", map::VisFlag::Omni},
         };
-
-        for (auto& m : mappings) {
+        for (auto& m : non_los) {
             if (unit->is_intel_enabled(m.type)) {
                 f32 r = unit->get_intel_radius(m.type);
                 if (r > 0.0f)
@@ -190,7 +272,37 @@ void SimState::update_visibility() {
         }
     }
 
-    // 4. Detect changes and fire OnIntelChange
+    // 3.5. Update blip cache (dead-reckoning positions)
+    entity_registry_.for_each([&](Entity& e) {
+        if (e.destroyed() || !e.is_unit()) return;
+        u32 eid = e.entity_id();
+        for (u32 a = 0; a < n; ++a) {
+            if (static_cast<i32>(a) == e.army()) continue; // skip own army
+            if (has_any_intel(&e, a)) {
+                // Army can see entity — update cached snapshot
+                auto& snap = blip_cache_[eid][a];
+                snap.last_known_position = e.position();
+                snap.blueprint_id = e.blueprint_id();
+                snap.entity_army = e.army();
+                snap.entity_dead = false;
+            }
+            // If no intel, keep stale data — that IS the dead-reckoning freeze
+        }
+    });
+
+    // Mark destroyed entities in blip cache
+    {
+        std::vector<u32> dead_ids;
+        for (auto& [eid, _] : blip_cache_) {
+            auto* e = entity_registry_.find(eid);
+            if (!e || e->destroyed())
+                dead_ids.push_back(eid);
+        }
+        for (u32 eid : dead_ids)
+            mark_entity_dead_in_cache(eid);
+    }
+
+    // 4. Detect changes and fire OnIntelChange (stealth-aware)
     std::vector<u32> ids;
     ids.reserve(entity_registry_.count());
     entity_registry_.for_each([&](Entity& e) {
@@ -209,10 +321,8 @@ void SimState::update_visibility() {
 
             bool cur_vis =
                 visibility_grid_->has_vision(pos.x, pos.z, a);
-            bool cur_rad =
-                visibility_grid_->has_radar(pos.x, pos.z, a);
-            bool cur_son =
-                visibility_grid_->has_sonar(pos.x, pos.z, a);
+            bool cur_rad = has_effective_radar(e, a);
+            bool cur_son = has_effective_sonar(e, a);
             bool cur_omn =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
 
@@ -244,7 +354,7 @@ void SimState::update_visibility() {
         }
     }
 
-    // 5. Save current state for next tick
+    // 5. Save current state for next tick (stealth-aware)
     prev_entity_vis_.clear();
     entity_registry_.for_each([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
@@ -253,10 +363,8 @@ void SimState::update_visibility() {
         for (u32 a = 0; a < n; ++a) {
             states[a].vision =
                 visibility_grid_->has_vision(pos.x, pos.z, a);
-            states[a].radar =
-                visibility_grid_->has_radar(pos.x, pos.z, a);
-            states[a].sonar =
-                visibility_grid_->has_sonar(pos.x, pos.z, a);
+            states[a].radar = has_effective_radar(&e, a);
+            states[a].sonar = has_effective_sonar(&e, a);
             states[a].omni =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
         }
@@ -284,11 +392,17 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
     lua_pushvalue(L_, brain_tbl); // self (brain)
 
-    // Build blip table: {_c_object = lightuserdata(entity)}
+    // Build blip table: {_c_object, _c_entity_id, _c_req_army}
     lua_newtable(L_);
     int blip_tbl = lua_gettop(L_);
     lua_pushstring(L_, "_c_object");
     lua_pushlightuserdata(L_, entity);
+    lua_rawset(L_, blip_tbl);
+    lua_pushstring(L_, "_c_entity_id");
+    lua_pushnumber(L_, entity->entity_id());
+    lua_rawset(L_, blip_tbl);
+    lua_pushstring(L_, "_c_req_army");
+    lua_pushnumber(L_, static_cast<lua_Number>(army_idx));
     lua_rawset(L_, blip_tbl);
 
     // Set __osc_blip_mt metatable (lazy-build, same pattern as unit_GetBlip)

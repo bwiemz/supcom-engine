@@ -19,14 +19,14 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, and fog of war.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, and radar jamming.
 
-**What works today (Milestones 1-31):**
+**What works today (Milestones 1-34):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
 - Entity system: units, props, projectiles, shields with full Lua lifecycle callbacks
-- Economy: per-unit production/consumption, army aggregation, storage
+- Economy: per-unit production/consumption, army aggregation, storage, stalling with efficiency scaling
 - Construction: building placement, build progress, factory production, engineer assist
 - Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build, Enhance, Dive with command queues
 - Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
@@ -39,8 +39,9 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Intel system: per-unit radar/sonar/omni/vision state tracking, enable/disable/radius queries
 - Shield system: personal shields with health, regen, energy drain, toggle on/off
 - Transport system: air transport load/unload, cargo tracking, attach/detach lifecycle, capacity limits
-- Fog of war: per-army visibility grid, Vision/Radar/Sonar/Omni paint from unit intel radii, alliance sharing, OnIntelChange callbacks, real blip methods, GetBlip fog-of-war filtering
-- 22 unit tests, 20 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, etc.)
+- Fog of war: per-army visibility grid, Vision/Radar/Sonar/Omni paint, alliance sharing, OnIntelChange callbacks, terrain LOS occlusion (Bresenham height ray), real blip methods with dead-reckoning
+- Radar jamming: RadarStealth/SonarStealth filtering, IsKnownFake (Omni reveals jammers), IsMaybeDead (no current intel), dead-reckoning position freeze for out-of-sight entities
+- 22 unit tests, 23 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--jammer-test`, etc.)
 
 **What's not yet implemented:**
 
@@ -48,9 +49,6 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Networking and multiplayer sync
 - Audio
 - Full UI and input handling
-- Terrain line-of-sight occlusion (vision is pure radius check)
-- Radar jamming and dead-reckoning (IsMaybeDead/IsKnownFake)
-- Economy stalling (resource rationing when demand exceeds supply)
 - Many moho binding stubs (90+ unit methods, entity methods, etc.)
 
 ## Prerequisites
@@ -142,6 +140,9 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--shield-test` | Shield system (create, health, regen, toggle) |
 | `--transport-test` | Transport load/unload, cargo tracking, speed mult |
 | `--fow-test` | Fog of war visibility grid and OnIntelChange callbacks |
+| `--los-test` | Terrain LOS occlusion (ridge blocking, Bresenham ray) |
+| `--stall-test` | Economy stalling (efficiency scaling, resource rationing) |
+| `--jammer-test` | Radar jamming, dead-reckoning, stealth, IsKnownFake |
 
 ## Project Structure
 

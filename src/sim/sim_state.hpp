@@ -24,6 +24,21 @@ class VisibilityGrid;
 
 namespace osc::sim {
 
+/// Per-army resource efficiency (pre-computed per tick).
+struct ArmyEfficiency {
+    f64 mass = 1.0;
+    f64 energy = 1.0;
+};
+
+/// Cached blip data for dead-reckoning (last-known position when entity
+/// leaves intel coverage, or entity destroyed while previously seen).
+struct BlipSnapshot {
+    Vector3 last_known_position;
+    std::string blueprint_id;
+    i32 entity_army = -1; // 0-based
+    bool entity_dead = false;
+};
+
 /// Lightweight context passed to Unit::update() each tick.
 struct SimContext {
     EntityRegistry& registry;
@@ -32,6 +47,8 @@ struct SimContext {
     const map::Pathfinder* pathfinder;
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
     const map::VisibilityGrid* visibility_grid;
+    static constexpr u32 MAX_EFFICIENCY_ARMIES = 16;
+    std::array<ArmyEfficiency, MAX_EFFICIENCY_ARMIES> army_efficiency;
 };
 
 class SimState {
@@ -115,6 +132,22 @@ private:
     static constexpr u32 MAX_VIS_ARMIES = 16;
     std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
         prev_entity_vis_;
+
+    // Dead-reckoning blip cache: per-entity per-army last-known data
+    std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>
+        blip_cache_;
+
+public:
+    /// Look up cached blip snapshot for a specific entity+army pair.
+    const BlipSnapshot* get_blip_snapshot(u32 entity_id, u32 army) const;
+
+    /// Mark entity as dead in all army blip cache entries.
+    void mark_entity_dead_in_cache(u32 entity_id);
+
+    /// Stealth-aware intel queries (check RadarStealth/SonarStealth).
+    bool has_effective_radar(const Entity* entity, u32 req_army) const;
+    bool has_effective_sonar(const Entity* entity, u32 req_army) const;
+    bool has_any_intel(const Entity* entity, u32 req_army) const;
 };
 
 } // namespace osc::sim

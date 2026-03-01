@@ -45,6 +45,12 @@ f64 ArmyBrain::get_economy_stored_ratio(const std::string& resource_type) const 
     return 0.0;
 }
 
+f64 ArmyBrain::get_economy_usage(const std::string& resource_type) const {
+    if (resource_type == "MASS") return economy_.mass.requested * mass_efficiency_;
+    if (resource_type == "ENERGY") return economy_.energy.requested * energy_efficiency_;
+    return 0.0;
+}
+
 f64 ArmyBrain::get_economy_trend(const std::string& resource_type) const {
     if (resource_type == "MASS")
         return economy_.mass.income - economy_.mass.requested;
@@ -133,20 +139,24 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     economy_.mass.max_storage = total_storage_mass;
     economy_.energy.max_storage = total_storage_energy;
 
-    mass_efficiency_ = (mass_consumption > 0)
-        ? std::min(1.0, mass_income / mass_consumption)
-        : 1.0;
-    energy_efficiency_ = (energy_consumption > 0)
-        ? std::min(1.0, energy_income / energy_consumption)
-        : 1.0;
-
-    economy_.mass.stored += (mass_income - mass_consumption) * dt;
-    economy_.energy.stored += (energy_income - energy_consumption) * dt;
-
-    economy_.mass.stored = std::clamp(economy_.mass.stored,
-                                       0.0, economy_.mass.max_storage);
-    economy_.energy.stored = std::clamp(economy_.energy.stored,
-                                         0.0, economy_.energy.max_storage);
+    // Storage-aware efficiency: storage acts as buffer that smoothly drains
+    // before stalling kicks in. available = income*dt + stored
+    {
+        f64 mass_avail = mass_income * dt + economy_.mass.stored;
+        f64 mass_needed = mass_consumption * dt;
+        f64 mass_consumed = (mass_needed > 0) ? std::min(mass_avail, mass_needed) : 0.0;
+        economy_.mass.stored = std::clamp(mass_avail - mass_consumed,
+                                           0.0, economy_.mass.max_storage);
+        mass_efficiency_ = (mass_needed > 0) ? mass_consumed / mass_needed : 1.0;
+    }
+    {
+        f64 energy_avail = energy_income * dt + economy_.energy.stored;
+        f64 energy_needed = energy_consumption * dt;
+        f64 energy_consumed = (energy_needed > 0) ? std::min(energy_avail, energy_needed) : 0.0;
+        economy_.energy.stored = std::clamp(energy_avail - energy_consumed,
+                                             0.0, economy_.energy.max_storage);
+        energy_efficiency_ = (energy_needed > 0) ? energy_consumed / energy_needed : 1.0;
+    }
 }
 
 Platoon* ArmyBrain::create_platoon(const std::string& name) {
