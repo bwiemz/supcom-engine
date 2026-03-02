@@ -59,6 +59,9 @@ public:
     const std::string& layer() const { return layer_; }
     void set_layer(const std::string& l) { layer_ = l; }
 
+    const std::string& armor_type() const { return armor_type_; }
+    void set_armor_type(const std::string& t) { armor_type_ = t; }
+
     bool is_being_built() const { return is_being_built_; }
     void set_is_being_built(bool b) { is_being_built_ = b; }
 
@@ -232,6 +235,19 @@ public:
     void finish_enhance(lua_State* L);
     void cancel_enhance(lua_State* L);
 
+    // Stats/telemetry system
+    void set_stat(const std::string& key, f64 value);
+    f64 get_stat(const std::string& key, f64 default_val = 0) const;
+    bool has_stat(const std::string& key) const;
+
+    // Silo ammo system (nuke + tactical missile counters)
+    i32 nuke_silo_ammo() const { return nuke_silo_ammo_; }
+    i32 tactical_silo_ammo() const { return tactical_silo_ammo_; }
+    void give_nuke_silo_ammo(i32 amount) { nuke_silo_ammo_ += amount; if (nuke_silo_ammo_ < 0) nuke_silo_ammo_ = 0; }
+    void give_tactical_silo_ammo(i32 amount) { tactical_silo_ammo_ += amount; if (tactical_silo_ammo_ < 0) tactical_silo_ammo_ = 0; }
+    void remove_nuke_silo_ammo(i32 amount) { nuke_silo_ammo_ -= amount; if (nuke_silo_ammo_ < 0) nuke_silo_ammo_ = 0; }
+    void remove_tactical_silo_ammo(i32 amount) { tactical_silo_ammo_ -= amount; if (tactical_silo_ammo_ < 0) tactical_silo_ammo_ = 0; }
+
     // Immobile flag (set during enhancement)
     bool immobile() const { return immobile_; }
     void set_immobile(bool b) { immobile_ = b; }
@@ -288,10 +304,28 @@ public:
     void disable_intel(const std::string& type);
     void set_intel_radius(const std::string& type, f32 radius);
 
+    // Adjacency system
+    const std::unordered_set<u32>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
+    void add_adjacent(u32 id) { adjacent_unit_ids_.insert(id); }
+    void remove_adjacent(u32 id) { adjacent_unit_ids_.erase(id); }
+    void clear_adjacents() { adjacent_unit_ids_.clear(); }
+
+    f32 skirt_size_x() const { return skirt_size_x_; }
+    f32 skirt_size_z() const { return skirt_size_z_; }
+    f32 skirt_offset_x() const { return skirt_offset_x_; }
+    f32 skirt_offset_z() const { return skirt_offset_z_; }
+    void set_skirt(f32 sx, f32 sz, f32 ox, f32 oz) {
+        skirt_size_x_ = sx; skirt_size_z_ = sz;
+        skirt_offset_x_ = ox; skirt_offset_z_ = oz;
+    }
+
+    void fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L);
+
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
 
     std::string unit_id_;
+    std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
     std::string layer_ = "Land";
     bool is_being_built_ = false;
@@ -351,6 +385,17 @@ private:
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
     i32 transport_class_ = 0;        // cargo TransportClass (1=small, 2=medium, 3=large)
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
+    // Stats/telemetry
+    std::unordered_map<std::string, f64> stats_;
+    // Silo ammo counters
+    i32 nuke_silo_ammo_ = 0;
+    i32 tactical_silo_ammo_ = 0;
+    // Adjacency system
+    std::unordered_set<u32> adjacent_unit_ids_;
+    f32 skirt_size_x_ = 0;
+    f32 skirt_size_z_ = 0;
+    f32 skirt_offset_x_ = 0;
+    f32 skirt_offset_z_ = 0;
 };
 
 } // namespace osc::sim

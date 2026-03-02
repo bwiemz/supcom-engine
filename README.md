@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, and real bone-based manipulators. A Vulkan renderer provides real-time visualization of the terrain, units, and water.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. A Vulkan renderer provides real-time visualization of the terrain, units, and water.
 
-**What works today (Milestones 1-40):**
+**What works today (Milestones 1-48):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -46,7 +46,15 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Vulkan renderer: terrain heightmap mesh, instanced unit cubes with army colors, water plane, RTS camera (WASD/scroll/orbit)
 - Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
 - Manipulators: 4 real types (Rotate, Anim, Slide, Aim) with per-tick simulation, WaitFor coroutine synchronization, 28 moho method implementations, shortest-arc rotation
-- 22 unit tests, 28 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--canpath-test`, etc.)
+- Armor system: per-unit armor types from blueprints, damage multipliers in all damage paths
+- Veterancy: HP regen from blueprint, SetRegenRate/RevertRegenRate moho methods
+- Wreckage: prop reclaim values, GetHeading quaternion-to-yaw conversion
+- Adjacency bonuses: skirt-based neighbor detection, OnAdjacentTo/OnNotAdjacentTo callbacks
+- Stats/telemetry: per-unit SetStat/GetStat/UpdateStat for veterancy and scoring
+- Silo ammo: nuke and tactical missile counters (Give/Remove/Get), fire-gate pattern
+- Targeting flags: SetDoNotTarget, SetReclaimable, IsValidTarget — guards in weapon auto-targeting and reclaim
+- Weapon layer caps: per-weapon `FireTargetLayerCapsTable` enforcement — weapons only auto-target entities on allowed layers (Land, Water, Sub, Seabed, Air)
+- 22 unit tests, 36 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--layercap-test`, etc.)
 
 **What's not yet implemented:**
 
@@ -178,6 +186,14 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--bone-test` | Bone system (SCM parser, bone queries, ShowBone/HideBone) |
 | `--manip-test` | Manipulator system (rotators, animators, sliders, aim, WaitFor) |
 | `--canpath-test` | CanPathTo pathfinding queries and GetThreatBetweenPositions |
+| `--armor-test` | Armor types and damage multipliers |
+| `--vet-test` | Veterancy system (regen, vet XP, level up) |
+| `--wreck-test` | Wreckage system (SetMaxReclaimValues, GetHeading) |
+| `--adjacency-test` | Adjacency bonus system and SetFiringRandomness |
+| `--stats-test` | Stats/telemetry (SetStat/GetStat/UpdateStat) |
+| `--silo-test` | Missile silo ammo (Give/Remove/Get nuke+tactical) |
+| `--flags-test` | Unit targeting flags (DoNotTarget, Reclaimable, IsValidTarget) |
+| `--layercap-test` | Weapon fire target layer caps |
 
 ## Project Structure
 

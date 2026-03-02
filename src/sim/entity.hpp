@@ -69,6 +69,9 @@ public:
     f32 max_health() const { return max_health_; }
     void set_max_health(f32 h) { max_health_ = h; }
 
+    f32 regen_rate() const { return regen_rate_; }
+    void set_regen_rate(f32 r) { regen_rate_ = r; }
+
     f32 fraction_complete() const { return fraction_complete_; }
     void set_fraction_complete(f32 f) { fraction_complete_ = f; }
 
@@ -87,6 +90,12 @@ public:
     const BoneData* bone_data() const { return bone_data_; }
     void set_bone_data(const BoneData* bd) { bone_data_ = bd; }
 
+    // Targeting/reclaimable flags
+    bool do_not_target() const { return do_not_target_; }
+    void set_do_not_target(bool b) { do_not_target_ = b; }
+    bool reclaimable() const { return reclaimable_; }
+    void set_reclaimable(bool b) { reclaimable_ = b; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -99,12 +108,15 @@ private:
     Quaternion orientation_;
     f32 health_ = 0;
     f32 max_health_ = 0;
+    f32 regen_rate_ = 0;
     f32 fraction_complete_ = 1.0f;
     bool destroyed_ = false;
     std::string blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
     u32 ambient_sound_handle_ = 0; ///< Active ambient loop (SoundHandle)
     const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
+    bool do_not_target_ = false;
+    bool reclaimable_ = true;
 };
 
 } // namespace osc::sim

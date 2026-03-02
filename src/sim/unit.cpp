@@ -6,6 +6,7 @@
 #include "map/pathfinding_grid.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -40,6 +41,117 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
 void Unit::clear_commands() {
     command_queue_.clear();
     navigator_.abort_move();
+}
+
+// --- Adjacency helpers ---
+
+namespace {
+
+struct SkirtRect { f32 x0, z0, x1, z1; };
+
+SkirtRect get_skirt_rect(const Unit& u) {
+    f32 sx0 = u.position().x - u.footprint_size_x() * 0.5f + u.skirt_offset_x();
+    f32 sz0 = u.position().z - u.footprint_size_z() * 0.5f + u.skirt_offset_z();
+    return { sx0, sz0, sx0 + u.skirt_size_x(), sz0 + u.skirt_size_z() };
+}
+
+bool skirts_adjacent(const SkirtRect& a, const SkirtRect& b) {
+    // FA structures are grid-aligned but skirt edges can be at .0 or .5
+    // offsets, so use a tolerance slightly larger than half a grid cell.
+    constexpr f32 eps = 0.6f;
+    bool x_overlap = (a.x0 < b.x1 - eps) && (b.x0 < a.x1 - eps);
+    bool z_overlap = (a.z0 < b.z1 - eps) && (b.z0 < a.z1 - eps);
+    bool x_touching = std::abs(a.x1 - b.x0) < eps || std::abs(b.x1 - a.x0) < eps;
+    bool z_touching = std::abs(a.z1 - b.z0) < eps || std::abs(b.z1 - a.z0) < eps;
+    return (x_overlap && z_touching) || (z_overlap && x_touching);
+}
+
+/// Call OnAdjacentTo(self_tbl, other_tbl, trigger_tbl) on self_tbl.
+/// Returns false if self entity was destroyed by the callback.
+bool call_on_adjacent_to(lua_State* L, int self_ref, int other_ref, int trigger_ref,
+                         u32 self_id, EntityRegistry& registry) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self_ref);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnAdjacentTo");
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, other_ref);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, trigger_ref);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            spdlog::warn("OnAdjacentTo error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); // tbl
+    auto* e = registry.find(self_id);
+    return e && !e->destroyed();
+}
+
+} // anonymous namespace
+
+void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
+    if (!has_category("STRUCTURE")) return;
+    if (skirt_size_x_ <= 0 || skirt_size_z_ <= 0) return;
+    if (lua_table_ref() < 0) return;
+
+    auto my_skirt = get_skirt_rect(*this);
+    // Expand generously: a neighbor's center can be far from its skirt edge
+    // (e.g., factory center at 200 has skirt edge at 204, 4 units away).
+    // Use 12.0 to cover largest FA structures (experimental: ~8 footprint + ~8 skirt offset).
+    constexpr f32 expand = 12.0f;
+    auto candidates = registry.collect_in_rect(
+        my_skirt.x0 - expand, my_skirt.z0 - expand,
+        my_skirt.x1 + expand, my_skirt.z1 + expand);
+
+    u32 my_id = entity_id();
+
+    for (u32 cid : candidates) {
+        if (cid == my_id) continue;
+        auto* ce = registry.find(cid);
+        if (!ce || ce->destroyed() || !ce->is_unit()) continue;
+        auto* cu = static_cast<Unit*>(ce);
+        if (cu->army() != army()) continue;
+        if (!cu->has_category("STRUCTURE")) continue;
+        if (cu->is_being_built()) continue;
+        if (cu->skirt_size_x() <= 0 || cu->skirt_size_z() <= 0) continue;
+        if (cu->lua_table_ref() < 0) continue;
+
+        auto cand_skirt = get_skirt_rect(*cu);
+        if (!skirts_adjacent(my_skirt, cand_skirt)) continue;
+        if (adjacent_unit_ids_.count(cid)) continue; // already adjacent
+
+        // Track adjacency on both sides
+        add_adjacent(cid);
+        cu->add_adjacent(my_id);
+
+        // Fire OnAdjacentTo(self, neighbor, self) on self
+        if (!call_on_adjacent_to(L, lua_table_ref(), cu->lua_table_ref(),
+                                  lua_table_ref(), my_id, registry)) {
+            return; // self destroyed
+        }
+
+        // Re-validate neighbor
+        ce = registry.find(cid);
+        if (!ce || ce->destroyed()) continue;
+        cu = static_cast<Unit*>(ce);
+
+        // Fire OnAdjacentTo(neighbor, self, self) on neighbor
+        // Re-validate self first
+        auto* me = registry.find(my_id);
+        if (!me || me->destroyed()) return;
+
+        call_on_adjacent_to(L, cu->lua_table_ref(), lua_table_ref(),
+                            lua_table_ref(), cid, registry);
+
+        // Re-validate self after neighbor callback
+        me = registry.find(my_id);
+        if (!me || me->destroyed()) return;
+
+        spdlog::debug("Adjacency: #{} and #{} are now adjacent", my_id, cid);
+    }
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
@@ -206,7 +318,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
             auto* target = registry.find(cmd.target_id);
-            if (!target || target->destroyed()) {
+            if (!target || target->destroyed() || !target->reclaimable()) {
                 if (is_reclaiming()) stop_reclaiming();
                 command_queue_.pop_front();
                 continue;
@@ -492,7 +604,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     if (is_building()) stop_assisting();
 
                     auto* reclaim_target = registry.find(target_reclaim_id);
-                    if (reclaim_target && !reclaim_target->destroyed()) {
+                    if (reclaim_target && !reclaim_target->destroyed() &&
+                        reclaim_target->reclaimable()) {
                         reclaim_target_id_ = target_reclaim_id;
 
                         // Compute own reclaim rate based on own build_rate
@@ -691,6 +804,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
     }
 done_commands:
 weapons_only:
+
+    // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
+    if (regen_rate() > 0 && health() > 0 && health() < max_health()) {
+        f32 new_hp = std::min(max_health(), health() + regen_rate() * static_cast<f32>(dt));
+        set_health(new_hp);
+    }
 
     // Update weapons (target scanning + firing)
     for (auto& weapon : weapons_) {
@@ -944,7 +1063,14 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             }
         }
 
+        // Fire adjacency callbacks for newly completed structure
+        target = registry.find(build_target_id_);
+        if (target && !target->destroyed() && target->is_unit()) {
+            static_cast<Unit*>(target)->fire_adjacency_callbacks(registry, L);
+        }
+
         // Call builder:OnStopBuild(target)
+        target = registry.find(build_target_id_);
         if (lua_table_ref() >= 0 && target && !target->destroyed() &&
             target->lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
@@ -1092,7 +1218,7 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
 
 bool Unit::progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L) {
     auto* target = registry.find(reclaim_target_id_);
-    if (!target || target->destroyed()) {
+    if (!target || target->destroyed() || !target->reclaimable()) {
         stop_reclaiming();
         return false;
     }
@@ -1645,6 +1771,21 @@ void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
             lua_pop(L, 1); // target_tbl
         }
     }
+}
+
+// --- Stats/telemetry system ---
+
+void Unit::set_stat(const std::string& key, f64 value) {
+    stats_[key] = value;
+}
+
+f64 Unit::get_stat(const std::string& key, f64 default_val) const {
+    auto it = stats_.find(key);
+    return (it != stats_.end()) ? it->second : default_val;
+}
+
+bool Unit::has_stat(const std::string& key) const {
+    return stats_.count(key) > 0;
 }
 
 // --- Enhancement system ---

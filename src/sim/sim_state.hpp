@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/thread_manager.hpp"
@@ -110,6 +111,10 @@ public:
     bool is_enemy(i32 army1, i32 army2) const;
     bool is_neutral(i32 army1, i32 army2) const;
 
+    // Armor definitions
+    const ArmorDefinition& armor_definition() const { return armor_def_; }
+    ArmorDefinition& armor_definition() { return armor_def_; }
+
     // Lua state access (for weapon/projectile updates)
     lua_State* lua_state() const { return L_; }
 
@@ -140,6 +145,7 @@ private:
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::unique_ptr<audio::SoundManager> sound_manager_;
     std::unique_ptr<BoneCache> bone_cache_;
+    ArmorDefinition armor_def_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;

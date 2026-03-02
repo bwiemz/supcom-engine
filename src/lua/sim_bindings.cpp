@@ -225,6 +225,13 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1); // RackBones
 
+                    // FiringRandomness (angular scatter in radians)
+                    lua_pushstring(L, "FiringRandomness");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->firing_randomness = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+
                     lua_pushvalue(L, we);
                     weapon->blueprint_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
@@ -349,6 +356,20 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 if (lua_isnumber(L, -1))
                     unit->set_economy_threat(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
+
+                // ArmorType (for armor damage multipliers)
+                lua_pushstring(L, "ArmorType");
+                lua_gettable(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING)
+                    unit->set_armor_type(lua_tostring(L, -1));
+                lua_pop(L, 1);
+
+                // RegenRate (base HP/sec regeneration)
+                lua_pushstring(L, "RegenRate");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_regen_rate(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }
@@ -369,6 +390,34 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 if (lua_isnumber(L, -1)) sz = static_cast<f32>(lua_tonumber(L, -1));
                 lua_pop(L, 1);
                 unit->set_footprint_size(sx, sz);
+            }
+            lua_pop(L, 2);
+        }
+
+        // Physics.SkirtSizeX/Z, SkirtOffsetX/Z (for adjacency detection)
+        {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Physics");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                f32 ssx = 0, ssz = 0, sox = 0, soz = 0;
+                lua_pushstring(L, "SkirtSizeX");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) ssx = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "SkirtSizeZ");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) ssz = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "SkirtOffsetX");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) sox = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "SkirtOffsetZ");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) soz = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                unit->set_skirt(ssx, ssz, sox, soz);
             }
             lua_pop(L, 2);
         }
@@ -612,6 +661,12 @@ static int l_CreateUnit(lua_State* L) {
             }
         } else {
             lua_pop(L, 1);
+        }
+
+        // Fire adjacency callbacks for pre-placed structures
+        unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+        if (unit_ptr && !unit_ptr->destroyed()) {
+            unit_ptr->fire_adjacency_callbacks(sim->entity_registry(), L);
         }
     }
 
@@ -1142,20 +1197,31 @@ static int l_Damage(lua_State* L) {
     int vector_idx = (nargs >= 5) ? 4 : 0;
     int dtype_idx = (nargs >= 5) ? 5 : 4;
 
+    // Apply armor multiplier
+    auto* sim = get_sim(L);
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 2);
+    auto* target_e = lua_isuserdata(L, -1)
+                         ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                         : nullptr;
+    lua_pop(L, 1);
+    if (target_e && target_e->is_unit() && sim) {
+        const char* dtype = (dtype_idx > 0 && lua_type(L, dtype_idx) == LUA_TSTRING)
+                            ? lua_tostring(L, dtype_idx) : "Normal";
+        auto* target_unit = static_cast<sim::Unit*>(target_e);
+        amount *= sim->armor_definition().get_multiplier(
+            target_unit->armor_type(), dtype);
+        if (amount <= 0) return 0;
+    }
+
     // Look up OnDamage method on the target
     lua_pushstring(L, "OnDamage");
     lua_gettable(L, 2); // target["OnDamage"]
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 1);
         // Fallback: directly reduce health if no OnDamage handler
-        lua_pushstring(L, "_c_object");
-        lua_rawget(L, 2); // target["_c_object"]
-        auto* e = lua_isuserdata(L, -1)
-                      ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                      : nullptr;
-        lua_pop(L, 1);
-        if (e && !e->destroyed()) {
-            e->set_health(e->health() - amount);
+        if (target_e && !target_e->destroyed()) {
+            target_e->set_health(target_e->health() - amount);
         }
         return 0;
     }
@@ -1212,6 +1278,25 @@ static bool call_ondamage(lua_State* L, int target_ref,
         lua_pop(L, 1);
         return false;
     }
+
+    // Apply armor multiplier
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    auto* e = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    if (e && e->is_unit()) {
+        auto* sim = get_sim(L);
+        const char* dtype = (damageType_idx > 0 && lua_type(L, damageType_idx) == LUA_TSTRING)
+                            ? lua_tostring(L, damageType_idx) : "Normal";
+        auto* u = static_cast<sim::Unit*>(e);
+        if (sim) {
+            amount *= sim->armor_definition().get_multiplier(
+                u->armor_type(), dtype);
+        }
+    }
+    if (amount <= 0) { lua_pop(L, 1); return true; }
 
     lua_pushstring(L, "OnDamage");
     lua_gettable(L, -2);

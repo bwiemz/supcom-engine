@@ -43,6 +43,23 @@ Result<void> SimLoader::boot_sim(LuaState& state,
     }
     spdlog::info("  Loaded: /lua/simInit.lua");
 
+    // Step 3a: Load armor definitions
+    {
+        auto armor_data = vfs.read_file("/lua/armordefinition.lua");
+        if (armor_data) {
+            state.do_buffer(armor_data->data(), armor_data->size(),
+                            "@/lua/armordefinition.lua");
+            lua_pushstring(state.raw(), "armordefinition");
+            lua_rawget(state.raw(), LUA_GLOBALSINDEX);
+            if (lua_istable(state.raw(), -1)) {
+                sim.armor_definition().load_from_lua(state.raw());
+                spdlog::info("  Loaded armor definitions ({} types)",
+                              sim.armor_definition().size());
+            }
+            lua_pop(state.raw(), 1);
+        }
+    }
+
     // Step 3b: Patch enhancement globals for dual-key compatibility.
     // FA's SimSync.AddUnitEnhancement stores with number key (unit.EntityId),
     // but enhancementcommon.GetEnhancements looks up with tostring(entityID).

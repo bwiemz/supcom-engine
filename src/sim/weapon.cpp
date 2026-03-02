@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -42,19 +43,28 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
     // Check if current target is still valid
     if (target_entity_id > 0) {
         auto* target = registry.find(target_entity_id);
-        if (target && !target->destroyed() && target->is_unit()) {
-            // Check range
-            f32 dx = target->position().x - owner.position().x;
-            f32 dz = target->position().z - owner.position().z;
-            f32 dist2 = dx * dx + dz * dz;
-            f32 max2 = max_range * max_range;
-            f32 min2 = min_range * min_range;
-            if (dist2 <= max2 && dist2 >= min2 &&
-                target->army() != owner.army()) {
-                return; // Current target still valid
+        if (target && !target->destroyed() && target->is_unit() &&
+            !target->do_not_target()) {
+            // Layer cap check on existing target
+            if (fire_target_layer_caps != 0xFF &&
+                !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)) {
+                target_entity_id = 0;
+            } else {
+                // Check range
+                f32 dx = target->position().x - owner.position().x;
+                f32 dz = target->position().z - owner.position().z;
+                f32 dist2 = dx * dx + dz * dz;
+                f32 max2 = max_range * max_range;
+                f32 min2 = min_range * min_range;
+                if (dist2 <= max2 && dist2 >= min2 &&
+                    target->army() != owner.army()) {
+                    return; // Current target still valid
+                }
+                target_entity_id = 0;
             }
+        } else {
+            target_entity_id = 0; // Invalid — clear
         }
-        target_entity_id = 0; // Invalid — clear
     }
 
     // Find nearest enemy in range
@@ -70,6 +80,11 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         if (e->army() == owner.army() || e->army() < 0) continue;
         if (e->entity_id() == owner.entity_id()) continue;
+        if (e->do_not_target()) continue;
+        // Layer cap filter
+        if (fire_target_layer_caps != 0xFF &&
+            !(layer_to_bit(static_cast<Unit*>(e)->layer()) & fire_target_layer_caps))
+            continue;
 
         f32 dx = e->position().x - owner.position().x;
         f32 dz = e->position().z - owner.position().z;
@@ -87,7 +102,9 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
                       lua_State* L) {
     auto* target = registry.find(target_entity_id);
-    if (!target || target->destroyed()) {
+    if (!target || target->destroyed() || target->do_not_target() ||
+        (fire_target_layer_caps != 0xFF && target->is_unit() &&
+         !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps))) {
         target_entity_id = 0;
         return false;
     }
@@ -116,6 +133,18 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     vel.x = dx * inv_dist * muzzle_velocity;
     vel.y = 0;
     vel.z = dz * inv_dist * muzzle_velocity;
+
+    // Apply firing randomness as angular offset to velocity direction
+    if (firing_randomness > 0) {
+        static thread_local std::mt19937 rng{std::random_device{}()};
+        std::uniform_real_distribution<f32> ang_dist(-firing_randomness, firing_randomness);
+        f32 angle = ang_dist(rng);
+        f32 c = std::cos(angle), s = std::sin(angle);
+        f32 nx = vel.x * c - vel.z * s;
+        f32 nz = vel.x * s + vel.z * c;
+        vel.x = nx;
+        vel.z = nz;
+    }
 
     // Create projectile
     auto proj = std::make_unique<Projectile>();

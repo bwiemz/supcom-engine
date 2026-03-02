@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -433,6 +434,18 @@ static int entity_GetPositionXYZ(lua_State* L) {
     return 3;
 }
 
+// entity:GetHeading() — extract yaw (Y-axis rotation) from quaternion
+static int entity_GetHeading(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) { lua_pushnumber(L, 0); return 1; }
+    const auto& q = e->orientation();
+    f32 heading = std::atan2(
+        2.0f * (q.w * q.y + q.x * q.z),
+        1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+    lua_pushnumber(L, heading);
+    return 1;
+}
+
 static int entity_SetPosition(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) return 0;
@@ -582,6 +595,70 @@ static int entity_Destroy(lua_State* L) {
             auto* mgr = get_sound_mgr(L);
             if (mgr) mgr->stop(e->ambient_sound_handle());
             e->set_ambient_sound_handle(0);
+        }
+
+        // Fire OnNotAdjacentTo for adjacent structures before destruction
+        if (e->is_unit()) {
+            auto* unit = static_cast<sim::Unit*>(e);
+            if (!unit->adjacent_unit_ids().empty()) {
+                auto* sim = get_sim(L);
+                std::vector<u32> adj_snap(unit->adjacent_unit_ids().begin(),
+                                          unit->adjacent_unit_ids().end());
+                for (u32 adj_id : adj_snap) {
+                    auto* adj_e = sim ? sim->entity_registry().find(adj_id) : nullptr;
+                    if (!adj_e || adj_e->destroyed() || !adj_e->is_unit()) continue;
+                    auto* adj_u = static_cast<sim::Unit*>(adj_e);
+                    adj_u->remove_adjacent(e->entity_id());
+
+                    // Fire OnNotAdjacentTo(self, neighbor) on dying unit
+                    if (e->lua_table_ref() >= 0 && adj_e->lua_table_ref() >= 0) {
+                        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+                        int self_tbl = lua_gettop(L);
+                        lua_pushstring(L, "OnNotAdjacentTo");
+                        lua_gettable(L, self_tbl);
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushvalue(L, self_tbl);
+                            lua_rawgeti(L, LUA_REGISTRYINDEX, adj_e->lua_table_ref());
+                            if (lua_pcall(L, 2, 0, 0) != 0) {
+                                spdlog::warn("OnNotAdjacentTo(self) error: {}",
+                                             lua_tostring(L, -1));
+                                lua_pop(L, 1);
+                            }
+                        } else {
+                            lua_pop(L, 1);
+                        }
+                        lua_pop(L, 1);
+                    }
+
+                    // Re-validate dying entity after pcall (could be recursively destroyed)
+                    if (e->destroyed()) break;
+
+                    // Re-validate neighbor after pcall
+                    adj_e = sim ? sim->entity_registry().find(adj_id) : nullptr;
+                    if (!adj_e || adj_e->destroyed()) continue;
+
+                    // Fire OnNotAdjacentTo(neighbor, self) on neighbor
+                    if (adj_e->lua_table_ref() >= 0 && e->lua_table_ref() >= 0) {
+                        lua_rawgeti(L, LUA_REGISTRYINDEX, adj_e->lua_table_ref());
+                        int nb_tbl = lua_gettop(L);
+                        lua_pushstring(L, "OnNotAdjacentTo");
+                        lua_gettable(L, nb_tbl);
+                        if (lua_isfunction(L, -1)) {
+                            lua_pushvalue(L, nb_tbl);
+                            lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+                            if (lua_pcall(L, 2, 0, 0) != 0) {
+                                spdlog::warn("OnNotAdjacentTo(neighbor) error: {}",
+                                             lua_tostring(L, -1));
+                                lua_pop(L, 1);
+                            }
+                        } else {
+                            lua_pop(L, 1);
+                        }
+                        lua_pop(L, 1);
+                    }
+                }
+                unit->clear_adjacents();
+            }
         }
 
         u32 id = e->entity_id();
@@ -2227,6 +2304,183 @@ static int unit_CanPathToCell(lua_State* L) {
     return 1;
 }
 
+// unit:GetArmorMult(damageType) → multiplier
+static int unit_GetArmorMult(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!u || !sim) { lua_pushnumber(L, 1); return 1; }
+    const char* dtype = (lua_type(L, 2) == LUA_TSTRING)
+                        ? lua_tostring(L, 2) : "Normal";
+    f32 mult = sim->armor_definition().get_multiplier(u->armor_type(), dtype);
+    lua_pushnumber(L, mult);
+    return 1;
+}
+
+// unit:AlterArmor(damageType, multiplier)
+static int unit_AlterArmor(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!u || !sim) return 0;
+    const char* dtype = lua_tostring(L, 2);
+    f32 mult = static_cast<f32>(lua_tonumber(L, 3));
+    if (dtype) {
+        sim->armor_definition().set_multiplier(u->armor_type(), dtype, mult);
+    }
+    return 0;
+}
+
+// unit:SetRegenRate(rate) — sets HP/sec regeneration rate
+static int unit_SetRegenRate(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) return 0;
+    e->set_regen_rate(static_cast<f32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+// unit:RevertRegenRate() — resets regen to blueprint Defense.RegenRate
+static int unit_RevertRegenRate(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!u || !sim) return 0;
+    auto* store = sim->blueprint_store();
+    if (!store) { u->set_regen_rate(0); return 0; }
+    auto* entry = store->find(u->unit_id());
+    if (!entry) { u->set_regen_rate(0); return 0; }
+
+    f32 bp_regen = 0;
+    store->push_lua_table(*entry, L);
+    lua_pushstring(L, "Defense");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "RegenRate");
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1))
+            bp_regen = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 2); // Defense + bp table
+    u->set_regen_rate(bp_regen);
+    return 0;
+}
+
+// unit:SetStat(key, value) → returns boolean (true if stat was new)
+static int unit_SetStat(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    if (lua_type(L, 2) != LUA_TSTRING) { lua_pushboolean(L, 0); return 1; }
+    std::string key = lua_tostring(L, 2);
+    f64 value = lua_isnumber(L, 3) ? lua_tonumber(L, 3) : 0;
+    bool is_new = !u->has_stat(key);
+    u->set_stat(key, value);
+    lua_pushboolean(L, is_new ? 1 : 0);
+    return 1;
+}
+
+// unit:GetStat(key, [default]) → returns {Value = stored_or_default}
+static int unit_GetStat(lua_State* L) {
+    auto* u = check_unit(L);
+    f64 val = 0;
+    if (u && lua_type(L, 2) == LUA_TSTRING) {
+        std::string key = lua_tostring(L, 2);
+        f64 def = lua_isnumber(L, 3) ? lua_tonumber(L, 3) : 0;
+        val = u->get_stat(key, def);
+    }
+    lua_newtable(L);
+    lua_pushstring(L, "Value");
+    lua_pushnumber(L, val);
+    lua_rawset(L, -3);
+    return 1;
+}
+
+// unit:UpdateStat(key, value) → fallback for units without full Lua class chain
+static int unit_UpdateStat(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    if (lua_type(L, 2) != LUA_TSTRING) return 0;
+    std::string key = lua_tostring(L, 2);
+    f64 value = lua_isnumber(L, 3) ? lua_tonumber(L, 3) : 0;
+    u->set_stat(key, value);
+    return 0;
+}
+
+// --- Silo ammo system ---
+
+static int unit_GetNukeSiloAmmoCount(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? u->nuke_silo_ammo() : 0);
+    return 1;
+}
+
+static int unit_GetTacticalSiloAmmoCount(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? u->tactical_silo_ammo() : 0);
+    return 1;
+}
+
+static int unit_GiveNukeSiloAmmo(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 amount = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    if (amount > 0) u->give_nuke_silo_ammo(amount);
+    return 0;
+}
+
+static int unit_GiveTacticalSiloAmmo(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 amount = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    if (amount > 0) u->give_tactical_silo_ammo(amount);
+    return 0;
+}
+
+static int unit_RemoveNukeSiloAmmo(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 amount = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    if (amount > 0) u->remove_nuke_silo_ammo(amount);
+    return 0;
+}
+
+static int unit_RemoveTacticalSiloAmmo(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 amount = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 1;
+    if (amount > 0) u->remove_tactical_silo_ammo(amount);
+    return 0;
+}
+
+// --- Targeting / reclaimable flags ---
+
+static int entity_SetDoNotTarget(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) return 0;
+    bool val = lua_toboolean(L, 2) != 0;
+    e->set_do_not_target(val);
+    return 0;
+}
+
+static int entity_SetReclaimable(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) return 0;
+    bool val = lua_toboolean(L, 2) != 0;
+    e->set_reclaimable(val);
+    return 0;
+}
+
+static int unit_IsValidTarget(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, (u && !u->do_not_target()) ? 1 : 0);
+    return 1;
+}
+
+static int unit_SetIsValidTarget(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    bool val = lua_toboolean(L, 2) != 0;
+    u->set_do_not_target(!val);
+    return 0;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -2307,30 +2561,33 @@ static const MethodEntry unit_methods[] = {
     {"SetBreakOffDistanceMult",     stub_noop},
     {"SetBreakOffTriggerMult",      stub_noop},
     {"GetCurrentMoveLocation",      entity_GetPosition},
-    {"GetHeading",                  stub_return_zero},
+    {"GetHeading",                  entity_GetHeading},
     // Stubs — transport / cargo
     {"GetCargo",                    unit_GetCargo},
     {"TransportHasSpaceFor",        unit_TransportHasSpaceFor},
     {"AddUnitToStorage",            unit_AddUnitToStorage},
     {"TransportDetachAllUnits",     unit_TransportDetachAllUnits},
     // Stubs — missiles
-    {"GetNukeSiloAmmoCount",        stub_return_zero},
-    {"GetTacticalSiloAmmoCount",    stub_return_zero},
-    {"GiveNukeSiloAmmo",            stub_noop},
-    {"GiveTacticalSiloAmmo",        stub_noop},
-    {"RemoveNukeSiloAmmo",          stub_noop},
-    {"RemoveTacticalSiloAmmo",      stub_noop},
-    // Stubs — armor
-    {"GetArmorMult",                stub_return_one},
-    {"AlterArmor",                  stub_noop},
+    {"GetNukeSiloAmmoCount",        unit_GetNukeSiloAmmoCount},
+    {"GetTacticalSiloAmmoCount",    unit_GetTacticalSiloAmmoCount},
+    {"GiveNukeSiloAmmo",            unit_GiveNukeSiloAmmo},
+    {"GiveTacticalSiloAmmo",        unit_GiveTacticalSiloAmmo},
+    {"RemoveNukeSiloAmmo",          unit_RemoveNukeSiloAmmo},
+    {"RemoveTacticalSiloAmmo",      unit_RemoveTacticalSiloAmmo},
+    // Armor
+    {"GetArmorMult",                unit_GetArmorMult},
+    {"AlterArmor",                  unit_AlterArmor},
+    // Regen
+    {"SetRegenRate",                unit_SetRegenRate},
+    {"RevertRegenRate",             unit_RevertRegenRate},
     // Stubs — fuel
     {"GetFuelRatio",                stub_return_one},
     {"SetFuelRatio",                stub_noop},
     {"GetFuelUseTime",              stub_return_zero},
     {"SetFuelUseTime",              stub_noop},
     // Stubs — misc
-    {"IsValidTarget",               stub_return_true},
-    {"SetIsValidTarget",            stub_noop},
+    {"IsValidTarget",               unit_IsValidTarget},
+    {"SetIsValidTarget",            unit_SetIsValidTarget},
     {"SetScriptBit",                unit_SetScriptBit},
     {"GetScriptBit",                unit_GetScriptBit},
     {"AddBuildRestriction",         stub_noop},
@@ -2339,15 +2596,15 @@ static const MethodEntry unit_methods[] = {
     {"PlayUnitSound",               stub_noop},
     {"PlayUnitAmbientSound",        stub_noop},
     {"StopUnitAmbientSound",        stub_noop},
-    {"SetDoNotTarget",              stub_noop},
+    {"SetDoNotTarget",              entity_SetDoNotTarget},
     {"GetGuards",                   unit_GetGuards},
-    {"UpdateStat",                  stub_noop},
-    {"GetStat",                     stub_return_empty_table},
-    {"SetStat",                     stub_noop},
+    {"UpdateStat",                  unit_UpdateStat},
+    {"GetStat",                     unit_GetStat},
+    {"SetStat",                     unit_SetStat},
     {"CanPathTo",                   unit_CanPathTo},
     {"CanPathToCell",               unit_CanPathToCell},
     {"GetAttacker",                 stub_return_nil},
-    {"SetReclaimable",              stub_noop},
+    {"SetReclaimable",              entity_SetReclaimable},
     {"SetCapturable",               unit_SetCapturable},
     {"IsCapturable",                unit_IsCapturable},
     {"GetParent",                   unit_GetParent},
@@ -2761,6 +3018,29 @@ static int weapon_CreateProjectile(lua_State* L) {
     return 1;
 }
 
+static int weapon_SetFiringRandomness(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->firing_randomness = static_cast<f32>(lua_tonumber(L, 2));
+    return 0;
+}
+
+static int weapon_GetFiringRandomness(lua_State* L) {
+    auto* w = check_weapon(L);
+    lua_pushnumber(L, w ? w->firing_randomness : 0);
+    return 1;
+}
+
+static int weapon_SetFireTargetLayerCaps(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    if (lua_type(L, 2) != LUA_TSTRING) {
+        w->fire_target_layer_caps = 0xFF; // no string → reset to all layers
+        return 0;
+    }
+    w->fire_target_layer_caps = sim::parse_layer_caps(lua_tostring(L, 2));
+    return 0;
+}
+
 static const MethodEntry weapon_methods[] = {
     // Real implementations
     {"GetBlueprint",                weapon_GetBlueprint},
@@ -2788,9 +3068,9 @@ static const MethodEntry weapon_methods[] = {
     {"TransferTarget",              stub_noop},
     {"SetFireControl",              stub_noop},
     {"IsFireControl",               stub_return_false},
-    {"SetFiringRandomness",         stub_noop},
-    {"GetFiringRandomness",         stub_return_zero},
-    {"SetFireTargetLayerCaps",      stub_noop},
+    {"SetFiringRandomness",         weapon_SetFiringRandomness},
+    {"GetFiringRandomness",         weapon_GetFiringRandomness},
+    {"SetFireTargetLayerCaps",      weapon_SetFireTargetLayerCaps},
     {"ChangeDamageRadius",          stub_noop},
     {"ChangeDamageType",            stub_noop},
     {"ChangeMaxHeightDiff",         stub_noop},
@@ -2803,6 +3083,33 @@ static const MethodEntry weapon_methods[] = {
     {"SetOnTransport",              stub_noop},
     {nullptr, nullptr},
 };
+
+// prop:SetMaxReclaimValues(time, mass, energy)
+// Sets reclaim fields on the Lua table (read by progress_reclaim)
+static int prop_SetMaxReclaimValues(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    f64 time   = lua_tonumber(L, 2);
+    f64 mass   = lua_tonumber(L, 3);
+    f64 energy = lua_tonumber(L, 4);
+
+    lua_pushstring(L, "MaxMassReclaim");
+    lua_pushnumber(L, mass);
+    lua_rawset(L, 1);
+
+    lua_pushstring(L, "MaxEnergyReclaim");
+    lua_pushnumber(L, energy);
+    lua_rawset(L, 1);
+
+    lua_pushstring(L, "TimeReclaim");
+    lua_pushnumber(L, time);
+    lua_rawset(L, 1);
+
+    lua_pushstring(L, "ReclaimLeft");
+    lua_pushnumber(L, 1.0);
+    lua_rawset(L, 1);
+
+    return 0;
+}
 
 static const MethodEntry prop_methods[] = {
     {"GetMaxHealth",                entity_GetMaxHealth},
@@ -2828,7 +3135,10 @@ static const MethodEntry prop_methods[] = {
     {"SetVizToEnemies",             stub_noop},
     {"SetVizToFocusPlayer",         stub_noop},
     {"SetVizToNeutrals",            stub_noop},
-    {"SetReclaimable",              stub_noop},
+    {"SetReclaimable",              entity_SetReclaimable},
+    {"SetMaxReclaimValues",          prop_SetMaxReclaimValues},
+    {"SetPropCollision",             stub_noop},
+    {"GetHeading",                   entity_GetHeading},
     {nullptr, nullptr},
 };
 

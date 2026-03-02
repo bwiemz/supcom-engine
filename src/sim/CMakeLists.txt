@@ -1,4 +1,5 @@
 add_library(osc_sim STATIC
+    armor_definition.cpp
     army_brain.cpp
     bone_cache.cpp
     bone_data.cpp
