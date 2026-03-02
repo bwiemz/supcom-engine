@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "audio/sound_manager.hpp"
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
@@ -25,6 +26,10 @@ void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     terrain_ = std::move(terrain);
 }
 
+void SimState::set_sound_manager(std::unique_ptr<audio::SoundManager> mgr) {
+    sound_manager_ = std::move(mgr);
+}
+
 void SimState::build_pathfinding_grid() {
     if (!terrain_) return;
     // Reset pathfinder first — it holds a reference to the old grid
@@ -45,6 +50,10 @@ ArmyBrain& SimState::add_army(const std::string& name,
     brain->set_index(static_cast<i32>(armies_.size()));
     brain->set_name(name);
     brain->set_nickname(nickname);
+    if (name.find("CIVILIAN") != std::string::npos ||
+        name.find("NEUTRAL") != std::string::npos) {
+        brain->set_civilian(true);
+    }
     armies_.push_back(std::move(brain));
     return *armies_.back();
 }
@@ -160,6 +169,11 @@ void SimState::tick() {
     update_economies();
     update_entities();
     update_visibility();
+
+    // Audio: clean up finished one-shot sounds
+    if (sound_manager_) {
+        sound_manager_->gc();
+    }
 }
 
 void SimState::update_economies() {

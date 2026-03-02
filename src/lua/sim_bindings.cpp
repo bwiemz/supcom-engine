@@ -1365,6 +1365,77 @@ static int stub_dummy_object(lua_State* L) {
     return 1;
 }
 
+// ArmyIsCivilian(army_index) -> bool
+static int l_ArmyIsCivilian(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 0); return 1; }
+    i32 idx = resolve_army(L, 1, sim);
+    if (idx < 0 || idx >= sim->army_count()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    auto* brain = sim->get_army(idx);
+    lua_pushboolean(L, brain && brain->is_civilian() ? 1 : 0);
+    return 1;
+}
+
+// ArmyIsOutOfGame(army_index) -> bool
+static int l_ArmyIsOutOfGame(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 0); return 1; }
+    i32 idx = resolve_army(L, 1, sim);
+    if (idx < 0 || idx >= sim->army_count()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    auto* brain = sim->get_army(idx);
+    lua_pushboolean(L, brain && brain->is_defeated() ? 1 : 0);
+    return 1;
+}
+
+// EntityCategoryCount(category, units_table) -> number
+static int l_EntityCategoryCount(lua_State* L) {
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    int count = 0;
+    for (int i = 1; ; i++) {
+        lua_rawgeti(L, 2, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+
+        int unit_tbl = lua_gettop(L);
+        auto* entity = extract_entity(L, unit_tbl);
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            auto* unit = static_cast<sim::Unit*>(entity);
+            if (osc::lua::unit_matches_category(L, 1, unit->categories())) {
+                count++;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+// GetUnitBlueprintByName(bp_id) -> blueprint table or nil
+static int l_GetUnitBlueprintByName(lua_State* L) {
+    const char* bp_id = luaL_checkstring(L, 1);
+    // Look up __blueprints[bp_id]
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, bp_id);
+    lua_rawget(L, -2);
+    lua_remove(L, -2); // remove __blueprints table
+    return 1;
+}
+
 // EntityCategoryContains(category, entity) -> bool
 static int l_EntityCategoryContains(lua_State* L) {
     if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
@@ -2668,6 +2739,9 @@ static int l_CreateShield(lua_State* L) {
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
     shield_ptr->set_lua_table_ref(ref);
 
+    // Store shield entity ID on owner unit for O(1) lookup
+    owner->set_shield_entity_id(id);
+
     spdlog::info("_c_CreateShield: entity #{} for owner #{} (army {}), size={:.1f}, maxHP={:.0f}",
                  id, owner->entity_id(), owner->army(), size, max_hp);
 
@@ -2939,7 +3013,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
                             l_EntityCategoryFilterOut);
     state.register_function("EntityCategoryGetUnitList",
                             l_EntityCategoryGetUnitList);
-    state.register_function("EntityCategoryCount", stub_zero);
+    state.register_function("EntityCategoryCount", l_EntityCategoryCount);
 
     // Math / vector
     state.register_function("EulerToQuaternion", l_EulerToQuaternion);
@@ -3068,7 +3142,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // Spatial queries
     state.register_function("GetUnitsInRect", l_GetUnitsInRect);
     state.register_function("GetReclaimablesInRect", l_GetReclaimablesInRect);
-    state.register_function("GetUnitBlueprintByName", stub_nil);
+    state.register_function("GetUnitBlueprintByName", l_GetUnitBlueprintByName);
 
     // Audio
     state.register_function("AudioSetLanguage", stub_noop);
@@ -3137,8 +3211,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetPlayableRect", stub_noop);
     state.register_function("CreateResourceDeposit", stub_noop);
     state.register_function("CreatePropInSimCallback", stub_noop);
-    state.register_function("ArmyIsCivilian", stub_false);
-    state.register_function("ArmyIsOutOfGame", stub_false);
+    state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
+    state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);
 
     // Game global — FA uses Game.IsRestricted(bp_id, army_index) in OnStopBeingBuilt
     {

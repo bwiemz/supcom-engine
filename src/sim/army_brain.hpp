@@ -59,6 +59,9 @@ public:
     bool is_human() const { return is_human_; }
     void set_human(bool h) { is_human_ = h; }
 
+    bool is_civilian() const { return is_civilian_; }
+    void set_civilian(bool c) { is_civilian_ = c; }
+
     // --- Brain state ---
     BrainState state() const { return state_; }
     void set_state(BrainState s) { state_ = s; }
@@ -123,6 +126,9 @@ public:
     void set_color(u8 r, u8 g, u8 b) {
         color_r_ = r; color_g_ = g; color_b_ = b;
     }
+    u8 color_r() const { return color_r_; }
+    u8 color_g() const { return color_g_; }
+    u8 color_b() const { return color_b_; }
 
 private:
     i32 index_ = 0;
@@ -130,6 +136,7 @@ private:
     std::string nickname_;
     i32 faction_ = 1;
     bool is_human_ = true;
+    bool is_civilian_ = false;
 
     BrainState state_ = BrainState::InProgress;
     int lua_table_ref_ = -2; // LUA_NOREF

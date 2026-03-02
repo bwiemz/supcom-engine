@@ -41,6 +41,26 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L) {
         return;
     }
 
+    // Apply ballistic acceleration (gravity)
+    if (ballistic_accel != 0) {
+        velocity.y += ballistic_accel * static_cast<f32>(dt);
+    }
+
+    // Apply linear acceleration capped at max_speed
+    if (acceleration > 0 && max_speed > 0) {
+        f32 spd = std::sqrt(velocity.x * velocity.x +
+                            velocity.y * velocity.y +
+                            velocity.z * velocity.z);
+        if (spd > 0 && spd < max_speed) {
+            f32 new_spd = std::min(max_speed,
+                                    spd + acceleration * static_cast<f32>(dt));
+            f32 scale = new_spd / spd;
+            velocity.x *= scale;
+            velocity.y *= scale;
+            velocity.z *= scale;
+        }
+    }
+
     // Move
     auto pos = position();
     pos.x += velocity.x * static_cast<f32>(dt);

@@ -112,6 +112,14 @@ public:
     f32 work_progress() const { return work_progress_; }
     void set_work_progress(f32 p) { work_progress_ = p; }
 
+    // Pause state
+    bool is_paused() const { return paused_; }
+    void set_paused(bool p) { paused_ = p; }
+
+    // Shield back-reference (entity ID, set by _c_CreateShield)
+    u32 shield_entity_id() const { return shield_entity_id_; }
+    void set_shield_entity_id(u32 id) { shield_entity_id_ = id; }
+
     // State flags
     bool busy() const { return busy_; }
     void set_busy(bool b) { busy_ = b; }
@@ -299,6 +307,8 @@ private:
     bool capturable_ = true;      // can this unit be captured?
     f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
     f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
+    bool paused_ = false;
+    u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
     bool block_command_queue_ = false;
     i32 fire_state_ = 0;         // 0=ReturnFire, 1=HoldFire, 2=HoldGround

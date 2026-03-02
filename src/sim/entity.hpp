@@ -49,6 +49,9 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 
+    u32 ambient_sound_handle() const { return ambient_sound_handle_; }
+    void set_ambient_sound_handle(u32 h) { ambient_sound_handle_ = h; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -65,6 +68,7 @@ private:
     bool destroyed_ = false;
     std::string blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
+    u32 ambient_sound_handle_ = 0; ///< Active ambient loop (SoundHandle)
 };
 
 } // namespace osc::sim

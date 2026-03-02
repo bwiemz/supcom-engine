@@ -68,6 +68,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
         econ_eff = static_cast<f32>(std::min(ae.mass, ae.energy));
     }
 
+    // Paused units skip command processing but still update weapons
+    if (paused_) goto weapons_only;
+
     // Process head command
     while (!command_queue_.empty()) {
         auto& cmd = command_queue_.front();
@@ -685,6 +688,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 done_commands:
+weapons_only:
 
     // Update weapons (target scanning + firing)
     for (auto& weapon : weapons_) {

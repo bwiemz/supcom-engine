@@ -22,6 +22,10 @@ class Pathfinder;
 class VisibilityGrid;
 }
 
+namespace osc::audio {
+class SoundManager;
+}
+
 namespace osc::sim {
 
 /// Per-army resource efficiency (pre-computed per tick).
@@ -72,6 +76,10 @@ public:
     void build_visibility_grid();
     map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
 
+    // Audio
+    void set_sound_manager(std::unique_ptr<audio::SoundManager> mgr);
+    audio::SoundManager* sound_manager() { return sound_manager_.get(); }
+
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
     ArmyBrain* get_army(i32 index);
@@ -80,6 +88,9 @@ public:
 
     /// Iterate armies (for range-for or indexed access).
     ArmyBrain* army_at(size_t i) {
+        return i < armies_.size() ? armies_[i].get() : nullptr;
+    }
+    const ArmyBrain* army_at(size_t i) const {
         return i < armies_.size() ? armies_[i].get() : nullptr;
     }
 
@@ -117,6 +128,7 @@ private:
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
+    std::unique_ptr<audio::SoundManager> sound_manager_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;

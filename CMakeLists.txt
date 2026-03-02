@@ -10,6 +10,11 @@ find_package(ZLIB REQUIRED)
 find_package(unofficial-minizip CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(Vulkan REQUIRED)
+find_package(glfw3 CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(vk-bootstrap CONFIG REQUIRED)
+find_package(unofficial-shaderc CONFIG REQUIRED)
 
 # Vendored Lua 5.0
 add_subdirectory(third_party/lua-5.0)
@@ -19,6 +24,8 @@ add_subdirectory(src/core)
 add_subdirectory(src/vfs)
 add_subdirectory(src/map)
 add_subdirectory(src/sim)
+add_subdirectory(src/audio)
+add_subdirectory(src/renderer)
 add_subdirectory(src/lua)
 add_subdirectory(src/blueprints)
 
@@ -29,6 +36,8 @@ target_link_libraries(opensupcom PRIVATE
     osc::vfs
     osc::sim
     osc::map
+    osc::audio
+    osc::renderer
     osc::lua
     osc::blueprints
 )

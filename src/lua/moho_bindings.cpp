@@ -12,8 +12,10 @@
 #include "sim/projectile.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit_command.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "audio/sound_manager.hpp"
 
 #include <cmath>
 #include <cstring>
@@ -108,6 +110,35 @@ static sim::Platoon* check_platoon(lua_State* L, int idx = 1) {
                   : nullptr;
     lua_pop(L, 1);
     return (p && !p->destroyed()) ? p : nullptr;
+}
+
+static audio::SoundManager* get_sound_mgr(lua_State* L) {
+    lua_pushstring(L, "osc_sound_manager");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* mgr = static_cast<audio::SoundManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return mgr;
+}
+
+/// Extract Bank and Cue strings from a sound table at the given stack index.
+/// Returns false if the table is missing or lacks Bank/Cue keys.
+static bool extract_sound_table(lua_State* L, int idx,
+                                std::string& bank, std::string& cue) {
+    if (!lua_istable(L, idx)) return false;
+
+    lua_pushstring(L, "Bank");
+    lua_rawget(L, idx);
+    if (lua_type(L, -1) != LUA_TSTRING) { lua_pop(L, 1); return false; }
+    bank = lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "Cue");
+    lua_rawget(L, idx);
+    if (lua_type(L, -1) != LUA_TSTRING) { lua_pop(L, 1); return false; }
+    cue = lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    return true;
 }
 
 // Push a Vector3 as a Lua table {[1]=x, [2]=y, [3]=z}
@@ -206,6 +237,68 @@ static f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type) {
     // Unknown type — return overall as fallback
     return unit->surface_threat() + unit->air_threat() +
            unit->sub_threat() + unit->economy_threat();
+}
+
+// ====================================================================
+// Sound methods
+// ====================================================================
+
+/// entity:PlaySound(soundTable) — play one-shot at entity position
+static int entity_PlaySound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) return 0;
+
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) return 0;
+
+    std::string bank, cue;
+    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+
+    auto pos = e->position();
+    mgr->play(bank, cue, &pos);
+    return 0;
+}
+
+/// entity:SetAmbientSound(soundTable, nil) — start/stop looping ambient
+/// SetAmbientSound(nil, nil) stops the current ambient sound.
+static int entity_SetAmbientSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) return 0;
+
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) return 0;
+
+    // Stop any existing ambient loop
+    if (e->ambient_sound_handle() != 0) {
+        mgr->stop(e->ambient_sound_handle());
+        e->set_ambient_sound_handle(0);
+    }
+
+    // If arg 2 is a sound table, start a new loop
+    std::string bank, cue;
+    if (extract_sound_table(L, 2, bank, cue)) {
+        auto pos = e->position();
+        auto handle = mgr->play_loop(bank, cue, &pos);
+        e->set_ambient_sound_handle(handle);
+    }
+
+    return 0;
+}
+
+/// weapon:PlaySound(soundTable) — play one-shot at owning unit position
+static int weapon_PlaySound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) return 0;
+
+    auto* unit = check_weapon_unit(L);
+    if (!unit || unit->destroyed()) return 0;
+
+    std::string bank, cue;
+    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+
+    auto pos = unit->position();
+    mgr->play(bank, cue, &pos);
+    return 0;
 }
 
 // ====================================================================
@@ -380,6 +473,13 @@ static int entity_GetFractionComplete(lua_State* L) {
 static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
     if (e) {
+        // Stop ambient sound before destruction
+        if (e->ambient_sound_handle() != 0) {
+            auto* mgr = get_sound_mgr(L);
+            if (mgr) mgr->stop(e->ambient_sound_handle());
+            e->set_ambient_sound_handle(0);
+        }
+
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
         e->mark_destroyed();
@@ -557,6 +657,8 @@ static int unit_IsUnitState(lua_State* L) {
             result = u->layer() == "Sub" || u->layer() == "Seabed";
         else if (std::strcmp(state, "Enhancing") == 0)
             result = u->is_enhancing();
+        else if (std::strcmp(state, "Paused") == 0)
+            result = u->is_paused();
         else if (std::strcmp(state, "Attached") == 0)
             result = u->is_loaded();
         else if (std::strcmp(state, "TransportLoading") == 0)
@@ -840,6 +942,159 @@ struct MethodEntry {
     lua_CFunction func;
 };
 
+// entity:CreateProjectile(bp, dx, dy, dz) -> projectile Lua table
+// Creates a projectile at entity position with optional velocity direction
+static int entity_CreateProjectile(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
+
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    auto proj = std::make_unique<sim::Projectile>();
+    proj->set_position(e->position());
+    proj->set_army(e->army());
+    proj->launcher_id = e->entity_id();
+    proj->lifetime = 10.0f;
+
+    // Optional velocity direction (args 3,4,5 if bp is string; args 2,3,4 if no bp)
+    int vel_start = 2;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        vel_start = 3; // bp string is arg 2, velocity starts at 3
+    }
+    if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
+        lua_isnumber(L, vel_start + 2)) {
+        proj->velocity.x = static_cast<f32>(lua_tonumber(L, vel_start));
+        proj->velocity.y = static_cast<f32>(lua_tonumber(L, vel_start + 1));
+        proj->velocity.z = static_cast<f32>(lua_tonumber(L, vel_start + 2));
+    }
+
+    u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
+    auto* proj_ptr = static_cast<sim::Projectile*>(
+        sim->entity_registry().find(proj_id));
+
+    // Create Lua table with projectile metatable (reuse __osc_proj_mt)
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, proj_ptr);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "__osc_proj_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        int mt_idx = lua_gettop(L);
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, mt_idx);
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "projectile_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                int src_idx = lua_gettop(L);
+                lua_pushnil(L);
+                while (lua_next(L, src_idx) != 0) {
+                    lua_pushvalue(L, -2);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, mt_idx);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "__osc_proj_mt");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    proj_ptr->set_lua_table_ref(ref);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    return 1;
+}
+
+// entity:CreateProjectileAtBone(bone, bp, dx, dy, dz) -> projectile Lua table
+// Same as CreateProjectile but skip bone arg (bones not implemented)
+static int entity_CreateProjectileAtBone(lua_State* L) {
+    // Shift args: remove bone (arg 2), shift bp+velocity down
+    // Easiest: just call CreateProjectile with args shifted
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
+
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    auto proj = std::make_unique<sim::Projectile>();
+    proj->set_position(e->position());
+    proj->set_army(e->army());
+    proj->launcher_id = e->entity_id();
+    proj->lifetime = 10.0f;
+
+    // arg 2 = bone (skip), arg 3 = bp (optional string), args 4,5,6 = velocity
+    int vel_start = 3;
+    if (lua_type(L, 3) == LUA_TSTRING) {
+        vel_start = 4; // bp string at arg 3
+    }
+    if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
+        lua_isnumber(L, vel_start + 2)) {
+        proj->velocity.x = static_cast<f32>(lua_tonumber(L, vel_start));
+        proj->velocity.y = static_cast<f32>(lua_tonumber(L, vel_start + 1));
+        proj->velocity.z = static_cast<f32>(lua_tonumber(L, vel_start + 2));
+    }
+
+    u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
+    auto* proj_ptr = static_cast<sim::Projectile*>(
+        sim->entity_registry().find(proj_id));
+
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, proj_ptr);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "__osc_proj_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        int mt_idx = lua_gettop(L);
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, mt_idx);
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "projectile_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                int src_idx = lua_gettop(L);
+                lua_pushnil(L);
+                while (lua_next(L, src_idx) != 0) {
+                    lua_pushvalue(L, -2);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, mt_idx);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "__osc_proj_mt");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    proj_ptr->set_lua_table_ref(ref);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry entity_methods[] = {
     // Real implementations
@@ -879,9 +1134,9 @@ static const MethodEntry entity_methods[] = {
     {"DetachFrom",              stub_noop},
     {"DetachAll",               stub_noop},
     {"GetBoneDirection",        entity_GetPosition}, // returns a vector
-    {"CreateProjectile",        stub_return_nil},
-    {"CreateProjectileAtBone",  stub_return_nil},
-    {"PlaySound",               stub_noop},
+    {"CreateProjectile",        entity_CreateProjectile},
+    {"CreateProjectileAtBone",  entity_CreateProjectileAtBone},
+    {"PlaySound",               entity_PlaySound},
     {"SetFractionComplete",     entity_SetFractionComplete},
     {"AddManualScroller",       stub_noop},
     {"AddPingPongScroller",     stub_noop},
@@ -1692,6 +1947,91 @@ static int unit_SetShieldRatio(lua_State* L) {
     return 0;
 }
 
+// unit:Stop() — clear command queue
+static int unit_Stop(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->clear_commands();
+    return 0;
+}
+
+// unit:SetPaused(bool) — set/clear pause flag + economy
+static int unit_SetPaused(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) {
+        bool paused = lua_toboolean(L, 2) != 0;
+        u->set_paused(paused);
+        // When pausing, zero economy activity (FA Lua re-enables on unpause)
+        if (paused) {
+            u->economy().production_active = false;
+            u->economy().consumption_active = false;
+        }
+    }
+    return 0;
+}
+
+// unit:IsPaused() -> bool
+static int unit_IsPaused(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->is_paused() ? 1 : 0);
+    return 1;
+}
+
+// unit:CanBuild(bp_id) -> bool — minimal: builders return true
+static int unit_CanBuild(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    bool is_builder = u->has_category("ENGINEER") ||
+                      u->has_category("FACTORY") ||
+                      u->has_category("CONSTRUCTION") ||
+                      u->has_category("COMMAND");
+    lua_pushboolean(L, is_builder ? 1 : 0);
+    return 1;
+}
+
+// unit:EnableShield() — enable shield on this unit's shield entity
+static int unit_EnableShield(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->shield_entity_id() == 0) return 0;
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    auto* e = sim->entity_registry().find(u->shield_entity_id());
+    if (e && e->is_shield()) {
+        static_cast<sim::Shield*>(e)->is_on = true;
+    }
+    return 0;
+}
+
+// unit:DisableShield() — disable shield on this unit's shield entity
+static int unit_DisableShield(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->shield_entity_id() == 0) return 0;
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    auto* e = sim->entity_registry().find(u->shield_entity_id());
+    if (e && e->is_shield()) {
+        static_cast<sim::Shield*>(e)->is_on = false;
+    }
+    return 0;
+}
+
+// unit:ShieldIsOn() -> bool
+static int unit_ShieldIsOn(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->shield_entity_id() == 0) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 0); return 1; }
+    auto* e = sim->entity_registry().find(u->shield_entity_id());
+    if (e && e->is_shield()) {
+        lua_pushboolean(L, static_cast<sim::Shield*>(e)->is_on ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -1722,8 +2062,8 @@ static const MethodEntry unit_methods[] = {
     {"GetFireState",                unit_GetFireState},
     {"SetFireState",                unit_SetFireState},
     {"ToggleFireState",             stub_noop},
-    {"SetPaused",                   stub_noop},
-    {"IsPaused",                    stub_return_false},
+    {"SetPaused",                   unit_SetPaused},
+    {"IsPaused",                    unit_IsPaused},
     // Stubs — bones / visual
     {"ShowBone",                    stub_noop},
     {"HideBone",                    stub_noop},
@@ -1732,7 +2072,7 @@ static const MethodEntry unit_methods[] = {
     {"GetBoneDirection",            entity_GetPosition},
     // Stubs — build / command
     {"GetCommandQueue",             unit_GetCommandQueue},
-    {"CanBuild",                    stub_return_true},
+    {"CanBuild",                    unit_CanBuild},
     {"AddCommandCap",               stub_noop},
     {"RemoveCommandCap",            stub_noop},
     {"RestoreCommandCaps",          stub_noop},
@@ -1750,9 +2090,9 @@ static const MethodEntry unit_methods[] = {
     {"EnableIntel",                 unit_EnableIntel},
     {"DisableIntel",                unit_DisableIntel},
     // Shield — EnableShield/DisableShield/ShieldIsOn are FA Lua overrides (stubs fine)
-    {"EnableShield",                stub_noop},
-    {"DisableShield",               stub_noop},
-    {"ShieldIsOn",                  stub_return_false},
+    {"EnableShield",                unit_EnableShield},
+    {"DisableShield",               unit_DisableShield},
+    {"ShieldIsOn",                  unit_ShieldIsOn},
     {"GetShieldRatio",              unit_GetShieldRatio},
     {"SetShieldRatio",              unit_SetShieldRatio},
     {"SetFocusEntity",              stub_noop},
@@ -1831,7 +2171,7 @@ static const MethodEntry unit_methods[] = {
     {"GetNumBuildOrders",           unit_GetNumBuildOrders},
     {"SetBuildingUnit",             stub_noop},
     {"GetUnitBeingBuilt",           unit_GetUnitBeingBuilt},
-    {"Stop",                        stub_noop},
+    {"Stop",                        unit_Stop},
     {"Kill",                        entity_Destroy},
     {"GetFocusUnit",                unit_GetFocusUnit},
     {"RestoreBuildRestrictions",    stub_noop},
@@ -1843,7 +2183,7 @@ static const MethodEntry unit_methods[] = {
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
-    {"SetAmbientSound",             stub_noop},
+    {"SetAmbientSound",             entity_SetAmbientSound},
     {"GetRallyPoint",                unit_GetRallyPoint},
     {"SetRallyPoint",                unit_SetRallyPoint},
     {"SetBusy",                      unit_SetBusy},
@@ -1943,6 +2283,46 @@ static int proj_SetNewTargetGround(lua_State* L) {
     return 0;
 }
 
+// proj:SetMaxSpeed(speed) — set max speed, return self for chaining
+static int proj_SetMaxSpeed(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->max_speed = static_cast<f32>(luaL_checknumber(L, 2));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// proj:SetAcceleration(accel) — set linear acceleration, return self
+static int proj_SetAcceleration(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->acceleration = static_cast<f32>(luaL_checknumber(L, 2));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// proj:SetBallisticAcceleration(accel) — set vertical gravity, return self
+static int proj_SetBallisticAcceleration(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->ballistic_accel = static_cast<f32>(luaL_checknumber(L, 2));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// proj:SetTurnRate(rate) — store turn rate (no heading-based flight yet)
+static int proj_SetTurnRate(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->turn_rate = static_cast<f32>(luaL_checknumber(L, 2));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// proj:SetTurnRateByDist(rate) — same as SetTurnRate for now, return self
+static int proj_SetTurnRateByDist(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->turn_rate = static_cast<f32>(luaL_checknumber(L, 2));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
 static const MethodEntry projectile_methods[] = {
     // Real implementations
     {"GetLauncher",                 proj_GetLauncher},
@@ -1958,15 +2338,15 @@ static const MethodEntry projectile_methods[] = {
     {"GetCurrentTargetPositionXYZ", stub_return_zero},
     {"TrackTarget",                 stub_return_false},
     {"SetScaleVelocity",            stub_return_self},
-    {"SetMaxSpeed",                 stub_noop},
-    {"SetAcceleration",             stub_return_self},
-    {"SetBallisticAcceleration",    stub_return_self},
+    {"SetMaxSpeed",                 proj_SetMaxSpeed},
+    {"SetAcceleration",             proj_SetAcceleration},
+    {"SetBallisticAcceleration",    proj_SetBallisticAcceleration},
     {"SetCollideEntity",            stub_return_self},
     {"SetCollideSurface",           stub_return_self},
     {"SetCollision",                stub_return_self},
     {"SetDestroyOnWater",           stub_noop},
     {"SetLocalAngularVelocity",     stub_return_self},
-    {"SetTurnRate",                 stub_return_self},
+    {"SetTurnRate",                 proj_SetTurnRate},
     {"SetStayUpright",              stub_noop},
     {"SetVelocityAlign",            stub_noop},
     {"StayUnderwater",              stub_return_false},
@@ -1977,7 +2357,7 @@ static const MethodEntry projectile_methods[] = {
     {"GetZigZagFrequency",          stub_return_zero},
     {"ChangeDetonateAboveHeight",   stub_noop},
     {"ChangeDetonateBelowHeight",   stub_noop},
-    {"SetTurnRateByDist",           stub_noop},
+    {"SetTurnRateByDist",           proj_SetTurnRateByDist},
     {nullptr, nullptr},
 };
 
@@ -2222,7 +2602,7 @@ static const MethodEntry weapon_methods[] = {
     {"ChangeFiringTolerance",       stub_noop},
     {"ChangeProjectileBlueprint",   stub_noop},
     {"BeenDestroyed",               stub_return_false},
-    {"PlaySound",                   stub_noop},
+    {"PlaySound",                   weapon_PlaySound},
     {"SetValidTargetsForCurrentLayer", stub_noop},
     {"SetWeaponPriorities",         stub_noop},
     {"SetOnTransport",              stub_noop},
@@ -3802,6 +4182,118 @@ static int platoon_CalculatePlatoonThreat(lua_State* L) {
     return 1;
 }
 
+// brain:CanBuildStructureAt(bp_id, position) -> bool
+// Check if footprint fits at position (no impassable/obstacle cells)
+static int brain_CanBuildStructureAt(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 1); return 1; }
+
+    auto* grid = sim->pathfinding_grid();
+    if (!grid) { lua_pushboolean(L, 1); return 1; } // no grid → allow
+
+    // arg 2: bp_id string (optional — read footprint from blueprint)
+    f32 size_x = 1.0f, size_z = 1.0f;
+    if (lua_isstring(L, 2)) {
+        const char* bp_id = lua_tostring(L, 2);
+        lua_pushstring(L, "__blueprints");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, bp_id);
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                int bp = lua_gettop(L);
+                lua_pushstring(L, "Footprint");
+                lua_rawget(L, bp);
+                if (lua_istable(L, -1)) {
+                    int fp = lua_gettop(L);
+                    lua_pushstring(L, "SizeX");
+                    lua_rawget(L, fp);
+                    if (lua_isnumber(L, -1)) size_x = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "SizeZ");
+                    lua_rawget(L, fp);
+                    if (lua_isnumber(L, -1)) size_z = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1); // Footprint
+            }
+            lua_pop(L, 1); // bp table
+        }
+        lua_pop(L, 1); // __blueprints
+    }
+
+    // arg 3: position table — FindPlaceToBuild returns {[1]=x, [2]=z, [3]=dist}
+    // Standard Vector3 is {[1]=x, [2]=y, [3]=z}. Read [2] as Z to match
+    // FindPlaceToBuild (primary caller); for Vector3 this gets y but building
+    // placement only needs X/Z and y=elevation is irrelevant for grid checks.
+    f32 wx = 0, wz = 0;
+    if (lua_istable(L, 3)) {
+        lua_pushnumber(L, 1);
+        lua_rawget(L, 3);
+        wx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushnumber(L, 2);
+        lua_rawget(L, 3);
+        wz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    // Check all cells in footprint area
+    f32 half_x = size_x * 0.5f;
+    f32 half_z = size_z * 0.5f;
+    u32 gx0, gz0, gx1, gz1;
+    grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
+    grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
+
+    for (u32 gz = gz0; gz <= gz1; ++gz) {
+        for (u32 gx = gx0; gx <= gx1; ++gx) {
+            auto cell = grid->get(gx, gz);
+            if (cell == map::CellPassability::Impassable ||
+                cell == map::CellPassability::Obstacle) {
+                lua_pushboolean(L, 0);
+                return 1;
+            }
+        }
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// brain:IsAnyEngineerBuilding(category) -> bool
+// Check if any engineer/commander in this army is building a unit matching category
+static int brain_IsAnyEngineerBuilding(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) { lua_pushboolean(L, 0); return 1; }
+
+    int cat_idx = lua_istable(L, 2) ? 2 : 0;
+    i32 army = brain->index();
+
+    bool found = false;
+    sim->entity_registry().for_each([&](sim::Entity& e) {
+        if (found) return;
+        if (e.destroyed() || !e.is_unit()) return;
+        auto& unit = static_cast<sim::Unit&>(e);
+        if (unit.army() != army) return;
+        if (!unit.has_category("ENGINEER") && !unit.has_category("COMMAND"))
+            return;
+        if (!unit.is_building()) return;
+
+        // Check if the unit being built matches the category
+        if (cat_idx > 0) {
+            auto* target = sim->entity_registry().find(unit.build_target_id());
+            if (!target || target->destroyed() || !target->is_unit()) return;
+            auto* target_unit = static_cast<sim::Unit*>(target);
+            if (!osc::lua::unit_matches_category(L, cat_idx, target_unit->categories()))
+                return;
+        }
+        found = true;
+    });
+
+    lua_pushboolean(L, found ? 1 : 0);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry aibrain_methods[] = {
     // Real implementations
@@ -3845,13 +4337,13 @@ static const MethodEntry aibrain_methods[] = {
     {"SetResourceSharing",          stub_noop},
     {"GetThreatAtPosition",         brain_GetThreatAtPosition},
     {"GetThreatsAroundPosition",    brain_GetThreatsAroundPosition},
-    {"IsAnyEngineerBuilding",       stub_return_false},
+    {"IsAnyEngineerBuilding",       brain_IsAnyEngineerBuilding},
     {"SetCurrentPlan",              stub_noop},
     {"PBMRemoveBuildLocation",      stub_noop},
     {"PBMAddBuildLocation",         stub_noop},
     {"SetUpAttackVectorsToArmy",    stub_noop},
     {"FindPlaceToBuild",            brain_FindPlaceToBuild},
-    {"CanBuildStructureAt",         stub_return_true},
+    {"CanBuildStructureAt",         brain_CanBuildStructureAt},
     {"BuildUnit",                   brain_BuildUnit},
     {"BuildStructure",              brain_BuildStructure},
     {"DecideWhatToBuild",           brain_DecideWhatToBuild},
