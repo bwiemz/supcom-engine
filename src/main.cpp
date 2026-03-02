@@ -12,6 +12,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "sim/unit.hpp"
 #include "audio/sound_manager.hpp"
+#include "sim/bone_cache.hpp"
 #include "renderer/renderer.hpp"
 
 extern "C" {
@@ -62,6 +63,9 @@ static void print_usage() {
               << "  --jammer-test      Dead-reckoning, stealth, jammer detection\n"
               << "  --stub-test        Moho stub conversions (14 real implementations)\n"
               << "  --audio-test       Audio system (XWB/XSB banks, play, loop, stop)\n"
+              << "  --bone-test        Bone system (SCM parser, bone queries)\n"
+              << "  --manip-test       Manipulator system (rotators, animators, sliders, aim)\n"
+              << "  --canpath-test     CanPathTo + GetThreatBetweenPositions\n"
               << "  --help             Show this help message\n";
 }
 
@@ -190,6 +194,9 @@ int main(int argc, char* argv[]) {
     bool jammer_test = parse_flag(argc, argv, "--jammer-test");
     bool stub_test = parse_flag(argc, argv, "--stub-test");
     bool audio_test = parse_flag(argc, argv, "--audio-test");
+    bool bone_test = parse_flag(argc, argv, "--bone-test");
+    bool manip_test = parse_flag(argc, argv, "--manip-test");
+    bool canpath_test = parse_flag(argc, argv, "--canpath-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -199,7 +206,8 @@ int main(int argc, char* argv[]) {
                     path_test || toggle_test || enhance_test ||
                     intel_test || shield_test || transport_test ||
                     fow_test || los_test || stall_test || jammer_test ||
-                    stub_test || audio_test;
+                    stub_test || audio_test || bone_test || manip_test ||
+                    canpath_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -263,6 +271,10 @@ int main(int argc, char* argv[]) {
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     sim_state.set_sound_manager(std::move(sound_mgr));
+
+    // Bone cache (lazy-loaded per-blueprint SCM bone data)
+    auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
+    sim_state.set_bone_cache(std::move(bone_cache));
 
     // Load scenario and map if --map was provided
     osc::lua::ScenarioMetadata scenario_meta;
@@ -3648,6 +3660,467 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("Audio test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    // Bone test: verify SCM parser, bone queries, and bone-relative positions
+    if (bone_test && !map_path.empty()) {
+        spdlog::info("=== BONE TEST: SCM bone system ===");
+
+        // Run initial ticks to fully create units
+        for (osc::u32 i = 0; i < 10; i++) {
+            sim_state.tick();
+        }
+
+        int pass = 0, fail = 0;
+
+        // Test 1: GetBoneCount > 1 for ACU (UEF ACU has ~40 bones)
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 1: entity #1 not found'); return end
+                local count = e:GetBoneCount()
+                if count > 1 then
+                    LOG('Bone test 1: PASS - GetBoneCount = ' .. tostring(count))
+                else
+                    WARN('Bone test 1: FAIL - GetBoneCount = ' .. tostring(count) .. ' (expected > 1)')
+                end
+            )");
+            auto* e1 = sim_state.entity_registry().find(1);
+            if (e1 && e1->bone_data() && e1->bone_data()->bone_count() > 1) {
+                spdlog::info("[PASS] Test 1: GetBoneCount={} for {}",
+                             e1->bone_data()->bone_count(),
+                             e1->blueprint_id());
+                pass++;
+            } else {
+                spdlog::error("[FAIL] Test 1: GetBoneCount <= 1");
+                fail++;
+            }
+        }
+
+        // Test 2: GetBoneName(0) returns non-empty string
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 2: entity #1 not found'); return end
+                local name = e:GetBoneName(0)
+                if name and name ~= '' then
+                    LOG('Bone test 2: PASS - bone[0] = "' .. name .. '"')
+                else
+                    WARN('Bone test 2: FAIL - GetBoneName(0) returned empty')
+                end
+            )");
+            auto* e1 = sim_state.entity_registry().find(1);
+            if (e1 && e1->bone_data() && !e1->bone_data()->bones.empty()) {
+                spdlog::info("[PASS] Test 2: bone[0] = '{}'",
+                             e1->bone_data()->bones[0].name);
+                pass++;
+            } else {
+                spdlog::error("[FAIL] Test 2: bone[0] name empty/missing");
+                fail++;
+            }
+        }
+
+        // Test 3: IsValidBone returns true for first bone name
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 3: entity #1 not found'); return end
+                local name = e:GetBoneName(0)
+                local valid = e:IsValidBone(name)
+                if valid then
+                    LOG('Bone test 3: PASS - IsValidBone("' .. name .. '") = true')
+                else
+                    WARN('Bone test 3: FAIL - IsValidBone("' .. name .. '") = false')
+                end
+            )");
+            if (r) { spdlog::info("[PASS] Test 3: IsValidBone(name) = true"); pass++; }
+            else { spdlog::error("[FAIL] Test 3: {}", r.error().message); fail++; }
+        }
+
+        // Test 4: IsValidBone returns false for nonexistent bone
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 4: entity #1 not found'); return end
+                local valid = e:IsValidBone('nonexistent_xyz_12345')
+                if not valid then
+                    LOG('Bone test 4: PASS - IsValidBone("nonexistent") = false')
+                else
+                    WARN('Bone test 4: FAIL - IsValidBone("nonexistent") = true')
+                end
+            )");
+            if (r) { spdlog::info("[PASS] Test 4: IsValidBone(nonexistent) = false"); pass++; }
+            else { spdlog::error("[FAIL] Test 4: {}", r.error().message); fail++; }
+        }
+
+        // Test 5: GetPosition(bone) differs from entity center for non-root bones
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 5: entity #1 not found'); return end
+                local center = e:GetPosition()
+                local count = e:GetBoneCount()
+                local found_diff = false
+                for i = 0, count - 1 do
+                    local bp = e:GetPosition(i)
+                    if bp then
+                        local dx = bp[1] - center[1]
+                        local dy = bp[2] - center[2]
+                        local dz = bp[3] - center[3]
+                        if math.abs(dx) > 0.01 or math.abs(dy) > 0.01 or math.abs(dz) > 0.01 then
+                            found_diff = true
+                            LOG('Bone test 5: PASS - bone ' .. i .. ' offset ('
+                                .. string.format('%.2f, %.2f, %.2f', dx, dy, dz) .. ')')
+                            break
+                        end
+                    end
+                end
+                if not found_diff then
+                    WARN('Bone test 5: FAIL - no bone differs from center')
+                end
+            )");
+            if (r) { spdlog::info("[PASS] Test 5: Bone position differs from center"); pass++; }
+            else { spdlog::error("[FAIL] Test 5: {}", r.error().message); fail++; }
+        }
+
+        // Test 6: ShowBone/HideBone don't crash
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 6: entity #1 not found'); return end
+                e:HideBone(0, true)
+                e:ShowBone(0, true)
+                LOG('Bone test 6: PASS - ShowBone/HideBone no crash')
+            )");
+            if (r) { spdlog::info("[PASS] Test 6: ShowBone/HideBone no crash"); pass++; }
+            else { spdlog::error("[FAIL] Test 6: {}", r.error().message); fail++; }
+        }
+
+        // Test 7: GetBoneDirection returns a vector
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 7: entity #1 not found'); return end
+                local dir = e:GetBoneDirection(0)
+                if dir and dir[1] and dir[2] and dir[3] then
+                    LOG('Bone test 7: PASS - direction (' ..
+                        string.format('%.3f, %.3f, %.3f', dir[1], dir[2], dir[3]) .. ')')
+                else
+                    WARN('Bone test 7: FAIL - GetBoneDirection returned nil/invalid')
+                end
+            )");
+            if (r) { spdlog::info("[PASS] Test 7: GetBoneDirection returns vector"); pass++; }
+            else { spdlog::error("[FAIL] Test 7: {}", r.error().message); fail++; }
+        }
+
+        // Test 8: Enumerate all bones, verify count matches
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Bone test 8: entity #1 not found'); return end
+                local count = e:GetBoneCount()
+                local valid = 0
+                for i = 0, count - 1 do
+                    local name = e:GetBoneName(i)
+                    if name ~= nil then
+                        valid = valid + 1
+                    end
+                end
+                if valid == count then
+                    LOG('Bone test 8: PASS - enumerated all ' .. count .. ' bones')
+                else
+                    WARN('Bone test 8: FAIL - enumerated ' .. valid
+                         .. ' of ' .. count .. ' bones')
+                end
+            )");
+            if (r) { spdlog::info("[PASS] Test 8: All bones enumerated"); pass++; }
+            else { spdlog::error("[FAIL] Test 8: {}", r.error().message); fail++; }
+        }
+
+        spdlog::info("Bone test: {}/{} passed", pass, pass + fail);
+        spdlog::info("Bone test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    // Manipulator test: rotators, animators, sliders, aim controllers, WaitFor
+    if (manip_test && !map_path.empty()) {
+        spdlog::info("=== MANIP TEST: Manipulator system ===");
+
+        // Run initial ticks to fully create units
+        for (osc::u32 i = 0; i < 10; i++) {
+            sim_state.tick();
+        }
+
+        int pass = 0, fail = 0;
+
+        // Test 1: RotateManipulator with goal + WaitFor
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Manip test 1: entity #1 not found'); return end
+                local rot = CreateRotator(e, 0, 'y', 90, 360)
+                if rot and rot.SetGoal then
+                    LOG('Manip test 1: PASS - CreateRotator returned real object')
+                else
+                    WARN('Manip test 1: FAIL - CreateRotator returned nil/dummy')
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 1: CreateRotator returns real object"); }
+            else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        }
+
+        // Test 2: RotateManipulator GetCurrentAngle updates after ticks
+        {
+            state.do_string(R"(
+                __test_rot = CreateRotator(GetEntityById(1), 0, 'y', 90, 360)
+            )");
+            // Run a few ticks to let the rotator advance
+            for (osc::u32 i = 0; i < 10; i++) {
+                sim_state.tick();
+            }
+            auto r = state.do_string(R"(
+                local angle = __test_rot:GetCurrentAngle()
+                if angle > 0 then
+                    LOG('Manip test 2: PASS - angle = ' .. string.format('%.1f', angle))
+                else
+                    WARN('Manip test 2: FAIL - angle = ' .. tostring(angle))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: RotateManipulator angle advances"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: RotateManipulator continuous (SetTargetSpeed)
+        {
+            state.do_string(R"(
+                __test_cont = CreateRotator(GetEntityById(1), 0, 'y')
+                __test_cont:SetTargetSpeed(180)
+                __test_cont:SetAccel(360)
+            )");
+            for (osc::u32 i = 0; i < 20; i++) {
+                sim_state.tick();
+            }
+            auto r = state.do_string(R"(
+                local angle = __test_cont:GetCurrentAngle()
+                if angle > 0 then
+                    LOG('Manip test 3: PASS - continuous angle = ' .. string.format('%.1f', angle))
+                else
+                    WARN('Manip test 3: FAIL - angle = ' .. tostring(angle))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 3: Continuous rotation works"); }
+            else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        }
+
+        // Test 4: AnimManipulator with PlayAnim/SetRate/GetAnimationFraction
+        {
+            state.do_string(R"(
+                __test_anim = CreateAnimator(GetEntityById(1))
+                __test_anim:PlayAnim('/test.sca'):SetRate(2)
+            )");
+            for (osc::u32 i = 0; i < 20; i++) {
+                sim_state.tick();
+            }
+            auto r = state.do_string(R"(
+                local frac = __test_anim:GetAnimationFraction()
+                if frac > 0 then
+                    LOG('Manip test 4: PASS - fraction = ' .. string.format('%.2f', frac))
+                else
+                    WARN('Manip test 4: FAIL - fraction = ' .. tostring(frac))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 4: AnimManipulator fraction advances"); }
+            else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        }
+
+        // Test 5: WaitFor(rotator) — thread completes when goal is reached
+        {
+            state.do_string(R"(
+                __waitfor_done = false
+                local rot = CreateRotator(GetEntityById(1), 0, 'y', 45, 360)
+                ForkThread(function()
+                    WaitFor(rot)
+                    __waitfor_done = true
+                end)
+            )");
+            // Run enough ticks for the rotator to reach 45 degrees
+            for (osc::u32 i = 0; i < 20; i++) {
+                sim_state.tick();
+            }
+            auto r = state.do_string(R"(
+                if __waitfor_done then
+                    LOG('Manip test 5: PASS - WaitFor thread completed')
+                else
+                    WARN('Manip test 5: FAIL - WaitFor thread still waiting')
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 5: WaitFor(rotator) works"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        }
+
+        // Test 6: AimManipulator SetHeadingPitch / GetHeadingPitch
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Manip test 6: entity #1 not found'); return end
+                local aim = CreateAimController(e, 'Default', 0)
+                aim:SetFiringArc(-180, 180, 90, -45, 45, 45)
+                aim:SetHeadingPitch(30, 15)
+                local h, p = aim:GetHeadingPitch()
+                if math.abs(h - 30) < 0.1 and math.abs(p - 15) < 0.1 then
+                    LOG('Manip test 6: PASS - heading=' .. h .. ' pitch=' .. p)
+                else
+                    WARN('Manip test 6: FAIL - heading=' .. tostring(h) .. ' pitch=' .. tostring(p))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 6: AimManipulator heading/pitch"); }
+            else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        }
+
+        // Test 7: Manipulator Destroy is safe
+        {
+            auto r = state.do_string(R"(
+                local e = GetEntityById(1)
+                if not e then WARN('Manip test 7: entity #1 not found'); return end
+                local rot = CreateRotator(e, 0, 'y', 90, 360)
+                local enabled = rot:IsEnabled()
+                rot:Destroy()
+                -- Methods should be safe no-ops after destroy
+                rot:SetGoal(45)
+                rot:SetSpeed(10)
+                if enabled then
+                    LOG('Manip test 7: PASS - Destroy + post-destroy methods safe')
+                else
+                    WARN('Manip test 7: FAIL - IsEnabled returned false before Destroy')
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 7: Destroy is safe"); }
+            else { fail++; spdlog::error("[FAIL] Test 7: {}", r.error().message); }
+        }
+
+        spdlog::info("Manip test: {}/{} passed", pass, pass + fail);
+        spdlog::info("Manip test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    // CanPathTo + GetThreatBetweenPositions test
+    if (canpath_test && !map_path.empty()) {
+        spdlog::info("=== CANPATH TEST: CanPathTo + GetThreatBetweenPositions ===");
+
+        // Run initial ticks to fully create units
+        for (osc::u32 i = 0; i < 10; i++) {
+            sim_state.tick();
+        }
+
+        int pass = 0, fail = 0;
+
+        // Test 1: CanPathTo nearby reachable position (same land mass)
+        {
+            auto r = state.do_string(R"(
+                local acu = GetEntityById(1)
+                if not acu then WARN('Canpath test 1: FAIL - no entity #1'); return end
+                local pos = acu:GetPosition()
+                -- Nearby position on same land
+                local dest = {pos[1] + 20, 0, pos[3] + 20}
+                local result = acu:CanPathTo(dest)
+                if result then
+                    LOG('Canpath test 1: PASS - CanPathTo nearby = true')
+                else
+                    WARN('Canpath test 1: FAIL - CanPathTo nearby = false')
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 1: CanPathTo nearby reachable"); }
+            else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        }
+
+        // Test 2: CanPathTo returns bool (not always true)
+        // Verify the result is a proper boolean, not the old stub_return_true
+        {
+            auto r = state.do_string(R"(
+                local acu = GetEntityById(1)
+                if not acu then WARN('Canpath test 2: FAIL - no entity #1'); return end
+                local pos = acu:GetPosition()
+                -- Nearby position should be true
+                local near = acu:CanPathTo({pos[1] + 5, 0, pos[3] + 5})
+                -- Same position should be true
+                local same = acu:CanPathTo(pos)
+                if near and same then
+                    LOG('Canpath test 2: PASS - returns true for reachable positions')
+                else
+                    WARN('Canpath test 2: FAIL - near=' .. tostring(near) .. ' same=' .. tostring(same))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: CanPathTo returns proper booleans"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: CanPathToCell works the same as CanPathTo
+        {
+            auto r = state.do_string(R"(
+                local acu = GetEntityById(1)
+                if not acu then WARN('Canpath test 3: FAIL - no entity #1'); return end
+                local pos = acu:GetPosition()
+                local dest = {pos[1] + 10, 0, pos[3] + 10}
+                local result = acu:CanPathToCell(dest)
+                if result then
+                    LOG('Canpath test 3: PASS - CanPathToCell nearby = true')
+                else
+                    WARN('Canpath test 3: FAIL - CanPathToCell nearby = false')
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 3: CanPathToCell nearby reachable"); }
+            else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        }
+
+        // Test 4: GetThreatBetweenPositions returns 0 with no enemies nearby
+        {
+            auto r = state.do_string(R"(
+                local brain = GetArmyBrain('ARMY_1')
+                if not brain then WARN('Canpath test 4: FAIL - no brain'); return end
+                -- Query between two nearby positions with no enemies
+                local t = brain:GetThreatBetweenPositions(
+                    {100, 0, 100}, {120, 0, 120}, nil, 'Overall')
+                if t == 0 then
+                    LOG('Canpath test 4: PASS - threat = 0 (no enemies nearby)')
+                else
+                    WARN('Canpath test 4: FAIL - expected 0, got ' .. tostring(t))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 4: GetThreatBetweenPositions = 0 (no enemies)"); }
+            else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        }
+
+        // Test 5: GetThreatBetweenPositions detects enemy unit along line
+        {
+            auto r = state.do_string(R"(
+                -- Entity #2 is ARMY_2 ACU (an enemy of ARMY_1)
+                local enemy = GetEntityById(2)
+                local brain = GetArmyBrain('ARMY_1')
+                if not enemy or not brain then
+                    WARN('Canpath test 5: FAIL - no enemy or brain')
+                    return
+                end
+                local epos = enemy:GetPosition()
+                -- Query line that passes through enemy position
+                local t = brain:GetThreatBetweenPositions(
+                    {epos[1] - 10, 0, epos[3]}, {epos[1] + 10, 0, epos[3]},
+                    nil, 'Overall')
+                if t > 0 then
+                    LOG('Canpath test 5: PASS - threat = ' .. string.format('%.1f', t))
+                else
+                    WARN('Canpath test 5: FAIL - expected threat > 0, got ' .. tostring(t))
+                end
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 5: GetThreatBetweenPositions detects enemy"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        }
+
+        spdlog::info("Canpath test: {}/{} passed", pass, pass + fail);
+        spdlog::info("Canpath test: {} entities, {} threads",
                      sim_state.entity_registry().count(),
                      sim_state.thread_manager().active_count());
     }

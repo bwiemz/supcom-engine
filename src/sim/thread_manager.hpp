@@ -42,6 +42,10 @@ public:
     /// Number of active (non-dead) threads.
     size_t active_count() const;
 
+    /// Wake a thread that is waiting on a manipulator (WaitFor).
+    /// Sets the thread's wait_until_tick to current_tick so it resumes next tick.
+    void wake_thread(int lua_ref, u32 current_tick);
+
     /// Set the maximum number of Lua VM instructions per coroutine resume.
     /// Set to 0 to disable the instruction limit.
     void set_instruction_budget(i32 budget) { instruction_budget_ = budget; }

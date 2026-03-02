@@ -25,6 +25,7 @@ public:
     f32 muzzle_velocity = 25;
     bool fire_on_death = false;
     bool manual_fire = false;
+    std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
     i32 weapon_index = 0;       // 0-based index within unit

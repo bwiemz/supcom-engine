@@ -2,9 +2,12 @@
 #include "lua/category_utils.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/thread_manager.hpp"
 #include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
 #include "sim/navigator.hpp"
@@ -12,6 +15,7 @@
 #include "sim/projectile.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit_command.hpp"
+#include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -301,6 +305,99 @@ static int weapon_PlaySound(lua_State* L) {
     return 0;
 }
 
+// --- Bone helper functions ---
+
+/// Resolve bone argument (string name or integer index) → bone index.
+/// Returns 0 (root) if not found.
+static i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg) {
+    auto* bd = e->bone_data();
+    if (!bd) return 0; // fallback root
+
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        std::string name = lua_tostring(L, arg);
+        i32 idx = bd->find_bone(name);
+        return (idx >= 0) ? idx : 0; // fallback to root
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        i32 idx = static_cast<i32>(lua_tonumber(L, arg));
+        return bd->is_valid(idx) ? idx : 0;
+    }
+    return 0; // default to root
+}
+
+/// Compute world-space bone position for an entity.
+static sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx) {
+    auto* bd = e->bone_data();
+    if (!bd || !bd->is_valid(bone_idx)) return e->position();
+
+    auto& bone = bd->bones[static_cast<size_t>(bone_idx)];
+    auto rotated = sim::quat_rotate(e->orientation(), bone.world_position);
+    return {
+        e->position().x + rotated.x,
+        e->position().y + rotated.y,
+        e->position().z + rotated.z
+    };
+}
+
+// --- Bone query functions ---
+
+static int entity_GetBoneCount(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) { lua_pushnumber(L, 1); return 1; }
+    auto* bd = e->bone_data();
+    lua_pushnumber(L, bd ? bd->bone_count() : 1);
+    return 1;
+}
+
+static int entity_GetBoneName(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) { lua_pushstring(L, "root"); return 1; }
+    auto* bd = e->bone_data();
+    if (!bd) { lua_pushstring(L, "root"); return 1; }
+    i32 idx = (lua_type(L, 2) == LUA_TNUMBER) ? static_cast<i32>(lua_tonumber(L, 2)) : 0;
+    if (bd->is_valid(idx))
+        lua_pushstring(L, bd->bones[static_cast<size_t>(idx)].name.c_str());
+    else
+        lua_pushstring(L, "root");
+    return 1;
+}
+
+static int entity_IsValidBone(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) { lua_pushboolean(L, 0); return 1; }
+    auto* bd = e->bone_data();
+    if (!bd) { lua_pushboolean(L, 0); return 1; }
+
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        std::string name = lua_tostring(L, 2);
+        lua_pushboolean(L, bd->find_bone(name) >= 0 ? 1 : 0);
+    } else if (lua_type(L, 2) == LUA_TNUMBER) {
+        i32 idx = static_cast<i32>(lua_tonumber(L, 2));
+        lua_pushboolean(L, bd->is_valid(idx) ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+static int entity_GetBoneDirection(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) { push_vector3(L, {0, 0, 1}); return 1; }
+    auto* bd = e->bone_data();
+    if (!bd || lua_gettop(L) < 2) {
+        // No bone data or no bone arg: return entity forward direction
+        auto fwd = sim::quat_rotate(e->orientation(), {0, 0, 1});
+        push_vector3(L, fwd);
+        return 1;
+    }
+    i32 idx = resolve_bone_index(e, L, 2);
+    auto& bone = bd->bones[static_cast<size_t>(idx)];
+    auto bone_world_rot = sim::quat_multiply(e->orientation(), bone.local_rotation);
+    auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
+    push_vector3(L, dir);
+    return 1;
+}
+
 // ====================================================================
 // entity_methods — real implementations
 // ====================================================================
@@ -309,6 +406,13 @@ static int entity_GetPosition(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) {
         push_vector3(L, {0, 0, 0});
+        return 1;
+    }
+    // Optional bone argument (arg 2): name or index
+    if (lua_gettop(L) >= 2 && e->bone_data() &&
+        (lua_type(L, 2) == LUA_TSTRING || lua_type(L, 2) == LUA_TNUMBER)) {
+        i32 idx = resolve_bone_index(e, L, 2);
+        push_vector3(L, bone_world_position(e, idx));
         return 1;
     }
     push_vector3(L, e->position());
@@ -549,16 +653,6 @@ static int entity_GetAIBrain(lua_State* L) {
     lua_pushstring(L, "Army");
     lua_pushnumber(L, e->army() >= 0 ? e->army() + 1 : -1); // 1-based for FA Lua
     lua_rawset(L, -3);
-    return 1;
-}
-
-static int entity_GetBoneCount(lua_State* L) {
-    lua_pushnumber(L, 1);
-    return 1;
-}
-
-static int entity_GetBoneName(lua_State* L) {
-    lua_pushstring(L, "root");
     return 1;
 }
 
@@ -1019,23 +1113,24 @@ static int entity_CreateProjectile(lua_State* L) {
 }
 
 // entity:CreateProjectileAtBone(bone, bp, dx, dy, dz) -> projectile Lua table
-// Same as CreateProjectile but skip bone arg (bones not implemented)
 static int entity_CreateProjectileAtBone(lua_State* L) {
-    // Shift args: remove bone (arg 2), shift bp+velocity down
-    // Easiest: just call CreateProjectile with args shifted
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
 
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
+    // arg 2 = bone (name or index)
+    i32 bone_idx = resolve_bone_index(e, L, 2);
+    auto spawn_pos = bone_world_position(e, bone_idx);
+
     auto proj = std::make_unique<sim::Projectile>();
-    proj->set_position(e->position());
+    proj->set_position(spawn_pos);
     proj->set_army(e->army());
     proj->launcher_id = e->entity_id();
     proj->lifetime = 10.0f;
 
-    // arg 2 = bone (skip), arg 3 = bp (optional string), args 4,5,6 = velocity
+    // arg 3 = bp (optional string), args 4,5,6 = velocity (or 3,4,5 if no bp)
     int vel_start = 3;
     if (lua_type(L, 3) == LUA_TSTRING) {
         vel_start = 4; // bp string at arg 3
@@ -1095,6 +1190,54 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     return 1;
 }
 
+// ShowBone(self, bone, recurse?)
+static int unit_ShowBone(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 idx = resolve_bone_index(u, L, 2);
+    u->show_bone(idx);
+    // Optional arg 3: recurse to full subtree (not just direct children)
+    if (lua_toboolean(L, 3) && u->bone_data()) {
+        auto* bd = u->bone_data();
+        std::vector<i32> to_process = {idx};
+        while (!to_process.empty()) {
+            i32 parent = to_process.back();
+            to_process.pop_back();
+            for (i32 i = 0; i < bd->bone_count(); i++) {
+                if (bd->bones[static_cast<size_t>(i)].parent_index == parent) {
+                    u->show_bone(i);
+                    to_process.push_back(i);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+// HideBone(self, bone, recurse?)
+static int unit_HideBone(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    i32 idx = resolve_bone_index(u, L, 2);
+    u->hide_bone(idx);
+    // Optional arg 3: recurse to full subtree (not just direct children)
+    if (lua_toboolean(L, 3) && u->bone_data()) {
+        auto* bd = u->bone_data();
+        std::vector<i32> to_process = {idx};
+        while (!to_process.empty()) {
+            i32 parent = to_process.back();
+            to_process.pop_back();
+            for (i32 i = 0; i < bd->bone_count(); i++) {
+                if (bd->bones[static_cast<size_t>(i)].parent_index == parent) {
+                    u->hide_bone(i);
+                    to_process.push_back(i);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 // clang-format off
 static const MethodEntry entity_methods[] = {
     // Real implementations
@@ -1117,6 +1260,7 @@ static const MethodEntry entity_methods[] = {
     {"BeenDestroyed",       entity_BeenDestroyed},
     {"GetBoneCount",        entity_GetBoneCount},
     {"GetBoneName",         entity_GetBoneName},
+    {"IsValidBone",         entity_IsValidBone},
     // Stubs
     {"SetCollisionShape",       stub_noop},
     {"SetDrawScale",            stub_noop},
@@ -1133,7 +1277,7 @@ static const MethodEntry entity_methods[] = {
     {"AttachTo",                stub_noop},
     {"DetachFrom",              stub_noop},
     {"DetachAll",               stub_noop},
-    {"GetBoneDirection",        entity_GetPosition}, // returns a vector
+    {"GetBoneDirection",        entity_GetBoneDirection},
     {"CreateProjectile",        entity_CreateProjectile},
     {"CreateProjectileAtBone",  entity_CreateProjectileAtBone},
     {"PlaySound",               entity_PlaySound},
@@ -2032,6 +2176,57 @@ static int unit_ShieldIsOn(lua_State* L) {
     return 1;
 }
 
+// unit:CanPathTo(destPos) -> bool
+// Uses A* pathfinder to check if a path exists from unit to destination.
+static int unit_CanPathTo(lua_State* L) {
+    auto* unit = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!unit || !sim || !sim->pathfinder()) {
+        lua_pushboolean(L, 1); // fallback: allow
+        return 1;
+    }
+    f32 dx = 0, dz = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        dx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        dz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    auto result = sim->pathfinder()->find_path(
+        unit->position().x, unit->position().z,
+        dx, dz, unit->layer());
+    lua_pushboolean(L, result.found ? 1 : 0);
+    return 1;
+}
+
+// unit:CanPathToCell(destPos) -> bool
+// Similar to CanPathTo but intended to be more lenient (cell-level check).
+// Currently uses the same A* approach.
+static int unit_CanPathToCell(lua_State* L) {
+    auto* unit = check_unit(L);
+    auto* sim = get_sim(L);
+    if (!unit || !sim || !sim->pathfinder()) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    f32 dx = 0, dz = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        dx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        dz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    auto result = sim->pathfinder()->find_path(
+        unit->position().x, unit->position().z,
+        dx, dz, unit->layer());
+    lua_pushboolean(L, result.found ? 1 : 0);
+    return 1;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -2064,12 +2259,12 @@ static const MethodEntry unit_methods[] = {
     {"ToggleFireState",             stub_noop},
     {"SetPaused",                   unit_SetPaused},
     {"IsPaused",                    unit_IsPaused},
-    // Stubs — bones / visual
-    {"ShowBone",                    stub_noop},
-    {"HideBone",                    stub_noop},
+    // Bones / visual
+    {"ShowBone",                    unit_ShowBone},
+    {"HideBone",                    unit_HideBone},
     {"SetMesh",                     stub_noop},
-    {"IsValidBone",                 stub_return_true},
-    {"GetBoneDirection",            entity_GetPosition},
+    {"IsValidBone",                 entity_IsValidBone},
+    {"GetBoneDirection",            entity_GetBoneDirection},
     // Stubs — build / command
     {"GetCommandQueue",             unit_GetCommandQueue},
     {"CanBuild",                    unit_CanBuild},
@@ -2149,8 +2344,8 @@ static const MethodEntry unit_methods[] = {
     {"UpdateStat",                  stub_noop},
     {"GetStat",                     stub_return_empty_table},
     {"SetStat",                     stub_noop},
-    {"CanPathTo",                   stub_return_true},
-    {"CanPathToCell",               stub_return_true},
+    {"CanPathTo",                   unit_CanPathTo},
+    {"CanPathToCell",               unit_CanPathToCell},
     {"GetAttacker",                 stub_return_nil},
     {"SetReclaimable",              stub_noop},
     {"SetCapturable",               unit_SetCapturable},
@@ -3151,6 +3346,70 @@ static int brain_GetHighestThreatPosition(lua_State* L) {
     push_vector3(L, best_pos);
     lua_pushnumber(L, best_threat);
     return 2;
+}
+
+// brain:GetThreatBetweenPositions(pos1, pos2, checkVis, threatType)
+// Returns the maximum threat at any sample point along the line from pos1 to pos2.
+// Samples every 32 world units (one threat ring). Useful for evaluating path danger.
+static int brain_GetThreatBetweenPositions(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    // arg 2: pos1
+    f32 x1 = 0, z1 = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        x1 = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        z1 = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    // arg 3: pos2
+    f32 x2 = 0, z2 = 0;
+    if (lua_istable(L, 3)) {
+        lua_rawgeti(L, 3, 1);
+        x2 = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 3, 3);
+        z2 = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    // arg 4: checkVis (ignored)
+    const char* threat_type =
+        (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
+
+    // Sample along line every 32 units (one threat ring)
+    f32 dx = x2 - x1, dz = z2 - z1;
+    f32 dist = std::sqrt(dx * dx + dz * dz);
+    constexpr f32 SAMPLE_SPACING = 32.0f;
+    i32 samples = std::max(1, static_cast<i32>(dist / SAMPLE_SPACING));
+
+    f32 max_threat = 0;
+    for (i32 i = 0; i <= samples; ++i) {
+        f32 t = static_cast<f32>(i) / static_cast<f32>(samples);
+        f32 px = x1 + dx * t;
+        f32 pz = z1 + dz * t;
+
+        auto ids = sim->entity_registry().collect_in_radius(
+            px, pz, SAMPLE_SPACING);
+        f32 sample_threat = 0;
+        for (u32 eid : ids) {
+            auto* entity = sim->entity_registry().find(eid);
+            if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+            auto* unit = static_cast<sim::Unit*>(entity);
+            if (!sim->is_enemy(brain->index(), unit->army())) continue;
+            sample_threat += get_unit_threat_for_type(unit, threat_type);
+        }
+        max_threat = std::max(max_threat, sample_threat);
+    }
+
+    lua_pushnumber(L, max_threat);
+    return 1;
 }
 
 // ====================================================================
@@ -4337,6 +4596,7 @@ static const MethodEntry aibrain_methods[] = {
     {"SetResourceSharing",          stub_noop},
     {"GetThreatAtPosition",         brain_GetThreatAtPosition},
     {"GetThreatsAroundPosition",    brain_GetThreatsAroundPosition},
+    {"GetThreatBetweenPositions",   brain_GetThreatBetweenPositions},
     {"IsAnyEngineerBuilding",       brain_IsAnyEngineerBuilding},
     {"SetCurrentPlan",              stub_noop},
     {"PBMRemoveBuildLocation",      stub_noop},
@@ -4789,55 +5049,399 @@ static const MethodEntry platoon_methods[] = {
     {nullptr, nullptr},
 };
 
-// Manipulator base methods
+// ====================================================================
+// Manipulator method implementations
+// ====================================================================
+
+/// Extract Manipulator* from self table's _c_object.
+static sim::Manipulator* check_manip_base(lua_State* L) {
+    if (!lua_istable(L, 1)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* m = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Manipulator*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    return (m && !m->is_destroyed()) ? m : nullptr;
+}
+
+// --- Base manipulator methods ---
+
+static int manip_Destroy(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* m = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Manipulator*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    if (m) {
+        // If a thread is WaitFor-ing on this manipulator, wake it so it
+        // doesn't sleep forever at INT32_MAX.
+        int waiter = m->waiting_thread_ref();
+        m->set_waiting_thread_ref(-2);
+        m->mark_destroyed();
+
+        if (waiter >= 0) {
+            lua_pushstring(L, "osc_thread_mgr");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            auto* mgr = lua_isuserdata(L, -1)
+                ? static_cast<sim::ThreadManager*>(lua_touserdata(L, -1))
+                : nullptr;
+            lua_pop(L, 1);
+            if (mgr) {
+                lua_pushstring(L, "osc_sim_state");
+                lua_rawget(L, LUA_REGISTRYINDEX);
+                auto* ss = lua_isuserdata(L, -1)
+                    ? static_cast<sim::SimState*>(lua_touserdata(L, -1))
+                    : nullptr;
+                lua_pop(L, 1);
+                u32 tick = ss ? ss->tick_count() : 0;
+                mgr->wake_thread(waiter, tick);
+            }
+        }
+    }
+    return 0;
+}
+
+static int manip_Enable(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) m->set_enabled(true);
+    return 0;
+}
+
+static int manip_Disable(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) m->set_enabled(false);
+    return 0;
+}
+
+static int manip_SetEnabled(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) m->set_enabled(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int manip_SetPrecedence(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) m->set_precedence(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+static int manip_IsEnabled(lua_State* L) {
+    auto* m = check_manip_base(L);
+    lua_pushboolean(L, m && m->enabled() ? 1 : 0);
+    return 1;
+}
+
+// --- RotateManipulator methods ---
+
+static int rotate_SetGoal(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_goal(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int rotate_SetSpeed(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_speed(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int rotate_SetAccel(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_accel(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int rotate_SetCurrentAngle(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_current_angle(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+static int rotate_GetCurrentAngle(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        lua_pushnumber(L, static_cast<sim::RotateManipulator*>(m)->current_angle());
+    } else {
+        lua_pushnumber(L, 0);
+    }
+    return 1;
+}
+
+static int rotate_SetSpinDown(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_spin_down(
+            lua_toboolean(L, 2) != 0);
+    }
+    return 0;
+}
+
+static int rotate_SetTargetSpeed(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->set_target_speed(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+static int rotate_ClearGoal(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::RotateManipulator*>(m)->clear_goal();
+    }
+    return 0;
+}
+
+// --- AnimationManipulator methods ---
+
+static int anim_PlayAnim(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        const char* path = lua_type(L, 2) == LUA_TSTRING
+                               ? lua_tostring(L, 2) : "";
+        bool loop = lua_toboolean(L, 3) != 0;
+        static_cast<sim::AnimManipulator*>(m)->play_anim(path, loop);
+    }
+    lua_pushvalue(L, 1); // return self for chaining
+    return 1;
+}
+
+static int anim_SetRate(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AnimManipulator*>(m)->set_rate(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int anim_SetAnimationFraction(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AnimManipulator*>(m)->set_animation_fraction(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+static int anim_GetAnimationFraction(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        lua_pushnumber(L, static_cast<sim::AnimManipulator*>(m)->animation_fraction());
+    } else {
+        lua_pushnumber(L, 0);
+    }
+    return 1;
+}
+
+static int anim_GetAnimationDuration(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        lua_pushnumber(L, static_cast<sim::AnimManipulator*>(m)->animation_duration());
+    } else {
+        lua_pushnumber(L, 1);
+    }
+    return 1;
+}
+
+static int anim_GetAnimationTime(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        lua_pushnumber(L, static_cast<sim::AnimManipulator*>(m)->animation_time());
+    } else {
+        lua_pushnumber(L, 0);
+    }
+    return 1;
+}
+
+static int anim_SetAnimationTime(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AnimManipulator*>(m)->set_animation_time(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+// --- SlideManipulator methods ---
+
+static int slide_SetGoal(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::SlideManipulator*>(m)->set_goal(
+            static_cast<f32>(lua_tonumber(L, 2)),
+            static_cast<f32>(lua_tonumber(L, 3)),
+            static_cast<f32>(lua_tonumber(L, 4)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int slide_SetSpeed(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::SlideManipulator*>(m)->set_speed(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int slide_SetAccel(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::SlideManipulator*>(m)->set_accel(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static int slide_SetWorldUnits(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::SlideManipulator*>(m)->set_world_units(
+            lua_toboolean(L, 2) != 0);
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// --- AimManipulator methods ---
+
+static int aim_SetFiringArc(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AimManipulator*>(m)->set_firing_arc(
+            static_cast<f32>(lua_tonumber(L, 2)),
+            static_cast<f32>(lua_tonumber(L, 3)),
+            static_cast<f32>(lua_tonumber(L, 4)),
+            static_cast<f32>(lua_tonumber(L, 5)),
+            static_cast<f32>(lua_tonumber(L, 6)),
+            static_cast<f32>(lua_tonumber(L, 7)));
+    }
+    return 0;
+}
+
+static int aim_SetHeadingPitch(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AimManipulator*>(m)->set_heading_pitch(
+            static_cast<f32>(lua_tonumber(L, 2)),
+            static_cast<f32>(lua_tonumber(L, 3)));
+    }
+    return 0;
+}
+
+static int aim_GetHeadingPitch(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        auto* aim = static_cast<sim::AimManipulator*>(m);
+        lua_pushnumber(L, aim->heading());
+        lua_pushnumber(L, aim->pitch());
+    } else {
+        lua_pushnumber(L, 0);
+        lua_pushnumber(L, 0);
+    }
+    return 2;
+}
+
+static int aim_OnTarget(lua_State* L) {
+    auto* m = check_manip_base(L);
+    lua_pushboolean(L, m && static_cast<sim::AimManipulator*>(m)->on_target() ? 1 : 0);
+    return 1;
+}
+
+static int aim_SetResetPoseTime(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AimManipulator*>(m)->set_reset_pose_time(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+static int aim_SetAimHeadingOffset(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        static_cast<sim::AimManipulator*>(m)->set_aim_heading_offset(
+            static_cast<f32>(lua_tonumber(L, 2)));
+    }
+    return 0;
+}
+
+// --- Method tables ---
+
 static const MethodEntry manipulator_methods[] = {
-    {"Destroy",                 stub_noop},
-    {"Enable",                  stub_noop},
-    {"Disable",                 stub_noop},
-    {"SetEnabled",              stub_noop},
-    {"SetPrecedence",           stub_noop},
-    {"IsEnabled",               stub_return_false},
+    {"Destroy",                 manip_Destroy},
+    {"Enable",                  manip_Enable},
+    {"Disable",                 manip_Disable},
+    {"SetEnabled",              manip_SetEnabled},
+    {"SetPrecedence",           manip_SetPrecedence},
+    {"IsEnabled",               manip_IsEnabled},
     {nullptr, nullptr},
 };
 
 static const MethodEntry aim_manipulator_methods[] = {
-    {"SetFiringArc",            stub_noop},
-    {"SetHeadingPitch",         stub_noop},
-    {"GetHeadingPitch",         stub_return_zero},
-    {"OnTarget",                stub_return_false},
-    {"SetEnabled",              stub_noop},
-    {"SetResetPoseTime",        stub_noop},
-    {"SetAimHeadingOffset",     stub_noop},
+    {"SetFiringArc",            aim_SetFiringArc},
+    {"SetHeadingPitch",         aim_SetHeadingPitch},
+    {"GetHeadingPitch",         aim_GetHeadingPitch},
+    {"OnTarget",                aim_OnTarget},
+    {"SetEnabled",              manip_SetEnabled},
+    {"SetResetPoseTime",        aim_SetResetPoseTime},
+    {"SetAimHeadingOffset",     aim_SetAimHeadingOffset},
     {nullptr, nullptr},
 };
 
 static const MethodEntry animation_manipulator_methods[] = {
-    {"PlayAnim",                stub_return_self},
-    {"SetRate",                 stub_return_self},
-    {"SetAnimationFraction",    stub_noop},
-    {"GetAnimationFraction",    stub_return_zero},
-    {"GetAnimationDuration",    stub_return_one},
-    {"GetAnimationTime",        stub_return_zero},
-    {"SetAnimationTime",        stub_noop},
+    {"PlayAnim",                anim_PlayAnim},
+    {"SetRate",                 anim_SetRate},
+    {"SetAnimationFraction",    anim_SetAnimationFraction},
+    {"GetAnimationFraction",    anim_GetAnimationFraction},
+    {"GetAnimationDuration",    anim_GetAnimationDuration},
+    {"GetAnimationTime",        anim_GetAnimationTime},
+    {"SetAnimationTime",        anim_SetAnimationTime},
     {"SetBoneEnabled",          stub_noop},
     {nullptr, nullptr},
 };
 
 static const MethodEntry rotate_manipulator_methods[] = {
-    {"SetGoal",                 stub_return_self},
-    {"SetSpeed",                stub_return_self},
-    {"SetAccel",                stub_return_self},
-    {"SetCurrentAngle",         stub_noop},
-    {"GetCurrentAngle",         stub_return_zero},
-    {"SetSpinDown",             stub_noop},
+    {"SetGoal",                 rotate_SetGoal},
+    {"SetSpeed",                rotate_SetSpeed},
+    {"SetAccel",                rotate_SetAccel},
+    {"SetCurrentAngle",         rotate_SetCurrentAngle},
+    {"GetCurrentAngle",         rotate_GetCurrentAngle},
+    {"SetSpinDown",             rotate_SetSpinDown},
+    {"SetTargetSpeed",          rotate_SetTargetSpeed},
+    {"ClearGoal",               rotate_ClearGoal},
     {nullptr, nullptr},
 };
 
 static const MethodEntry slide_manipulator_methods[] = {
-    {"SetGoal",                 stub_return_self},
-    {"SetSpeed",                stub_return_self},
-    {"SetAccel",                stub_return_self},
-    {"SetWorldUnits",           stub_return_self},
+    {"SetGoal",                 slide_SetGoal},
+    {"SetSpeed",                slide_SetSpeed},
+    {"SetAccel",                slide_SetAccel},
+    {"SetWorldUnits",           slide_SetWorldUnits},
     {nullptr, nullptr},
 };
 

@@ -26,7 +26,13 @@ namespace osc::audio {
 class SoundManager;
 }
 
+namespace osc::vfs {
+class VirtualFileSystem;
+}
+
 namespace osc::sim {
+
+class BoneCache;
 
 /// Per-army resource efficiency (pre-computed per tick).
 struct ArmyEfficiency {
@@ -80,6 +86,10 @@ public:
     void set_sound_manager(std::unique_ptr<audio::SoundManager> mgr);
     audio::SoundManager* sound_manager() { return sound_manager_.get(); }
 
+    // Bones
+    void set_bone_cache(std::unique_ptr<BoneCache> cache);
+    BoneCache* bone_cache() { return bone_cache_.get(); }
+
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
     ArmyBrain* get_army(i32 index);
@@ -129,6 +139,7 @@ private:
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::unique_ptr<audio::SoundManager> sound_manager_;
+    std::unique_ptr<BoneCache> bone_cache_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;

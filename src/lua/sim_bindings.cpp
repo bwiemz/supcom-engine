@@ -3,7 +3,10 @@
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bone_cache.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/entity.hpp"
+#include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
@@ -201,6 +204,26 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     lua_gettable(L, we);
                     if (lua_isboolean(L, -1)) weapon->manual_fire = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
+
+                    // RackBones[1].MuzzleBones[1] → muzzle bone name (string)
+                    lua_pushstring(L, "RackBones");
+                    lua_gettable(L, we);
+                    if (lua_istable(L, -1)) {
+                        lua_rawgeti(L, -1, 1); // first rack
+                        if (lua_istable(L, -1)) {
+                            lua_pushstring(L, "MuzzleBones");
+                            lua_gettable(L, -2);
+                            if (lua_istable(L, -1)) {
+                                lua_rawgeti(L, -1, 1); // first muzzle bone name
+                                if (lua_isstring(L, -1))
+                                    weapon->muzzle_bone_name = lua_tostring(L, -1);
+                                lua_pop(L, 1); // bone name
+                            }
+                            lua_pop(L, 1); // MuzzleBones
+                        }
+                        lua_pop(L, 1); // rack[1]
+                    }
+                    lua_pop(L, 1); // RackBones
 
                     lua_pushvalue(L, we);
                     weapon->blueprint_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -428,6 +451,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 2);
         }
     }
+
+    // Wire bone data from BoneCache
+    auto* bc = sim->bone_cache();
+    if (bc) unit->set_bone_data(bc->get(bp_id, L));
 
     u32 id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
@@ -1363,6 +1390,294 @@ static int stub_dummy_object(lua_State* L) {
     }
     lua_setmetatable(L, -2);
     return 1;
+}
+
+// ====================================================================
+// Manipulator helpers — extract unit from self, resolve bones, set metatable
+// ====================================================================
+
+/// Extract Unit* from a Lua self table (arg 1) containing _c_object.
+static sim::Unit* manip_check_unit(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* e = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    if (e && e->is_unit()) return static_cast<sim::Unit*>(e);
+    return nullptr;
+}
+
+/// Resolve bone argument (string name or number) → bone index. Returns 0 if
+/// not found. Same logic as moho_bindings resolve_bone_index.
+static i32 manip_resolve_bone(const sim::Entity* e, lua_State* L, int arg) {
+    auto* bd = e->bone_data();
+    if (!bd) return 0;
+    if (lua_type(L, arg) == LUA_TSTRING) {
+        std::string name = lua_tostring(L, arg);
+        i32 idx = bd->find_bone(name);
+        return (idx >= 0) ? idx : 0;
+    }
+    if (lua_type(L, arg) == LUA_TNUMBER) {
+        i32 idx = static_cast<i32>(lua_tonumber(L, arg));
+        return bd->is_valid(idx) ? idx : 0;
+    }
+    return 0;
+}
+
+/// Set a cached metatable for a manipulator Lua table.
+/// Registry key = cache_key, copies methods from moho.{moho_class_name}.
+/// Also copies inherited methods from moho.manipulator_methods.
+static void set_manip_metatable(lua_State* L, int table_idx,
+                                 const char* cache_key,
+                                 const char* moho_class_name) {
+    lua_pushstring(L, cache_key);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L); // mt
+        int mt_idx = lua_gettop(L);
+
+        // mt.__index = mt (self-referencing for method lookup)
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, mt_idx);
+
+        // Copy methods from moho.{class_name} and moho.manipulator_methods
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            int moho_idx = lua_gettop(L);
+
+            // Copy base manipulator_methods first
+            lua_pushstring(L, "manipulator_methods");
+            lua_rawget(L, moho_idx);
+            if (lua_istable(L, -1)) {
+                lua_pushnil(L);
+                while (lua_next(L, -2) != 0) {
+                    lua_pushvalue(L, -2); // key
+                    lua_pushvalue(L, -2); // value
+                    lua_rawset(L, mt_idx);
+                    lua_pop(L, 1); // pop value, keep key
+                }
+            }
+            lua_pop(L, 1); // manipulator_methods
+
+            // Copy specialized methods (override base where needed)
+            lua_pushstring(L, moho_class_name);
+            lua_rawget(L, moho_idx);
+            if (lua_istable(L, -1)) {
+                lua_pushnil(L);
+                while (lua_next(L, -2) != 0) {
+                    lua_pushvalue(L, -2);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, mt_idx);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // class table
+        }
+        lua_pop(L, 1); // moho
+
+        // Cache in registry
+        lua_pushstring(L, cache_key);
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, table_idx);
+}
+
+// ====================================================================
+// CreateRotator(unit, bone, axis, goal, speed [, accel [, targetSpeed]])
+// ====================================================================
+static int l_CreateRotator(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    i32 bone = manip_resolve_bone(unit, L, 2);
+
+    char axis = 'y';
+    if (lua_type(L, 3) == LUA_TSTRING) {
+        const char* s = lua_tostring(L, 3);
+        if (s[0] == 'x' || s[0] == 'X') axis = 'x';
+        else if (s[0] == 'z' || s[0] == 'Z') axis = 'z';
+    }
+
+    auto manip = std::make_unique<sim::RotateManipulator>();
+    manip->set_bone_index(bone);
+    manip->set_axis(axis);
+
+    // arg 4 = goal (nil for continuous), arg 5 = speed
+    if (lua_type(L, 4) == LUA_TNUMBER) {
+        manip->set_goal(static_cast<f32>(lua_tonumber(L, 4)));
+    }
+    if (lua_type(L, 5) == LUA_TNUMBER) {
+        manip->set_speed(static_cast<f32>(lua_tonumber(L, 5)));
+    }
+    if (lua_type(L, 6) == LUA_TNUMBER) {
+        manip->set_accel(static_cast<f32>(lua_tonumber(L, 6)));
+    }
+    if (lua_type(L, 7) == LUA_TNUMBER) {
+        manip->set_target_speed(static_cast<f32>(lua_tonumber(L, 7)));
+    }
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    // Create Lua table with _c_object
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_rotate_mt", "RotateManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateAnimator(unit [, looping])
+// ====================================================================
+static int l_CreateAnimator(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::AnimManipulator>();
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_anim_mt", "AnimationManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateSlider(unit, bone [, goalX, goalY, goalZ [, speed [, worldUnits]]])
+// ====================================================================
+static int l_CreateSlider(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    i32 bone = manip_resolve_bone(unit, L, 2);
+
+    auto manip = std::make_unique<sim::SlideManipulator>();
+    manip->set_bone_index(bone);
+
+    if (lua_type(L, 3) == LUA_TNUMBER &&
+        lua_type(L, 4) == LUA_TNUMBER &&
+        lua_type(L, 5) == LUA_TNUMBER) {
+        manip->set_goal(static_cast<f32>(lua_tonumber(L, 3)),
+                         static_cast<f32>(lua_tonumber(L, 4)),
+                         static_cast<f32>(lua_tonumber(L, 5)));
+    }
+    if (lua_type(L, 6) == LUA_TNUMBER) {
+        manip->set_speed(static_cast<f32>(lua_tonumber(L, 6)));
+    }
+    if (lua_gettop(L) >= 7) {
+        manip->set_world_units(lua_toboolean(L, 7) != 0);
+    }
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_slide_mt", "SlideManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateAimController(weapon_or_unit, name, yawBone [, pitchBone, muzzleBone])
+// ====================================================================
+static int l_CreateAimController(lua_State* L) {
+    // arg 1 can be either a weapon table or a unit table
+    sim::Unit* unit = nullptr;
+    if (lua_istable(L, 1)) {
+        // Try weapon first (_c_object → Weapon*)
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 1);
+        if (lua_isuserdata(L, -1)) {
+            auto* ptr = lua_touserdata(L, -1);
+            // Check if it's an Entity (unit) or Weapon
+            auto* ent = static_cast<sim::Entity*>(ptr);
+            if (ent && ent->is_unit()) {
+                unit = static_cast<sim::Unit*>(ent);
+            }
+        }
+        lua_pop(L, 1);
+
+        // If not a unit, try _c_unit (weapon tables store owner here)
+        if (!unit) {
+            lua_pushstring(L, "_c_unit");
+            lua_rawget(L, 1);
+            if (lua_isuserdata(L, -1)) {
+                unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+    }
+
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::AimManipulator>();
+
+    // arg 2 = name (string, ignored for now — just for labeling)
+    // arg 3 = yawBone
+    if (lua_gettop(L) >= 3) {
+        manip->set_yaw_bone(manip_resolve_bone(unit, L, 3));
+    }
+    // arg 4 = pitchBone
+    if (lua_gettop(L) >= 4) {
+        manip->set_pitch_bone(manip_resolve_bone(unit, L, 4));
+    }
+    // arg 5 = muzzleBone
+    if (lua_gettop(L) >= 5) {
+        manip->set_muzzle_bone(manip_resolve_bone(unit, L, 5));
+    }
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_aim_mt", "AimManipulator");
+    return 1;
+}
+
+// ====================================================================
+// WaitFor(manipulator) — yield until manipulator reaches its goal
+// ====================================================================
+static int l_WaitFor(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* manip = lua_isuserdata(L, -1)
+                      ? static_cast<sim::Manipulator*>(lua_touserdata(L, -1))
+                      : nullptr;
+    lua_pop(L, 1);
+
+    if (!manip || manip->is_destroyed()) return 0;
+
+    // If already at goal, return immediately (no yield)
+    if (manip->is_at_goal()) return 0;
+
+    // Yield with the manipulator pointer as a lightuserdata sentinel.
+    // ThreadManager::resume_all() recognizes this and sets wait_until_tick
+    // to INT32_MAX. The manipulator's tick_manipulators() will wake the
+    // thread when the manipulator reaches its goal.
+    lua_pushlightuserdata(L, manip);
+    return lua_yield(L, 1);
 }
 
 // ArmyIsCivilian(army_index) -> bool
@@ -3066,16 +3381,19 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // These Create* functions return dummy objects whose methods are
     // no-ops that return self for chaining.  FA Lua code calls methods
     // on the returned objects (e.g., CreateAnimator(self):PlayAnim():SetRate(1)).
-    state.register_function("CreateAnimator", stub_dummy_object);
-    state.register_function("CreateAimController", stub_dummy_object);
+    state.register_function("CreateAnimator", l_CreateAnimator);
+    state.register_function("CreateAimController", l_CreateAimController);
     state.register_function("CreateBuilderArmController", stub_dummy_object);
     state.register_function("CreateCollisionDetector", stub_dummy_object);
     state.register_function("CreateFootPlantController", stub_dummy_object);
-    state.register_function("CreateRotator", stub_dummy_object);
-    state.register_function("CreateSlider", stub_dummy_object);
+    state.register_function("CreateRotator", l_CreateRotator);
+    state.register_function("CreateSlider", l_CreateSlider);
     state.register_function("CreateSlaver", stub_dummy_object);
     state.register_function("CreateStorageManipulator", stub_dummy_object);
     state.register_function("CreateThrustController", stub_dummy_object);
+
+    // WaitFor(manipulator) — real implementation with yield/resume
+    state.register_function("WaitFor", l_WaitFor);
     state.register_function("CreateProp", l_CreateProp);
     state.register_function("CreatePropHPR", l_CreatePropHPR);
 

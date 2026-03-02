@@ -12,6 +12,8 @@
 #include <unordered_set>
 #include <vector>
 
+namespace osc::sim { class Manipulator; }
+
 struct lua_State;
 
 namespace osc::map {
@@ -267,6 +269,17 @@ public:
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     void detach_all_cargo(EntityRegistry& registry, lua_State* L);
 
+    // Bone visibility (per-unit, ShowBone/HideBone)
+    bool is_bone_hidden(i32 idx) const { return hidden_bones_.count(idx) > 0; }
+    void show_bone(i32 idx) { hidden_bones_.erase(idx); }
+    void hide_bone(i32 idx) { hidden_bones_.insert(idx); }
+
+    // Manipulator system
+    Manipulator* add_manipulator(std::unique_ptr<Manipulator> m);
+    void remove_manipulator(Manipulator* m);
+    void tick_manipulators(f32 dt, lua_State* L);
+    void destroy_all_manipulators();
+
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
     f32 get_intel_radius(const std::string& type) const;
@@ -326,8 +339,12 @@ private:
     bool immobile_ = false;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
+    // Bone visibility
+    std::unordered_set<i32> hidden_bones_;
     // Intel system
     std::unordered_map<std::string, IntelState> intel_states_;
+    // Manipulator system
+    std::vector<std::unique_ptr<Manipulator>> manipulators_;
     // Transport system
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)

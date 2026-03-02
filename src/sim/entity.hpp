@@ -14,6 +14,38 @@ struct Quaternion {
     f32 x = 0, y = 0, z = 0, w = 1;
 };
 
+// --- Quaternion math utilities ---
+
+/// Rotate a vector by a quaternion (Hamilton product: q * v * q_conjugate).
+inline Vector3 quat_rotate(const Quaternion& q, const Vector3& v) {
+    f32 t2  =  q.w * q.x;
+    f32 t3  =  q.w * q.y;
+    f32 t4  =  q.w * q.z;
+    f32 t5  = -q.x * q.x;
+    f32 t6  =  q.x * q.y;
+    f32 t7  =  q.x * q.z;
+    f32 t8  = -q.y * q.y;
+    f32 t9  =  q.y * q.z;
+    f32 t10 = -q.z * q.z;
+    return {
+        2.0f * ((t8 + t10) * v.x + (t6 -  t4) * v.y + (t3 + t7) * v.z) + v.x,
+        2.0f * ((t4 +  t6) * v.x + (t5 + t10) * v.y + (t9 - t2) * v.z) + v.y,
+        2.0f * ((t7 -  t3) * v.x + (t2 +  t9) * v.y + (t5 + t8) * v.z) + v.z
+    };
+}
+
+/// Multiply two quaternions (Hamilton product).
+inline Quaternion quat_multiply(const Quaternion& a, const Quaternion& b) {
+    return {
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    };
+}
+
+struct BoneData; // forward decl
+
 class Entity {
 public:
     Entity() = default;
@@ -52,6 +84,9 @@ public:
     u32 ambient_sound_handle() const { return ambient_sound_handle_; }
     void set_ambient_sound_handle(u32 h) { ambient_sound_handle_ = h; }
 
+    const BoneData* bone_data() const { return bone_data_; }
+    void set_bone_data(const BoneData* bd) { bone_data_ = bd; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -69,6 +104,7 @@ private:
     std::string blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
     u32 ambient_sound_handle_ = 0; ///< Active ambient loop (SoundHandle)
+    const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
 };
 
 } // namespace osc::sim

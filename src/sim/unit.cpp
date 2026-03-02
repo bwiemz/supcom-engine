@@ -1,6 +1,8 @@
 #include "sim/unit.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
 
 #include <algorithm>
@@ -694,6 +696,9 @@ weapons_only:
     for (auto& weapon : weapons_) {
         weapon->update(dt, *this, registry, L);
     }
+
+    // Update manipulators (rotators, animators, sliders, aim controllers)
+    tick_manipulators(static_cast<f32>(dt), L);
 }
 
 bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
@@ -2036,6 +2041,63 @@ void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
         }
         lua_pop(L, 1); // tbl
     }
+}
+
+// ---------------------------------------------------------------------------
+// Manipulator system
+// ---------------------------------------------------------------------------
+
+Manipulator* Unit::add_manipulator(std::unique_ptr<Manipulator> m) {
+    m->set_owner(this);
+    auto* raw = m.get();
+    manipulators_.push_back(std::move(m));
+    return raw;
+}
+
+void Unit::remove_manipulator(Manipulator* m) {
+    for (auto it = manipulators_.begin(); it != manipulators_.end(); ++it) {
+        if (it->get() == m) {
+            manipulators_.erase(it);
+            return;
+        }
+    }
+}
+
+void Unit::tick_manipulators(f32 dt, lua_State* L) {
+    for (auto& m : manipulators_) {
+        if (m->is_destroyed() || !m->enabled()) continue;
+        bool was_at_goal = m->is_at_goal();
+        m->tick(dt);
+        // If just reached goal and someone is waiting, wake the thread
+        if (!was_at_goal && m->is_at_goal() && m->waiting_thread_ref() >= 0) {
+            // Look up ThreadManager from Lua registry
+            lua_pushstring(L, "osc_thread_mgr");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            auto* tmgr = static_cast<ThreadManager*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (tmgr) {
+                // Look up current tick from SimState in registry
+                lua_pushstring(L, "osc_sim_state");
+                lua_rawget(L, LUA_REGISTRYINDEX);
+                auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+                lua_pop(L, 1);
+                if (sim) {
+                    tmgr->wake_thread(m->waiting_thread_ref(),
+                                       sim->tick_count());
+                }
+            }
+            m->set_waiting_thread_ref(-2); // LUA_NOREF
+        }
+    }
+    // Clean up destroyed manipulators
+    manipulators_.erase(
+        std::remove_if(manipulators_.begin(), manipulators_.end(),
+                        [](const auto& m) { return m->is_destroyed(); }),
+        manipulators_.end());
+}
+
+void Unit::destroy_all_manipulators() {
+    manipulators_.clear();
 }
 
 } // namespace osc::sim

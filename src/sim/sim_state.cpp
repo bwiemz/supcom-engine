@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/bone_cache.hpp"
 #include "audio/sound_manager.hpp"
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -28,6 +29,10 @@ void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
 
 void SimState::set_sound_manager(std::unique_ptr<audio::SoundManager> mgr) {
     sound_manager_ = std::move(mgr);
+}
+
+void SimState::set_bone_cache(std::unique_ptr<BoneCache> cache) {
+    bone_cache_ = std::move(cache);
 }
 
 void SimState::build_pathfinding_grid() {

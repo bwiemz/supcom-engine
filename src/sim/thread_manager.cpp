@@ -1,5 +1,7 @@
 #include "sim/thread_manager.hpp"
+#include "sim/manipulator.hpp"
 
+#include <climits>
 #include <cstring>
 #include <spdlog/spdlog.h>
 
@@ -189,15 +191,25 @@ void ThreadManager::resume_all(u32 current_tick) {
                 lua_settop(t.coroutine, 0);
                 t.dead = true;
             } else {
-                // Thread yielded. The yielded value is the number of ticks
-                // to wait. WaitTicks = coroutine.yield, so WaitTicks(n)
-                // yields n.
+                // Thread yielded. Check what it yielded:
+                // - number → WaitTicks(n), resume after n ticks
+                // - lightuserdata → WaitFor(manipulator), sleep until woken
                 i32 wait_ticks = 1;
-                if (lua_gettop(t.coroutine) > 0 &&
-                    lua_isnumber(t.coroutine, -1)) {
-                    wait_ticks = std::max(
-                        1,
-                        static_cast<i32>(lua_tonumber(t.coroutine, -1)));
+                if (lua_gettop(t.coroutine) > 0) {
+                    if (lua_type(t.coroutine, -1) == LUA_TNUMBER) {
+                        wait_ticks = std::max(
+                            1,
+                            static_cast<i32>(lua_tonumber(t.coroutine, -1)));
+                    } else if (lua_type(t.coroutine, -1) == LUA_TLIGHTUSERDATA) {
+                        // WaitFor(manipulator) — store thread ref on
+                        // manipulator, sleep until manipulator reaches goal
+                        auto* manip = static_cast<Manipulator*>(
+                            lua_touserdata(t.coroutine, -1));
+                        manip->set_waiting_thread_ref(t.lua_ref);
+                        lua_settop(t.coroutine, 0);
+                        t.wait_until_tick = INT32_MAX;
+                        continue;
+                    }
                 }
                 lua_settop(t.coroutine, 0); // clear yielded values
                 t.wait_until_tick =
@@ -236,6 +248,21 @@ size_t ThreadManager::active_count() const {
             count++;
     }
     return count;
+}
+
+void ThreadManager::wake_thread(int lua_ref, u32 current_tick) {
+    for (auto& t : threads_) {
+        if (t.lua_ref == lua_ref && !t.dead) {
+            t.wait_until_tick = static_cast<i32>(current_tick);
+            return;
+        }
+    }
+    for (auto& t : pending_threads_) {
+        if (t.lua_ref == lua_ref && !t.dead) {
+            t.wait_until_tick = static_cast<i32>(current_tick);
+            return;
+        }
+    }
 }
 
 void ThreadManager::cleanup_dead_threads() {

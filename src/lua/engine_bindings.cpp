@@ -461,7 +461,7 @@ static int l_KillThread(lua_State*) { return 0; }
 static int l_CurrentThread(lua_State* L) { lua_pushnil(L); return 1; }
 static int l_SuspendCurrentThread(lua_State*) { return 0; }
 static int l_ResumeThread(lua_State*) { return 0; }
-static int l_WaitFor(lua_State*) { return 0; }
+// WaitFor is now implemented in sim_bindings.cpp with real yield/resume
 
 // Misc stubs
 static int l_Trace(lua_State*) { return 0; }
@@ -621,7 +621,7 @@ void register_blueprint_bindings(LuaState& state) {
     state.register_function("CurrentThread", l_CurrentThread);
     state.register_function("SuspendCurrentThread", l_SuspendCurrentThread);
     state.register_function("ResumeThread", l_ResumeThread);
-    state.register_function("WaitFor", l_WaitFor);
+    // WaitFor moved to sim_bindings.cpp (real implementation)
 
     // String utilities
     state.register_function("STR_GetTokens", l_STR_GetTokens);

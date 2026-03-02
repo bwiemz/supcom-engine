@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, and radar jamming. A Vulkan renderer provides real-time visualization of the terrain, units, and water.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, and real bone-based manipulators. A Vulkan renderer provides real-time visualization of the terrain, units, and water.
 
-**What works today (Milestones 1-37):**
+**What works today (Milestones 1-40):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -31,7 +31,7 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build, Enhance, Dive with command queues
 - Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
 - AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops
-- Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following
+- Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following, real CanPathTo/CanPathToCell queries, GetThreatBetweenPositions for path danger evaluation
 - Structure upgrades: T1->T2 structure upgrade via build system
 - Capture: engineer captures enemy units, army transfer
 - Toggle system: script bits (shield/weapon/intel/stealth/cloak toggles), dive command, layer changes
@@ -44,7 +44,9 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Moho stub conversions: 14 stubs converted to real implementations (ArmyIsCivilian, EntityCategoryCount, CanBuild, ShieldIsOn, CreateProjectile, projectile physics, etc.)
 - Audio: XWB/XSB bank parsers, miniaudio backend, PlaySound/SetAmbientSound real implementations, 3D spatial audio
 - Vulkan renderer: terrain heightmap mesh, instanced unit cubes with army colors, water plane, RTS camera (WASD/scroll/orbit)
-- 22 unit tests, 25 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--audio-test`, etc.)
+- Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
+- Manipulators: 4 real types (Rotate, Anim, Slide, Aim) with per-tick simulation, WaitFor coroutine synchronization, 28 moho method implementations, shortest-arc rotation
+- 22 unit tests, 28 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--canpath-test`, etc.)
 
 **What's not yet implemented:**
 
@@ -173,6 +175,9 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--jammer-test` | Radar jamming, dead-reckoning, stealth, IsKnownFake |
 | `--stub-test` | Moho stub conversions (14 real implementations) |
 | `--audio-test` | Audio system (XWB/XSB parsing, PlaySound, 3D spatial) |
+| `--bone-test` | Bone system (SCM parser, bone queries, ShowBone/HideBone) |
+| `--manip-test` | Manipulator system (rotators, animators, sliders, aim, WaitFor) |
+| `--canpath-test` | CanPathTo pathfinding queries and GetThreatBetweenPositions |
 
 ## Project Structure
 
@@ -181,7 +186,7 @@ src/
   core/        # Fundamental types (Vector3, numeric aliases)
   vfs/         # Virtual filesystem (.scd/.nx2 archive mounting)
   map/         # Map loading (.scmap terrain, scenario files, A* pathfinding, visibility grid)
-  sim/         # Simulation (Entity, Unit, Projectile, Shield, Platoon, ArmyBrain, economy, intel)
+  sim/         # Simulation (Entity, Unit, Projectile, Shield, Platoon, ArmyBrain, economy, intel, bones, manipulators)
   lua/         # Lua<->C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   audio/       # Audio system (miniaudio, XWB/XSB bank parsers, sound manager)

@@ -1,4 +1,5 @@
 #include "sim/weapon.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/projectile.hpp"
 #include "sim/unit.hpp"
@@ -91,9 +92,22 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
         return false;
     }
 
+    // Resolve muzzle bone position for projectile spawn
+    Vector3 spawn_pos = owner.position();
+    if (!muzzle_bone_name.empty() && owner.bone_data()) {
+        i32 bi = owner.bone_data()->find_bone(muzzle_bone_name);
+        if (bi >= 0) {
+            auto& bone = owner.bone_data()->bones[static_cast<size_t>(bi)];
+            auto rotated = quat_rotate(owner.orientation(), bone.world_position);
+            spawn_pos.x += rotated.x;
+            spawn_pos.y += rotated.y;
+            spawn_pos.z += rotated.z;
+        }
+    }
+
     // Calculate direction to target
-    f32 dx = target->position().x - owner.position().x;
-    f32 dz = target->position().z - owner.position().z;
+    f32 dx = target->position().x - spawn_pos.x;
+    f32 dz = target->position().z - spawn_pos.z;
     f32 dist = std::sqrt(dx * dx + dz * dz);
     if (dist < 0.001f) dist = 0.001f;
 
@@ -105,7 +119,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
 
     // Create projectile
     auto proj = std::make_unique<Projectile>();
-    proj->set_position(owner.position());
+    proj->set_position(spawn_pos);
     proj->set_army(owner.army());
     proj->velocity = vel;
     proj->target_entity_id = target_entity_id;
