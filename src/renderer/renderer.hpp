@@ -1,7 +1,9 @@
 #pragma once
 
 #include "renderer/camera.hpp"
+#include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
+#include "renderer/texture_cache.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/vk_types.hpp"
@@ -10,6 +12,11 @@
 #include <string>
 
 struct GLFWwindow;
+struct lua_State;
+
+namespace osc::vfs {
+class VirtualFileSystem;
+}
 
 namespace osc::sim {
 class SimState;
@@ -23,11 +30,12 @@ public:
     /// Returns false if Vulkan is unavailable (fall back to headless).
     bool init(u32 width, u32 height, const std::string& title);
 
-    /// One-time scene upload (terrain mesh, static buffers).
-    void build_scene(const sim::SimState& sim);
+    /// One-time scene upload (terrain mesh, static buffers, mesh preload).
+    void build_scene(const sim::SimState& sim, vfs::VirtualFileSystem* vfs,
+                     lua_State* L);
 
     /// Render one frame (updates unit instances, draws everything).
-    void render(const sim::SimState& sim);
+    void render(const sim::SimState& sim, lua_State* L);
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -96,11 +104,24 @@ private:
     VkPipelineLayout unit_layout_ = VK_NULL_HANDLE;
     VkPipeline water_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout water_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE;
+
+    // Texture infrastructure
+    VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
+    VkSampler texture_sampler_ = VK_NULL_HANDLE;
+
+    // Bone SSBO infrastructure (set=1 for mesh pipeline)
+    VkDescriptorSetLayout bone_ds_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet bone_ds_ = VK_NULL_HANDLE;
 
     // Sub-renderers
     TerrainMesh terrain_mesh_;
     UnitRenderer unit_renderer_;
     WaterRenderer water_renderer_;
+    MeshCache mesh_cache_;
+    TextureCache texture_cache_;
     Camera camera_;
 
     // Cleanup

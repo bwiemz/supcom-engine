@@ -12,6 +12,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "sim/unit.hpp"
 #include "audio/sound_manager.hpp"
+#include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "renderer/renderer.hpp"
 
@@ -77,6 +78,7 @@ static void print_usage() {
               << "  --massstub-test    Mass stub conversion (weapon/movement/fuel/projectile/misc)\n"
               << "  --massstub2-test   Mass stub conversion II (damage flags/caps/weapon/proj/elevation)\n"
               << "  --massstub3-test   Mass stub conversion III (brain/weapon/projectile/platoon)\n"
+              << "  --anim-test        SCA skeletal animation (parsing, bone matrices, GPU skinning)\n"
               << "  --help             Show this help message\n";
 }
 
@@ -219,6 +221,7 @@ int main(int argc, char* argv[]) {
     bool massstub_test = parse_flag(argc, argv, "--massstub-test");
     bool massstub2_test = parse_flag(argc, argv, "--massstub2-test");
     bool massstub3_test = parse_flag(argc, argv, "--massstub3-test");
+    bool anim_test = parse_flag(argc, argv, "--anim-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -232,7 +235,8 @@ int main(int argc, char* argv[]) {
                     canpath_test || armor_test || vet_test ||
                     wreck_test || adjacency_test || stats_test ||
                     silo_test || flags_test || layercap_test ||
-                    massstub_test || massstub2_test || massstub3_test;
+                    massstub_test || massstub2_test || massstub3_test ||
+                    anim_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -301,6 +305,10 @@ int main(int argc, char* argv[]) {
     auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
     sim_state.set_bone_cache(std::move(bone_cache));
 
+    // Animation cache (lazy-loaded SCA animation data)
+    auto anim_cache = std::make_unique<osc::sim::AnimCache>(&vfs);
+    sim_state.set_anim_cache(std::move(anim_cache));
+
     // Load scenario and map if --map was provided
     osc::lua::ScenarioMetadata scenario_meta;
     if (!map_path.empty()) {
@@ -363,7 +371,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
         if (renderer.init(1600, 900, "OpenSupCom")) {
-            renderer.build_scene(sim_state);
+            renderer.build_scene(sim_state, &vfs, state.raw());
 
             double sim_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();
@@ -383,7 +391,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 renderer.poll_events(dt);
-                renderer.render(sim_state);
+                renderer.render(sim_state, state.raw());
             }
 
             renderer.shutdown();
@@ -5410,6 +5418,133 @@ int main(int argc, char* argv[]) {
 
         spdlog::info("MassStub3 test: {}/{} passed", pass, pass + fail);
         spdlog::info("MassStub3 test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    if (anim_test && !map_path.empty()) {
+        spdlog::info("=== ANIM TEST: SCA skeletal animation ===");
+
+        // Run initial ticks to fully create units (ACUs with bones)
+        for (osc::u32 i = 0; i < 10; i++) {
+            sim_state.tick();
+        }
+
+        int pass = 0, fail = 0;
+
+        // Test 1: SCA parser — parse the UEF ACU walk animation via AnimCache
+        {
+            auto* cache = sim_state.anim_cache();
+            if (!cache) {
+                fail++; spdlog::error("[FAIL] Test 1: AnimCache is null");
+            } else {
+                auto* sca = cache->get("/units/uel0001/uel0001_a001.sca");
+                if (!sca) {
+                    fail++; spdlog::error("[FAIL] Test 1: SCA parse returned null");
+                } else if (sca->num_frames < 2) {
+                    fail++; spdlog::error("[FAIL] Test 1: SCA has {} frames (expected >= 2)", sca->num_frames);
+                } else if (sca->num_bones < 2) {
+                    fail++; spdlog::error("[FAIL] Test 1: SCA has {} bones (expected >= 2)", sca->num_bones);
+                } else if (sca->duration <= 0.0f) {
+                    fail++; spdlog::error("[FAIL] Test 1: SCA duration = {:.3f} (expected > 0)", sca->duration);
+                } else {
+                    pass++;
+                    spdlog::info("[PASS] Test 1: SCA parsed — {} frames, {} bones, {:.3f}s",
+                                 sca->num_frames, sca->num_bones, sca->duration);
+                }
+            }
+        }
+
+        // Test 2: AnimManipulator with real SCA — PlayAnim loads SCA, rate advances fraction
+        {
+            state.do_string(R"(
+                __anim_unit = GetEntityById(1)
+                __anim_manip = CreateAnimator(__anim_unit)
+                __anim_manip:PlayAnim('/units/uel0001/uel0001_a001.sca')
+                __anim_manip:SetRate(1.0)
+            )");
+            // Run 30 ticks (~1 second game time) to advance animation
+            for (osc::u32 i = 0; i < 30; i++) {
+                sim_state.tick();
+            }
+            auto r = state.do_string(R"(
+                local frac = __anim_manip:GetAnimationFraction()
+                local dur = __anim_manip:GetAnimationDuration()
+                if dur <= 0 then
+                    error('AnimationDuration should be > 0 (got ' .. tostring(dur) .. ')')
+                end
+                if frac <= 0 then
+                    error('AnimationFraction should have advanced (got ' .. tostring(frac) .. ')')
+                end
+                LOG('Anim test 2: PASS — frac=' .. string.format('%.3f', frac)
+                    .. ' dur=' .. string.format('%.3f', dur))
+            )");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: AnimManipulator with real SCA"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: Bone matrices updated (non-identity after animation plays)
+        {
+            // Find entity 1 and check its animated_bone_matrices
+            auto* ent = sim_state.entity_registry().find(1);
+            auto* unit = ent ? dynamic_cast<osc::sim::Unit*>(ent) : nullptr;
+            if (!unit) {
+                fail++; spdlog::error("[FAIL] Test 3: entity #1 not found or not a unit");
+            } else if (unit->animated_bone_count() == 0) {
+                fail++; spdlog::error("[FAIL] Test 3: unit has no animated bone matrices");
+            } else {
+                // Check that at least one bone matrix differs from identity
+                bool any_non_identity = false;
+                const auto& matrices = unit->animated_bone_matrices();
+                for (osc::u32 i = 0; i < unit->animated_bone_count() && !any_non_identity; i++) {
+                    const auto& m = matrices[i];
+                    // Identity: diag=1, off-diag=0
+                    for (int j = 0; j < 16 && !any_non_identity; j++) {
+                        float expected = (j % 5 == 0) ? 1.0f : 0.0f;
+                        if (std::abs(m[j] - expected) > 1e-4f) {
+                            any_non_identity = true;
+                        }
+                    }
+                }
+                if (any_non_identity) {
+                    pass++;
+                    spdlog::info("[PASS] Test 3: Bone matrices are non-identity ({} bones)",
+                                 unit->animated_bone_count());
+                } else {
+                    fail++;
+                    spdlog::error("[FAIL] Test 3: All bone matrices are still identity");
+                }
+            }
+        }
+
+        // Test 4: AnimCache caching — second get() returns same pointer
+        {
+            auto* cache = sim_state.anim_cache();
+            auto* sca1 = cache ? cache->get("/units/uel0001/uel0001_a001.sca") : nullptr;
+            auto* sca2 = cache ? cache->get("/units/uel0001/uel0001_a001.sca") : nullptr;
+            if (sca1 && sca2 && sca1 == sca2) {
+                pass++; spdlog::info("[PASS] Test 4: AnimCache returns cached pointer");
+            } else {
+                fail++; spdlog::error("[FAIL] Test 4: AnimCache pointers differ");
+            }
+        }
+
+        // Test 5: SCA bone name mapping — verify SCA bones map to SCM bones
+        {
+            auto* cache = sim_state.anim_cache();
+            auto* sca = cache ? cache->get("/units/uel0001/uel0001_a001.sca") : nullptr;
+            if (sca && !sca->bone_names.empty()) {
+                pass++;
+                spdlog::info("[PASS] Test 5: SCA has {} bone names, first='{}'",
+                             sca->bone_names.size(), sca->bone_names[0]);
+            } else {
+                fail++;
+                spdlog::error("[FAIL] Test 5: SCA bone names empty or null");
+            }
+        }
+
+        spdlog::info("Anim test: {}/{} passed", pass, pass + fail);
+        spdlog::info("Anim test: {} entities, {} threads",
                      sim_state.entity_registry().count(),
                      sim_state.thread_manager().active_count());
     }

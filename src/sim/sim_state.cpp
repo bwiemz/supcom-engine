@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "audio/sound_manager.hpp"
 #include "map/pathfinder.hpp"
@@ -33,6 +34,10 @@ void SimState::set_sound_manager(std::unique_ptr<audio::SoundManager> mgr) {
 
 void SimState::set_bone_cache(std::unique_ptr<BoneCache> cache) {
     bone_cache_ = std::move(cache);
+}
+
+void SimState::set_anim_cache(std::unique_ptr<AnimCache> cache) {
+    anim_cache_ = std::move(cache);
 }
 
 void SimState::build_pathfinding_grid() {

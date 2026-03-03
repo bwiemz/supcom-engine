@@ -3,6 +3,9 @@ add_library(osc_renderer STATIC
     terrain_mesh.cpp
     unit_renderer.cpp
     water_renderer.cpp
+    mesh_cache.cpp
+    texture_cache.cpp
+    dds_parser.cpp
     camera.cpp
     shader_utils.cpp
     pipeline_builder.cpp
@@ -16,5 +19,5 @@ target_link_libraries(osc_renderer
     PUBLIC osc::core osc::map osc::sim
            Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator
     PRIVATE glfw vk-bootstrap::vk-bootstrap unofficial::shaderc::shaderc
-            spdlog::spdlog
+            spdlog::spdlog osc::vfs osc::blueprints
 )

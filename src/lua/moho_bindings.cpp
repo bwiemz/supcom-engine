@@ -6346,7 +6346,9 @@ static int anim_PlayAnim(lua_State* L) {
         const char* path = lua_type(L, 2) == LUA_TSTRING
                                ? lua_tostring(L, 2) : "";
         bool loop = lua_toboolean(L, 3) != 0;
-        static_cast<sim::AnimManipulator*>(m)->play_anim(path, loop);
+        auto* sim = get_sim(L);
+        auto* cache = sim ? sim->anim_cache() : nullptr;
+        static_cast<sim::AnimManipulator*>(m)->play_anim(path, loop, cache);
     }
     lua_pushvalue(L, 1); // return self for chaining
     return 1;

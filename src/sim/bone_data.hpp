@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3, Quaternion
 
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,6 +17,8 @@ struct BoneInfo {
     i32 parent_index = -1;     // -1 = root
     Vector3 world_position;    // pre-computed: accumulated from root
     Quaternion world_rotation; // pre-computed: accumulated from root
+    std::array<f32, 16> inverse_bind_pose = {
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; // column-major
 };
 
 /// Shared bone data for all units of the same blueprint.

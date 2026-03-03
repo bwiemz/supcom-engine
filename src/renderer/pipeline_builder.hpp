@@ -19,6 +19,8 @@ public:
     PipelineBuilder& set_blend(bool enable);
     PipelineBuilder& set_push_constant(uint32_t size,
                                        VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT);
+    PipelineBuilder& set_descriptor_set_layout(VkDescriptorSetLayout layout);
+    PipelineBuilder& add_descriptor_set_layout(VkDescriptorSetLayout layout);
 
     /// Build the pipeline. Returns VK_NULL_HANDLE on failure.
     VkPipeline build(VkDevice device, VkRenderPass render_pass,
@@ -41,6 +43,7 @@ private:
     bool blend_ = false;
     uint32_t push_constant_size_ = 0;
     VkShaderStageFlags push_constant_stages_ = VK_SHADER_STAGE_VERTEX_BIT;
+    std::vector<VkDescriptorSetLayout> ds_layouts_;
 };
 
 } // namespace osc::renderer

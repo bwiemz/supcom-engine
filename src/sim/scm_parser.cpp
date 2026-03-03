@@ -160,9 +160,11 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
             bone.name = "bone_" + std::to_string(i);
         }
 
-        // Skip 4x4 rest_pose_inverse matrix (64 bytes) — not needed for
-        // position queries
-        reader.skip(64);
+        // Read 4x4 rest_pose_inverse matrix (64 bytes, row-major in file)
+        // Transpose to column-major for our convention
+        for (int row = 0; row < 4; row++)
+            for (int col = 0; col < 4; col++)
+                bone.inverse_bind_pose[col * 4 + row] = reader.read_f32();
 
         // Position relative to parent (3 floats)
         bone.local_position.x = reader.read_f32();
@@ -218,6 +220,109 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
 
     spdlog::debug("SCM: parsed {} bones", bone_count);
     return result;
+}
+
+std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
+    if (file_data.size() < 48) {
+        spdlog::debug("SCM mesh: file too small ({} bytes)", file_data.size());
+        return std::nullopt;
+    }
+
+    BinaryReader reader(file_data.data(), file_data.size());
+
+    // --- Header (48 bytes): '4s11I' ---
+    char magic[4];
+    std::memcpy(magic, file_data.data(), 4);
+    reader.skip(4);
+    if (magic[0] != 'M' || magic[1] != 'O' || magic[2] != 'D' ||
+        magic[3] != 'L') {
+        spdlog::debug("SCM mesh: invalid magic");
+        return std::nullopt;
+    }
+
+    u32 version = reader.read_u32();
+    if (version != 5) {
+        spdlog::debug("SCM mesh: unsupported version {}", version);
+        return std::nullopt;
+    }
+
+    // Header fields: bone_offset, bone_count, vert_offset, extra_vert_offset,
+    //                vert_count, index_offset, index_count, info_offset,
+    //                info_count, total_bone_count
+    reader.skip(4); // bone_offset
+    reader.skip(4); // bone_count
+    u32 vert_offset = reader.read_u32();
+    reader.skip(4); // extra_vert_offset
+    u32 vert_count = reader.read_u32();
+    u32 index_offset = reader.read_u32();
+    u32 index_count = reader.read_u32();
+    // Skip remaining: info_offset, info_count, total_bone_count
+    // reader is now at byte 48
+
+    if (vert_count == 0 || index_count == 0) {
+        spdlog::debug("SCM mesh: no vertices or indices");
+        return std::nullopt;
+    }
+
+    // --- Vertices (68 bytes each) ---
+    // Layout: 3f pos, 3f tangent, 3f normal, 3f binormal, 2f uv1, 2f uv2, 4B bone
+    static constexpr size_t VERT_SIZE = 68;
+    if (vert_offset + static_cast<size_t>(vert_count) * VERT_SIZE > file_data.size()) {
+        spdlog::debug("SCM mesh: vertex data truncated");
+        return std::nullopt;
+    }
+
+    SCMMesh mesh;
+    mesh.vertices.resize(vert_count);
+    reader.seek(vert_offset);
+
+    for (u32 i = 0; i < vert_count; i++) {
+        auto& v = mesh.vertices[i];
+        // Position (3 floats)
+        v.px = reader.read_f32();
+        v.py = reader.read_f32();
+        v.pz = reader.read_f32();
+        // Skip tangent (3 floats = 12 bytes)
+        reader.skip(12);
+        // Normal (3 floats)
+        v.nx = reader.read_f32();
+        v.ny = reader.read_f32();
+        v.nz = reader.read_f32();
+        // Skip binormal (3 floats = 12 bytes)
+        reader.skip(12);
+        // UV1 (2 floats)
+        v.u = reader.read_f32();
+        v.v = reader.read_f32();
+        // Skip UV2 (2 floats = 8 bytes)
+        reader.skip(8);
+        // Bone index (4 bytes — rigid skinning: first byte is bone index)
+        u8 bone_bytes[4];
+        std::memcpy(bone_bytes, file_data.data() + reader.position(), 4);
+        reader.skip(4);
+        v.bone_index = static_cast<i32>(bone_bytes[0]);
+    }
+
+    // --- Indices (6 bytes per triangle = 3 × u16) ---
+    // index_count is the total number of indices (not triangles)
+    static constexpr size_t INDEX_SIZE = 2; // u16 per index
+    if (index_offset + static_cast<size_t>(index_count) * INDEX_SIZE > file_data.size()) {
+        spdlog::debug("SCM mesh: index data truncated");
+        return std::nullopt;
+    }
+
+    mesh.indices.resize(index_count);
+    reader.seek(index_offset);
+
+    for (u32 i = 0; i < index_count; i++) {
+        u16 idx;
+        std::memcpy(&idx, file_data.data() + reader.position(), 2);
+        reader.skip(2);
+        mesh.indices[i] = static_cast<u32>(idx);
+    }
+
+    spdlog::debug("SCM mesh: parsed {} vertices, {} indices ({} triangles)",
+                   vert_count, index_count, index_count / 3);
+    return mesh;
 }
 
 } // namespace osc::sim

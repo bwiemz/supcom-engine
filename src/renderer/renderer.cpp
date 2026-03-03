@@ -3,6 +3,7 @@
 #include "renderer/pipeline_builder.hpp"
 #include "renderer/shader_utils.hpp"
 #include "renderer/terrain_mesh.hpp"
+#include "sim/scm_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "map/terrain.hpp"
 
@@ -79,11 +80,16 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         return false;
     }
 
-    // Physical device
+    // Physical device — require BC texture compression + anisotropic filtering
+    VkPhysicalDeviceFeatures required_features{};
+    required_features.textureCompressionBC = VK_TRUE;
+    required_features.samplerAnisotropy = VK_TRUE;
+
     vkb::PhysicalDeviceSelector selector(vkb_inst);
     auto phys_ret = selector
         .set_surface(surface_)
         .set_minimum_version(1, 0)
+        .set_required_features(required_features)
         .select();
 
     if (!phys_ret) {
@@ -161,6 +167,52 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_);
     vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_);
+
+    // Texture descriptor set layout (set=0, binding=0: combined image sampler)
+    {
+        VkDescriptorSetLayoutBinding sampler_binding{};
+        sampler_binding.binding = 0;
+        sampler_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sampler_binding.descriptorCount = 1;
+        sampler_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo ds_ci{};
+        ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        ds_ci.bindingCount = 1;
+        ds_ci.pBindings = &sampler_binding;
+        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &texture_ds_layout_);
+    }
+
+    // Bone SSBO descriptor set layout (set=1, binding=0: storage buffer)
+    {
+        VkDescriptorSetLayoutBinding ssbo_binding{};
+        ssbo_binding.binding = 0;
+        ssbo_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        ssbo_binding.descriptorCount = 1;
+        ssbo_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo ds_ci{};
+        ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        ds_ci.bindingCount = 1;
+        ds_ci.pBindings = &ssbo_binding;
+        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_);
+    }
+
+    // Texture sampler (trilinear, anisotropic, repeat wrap)
+    {
+        VkSamplerCreateInfo sampler_ci{};
+        sampler_ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        sampler_ci.magFilter = VK_FILTER_LINEAR;
+        sampler_ci.minFilter = VK_FILTER_LINEAR;
+        sampler_ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        sampler_ci.anisotropyEnable = VK_TRUE;
+        sampler_ci.maxAnisotropy = 8.0f;
+        sampler_ci.maxLod = 16.0f;
+        vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_);
+    }
 
     // Pipelines
     create_pipelines();
@@ -314,15 +366,18 @@ void Renderer::create_pipelines() {
     auto uf = compile_glsl(device_, shaders::unit_frag, "unit.frag", false);
     auto wv = compile_glsl(device_, shaders::water_vert, "water.vert", true);
     auto wf = compile_glsl(device_, shaders::water_frag, "water.frag", false);
+    auto mv = compile_glsl(device_, shaders::mesh_vert, "mesh.vert", true);
+    auto mf = compile_glsl(device_, shaders::mesh_frag, "mesh.frag", false);
 
     // Abort if any shader failed to compile
-    if (!tv || !tf || !uv || !uf || !wv || !wf) {
+    if (!tv || !tf || !uv || !uf || !wv || !wf || !mv || !mf) {
         spdlog::error("One or more shaders failed to compile");
         auto safe_destroy = [&](VkShaderModule m) {
             if (m) vkDestroyShaderModule(device_, m, nullptr);
         };
         safe_destroy(tv); safe_destroy(tf); safe_destroy(uv);
         safe_destroy(uf); safe_destroy(wv); safe_destroy(wf);
+        safe_destroy(mv); safe_destroy(mf);
         return;
     }
 
@@ -347,7 +402,7 @@ void Renderer::create_pipelines() {
             .build(device_, render_pass_, &terrain_layout_);
     }
 
-    // --- Unit pipeline (instanced) ---
+    // --- Unit pipeline (instanced cubes — fallback) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
         // Binding 0: per-vertex cube data
@@ -356,15 +411,15 @@ void Renderer::create_pipelines() {
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
         // Binding 1: per-instance data
         bindings[1].binding = 1;
-        bindings[1].stride = sizeof(UnitInstance);
+        bindings[1].stride = sizeof(CubeInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
         std::array<VkVertexInputAttributeDescription, 5> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
-        attrs[2] = {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(UnitInstance, x)};   // instancePos
-        attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(UnitInstance, scale)};// scale
-        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(UnitInstance, r)}; // color
+        attrs[2] = {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeInstance, x)};   // instancePos
+        attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(CubeInstance, scale)};// scale
+        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)}; // color
 
         unit_pipeline_ = PipelineBuilder()
             .set_shaders(uv, uf)
@@ -377,6 +432,46 @@ void Renderer::create_pipelines() {
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
             .set_push_constant(sizeof(f32) * 16)
             .build(device_, render_pass_, &unit_layout_);
+    }
+
+    // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
+    {
+        std::array<VkVertexInputBindingDescription, 2> bindings{};
+        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_index = 36 bytes)
+        bindings[0].binding = 0;
+        bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
+        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        // Binding 1: per-instance data (mat4 model + vec4 color = 80 bytes)
+        bindings[1].binding = 1;
+        bindings[1].stride = sizeof(MeshInstance);
+        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        // 9 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_index(8)
+        std::array<VkVertexInputAttributeDescription, 9> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
+        attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
+        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + 0};
+        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 4};
+        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
+        attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
+        attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};   // color
+        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, sizeof(f32) * 8};                        // bone_index
+
+        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) = 72B
+        mesh_pipeline_ = PipelineBuilder()
+            .set_shaders(mv, mf)
+            .set_vertex_input(bindings.data(),
+                              static_cast<u32>(bindings.size()),
+                              attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_blend(true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2)
+            .set_descriptor_set_layout(texture_ds_layout_)
+            .add_descriptor_set_layout(bone_ds_layout_)
+            .build(device_, render_pass_, &mesh_layout_);
     }
 
     // --- Water pipeline ---
@@ -406,9 +501,12 @@ void Renderer::create_pipelines() {
     vkDestroyShaderModule(device_, uf, nullptr);
     vkDestroyShaderModule(device_, wv, nullptr);
     vkDestroyShaderModule(device_, wf, nullptr);
+    vkDestroyShaderModule(device_, mv, nullptr);
+    vkDestroyShaderModule(device_, mf, nullptr);
 }
 
-void Renderer::build_scene(const sim::SimState& sim) {
+void Renderer::build_scene(const sim::SimState& sim,
+                           vfs::VirtualFileSystem* vfs, lua_State* L) {
     auto* terrain = sim.terrain();
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
@@ -419,6 +517,50 @@ void Renderer::build_scene(const sim::SimState& sim) {
                         graphics_queue_);
 
     unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
+
+    // Initialize mesh cache, texture cache, and preload meshes
+    if (vfs && sim.blueprint_store()) {
+        mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                         vfs, sim.blueprint_store());
+        texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                            texture_ds_layout_, texture_sampler_, vfs);
+        unit_renderer_.preload_meshes(sim, mesh_cache_, L);
+    }
+
+    // Create bone SSBO descriptor pool and set
+    if (unit_renderer_.bone_ssbo_buffer() && bone_ds_layout_) {
+        VkDescriptorPoolSize pool_size{};
+        pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        pool_size.descriptorCount = 1;
+
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets = 1;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes = &pool_size;
+        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bone_ds_pool_);
+
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = bone_ds_pool_;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &bone_ds_layout_;
+        vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_);
+
+        VkDescriptorBufferInfo buf_info{};
+        buf_info.buffer = unit_renderer_.bone_ssbo_buffer();
+        buf_info.offset = 0;
+        buf_info.range = VK_WHOLE_SIZE;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = bone_ds_;
+        write.dstBinding = 0;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.descriptorCount = 1;
+        write.pBufferInfo = &buf_info;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
 
     if (terrain->has_water()) {
         water_renderer_.build(
@@ -434,7 +576,7 @@ void Renderer::build_scene(const sim::SimState& sim) {
     spdlog::info("Scene built");
 }
 
-void Renderer::render(const sim::SimState& sim) {
+void Renderer::render(const sim::SimState& sim, lua_State* L) {
     // Wait for ALL previous GPU work (including present) to complete.
     // Using vkDeviceWaitIdle instead of fence-only sync avoids the classic
     // single-buffered semaphore race: fence signals on submit completion,
@@ -454,8 +596,8 @@ void Renderer::render(const sim::SimState& sim) {
 
     vkResetFences(device_, 1, &render_fence_);
 
-    // Update unit instances
-    unit_renderer_.update(sim);
+    // Update unit instances (mesh + cube fallback + texture resolution)
+    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_);
 
     // View-projection matrix
     f32 aspect = static_cast<f32>(window_width_) /
@@ -512,25 +654,84 @@ void Renderer::render(const sim::SimState& sim) {
         vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
-    // 2. Draw units
-    if (unit_renderer_.instance_count() > 0 && unit_pipeline_) {
+    // 2. Draw mesh units (real SCM models with GPU skinning)
+    if (!unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          mesh_pipeline_);
+
+        // Push viewProj as first 64 bytes (bone offsets per-group below)
+        struct MeshPushConstants {
+            f32 viewProj[16];
+            u32 boneBase;
+            u32 bonesPerInst;
+        } mesh_pc{};
+        std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
+
+        // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
+        VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
+        if (fallback_ds) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    mesh_layout_, 0, 1, &fallback_ds,
+                                    0, nullptr);
+        }
+
+        // Bind bone SSBO at set=1 (once for all groups)
+        if (bone_ds_) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    mesh_layout_, 1, 1, &bone_ds_,
+                                    0, nullptr);
+        }
+
+        for (auto& group : unit_renderer_.mesh_groups()) {
+            if (!group.mesh || group.instance_count == 0) continue;
+
+            // Bind per-group texture descriptor (overrides fallback)
+            if (group.texture_ds && group.texture_ds != fallback_ds) {
+                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        mesh_layout_, 0, 1, &group.texture_ds,
+                                        0, nullptr);
+            }
+
+            // Push bone offsets per group
+            mesh_pc.boneBase = group.bone_base_offset;
+            mesh_pc.bonesPerInst = group.bones_per_instance;
+            vkCmdPushConstants(cmd_buf_, mesh_layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT, 0,
+                               sizeof(mesh_pc), &mesh_pc);
+
+            VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
+                                unit_renderer_.mesh_instance_buffer()};
+            VkDeviceSize buf_offsets[] = {
+                0,
+                static_cast<VkDeviceSize>(group.instance_offset) *
+                    sizeof(MeshInstance)};
+            vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
+            vkCmdBindIndexBuffer(cmd_buf_, group.mesh->index_buf.buffer, 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_buf_, group.mesh->index_count,
+                             group.instance_count, 0, 0, 0);
+        }
+    }
+
+    // 3. Draw cube fallback units
+    if (unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           unit_pipeline_);
         vkCmdPushConstants(cmd_buf_, unit_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(f32) * 16, vp.data());
 
-        VkBuffer vbufs[] = {unit_renderer_.vertex_buffer(),
-                            unit_renderer_.instance_buffer()};
+        VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
+                            unit_renderer_.cube_instance_buffer()};
         VkDeviceSize offsets[] = {0, 0};
         vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_, unit_renderer_.index_buffer(), 0,
+        vkCmdBindIndexBuffer(cmd_buf_, unit_renderer_.cube_index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_, unit_renderer_.index_count(),
-                         unit_renderer_.instance_count(), 0, 0, 0);
+        vkCmdDrawIndexed(cmd_buf_, unit_renderer_.cube_index_count(),
+                         unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
-    // 3. Draw water (last, blended)
+    // 4. Draw water (last, blended)
     if (water_renderer_.has_water() && water_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           water_pipeline_);
@@ -638,6 +839,19 @@ void Renderer::shutdown() {
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
+    mesh_cache_.destroy(device_, allocator_);
+    texture_cache_.destroy(device_, allocator_);
+
+    // Bone SSBO infrastructure
+    if (bone_ds_pool_)
+        vkDestroyDescriptorPool(device_, bone_ds_pool_, nullptr);
+    if (bone_ds_layout_)
+        vkDestroyDescriptorSetLayout(device_, bone_ds_layout_, nullptr);
+
+    // Texture infrastructure
+    if (texture_sampler_) vkDestroySampler(device_, texture_sampler_, nullptr);
+    if (texture_ds_layout_)
+        vkDestroyDescriptorSetLayout(device_, texture_ds_layout_, nullptr);
 
     // Pipelines
     vkDestroyPipeline(device_, terrain_pipeline_, nullptr);
@@ -646,6 +860,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
     vkDestroyPipeline(device_, water_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, water_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
 
     // Sync
     vkDestroyFence(device_, render_fence_, nullptr);

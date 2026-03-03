@@ -501,9 +501,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         }
     }
 
-    // Wire bone data from BoneCache
+    // Wire bone data from BoneCache + init animated bone matrices
     auto* bc = sim->bone_cache();
-    if (bc) unit->set_bone_data(bc->get(bp_id, L));
+    if (bc) {
+        unit->set_bone_data(bc->get(bp_id, L));
+        unit->init_animated_bones();
+    }
 
     u32 id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));

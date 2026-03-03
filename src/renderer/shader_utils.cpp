@@ -155,6 +155,71 @@ void main() {
 }
 )glsl";
 
+const char* mesh_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    uint boneBase;
+    uint bonesPerInst;
+} pc;
+
+// Per-vertex (binding 0): position + normal + UV + bone_index
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec2 inUV;
+layout(location = 8) in int inBoneIndex;
+
+// Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
+layout(location = 3) in mat4 inModel;
+layout(location = 7) in vec4 inColor;
+
+// Bone SSBO (set=1, binding=0)
+layout(std430, set = 1, binding = 0) readonly buffer BoneBuffer {
+    mat4 bones[];
+} boneSSBO;
+
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec4 fragColor;
+layout(location = 2) out vec2 fragUV;
+
+void main() {
+    // Apply skeletal skinning: bone transform before model matrix
+    uint boneIdx = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst
+                   + uint(inBoneIndex);
+    mat4 bone = boneSSBO.bones[boneIdx];
+    vec4 skinnedPos = bone * vec4(inPosition, 1.0);
+    vec4 worldPos = inModel * skinnedPos;
+    gl_Position = pc.viewProj * worldPos;
+    // Transform normal through bone then model
+    fragNormal = mat3(inModel) * (mat3(bone) * inNormal);
+    fragColor = inColor;
+    fragUV = inUV;
+}
+)glsl";
+
+// Mesh fragment shader — samples albedo texture, multiplies with army color
+const char* mesh_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
+
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec4 fragColor;
+layout(location = 2) in vec2 fragUV;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+    float NdotL = max(dot(normalize(fragNormal), lightDir), 0.0);
+    float lighting = 0.4 + 0.6 * NdotL;
+
+    vec4 texColor = texture(texAlbedo, fragUV);
+    outColor = vec4(texColor.rgb * fragColor.rgb * lighting, texColor.a * fragColor.a);
+}
+)glsl";
+
 } // namespace shaders
 
 } // namespace osc::renderer

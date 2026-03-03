@@ -33,6 +33,7 @@ class VirtualFileSystem;
 
 namespace osc::sim {
 
+class AnimCache;
 class BoneCache;
 
 /// Per-army resource efficiency (pre-computed per tick).
@@ -73,6 +74,7 @@ public:
     ThreadManager& thread_manager() { return thread_manager_; }
 
     blueprints::BlueprintStore* blueprint_store() { return blueprint_store_; }
+    blueprints::BlueprintStore* blueprint_store() const { return blueprint_store_; }
 
     // Terrain & Pathfinding
     void set_terrain(std::unique_ptr<map::Terrain> terrain);
@@ -90,6 +92,10 @@ public:
     // Bones
     void set_bone_cache(std::unique_ptr<BoneCache> cache);
     BoneCache* bone_cache() { return bone_cache_.get(); }
+
+    // Animation
+    void set_anim_cache(std::unique_ptr<AnimCache> cache);
+    AnimCache* anim_cache() { return anim_cache_.get(); }
 
     // Army/Brain management
     ArmyBrain& add_army(const std::string& name, const std::string& nickname);
@@ -145,6 +151,7 @@ private:
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::unique_ptr<audio::SoundManager> sound_manager_;
     std::unique_ptr<BoneCache> bone_cache_;
+    std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;

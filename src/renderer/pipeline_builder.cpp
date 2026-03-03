@@ -53,6 +53,19 @@ PipelineBuilder& PipelineBuilder::set_push_constant(
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_descriptor_set_layout(
+    VkDescriptorSetLayout layout) {
+    ds_layouts_.clear();
+    ds_layouts_.push_back(layout);
+    return *this;
+}
+
+PipelineBuilder& PipelineBuilder::add_descriptor_set_layout(
+    VkDescriptorSetLayout layout) {
+    ds_layouts_.push_back(layout);
+    return *this;
+}
+
 VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
                                   VkPipelineLayout* out_layout) {
     // Shader stages
@@ -137,9 +150,14 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
     blend_state.attachmentCount = 1;
     blend_state.pAttachments = &blend_att;
 
-    // Pipeline layout (push constants only, no descriptor sets)
+    // Pipeline layout
     VkPipelineLayoutCreateInfo layout_ci{};
     layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    if (!ds_layouts_.empty()) {
+        layout_ci.setLayoutCount = static_cast<uint32_t>(ds_layouts_.size());
+        layout_ci.pSetLayouts = ds_layouts_.data();
+    }
 
     VkPushConstantRange push_range{};
     if (push_constant_size_ > 0) {

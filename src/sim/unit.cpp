@@ -1,4 +1,5 @@
 #include "sim/unit.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
@@ -2239,6 +2240,19 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
 
 void Unit::destroy_all_manipulators() {
     manipulators_.clear();
+}
+
+void Unit::init_animated_bones() {
+    if (!bone_data()) return;
+    i32 count = bone_data()->bone_count();
+    if (count <= 0) return;
+    animated_bone_matrices_.resize(static_cast<size_t>(count));
+    // Fill with identity matrices (column-major)
+    static constexpr std::array<f32, 16> IDENTITY = {
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    for (auto& m : animated_bone_matrices_) {
+        m = IDENTITY;
+    }
 }
 
 } // namespace osc::sim

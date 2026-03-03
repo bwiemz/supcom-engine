@@ -5,10 +5,13 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace osc::sim {
 
+class AnimCache;
 class Unit;
+struct SCAData;
 
 /// Base class for all manipulators (rotators, animators, sliders, aim controllers).
 /// Manipulators are lightweight C++ objects owned by Units, NOT entities.
@@ -86,14 +89,15 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// AnimManipulator — plays skeletal animations (tracks fraction, no .sca parse)
+// AnimManipulator — plays skeletal animations with SCA bone matrix computation
 // ---------------------------------------------------------------------------
 class AnimManipulator : public Manipulator {
 public:
     void tick(f32 dt) override;
     bool is_at_goal() const override;
 
-    void play_anim(const std::string& anim, bool loop);
+    void play_anim(const std::string& anim, bool loop,
+                   AnimCache* cache = nullptr);
     void set_rate(f32 rate) { rate_ = rate; }
     f32 rate() const { return rate_; }
     void set_animation_fraction(f32 frac) { fraction_ = frac; finished_ = false; }
@@ -103,13 +107,20 @@ public:
     f32 animation_time() const { return fraction_ * duration_; }
     const std::string& current_anim() const { return current_anim_; }
 
+    const SCAData* sca_data() const { return sca_data_; }
+
 private:
+    void compute_bone_matrices();
+
     std::string current_anim_;
     f32 rate_ = 0.0f;         // default 0 = paused until SetRate called
     f32 fraction_ = 0.0f;     // 0.0-1.0
     f32 duration_ = 1.0f;     // default (no .sca parsing yet)
     bool looping_ = false;
     bool finished_ = false;
+
+    const SCAData* sca_data_ = nullptr;
+    std::vector<i32> sca_to_scm_map_;  // SCA bone → SCM bone index
 };
 
 // ---------------------------------------------------------------------------

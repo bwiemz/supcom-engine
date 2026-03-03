@@ -1,4 +1,5 @@
 add_library(osc_sim STATIC
+    anim_cache.cpp
     armor_definition.cpp
     army_brain.cpp
     bone_cache.cpp
@@ -6,6 +7,7 @@ add_library(osc_sim STATIC
     entity.cpp
     manipulator.cpp
     platoon.cpp
+    sca_parser.cpp
     scm_parser.cpp
     unit.cpp
     weapon.cpp

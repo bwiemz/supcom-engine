@@ -5,6 +5,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
+#include <array>
 #include <deque>
 #include <memory>
 #include <string>
@@ -344,6 +345,18 @@ public:
     void show_bone(i32 idx) { hidden_bones_.erase(idx); }
     void hide_bone(i32 idx) { hidden_bones_.insert(idx); }
 
+    // Animated bone matrices (for GPU skinning)
+    const std::vector<std::array<f32, 16>>& animated_bone_matrices() const {
+        return animated_bone_matrices_;
+    }
+    std::vector<std::array<f32, 16>>& animated_bone_matrices() {
+        return animated_bone_matrices_;
+    }
+    u32 animated_bone_count() const {
+        return static_cast<u32>(animated_bone_matrices_.size());
+    }
+    void init_animated_bones();
+
     // Manipulator system
     Manipulator* add_manipulator(std::unique_ptr<Manipulator> m);
     void remove_manipulator(Manipulator* m);
@@ -429,6 +442,8 @@ private:
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Bone visibility
     std::unordered_set<i32> hidden_bones_;
+    // Animated bone matrices (identity = no deformation)
+    std::vector<std::array<f32, 16>> animated_bone_matrices_;
     // Intel system
     std::unordered_map<std::string, IntelState> intel_states_;
     // Manipulator system
