@@ -508,6 +508,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     u32 id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
 
+    // Set weapon owner back-pointers now that entity ID is assigned
+    for (i32 wi = 0; wi < unit_ptr->weapon_count(); ++wi) {
+        auto* w = unit_ptr->get_weapon(wi);
+        if (w) w->owner_entity_id = id;
+    }
+
     // Create Lua instance table
     lua_newtable(L);
 
@@ -1206,12 +1212,23 @@ static int l_Damage(lua_State* L) {
                          : nullptr;
     lua_pop(L, 1);
     if (target_e && target_e->is_unit() && sim) {
+        auto* target_unit = static_cast<sim::Unit*>(target_e);
+        // can_take_damage guard
+        if (!target_unit->can_take_damage()) return 0;
         const char* dtype = (dtype_idx > 0 && lua_type(L, dtype_idx) == LUA_TSTRING)
                             ? lua_tostring(L, dtype_idx) : "Normal";
-        auto* target_unit = static_cast<sim::Unit*>(target_e);
         amount *= sim->armor_definition().get_multiplier(
             target_unit->armor_type(), dtype);
         if (amount <= 0) return 0;
+        // Track attacker
+        if (lua_istable(L, 1)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, 1);
+            auto* instigator = lua_isuserdata(L, -1)
+                ? static_cast<sim::Entity*>(lua_touserdata(L, -1)) : nullptr;
+            lua_pop(L, 1);
+            if (instigator) target_unit->set_last_attacker_id(instigator->entity_id());
+        }
     }
 
     // Look up OnDamage method on the target
@@ -1349,6 +1366,9 @@ static int l_DamageArea(lua_State* L) {
         if (!target || target->destroyed()) continue;
         int ref = target->lua_table_ref();
         if (ref < 0) continue;
+        // can_take_damage guard
+        if (target->is_unit() &&
+            !static_cast<sim::Unit*>(target)->can_take_damage()) continue;
 
         // Skip friendly units if damageFriendly is false
         if (!damage_friendly && instigator_army >= 0 &&
@@ -1393,6 +1413,9 @@ static int l_DamageRing(lua_State* L) {
         if (!target || target->destroyed()) continue;
         int ref = target->lua_table_ref();
         if (ref < 0) continue;
+        // can_take_damage guard
+        if (target->is_unit() &&
+            !static_cast<sim::Unit*>(target)->can_take_damage()) continue;
 
         // Exclude entities inside the inner radius
         if (inner_r2 > 0) {

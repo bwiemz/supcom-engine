@@ -590,6 +590,20 @@ static int entity_GetFractionComplete(lua_State* L) {
 static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
     if (e) {
+        // can_be_killed guard — check both C++ field and Lua field
+        // (FA's SetCanBeKilled sets a Lua field, not the C++ field)
+        if (e->is_unit()) {
+            auto* u = static_cast<sim::Unit*>(e);
+            if (!u->can_be_killed()) return 0;
+            // Also check Lua-side CanBeKilled field
+            lua_pushstring(L, "CanBeKilled");
+            lua_rawget(L, 1);
+            if (lua_isboolean(L, -1) && !lua_toboolean(L, -1)) {
+                lua_pop(L, 1);
+                return 0;
+            }
+            lua_pop(L, 1);
+        }
         // Stop ambient sound before destruction
         if (e->ambient_sound_handle() != 0) {
             auto* mgr = get_sound_mgr(L);
@@ -1315,6 +1329,13 @@ static int unit_HideBone(lua_State* L) {
     return 0;
 }
 
+static int entity_SetCustomName(lua_State* L) {
+    auto* e = check_entity(L);
+    if (e && lua_type(L, 2) == LUA_TSTRING)
+        e->set_custom_name(lua_tostring(L, 2));
+    return 0;
+}
+
 // clang-format off
 static const MethodEntry entity_methods[] = {
     // Real implementations
@@ -1364,7 +1385,7 @@ static const MethodEntry entity_methods[] = {
     {"AddThreadScroller",       stub_noop},
     {"RemoveScroller",          stub_noop},
     {"RequestRefreshUI",        stub_noop},
-    {"SetCustomName",           stub_noop},
+    {"SetCustomName",           entity_SetCustomName},
     {nullptr, nullptr},
 };
 
@@ -2481,6 +2502,236 @@ static int unit_SetIsValidTarget(lua_State* L) {
     return 0;
 }
 
+// --- Movement multipliers ---
+
+static int unit_SetAccMult(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_accel_mult(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_SetTurnMult(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_turn_mult(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_SetBreakOffDistanceMult(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_break_off_distance_mult(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_SetBreakOffTriggerMult(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_break_off_trigger_mult(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_ResetSpeedAndAccel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->reset_speed_and_accel();
+    return 0;
+}
+
+// --- Fuel system ---
+
+static int unit_GetFuelRatio(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? u->fuel_ratio() : -1);
+    return 1;
+}
+
+static int unit_SetFuelRatio(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_fuel_ratio(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_GetFuelUseTime(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? u->fuel_use_time() : 0);
+    return 1;
+}
+
+static int unit_SetFuelUseTime(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_fuel_use_time(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+// --- Misc flags ---
+
+static int unit_SetCreator(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    auto* creator = check_entity(L, 2);
+    u->set_creator_id(creator ? creator->entity_id() : 0);
+    return 0;
+}
+
+static int unit_SetAutoOvercharge(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_auto_overcharge(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int unit_GetAutoOvercharge(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, (u && u->auto_overcharge()) ? 1 : 0);
+    return 1;
+}
+
+static int unit_SetOverchargePaused(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_overcharge_paused(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int unit_SetFocusEntity(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    auto* target = check_entity(L, 2);
+    u->set_focus_entity_id(target ? target->entity_id() : 0);
+    return 0;
+}
+
+static int unit_ClearFocusEntity(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_focus_entity_id(0);
+    return 0;
+}
+
+// --- ToggleFireState ---
+
+static int unit_ToggleFireState(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_fire_state((u->fire_state() + 1) % 3);
+    return 0;
+}
+
+// --- Damage/kill flags + attacker ---
+
+static int unit_SetCanTakeDamage(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_can_take_damage(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int unit_SetCanBeKilled(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_can_be_killed(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int unit_GetAttacker(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->last_attacker_id() == 0) { lua_pushnil(L); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* attacker = sim->entity_registry().find(u->last_attacker_id());
+    if (!attacker || attacker->lua_table_ref() < 0) { lua_pushnil(L); return 1; }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, attacker->lua_table_ref());
+    return 1;
+}
+
+// --- SetRotation ---
+
+static int unit_SetRotation(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e) return 0;
+    // Accept quaternion (4 numbers) or single yaw angle
+    if (lua_isnumber(L, 3)) {
+        // 4-arg: SetRotation(x, y, z, w)
+        f32 x = static_cast<f32>(lua_tonumber(L, 2));
+        f32 y = static_cast<f32>(lua_tonumber(L, 3));
+        f32 z = static_cast<f32>(lua_tonumber(L, 4));
+        f32 w = static_cast<f32>(lua_tonumber(L, 5));
+        e->set_orientation({x, y, z, w});
+    } else {
+        // 1-arg: SetRotation(yaw_radians) — Y-axis rotation
+        f32 yaw = static_cast<f32>(lua_tonumber(L, 2));
+        f32 half = yaw * 0.5f;
+        e->set_orientation({0, std::sin(half), 0, std::cos(half)});
+    }
+    return 0;
+}
+
+// --- SetBuildingUnit ---
+
+static int unit_SetBuildingUnit(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    // FA sig: SetBuildingUnit(self, bool, unit) — arg2=bool, arg3=entity
+    // Also handle legacy: SetBuildingUnit(self, unit)
+    int entity_idx = lua_isboolean(L, 2) ? 3 : 2;
+    if (lua_istable(L, entity_idx)) {
+        auto* target = check_entity(L, entity_idx);
+        u->set_build_target_id(target ? target->entity_id() : 0);
+    } else {
+        u->set_build_target_id(0);
+    }
+    return 0;
+}
+
+// --- Command caps ---
+
+static int unit_AddCommandCap(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING)
+        u->add_command_cap(lua_tostring(L, 2));
+    return 0;
+}
+
+static int unit_RemoveCommandCap(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING)
+        u->remove_command_cap(lua_tostring(L, 2));
+    return 0;
+}
+
+static int unit_RestoreCommandCaps(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->restore_command_caps();
+    return 0;
+}
+
+// --- Build restrictions ---
+
+static int unit_AddBuildRestriction(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING)
+        u->add_build_restriction(lua_tostring(L, 2));
+    return 0;
+}
+
+static int unit_RemoveBuildRestriction(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u && lua_type(L, 2) == LUA_TSTRING)
+        u->remove_build_restriction(lua_tostring(L, 2));
+    return 0;
+}
+
+static int unit_RestoreBuildRestrictions(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->restore_build_restrictions();
+    return 0;
+}
+
+// --- Elevation ---
+
+static int unit_SetElevation(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_elevation_override(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int unit_RevertElevation(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->clear_elevation_override();
+    return 0;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -2510,7 +2761,7 @@ static const MethodEntry unit_methods[] = {
     {"IsIdleState",                 unit_IsIdleState},
     {"GetFireState",                unit_GetFireState},
     {"SetFireState",                unit_SetFireState},
-    {"ToggleFireState",             stub_noop},
+    {"ToggleFireState",             unit_ToggleFireState},
     {"SetPaused",                   unit_SetPaused},
     {"IsPaused",                    unit_IsPaused},
     // Bones / visual
@@ -2522,9 +2773,9 @@ static const MethodEntry unit_methods[] = {
     // Stubs — build / command
     {"GetCommandQueue",             unit_GetCommandQueue},
     {"CanBuild",                    unit_CanBuild},
-    {"AddCommandCap",               stub_noop},
-    {"RemoveCommandCap",            stub_noop},
-    {"RestoreCommandCaps",          stub_noop},
+    {"AddCommandCap",               unit_AddCommandCap},
+    {"RemoveCommandCap",            unit_RemoveCommandCap},
+    {"RestoreCommandCaps",          unit_RestoreCommandCaps},
     {"HasValidTeleportDest",        stub_return_false},
     {"GetWorkProgress",             unit_GetWorkProgress},
     {"SetWorkProgress",             unit_SetWorkProgress},
@@ -2544,22 +2795,22 @@ static const MethodEntry unit_methods[] = {
     {"ShieldIsOn",                  unit_ShieldIsOn},
     {"GetShieldRatio",              unit_GetShieldRatio},
     {"SetShieldRatio",              unit_SetShieldRatio},
-    {"SetFocusEntity",              stub_noop},
-    {"ClearFocusEntity",            stub_noop},
+    {"SetFocusEntity",              unit_SetFocusEntity},
+    {"ClearFocusEntity",            unit_ClearFocusEntity},
     // Stubs — collision
     {"SetCollisionShape",           stub_noop},
     {"RevertCollisionShape",        stub_noop},
-    {"RevertElevation",             stub_noop},
-    {"SetElevation",                stub_noop},
+    {"RevertElevation",             unit_RevertElevation},
+    {"SetElevation",                unit_SetElevation},
     // Stubs — movement
     {"IsMobile",                    unit_IsMobile},
     {"IsMoving",                    unit_IsMoving},
     {"GetNavigator",                unit_GetNavigator},
     {"SetSpeedMult",                unit_SetSpeedMult},
-    {"SetAccMult",                  stub_noop},
-    {"SetTurnMult",                 stub_noop},
-    {"SetBreakOffDistanceMult",     stub_noop},
-    {"SetBreakOffTriggerMult",      stub_noop},
+    {"SetAccMult",                  unit_SetAccMult},
+    {"SetTurnMult",                 unit_SetTurnMult},
+    {"SetBreakOffDistanceMult",     unit_SetBreakOffDistanceMult},
+    {"SetBreakOffTriggerMult",      unit_SetBreakOffTriggerMult},
     {"GetCurrentMoveLocation",      entity_GetPosition},
     {"GetHeading",                  entity_GetHeading},
     // Stubs — transport / cargo
@@ -2581,17 +2832,17 @@ static const MethodEntry unit_methods[] = {
     {"SetRegenRate",                unit_SetRegenRate},
     {"RevertRegenRate",             unit_RevertRegenRate},
     // Stubs — fuel
-    {"GetFuelRatio",                stub_return_one},
-    {"SetFuelRatio",                stub_noop},
-    {"GetFuelUseTime",              stub_return_zero},
-    {"SetFuelUseTime",              stub_noop},
+    {"GetFuelRatio",                unit_GetFuelRatio},
+    {"SetFuelRatio",                unit_SetFuelRatio},
+    {"GetFuelUseTime",              unit_GetFuelUseTime},
+    {"SetFuelUseTime",              unit_SetFuelUseTime},
     // Stubs — misc
     {"IsValidTarget",               unit_IsValidTarget},
     {"SetIsValidTarget",            unit_SetIsValidTarget},
     {"SetScriptBit",                unit_SetScriptBit},
     {"GetScriptBit",                unit_GetScriptBit},
-    {"AddBuildRestriction",         stub_noop},
-    {"RemoveBuildRestriction",      stub_noop},
+    {"AddBuildRestriction",         unit_AddBuildRestriction},
+    {"RemoveBuildRestriction",      unit_RemoveBuildRestriction},
     {"AddOnGivenCallback",          stub_noop},
     {"PlayUnitSound",               stub_noop},
     {"PlayUnitAmbientSound",        stub_noop},
@@ -2603,33 +2854,33 @@ static const MethodEntry unit_methods[] = {
     {"SetStat",                     unit_SetStat},
     {"CanPathTo",                   unit_CanPathTo},
     {"CanPathToCell",               unit_CanPathToCell},
-    {"GetAttacker",                 stub_return_nil},
+    {"GetAttacker",                 unit_GetAttacker},
     {"SetReclaimable",              entity_SetReclaimable},
     {"SetCapturable",               unit_SetCapturable},
     {"IsCapturable",                unit_IsCapturable},
     {"GetParent",                   unit_GetParent},
-    {"SetCanTakeDamage",            stub_noop},
-    {"SetCanBeKilled",              stub_noop},
+    {"SetCanTakeDamage",            unit_SetCanTakeDamage},
+    {"SetCanBeKilled",              unit_SetCanBeKilled},
     {"SetUnSelectable",             stub_noop},
-    {"SetAutoOvercharge",           stub_noop},
+    {"SetAutoOvercharge",           unit_SetAutoOvercharge},
     {"ToggleScriptBit",             unit_ToggleScriptBit},
-    {"GetAutoOvercharge",           stub_return_false},
-    {"SetOverchargePaused",         stub_noop},
+    {"GetAutoOvercharge",           unit_GetAutoOvercharge},
+    {"SetOverchargePaused",         unit_SetOverchargePaused},
     {"RemoveSpecifiedEnhancement",  unit_RemoveSpecifiedEnhancement},
     {"HasEnhancement",              unit_HasEnhancement},
     {"CreateEnhancement",           unit_CreateEnhancement},
     {"GetResourceConsumed",         unit_GetResourceConsumed},
     {"SetImmobile",                 unit_SetImmobile},
     {"GetNumBuildOrders",           unit_GetNumBuildOrders},
-    {"SetBuildingUnit",             stub_noop},
+    {"SetBuildingUnit",             unit_SetBuildingUnit},
     {"GetUnitBeingBuilt",           unit_GetUnitBeingBuilt},
     {"Stop",                        unit_Stop},
     {"Kill",                        entity_Destroy},
     {"GetFocusUnit",                unit_GetFocusUnit},
-    {"RestoreBuildRestrictions",    stub_noop},
-    {"SetCreator",                  stub_noop},
+    {"RestoreBuildRestrictions",    unit_RestoreBuildRestrictions},
+    {"SetCreator",                  unit_SetCreator},
     {"OccupyGround",               stub_return_true},
-    {"ResetSpeedAndAccel",          stub_noop},
+    {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
     {"RemoveToggleCap",             unit_RemoveToggleCap},
     {"TestToggleCaps",              unit_TestToggleCaps},
@@ -2639,7 +2890,7 @@ static const MethodEntry unit_methods[] = {
     {"GetRallyPoint",                unit_GetRallyPoint},
     {"SetRallyPoint",                unit_SetRallyPoint},
     {"SetBusy",                      unit_SetBusy},
-    {"SetRotation",                  stub_noop},
+    {"SetRotation",                  unit_SetRotation},
     {"GetGuardedUnit",               unit_GetGuardedUnit},
     {"PlayFxRollOffEnd",             stub_noop},
     {"SetupBuildBones",              stub_noop},
@@ -2775,6 +3026,218 @@ static int proj_SetTurnRateByDist(lua_State* L) {
     return 1;
 }
 
+// --- Projectile target + guidance ---
+
+static int proj_GetCurrentTargetPosition(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (!p) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+    lua_pushnumber(L, 1); lua_pushnumber(L, p->target_position.x); lua_rawset(L, -3);
+    lua_pushnumber(L, 2); lua_pushnumber(L, p->target_position.y); lua_rawset(L, -3);
+    lua_pushnumber(L, 3); lua_pushnumber(L, p->target_position.z); lua_rawset(L, -3);
+    return 1;
+}
+
+static int proj_GetCurrentTargetPositionXYZ(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (!p) { lua_pushnumber(L, 0); lua_pushnumber(L, 0); lua_pushnumber(L, 0); return 3; }
+    lua_pushnumber(L, p->target_position.x);
+    lua_pushnumber(L, p->target_position.y);
+    lua_pushnumber(L, p->target_position.z);
+    return 3;
+}
+
+static int proj_GetTrackingTarget(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (!p || p->target_entity_id == 0) { lua_pushnil(L); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* target = sim->entity_registry().find(p->target_entity_id);
+    if (!target || target->lua_table_ref() < 0) { lua_pushnil(L); return 1; }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+    return 1;
+}
+
+static int proj_TrackTarget(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->tracking = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int proj_ChangeMaxZigZag(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->max_zig_zag = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int proj_ChangeZigZagFrequency(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->zig_zag_freq = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int proj_GetMaxZigZag(lua_State* L) {
+    auto* p = check_projectile(L);
+    lua_pushnumber(L, p ? p->max_zig_zag : 0);
+    return 1;
+}
+
+static int proj_GetZigZagFrequency(lua_State* L) {
+    auto* p = check_projectile(L);
+    lua_pushnumber(L, p ? p->zig_zag_freq : 0);
+    return 1;
+}
+
+static int proj_ChangeDetonateAboveHeight(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->detonate_above_height = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int proj_ChangeDetonateBelowHeight(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->detonate_below_height = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+// --- Projectile physics flags ---
+
+static int proj_SetDestroyOnWater(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->destroy_on_water = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int proj_SetStayUpright(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->stay_upright = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int proj_SetVelocityAlign(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->velocity_align = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int proj_SetScaleVelocity(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) {
+        f32 s = static_cast<f32>(luaL_checknumber(L, 2));
+        p->velocity.x *= s;
+        p->velocity.y *= s;
+        p->velocity.z *= s;
+    }
+    lua_pushvalue(L, 1); // return self for chaining
+    return 1;
+}
+
+static int proj_SetLocalAngularVelocity(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) {
+        p->angular_velocity.x = static_cast<f32>(luaL_checknumber(L, 2));
+        p->angular_velocity.y = static_cast<f32>(luaL_checknumber(L, 3));
+        p->angular_velocity.z = static_cast<f32>(luaL_checknumber(L, 4));
+    }
+    lua_pushvalue(L, 1); // return self for chaining
+    return 1;
+}
+
+// --- Projectile collision + CreateChildProjectile (M51) ---
+
+static int proj_SetCollision(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->collision_enabled = (lua_toboolean(L, 2) != 0);
+    lua_pushvalue(L, 1); return 1; // return self for chaining
+}
+
+static int proj_SetCollideEntity(lua_State* L) {
+    // No-op + chaining (collision system not fully implemented)
+    lua_pushvalue(L, 1); return 1;
+}
+
+static int proj_SetCollideSurface(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->collide_surface = (lua_toboolean(L, 2) != 0);
+    lua_pushvalue(L, 1); return 1;
+}
+
+static int proj_StayUnderwater(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (p) p->stay_underwater = (lua_toboolean(L, 2) != 0);
+    lua_pushvalue(L, 1); // return self for chaining
+    return 1;
+}
+
+static int proj_CreateChildProjectile(lua_State* L) {
+    auto* parent = check_projectile(L);
+    if (!parent || parent->destroyed()) { lua_pushnil(L); return 1; }
+
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    auto child = std::make_unique<sim::Projectile>();
+    child->set_position(parent->position());
+    child->set_army(parent->army());
+    child->launcher_id = parent->launcher_id;
+    child->velocity = parent->velocity;
+    child->lifetime = 10.0f;
+
+    // Optional bp_id arg
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        // bp_id provided but we don't parse projectile blueprints yet
+    }
+
+    u32 child_id = sim->entity_registry().register_entity(std::move(child));
+    auto* child_ptr = static_cast<sim::Projectile*>(
+        sim->entity_registry().find(child_id));
+
+    // Create Lua table with projectile metatable
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, child_ptr);
+    lua_rawset(L, -3);
+
+    // Set __osc_proj_mt metatable (cached in registry)
+    lua_pushstring(L, "__osc_proj_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        int mt_idx = lua_gettop(L);
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, mt_idx);
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "projectile_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                int src_idx = lua_gettop(L);
+                lua_pushnil(L);
+                while (lua_next(L, src_idx) != 0) {
+                    lua_pushvalue(L, -2);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, mt_idx);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "__osc_proj_mt");
+        lua_pushvalue(L, mt_idx);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    child_ptr->set_lua_table_ref(ref);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    return 1;
+}
+
 static const MethodEntry projectile_methods[] = {
     // Real implementations
     {"GetLauncher",                 proj_GetLauncher},
@@ -2785,30 +3248,30 @@ static const MethodEntry projectile_methods[] = {
     {"SetNewTarget",                proj_SetNewTarget},
     {"SetNewTargetGround",          proj_SetNewTargetGround},
     // Stubs — return self for chaining
-    {"GetTrackingTarget",           stub_return_nil},
-    {"GetCurrentTargetPosition",    stub_return_nil},
-    {"GetCurrentTargetPositionXYZ", stub_return_zero},
-    {"TrackTarget",                 stub_return_false},
-    {"SetScaleVelocity",            stub_return_self},
+    {"GetTrackingTarget",           proj_GetTrackingTarget},
+    {"GetCurrentTargetPosition",    proj_GetCurrentTargetPosition},
+    {"GetCurrentTargetPositionXYZ", proj_GetCurrentTargetPositionXYZ},
+    {"TrackTarget",                 proj_TrackTarget},
+    {"SetScaleVelocity",            proj_SetScaleVelocity},
     {"SetMaxSpeed",                 proj_SetMaxSpeed},
     {"SetAcceleration",             proj_SetAcceleration},
     {"SetBallisticAcceleration",    proj_SetBallisticAcceleration},
-    {"SetCollideEntity",            stub_return_self},
-    {"SetCollideSurface",           stub_return_self},
-    {"SetCollision",                stub_return_self},
-    {"SetDestroyOnWater",           stub_noop},
-    {"SetLocalAngularVelocity",     stub_return_self},
+    {"SetCollideEntity",            proj_SetCollideEntity},
+    {"SetCollideSurface",           proj_SetCollideSurface},
+    {"SetCollision",                proj_SetCollision},
+    {"SetDestroyOnWater",           proj_SetDestroyOnWater},
+    {"SetLocalAngularVelocity",     proj_SetLocalAngularVelocity},
     {"SetTurnRate",                 proj_SetTurnRate},
-    {"SetStayUpright",              stub_noop},
-    {"SetVelocityAlign",            stub_noop},
-    {"StayUnderwater",              stub_return_false},
-    {"CreateChildProjectile",       stub_return_nil},
-    {"ChangeMaxZigZag",             stub_noop},
-    {"ChangeZigZagFrequency",       stub_noop},
-    {"GetMaxZigZag",                stub_return_zero},
-    {"GetZigZagFrequency",          stub_return_zero},
-    {"ChangeDetonateAboveHeight",   stub_noop},
-    {"ChangeDetonateBelowHeight",   stub_noop},
+    {"SetStayUpright",              proj_SetStayUpright},
+    {"SetVelocityAlign",            proj_SetVelocityAlign},
+    {"StayUnderwater",              proj_StayUnderwater},
+    {"CreateChildProjectile",       proj_CreateChildProjectile},
+    {"ChangeMaxZigZag",             proj_ChangeMaxZigZag},
+    {"ChangeZigZagFrequency",       proj_ChangeZigZagFrequency},
+    {"GetMaxZigZag",                proj_GetMaxZigZag},
+    {"GetZigZagFrequency",          proj_GetZigZagFrequency},
+    {"ChangeDetonateAboveHeight",   proj_ChangeDetonateAboveHeight},
+    {"ChangeDetonateBelowHeight",   proj_ChangeDetonateBelowHeight},
     {"SetTurnRateByDist",           proj_SetTurnRateByDist},
     {nullptr, nullptr},
 };
@@ -3041,6 +3504,240 @@ static int weapon_SetFireTargetLayerCaps(lua_State* L) {
     return 0;
 }
 
+static int weapon_ChangeDamageRadius(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->damage_radius = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int weapon_ChangeDamageType(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        w->damage_type = lua_tostring(L, 2);
+    return 0;
+}
+
+static int weapon_ChangeMaxHeightDiff(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->max_height_diff = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int weapon_ChangeFiringTolerance(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->firing_tolerance = static_cast<f32>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+static int weapon_ChangeProjectileBlueprint(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        w->projectile_bp_id = lua_tostring(L, 2);
+    return 0;
+}
+
+static int weapon_SetOnTransport(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->enabled = !(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+// --- Weapon targeting + control ---
+
+static int weapon_GetProjectileBlueprint(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w && !w->projectile_bp_id.empty()) {
+        lua_pushstring(L, w->projectile_bp_id.c_str());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+static int weapon_SetTargetGround(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->target_ground = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int weapon_SetFireControl(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (w) w->fire_control = (lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int weapon_IsFireControl(lua_State* L) {
+    auto* w = check_weapon(L);
+    lua_pushboolean(L, (w && w->fire_control) ? 1 : 0);
+    return 1;
+}
+
+static int weapon_TransferTarget(lua_State* L) {
+    auto* w = check_weapon(L);
+    auto* src = check_weapon(L, 2);
+    if (w && src) w->target_entity_id = src->target_entity_id;
+    return 0;
+}
+
+static int weapon_SetTargetingPriorities(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    if (w->targeting_priorities_ref >= 0)
+        luaL_unref(L, LUA_REGISTRYINDEX, w->targeting_priorities_ref);
+    if (lua_istable(L, 2)) {
+        lua_pushvalue(L, 2);
+        w->targeting_priorities_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        w->targeting_priorities_ref = -2;
+    }
+    return 0;
+}
+
+static int weapon_SetWeaponPriorities(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    if (w->weapon_priorities_ref >= 0)
+        luaL_unref(L, LUA_REGISTRYINDEX, w->weapon_priorities_ref);
+    if (lua_istable(L, 2)) {
+        lua_pushvalue(L, 2);
+        w->weapon_priorities_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    } else {
+        w->weapon_priorities_ref = -2;
+    }
+    return 0;
+}
+
+// ---- M51: weapon fire + control bindings ----
+
+// weapon:FireWeapon() — trigger weapon fire cycle
+static int weapon_FireWeapon(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) { lua_pushboolean(L, 0); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 0); return 1; }
+    auto* owner = sim->entity_registry().find(w->owner_entity_id);
+    if (!owner || owner->destroyed() || !owner->is_unit()) {
+        lua_pushboolean(L, 0); return 1;
+    }
+    auto& unit = static_cast<sim::Unit&>(*owner);
+    bool fired = w->try_fire(unit, sim->entity_registry(), L);
+    lua_pushboolean(L, fired ? 1 : 0);
+    return 1;
+}
+
+// weapon:DoInstaHit(target_bone, target_entity, damage_amount, [damage_type])
+// Applies damage directly to target without projectile
+static int weapon_DoInstaHit(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    // arg2 = target bone (string, ignored)
+    // arg3 = target entity (table with _c_object)
+    // arg4 = damage amount (number, optional — defaults to weapon damage)
+    // FA actually calls: DoInstaHit(self, 0, target, damageAmount, damageTable)
+    // Find the entity argument (first table arg after self)
+    int target_idx = 0;
+    for (int i = 2; i <= lua_gettop(L); ++i) {
+        if (lua_istable(L, i)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, i);
+            if (lua_isuserdata(L, -1)) {
+                target_idx = i;
+                lua_pop(L, 1);
+                break;
+            }
+            lua_pop(L, 1);
+        }
+    }
+    if (target_idx == 0) return 0;
+
+    auto* target_e = check_entity(L, target_idx);
+    if (!target_e || target_e->destroyed()) return 0;
+
+    f32 amount = w->damage;
+    // Check if there's a number after the target table for damage amount
+    if (target_idx + 1 <= lua_gettop(L) && lua_isnumber(L, target_idx + 1))
+        amount = static_cast<f32>(lua_tonumber(L, target_idx + 1));
+
+    if (amount <= 0) return 0;
+
+    // Apply armor multiplier if target is a unit
+    auto* sim = get_sim(L);
+    if (sim && target_e->is_unit()) {
+        auto* target_unit = static_cast<sim::Unit*>(target_e);
+        if (!target_unit->can_take_damage()) return 0;
+        amount *= sim->armor_definition().get_multiplier(
+            target_unit->armor_type(), w->damage_type.c_str());
+        if (amount <= 0) return 0;
+    }
+
+    // Call OnDamage on target
+    lua_pushstring(L, "OnDamage");
+    lua_gettable(L, target_idx);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, target_idx); // self
+        // Find instigator (owner unit)
+        if (sim) {
+            auto* owner = sim->entity_registry().find(w->owner_entity_id);
+            if (owner && owner->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, owner->lua_table_ref());
+            } else {
+                lua_pushnil(L);
+            }
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushnumber(L, amount);
+        lua_pushnil(L); // vector (unused)
+        lua_pushstring(L, w->damage_type.c_str());
+        lua_pcall(L, 5, 0, 0);
+    } else {
+        lua_pop(L, 1);
+        // Fallback: direct HP reduction
+        target_e->set_health(target_e->health() - amount);
+    }
+    return 0;
+}
+
+// weapon:SetValidTargetsForCurrentLayer(layer)
+// Sets fire_target_layer_caps from the weapon blueprint's FireTargetLayerCapsTable
+static int weapon_SetValidTargetsForCurrentLayer(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) return 0;
+    // arg2 = layer string (e.g. "Land", "Water")
+    const char* layer = (lua_type(L, 2) == LUA_TSTRING) ? lua_tostring(L, 2) : nullptr;
+    if (!layer) return 0;
+
+    // Look up bp.FireTargetLayerCapsTable[layer]
+    if (w->blueprint_ref >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, w->blueprint_ref);
+        lua_pushstring(L, "FireTargetLayerCapsTable");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, layer);
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                w->fire_target_layer_caps = sim::parse_layer_caps(lua_tostring(L, -1));
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2); // FireTargetLayerCapsTable + bp table
+    }
+    return 0;
+}
+
+// weapon:BeenDestroyed() — returns true if weapon's owner unit is destroyed
+static int weapon_BeenDestroyed(lua_State* L) {
+    auto* w = check_weapon(L);
+    if (!w) { lua_pushboolean(L, 1); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushboolean(L, 1); return 1; }
+    auto* owner = sim->entity_registry().find(w->owner_entity_id);
+    lua_pushboolean(L, (!owner || owner->destroyed()) ? 1 : 0);
+    return 1;
+}
+
 static const MethodEntry weapon_methods[] = {
     // Real implementations
     {"GetBlueprint",                weapon_GetBlueprint},
@@ -3060,27 +3757,27 @@ static const MethodEntry weapon_methods[] = {
     {"ChangeRateOfFire",            weapon_ChangeRateOfFire},
     {"CreateProjectile",            weapon_CreateProjectile},
     // Stubs (still needed by FA Lua but not critical for M10)
-    {"GetProjectileBlueprint",      stub_return_nil},
-    {"FireWeapon",                  stub_return_false},
-    {"DoInstaHit",                  stub_noop},
-    {"SetTargetGround",             stub_noop},
-    {"SetTargetingPriorities",      stub_noop},
-    {"TransferTarget",              stub_noop},
-    {"SetFireControl",              stub_noop},
-    {"IsFireControl",               stub_return_false},
+    {"GetProjectileBlueprint",      weapon_GetProjectileBlueprint},
+    {"FireWeapon",                  weapon_FireWeapon},
+    {"DoInstaHit",                  weapon_DoInstaHit},
+    {"SetTargetGround",             weapon_SetTargetGround},
+    {"SetTargetingPriorities",      weapon_SetTargetingPriorities},
+    {"TransferTarget",              weapon_TransferTarget},
+    {"SetFireControl",              weapon_SetFireControl},
+    {"IsFireControl",               weapon_IsFireControl},
     {"SetFiringRandomness",         weapon_SetFiringRandomness},
     {"GetFiringRandomness",         weapon_GetFiringRandomness},
     {"SetFireTargetLayerCaps",      weapon_SetFireTargetLayerCaps},
-    {"ChangeDamageRadius",          stub_noop},
-    {"ChangeDamageType",            stub_noop},
-    {"ChangeMaxHeightDiff",         stub_noop},
-    {"ChangeFiringTolerance",       stub_noop},
-    {"ChangeProjectileBlueprint",   stub_noop},
-    {"BeenDestroyed",               stub_return_false},
+    {"ChangeDamageRadius",          weapon_ChangeDamageRadius},
+    {"ChangeDamageType",            weapon_ChangeDamageType},
+    {"ChangeMaxHeightDiff",         weapon_ChangeMaxHeightDiff},
+    {"ChangeFiringTolerance",       weapon_ChangeFiringTolerance},
+    {"ChangeProjectileBlueprint",   weapon_ChangeProjectileBlueprint},
+    {"BeenDestroyed",               weapon_BeenDestroyed},
     {"PlaySound",                   weapon_PlaySound},
-    {"SetValidTargetsForCurrentLayer", stub_noop},
-    {"SetWeaponPriorities",         stub_noop},
-    {"SetOnTransport",              stub_noop},
+    {"SetValidTargetsForCurrentLayer", weapon_SetValidTargetsForCurrentLayer},
+    {"SetWeaponPriorities",         weapon_SetWeaponPriorities},
+    {"SetOnTransport",              weapon_SetOnTransport},
     {nullptr, nullptr},
 };
 
@@ -4863,6 +5560,77 @@ static int brain_IsAnyEngineerBuilding(lua_State* L) {
     return 1;
 }
 
+// --- Brain event callbacks + utility (M51) ---
+
+static int brain_OnVictory(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain) brain->set_state(sim::BrainState::Victory);
+    return 0;
+}
+
+static int brain_OnDefeat(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain) brain->set_state(sim::BrainState::Defeat);
+    return 0;
+}
+
+static int brain_OnDraw(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain) brain->set_state(sim::BrainState::Draw);
+    return 0;
+}
+
+static int brain_OnUnitStopBeingBuilt(lua_State* L) {
+    // Lua→C++ event; no-op bookkeeping placeholder
+    (void)L;
+    return 0;
+}
+
+static int brain_SetCurrentPlan(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain && lua_type(L, 2) == LUA_TSTRING)
+        brain->set_current_plan(lua_tostring(L, 2));
+    return 0;
+}
+
+static int brain_GiveStorage(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain) return 0;
+    if (lua_type(L, 2) != LUA_TSTRING) return 0;
+    std::string type = lua_tostring(L, 2);
+    f64 amount = lua_tonumber(L, 3);
+    if (amount <= 0) return 0; // guard: storage can only increase via GiveStorage
+    if (type == "MASS" || type == "Mass")
+        brain->economy().mass.max_storage += amount;
+    else if (type == "ENERGY" || type == "Energy")
+        brain->economy().energy.max_storage += amount;
+    return 0;
+}
+
+static int brain_SetResourceSharing(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain) brain->set_resource_sharing(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int brain_GetArmySkinName(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (brain && !brain->skin_name().empty())
+        lua_pushstring(L, brain->skin_name().c_str());
+    else
+        lua_pushstring(L, "");
+    return 1;
+}
+
+// Not called in FA — named no-ops to replace generic stubs
+static int brain_SetArmyStatsTrigger(lua_State*) { return 0; }
+static int brain_RemoveArmyStatsTrigger(lua_State*) { return 0; }
+static int brain_RemoveEnergyDependingEntity(lua_State*) { return 0; }
+static int brain_PBMAddBuildLocation(lua_State*) { return 0; }
+static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
+static int brain_SetUpAttackVectorsToArmy(lua_State*) { return 0; }
+static int brain_SetGreaterOf(lua_State*) { return 0; }
+
 // clang-format off
 static const MethodEntry aibrain_methods[] = {
     // Real implementations
@@ -4886,32 +5654,32 @@ static const MethodEntry aibrain_methods[] = {
     {"SetArmyStat",                 brain_SetArmyStat},
     {"GetBlueprintStat",            brain_GetBlueprintStat},
     {"GetUnitBlueprint",            brain_GetUnitBlueprint},
-    {"SetArmyStatsTrigger",         stub_noop},
+    {"SetArmyStatsTrigger",         brain_SetArmyStatsTrigger},
     // AddUnitStat — defined in StatManagerBrainComponent (Lua)
     // AddEnergyDependingEntity — defined in EnergyManagerBrainComponent (Lua)
     {"GetEconomyUsage",             brain_GetEconomyUsage},
     // TrackJammer — defined in JammerManagerBrainComponent (Lua)
-    {"RemoveArmyStatsTrigger",      stub_noop},
-    {"RemoveEnergyDependingEntity", stub_noop},
-    {"GiveStorage",                 stub_noop},
-    {"OnUnitStopBeingBuilt",        stub_noop},
-    {"OnVictory",                   stub_noop},
-    {"OnDefeat",                    stub_noop},
-    {"OnDraw",                      stub_noop},
+    {"RemoveArmyStatsTrigger",      brain_RemoveArmyStatsTrigger},
+    {"RemoveEnergyDependingEntity", brain_RemoveEnergyDependingEntity},
+    {"GiveStorage",                 brain_GiveStorage},
+    {"OnUnitStopBeingBuilt",        brain_OnUnitStopBeingBuilt},
+    {"OnVictory",                   brain_OnVictory},
+    {"OnDefeat",                    brain_OnDefeat},
+    {"OnDraw",                      brain_OnDraw},
     {"SetArmyColor",                brain_SetArmyColor},
     // Stubs (AI/platoon features not yet implemented)
     {"AssignUnitsToPlatoon",        brain_AssignUnitsToPlatoon},
     {"PlatoonExists",               brain_PlatoonExists},
     {"DisbandPlatoon",              brain_DisbandPlatoon},
-    {"SetResourceSharing",          stub_noop},
+    {"SetResourceSharing",          brain_SetResourceSharing},
     {"GetThreatAtPosition",         brain_GetThreatAtPosition},
     {"GetThreatsAroundPosition",    brain_GetThreatsAroundPosition},
     {"GetThreatBetweenPositions",   brain_GetThreatBetweenPositions},
     {"IsAnyEngineerBuilding",       brain_IsAnyEngineerBuilding},
-    {"SetCurrentPlan",              stub_noop},
-    {"PBMRemoveBuildLocation",      stub_noop},
-    {"PBMAddBuildLocation",         stub_noop},
-    {"SetUpAttackVectorsToArmy",    stub_noop},
+    {"SetCurrentPlan",              brain_SetCurrentPlan},
+    {"PBMRemoveBuildLocation",      brain_PBMRemoveBuildLocation},
+    {"PBMAddBuildLocation",         brain_PBMAddBuildLocation},
+    {"SetUpAttackVectorsToArmy",    brain_SetUpAttackVectorsToArmy},
     {"FindPlaceToBuild",            brain_FindPlaceToBuild},
     {"CanBuildStructureAt",         brain_CanBuildStructureAt},
     {"BuildUnit",                   brain_BuildUnit},
@@ -4920,8 +5688,8 @@ static const MethodEntry aibrain_methods[] = {
     {"MakePlatoon",                 brain_MakePlatoon},
     {"GetPlatoonUniquelyNamed",     brain_GetPlatoonUniquelyNamed},
     {"GetHighestThreatPosition",    brain_GetHighestThreatPosition},
-    {"SetGreaterOf",                stub_noop},
-    {"GetArmySkinName",             stub_return_empty_string},
+    {"SetGreaterOf",                brain_SetGreaterOf},
+    {"GetArmySkinName",             brain_GetArmySkinName},
     {"GetCurrentEnemy",             brain_GetCurrentEnemy},
     {"SetCurrentEnemy",             brain_SetCurrentEnemy},
     {"GetNumUnitsAroundPoint",      brain_GetNumUnitsAroundPoint},
@@ -5332,6 +6100,55 @@ static const MethodEntry blip_methods[] = {
     {nullptr, nullptr},
 };
 
+// ---- M51: platoon bindings ----
+
+// platoon:SetPlatoonFormationOverride(formation)
+static int platoon_SetPlatoonFormationOverride(lua_State* L) {
+    auto* p = check_platoon(L);
+    if (!p) return 0;
+    const char* f = (lua_type(L, 2) == LUA_TSTRING) ? lua_tostring(L, 2) : "";
+    p->set_formation_override(f);
+    return 0;
+}
+
+// platoon:IsOpponentAIRunning() — true if any non-defeated, non-civilian enemy brain exists
+static int platoon_IsOpponentAIRunning(lua_State* L) {
+    auto* p = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!p || !sim) { lua_pushboolean(L, 0); return 1; }
+    i32 my_army = p->army_index();
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        if (static_cast<i32>(i) == my_army) continue;
+        auto* brain = sim->get_army(static_cast<i32>(i));
+        if (!brain) continue;
+        if (brain->is_civilian()) continue;
+        if (brain->is_defeated()) continue;
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// platoon:SetPrioritizedTargetList(category, table)
+static int platoon_SetPrioritizedTargetList(lua_State* L) {
+    auto* p = check_platoon(L);
+    if (!p) return 0;
+    // Free old ref if any
+    if (p->priority_targets_ref() >= 0)
+        luaL_unref(L, LUA_REGISTRYINDEX, p->priority_targets_ref());
+    // arg2 = category string (e.g. "Attack"), arg3 = table of categories
+    // Some FA code passes (self, string, table), some (self, table)
+    int tbl_idx = lua_istable(L, 3) ? 3 : (lua_istable(L, 2) ? 2 : 0);
+    if (tbl_idx > 0) {
+        lua_pushvalue(L, tbl_idx);
+        p->set_priority_targets_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    } else {
+        p->set_priority_targets_ref(-2);
+    }
+    return 0;
+}
+
 static const MethodEntry platoon_methods[] = {
     {"Destroy",                     platoon_Destroy},
     {"GetPlatoonUnits",             platoon_GetPlatoonUnits},
@@ -5342,7 +6159,7 @@ static const MethodEntry platoon_methods[] = {
     {"ForkThread",                  platoon_ForkThread},
     {"SetAIPlan",                   platoon_SetAIPlan},
     {"GetPlan",                     platoon_GetPlan},
-    {"SetPlatoonFormationOverride", stub_noop},
+    {"SetPlatoonFormationOverride", platoon_SetPlatoonFormationOverride},
     {"Stop",                        platoon_Stop},
     {"MoveToLocation",              platoon_MoveToLocation},
     {"MoveToTarget",                platoon_MoveToLocation},
@@ -5350,10 +6167,10 @@ static const MethodEntry platoon_methods[] = {
     {"AggressiveMoveToLocation",    platoon_MoveToLocation},
     {"AttackTarget",                platoon_AttackTarget},
     {"GuardTarget",                 platoon_GuardTarget},
-    {"IsOpponentAIRunning",         stub_return_false},
+    {"IsOpponentAIRunning",         platoon_IsOpponentAIRunning},
     {"FindClosestUnit",             platoon_FindClosestUnit},
     {"FindPrioritizedUnit",         platoon_FindPrioritizedUnit},
-    {"SetPrioritizedTargetList",    stub_noop},
+    {"SetPrioritizedTargetList",    platoon_SetPrioritizedTargetList},
     {"IsCommandsActive",            platoon_IsCommandsActive},
     {"CalculatePlatoonThreat",      platoon_CalculatePlatoonThreat},
     {nullptr, nullptr},
@@ -5766,10 +6583,16 @@ static const MethodEntry ieffect_methods[] = {
     {nullptr, nullptr},
 };
 
+static int nav_SetSpeedThroughGoal(lua_State* L) {
+    auto* nav = check_navigator(L);
+    if (nav) nav->set_speed_through_goal(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
 // navigator
 static const MethodEntry navigator_methods[] = {
     {"GetCurrentTargetSpeed",   nav_GetCurrentTargetSpeed},
-    {"SetSpeedThroughGoal",     stub_noop},
+    {"SetSpeedThroughGoal",     nav_SetSpeedThroughGoal},
     {"SetGoal",                 nav_SetGoal},
     {"GetGoal",                 nav_GetGoal},
     {"AbortMove",               nav_AbortMove},

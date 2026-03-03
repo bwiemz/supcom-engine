@@ -74,6 +74,9 @@ static void print_usage() {
               << "  --silo-test        Missile silo ammo system (Give/Remove/Get nuke+tactical)\n"
               << "  --flags-test       Unit targeting flags (DoNotTarget, Reclaimable, IsValidTarget)\n"
               << "  --layercap-test    Weapon fire target layer caps\n"
+              << "  --massstub-test    Mass stub conversion (weapon/movement/fuel/projectile/misc)\n"
+              << "  --massstub2-test   Mass stub conversion II (damage flags/caps/weapon/proj/elevation)\n"
+              << "  --massstub3-test   Mass stub conversion III (brain/weapon/projectile/platoon)\n"
               << "  --help             Show this help message\n";
 }
 
@@ -213,6 +216,9 @@ int main(int argc, char* argv[]) {
     bool silo_test = parse_flag(argc, argv, "--silo-test");
     bool flags_test = parse_flag(argc, argv, "--flags-test");
     bool layercap_test = parse_flag(argc, argv, "--layercap-test");
+    bool massstub_test = parse_flag(argc, argv, "--massstub-test");
+    bool massstub2_test = parse_flag(argc, argv, "--massstub2-test");
+    bool massstub3_test = parse_flag(argc, argv, "--massstub3-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -225,7 +231,8 @@ int main(int argc, char* argv[]) {
                     stub_test || audio_test || bone_test || manip_test ||
                     canpath_test || armor_test || vet_test ||
                     wreck_test || adjacency_test || stats_test ||
-                    silo_test || flags_test || layercap_test;
+                    silo_test || flags_test || layercap_test ||
+                    massstub_test || massstub2_test || massstub3_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -4985,6 +4992,424 @@ int main(int argc, char* argv[]) {
 
         spdlog::info("LayerCap test: {}/{} passed", pass, pass + fail);
         spdlog::info("LayerCap test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    if (massstub_test && !map_path.empty()) {
+        spdlog::info("=== MASSSTUB TEST: Mass stub conversions (32 bindings) ===");
+
+        // Run initial ticks for session setup
+        for (osc::u32 i = 0; i < 10; i++) sim_state.tick();
+
+        int pass = 0, fail = 0;
+
+        // Test 1: Weapon Change* methods
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "if not u then error('no entity 1') end\n"
+                "local w = u:GetWeapon(1)\n"
+                "if not w then error('entity 1 has no weapon') end\n"
+                "w:ChangeDamageRadius(5.0)\n"
+                "w:ChangeDamageType('Fire')\n"
+                "w:ChangeMaxHeightDiff(10.0)\n"
+                "w:ChangeFiringTolerance(0.5)\n"
+                "w:ChangeProjectileBlueprint('/projectiles/test')\n"
+                "w:SetOnTransport(true)\n"
+                "LOG('MassStub test 1: weapon Change* methods OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 1: Weapon Change* methods"); }
+            else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        }
+
+        // Test 2: Movement multipliers + ResetSpeedAndAccel
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "u:SetAccMult(2.0)\n"
+                "u:SetTurnMult(0.5)\n"
+                "u:SetBreakOffDistanceMult(1.5)\n"
+                "u:SetBreakOffTriggerMult(2.0)\n"
+                "u:SetSpeedMult(3.0)\n"
+                "u:ResetSpeedAndAccel()\n"
+                "LOG('MassStub test 2: movement mults + reset OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: Movement multipliers + reset"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: Fuel system round-trip
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "u:SetFuelRatio(0.5)\n"
+                "local ratio = u:GetFuelRatio()\n"
+                "if math.abs(ratio - 0.5) > 0.01 then\n"
+                "    error('GetFuelRatio expected 0.5, got ' .. tostring(ratio))\n"
+                "end\n"
+                "u:SetFuelUseTime(120)\n"
+                "local t = u:GetFuelUseTime()\n"
+                "if math.abs(t - 120) > 0.01 then\n"
+                "    error('GetFuelUseTime expected 120, got ' .. tostring(t))\n"
+                "end\n"
+                "LOG('MassStub test 3: fuel round-trip OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 3: Fuel system round-trip"); }
+            else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        }
+
+        // Test 4: Projectile target position + zigzag
+        {
+            // Fire a projectile and check target position
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "local w = u:GetWeapon(1)\n"
+                "w:SetOnTransport(false)\n"  // re-enable weapon
+                "w:SetFireTargetLayerCaps('Land|Water|Air|Sub|Seabed')\n"
+                "w:ChangeMaxRadius(999)\n"
+                // Find an enemy and force-fire
+                "local enemy = nil\n"
+                "for i = 2, 20 do\n"
+                "    local e = GetEntityById(i)\n"
+                "    if e and e:GetArmy() ~= u:GetArmy() then\n"
+                "        enemy = e\n"
+                "        break\n"
+                "    end\n"
+                "end\n"
+                "if not enemy then error('no enemy found') end\n"
+                "w:SetTargetEntity(enemy)\n");
+            if (!r) {
+                fail++; spdlog::error("[FAIL] Test 4 setup: {}", r.error().message);
+            } else {
+                // Don't tick — test the projectile binding functions directly
+                // by creating a projectile via CreateProjectileAtBone or
+                // by calling the methods on a dummy. Instead, test via unit's
+                // weapon firing: tick once to create projectile, then search
+                // across a wider range of entity IDs.
+                sim_state.tick(); // fire projectile
+                auto r2 = state.do_string(
+                    // Search for projectile across a wide range
+                    "local proj = nil\n"
+                    "for i = 100, 300 do\n"
+                    "    local e = GetEntityById(i)\n"
+                    "    if e and e.GetCurrentTargetPosition then\n"
+                    "        proj = e\n"
+                    "        break\n"
+                    "    end\n"
+                    "end\n"
+                    "if not proj then\n"
+                    "    -- Projectile may have impacted; test the binding functions\n"
+                    "    -- exist without error by calling on any entity that has them.\n"
+                    "    -- Create a fresh projectile via CreateProjectile\n"
+                    "    local u = GetEntityById(1)\n"
+                    "    proj = u:CreateProjectile('/projectiles/test', 0, 0, 0, 0, 0, 0)\n"
+                    "end\n"
+                    "if not proj then error('no projectile found') end\n"
+                    "local pos = proj:GetCurrentTargetPosition()\n"
+                    "if type(pos) ~= 'table' then error('expected table from GetCurrentTargetPosition') end\n"
+                    "proj:ChangeMaxZigZag(3.0)\n"
+                    "proj:ChangeZigZagFrequency(0.5)\n"
+                    "local zz = proj:GetMaxZigZag()\n"
+                    "if math.abs(zz - 3.0) > 0.01 then error('GetMaxZigZag got ' .. tostring(zz)) end\n"
+                    "local zf = proj:GetZigZagFrequency()\n"
+                    "if math.abs(zf - 0.5) > 0.01 then error('GetZigZagFrequency got ' .. tostring(zf)) end\n"
+                    "proj:ChangeDetonateAboveHeight(100)\n"
+                    "proj:ChangeDetonateBelowHeight(5)\n"
+                    "proj:TrackTarget(true)\n"
+                    "LOG('MassStub test 4: projectile target+guidance OK')\n");
+                if (r2) { pass++; spdlog::info("[PASS] Test 4: Projectile target + guidance"); }
+                else { fail++; spdlog::error("[FAIL] Test 4: {}", r2.error().message); }
+            }
+        }
+
+        // Test 5: Misc flags + ToggleFireState
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "u:SetAutoOvercharge(true)\n"
+                "local oc = u:GetAutoOvercharge()\n"
+                "if oc ~= true then error('GetAutoOvercharge expected true, got ' .. tostring(oc)) end\n"
+                "u:SetOverchargePaused(true)\n"
+                "u:SetAutoOvercharge(false)\n"
+                "local oc2 = u:GetAutoOvercharge()\n"
+                "if oc2 ~= false then error('GetAutoOvercharge expected false after set') end\n"
+                // ToggleFireState cycles 0→1→2→0
+                "u:SetFireState(0)\n"
+                "u:ToggleFireState()\n"
+                "local fs = u:GetFireState()\n"
+                "if fs ~= 1 then error('ToggleFireState 0->1 failed, got ' .. tostring(fs)) end\n"
+                "u:ToggleFireState()\n"
+                "fs = u:GetFireState()\n"
+                "if fs ~= 2 then error('ToggleFireState 1->2 failed, got ' .. tostring(fs)) end\n"
+                "u:ToggleFireState()\n"
+                "fs = u:GetFireState()\n"
+                "if fs ~= 0 then error('ToggleFireState 2->0 failed, got ' .. tostring(fs)) end\n"
+                // SetCreator, SetFocusEntity, ClearFocusEntity
+                "u:SetCreator(u)\n"
+                "u:SetFocusEntity(u)\n"
+                "u:ClearFocusEntity()\n"
+                "LOG('MassStub test 5: misc flags + ToggleFireState OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 5: Misc flags + ToggleFireState"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        }
+
+        spdlog::info("MassStub test: {}/{} passed", pass, pass + fail);
+        spdlog::info("MassStub test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    if (massstub2_test && !map_path.empty()) {
+        spdlog::info("=== MASSSTUB2 TEST: Mass stub conversions II (27 bindings) ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: Damage flags — SetCanTakeDamage(false) blocks Damage(), GetAttacker tracks instigator
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "local hp_before = u:GetHealth()\n"
+                // First, damage while can_take_damage is true to verify GetAttacker
+                "local enemy = nil\n"
+                "for i = 2, 20 do\n"
+                "    local e = GetEntityById(i)\n"
+                "    if e and e:GetArmy() ~= u:GetArmy() then\n"
+                "        enemy = e\n"
+                "        break\n"
+                "    end\n"
+                "end\n"
+                "if not enemy then error('no enemy found') end\n"
+                "Damage(enemy, u, 10, 'Normal')\n"
+                "local hp_after = u:GetHealth()\n"
+                "if hp_after >= hp_before then error('damage should have reduced HP') end\n"
+                "local attacker = u:GetAttacker()\n"
+                "if not attacker then error('GetAttacker returned nil after damage') end\n"
+                // Now block damage
+                "u:SetCanTakeDamage(false)\n"
+                "local hp2 = u:GetHealth()\n"
+                "Damage(enemy, u, 999, 'Normal')\n"
+                "local hp3 = u:GetHealth()\n"
+                "if hp3 ~= hp2 then error('damage should be blocked, hp changed from ' .. hp2 .. ' to ' .. hp3) end\n"
+                "u:SetCanTakeDamage(true)\n"  // restore
+                "u:SetHealth(u, hp_before)\n"  // restore HP
+                "LOG('MassStub2 test 1: damage flags OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 1: Damage flags + GetAttacker"); }
+            else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        }
+
+        // Test 2: Kill flag — SetCanBeKilled(false) blocks Destroy()
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "local hp_before = u:GetHealth()\n"
+                "u:SetCanBeKilled(false)\n"
+                "u:Destroy()\n"  // should be blocked by can_be_killed guard
+                "-- If we get here, Destroy was blocked (entity still alive)\n"
+                "local hp = u:GetHealth()\n"
+                "if hp ~= hp_before then error('HP should be unchanged, was ' .. hp_before .. ' now ' .. hp) end\n"
+                "u:SetCanBeKilled(true)\n"  // restore
+                "LOG('MassStub2 test 2: kill flag OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: Kill flag (SetCanBeKilled)"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: Command caps round-trip
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "u:AddCommandCap('RULEUCC_Attack')\n"
+                "u:AddCommandCap('RULEUCC_Guard')\n"
+                "u:RemoveCommandCap('RULEUCC_Attack')\n"
+                // RestoreCommandCaps should bring back the snapshot (empty baseline)
+                "u:RestoreCommandCaps()\n"
+                // Build restrictions
+                "u:AddBuildRestriction('uel0201')\n"
+                "u:RemoveBuildRestriction('uel0201')\n"
+                "u:RestoreBuildRestrictions()\n"
+                "LOG('MassStub2 test 3: command caps + build restrictions OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 3: Command caps + build restrictions"); }
+            else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        }
+
+        // Test 4: Weapon targeting — GetProjectileBlueprint, SetTargetGround, SetFireControl/IsFireControl, TransferTarget
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "local w = u:GetWeapon(1)\n"
+                "if not w then error('no weapon') end\n"
+                "local bp = w:GetProjectileBlueprint()\n"
+                "if type(bp) ~= 'string' then\n"
+                "    if bp ~= nil then error('GetProjectileBlueprint expected string or nil, got ' .. type(bp)) end\n"
+                "end\n"
+                "w:SetTargetGround(true)\n"
+                "w:SetFireControl(true)\n"
+                "local fc = w:IsFireControl()\n"
+                "if fc ~= true then error('IsFireControl expected true, got ' .. tostring(fc)) end\n"
+                "w:SetFireControl(false)\n"
+                "fc = w:IsFireControl()\n"
+                "if fc ~= false then error('IsFireControl expected false after set') end\n"
+                // TransferTarget: test with self weapon
+                "w:TransferTarget(w)\n"
+                // SetTargetingPriorities / SetWeaponPriorities accept tables
+                "w:SetTargetingPriorities({categories.ALLUNITS})\n"
+                "w:SetWeaponPriorities({categories.ALLUNITS})\n"
+                "LOG('MassStub2 test 4: weapon targeting OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 4: Weapon targeting + control"); }
+            else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        }
+
+        // Test 5: Projectile physics flags
+        {
+            // Fire a projectile first, then test flags
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "local proj = u:CreateProjectile('/projectiles/test', 0, 1, 0, 0, 1, 0)\n"
+                "if not proj then error('CreateProjectile returned nil') end\n"
+                "proj:SetDestroyOnWater(true)\n"
+                "proj:SetStayUpright(true)\n"
+                "proj:SetVelocityAlign(true)\n"
+                "local ret = proj:SetScaleVelocity(2.0)\n"
+                "if not ret then error('SetScaleVelocity should return self') end\n"
+                "local ret2 = proj:SetLocalAngularVelocity(1.0, 0.5, 0.2)\n"
+                "if not ret2 then error('SetLocalAngularVelocity should return self') end\n"
+                "LOG('MassStub2 test 5: projectile physics flags OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 5: Projectile physics flags"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        }
+
+        // Test 6: Elevation + rotation + SetCustomName + SetBuildingUnit + SetSpeedThroughGoal
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                // Elevation
+                "u:SetElevation(50)\n"
+                "u:RevertElevation()\n"
+                // Rotation (quaternion form: identity quat)
+                "u:SetRotation(0, 0, 0, 1)\n"
+                // SetCustomName on entity
+                "u:SetCustomName('TestUnit')\n"
+                // SetBuildingUnit (set and clear)
+                "u:SetBuildingUnit(true, u)\n"
+                "u:SetBuildingUnit(false, nil)\n"
+                // Navigator: SetSpeedThroughGoal
+                "local nav = u:GetNavigator()\n"
+                "if nav then\n"
+                "    nav:SetSpeedThroughGoal(true)\n"
+                "end\n"
+                "LOG('MassStub2 test 6: elevation + rotation + misc OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 6: Elevation + rotation + misc"); }
+            else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        }
+
+        spdlog::info("MassStub2 test: {}/{} passed", pass, pass + fail);
+        spdlog::info("MassStub2 test: {} entities, {} threads",
+                     sim_state.entity_registry().count(),
+                     sim_state.thread_manager().active_count());
+    }
+
+    if (massstub3_test && !map_path.empty()) {
+        spdlog::info("=== MASSSTUB3 TEST: Mass stub conversions III (26 bindings) ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: Brain events — OnDefeat sets BrainState, SetCurrentPlan stores plan
+        {
+            auto r = state.do_string(
+                "local brain = GetArmyBrain(2)\n"
+                "brain:SetCurrentPlan('TestPlan')\n"
+                "-- OnDefeat should set state to Defeat\n"
+                "brain:OnDefeat()\n"
+                "-- Verify brain is now defeated\n"
+                "local ok = brain:IsDefeated()\n"
+                "if not ok then error('brain should be defeated after OnDefeat') end\n"
+                "LOG('MassStub3 test 1: brain events OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 1: Brain events"); }
+            else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        }
+
+        // Test 2: Brain utility — GiveStorage, SetResourceSharing, GetArmySkinName
+        {
+            auto r = state.do_string(
+                "local brain = GetArmyBrain(1)\n"
+                "local before = brain:GetEconomyStoredRatio('ENERGY')\n"
+                "brain:GiveStorage('ENERGY', 500)\n"
+                "brain:SetResourceSharing(true)\n"
+                "local skin = brain:GetArmySkinName()\n"
+                "if type(skin) ~= 'string' then error('GetArmySkinName should return string') end\n"
+                "LOG('MassStub3 test 2: brain utility OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 2: Brain utility"); }
+            else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        }
+
+        // Test 3: Projectile collision flags — SetCollision, SetCollideSurface, StayUnderwater
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "if not u then error('no entity 1') end\n"
+                "-- CreateProjectile returns a projectile table\n"
+                "local proj = u:CreateProjectile('/projectiles/CDFProton01/CDFProton01_proj.bp',\n"
+                "    0, 0, 0, 0, 0, 0)\n"
+                "if not proj then error('CreateProjectile returned nil') end\n"
+                "-- Test chaining: SetCollision returns self\n"
+                "local ret = proj:SetCollision(false)\n"
+                "if not ret then error('SetCollision should return self') end\n"
+                "proj:SetCollideSurface(false)\n"
+                "proj:StayUnderwater(true)\n"
+                "LOG('MassStub3 test 3: projectile collision flags OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 3: Projectile collision flags"); }
+            else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        }
+
+        // Test 4: CreateChildProjectile
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "if not u then error('no entity 1') end\n"
+                "local parent = u:CreateProjectile('/projectiles/CDFProton01/CDFProton01_proj.bp',\n"
+                "    0, 0, 0, 0, 0, 0)\n"
+                "if not parent then error('parent projectile nil') end\n"
+                "local child = parent:CreateChildProjectile('/projectiles/CDFProton01/CDFProton01_proj.bp')\n"
+                "if not child then error('CreateChildProjectile returned nil') end\n"
+                "-- Child should have _c_object\n"
+                "if not child._c_object then error('child has no _c_object') end\n"
+                "LOG('MassStub3 test 4: CreateChildProjectile OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 4: CreateChildProjectile"); }
+            else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        }
+
+        // Test 5: Weapon — BeenDestroyed, SetValidTargetsForCurrentLayer
+        {
+            auto r = state.do_string(
+                "local u = GetEntityById(1)\n"
+                "if not u then error('no entity 1') end\n"
+                "-- Get first weapon via GetWeapon\n"
+                "local w = u:GetWeapon(1)\n"
+                "if not w then error('no weapon on entity 1') end\n"
+                "-- BeenDestroyed should return false for a living unit\n"
+                "local dead = w:BeenDestroyed()\n"
+                "if dead then error('weapon should not be destroyed') end\n"
+                "-- SetValidTargetsForCurrentLayer should not error\n"
+                "w:SetValidTargetsForCurrentLayer('Land')\n"
+                "LOG('MassStub3 test 5: weapon fire/control OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 5: Weapon fire/control"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        }
+
+        // Test 6: Platoon — SetPlatoonFormationOverride, IsOpponentAIRunning, SetPrioritizedTargetList
+        {
+            auto r = state.do_string(
+                "local brain = GetArmyBrain(1)\n"
+                "local platoon = brain:MakePlatoon('TestPlatoon', 'none')\n"
+                "if not platoon then error('MakePlatoon returned nil') end\n"
+                "platoon:SetPlatoonFormationOverride('AttackFormation')\n"
+                "-- IsOpponentAIRunning should return true (other armies exist)\n"
+                "local running = platoon:IsOpponentAIRunning()\n"
+                "if not running then error('IsOpponentAIRunning should be true') end\n"
+                "-- SetPrioritizedTargetList with category string + table\n"
+                "platoon:SetPrioritizedTargetList('Attack', {categories.ALLUNITS})\n"
+                "LOG('MassStub3 test 6: platoon stubs OK')\n");
+            if (r) { pass++; spdlog::info("[PASS] Test 6: Platoon stubs"); }
+            else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        }
+
+        spdlog::info("MassStub3 test: {}/{} passed", pass, pass + fail);
+        spdlog::info("MassStub3 test: {} entities, {} threads",
                      sim_state.entity_registry().count(),
                      sim_state.thread_manager().active_count());
     }

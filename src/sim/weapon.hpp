@@ -28,9 +28,17 @@ public:
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
     f32 firing_randomness = 0;    // angular scatter in radians
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
+    f32 max_height_diff = 0;        // ChangeMaxHeightDiff
+    f32 firing_tolerance = 0;       // ChangeFiringTolerance
+    std::string projectile_bp_id;   // ChangeProjectileBlueprint
+    bool target_ground = false;       // SetTargetGround
+    bool fire_control = false;        // SetFireControl / IsFireControl
+    int targeting_priorities_ref = -2; // LUA_NOREF: SetTargetingPriorities Lua table ref
+    int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
     i32 weapon_index = 0;       // 0-based index within unit
+    u32 owner_entity_id = 0;    // back-pointer to owning unit
 
     // Runtime state
     u32 target_entity_id = 0;   // 0 = no target
@@ -41,9 +49,11 @@ public:
     void update(f64 dt, Unit& owner, EntityRegistry& registry,
                 lua_State* L);
 
+    /// Fire the weapon at current target. Returns true if fired.
+    bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L);
+
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry);
-    bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L);
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.

@@ -35,9 +35,13 @@ public:
     bool update(Entity& entity, f32 max_speed, f64 dt,
                 const map::Terrain* terrain = nullptr);
 
+    bool speed_through_goal() const { return speed_through_goal_; }
+    void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
+
 private:
     Vector3 goal_;
     Status status_ = Status::Idle;
+    bool speed_through_goal_ = false;
     std::vector<Vector3> waypoints_;
     size_t waypoint_index_ = 0;
     static constexpr f32 ARRIVAL_TOLERANCE = 0.5f;

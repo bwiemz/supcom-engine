@@ -45,6 +45,14 @@ public:
     void set_unit_squad(u32 entity_id, const std::string& squad);
     const std::string& get_unit_squad(u32 entity_id) const;
 
+    // Formation override
+    const std::string& formation_override() const { return formation_override_; }
+    void set_formation_override(const std::string& f) { formation_override_ = f; }
+
+    // Priority targets (Lua table ref)
+    int priority_targets_ref() const { return priority_targets_ref_; }
+    void set_priority_targets_ref(int ref) { priority_targets_ref_ = ref; }
+
 private:
     u32 platoon_id_ = 0;
     i32 army_index_ = -1;
@@ -54,6 +62,8 @@ private:
     std::string plan_name_;
     std::vector<u32> unit_ids_;
     std::unordered_map<u32, std::string> squad_map_;
+    std::string formation_override_;
+    int priority_targets_ref_ = -2; // LUA_NOREF
 };
 
 } // namespace osc::sim

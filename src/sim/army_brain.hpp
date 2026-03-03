@@ -122,6 +122,18 @@ public:
         return i < platoons_.size() ? platoons_[i].get() : nullptr;
     }
 
+    // --- Current plan ---
+    const std::string& current_plan() const { return current_plan_; }
+    void set_current_plan(const std::string& p) { current_plan_ = p; }
+
+    // --- Resource sharing ---
+    bool resource_sharing() const { return resource_sharing_; }
+    void set_resource_sharing(bool b) { resource_sharing_ = b; }
+
+    // --- Skin name ---
+    const std::string& skin_name() const { return skin_name_; }
+    void set_skin_name(const std::string& s) { skin_name_ = s; }
+
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {
         color_r_ = r; color_g_ = g; color_b_ = b;
@@ -151,6 +163,10 @@ private:
     i32 build_place_counter_ = 0;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
+
+    std::string current_plan_;
+    bool resource_sharing_ = false;
+    std::string skin_name_;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;

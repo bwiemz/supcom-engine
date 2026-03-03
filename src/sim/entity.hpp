@@ -96,6 +96,9 @@ public:
     bool reclaimable() const { return reclaimable_; }
     void set_reclaimable(bool b) { reclaimable_ = b; }
 
+    const std::string& custom_name() const { return custom_name_; }
+    void set_custom_name(const std::string& name) { custom_name_ = name; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -117,6 +120,7 @@ private:
     const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
     bool do_not_target_ = false;
     bool reclaimable_ = true;
+    std::string custom_name_;
 };
 
 } // namespace osc::sim

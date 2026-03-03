@@ -277,6 +277,60 @@ public:
     void set_speed_mult(f32 m) { speed_mult_ = m; }
     f32 effective_speed() const { return max_speed_ * speed_mult_; }
 
+    // Movement multipliers
+    f32 accel_mult() const { return accel_mult_; }
+    void set_accel_mult(f32 m) { accel_mult_ = m; }
+    f32 turn_mult() const { return turn_mult_; }
+    void set_turn_mult(f32 m) { turn_mult_ = m; }
+    f32 break_off_distance_mult() const { return break_off_distance_mult_; }
+    void set_break_off_distance_mult(f32 m) { break_off_distance_mult_ = m; }
+    f32 break_off_trigger_mult() const { return break_off_trigger_mult_; }
+    void set_break_off_trigger_mult(f32 m) { break_off_trigger_mult_ = m; }
+    void reset_speed_and_accel() { speed_mult_ = 1.0f; accel_mult_ = 1.0f; turn_mult_ = 1.0f; }
+
+    // Fuel system
+    f32 fuel_ratio() const { return fuel_ratio_; }
+    void set_fuel_ratio(f32 r) { fuel_ratio_ = r; }
+    f32 fuel_use_time() const { return fuel_use_time_; }
+    void set_fuel_use_time(f32 t) { fuel_use_time_ = t; }
+
+    // Misc flags
+    u32 creator_id() const { return creator_id_; }
+    void set_creator_id(u32 id) { creator_id_ = id; }
+    bool auto_overcharge() const { return auto_overcharge_; }
+    void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
+    bool overcharge_paused() const { return overcharge_paused_; }
+    void set_overcharge_paused(bool b) { overcharge_paused_ = b; }
+    u32 focus_entity_id() const { return focus_entity_id_; }
+    void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
+
+    // Damage/kill flags
+    bool can_take_damage() const { return can_take_damage_; }
+    void set_can_take_damage(bool b) { can_take_damage_ = b; }
+    bool can_be_killed() const { return can_be_killed_; }
+    void set_can_be_killed(bool b) { can_be_killed_ = b; }
+    u32 last_attacker_id() const { return last_attacker_id_; }
+    void set_last_attacker_id(u32 id) { last_attacker_id_ = id; }
+
+    // Command caps (RULEUCC_* command capabilities)
+    void add_command_cap(const std::string& cap) { command_caps_.insert(cap); }
+    void remove_command_cap(const std::string& cap) { command_caps_.erase(cap); }
+    void restore_command_caps() { command_caps_ = original_command_caps_; }
+    void snapshot_command_caps() { original_command_caps_ = command_caps_; }
+    bool has_command_cap(const std::string& cap) const { return command_caps_.count(cap) > 0; }
+
+    // Build restrictions
+    void add_build_restriction(const std::string& id) { build_restrictions_.insert(id); }
+    void remove_build_restriction(const std::string& id) { build_restrictions_.erase(id); }
+    void restore_build_restrictions() { build_restrictions_.clear(); }
+    bool is_build_restricted(const std::string& id) const { return build_restrictions_.count(id) > 0; }
+
+    // Elevation override
+    f32 elevation_override() const { return elevation_override_; }
+    void set_elevation_override(f32 e) { elevation_override_ = e; }
+    bool has_elevation_override() const { return elevation_override_ >= 0; }
+    void clear_elevation_override() { elevation_override_ = -1.0f; }
+
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
     i32 transport_capacity() const { return transport_capacity_; }
@@ -396,6 +450,30 @@ private:
     f32 skirt_size_z_ = 0;
     f32 skirt_offset_x_ = 0;
     f32 skirt_offset_z_ = 0;
+    // Movement multipliers
+    f32 accel_mult_ = 1.0f;
+    f32 turn_mult_ = 1.0f;
+    f32 break_off_distance_mult_ = 1.0f;
+    f32 break_off_trigger_mult_ = 1.0f;
+    // Fuel system
+    f32 fuel_ratio_ = -1.0f;     // -1 = no fuel system (sentinel)
+    f32 fuel_use_time_ = 0.0f;   // seconds of flight time
+    // Misc flags
+    u32 creator_id_ = 0;
+    bool auto_overcharge_ = false;
+    bool overcharge_paused_ = false;
+    u32 focus_entity_id_ = 0;
+    // Damage/kill flags
+    bool can_take_damage_ = true;
+    bool can_be_killed_ = true;
+    u32 last_attacker_id_ = 0;
+    // Command caps
+    std::unordered_set<std::string> command_caps_;
+    std::unordered_set<std::string> original_command_caps_;
+    // Build restrictions
+    std::unordered_set<std::string> build_restrictions_;
+    // Elevation override
+    f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
 };
 
 } // namespace osc::sim
