@@ -68,6 +68,16 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L) {
     pos.z += velocity.z * static_cast<f32>(dt);
     set_position(pos);
 
+    // Velocity-align orientation for rendering
+    if (velocity_align) {
+        f32 spd_xz = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+        if (spd_xz > 0.001f || std::abs(velocity.y) > 0.001f) {
+            f32 heading = std::atan2(velocity.x, velocity.z);
+            f32 pitch = std::atan2(-velocity.y, spd_xz);
+            set_orientation(euler_to_quat(heading, pitch, 0.0f));
+        }
+    }
+
     f32 speed = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     f32 step = speed * static_cast<f32>(dt);
 

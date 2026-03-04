@@ -21,6 +21,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -1145,6 +1146,10 @@ static int entity_CreateProjectile(lua_State* L) {
     // Optional velocity direction (args 3,4,5 if bp is string; args 2,3,4 if no bp)
     int vel_start = 2;
     if (lua_type(L, 2) == LUA_TSTRING) {
+        std::string bp_id = lua_tostring(L, 2);
+        std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        proj->set_blueprint_id(bp_id);
         vel_start = 3; // bp string is arg 2, velocity starts at 3
     }
     if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
@@ -1224,6 +1229,10 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     // arg 3 = bp (optional string), args 4,5,6 = velocity (or 3,4,5 if no bp)
     int vel_start = 3;
     if (lua_type(L, 3) == LUA_TSTRING) {
+        std::string bp_id = lua_tostring(L, 3);
+        std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        proj->set_blueprint_id(bp_id);
         vel_start = 4; // bp string at arg 3
     }
     if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
@@ -3413,6 +3422,11 @@ static int weapon_CreateProjectile(lua_State* L) {
     proj->damage_type = w->damage_type;
     proj->lifetime = 10.0f;
 
+    // Set projectile blueprint for rendering
+    if (!w->projectile_bp_id.empty()) {
+        proj->set_blueprint_id(w->projectile_bp_id);
+    }
+
     // If target exists, aim toward it
     if (w->target_entity_id > 0) {
         auto* target = sim->entity_registry().find(w->target_entity_id);
@@ -3429,6 +3443,13 @@ static int weapon_CreateProjectile(lua_State* L) {
             }
             proj->lifetime = (dist / w->muzzle_velocity) + 2.0f;
         }
+    }
+
+    // Velocity-align: set initial orientation facing fire direction
+    proj->velocity_align = true;
+    if (proj->velocity.x != 0 || proj->velocity.z != 0) {
+        f32 heading = std::atan2(proj->velocity.x, proj->velocity.z);
+        proj->set_orientation(sim::euler_to_quat(heading, 0.0f, 0.0f));
     }
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));

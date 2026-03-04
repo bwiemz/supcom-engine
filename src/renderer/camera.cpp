@@ -76,6 +76,12 @@ std::array<f32, 16> Camera::view_proj(f32 aspect) const {
     return math::mat4_mul(proj, view);
 }
 
+void Camera::eye_position(f32& x, f32& y, f32& z) const {
+    x = target_x_ + distance_ * std::sin(yaw_) * std::cos(pitch_);
+    y = distance_ * std::sin(pitch_);
+    z = target_z_ + distance_ * std::cos(yaw_) * std::cos(pitch_);
+}
+
 // --- Matrix math ---
 
 namespace math {

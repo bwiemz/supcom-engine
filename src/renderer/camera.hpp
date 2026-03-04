@@ -24,6 +24,9 @@ public:
     f32 target_x() const { return target_x_; }
     f32 target_z() const { return target_z_; }
     f32 distance() const { return distance_; }
+
+    /// Compute camera eye position from spherical coordinates.
+    void eye_position(f32& out_x, f32& out_y, f32& out_z) const;
     void set_distance(f32 d) { distance_ = d; }
 
 private:

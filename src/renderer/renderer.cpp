@@ -5,13 +5,17 @@
 #include "renderer/terrain_mesh.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/entity.hpp"
 #include "map/terrain.hpp"
 
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
+#include <cstring>
+#include <unordered_map>
 
 namespace osc::renderer {
 
@@ -198,6 +202,26 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_);
     }
 
+    // Terrain texture descriptor set layout (set=0: 20 combined image samplers)
+    // bindings 0-1: blend maps, bindings 2-10: stratum 0-8 albedo, bindings 11-19: stratum 0-8 normal
+    {
+        std::array<VkDescriptorSetLayoutBinding, 20> terrain_bindings{};
+        for (u32 i = 0; i < 20; i++) {
+            terrain_bindings[i].binding = i;
+            terrain_bindings[i].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            terrain_bindings[i].descriptorCount = 1;
+            terrain_bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+
+        VkDescriptorSetLayoutCreateInfo ds_ci{};
+        ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        ds_ci.bindingCount = static_cast<u32>(terrain_bindings.size());
+        ds_ci.pBindings = terrain_bindings.data();
+        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr,
+                                    &terrain_tex_ds_layout_);
+    }
+
     // Texture sampler (trilinear, anisotropic, repeat wrap)
     {
         VkSamplerCreateInfo sampler_ci{};
@@ -368,9 +392,11 @@ void Renderer::create_pipelines() {
     auto wf = compile_glsl(device_, shaders::water_frag, "water.frag", false);
     auto mv = compile_glsl(device_, shaders::mesh_vert, "mesh.vert", true);
     auto mf = compile_glsl(device_, shaders::mesh_frag, "mesh.frag", false);
+    auto dv = compile_glsl(device_, shaders::decal_vert, "decal.vert", true);
+    auto df = compile_glsl(device_, shaders::decal_frag, "decal.frag", false);
 
     // Abort if any shader failed to compile
-    if (!tv || !tf || !uv || !uf || !wv || !wf || !mv || !mf) {
+    if (!tv || !tf || !uv || !uf || !wv || !wf || !mv || !mf || !dv || !df) {
         spdlog::error("One or more shaders failed to compile");
         auto safe_destroy = [&](VkShaderModule m) {
             if (m) vkDestroyShaderModule(device_, m, nullptr);
@@ -378,6 +404,7 @@ void Renderer::create_pipelines() {
         safe_destroy(tv); safe_destroy(tf); safe_destroy(uv);
         safe_destroy(uf); safe_destroy(wv); safe_destroy(wf);
         safe_destroy(mv); safe_destroy(mf);
+        safe_destroy(dv); safe_destroy(df);
         return;
     }
 
@@ -392,13 +419,17 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
+        // Push constant: mat4 viewProj(64) + float mapW(4) + float mapH(4)
+        //                + float scales[9](36) = 108 bytes
         terrain_pipeline_ = PipelineBuilder()
             .set_shaders(tv, tf)
             .set_vertex_input(&binding, 1, attrs.data(),
                               static_cast<u32>(attrs.size()))
             .set_depth_test(true, true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16)
+            .set_push_constant(108,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(terrain_tex_ds_layout_)
             .build(device_, render_pass_, &terrain_layout_);
     }
 
@@ -437,7 +468,7 @@ void Renderer::create_pipelines() {
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_index = 36 bytes)
+        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_index + tangent = 48 bytes)
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -446,8 +477,8 @@ void Renderer::create_pipelines() {
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 9 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_index(8)
-        std::array<VkVertexInputAttributeDescription, 9> attrs{};
+        // 10 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_index(8), tangent(9)
+        std::array<VkVertexInputAttributeDescription, 10> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -456,9 +487,10 @@ void Renderer::create_pipelines() {
         attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
         attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
         attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};   // color
-        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, sizeof(f32) * 8};                        // bone_index
+        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, offsetof(sim::SCMMesh::Vertex, bone_index)};         // bone_index
+        attrs[9] = {9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};    // tangent
 
-        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) = 72B
+        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3 eye (12B) = 84B
         mesh_pipeline_ = PipelineBuilder()
             .set_shaders(mv, mf)
             .set_vertex_input(bindings.data(),
@@ -468,9 +500,12 @@ void Renderer::create_pipelines() {
             .set_depth_test(true, true)
             .set_blend(true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2)
-            .set_descriptor_set_layout(texture_ds_layout_)
-            .add_descriptor_set_layout(bone_ds_layout_)
+            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(texture_ds_layout_)   // set=0: albedo
+            .add_descriptor_set_layout(bone_ds_layout_)       // set=1: bone SSBO
+            .add_descriptor_set_layout(texture_ds_layout_)    // set=2: specteam
+            .add_descriptor_set_layout(texture_ds_layout_)    // set=3: normal map
             .build(device_, render_pass_, &mesh_layout_);
     }
 
@@ -494,6 +529,42 @@ void Renderer::create_pipelines() {
             .build(device_, render_pass_, &water_layout_);
     }
 
+    // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
+    {
+        std::array<VkVertexInputBindingDescription, 2> bindings{};
+        // Binding 0: per-vertex quad data (pos3 + uv2 = 20 bytes)
+        bindings[0].binding = 0;
+        bindings[0].stride = sizeof(f32) * 5;
+        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        // Binding 1: per-instance model matrix (mat4 = 64 bytes)
+        bindings[1].binding = 1;
+        bindings[1].stride = sizeof(f32) * 16;
+        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        std::array<VkVertexInputAttributeDescription, 6> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 3};                   // UV
+        attrs[2] = {2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};                            // model col0
+        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 4};              // model col1
+        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};              // model col2
+        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 12};             // model col3
+
+        decal_pipeline_ = PipelineBuilder()
+            .set_shaders(dv, df)
+            .set_vertex_input(bindings.data(),
+                              static_cast<u32>(bindings.size()),
+                              attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, false) // test ON, write OFF
+            .set_blend(true)
+            .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_depth_bias(-1.0f, -1.0f)
+            .set_push_constant(sizeof(f32) * 16,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+            .set_descriptor_set_layout(texture_ds_layout_)
+            .build(device_, render_pass_, &decal_layout_);
+    }
+
     // Destroy shader modules (already compiled into pipelines)
     vkDestroyShaderModule(device_, tv, nullptr);
     vkDestroyShaderModule(device_, tf, nullptr);
@@ -503,6 +574,8 @@ void Renderer::create_pipelines() {
     vkDestroyShaderModule(device_, wf, nullptr);
     vkDestroyShaderModule(device_, mv, nullptr);
     vkDestroyShaderModule(device_, mf, nullptr);
+    vkDestroyShaderModule(device_, dv, nullptr);
+    vkDestroyShaderModule(device_, df, nullptr);
 }
 
 void Renderer::build_scene(const sim::SimState& sim,
@@ -562,12 +635,199 @@ void Renderer::build_scene(const sim::SimState& sim,
         vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
     }
 
+    // Load terrain stratum textures and create terrain descriptor set
+    // Requires texture_cache_ to be initialized (needs VFS for albedo textures)
+    if (terrain_tex_ds_layout_ && !terrain->strata().empty() &&
+        texture_cache_.fallback_view()) {
+        // Store map dimensions and strata scales
+        terrain_map_width_ = static_cast<f32>(terrain->map_width());
+        terrain_map_height_ = static_cast<f32>(terrain->map_height());
+        auto& strata = terrain->strata();
+        // Only strata 0-8 are blended; stratum 9 (UpperStratum) has no
+        // blend map channel and is handled separately in FA.
+        for (size_t i = 0; i < 9 && i < strata.size(); i++)
+            terrain_strata_scales_[i] = strata[i].albedo_scale;
+
+        // Collect 20 image views:
+        // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
+        std::array<VkImageView, 20> views{};
+
+        // Blend maps from embedded DDS
+        VkImageView white_view = texture_cache_.fallback_view();
+        VkImageView zero_view = texture_cache_.zero_fallback_view();
+        VkImageView normal_fb_view = texture_cache_.normal_fallback_view();
+
+        auto* blend0 = terrain->blend_dds_0().empty() ? nullptr
+            : texture_cache_.get_raw("__terrain_blend0", terrain->blend_dds_0());
+        auto* blend1 = terrain->blend_dds_1().empty() ? nullptr
+            : texture_cache_.get_raw("__terrain_blend1", terrain->blend_dds_1());
+
+        views[0] = blend0 ? blend0->image.view : zero_view;  // black = no blending
+        views[1] = blend1 ? blend1->image.view : zero_view;
+
+        // Stratum albedo textures (0-8) at bindings 2-10
+        for (size_t i = 0; i < 9; i++) {
+            if (i < strata.size() && !strata[i].albedo_path.empty()) {
+                auto* tex = texture_cache_.get(strata[i].albedo_path);
+                views[2 + i] = tex ? tex->image.view : white_view;
+            } else {
+                views[2 + i] = white_view;
+            }
+        }
+
+        // Stratum normal map textures (0-8) at bindings 11-19
+        for (size_t i = 0; i < 9; i++) {
+            if (i < strata.size() && !strata[i].normal_path.empty()) {
+                auto* tex = texture_cache_.get(strata[i].normal_path);
+                views[11 + i] = tex ? tex->image.view : normal_fb_view;
+            } else {
+                views[11 + i] = normal_fb_view;
+            }
+        }
+
+        // Create descriptor pool and set
+        VkDescriptorPoolSize pool_size{};
+        pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        pool_size.descriptorCount = 20;
+
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets = 1;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes = &pool_size;
+        vkCreateDescriptorPool(device_, &pool_ci, nullptr,
+                                &terrain_tex_ds_pool_);
+
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = terrain_tex_ds_pool_;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &terrain_tex_ds_layout_;
+        vkAllocateDescriptorSets(device_, &alloc_info, &terrain_tex_ds_);
+
+        // Write all 20 image descriptors
+        std::array<VkDescriptorImageInfo, 20> img_infos{};
+        std::array<VkWriteDescriptorSet, 20> writes{};
+        for (u32 i = 0; i < 20; i++) {
+            img_infos[i].sampler = texture_sampler_;
+            img_infos[i].imageView = views[i];
+            img_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = terrain_tex_ds_;
+            writes[i].dstBinding = i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].pImageInfo = &img_infos[i];
+        }
+        vkUpdateDescriptorSets(device_, 20, writes.data(), 0, nullptr);
+
+        spdlog::info("Terrain textures: {} strata loaded, blend0={}, blend1={}",
+                     strata.size(),
+                     blend0 ? "OK" : "fallback",
+                     blend1 ? "OK" : "fallback");
+    }
+
     if (terrain->has_water()) {
         water_renderer_.build(
             static_cast<f32>(terrain->map_width()),
             static_cast<f32>(terrain->map_height()),
             terrain->water_elevation(), device_, allocator_, cmd_pool_,
             graphics_queue_);
+    }
+
+    // Build decal quad mesh + instance buffer + populate stored decals
+    if (!terrain->decals().empty() && decal_pipeline_) {
+        // Unit quad: (-0.5, 0, -0.5) to (0.5, 0, 0.5) with UV
+        // Each vertex: pos(3) + uv(2)
+        const f32 quad_verts[] = {
+            -0.5f, 0.0f, -0.5f, 0.0f, 0.0f,
+             0.5f, 0.0f, -0.5f, 1.0f, 0.0f,
+             0.5f, 0.0f,  0.5f, 1.0f, 1.0f,
+            -0.5f, 0.0f,  0.5f, 0.0f, 1.0f,
+        };
+        const u32 quad_indices[] = {0, 1, 2, 0, 2, 3};
+
+        decal_quad_verts_ = upload_buffer(
+            device_, allocator_, cmd_pool_, graphics_queue_,
+            quad_verts, sizeof(quad_verts),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        decal_quad_indices_ = upload_buffer(
+            device_, allocator_, cmd_pool_, graphics_queue_,
+            quad_indices, sizeof(quad_indices),
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+
+        // Host-visible, persistently-mapped instance buffer for model matrices
+        VkDeviceSize inst_size = MAX_DECALS * sizeof(f32) * 16;
+        VkBufferCreateInfo buf_ci{};
+        buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buf_ci.size = inst_size;
+        buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VmaAllocationInfo alloc_info{};
+        VkResult vma_res = vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci,
+                        &decal_instance_buf_.buffer,
+                        &decal_instance_buf_.allocation, &alloc_info);
+        if (vma_res != VK_SUCCESS || !alloc_info.pMappedData) {
+            spdlog::error("Decal: failed to allocate instance buffer");
+            // decal_instance_mapped_ stays null, render() guard will skip decals
+        } else {
+        decal_instance_mapped_ = alloc_info.pMappedData;
+
+        // Build model matrix helper (same as unit_renderer.cpp)
+        auto build_mat = [](f32* out, f32 px, f32 py, f32 pz,
+                            const sim::Quaternion& q,
+                            f32 sx, f32 sy, f32 sz) {
+            f32 xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
+            f32 xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
+            f32 wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
+            out[0]  = (1.f - 2.f*(yy+zz))*sx; out[1]  = (2.f*(xy+wz))*sx;
+            out[2]  = (2.f*(xz-wy))*sx;        out[3]  = 0.f;
+            out[4]  = (2.f*(xy-wz))*sy;         out[5]  = (1.f - 2.f*(xx+zz))*sy;
+            out[6]  = (2.f*(yz+wx))*sy;          out[7]  = 0.f;
+            out[8]  = (2.f*(xz+wy))*sz;         out[9]  = (2.f*(yz-wx))*sz;
+            out[10] = (1.f - 2.f*(xx+yy))*sz;   out[11] = 0.f;
+            out[12] = px; out[13] = py; out[14] = pz; out[15] = 1.f;
+        };
+
+        // Populate stored decals and preload textures
+        stored_decals_.reserve(terrain->decals().size());
+        for (auto& d : terrain->decals()) {
+            StoredDecal sd;
+            sd.texture_path = d.texture_path;
+            sd.position_x = d.position_x;
+            sd.position_y = d.position_y;
+            sd.position_z = d.position_z;
+            sd.cut_off_lod = d.cut_off_lod;
+
+            auto q = sim::euler_to_quat(d.rotation_y, d.rotation_x, d.rotation_z);
+            build_mat(sd.model, d.position_x, d.position_y, d.position_z,
+                      q, d.scale_x, d.scale_y, d.scale_z);
+            stored_decals_.push_back(std::move(sd));
+        }
+
+        // Preload all unique decal textures into texture_cache_
+        std::unordered_map<std::string, VkDescriptorSet> preloaded;
+        for (auto& sd : stored_decals_) {
+            if (preloaded.count(sd.texture_path)) continue;
+            auto* tex = texture_cache_.get(sd.texture_path);
+            preloaded[sd.texture_path] = tex ? tex->descriptor_set : VK_NULL_HANDLE;
+        }
+
+        // Sort stored_decals_ by texture_path for efficient per-frame grouping
+        std::sort(stored_decals_.begin(), stored_decals_.end(),
+                  [](const StoredDecal& a, const StoredDecal& b) {
+                      return a.texture_path < b.texture_path;
+                  });
+
+        spdlog::info("Decals: {} stored for rendering ({} unique textures)",
+                     stored_decals_.size(), preloaded.size());
+        } // else (vma success)
     }
 
     camera_.init(static_cast<f32>(terrain->map_width()),
@@ -596,8 +856,8 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
 
     vkResetFences(device_, 1, &render_fence_);
 
-    // Update unit instances (mesh + cube fallback + texture resolution)
-    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_);
+    // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
+    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_);
 
     // View-projection matrix
     f32 aspect = static_cast<f32>(window_width_) /
@@ -642,9 +902,30 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
+
+        // Push constants: viewProj + mapWidth + mapHeight + scales[9] = 108B
+        struct TerrainPC {
+            f32 viewProj[16];
+            f32 mapWidth;
+            f32 mapHeight;
+            f32 scales[9];
+        } tpc{};
+        std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
+        tpc.mapWidth = terrain_map_width_;
+        tpc.mapHeight = terrain_map_height_;
+        std::memcpy(tpc.scales, terrain_strata_scales_, sizeof(f32) * 9);
+
         vkCmdPushConstants(cmd_buf_, terrain_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(f32) * 16, vp.data());
+                           VK_SHADER_STAGE_VERTEX_BIT |
+                               VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(tpc), &tpc);
+
+        // Bind terrain texture descriptor set
+        if (terrain_tex_ds_) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    terrain_layout_, 0, 1, &terrain_tex_ds_,
+                                    0, nullptr);
+        }
 
         VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
@@ -654,7 +935,76 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
         vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
-    // 2. Draw mesh units (real SCM models with GPU skinning)
+    // 2. Draw decals (textured quads on terrain)
+    // stored_decals_ is pre-sorted by texture_path (in build_scene) for
+    // allocation-free per-frame grouping via linear scan.
+    if (!stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_) {
+        f32 cam_x, cam_y, cam_z;
+        camera_.eye_position(cam_x, cam_y, cam_z);
+
+        // Linear scan over pre-sorted decals: distance-cull + group by texture
+        decal_groups_.clear();
+        u32 total_instances = 0;
+        auto* dst = static_cast<f32*>(decal_instance_mapped_);
+        const std::string* cur_path = nullptr;
+        VkDescriptorSet cur_ds = VK_NULL_HANDLE;
+
+        for (auto& sd : stored_decals_) {
+            if (total_instances >= MAX_DECALS) break;
+
+            // Distance cull
+            f32 dx = sd.position_x - cam_x;
+            f32 dz = sd.position_z - cam_z;
+            if (dx * dx + dz * dz > sd.cut_off_lod * sd.cut_off_lod) continue;
+
+            // New texture group?
+            if (!cur_path || *cur_path != sd.texture_path) {
+                cur_path = &sd.texture_path;
+                auto* tex = texture_cache_.get(sd.texture_path);
+                cur_ds = tex ? tex->descriptor_set : VK_NULL_HANDLE;
+                if (cur_ds) {
+                    decal_groups_.push_back({cur_ds, total_instances, 0});
+                }
+            }
+
+            if (!cur_ds) continue;
+
+            std::memcpy(dst + total_instances * 16, sd.model, sizeof(f32) * 16);
+            total_instances++;
+            decal_groups_.back().instance_count++;
+        }
+
+        if (total_instances > 0) {
+            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              decal_pipeline_);
+            vkCmdPushConstants(cmd_buf_, decal_layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(f32) * 16, vp.data());
+
+            VkBuffer quad_buf = decal_quad_verts_.buffer;
+            VkBuffer inst_buf = decal_instance_buf_.buffer;
+
+            for (auto& group : decal_groups_) {
+                vkCmdBindDescriptorSets(cmd_buf_,
+                                        VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        decal_layout_, 0, 1,
+                                        &group.texture_ds, 0, nullptr);
+
+                VkBuffer vbufs[] = {quad_buf, inst_buf};
+                VkDeviceSize buf_offsets[] = {
+                    0,
+                    static_cast<VkDeviceSize>(group.instance_offset) *
+                        sizeof(f32) * 16};
+                vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
+                vkCmdBindIndexBuffer(cmd_buf_, decal_quad_indices_.buffer, 0,
+                                     VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd_buf_, 6, group.instance_count, 0, 0, 0);
+            }
+        }
+    }
+
+    // 3. Draw mesh units (real SCM models with GPU skinning)
     if (!unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           mesh_pipeline_);
@@ -664,8 +1014,10 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
             f32 viewProj[16];
             u32 boneBase;
             u32 bonesPerInst;
+            f32 eyeX, eyeY, eyeZ;
         } mesh_pc{};
         std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
+        camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
 
         // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
         VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
@@ -682,13 +1034,51 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
                                     0, nullptr);
         }
 
+        // Bind specteam fallback at set=2 (alpha=0 = no team color)
+        VkDescriptorSet specteam_fallback =
+            texture_cache_.specteam_fallback_descriptor();
+        if (specteam_fallback) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    mesh_layout_, 2, 1, &specteam_fallback,
+                                    0, nullptr);
+        }
+
+        // Bind normal map fallback at set=3 (flat normal = no perturbation)
+        VkDescriptorSet normal_fallback =
+            texture_cache_.normal_fallback_descriptor();
+        if (normal_fallback) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    mesh_layout_, 3, 1, &normal_fallback,
+                                    0, nullptr);
+        }
+
         for (auto& group : unit_renderer_.mesh_groups()) {
             if (!group.mesh || group.instance_count == 0) continue;
 
-            // Bind per-group texture descriptor (overrides fallback)
-            if (group.texture_ds && group.texture_ds != fallback_ds) {
+            // Bind per-group albedo texture descriptor (always bind to avoid
+            // stale set=0 from prior group)
+            VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
+            if (albedo_ds) {
                 vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        mesh_layout_, 0, 1, &group.texture_ds,
+                                        mesh_layout_, 0, 1, &albedo_ds,
+                                        0, nullptr);
+            }
+
+            // Bind per-group specteam texture descriptor (always bind to avoid
+            // stale set=2 from prior group)
+            VkDescriptorSet spec_ds = group.specteam_ds ? group.specteam_ds : specteam_fallback;
+            if (spec_ds) {
+                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        mesh_layout_, 2, 1, &spec_ds,
+                                        0, nullptr);
+            }
+
+            // Bind per-group normal map descriptor (always bind to avoid
+            // stale set=3 from prior group)
+            VkDescriptorSet norm_ds = group.normal_ds ? group.normal_ds : normal_fallback;
+            if (norm_ds) {
+                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        mesh_layout_, 3, 1, &norm_ds,
                                         0, nullptr);
             }
 
@@ -696,8 +1086,8 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
             mesh_pc.boneBase = group.bone_base_offset;
             mesh_pc.bonesPerInst = group.bones_per_instance;
             vkCmdPushConstants(cmd_buf_, mesh_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT, 0,
-                               sizeof(mesh_pc), &mesh_pc);
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(mesh_pc), &mesh_pc);
 
             VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
                                 unit_renderer_.mesh_instance_buffer()};
@@ -713,7 +1103,7 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
         }
     }
 
-    // 3. Draw cube fallback units
+    // 4. Draw cube fallback units
     if (unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           unit_pipeline_);
@@ -731,7 +1121,7 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
-    // 4. Draw water (last, blended)
+    // 5. Draw water (last, blended)
     if (water_renderer_.has_water() && water_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           water_pipeline_);
@@ -835,6 +1225,12 @@ void Renderer::shutdown() {
 
     vkDeviceWaitIdle(device_);
 
+    // Terrain texture pool first (references image views owned by texture_cache_)
+    if (terrain_tex_ds_pool_)
+        vkDestroyDescriptorPool(device_, terrain_tex_ds_pool_, nullptr);
+    if (terrain_tex_ds_layout_)
+        vkDestroyDescriptorSetLayout(device_, terrain_tex_ds_layout_, nullptr);
+
     // Sub-renderers
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
@@ -853,6 +1249,17 @@ void Renderer::shutdown() {
     if (texture_ds_layout_)
         vkDestroyDescriptorSetLayout(device_, texture_ds_layout_, nullptr);
 
+    // Decal buffers
+    if (decal_quad_verts_.buffer)
+        vmaDestroyBuffer(allocator_, decal_quad_verts_.buffer,
+                         decal_quad_verts_.allocation);
+    if (decal_quad_indices_.buffer)
+        vmaDestroyBuffer(allocator_, decal_quad_indices_.buffer,
+                         decal_quad_indices_.allocation);
+    if (decal_instance_buf_.buffer)
+        vmaDestroyBuffer(allocator_, decal_instance_buf_.buffer,
+                         decal_instance_buf_.allocation);
+
     // Pipelines
     vkDestroyPipeline(device_, terrain_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
@@ -862,6 +1269,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, water_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
+    vkDestroyPipeline(device_, decal_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
 
     // Sync
     vkDestroyFence(device_, render_fence_, nullptr);

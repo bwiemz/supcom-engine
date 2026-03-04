@@ -3,6 +3,7 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "sim/prop.hpp"
 #include "sim/sim_state.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -233,9 +234,58 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     auto terrain = std::make_unique<map::Terrain>(
         std::move(heightmap), water_elev, scmap.has_water);
 
+    // Pass stratum texture data for rendering
+    if (!scmap.strata.empty()) {
+        std::vector<map::StratumInfo> strata_info;
+        strata_info.reserve(scmap.strata.size());
+        for (auto& s : scmap.strata)
+            strata_info.push_back({s.albedo_path, s.albedo_scale, s.normal_path, s.normal_scale});
+        terrain->set_strata(std::move(strata_info),
+                            std::move(scmap.blend_dds_0),
+                            std::move(scmap.blend_dds_1));
+        spdlog::info("  Terrain strata: {} layers, blend0={} bytes, blend1={} bytes",
+                     terrain->strata().size(),
+                     terrain->blend_dds_0().size(),
+                     terrain->blend_dds_1().size());
+    }
+
+    // Pass decal data for rendering
+    if (!scmap.decals.empty()) {
+        std::vector<map::DecalInfo> decal_info;
+        decal_info.reserve(scmap.decals.size());
+        for (auto& d : scmap.decals) {
+            if (d.texture1_path.empty()) continue;
+            decal_info.push_back({
+                d.texture1_path,
+                d.position_x, d.position_y, d.position_z,
+                d.scale_x, d.scale_y, d.scale_z,
+                d.rotation_x, d.rotation_y, d.rotation_z,
+                d.cut_off_lod
+            });
+        }
+        terrain->set_decals(std::move(decal_info));
+        spdlog::info("  Terrain decals: {} loaded", terrain->decals().size());
+    }
+
     sim.set_terrain(std::move(terrain));
     sim.build_pathfinding_grid();
     sim.build_visibility_grid();
+
+    // Step 5: Create prop entities from .scmap data
+    if (!scmap.props.empty()) {
+        u32 created = 0;
+        for (auto& sp : scmap.props) {
+            auto prop = std::make_unique<sim::Prop>();
+            prop->set_blueprint_id(sp.blueprint_path);
+            prop->set_position({sp.px, sp.py, sp.pz});
+            prop->set_orientation(sim::rot_matrix_to_quat(sp.rot));
+            prop->set_scale(sp.sx, sp.sy, sp.sz);
+            prop->set_fraction_complete(1.0f);
+            sim.entity_registry().register_entity(std::move(prop));
+            created++;
+        }
+        spdlog::info("  SCMAP props: {} created", created);
+    }
 
     return meta;
 }

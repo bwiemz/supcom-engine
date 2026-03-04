@@ -21,6 +21,8 @@ extern const char* water_vert;
 extern const char* water_frag;
 extern const char* mesh_vert;
 extern const char* mesh_frag;
+extern const char* decal_vert;
+extern const char* decal_frag;
 } // namespace shaders
 
 } // namespace osc::renderer

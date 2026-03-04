@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 
+#include <cmath>
 #include <string>
 
 namespace osc::sim {
@@ -42,6 +43,59 @@ inline Quaternion quat_multiply(const Quaternion& a, const Quaternion& b) {
         a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
         a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
     };
+}
+
+/// Convert Euler angles (heading=Y, pitch=X, roll=Z, intrinsic YXZ) to quaternion.
+/// FA convention: heading rotates around Y axis, pitch around X, roll around Z.
+inline Quaternion euler_to_quat(f32 heading, f32 pitch, f32 roll) {
+    f32 ch = std::cos(heading * 0.5f), sh = std::sin(heading * 0.5f);
+    f32 cp = std::cos(pitch * 0.5f),   sp = std::sin(pitch * 0.5f);
+    f32 cr = std::cos(roll * 0.5f),    sr = std::sin(roll * 0.5f);
+    // YXZ intrinsic = ZXY extrinsic
+    return {
+        ch * sp * cr + sh * cp * sr,  // x
+        sh * cp * cr - ch * sp * sr,  // y
+        ch * cp * sr - sh * sp * cr,  // z
+        ch * cp * cr + sh * sp * sr   // w
+    };
+}
+
+/// Convert 3x3 rotation matrix (row-major: [row0][row1][row2]) to quaternion.
+/// Uses Shepperd's method to avoid numerical instability.
+inline Quaternion rot_matrix_to_quat(const f32 m[9]) {
+    // m[0..2] = row 0 (X basis), m[3..5] = row 1 (Y basis), m[6..8] = row 2 (Z basis)
+    f32 m00 = m[0], m01 = m[1], m02 = m[2];
+    f32 m10 = m[3], m11 = m[4], m12 = m[5];
+    f32 m20 = m[6], m21 = m[7], m22 = m[8];
+
+    f32 trace = m00 + m11 + m22;
+    Quaternion q;
+    if (trace > 0) {
+        f32 s = std::sqrt(trace + 1.0f) * 2.0f; // s = 4*w
+        q.w = 0.25f * s;
+        q.x = (m21 - m12) / s;
+        q.y = (m02 - m20) / s;
+        q.z = (m10 - m01) / s;
+    } else if (m00 > m11 && m00 > m22) {
+        f32 s = std::sqrt(1.0f + m00 - m11 - m22) * 2.0f;
+        q.w = (m21 - m12) / s;
+        q.x = 0.25f * s;
+        q.y = (m01 + m10) / s;
+        q.z = (m02 + m20) / s;
+    } else if (m11 > m22) {
+        f32 s = std::sqrt(1.0f + m11 - m00 - m22) * 2.0f;
+        q.w = (m02 - m20) / s;
+        q.x = (m01 + m10) / s;
+        q.y = 0.25f * s;
+        q.z = (m12 + m21) / s;
+    } else {
+        f32 s = std::sqrt(1.0f + m22 - m00 - m11) * 2.0f;
+        q.w = (m10 - m01) / s;
+        q.x = (m02 + m20) / s;
+        q.y = (m12 + m21) / s;
+        q.z = 0.25f * s;
+    }
+    return q;
 }
 
 struct BoneData; // forward decl
@@ -99,6 +153,11 @@ public:
     const std::string& custom_name() const { return custom_name_; }
     void set_custom_name(const std::string& name) { custom_name_ = name; }
 
+    f32 scale_x() const { return scale_x_; }
+    f32 scale_y() const { return scale_y_; }
+    f32 scale_z() const { return scale_z_; }
+    void set_scale(f32 sx, f32 sy, f32 sz) { scale_x_ = sx; scale_y_ = sy; scale_z_ = sz; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -121,6 +180,9 @@ private:
     bool do_not_target_ = false;
     bool reclaimable_ = true;
     std::string custom_name_;
+    f32 scale_x_ = 1.0f;
+    f32 scale_y_ = 1.0f;
+    f32 scale_z_ = 1.0f;
 };
 
 } // namespace osc::sim

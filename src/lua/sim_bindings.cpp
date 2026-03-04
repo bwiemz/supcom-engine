@@ -15,6 +15,7 @@
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -230,6 +231,17 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     lua_gettable(L, we);
                     if (lua_isnumber(L, -1))
                         weapon->firing_randomness = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+
+                    // ProjectileId (projectile blueprint reference)
+                    lua_pushstring(L, "ProjectileId");
+                    lua_gettable(L, we);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string pid = lua_tostring(L, -1);
+                        std::transform(pid.begin(), pid.end(), pid.begin(),
+                                       [](unsigned char c) { return std::tolower(c); });
+                        weapon->projectile_bp_id = pid;
+                    }
                     lua_pop(L, 1);
 
                     lua_pushvalue(L, we);
@@ -3188,10 +3200,14 @@ static int l_CreatePropHPR(lua_State* L) {
     f32 x = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0;
     f32 y = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0;
     f32 z = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0;
+    f32 heading = lua_isnumber(L, 5) ? static_cast<f32>(lua_tonumber(L, 5)) : 0;
+    f32 pitch   = lua_isnumber(L, 6) ? static_cast<f32>(lua_tonumber(L, 6)) : 0;
+    f32 roll    = lua_isnumber(L, 7) ? static_cast<f32>(lua_tonumber(L, 7)) : 0;
 
     auto prop = std::make_unique<sim::Prop>();
     prop->set_blueprint_id(bp_path);
     prop->set_position({x, y, z});
+    prop->set_orientation(sim::euler_to_quat(heading, pitch, roll));
     prop->set_fraction_complete(1.0f);
 
     u32 id = sim->entity_registry().register_entity(std::move(prop));

@@ -26,7 +26,9 @@ struct GPUMesh {
     AllocatedBuffer index_buf{};
     u32 index_count = 0;
     f32 uniform_scale = 1.0f;
-    std::string texture_path;  // VFS path to albedo DDS (empty = no texture)
+    std::string texture_path;   // VFS path to albedo DDS (empty = no texture)
+    std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
+    std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)
 };
 
 /// Caches GPU mesh buffers per blueprint ID.
@@ -47,7 +49,13 @@ public:
 private:
     std::string resolve_mesh_path(const std::string& bp_id, lua_State* L);
     std::string resolve_albedo_path(const std::string& bp_id, lua_State* L);
+    std::string resolve_specteam_path(const std::string& bp_id, lua_State* L);
+    std::string resolve_normal_path(const std::string& bp_id, lua_State* L);
     f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
+    /// Get Display.MeshBlueprint ID from a unit blueprint.
+    std::string resolve_mesh_bp_id(const std::string& bp_id, lua_State* L);
+    /// Derive base path from mesh bp ID: "/units/uel0001/uel0001_mesh" → "/units/uel0001/uel0001"
+    static std::string derive_base_path(const std::string& mesh_bp_id);
 
     std::unordered_map<std::string, std::unique_ptr<GPUMesh>> cache_;
     std::unordered_set<std::string> failed_;

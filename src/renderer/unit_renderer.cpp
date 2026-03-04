@@ -1,9 +1,11 @@
 #include "renderer/unit_renderer.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_types.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/entity.hpp"
+#include "sim/prop.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -52,33 +54,34 @@ static void get_army_color(const sim::Entity& entity,
             r = g = b = 0.7f;
         }
     } else {
-        r = g = b = 0.5f;
+        r = g = b = 1.0f; // neutral/props: white (albedo shows through)
     }
     a = (entity.fraction_complete() < 1.0f) ? 0.4f : 1.0f;
 }
 
-/// Build column-major 4x4 model matrix from position + quaternion + scale.
+/// Build column-major 4x4 model matrix from position + quaternion + non-uniform scale.
 static void build_model_matrix(f32* out, const sim::Vector3& pos,
-                                const sim::Quaternion& q, f32 scale) {
-    // Quaternion to 3x3 rotation matrix (scaled)
+                                const sim::Quaternion& q,
+                                f32 sx, f32 sy, f32 sz) {
+    // Quaternion to 3x3 rotation matrix with per-axis scale
     f32 xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
     f32 xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
     f32 wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
 
-    // Column 0
-    out[0]  = (1.0f - 2.0f * (yy + zz)) * scale;
-    out[1]  = (2.0f * (xy + wz)) * scale;
-    out[2]  = (2.0f * (xz - wy)) * scale;
+    // Column 0 (X-axis, scaled by sx)
+    out[0]  = (1.0f - 2.0f * (yy + zz)) * sx;
+    out[1]  = (2.0f * (xy + wz)) * sx;
+    out[2]  = (2.0f * (xz - wy)) * sx;
     out[3]  = 0.0f;
-    // Column 1
-    out[4]  = (2.0f * (xy - wz)) * scale;
-    out[5]  = (1.0f - 2.0f * (xx + zz)) * scale;
-    out[6]  = (2.0f * (yz + wx)) * scale;
+    // Column 1 (Y-axis, scaled by sy)
+    out[4]  = (2.0f * (xy - wz)) * sy;
+    out[5]  = (1.0f - 2.0f * (xx + zz)) * sy;
+    out[6]  = (2.0f * (yz + wx)) * sy;
     out[7]  = 0.0f;
-    // Column 2
-    out[8]  = (2.0f * (xz + wy)) * scale;
-    out[9]  = (2.0f * (yz - wx)) * scale;
-    out[10] = (1.0f - 2.0f * (xx + yy)) * scale;
+    // Column 2 (Z-axis, scaled by sz)
+    out[8]  = (2.0f * (xz + wy)) * sz;
+    out[9]  = (2.0f * (yz - wx)) * sz;
+    out[10] = (1.0f - 2.0f * (xx + yy)) * sz;
     out[11] = 0.0f;
     // Column 3 (translation)
     out[12] = pos.x;
@@ -155,7 +158,7 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
     {
         VkBufferCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        // MAX_INSTANCES * MAX_BONES_PER_UNIT * sizeof(mat4) = 2048*64*64 = 8MB
+        // MAX_INSTANCES * MAX_BONES_PER_UNIT * sizeof(mat4) = 8192*64*64 = 32MB
         ci.size = static_cast<VkDeviceSize>(MAX_INSTANCES) *
                   MAX_BONES_PER_UNIT * sizeof(f32) * 16;
         ci.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -177,7 +180,7 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
     // Collect unique blueprint IDs
     std::unordered_set<std::string> bp_ids;
     sim.entity_registry().for_each([&](const sim::Entity& entity) {
-        if (entity.is_unit() && !entity.destroyed() &&
+        if ((entity.is_unit() || entity.is_prop() || entity.is_projectile()) && !entity.destroyed() &&
             !entity.blueprint_id().empty()) {
             bp_ids.insert(entity.blueprint_id());
         }
@@ -191,7 +194,8 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
 }
 
 void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
-                           lua_State* L, TextureCache* tex_cache) {
+                           lua_State* L, TextureCache* tex_cache,
+                           const Camera* camera) {
     mesh_groups_.clear();
 
     if (!cube_instance_mapped_ || !mesh_instance_mapped_) return;
@@ -202,6 +206,15 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                           ? static_cast<f32*>(bone_ssbo_mapped_) : nullptr;
     u32 cube_count = 0;
     u32 mesh_count = 0;
+
+    // Camera eye XZ for ground-plane distance culling (props only)
+    f32 cam_x = 0, cam_z = 0;
+    constexpr f32 PROP_CULL_DIST_SQ = 600.0f * 600.0f;
+    if (camera) {
+        f32 cam_y = 0;
+        camera->eye_position(cam_x, cam_y, cam_z);
+        (void)cam_y; // XZ-only culling is intentional for RTS ground-plane
+    }
 
     // Per-instance bone info (parallel to mesh_groups entries)
     struct InstanceBones {
@@ -217,10 +230,17 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups;
 
     sim.entity_registry().for_each([&](const sim::Entity& entity) {
-        if (!entity.is_unit() || entity.destroyed())
+        if ((!entity.is_unit() && !entity.is_prop() && !entity.is_projectile()) || entity.destroyed())
             return;
         if (cube_count + mesh_count >= MAX_INSTANCES)
             return;
+
+        // Distance-cull props (units always render)
+        if (entity.is_prop() && camera) {
+            f32 dx = entity.position().x - cam_x;
+            f32 dz = entity.position().z - cam_z;
+            if (dx * dx + dz * dz > PROP_CULL_DIST_SQ) return;
+        }
 
         f32 r, g, b, a;
         get_army_color(entity, sim, r, g, b, a);
@@ -234,18 +254,25 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         if (gpu) {
             if (mesh_count >= MAX_INSTANCES) return;
             MeshInstance inst{};
+            f32 sx = entity.scale_x() * gpu->uniform_scale;
+            f32 sy = entity.scale_y() * gpu->uniform_scale;
+            f32 sz = entity.scale_z() * gpu->uniform_scale;
             build_model_matrix(inst.model, entity.position(),
-                               entity.orientation(), gpu->uniform_scale);
+                               entity.orientation(), sx, sy, sz);
             inst.r = r; inst.g = g; inst.b = b; inst.a = a;
 
             auto& gd = mesh_groups[gpu];
             gd.instances.push_back(inst);
 
-            // Track bone data for this instance
-            auto* unit = static_cast<const sim::Unit*>(&entity);
-            u32 bc = unit->animated_bone_count();
-            if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
-            gd.bones.push_back({unit, bc});
+            // Track bone data for this instance (props have no bones)
+            if (entity.is_unit()) {
+                auto* unit = static_cast<const sim::Unit*>(&entity);
+                u32 bc = unit->animated_bone_count();
+                if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
+                gd.bones.push_back({unit, bc});
+            } else {
+                gd.bones.push_back({nullptr, 0});
+            }
 
             mesh_count++;
         } else {
@@ -302,14 +329,17 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                 u32 base = bone_offset + i * group_bones;
 
                 auto* unit = gd.bones[i].unit;
-                auto& mats = unit->animated_bone_matrices();
-                u32 bc = static_cast<u32>(mats.size());
-                if (bc > group_bones) bc = group_bones;
+                u32 bc = 0;
+                if (unit) {
+                    auto& mats = unit->animated_bone_matrices();
+                    bc = static_cast<u32>(mats.size());
+                    if (bc > group_bones) bc = group_bones;
 
-                // Copy actual bone matrices
-                for (u32 b = 0; b < bc; b++) {
-                    std::memcpy(bone_data + (base + b) * 16,
-                                mats[b].data(), sizeof(f32) * 16);
+                    // Copy actual bone matrices
+                    for (u32 b = 0; b < bc; b++) {
+                        std::memcpy(bone_data + (base + b) * 16,
+                                    mats[b].data(), sizeof(f32) * 16);
+                    }
                 }
                 // Fill remaining with identity
                 for (u32 b = bc; b < group_bones; b++) {
@@ -320,22 +350,40 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             bone_offset += safe_count * group_bones;
         }
 
-        // Resolve texture descriptor for this group
+        // Resolve texture descriptors for this group
         if (tex_cache && gpu && !gpu->texture_path.empty()) {
             auto* tex = tex_cache->get(gpu->texture_path);
             if (tex) {
                 group.texture_ds = tex->descriptor_set;
-                auto* base = mesh_instances + offset;
-                for (u32 i = 0; i < count; i++) {
-                    base[i].r = 1.0f;
-                    base[i].g = 1.0f;
-                    base[i].b = 1.0f;
-                }
             } else {
                 group.texture_ds = tex_cache->fallback_descriptor();
             }
         } else if (tex_cache) {
             group.texture_ds = tex_cache->fallback_descriptor();
+        }
+
+        // Resolve SpecTeam texture (team color mask)
+        if (tex_cache && gpu && !gpu->specteam_path.empty()) {
+            auto* spec = tex_cache->get(gpu->specteam_path);
+            if (spec) {
+                group.specteam_ds = spec->descriptor_set;
+            } else {
+                group.specteam_ds = tex_cache->specteam_fallback_descriptor();
+            }
+        } else if (tex_cache) {
+            group.specteam_ds = tex_cache->specteam_fallback_descriptor();
+        }
+
+        // Resolve normal map texture
+        if (tex_cache && gpu && !gpu->normal_path.empty()) {
+            auto* norm = tex_cache->get(gpu->normal_path);
+            if (norm) {
+                group.normal_ds = norm->descriptor_set;
+            } else {
+                group.normal_ds = tex_cache->normal_fallback_descriptor();
+            }
+        } else if (tex_cache) {
+            group.normal_ds = tex_cache->normal_fallback_descriptor();
         }
 
         mesh_groups_.push_back(group);

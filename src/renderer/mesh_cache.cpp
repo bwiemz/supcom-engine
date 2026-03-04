@@ -53,7 +53,7 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
         return nullptr;
     }
 
-    // Upload vertex buffer (position + normal + UV + bone_index = 9 values = 36 bytes per vert)
+    // Upload vertex buffer (position + normal + UV + bone_index + tangent = 48 bytes per vert)
     auto vert_buf = upload_buffer(
         device_, allocator_, cmd_pool_, queue_,
         mesh->vertices.data(),
@@ -87,10 +87,12 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
     gpu->index_count = static_cast<u32>(mesh->indices.size());
     gpu->uniform_scale = scale;
     gpu->texture_path = resolve_albedo_path(blueprint_id, L);
+    gpu->specteam_path = resolve_specteam_path(blueprint_id, L);
+    gpu->normal_path = resolve_normal_path(blueprint_id, L);
 
-    spdlog::debug("MeshCache: loaded '{}' ({} verts, {} indices, scale={:.2f}, tex='{}')",
+    spdlog::debug("MeshCache: loaded '{}' ({} verts, {} indices, scale={:.2f}, tex='{}', normal='{}')",
                    blueprint_id, mesh->vertices.size(), mesh->indices.size(),
-                   scale, gpu->texture_path);
+                   scale, gpu->texture_path, gpu->normal_path);
 
     auto* raw = gpu.get();
     cache_[blueprint_id] = std::move(gpu);
@@ -181,75 +183,211 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
     return result;
 }
 
-std::string MeshCache::resolve_albedo_path(const std::string& bp_id,
+std::string MeshCache::resolve_mesh_bp_id(const std::string& bp_id,
                                             lua_State* L) {
-    // Same traversal as resolve_mesh_path: bp → Display.MeshBlueprint →
-    // __blueprints[mesh_bp_id] → LODs[1].AlbedoName
     if (!store_ || !L) return {};
-
     auto* entry = store_->find(bp_id);
     if (!entry) return {};
-
     store_->push_lua_table(*entry, L);
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
     int bp_table = lua_gettop(L);
-
     lua_pushstring(L, "Display");
     lua_rawget(L, bp_table);
     if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
     int display_table = lua_gettop(L);
-
     lua_pushstring(L, "MeshBlueprint");
     lua_rawget(L, display_table);
-    if (!lua_isstring(L, -1)) { lua_pop(L, 3); return {}; }
-    std::string mesh_bp_id = lua_tostring(L, -1);
+    std::string result;
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        result = lua_tostring(L, -1);
+    }
     lua_pop(L, 3);
+    return result;
+}
 
+std::string MeshCache::derive_base_path(const std::string& mesh_bp_id) {
+    // "/units/uel0001/uel0001_mesh" → "/units/uel0001/uel0001"
+    const std::string suffix = "_mesh";
+    if (mesh_bp_id.size() > suffix.size() &&
+        mesh_bp_id.compare(mesh_bp_id.size() - suffix.size(),
+                           suffix.size(), suffix) == 0) {
+        return mesh_bp_id.substr(0, mesh_bp_id.size() - suffix.size());
+    }
+    return {};
+}
+
+std::string MeshCache::resolve_albedo_path(const std::string& bp_id,
+                                            lua_State* L) {
+    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) return {};
 
-    // Look up mesh blueprint in __blueprints
+    // Strategy 1: LODs[1].AlbedoName from mesh blueprint (works if bp not overwritten)
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
-    int blueprints_table = lua_gettop(L);
-
-    lua_pushstring(L, mesh_bp_id.c_str());
-    lua_rawget(L, blueprints_table);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
-    int mesh_bp = lua_gettop(L);
-
-    // Read LODs[1].AlbedoName
-    std::string albedo_name;
-    lua_pushstring(L, "LODs");
-    lua_rawget(L, mesh_bp);
     if (lua_istable(L, -1)) {
-        int lods_table = lua_gettop(L);
-        lua_rawgeti(L, lods_table, 1);
+        int bps = lua_gettop(L);
+        lua_pushstring(L, mesh_bp_id.c_str());
+        lua_rawget(L, bps);
         if (lua_istable(L, -1)) {
-            int lod1 = lua_gettop(L);
-            lua_pushstring(L, "AlbedoName");
-            lua_rawget(L, lod1);
-            if (lua_type(L, -1) == LUA_TSTRING) {
-                albedo_name = lua_tostring(L, -1);
+            int mbp = lua_gettop(L);
+            lua_pushstring(L, "LODs");
+            lua_rawget(L, mbp);
+            if (lua_istable(L, -1)) {
+                int lods = lua_gettop(L);
+                lua_rawgeti(L, lods, 1);
+                if (lua_istable(L, -1)) {
+                    int lod1 = lua_gettop(L);
+                    lua_pushstring(L, "AlbedoName");
+                    lua_rawget(L, lod1);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string name = lua_tostring(L, -1);
+                        lua_pop(L, 5); // AlbedoName+lod1+lods+mbp+bps
+                        if (!name.empty()) {
+                            if (name[0] != '/') {
+                                auto slash = mesh_bp_id.rfind('/');
+                                if (slash != std::string::npos)
+                                    name = mesh_bp_id.substr(0, slash + 1) + name;
+                            }
+                            return name;
+                        }
+                    } else {
+                        lua_pop(L, 1);
+                    }
+                }
+                lua_pop(L, 1); // lod1 or rawgeti result
+            }
+            lua_pop(L, 1); // LODs
+        }
+        lua_pop(L, 1); // mbp
+    }
+    lua_pop(L, 1); // bps
+
+    // Strategy 2: convention-based — derive from mesh bp ID
+    // "/units/uel0001/uel0001_mesh" → "/units/uel0001/uel0001_Albedo.dds"
+    std::string base = derive_base_path(mesh_bp_id);
+    if (!base.empty()) {
+        std::string path = base + "_Albedo.dds";
+        if (vfs_ && vfs_->read_file(path)) return path;
+    }
+
+    return {};
+}
+
+std::string MeshCache::resolve_specteam_path(const std::string& bp_id,
+                                              lua_State* L) {
+    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
+    if (mesh_bp_id.empty()) return {};
+
+    // Strategy 1: LODs[1].SpecularName from mesh blueprint
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        int bps = lua_gettop(L);
+        lua_pushstring(L, mesh_bp_id.c_str());
+        lua_rawget(L, bps);
+        if (lua_istable(L, -1)) {
+            int mbp = lua_gettop(L);
+            lua_pushstring(L, "LODs");
+            lua_rawget(L, mbp);
+            if (lua_istable(L, -1)) {
+                int lods = lua_gettop(L);
+                lua_rawgeti(L, lods, 1);
+                if (lua_istable(L, -1)) {
+                    int lod1 = lua_gettop(L);
+                    lua_pushstring(L, "SpecularName");
+                    lua_rawget(L, lod1);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string name = lua_tostring(L, -1);
+                        lua_pop(L, 5);
+                        if (!name.empty()) {
+                            if (name[0] != '/') {
+                                auto slash = mesh_bp_id.rfind('/');
+                                if (slash != std::string::npos)
+                                    name = mesh_bp_id.substr(0, slash + 1) + name;
+                            }
+                            return name;
+                        }
+                    } else {
+                        lua_pop(L, 1);
+                    }
+                }
+                lua_pop(L, 1);
             }
             lua_pop(L, 1);
         }
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
-    lua_pop(L, 2); // mesh_bp + blueprints_table
 
-    if (albedo_name.empty()) return {};
-
-    // AlbedoName is relative to the mesh blueprint directory
-    if (albedo_name[0] != '/') {
-        auto slash = mesh_bp_id.rfind('/');
-        if (slash != std::string::npos) {
-            albedo_name = mesh_bp_id.substr(0, slash + 1) + albedo_name;
-        }
+    // Strategy 2: convention-based — derive from mesh bp ID
+    // "/units/uel0001/uel0001_mesh" → "/units/uel0001/uel0001_SpecTeam.dds"
+    std::string base = derive_base_path(mesh_bp_id);
+    if (!base.empty() && vfs_) {
+        std::string path = base + "_SpecTeam.dds";
+        if (vfs_->read_file(path)) return path;
     }
 
-    return albedo_name;
+    return {};
+}
+
+std::string MeshCache::resolve_normal_path(const std::string& bp_id,
+                                            lua_State* L) {
+    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
+    if (mesh_bp_id.empty()) return {};
+
+    // Strategy 1: LODs[1].NormalsName from mesh blueprint
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        int bps = lua_gettop(L);
+        lua_pushstring(L, mesh_bp_id.c_str());
+        lua_rawget(L, bps);
+        if (lua_istable(L, -1)) {
+            int mbp = lua_gettop(L);
+            lua_pushstring(L, "LODs");
+            lua_rawget(L, mbp);
+            if (lua_istable(L, -1)) {
+                int lods = lua_gettop(L);
+                lua_rawgeti(L, lods, 1);
+                if (lua_istable(L, -1)) {
+                    int lod1 = lua_gettop(L);
+                    lua_pushstring(L, "NormalsName");
+                    lua_rawget(L, lod1);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string name = lua_tostring(L, -1);
+                        lua_pop(L, 5);
+                        if (!name.empty()) {
+                            if (name[0] != '/') {
+                                auto slash = mesh_bp_id.rfind('/');
+                                if (slash != std::string::npos)
+                                    name = mesh_bp_id.substr(0, slash + 1) + name;
+                            }
+                            return name;
+                        }
+                    } else {
+                        lua_pop(L, 1);
+                    }
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
+    // Strategy 2: convention-based — derive from mesh bp ID
+    // Try _normalsTS.dds (most common FA convention)
+    std::string base = derive_base_path(mesh_bp_id);
+    if (!base.empty() && vfs_) {
+        std::string path = base + "_normalsTS.dds";
+        if (vfs_->read_file(path)) return path;
+        // Try capitalized variant
+        path = base + "_NormalsTS.dds";
+        if (vfs_->read_file(path)) return path;
+    }
+
+    return {};
 }
 
 f32 MeshCache::resolve_uniform_scale(const std::string& bp_id,

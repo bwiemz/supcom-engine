@@ -51,41 +51,146 @@ layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 
 layout(location = 0) out vec3 fragNormal;
-layout(location = 1) out float fragHeight;
+layout(location = 1) out vec2 fragWorldXZ;
 
 void main() {
     gl_Position = pc.viewProj * vec4(inPosition, 1.0);
     fragNormal = inNormal;
-    fragHeight = inPosition.y;
+    fragWorldXZ = inPosition.xz;
 }
 )glsl";
 
 const char* terrain_frag = R"glsl(
 #version 450
 
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    float mapWidth, mapHeight;
+    float scales[9];
+} pc;
+
+// Blend maps
+layout(set = 0, binding = 0) uniform sampler2D blendMap0;
+layout(set = 0, binding = 1) uniform sampler2D blendMap1;
+
+// Stratum albedo (bindings 2-10)
+layout(set = 0, binding = 2) uniform sampler2D stratum0;
+layout(set = 0, binding = 3) uniform sampler2D stratum1;
+layout(set = 0, binding = 4) uniform sampler2D stratum2;
+layout(set = 0, binding = 5) uniform sampler2D stratum3;
+layout(set = 0, binding = 6) uniform sampler2D stratum4;
+layout(set = 0, binding = 7) uniform sampler2D stratum5;
+layout(set = 0, binding = 8) uniform sampler2D stratum6;
+layout(set = 0, binding = 9) uniform sampler2D stratum7;
+layout(set = 0, binding = 10) uniform sampler2D stratum8;
+
+// Stratum normal maps (bindings 11-19)
+layout(set = 0, binding = 11) uniform sampler2D normalMap0;
+layout(set = 0, binding = 12) uniform sampler2D normalMap1;
+layout(set = 0, binding = 13) uniform sampler2D normalMap2;
+layout(set = 0, binding = 14) uniform sampler2D normalMap3;
+layout(set = 0, binding = 15) uniform sampler2D normalMap4;
+layout(set = 0, binding = 16) uniform sampler2D normalMap5;
+layout(set = 0, binding = 17) uniform sampler2D normalMap6;
+layout(set = 0, binding = 18) uniform sampler2D normalMap7;
+layout(set = 0, binding = 19) uniform sampler2D normalMap8;
+
 layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in float fragHeight;
+layout(location = 1) in vec2 fragWorldXZ;
 
 layout(location = 0) out vec4 outColor;
 
+// Decode FA DXT5nm normal map: X=Green, Y=Alpha, Z=derived
+vec3 decodeNormal(sampler2D nmap, vec2 uv) {
+    vec4 s = texture(nmap, uv);
+    vec3 n;
+    n.x = s.g * 2.0 - 1.0;
+    n.y = s.a * 2.0 - 1.0;
+    n.z = sqrt(max(0.0, 1.0 - n.x*n.x - n.y*n.y));
+    return n;
+}
+
 void main() {
-    vec3 green = vec3(0.2, 0.5, 0.15);
-    vec3 brown = vec3(0.45, 0.3, 0.15);
-    vec3 white = vec3(0.9, 0.9, 0.85);
+    // Blend map UV: world position normalized to [0,1] over map extents
+    vec2 blendUV = fragWorldXZ / vec2(pc.mapWidth, pc.mapHeight);
 
-    float t = clamp(fragHeight / 40.0, 0.0, 1.0);
-    vec3 baseColor;
-    if (t < 0.5) {
-        baseColor = mix(green, brown, t * 2.0);
+    // Sample blend weights (RGBA = 4 strata weights each)
+    vec4 b0 = texture(blendMap0, blendUV);
+    vec4 b1 = texture(blendMap1, blendUV);
+
+    // Per-stratum UV (reuse albedo scale for normal maps)
+    vec2 uv0 = fragWorldXZ / max(pc.scales[0], 1.0);
+    vec2 uv1 = fragWorldXZ / max(pc.scales[1], 1.0);
+    vec2 uv2 = fragWorldXZ / max(pc.scales[2], 1.0);
+    vec2 uv3 = fragWorldXZ / max(pc.scales[3], 1.0);
+    vec2 uv4 = fragWorldXZ / max(pc.scales[4], 1.0);
+    vec2 uv5 = fragWorldXZ / max(pc.scales[5], 1.0);
+    vec2 uv6 = fragWorldXZ / max(pc.scales[6], 1.0);
+    vec2 uv7 = fragWorldXZ / max(pc.scales[7], 1.0);
+    vec2 uv8 = fragWorldXZ / max(pc.scales[8], 1.0);
+
+    // Sample each stratum albedo
+    vec3 s0 = texture(stratum0, uv0).rgb;
+    vec3 s1 = texture(stratum1, uv1).rgb;
+    vec3 s2 = texture(stratum2, uv2).rgb;
+    vec3 s3 = texture(stratum3, uv3).rgb;
+    vec3 s4 = texture(stratum4, uv4).rgb;
+    vec3 s5 = texture(stratum5, uv5).rgb;
+    vec3 s6 = texture(stratum6, uv6).rgb;
+    vec3 s7 = texture(stratum7, uv7).rgb;
+    vec3 s8 = texture(stratum8, uv8).rgb;
+
+    // Stratum 0 = base layer, weight = 1 - sum(overlay weights)
+    float total = b0.r + b0.g + b0.b + b0.a + b1.r + b1.g + b1.b + b1.a;
+    float base = max(0.0, 1.0 - total);
+
+    // Blend albedo
+    vec3 color = s0 * base
+        + s1 * b0.r + s2 * b0.g + s3 * b0.b + s4 * b0.a
+        + s5 * b1.r + s6 * b1.g + s7 * b1.b + s8 * b1.a;
+
+    // Decode and blend per-stratum normal maps (same UV as albedo)
+    vec3 n0 = decodeNormal(normalMap0, uv0);
+    vec3 n1 = decodeNormal(normalMap1, uv1);
+    vec3 n2 = decodeNormal(normalMap2, uv2);
+    vec3 n3 = decodeNormal(normalMap3, uv3);
+    vec3 n4 = decodeNormal(normalMap4, uv4);
+    vec3 n5 = decodeNormal(normalMap5, uv5);
+    vec3 n6 = decodeNormal(normalMap6, uv6);
+    vec3 n7 = decodeNormal(normalMap7, uv7);
+    vec3 n8 = decodeNormal(normalMap8, uv8);
+
+    // Renormalize blend weights to avoid near-zero vectors when total != 1.0
+    float norm_w = base + b0.r + b0.g + b0.b + b0.a
+                        + b1.r + b1.g + b1.b + b1.a;
+    norm_w = max(norm_w, 0.001);
+    vec3 blendedTangentNormal = (n0 * base
+        + n1 * b0.r + n2 * b0.g + n3 * b0.b + n4 * b0.a
+        + n5 * b1.r + n6 * b1.g + n7 * b1.b + n8 * b1.a) / norm_w;
+    blendedTangentNormal = normalize(blendedTangentNormal);
+
+    // TBN: terrain UV is world-XZ-aligned, so T=(1,0,0), B=(0,0,1)
+    // Gram-Schmidt orthogonalize against vertex normal for slopes
+    // Falls back to Z-axis when N is nearly parallel to X (steep cliff faces)
+    vec3 N = normalize(fragNormal);
+    float d = dot(N, vec3(1.0, 0.0, 0.0));
+    vec3 T;
+    if (abs(d) > 0.999) {
+        T = normalize(vec3(0.0, 0.0, 1.0) - N * dot(N, vec3(0.0, 0.0, 1.0)));
     } else {
-        baseColor = mix(brown, white, (t - 0.5) * 2.0);
+        T = normalize(vec3(1.0, 0.0, 0.0) - N * d);
     }
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
 
+    vec3 worldNormal = normalize(TBN * blendedTangentNormal);
+
+    // Lambertian lighting with perturbed normal
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float NdotL = max(dot(normalize(fragNormal), lightDir), 0.0);
+    float NdotL = max(dot(worldNormal, lightDir), 0.0);
     float lighting = 0.3 + 0.7 * NdotL;
 
-    outColor = vec4(baseColor * lighting, 1.0);
+    outColor = vec4(color * lighting, 1.0);
 }
 )glsl";
 
@@ -162,13 +267,15 @@ layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     uint boneBase;
     uint bonesPerInst;
+    float eyeX, eyeY, eyeZ;
 } pc;
 
-// Per-vertex (binding 0): position + normal + UV + bone_index
+// Per-vertex (binding 0): position + normal + UV + bone_index + tangent
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
 layout(location = 8) in int inBoneIndex;
+layout(location = 9) in vec3 inTangent;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -182,6 +289,9 @@ layout(std430, set = 1, binding = 0) readonly buffer BoneBuffer {
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec4 fragColor;
 layout(location = 2) out vec2 fragUV;
+layout(location = 3) out vec3 fragTangent;
+layout(location = 4) out vec3 fragBitangent;
+layout(location = 5) out vec3 fragWorldPos;
 
 void main() {
     // Apply skeletal skinning: bone transform before model matrix
@@ -191,32 +301,117 @@ void main() {
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.viewProj * worldPos;
-    // Transform normal through bone then model
-    fragNormal = mat3(inModel) * (mat3(bone) * inNormal);
+    fragWorldPos = worldPos.xyz;
+    // Transform TBN vectors through bone then model
+    mat3 normalMat = mat3(inModel) * mat3(bone);
+    fragNormal = normalMat * inNormal;
+    fragTangent = normalMat * inTangent;
+    fragBitangent = cross(fragNormal, fragTangent);
     fragColor = inColor;
     fragUV = inUV;
 }
 )glsl";
 
-// Mesh fragment shader — samples albedo texture, multiplies with army color
+// Mesh fragment shader — normal mapping + Blinn-Phong specular + SpecTeam team color
 const char* mesh_frag = R"glsl(
 #version 450
 
+// Full block declared for layout compatibility; only eyeX/Y/Z read in this stage
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    uint boneBase;
+    uint bonesPerInst;
+    float eyeX, eyeY, eyeZ;
+} pc;
+
 layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
+layout(set = 2, binding = 0) uniform sampler2D texSpecTeam;
+layout(set = 3, binding = 0) uniform sampler2D texNormal;
 
 layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec4 fragColor;
+layout(location = 1) in vec4 fragColor;  // army color (RGB) + build alpha (A)
 layout(location = 2) in vec2 fragUV;
+layout(location = 3) in vec3 fragTangent;
+layout(location = 4) in vec3 fragBitangent;
+layout(location = 5) in vec3 fragWorldPos;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
+    // Decode normal from GA channels (FA DXT5nm encoding: X=Green, Y=Alpha)
+    vec4 nmap = texture(texNormal, fragUV);
+    vec3 tangentNormal;
+    tangentNormal.x = nmap.g * 2.0 - 1.0;
+    tangentNormal.y = nmap.a * 2.0 - 1.0;
+    tangentNormal.z = sqrt(max(0.0, 1.0 - tangentNormal.x*tangentNormal.x
+                                         - tangentNormal.y*tangentNormal.y));
+
+    // TBN matrix: transform tangent-space normal to world space
+    vec3 N = normalize(fragNormal);
+    vec3 T = normalize(fragTangent);
+    vec3 B = normalize(fragBitangent);
+    mat3 TBN = mat3(T, B, N);
+    vec3 worldNormal = normalize(TBN * tangentNormal);
+
+    // Diffuse lighting (Lambertian)
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float NdotL = max(dot(normalize(fragNormal), lightDir), 0.0);
+    float NdotL = max(dot(worldNormal, lightDir), 0.0);
     float lighting = 0.4 + 0.6 * NdotL;
 
     vec4 texColor = texture(texAlbedo, fragUV);
-    outColor = vec4(texColor.rgb * fragColor.rgb * lighting, texColor.a * fragColor.a);
+    vec4 specTeam = texture(texSpecTeam, fragUV);
+
+    // Team color mask from SpecTeam alpha channel
+    float teamMask = specTeam.a;
+    vec3 blended = mix(texColor.rgb, fragColor.rgb, teamMask);
+
+    // Specular lighting (Blinn-Phong)
+    vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
+    vec3 halfDir = normalize(lightDir + viewDir);
+    float NdotH = max(dot(worldNormal, halfDir), 0.0);
+    float specIntensity = specTeam.r;
+    float spec = pow(NdotH, 32.0) * specIntensity;
+
+    outColor = vec4(blended * lighting + vec3(spec), texColor.a * fragColor.a);
+}
+)glsl";
+
+const char* decal_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+} pc;
+
+// Per-vertex (binding 0): position + UV
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec2 inUV;
+
+// Per-instance (binding 1): model matrix (4 vec4 columns at locations 2-5)
+layout(location = 2) in mat4 inModel;
+
+layout(location = 0) out vec2 fragUV;
+
+void main() {
+    vec4 worldPos = inModel * vec4(inPosition, 1.0);
+    gl_Position = pc.viewProj * worldPos;
+    fragUV = inUV;
+}
+)glsl";
+
+const char* decal_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
+
+layout(location = 0) in vec2 fragUV;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec4 color = texture(texAlbedo, fragUV);
+    if (color.a < 0.01) discard;
+    outColor = color;
 }
 )glsl";
 

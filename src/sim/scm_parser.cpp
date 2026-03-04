@@ -282,8 +282,10 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
         v.px = reader.read_f32();
         v.py = reader.read_f32();
         v.pz = reader.read_f32();
-        // Skip tangent (3 floats = 12 bytes)
-        reader.skip(12);
+        // Tangent (3 floats) — for normal mapping TBN matrix
+        v.tx = reader.read_f32();
+        v.ty = reader.read_f32();
+        v.tz = reader.read_f32();
         // Normal (3 floats)
         v.nx = reader.read_f32();
         v.ny = reader.read_f32();

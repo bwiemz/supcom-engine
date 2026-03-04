@@ -10,6 +10,8 @@
 #include "core/types.hpp"
 
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 struct GLFWwindow;
 struct lua_State;
@@ -50,6 +52,7 @@ public:
     void on_scroll(f64 y_offset);
 
     Camera& camera() { return camera_; }
+    u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
 
 private:
     bool create_swapchain(u32 width, u32 height);
@@ -106,6 +109,8 @@ private:
     VkPipelineLayout water_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE;
+    VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
 
     // Texture infrastructure
     VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
@@ -116,6 +121,14 @@ private:
     VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
     VkDescriptorSet bone_ds_ = VK_NULL_HANDLE;
 
+    // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
+    VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool terrain_tex_ds_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet terrain_tex_ds_ = VK_NULL_HANDLE;
+    f32 terrain_map_width_ = 0;
+    f32 terrain_map_height_ = 0;
+    f32 terrain_strata_scales_[9] = {};
+
     // Sub-renderers
     TerrainMesh terrain_mesh_;
     UnitRenderer unit_renderer_;
@@ -123,6 +136,29 @@ private:
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
     Camera camera_;
+
+    // Decal rendering
+    AllocatedBuffer decal_quad_verts_{};
+    AllocatedBuffer decal_quad_indices_{};
+    AllocatedBuffer decal_instance_buf_{};
+    void* decal_instance_mapped_ = nullptr;
+
+    struct StoredDecal {
+        std::string texture_path;
+        f32 model[16];
+        f32 position_x, position_y, position_z;
+        f32 cut_off_lod;
+    };
+    std::vector<StoredDecal> stored_decals_;
+
+    struct DecalDrawGroup {
+        VkDescriptorSet texture_ds = VK_NULL_HANDLE;
+        u32 instance_offset = 0;
+        u32 instance_count = 0;
+    };
+    std::vector<DecalDrawGroup> decal_groups_;
+
+    static constexpr u32 MAX_DECALS = 4096;
 
     // Cleanup
     DeletionQueue deletion_queue_;

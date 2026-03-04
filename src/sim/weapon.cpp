@@ -159,6 +159,17 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     proj->damage_type = damage_type;
     proj->lifetime = (dist / muzzle_velocity) + 2.0f; // flight time + buffer
 
+    // Set projectile blueprint for rendering
+    if (!projectile_bp_id.empty()) {
+        proj->set_blueprint_id(projectile_bp_id);
+    }
+
+    // Velocity-align: set initial orientation facing fire direction.
+    // TODO: Read Physics.VelocityAlign from projectile blueprint when bp parsing exists.
+    proj->velocity_align = true;
+    f32 heading = std::atan2(vel.x, vel.z);
+    proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));
 

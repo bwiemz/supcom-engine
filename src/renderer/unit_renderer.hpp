@@ -16,6 +16,7 @@ class SimState;
 
 namespace osc::renderer {
 
+class Camera;       // forward
 class TextureCache; // forward
 
 /// Per-instance data for cube fallback (old format).
@@ -36,7 +37,9 @@ struct MeshDrawGroup {
     const GPUMesh* mesh = nullptr;
     u32 instance_offset = 0;  // offset into shared instance buffer
     u32 instance_count = 0;
-    VkDescriptorSet texture_ds = VK_NULL_HANDLE; // albedo texture descriptor
+    VkDescriptorSet texture_ds = VK_NULL_HANDLE;  // albedo texture descriptor (set=0)
+    VkDescriptorSet specteam_ds = VK_NULL_HANDLE; // SpecTeam texture descriptor (set=2)
+    VkDescriptorSet normal_ds = VK_NULL_HANDLE;   // Normal map descriptor (set=3)
     u32 bone_base_offset = 0; // index into bone SSBO (in mat4 units)
     u32 bones_per_instance = 0; // 0 = no skinning, else bone count
 };
@@ -54,7 +57,8 @@ public:
 
     /// Update per-frame instance data from sim state.
     void update(const sim::SimState& sim, MeshCache& mesh_cache,
-                lua_State* L, TextureCache* tex_cache = nullptr);
+                lua_State* L, TextureCache* tex_cache = nullptr,
+                const Camera* camera = nullptr);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -72,7 +76,7 @@ public:
     VkBuffer mesh_instance_buffer() const { return mesh_instance_buf_.buffer; }
     VkBuffer bone_ssbo_buffer() const { return bone_ssbo_.buffer; }
 
-    static constexpr u32 MAX_INSTANCES = 2048;
+    static constexpr u32 MAX_INSTANCES = 8192;
     static constexpr u32 MAX_BONES_PER_UNIT = 64;
 
 private:

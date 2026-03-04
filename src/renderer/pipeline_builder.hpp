@@ -17,6 +17,7 @@ public:
     PipelineBuilder& set_cull_mode(VkCullModeFlags cull, VkFrontFace front);
     PipelineBuilder& set_depth_test(bool test, bool write);
     PipelineBuilder& set_blend(bool enable);
+    PipelineBuilder& set_depth_bias(float constant_factor, float slope_factor);
     PipelineBuilder& set_push_constant(uint32_t size,
                                        VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT);
     PipelineBuilder& set_descriptor_set_layout(VkDescriptorSetLayout layout);
@@ -43,6 +44,9 @@ private:
     bool blend_ = false;
     uint32_t push_constant_size_ = 0;
     VkShaderStageFlags push_constant_stages_ = VK_SHADER_STAGE_VERTEX_BIT;
+    bool depth_bias_ = false;
+    float depth_bias_constant_ = 0.0f;
+    float depth_bias_slope_ = 0.0f;
     std::vector<VkDescriptorSetLayout> ds_layouts_;
 };
 

@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 84 former moho stubs have been converted to real implementations across three mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU skeletal animation, terrain heightmap, and water.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 84 former moho stubs have been converted to real implementations across three mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU skeletal animation, team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, terrain heightmap with 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water.
 
-**What works today (Milestones 1-54):**
+**What works today (Milestones 1-63):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -43,7 +43,7 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Radar jamming: RadarStealth/SonarStealth filtering, IsKnownFake (Omni reveals jammers), IsMaybeDead (no current intel), dead-reckoning position freeze for out-of-sight entities
 - Moho stub conversions: 84 stubs converted to real implementations across 4 milestones (M35 + M49–M51), covering brain events/utility, weapon fire/control/targeting, projectile collision/child spawning, platoon formation/targeting, damage/kill flags, command caps, movement/fuel/speed multipliers, navigator, elevation, rotation, and more
 - Audio: XWB/XSB bank parsers, miniaudio backend, PlaySound/SetAmbientSound real implementations, 3D spatial audio
-- Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), water plane, RTS camera (WASD/scroll/orbit)
+- Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), team color via SpecTeam alpha mask (set=2 descriptor), water plane, RTS camera (WASD/scroll/orbit)
 - Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
 - Manipulators: 4 real types (Rotate, Anim, Slide, Aim) with per-tick simulation, WaitFor coroutine synchronization, 28 moho method implementations, shortest-arc rotation
 - Armor system: per-unit armor types from blueprints, damage multipliers in all damage paths
@@ -59,7 +59,16 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Mass stub conversions II: 27 stubs (damage/kill flags, command caps, build restrictions, elevation, weapon targeting/priorities, projectile physics, navigator, rotation)
 - Mass stub conversions III: 26 stubs (brain events/utility, projectile collision/child, weapon fire/control, platoon formation/targeting)
 - SCA skeletal animation: SCA v5 parser, AnimCache lazy loading, per-unit bone matrices, GPU skinning via SSBO, nlerp quaternion interpolation, SCA-to-SCM bone mapping
-- 22 unit tests, 41 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, etc.)
+- Team color rendering: SpecTeam DDS texture alpha mask for selective army color blending, convention-based texture path derivation, per-group Vulkan descriptor binding (set=2)
+- Normal map rendering: tangent-space DXT5nm normal maps (`*_normalsTS.dds`), TBN matrix from SCM tangent vectors, GA-channel decode in fragment shader, flat-normal fallback for unmapped meshes
+- Map prop rendering: full .scmap binary prop parsing (5,182 trees/rocks/debris on Seton's Clutch), SCMAP section skipper (water/strata/decals/DDS), euler_to_quat + rot_matrix_to_quat orientation, props rendered as textured 3D SCM meshes alongside units
+- Prop scale & distance culling: per-entity non-uniform scale (sx/sy/sz), SCMAP scale applied to props, non-uniform model matrix, MAX_INSTANCES raised to 8192, XZ ground-plane distance culling for props (600 unit radius), camera eye position accessor
+- Specular lighting: Blinn-Phong specular highlights, eye position in push constants (84 bytes), world-space fragment position, SpecTeam R channel for specular intensity, shininess=32, white specular on top of diffuse+team color
+- Terrain textures: 9-stratum blending from .scmap data, embedded DDS blend maps (2x RGBA = 8 overlay weights), per-stratum UV scaling, 108-byte push constants, TextureCache::get_raw() for embedded DDS
+- Terrain normal maps: per-stratum DXT5nm normal maps (bindings 11-19), world-aligned TBN with Gram-Schmidt orthogonalization, blended tangent-space normals, 20-binding descriptor set, Lambertian lighting with perturbed normals
+- Terrain decal rendering: .scmap binary decal parsing (2,236 decals on Seton's Clutch), instanced textured quads with per-decal model matrices, alpha blending with depth bias z-fighting prevention, LOD distance culling, pre-sorted texture grouping for allocation-free per-frame draw
+- Projectile rendering: weapon ProjectileId parsing, blueprint_id on projectiles in all creation paths (C++ auto-fire + 3 Lua paths), velocity-aligned orientation via euler_to_quat, MeshCache mesh/texture resolution for projectile blueprints, UnitRenderer integration (no new pipeline needed)
+- 22 unit tests, 50 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, etc.)
 
 **What's not yet implemented:**
 
@@ -67,7 +76,6 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Full UI and input handling
 - Remaining moho binding stubs (~56 renderer/VFX/attachment stubs with no sim impact)
 - Blend-weight skinning (current implementation is rigid skinning: 1 bone per vertex)
-- Team color blending (units use albedo texture only; no army color overlay yet for textured meshes)
 
 ## Prerequisites
 
@@ -204,6 +212,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--massstub2-test` | Mass stub conversion II (damage flags/caps/weapon/proj/elevation) |
 | `--massstub3-test` | Mass stub conversion III (brain/weapon/projectile/platoon) |
 | `--anim-test` | SCA skeletal animation (parsing, bone matrices, GPU skinning) |
+| `--teamcolor-test` | Team color rendering (SpecTeam texture resolution, DDS validation) |
+| `--normal-test` | Normal map rendering (path resolution, DDS validation, tangent data) |
 
 ## Project Structure
 

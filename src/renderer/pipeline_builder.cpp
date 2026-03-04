@@ -46,6 +46,14 @@ PipelineBuilder& PipelineBuilder::set_blend(bool enable) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_depth_bias(float constant_factor,
+                                                  float slope_factor) {
+    depth_bias_ = true;
+    depth_bias_constant_ = constant_factor;
+    depth_bias_slope_ = slope_factor;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::set_push_constant(
     uint32_t size, VkShaderStageFlags stages) {
     push_constant_size_ = size;
@@ -115,6 +123,11 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
     raster.lineWidth = 1.0f;
     raster.cullMode = cull_mode_;
     raster.frontFace = front_face_;
+    if (depth_bias_) {
+        raster.depthBiasEnable = VK_TRUE;
+        raster.depthBiasConstantFactor = depth_bias_constant_;
+        raster.depthBiasSlopeFactor = depth_bias_slope_;
+    }
 
     // Multisampling (off)
     VkPipelineMultisampleStateCreateInfo ms{};
