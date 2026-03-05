@@ -36,6 +36,15 @@ namespace osc::sim {
 class AnimCache;
 class BoneCache;
 
+/// Camera shake event queued by ShakeCamera moho method.
+struct CameraShakeEvent {
+    f32 x = 0, z = 0;       // world position of shake source
+    f32 radius = 30;         // max radius of effect
+    f32 max_shake = 1;       // intensity at epicenter
+    f32 min_shake = 0;       // intensity at edge of radius
+    f32 duration = 0.5f;     // seconds
+};
+
 /// Per-army resource efficiency (pre-computed per tick).
 struct ArmyEfficiency {
     f64 mass = 1.0;
@@ -134,6 +143,11 @@ public:
     /// Monotonically increasing command ID for IsCommandsActive tracking.
     u32 next_command_id() { return ++next_command_id_; }
 
+    // Camera shake events (consumed by renderer each frame)
+    void add_camera_shake(const CameraShakeEvent& e) { camera_shake_events_.push_back(e); }
+    const std::vector<CameraShakeEvent>& camera_shake_events() const { return camera_shake_events_; }
+    void clear_camera_shake_events() { camera_shake_events_.clear(); }
+
 private:
     void update_economies();
     void update_entities();
@@ -157,6 +171,7 @@ private:
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
     u32 next_command_id_ = 0;
+    std::vector<CameraShakeEvent> camera_shake_events_;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
     struct EntityVisSnapshot {

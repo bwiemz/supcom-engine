@@ -1345,6 +1345,225 @@ static int entity_SetCustomName(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// M65: Stub conversions — visibility, scale, mesh, collision, attach, shake
+// ====================================================================
+
+static sim::VizMode parse_viz_mode(lua_State* L, int arg) {
+    if (lua_type(L, arg) != LUA_TSTRING) return sim::VizMode::INTEL;
+    const char* s = lua_tostring(L, arg);
+    if (std::strcmp(s, "Always") == 0) return sim::VizMode::ALWAYS;
+    if (std::strcmp(s, "Never") == 0) return sim::VizMode::NEVER;
+    return sim::VizMode::INTEL; // default and 'Intel'
+}
+
+static int entity_SetVizToAllies(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_viz_allies(parse_viz_mode(L, 2));
+    return 0;
+}
+static int entity_SetVizToEnemies(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_viz_enemies(parse_viz_mode(L, 2));
+    return 0;
+}
+static int entity_SetVizToFocusPlayer(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_viz_focus_player(parse_viz_mode(L, 2));
+    return 0;
+}
+static int entity_SetVizToNeutrals(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_viz_neutrals(parse_viz_mode(L, 2));
+    return 0;
+}
+
+static int entity_SetScale(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    auto s = static_cast<f32>(luaL_checknumber(L, 2));
+    e->set_scale(s, s, s);
+    return 0;
+}
+
+static int entity_SetMesh(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        e->set_mesh_override(lua_tostring(L, 2));
+    else
+        e->set_mesh_override(""); // clear override
+    return 0;
+}
+
+static int entity_SetCollisionShape(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    sim::CollisionShape shape;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* type = lua_tostring(L, 2);
+        if (std::strcmp(type, "Sphere") == 0) {
+            shape.type = sim::CollisionShapeType::SPHERE;
+            shape.cx = static_cast<f32>(luaL_optnumber(L, 3, 0));
+            shape.cy = static_cast<f32>(luaL_optnumber(L, 4, 0));
+            shape.cz = static_cast<f32>(luaL_optnumber(L, 5, 0));
+            shape.sx = static_cast<f32>(luaL_optnumber(L, 6, 1)); // radius
+        } else if (std::strcmp(type, "Box") == 0) {
+            shape.type = sim::CollisionShapeType::BOX;
+            shape.cx = static_cast<f32>(luaL_optnumber(L, 3, 0));
+            shape.cy = static_cast<f32>(luaL_optnumber(L, 4, 0));
+            shape.cz = static_cast<f32>(luaL_optnumber(L, 5, 0));
+            shape.sx = static_cast<f32>(luaL_optnumber(L, 6, 1));
+            shape.sy = static_cast<f32>(luaL_optnumber(L, 7, 1));
+            shape.sz = static_cast<f32>(luaL_optnumber(L, 8, 1));
+        }
+        // else "None" → default NONE
+    }
+    e->set_collision_shape(shape);
+    return 0;
+}
+
+static int entity_RevertCollisionShape(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_collision_shape(sim::CollisionShape{}); // reset to NONE
+    return 0;
+}
+
+static int entity_SetParentOffset(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    sim::Vector3 off;
+    if (lua_istable(L, 2)) {
+        lua_pushnumber(L, 1); lua_rawget(L, 2);
+        off.x = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_pushnumber(L, 2); lua_rawget(L, 2);
+        off.y = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_pushnumber(L, 3); lua_rawget(L, 2);
+        off.z = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    } else {
+        off.x = static_cast<f32>(luaL_optnumber(L, 2, 0));
+        off.y = static_cast<f32>(luaL_optnumber(L, 3, 0));
+        off.z = static_cast<f32>(luaL_optnumber(L, 4, 0));
+    }
+    e->set_parent_offset(off);
+    return 0;
+}
+
+/// Helper: extract an Entity* from a Lua table at the given stack index.
+static sim::Entity* check_entity_arg(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return nullptr; }
+    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return entity;
+}
+
+static int entity_AttachTo(lua_State* L) {
+    auto* self = check_entity(L); if (!self) return 0;
+    auto* parent = check_entity_arg(L, 2); if (!parent) return 0;
+    i32 bone = resolve_bone_index(parent, L, 3);
+    // Detach from current parent first
+    if (self->parent_entity_id()) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            auto* old = sim->entity_registry().find(self->parent_entity_id());
+            if (old) old->remove_child(self->entity_id());
+        }
+    }
+    self->set_parent(parent->entity_id(), bone);
+    parent->add_child(self->entity_id(), bone);
+    return 0;
+}
+
+static int entity_AttachBoneTo(lua_State* L) {
+    auto* self = check_entity(L); if (!self) return 0;
+    i32 self_bone = resolve_bone_index(self, L, 2);
+    auto* parent = check_entity_arg(L, 3); if (!parent) return 0;
+    i32 parent_bone = resolve_bone_index(parent, L, 4);
+    // Detach from current parent first
+    if (self->parent_entity_id()) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            auto* old = sim->entity_registry().find(self->parent_entity_id());
+            if (old) old->remove_child(self->entity_id());
+        }
+    }
+    self->set_parent(parent->entity_id(), parent_bone, self_bone);
+    parent->add_child(self->entity_id(), parent_bone);
+    return 0;
+}
+
+static int entity_AttachBoneToEntityBone(lua_State* L) {
+    // self:AttachBoneToEntityBone(targetEntity, sourceBone, offsetBone, reparent)
+    auto* self = check_entity(L); if (!self) return 0;
+    auto* target = check_entity_arg(L, 2); if (!target) return 0;
+    i32 self_bone = resolve_bone_index(self, L, 3);
+    // Detach target from current parent
+    if (target->parent_entity_id()) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            auto* old = sim->entity_registry().find(target->parent_entity_id());
+            if (old) old->remove_child(target->entity_id());
+        }
+    }
+    target->set_parent(self->entity_id(), self_bone);
+    self->add_child(target->entity_id(), self_bone);
+    return 0;
+}
+
+static int entity_DetachFrom(lua_State* L) {
+    auto* self = check_entity(L); if (!self) return 0;
+    if (self->parent_entity_id()) {
+        auto* sim = get_sim(L);
+        if (sim) {
+            auto* parent = sim->entity_registry().find(self->parent_entity_id());
+            if (parent) parent->remove_child(self->entity_id());
+        }
+        self->clear_parent();
+    }
+    return 0;
+}
+
+static int entity_DetachAll(lua_State* L) {
+    auto* self = check_entity(L); if (!self) return 0;
+    i32 bone = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER)
+        bone = static_cast<i32>(lua_tonumber(L, 2));
+    else if (lua_type(L, 2) == LUA_TSTRING)
+        bone = resolve_bone_index(self, L, 2);
+
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+
+    // Snapshot children to avoid mutation during iteration
+    auto children_copy = self->children();
+    for (auto& c : children_copy) {
+        if (bone >= 0 && c.bone != bone) continue;
+        auto* child = sim->entity_registry().find(c.entity_id);
+        if (child) child->clear_parent();
+        self->remove_child(c.entity_id);
+    }
+    return 0;
+}
+
+static int entity_ShakeCamera(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    auto* sim = get_sim(L); if (!sim) return 0;
+    sim::CameraShakeEvent ev;
+    ev.x = e->position().x;
+    ev.z = e->position().z;
+    ev.radius    = static_cast<f32>(luaL_optnumber(L, 2, 30));
+    ev.max_shake = static_cast<f32>(luaL_optnumber(L, 3, 1));
+    ev.min_shake = static_cast<f32>(luaL_optnumber(L, 4, 0));
+    ev.duration  = static_cast<f32>(luaL_optnumber(L, 5, 0.5));
+    sim->add_camera_shake(ev);
+    return 0;
+}
+
+static int entity_SetUnSelectable(lua_State* L) {
+    auto* e = check_entity(L); if (!e) return 0;
+    e->set_unselectable(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
 // clang-format off
 static const MethodEntry entity_methods[] = {
     // Real implementations
@@ -1368,22 +1587,22 @@ static const MethodEntry entity_methods[] = {
     {"GetBoneCount",        entity_GetBoneCount},
     {"GetBoneName",         entity_GetBoneName},
     {"IsValidBone",         entity_IsValidBone},
-    // Stubs
-    {"SetCollisionShape",       stub_noop},
-    {"SetDrawScale",            stub_noop},
-    {"SetMesh",                 stub_noop},
-    {"SetScale",                stub_noop},
-    {"SetParentOffset",         stub_noop},
-    {"SetVizToAllies",          stub_noop},
-    {"SetVizToEnemies",         stub_noop},
-    {"SetVizToFocusPlayer",     stub_noop},
-    {"SetVizToNeutrals",        stub_noop},
-    {"ShakeCamera",             stub_noop},
-    {"AttachBoneTo",            stub_noop},
-    {"AttachBoneToEntityBone",  stub_noop},
-    {"AttachTo",                stub_noop},
-    {"DetachFrom",              stub_noop},
-    {"DetachAll",               stub_noop},
+    // M65: real implementations
+    {"SetCollisionShape",       entity_SetCollisionShape},
+    {"SetDrawScale",            entity_SetScale},
+    {"SetMesh",                 entity_SetMesh},
+    {"SetScale",                entity_SetScale},
+    {"SetParentOffset",         entity_SetParentOffset},
+    {"SetVizToAllies",          entity_SetVizToAllies},
+    {"SetVizToEnemies",         entity_SetVizToEnemies},
+    {"SetVizToFocusPlayer",     entity_SetVizToFocusPlayer},
+    {"SetVizToNeutrals",        entity_SetVizToNeutrals},
+    {"ShakeCamera",             entity_ShakeCamera},
+    {"AttachBoneTo",            entity_AttachBoneTo},
+    {"AttachBoneToEntityBone",  entity_AttachBoneToEntityBone},
+    {"AttachTo",                entity_AttachTo},
+    {"DetachFrom",              entity_DetachFrom},
+    {"DetachAll",               entity_DetachAll},
     {"GetBoneDirection",        entity_GetBoneDirection},
     {"CreateProjectile",        entity_CreateProjectile},
     {"CreateProjectileAtBone",  entity_CreateProjectileAtBone},
@@ -2776,7 +2995,7 @@ static const MethodEntry unit_methods[] = {
     // Bones / visual
     {"ShowBone",                    unit_ShowBone},
     {"HideBone",                    unit_HideBone},
-    {"SetMesh",                     stub_noop},
+    {"SetMesh",                     entity_SetMesh},
     {"IsValidBone",                 entity_IsValidBone},
     {"GetBoneDirection",            entity_GetBoneDirection},
     // Stubs — build / command
@@ -2807,8 +3026,8 @@ static const MethodEntry unit_methods[] = {
     {"SetFocusEntity",              unit_SetFocusEntity},
     {"ClearFocusEntity",            unit_ClearFocusEntity},
     // Stubs — collision
-    {"SetCollisionShape",           stub_noop},
-    {"RevertCollisionShape",        stub_noop},
+    {"SetCollisionShape",           entity_SetCollisionShape},
+    {"RevertCollisionShape",        entity_RevertCollisionShape},
     {"RevertElevation",             unit_RevertElevation},
     {"SetElevation",                unit_SetElevation},
     // Stubs — movement
@@ -2870,7 +3089,7 @@ static const MethodEntry unit_methods[] = {
     {"GetParent",                   unit_GetParent},
     {"SetCanTakeDamage",            unit_SetCanTakeDamage},
     {"SetCanBeKilled",              unit_SetCanBeKilled},
-    {"SetUnSelectable",             stub_noop},
+    {"SetUnSelectable",             entity_SetUnSelectable},
     {"SetAutoOvercharge",           unit_SetAutoOvercharge},
     {"ToggleScriptBit",             unit_ToggleScriptBit},
     {"GetAutoOvercharge",           unit_GetAutoOvercharge},
@@ -3845,17 +4064,17 @@ static const MethodEntry prop_methods[] = {
     {"Destroy",                     entity_Destroy},
     {"BeenDestroyed",               entity_BeenDestroyed},
     {"AddBoundedProp",              stub_return_nil},
-    {"SetCollisionShape",           stub_noop},
-    {"SetMesh",                     stub_noop},
-    {"SetScale",                    stub_noop},
-    {"SetDrawScale",                stub_noop},
-    {"SetVizToAllies",              stub_noop},
-    {"SetVizToEnemies",             stub_noop},
-    {"SetVizToFocusPlayer",         stub_noop},
-    {"SetVizToNeutrals",            stub_noop},
+    {"SetCollisionShape",           entity_SetCollisionShape},
+    {"SetMesh",                     entity_SetMesh},
+    {"SetScale",                    entity_SetScale},
+    {"SetDrawScale",                entity_SetScale},
+    {"SetVizToAllies",              entity_SetVizToAllies},
+    {"SetVizToEnemies",             entity_SetVizToEnemies},
+    {"SetVizToFocusPlayer",         entity_SetVizToFocusPlayer},
+    {"SetVizToNeutrals",            entity_SetVizToNeutrals},
     {"SetReclaimable",              entity_SetReclaimable},
     {"SetMaxReclaimValues",          prop_SetMaxReclaimValues},
-    {"SetPropCollision",             stub_noop},
+    {"SetPropCollision",             entity_SetCollisionShape},
     {"GetHeading",                   entity_GetHeading},
     {nullptr, nullptr},
 };

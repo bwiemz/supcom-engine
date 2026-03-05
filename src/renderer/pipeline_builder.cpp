@@ -74,6 +74,11 @@ PipelineBuilder& PipelineBuilder::add_descriptor_set_layout(
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_no_color_attachment() {
+    no_color_ = true;
+    return *this;
+}
+
 VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
                                   VkPipelineLayout* out_layout) {
     // Shader stages
@@ -160,8 +165,13 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
     VkPipelineColorBlendStateCreateInfo blend_state{};
     blend_state.sType =
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blend_state.attachmentCount = 1;
-    blend_state.pAttachments = &blend_att;
+    if (no_color_) {
+        blend_state.attachmentCount = 0;
+        blend_state.pAttachments = nullptr;
+    } else {
+        blend_state.attachmentCount = 1;
+        blend_state.pAttachments = &blend_att;
+    }
 
     // Pipeline layout
     VkPipelineLayoutCreateInfo layout_ci{};

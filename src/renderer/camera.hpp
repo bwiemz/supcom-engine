@@ -29,6 +29,9 @@ public:
     void eye_position(f32& out_x, f32& out_y, f32& out_z) const;
     void set_distance(f32 d) { distance_ = d; }
 
+    /// Accumulate camera shake intensity (called from renderer per frame).
+    void apply_shake(f32 intensity);
+
 private:
     // Look-at target on XZ ground plane
     f32 target_x_ = 0;
@@ -47,6 +50,9 @@ private:
     bool orbiting_ = false;
     f64 last_mouse_x_ = 0;
     f64 last_mouse_y_ = 0;
+
+    // Camera shake
+    f32 shake_intensity_ = 0;
 };
 
 // Inline matrix math (no GLM dependency)
@@ -58,6 +64,9 @@ std::array<f32, 16> look_at(f32 ex, f32 ey, f32 ez,
 
 /// Perspective projection with Vulkan [0,1] depth and Y-flip.
 std::array<f32, 16> perspective(f32 fov_rad, f32 aspect, f32 near, f32 far);
+
+/// Orthographic projection with Vulkan [0,1] depth, no Y-flip (for shadow maps).
+std::array<f32, 16> ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near, f32 far);
 
 /// Multiply two 4x4 column-major matrices: result = a * b.
 std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,

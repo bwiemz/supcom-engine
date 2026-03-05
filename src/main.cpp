@@ -89,6 +89,8 @@ static void print_usage() {
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
+              << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
+              << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --help             Show this help message\n";
@@ -243,6 +245,8 @@ int main(int argc, char* argv[]) {
     bool terrain_tex_test = parse_flag(argc, argv, "--terrain-tex-test");
     bool decal_test = parse_flag(argc, argv, "--decal-test");
     bool projectile_test = parse_flag(argc, argv, "--projectile-test");
+    bool shadow_test = parse_flag(argc, argv, "--shadow-test");
+    bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -260,7 +264,8 @@ int main(int argc, char* argv[]) {
                     anim_test || teamcolor_test || normal_test ||
                     prop_test || scale_test || specular_test ||
                     terrain_normal_test || terrain_tex_test ||
-                    decal_test || projectile_test;
+                    decal_test || projectile_test || shadow_test ||
+                    massstub4_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -6578,6 +6583,223 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("Terrain-tex test: {}/{} passed", pass, pass + fail);
+    }
+
+    if (shadow_test && !map_path.empty()) {
+        spdlog::info("=== SHADOW TEST: Shadow mapping ===");
+
+        int pass = 0, fail = 0;
+
+        // Test 1: Shadow map size constant
+        {
+            if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 2048) {
+                pass++;
+                spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 2048");
+            } else {
+                fail++;
+                spdlog::error("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",
+                              osc::renderer::Renderer::SHADOW_MAP_SIZE);
+            }
+        }
+
+        // Test 2: Ortho projection produces valid matrix
+        {
+            auto m = osc::renderer::math::ortho(-100, 100, -100, 100, 0.1f, 400.0f);
+            // Diagonal should be non-zero
+            bool ok = m[0] != 0.0f && m[5] != 0.0f && m[10] != 0.0f && m[15] == 1.0f;
+            if (ok) {
+                pass++;
+                spdlog::info("[PASS] Test 2: ortho() produces valid matrix");
+            } else {
+                fail++;
+                spdlog::error("[FAIL] Test 2: ortho() produced invalid matrix");
+            }
+        }
+
+        // Test 3: Renderer initializes with shadow resources (visual, requires Vulkan)
+        {
+            osc::renderer::Renderer renderer;
+            if (renderer.init(800, 600, "Shadow Test")) {
+                pass++;
+                spdlog::info("[PASS] Test 3: Renderer initialized with shadow resources");
+
+                // Test 4: Build scene and render 3 frames without crash
+                renderer.build_scene(sim_state, &vfs, state.raw());
+                bool render_ok = true;
+                for (int f = 0; f < 3; f++) {
+                    try {
+                        renderer.render(sim_state, state.raw());
+                        renderer.poll_events(0.016);
+                    } catch (...) {
+                        render_ok = false;
+                        break;
+                    }
+                }
+                if (render_ok) {
+                    pass++;
+                    spdlog::info("[PASS] Test 4: 3 frames rendered with shadow pass");
+                } else {
+                    fail++;
+                    spdlog::error("[FAIL] Test 4: rendering crashed");
+                }
+
+                renderer.shutdown();
+            } else {
+                fail++;
+                spdlog::warn("[FAIL] Test 3: Renderer init failed (no Vulkan?)");
+                fail++; // Also fail test 4
+                spdlog::warn("[FAIL] Test 4: skipped (no renderer)");
+            }
+        }
+
+        spdlog::info("Shadow test: {}/{} passed", pass, pass + fail);
+    }
+
+    if (massstub4_test && !map_path.empty()) {
+        spdlog::info("=== MASSSTUB4 TEST: visibility, scale, mesh, collision, attach, shake ===");
+
+        int pass = 0, fail = 0;
+
+        // Need at least 2 entities for attachment tests
+        osc::u32 eid1 = 0, eid2 = 0;
+        sim_state.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (e.is_unit() && !e.destroyed()) {
+                if (!eid1) eid1 = e.entity_id();
+                else if (!eid2) eid2 = e.entity_id();
+            }
+        });
+
+        // Test 1: Visibility flags
+        {
+            auto* e = sim_state.entity_registry().find(eid1);
+            if (e) {
+                e->set_viz_allies(osc::sim::VizMode::ALWAYS);
+                e->set_viz_enemies(osc::sim::VizMode::NEVER);
+                e->set_viz_focus_player(osc::sim::VizMode::INTEL);
+                e->set_viz_neutrals(osc::sim::VizMode::ALWAYS);
+                bool ok = e->viz_allies() == osc::sim::VizMode::ALWAYS &&
+                          e->viz_enemies() == osc::sim::VizMode::NEVER &&
+                          e->viz_focus_player() == osc::sim::VizMode::INTEL &&
+                          e->viz_neutrals() == osc::sim::VizMode::ALWAYS;
+                if (ok) { pass++; spdlog::info("[PASS] Test 1: visibility flags"); }
+                else { fail++; spdlog::error("[FAIL] Test 1: visibility flags"); }
+            } else { fail++; spdlog::error("[FAIL] Test 1: no entity"); }
+        }
+
+        // Test 2: Scale methods
+        {
+            auto* e = sim_state.entity_registry().find(eid1);
+            if (e) {
+                e->set_scale(2.5f, 2.5f, 2.5f);
+                bool ok = std::abs(e->scale_x() - 2.5f) < 0.01f &&
+                          std::abs(e->scale_y() - 2.5f) < 0.01f;
+                e->set_scale(1.0f, 1.0f, 1.0f); // restore
+                if (ok) { pass++; spdlog::info("[PASS] Test 2: SetScale"); }
+                else { fail++; spdlog::error("[FAIL] Test 2: SetScale"); }
+            } else { fail++; spdlog::error("[FAIL] Test 2: no entity"); }
+        }
+
+        // Test 3: SetMesh
+        {
+            auto* e = sim_state.entity_registry().find(eid1);
+            if (e) {
+                e->set_mesh_override("/units/uel0001/uel0001_mesh");
+                bool ok = e->mesh_override() == "/units/uel0001/uel0001_mesh";
+                e->set_mesh_override(""); // restore
+                if (ok) { pass++; spdlog::info("[PASS] Test 3: SetMesh"); }
+                else { fail++; spdlog::error("[FAIL] Test 3: SetMesh"); }
+            } else { fail++; spdlog::error("[FAIL] Test 3: no entity"); }
+        }
+
+        // Test 4: Collision shape
+        {
+            auto* e = sim_state.entity_registry().find(eid1);
+            if (e) {
+                osc::sim::CollisionShape sphere;
+                sphere.type = osc::sim::CollisionShapeType::SPHERE;
+                sphere.cx = 0; sphere.cy = 1; sphere.cz = 0; sphere.sx = 3;
+                e->set_collision_shape(sphere);
+                bool ok1 = e->collision_shape().type == osc::sim::CollisionShapeType::SPHERE &&
+                           std::abs(e->collision_shape().sx - 3.0f) < 0.01f;
+
+                osc::sim::CollisionShape box;
+                box.type = osc::sim::CollisionShapeType::BOX;
+                box.sx = 2; box.sy = 3; box.sz = 2;
+                e->set_collision_shape(box);
+                bool ok2 = e->collision_shape().type == osc::sim::CollisionShapeType::BOX;
+
+                e->set_collision_shape(osc::sim::CollisionShape{}); // revert
+                bool ok3 = e->collision_shape().type == osc::sim::CollisionShapeType::NONE;
+
+                if (ok1 && ok2 && ok3) { pass++; spdlog::info("[PASS] Test 4: collision shape"); }
+                else { fail++; spdlog::error("[FAIL] Test 4: collision shape"); }
+            } else { fail++; spdlog::error("[FAIL] Test 4: no entity"); }
+        }
+
+        // Test 5: Camera shake
+        {
+            osc::sim::CameraShakeEvent ev;
+            ev.x = 256; ev.z = 256; ev.radius = 100;
+            ev.max_shake = 5; ev.min_shake = 1; ev.duration = 0.5f;
+            sim_state.add_camera_shake(ev);
+            bool ok1 = sim_state.camera_shake_events().size() == 1;
+            sim_state.clear_camera_shake_events();
+            bool ok2 = sim_state.camera_shake_events().empty();
+            if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 5: camera shake queue"); }
+            else { fail++; spdlog::error("[FAIL] Test 5: camera shake queue"); }
+        }
+
+        // Test 6: Attachment (AttachTo + DetachFrom)
+        {
+            auto* e1 = sim_state.entity_registry().find(eid1);
+            auto* e2 = sim_state.entity_registry().find(eid2);
+            if (e1 && e2) {
+                e2->set_parent(e1->entity_id(), 0);
+                e1->add_child(e2->entity_id(), 0);
+                bool ok1 = e2->parent_entity_id() == e1->entity_id() &&
+                           e1->children().size() == 1;
+                // Detach
+                e1->remove_child(e2->entity_id());
+                e2->clear_parent();
+                bool ok2 = e2->parent_entity_id() == 0 && e1->children().empty();
+                if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 6: attachment"); }
+                else { fail++; spdlog::error("[FAIL] Test 6: attachment ok1={} ok2={}", ok1, ok2); }
+            } else { fail++; spdlog::error("[FAIL] Test 6: need 2 entities"); }
+        }
+
+        // Test 7: SetParentOffset + DetachAll
+        {
+            auto* e1 = sim_state.entity_registry().find(eid1);
+            auto* e2 = sim_state.entity_registry().find(eid2);
+            if (e1 && e2) {
+                e2->set_parent(e1->entity_id(), 0);
+                e1->add_child(e2->entity_id(), 0);
+                e2->set_parent_offset({0, 5, 0});
+                bool ok1 = std::abs(e2->parent_offset().y - 5.0f) < 0.01f;
+                // DetachAll
+                e1->remove_child(e2->entity_id());
+                e2->clear_parent();
+                e2->set_parent_offset({0, 0, 0});
+                bool ok2 = e1->children().empty();
+                if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 7: parent offset + detach all"); }
+                else { fail++; spdlog::error("[FAIL] Test 7: parent offset"); }
+            } else { fail++; spdlog::error("[FAIL] Test 7: need 2 entities"); }
+        }
+
+        // Test 8: SetUnSelectable
+        {
+            auto* e = sim_state.entity_registry().find(eid1);
+            if (e) {
+                e->set_unselectable(true);
+                bool ok1 = e->unselectable();
+                e->set_unselectable(false);
+                bool ok2 = !e->unselectable();
+                if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 8: SetUnSelectable"); }
+                else { fail++; spdlog::error("[FAIL] Test 8: SetUnSelectable"); }
+            } else { fail++; spdlog::error("[FAIL] Test 8: no entity"); }
+        }
+
+        spdlog::info("MassStub4 test: {}/{} passed", pass, pass + fail);
     }
 
     // Report final state

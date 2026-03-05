@@ -68,13 +68,15 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Terrain normal maps: per-stratum DXT5nm normal maps (bindings 11-19), world-aligned TBN with Gram-Schmidt orthogonalization, blended tangent-space normals, 20-binding descriptor set, Lambertian lighting with perturbed normals
 - Terrain decal rendering: .scmap binary decal parsing (2,236 decals on Seton's Clutch), instanced textured quads with per-decal model matrices, alpha blending with depth bias z-fighting prevention, LOD distance culling, pre-sorted texture grouping for allocation-free per-frame draw
 - Projectile rendering: weapon ProjectileId parsing, blueprint_id on projectiles in all creation paths (C++ auto-fire + 3 Lua paths), velocity-aligned orientation via euler_to_quat, MeshCache mesh/texture resolution for projectile blueprints, UnitRenderer integration (no new pipeline needed)
-- 22 unit tests, 50 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, etc.)
+- Shadow mapping: 2048x2048 depth-only shadow pass (terrain + meshes + cubes), orthographic light frustum centered on camera, comparison sampler with hardware bilinear PCF, calcShadow() in terrain/mesh/unit fragment shaders, depth bias for acne prevention
+- Mass stub conversion IV: 27 stubs→real (visibility flags SetVizTo*, scale SetScale/SetDrawScale, SetMesh with runtime mesh override, collision shape Sphere/Box/None, attachment system AttachTo/AttachBoneTo/DetachFrom/DetachAll/SetParentOffset, ShakeCamera with sim→renderer bridge, SetUnSelectable)
+- 22 unit tests, 52 integration test flags (`--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, `--shadow-test`, `--massstub4-test`, etc.)
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
 - Full UI and input handling
-- Remaining moho binding stubs (~56 renderer/VFX/attachment stubs with no sim impact)
+- Remaining moho binding stubs (~29 renderer/VFX stubs: IEffect, CollisionBeam, emitter system)
 - Blend-weight skinning (current implementation is rigid skinning: 1 bone per vertex)
 
 ## Prerequisites

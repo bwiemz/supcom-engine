@@ -37,7 +37,7 @@ public:
                      lua_State* L);
 
     /// Render one frame (updates unit instances, draws everything).
-    void render(const sim::SimState& sim, lua_State* L);
+    void render(sim::SimState& sim, lua_State* L);
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -54,6 +54,8 @@ public:
     Camera& camera() { return camera_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
 
+    static constexpr u32 SHADOW_MAP_SIZE = 2048;
+
 private:
     bool create_swapchain(u32 width, u32 height);
     void create_depth_image();
@@ -61,6 +63,9 @@ private:
     void create_framebuffers();
     void create_pipelines();
     void recreate_swapchain();
+    void create_shadow_resources();
+    void create_shadow_pipelines();
+    std::array<f32, 16> compute_light_vp() const;
 
     // GLFW
     GLFWwindow* window_ = nullptr;
@@ -159,6 +164,26 @@ private:
     std::vector<DecalDrawGroup> decal_groups_;
 
     static constexpr u32 MAX_DECALS = 4096;
+
+    // Shadow mapping
+    AllocatedImage shadow_image_{};
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
+    VkRenderPass shadow_render_pass_ = VK_NULL_HANDLE;
+    VkFramebuffer shadow_framebuffer_ = VK_NULL_HANDLE;
+
+    VkPipeline shadow_terrain_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadow_terrain_layout_ = VK_NULL_HANDLE;
+    VkPipeline shadow_mesh_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadow_mesh_layout_ = VK_NULL_HANDLE;
+    VkPipeline shadow_unit_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout shadow_unit_layout_ = VK_NULL_HANDLE;
+
+    VkDescriptorSetLayout shadow_ds_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool shadow_ds_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet shadow_ds_ = VK_NULL_HANDLE;
+
+    AllocatedBuffer light_ubo_{};
+    void* light_ubo_mapped_ = nullptr;
 
     // Cleanup
     DeletionQueue deletion_queue_;

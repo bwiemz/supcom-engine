@@ -2,8 +2,10 @@
 
 #include "core/types.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 namespace osc::sim {
 
@@ -98,6 +100,23 @@ inline Quaternion rot_matrix_to_quat(const f32 m[9]) {
     return q;
 }
 
+/// Visibility mode for per-army rendering control.
+enum class VizMode : u8 { ALWAYS, INTEL, NEVER };
+
+/// Collision shape variant.
+enum class CollisionShapeType : u8 { NONE, SPHERE, BOX };
+struct CollisionShape {
+    CollisionShapeType type = CollisionShapeType::NONE;
+    f32 cx = 0, cy = 0, cz = 0; // center offset
+    f32 sx = 0, sy = 0, sz = 0; // radius (sphere) or half-extents (box)
+};
+
+/// Attachment child record.
+struct ChildAttachment {
+    u32 entity_id = 0;
+    i32 bone = -1; // which bone of parent the child is attached to
+};
+
 struct BoneData; // forward decl
 
 class Entity {
@@ -158,6 +177,53 @@ public:
     f32 scale_z() const { return scale_z_; }
     void set_scale(f32 sx, f32 sy, f32 sz) { scale_x_ = sx; scale_y_ = sy; scale_z_ = sz; }
 
+    // Visibility
+    VizMode viz_allies() const { return viz_allies_; }
+    VizMode viz_enemies() const { return viz_enemies_; }
+    VizMode viz_focus_player() const { return viz_focus_player_; }
+    VizMode viz_neutrals() const { return viz_neutrals_; }
+    void set_viz_allies(VizMode m) { viz_allies_ = m; }
+    void set_viz_enemies(VizMode m) { viz_enemies_ = m; }
+    void set_viz_focus_player(VizMode m) { viz_focus_player_ = m; }
+    void set_viz_neutrals(VizMode m) { viz_neutrals_ = m; }
+
+    // Collision shape
+    const CollisionShape& collision_shape() const { return collision_shape_; }
+    void set_collision_shape(const CollisionShape& s) { collision_shape_ = s; }
+
+    // Mesh override (runtime mesh switching via SetMesh)
+    const std::string& mesh_override() const { return mesh_override_; }
+    void set_mesh_override(const std::string& path) { mesh_override_ = path; }
+
+    // Selection
+    bool unselectable() const { return unselectable_; }
+    void set_unselectable(bool b) { unselectable_ = b; }
+
+    // Attachment — parent tracking
+    u32 parent_entity_id() const { return parent_entity_id_; }
+    i32 parent_bone() const { return parent_bone_; }
+    i32 attached_bone() const { return attached_bone_; }
+    void set_parent(u32 pid, i32 pbone, i32 abone = -1) {
+        parent_entity_id_ = pid; parent_bone_ = pbone; attached_bone_ = abone;
+    }
+    void clear_parent() { parent_entity_id_ = 0; parent_bone_ = -1; attached_bone_ = -1; }
+    const Vector3& parent_offset() const { return parent_offset_; }
+    void set_parent_offset(const Vector3& off) { parent_offset_ = off; }
+
+    // Attachment — children tracking
+    const std::vector<ChildAttachment>& children() const { return children_; }
+    void add_child(u32 eid, i32 bone) { children_.push_back({eid, bone}); }
+    void remove_child(u32 eid) {
+        children_.erase(std::remove_if(children_.begin(), children_.end(),
+            [eid](const ChildAttachment& c) { return c.entity_id == eid; }),
+            children_.end());
+    }
+    void remove_children_at_bone(i32 bone) {
+        children_.erase(std::remove_if(children_.begin(), children_.end(),
+            [bone](const ChildAttachment& c) { return c.bone == bone; }),
+            children_.end());
+    }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -183,6 +249,18 @@ private:
     f32 scale_x_ = 1.0f;
     f32 scale_y_ = 1.0f;
     f32 scale_z_ = 1.0f;
+    VizMode viz_allies_ = VizMode::INTEL;
+    VizMode viz_enemies_ = VizMode::INTEL;
+    VizMode viz_focus_player_ = VizMode::ALWAYS;
+    VizMode viz_neutrals_ = VizMode::INTEL;
+    CollisionShape collision_shape_;
+    std::string mesh_override_;
+    bool unselectable_ = false;
+    u32 parent_entity_id_ = 0;
+    i32 parent_bone_ = -1;
+    i32 attached_bone_ = -1;
+    Vector3 parent_offset_;
+    std::vector<ChildAttachment> children_;
 };
 
 } // namespace osc::sim

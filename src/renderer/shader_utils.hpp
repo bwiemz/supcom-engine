@@ -23,6 +23,10 @@ extern const char* mesh_vert;
 extern const char* mesh_frag;
 extern const char* decal_vert;
 extern const char* decal_frag;
+extern const char* shadow_vert;       // terrain shadow (lightVP * position)
+extern const char* shadow_mesh_vert;  // mesh shadow (bone skinning + lightVP)
+extern const char* shadow_unit_vert;  // cube shadow (instanced + lightVP)
+extern const char* shadow_frag;       // empty (depth-only write)
 } // namespace shaders
 
 } // namespace osc::renderer

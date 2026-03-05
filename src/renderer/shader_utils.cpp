@@ -52,11 +52,13 @@ layout(location = 1) in vec3 inNormal;
 
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec2 fragWorldXZ;
+layout(location = 2) out float fragWorldY;
 
 void main() {
     gl_Position = pc.viewProj * vec4(inPosition, 1.0);
     fragNormal = inNormal;
     fragWorldXZ = inPosition.xz;
+    fragWorldY = inPosition.y;
 }
 )glsl";
 
@@ -95,10 +97,24 @@ layout(set = 0, binding = 17) uniform sampler2D normalMap6;
 layout(set = 0, binding = 18) uniform sampler2D normalMap7;
 layout(set = 0, binding = 19) uniform sampler2D normalMap8;
 
+// Shadow map (set=1)
+layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
+layout(set = 1, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
 
 layout(location = 0) out vec4 outColor;
+
+float calcShadow(vec3 worldPos) {
+    vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
+    vec3 pc2 = lc.xyz / lc.w;
+    vec2 uv = pc2.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        return 1.0;
+    return texture(shadowMap, vec3(uv, pc2.z));
+}
 
 // Decode FA DXT5nm normal map: X=Green, Y=Alpha, Z=derived
 vec3 decodeNormal(sampler2D nmap, vec2 uv) {
@@ -185,10 +201,12 @@ void main() {
 
     vec3 worldNormal = normalize(TBN * blendedTangentNormal);
 
-    // Lambertian lighting with perturbed normal
+    // Lambertian lighting with perturbed normal + shadow
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float NdotL = max(dot(worldNormal, lightDir), 0.0);
-    float lighting = 0.3 + 0.7 * NdotL;
+    vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
+    float shadow = calcShadow(worldPos);
+    float lighting = 0.3 + 0.7 * NdotL * shadow;
 
     outColor = vec4(color * lighting, 1.0);
 }
@@ -210,27 +228,44 @@ layout(location = 4) in vec4 inColor;
 
 layout(location = 0) out vec3 fragNormal;
 layout(location = 1) out vec4 fragColor;
+layout(location = 2) out vec3 fragWorldPos;
 
 void main() {
     vec3 worldPos = inPosition * inScale + inInstancePos;
     gl_Position = pc.viewProj * vec4(worldPos, 1.0);
     fragNormal = inNormal;
     fragColor = inColor;
+    fragWorldPos = worldPos;
 }
 )glsl";
 
 const char* unit_frag = R"glsl(
 #version 450
 
+// Shadow map (set=0)
+layout(set = 0, binding = 0) uniform sampler2DShadow shadowMap;
+layout(set = 0, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec4 fragColor;
+layout(location = 2) in vec3 fragWorldPos;
 
 layout(location = 0) out vec4 outColor;
+
+float calcShadow(vec3 worldPos) {
+    vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
+    vec3 pc = lc.xyz / lc.w;
+    vec2 uv = pc.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        return 1.0;
+    return texture(shadowMap, vec3(uv, pc.z));
+}
 
 void main() {
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float NdotL = max(dot(normalize(fragNormal), lightDir), 0.0);
-    float lighting = 0.4 + 0.6 * NdotL;
+    float shadow = calcShadow(fragWorldPos);
+    float lighting = 0.4 + 0.6 * NdotL * shadow;
 
     outColor = vec4(fragColor.rgb * lighting, fragColor.a);
 }
@@ -328,6 +363,10 @@ layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
 layout(set = 2, binding = 0) uniform sampler2D texSpecTeam;
 layout(set = 3, binding = 0) uniform sampler2D texNormal;
 
+// Shadow map (set=4)
+layout(set = 4, binding = 0) uniform sampler2DShadow shadowMap;
+layout(set = 4, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec4 fragColor;  // army color (RGB) + build alpha (A)
 layout(location = 2) in vec2 fragUV;
@@ -336,6 +375,15 @@ layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec3 fragWorldPos;
 
 layout(location = 0) out vec4 outColor;
+
+float calcShadow(vec3 worldPos) {
+    vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
+    vec3 pc2 = lc.xyz / lc.w;
+    vec2 uv = pc2.xy * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
+        return 1.0;
+    return texture(shadowMap, vec3(uv, pc2.z));
+}
 
 void main() {
     // Decode normal from GA channels (FA DXT5nm encoding: X=Green, Y=Alpha)
@@ -353,10 +401,11 @@ void main() {
     mat3 TBN = mat3(T, B, N);
     vec3 worldNormal = normalize(TBN * tangentNormal);
 
-    // Diffuse lighting (Lambertian)
+    // Diffuse lighting (Lambertian) + shadow
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float NdotL = max(dot(worldNormal, lightDir), 0.0);
-    float lighting = 0.4 + 0.6 * NdotL;
+    float shadow = calcShadow(fragWorldPos);
+    float lighting = 0.4 + 0.6 * NdotL * shadow;
 
     vec4 texColor = texture(texAlbedo, fragUV);
     vec4 specTeam = texture(texSpecTeam, fragUV);
@@ -370,7 +419,7 @@ void main() {
     vec3 halfDir = normalize(lightDir + viewDir);
     float NdotH = max(dot(worldNormal, halfDir), 0.0);
     float specIntensity = specTeam.r;
-    float spec = pow(NdotH, 32.0) * specIntensity;
+    float spec = pow(NdotH, 32.0) * specIntensity * shadow;
 
     outColor = vec4(blended * lighting + vec3(spec), texColor.a * fragColor.a);
 }
@@ -413,6 +462,83 @@ void main() {
     if (color.a < 0.01) discard;
     outColor = color;
 }
+)glsl";
+
+// --- Shadow depth-only shaders ---
+
+const char* shadow_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 lightViewProj;
+} pc;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;  // unused but must match terrain vertex layout
+
+void main() {
+    gl_Position = pc.lightViewProj * vec4(inPosition, 1.0);
+}
+)glsl";
+
+const char* shadow_mesh_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 lightViewProj;
+    uint boneBase;
+    uint bonesPerInst;
+} pc;
+
+// Per-vertex (binding 0): position + normal + UV + bone_index + tangent
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec2 inUV;
+layout(location = 8) in int inBoneIndex;
+layout(location = 9) in vec3 inTangent;
+
+// Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
+layout(location = 3) in mat4 inModel;
+layout(location = 7) in vec4 inColor;
+
+// Bone SSBO (set=0, binding=0)
+layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
+    mat4 bones[];
+} boneSSBO;
+
+void main() {
+    uint boneIdx = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst
+                   + uint(inBoneIndex);
+    mat4 bone = boneSSBO.bones[boneIdx];
+    vec4 skinnedPos = bone * vec4(inPosition, 1.0);
+    vec4 worldPos = inModel * skinnedPos;
+    gl_Position = pc.lightViewProj * worldPos;
+}
+)glsl";
+
+const char* shadow_unit_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 lightViewProj;
+} pc;
+
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;  // unused but must match cube vertex layout
+
+layout(location = 2) in vec3 inInstancePos;
+layout(location = 3) in float inScale;
+layout(location = 4) in vec4 inColor;   // unused
+
+void main() {
+    vec3 worldPos = inPosition * inScale + inInstancePos;
+    gl_Position = pc.lightViewProj * vec4(worldPos, 1.0);
+}
+)glsl";
+
+const char* shadow_frag = R"glsl(
+#version 450
+void main() {}
 )glsl";
 
 } // namespace shaders

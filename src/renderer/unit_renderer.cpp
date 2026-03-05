@@ -245,11 +245,12 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         f32 r, g, b, a;
         get_army_color(entity, sim, r, g, b, a);
 
-        // Try mesh lookup
+        // Try mesh lookup (mesh_override from SetMesh takes priority)
         const GPUMesh* gpu = nullptr;
-        if (!entity.blueprint_id().empty()) {
+        if (!entity.mesh_override().empty())
+            gpu = mesh_cache.get(entity.mesh_override(), L);
+        if (!gpu && !entity.blueprint_id().empty())
             gpu = mesh_cache.get(entity.blueprint_id(), L);
-        }
 
         if (gpu) {
             if (mesh_count >= MAX_INSTANCES) return;

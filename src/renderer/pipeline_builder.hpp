@@ -22,6 +22,7 @@ public:
                                        VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT);
     PipelineBuilder& set_descriptor_set_layout(VkDescriptorSetLayout layout);
     PipelineBuilder& add_descriptor_set_layout(VkDescriptorSetLayout layout);
+    PipelineBuilder& set_no_color_attachment();
 
     /// Build the pipeline. Returns VK_NULL_HANDLE on failure.
     VkPipeline build(VkDevice device, VkRenderPass render_pass,
@@ -47,6 +48,7 @@ private:
     bool depth_bias_ = false;
     float depth_bias_constant_ = 0.0f;
     float depth_bias_slope_ = 0.0f;
+    bool no_color_ = false;
     std::vector<VkDescriptorSetLayout> ds_layouts_;
 };
 

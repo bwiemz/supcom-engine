@@ -238,8 +238,14 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_);
     }
 
+    // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
+    create_shadow_resources();
+
     // Pipelines
     create_pipelines();
+
+    // Shadow depth-only pipelines (need shadow_render_pass_ + bone_ds_layout_)
+    create_shadow_pipelines();
 
     initialized_ = true;
     spdlog::info("Renderer initialized ({}x{})", width, height);
@@ -382,6 +388,221 @@ void Renderer::create_framebuffers() {
     }
 }
 
+void Renderer::create_shadow_resources() {
+    // --- Shadow depth image (2048x2048, D32_SFLOAT, samplable) ---
+    {
+        VkImageCreateInfo img_ci{};
+        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_ci.imageType = VK_IMAGE_TYPE_2D;
+        img_ci.format = VK_FORMAT_D32_SFLOAT;
+        img_ci.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 1};
+        img_ci.mipLevels = 1;
+        img_ci.arrayLayers = 1;
+        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                     | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &shadow_image_.image, &shadow_image_.allocation, nullptr);
+
+        VkImageViewCreateInfo view_ci{};
+        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_ci.image = shadow_image_.image;
+        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_ci.format = VK_FORMAT_D32_SFLOAT;
+        view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        view_ci.subresourceRange.levelCount = 1;
+        view_ci.subresourceRange.layerCount = 1;
+        vkCreateImageView(device_, &view_ci, nullptr, &shadow_image_.view);
+    }
+
+    // --- Shadow render pass (depth-only) ---
+    {
+        VkAttachmentDescription depth_att{};
+        depth_att.format = VK_FORMAT_D32_SFLOAT;
+        depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentReference depth_ref{};
+        depth_ref.attachment = 0;
+        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 0;
+        subpass.pDepthStencilAttachment = &depth_ref;
+
+        VkSubpassDependency dep{};
+        dep.srcSubpass = 0;
+        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        dep.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                         | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dep.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        VkRenderPassCreateInfo rp_ci{};
+        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp_ci.attachmentCount = 1;
+        rp_ci.pAttachments = &depth_att;
+        rp_ci.subpassCount = 1;
+        rp_ci.pSubpasses = &subpass;
+        rp_ci.dependencyCount = 1;
+        rp_ci.pDependencies = &dep;
+
+        vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_);
+    }
+
+    // --- Shadow framebuffer ---
+    {
+        VkFramebufferCreateInfo fb_ci{};
+        fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fb_ci.renderPass = shadow_render_pass_;
+        fb_ci.attachmentCount = 1;
+        fb_ci.pAttachments = &shadow_image_.view;
+        fb_ci.width = SHADOW_MAP_SIZE;
+        fb_ci.height = SHADOW_MAP_SIZE;
+        fb_ci.layers = 1;
+        vkCreateFramebuffer(device_, &fb_ci, nullptr, &shadow_framebuffer_);
+    }
+
+    // --- Shadow comparison sampler (for sampler2DShadow) ---
+    {
+        VkSamplerCreateInfo ci{};
+        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_LINEAR;
+        ci.minFilter = VK_FILTER_LINEAR;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+        ci.compareEnable = VK_TRUE;
+        ci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        ci.maxLod = 1.0f;
+        vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_);
+    }
+
+    // --- Light UBO (64B, persistently mapped) ---
+    {
+        VkBufferCreateInfo ubo_ci{};
+        ubo_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        ubo_ci.size = sizeof(f32) * 16;
+        ubo_ci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VmaAllocationInfo info{};
+        vmaCreateBuffer(allocator_, &ubo_ci, &alloc_ci,
+                        &light_ubo_.buffer, &light_ubo_.allocation, &info);
+        light_ubo_mapped_ = info.pMappedData;
+    }
+
+    // --- Shadow descriptor set layout (binding 0: shadow sampler, binding 1: light UBO) ---
+    {
+        std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+        bindings[0].binding = 0;
+        bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[0].descriptorCount = 1;
+        bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        bindings[1].binding = 1;
+        bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        bindings[1].descriptorCount = 1;
+        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo ds_ci{};
+        ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        ds_ci.bindingCount = static_cast<u32>(bindings.size());
+        ds_ci.pBindings = bindings.data();
+        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &shadow_ds_layout_);
+    }
+
+    // --- Shadow descriptor pool + set ---
+    {
+        std::array<VkDescriptorPoolSize, 2> pool_sizes{};
+        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+        pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets = 1;
+        pool_ci.poolSizeCount = static_cast<u32>(pool_sizes.size());
+        pool_ci.pPoolSizes = pool_sizes.data();
+        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &shadow_ds_pool_);
+
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = shadow_ds_pool_;
+        alloc_info.descriptorSetCount = 1;
+        alloc_info.pSetLayouts = &shadow_ds_layout_;
+        vkAllocateDescriptorSets(device_, &alloc_info, &shadow_ds_);
+
+        VkDescriptorImageInfo img_info{};
+        img_info.sampler = shadow_sampler_;
+        img_info.imageView = shadow_image_.view;
+        img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkDescriptorBufferInfo buf_info{};
+        buf_info.buffer = light_ubo_.buffer;
+        buf_info.offset = 0;
+        buf_info.range = sizeof(f32) * 16;
+
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = shadow_ds_;
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &img_info;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = shadow_ds_;
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[1].pBufferInfo = &buf_info;
+
+        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()),
+                               writes.data(), 0, nullptr);
+    }
+
+    spdlog::info("Shadow resources created ({}x{} depth map)", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+}
+
+std::array<f32, 16> Renderer::compute_light_vp() const {
+    // Light direction (matches all lit shaders)
+    constexpr f32 lx = 0.5f, ly = 1.0f, lz = 0.3f;
+    constexpr f32 len = 1.1576f; // sqrt(0.25 + 1.0 + 0.09)
+    constexpr f32 dx = lx / len, dy = ly / len, dz = lz / len;
+
+    // Ortho frustum centered on camera target, proportional to zoom
+    f32 half = std::clamp(camera_.distance() * 0.8f, 50.0f, 800.0f);
+    f32 far_off = half * 2.0f;
+
+    f32 ex = camera_.target_x() + dx * far_off;
+    f32 ey = dy * far_off;
+    f32 ez = camera_.target_z() + dz * far_off;
+
+    auto view = math::look_at(ex, ey, ez,
+                              camera_.target_x(), 0.0f, camera_.target_z(),
+                              0.0f, 1.0f, 0.0f);
+    auto proj = math::ortho(-half, half, -half, half, 0.1f, far_off * 2.0f);
+    return math::mat4_mul(proj, view);
+}
+
 void Renderer::create_pipelines() {
     // Compile shaders from embedded GLSL
     auto tv = compile_glsl(device_, shaders::terrain_vert, "terrain.vert", true);
@@ -429,7 +650,8 @@ void Renderer::create_pipelines() {
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
             .set_push_constant(108,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .set_descriptor_set_layout(terrain_tex_ds_layout_)
+            .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
+            .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
             .build(device_, render_pass_, &terrain_layout_);
     }
 
@@ -462,6 +684,7 @@ void Renderer::create_pipelines() {
             .set_blend(true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
             .set_push_constant(sizeof(f32) * 16)
+            .set_descriptor_set_layout(shadow_ds_layout_)   // set=0: shadow
             .build(device_, render_pass_, &unit_layout_);
     }
 
@@ -506,6 +729,7 @@ void Renderer::create_pipelines() {
             .add_descriptor_set_layout(bone_ds_layout_)       // set=1: bone SSBO
             .add_descriptor_set_layout(texture_ds_layout_)    // set=2: specteam
             .add_descriptor_set_layout(texture_ds_layout_)    // set=3: normal map
+            .add_descriptor_set_layout(shadow_ds_layout_)     // set=4: shadow
             .build(device_, render_pass_, &mesh_layout_);
     }
 
@@ -576,6 +800,122 @@ void Renderer::create_pipelines() {
     vkDestroyShaderModule(device_, mf, nullptr);
     vkDestroyShaderModule(device_, dv, nullptr);
     vkDestroyShaderModule(device_, df, nullptr);
+}
+
+void Renderer::create_shadow_pipelines() {
+    // Compile shadow shaders
+    auto sv = compile_glsl(device_, shaders::shadow_vert, "shadow.vert", true);
+    auto smv = compile_glsl(device_, shaders::shadow_mesh_vert, "shadow_mesh.vert", true);
+    auto suv = compile_glsl(device_, shaders::shadow_unit_vert, "shadow_unit.vert", true);
+    auto sf = compile_glsl(device_, shaders::shadow_frag, "shadow.frag", false);
+
+    if (!sv || !smv || !suv || !sf) {
+        spdlog::error("Shadow shader compilation failed");
+        auto safe_destroy = [&](VkShaderModule m) {
+            if (m) vkDestroyShaderModule(device_, m, nullptr);
+        };
+        safe_destroy(sv); safe_destroy(smv); safe_destroy(suv); safe_destroy(sf);
+        return;
+    }
+
+    // --- Shadow terrain pipeline (depth-only, same vertex layout as terrain) ---
+    {
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(TerrainVertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        std::array<VkVertexInputAttributeDescription, 2> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
+
+        shadow_terrain_pipeline_ = PipelineBuilder()
+            .set_shaders(sv, sf)
+            .set_vertex_input(&binding, 1, attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
+            .set_no_color_attachment()
+            .set_depth_bias(4.0f, 1.5f)
+            .build(device_, shadow_render_pass_, &shadow_terrain_layout_);
+    }
+
+    // --- Shadow mesh pipeline (depth-only, bone skinning) ---
+    {
+        std::array<VkVertexInputBindingDescription, 2> bindings{};
+        bindings[0].binding = 0;
+        bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
+        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        bindings[1].binding = 1;
+        bindings[1].stride = sizeof(MeshInstance);
+        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        std::array<VkVertexInputAttributeDescription, 10> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};
+        attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};
+        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + 0};
+        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 4};
+        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
+        attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
+        attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};
+        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, offsetof(sim::SCMMesh::Vertex, bone_index)};
+        attrs[9] = {9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
+
+        // Push constant 72B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4)
+        shadow_mesh_pipeline_ = PipelineBuilder()
+            .set_shaders(smv, sf)
+            .set_vertex_input(bindings.data(),
+                              static_cast<u32>(bindings.size()),
+                              attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2, VK_SHADER_STAGE_VERTEX_BIT)
+            .set_descriptor_set_layout(bone_ds_layout_)   // set=0: bone SSBO
+            .set_no_color_attachment()
+            .set_depth_bias(4.0f, 1.5f)
+            .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
+    }
+
+    // --- Shadow unit cube pipeline (depth-only, instanced) ---
+    {
+        std::array<VkVertexInputBindingDescription, 2> bindings{};
+        bindings[0].binding = 0;
+        bindings[0].stride = sizeof(f32) * 6;
+        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        bindings[1].binding = 1;
+        bindings[1].stride = sizeof(CubeInstance);
+        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        std::array<VkVertexInputAttributeDescription, 5> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};
+        attrs[2] = {2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeInstance, x)};
+        attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(CubeInstance, scale)};
+        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)};
+
+        shadow_unit_pipeline_ = PipelineBuilder()
+            .set_shaders(suv, sf)
+            .set_vertex_input(bindings.data(),
+                              static_cast<u32>(bindings.size()),
+                              attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(true, true)
+            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 16, VK_SHADER_STAGE_VERTEX_BIT)
+            .set_no_color_attachment()
+            .set_depth_bias(4.0f, 1.5f)
+            .build(device_, shadow_render_pass_, &shadow_unit_layout_);
+    }
+
+    vkDestroyShaderModule(device_, sv, nullptr);
+    vkDestroyShaderModule(device_, smv, nullptr);
+    vkDestroyShaderModule(device_, suv, nullptr);
+    vkDestroyShaderModule(device_, sf, nullptr);
+
+    spdlog::info("Shadow pipelines created (terrain + mesh + unit)");
 }
 
 void Renderer::build_scene(const sim::SimState& sim,
@@ -836,7 +1176,7 @@ void Renderer::build_scene(const sim::SimState& sim,
     spdlog::info("Scene built");
 }
 
-void Renderer::render(const sim::SimState& sim, lua_State* L) {
+void Renderer::render(sim::SimState& sim, lua_State* L) {
     // Wait for ALL previous GPU work (including present) to complete.
     // Using vkDeviceWaitIdle instead of fence-only sync avoids the classic
     // single-buffered semaphore race: fence signals on submit completion,
@@ -856,6 +1196,25 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
 
     vkResetFences(device_, 1, &render_fence_);
 
+    // Process camera shake events from sim
+    {
+        auto shakes = sim.camera_shake_events(); // copy before clear
+        if (!shakes.empty()) {
+            sim.clear_camera_shake_events();
+            f32 total_intensity = 0;
+            for (const auto& ev : shakes) {
+                f32 dx = camera_.target_x() - ev.x;
+                f32 dz = camera_.target_z() - ev.z;
+                f32 dist = std::sqrt(dx * dx + dz * dz);
+                if (dist < ev.radius) {
+                    f32 t = 1.0f - dist / ev.radius;
+                    total_intensity += ev.min_shake + t * (ev.max_shake - ev.min_shake);
+                }
+            }
+            camera_.apply_shake(total_intensity);
+        }
+    }
+
     // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
     unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_);
 
@@ -872,6 +1231,113 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd_buf_, &begin_info);
 
+    // ==================== SHADOW PASS ====================
+    if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_) {
+        // Update light UBO
+        auto light_vp = compute_light_vp();
+        std::memcpy(light_ubo_mapped_, light_vp.data(), sizeof(f32) * 16);
+
+        VkClearValue shadow_clear{};
+        shadow_clear.depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo shadow_rp{};
+        shadow_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        shadow_rp.renderPass = shadow_render_pass_;
+        shadow_rp.framebuffer = shadow_framebuffer_;
+        shadow_rp.renderArea.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
+        shadow_rp.clearValueCount = 1;
+        shadow_rp.pClearValues = &shadow_clear;
+        vkCmdBeginRenderPass(cmd_buf_, &shadow_rp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport shadow_vp{};
+        shadow_vp.width = static_cast<f32>(SHADOW_MAP_SIZE);
+        shadow_vp.height = static_cast<f32>(SHADOW_MAP_SIZE);
+        shadow_vp.minDepth = 0.0f;
+        shadow_vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd_buf_, 0, 1, &shadow_vp);
+
+        VkRect2D shadow_sc{};
+        shadow_sc.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
+        vkCmdSetScissor(cmd_buf_, 0, 1, &shadow_sc);
+
+        // Shadow terrain
+        if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
+            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              shadow_terrain_pipeline_);
+            vkCmdPushConstants(cmd_buf_, shadow_terrain_layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT,
+                               0, sizeof(f32) * 16, light_vp.data());
+
+            VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(cmd_buf_, 0, 1, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_, terrain_mesh_.index_buffer(), 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
+        }
+
+        // Shadow meshes
+        if (!unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_) {
+            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              shadow_mesh_pipeline_);
+
+            // Bind bone SSBO at set=0
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    shadow_mesh_layout_, 0, 1, &bone_ds_,
+                                    0, nullptr);
+
+            struct ShadowMeshPC {
+                f32 lightVP[16];
+                u32 boneBase;
+                u32 bonesPerInst;
+            } spc{};
+            std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
+
+            for (auto& group : unit_renderer_.mesh_groups()) {
+                if (!group.mesh || group.instance_count == 0) continue;
+
+                spc.boneBase = group.bone_base_offset;
+                spc.bonesPerInst = group.bones_per_instance;
+                vkCmdPushConstants(cmd_buf_, shadow_mesh_layout_,
+                                   VK_SHADER_STAGE_VERTEX_BIT,
+                                   0, sizeof(spc), &spc);
+
+                VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
+                                    unit_renderer_.mesh_instance_buffer()};
+                VkDeviceSize buf_offsets[] = {
+                    0,
+                    static_cast<VkDeviceSize>(group.instance_offset) *
+                        sizeof(MeshInstance)};
+                vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
+                vkCmdBindIndexBuffer(cmd_buf_, group.mesh->index_buf.buffer, 0,
+                                     VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd_buf_, group.mesh->index_count,
+                                 group.instance_count, 0, 0, 0);
+            }
+        }
+
+        // Shadow cubes
+        if (unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
+            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              shadow_unit_pipeline_);
+            vkCmdPushConstants(cmd_buf_, shadow_unit_layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT,
+                               0, sizeof(f32) * 16, light_vp.data());
+
+            VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
+                                unit_renderer_.cube_instance_buffer()};
+            VkDeviceSize offsets[] = {0, 0};
+            vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_, unit_renderer_.cube_index_buffer(), 0,
+                                 VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd_buf_, unit_renderer_.cube_index_count(),
+                             unit_renderer_.cube_instance_count(), 0, 0, 0);
+        }
+
+        vkCmdEndRenderPass(cmd_buf_);
+    }
+
+    // ==================== MAIN PASS ====================
     // Begin render pass
     std::array<VkClearValue, 2> clear_values{};
     clear_values[0].color = {{0.1f, 0.15f, 0.3f, 1.0f}}; // dark blue sky
@@ -920,10 +1386,16 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
                                VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(tpc), &tpc);
 
-        // Bind terrain texture descriptor set
+        // Bind terrain texture descriptor set (set=0)
         if (terrain_tex_ds_) {
             vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     terrain_layout_, 0, 1, &terrain_tex_ds_,
+                                    0, nullptr);
+        }
+        // Bind shadow descriptor set (set=1)
+        if (shadow_ds_) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    terrain_layout_, 1, 1, &shadow_ds_,
                                     0, nullptr);
         }
 
@@ -1052,6 +1524,13 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
                                     0, nullptr);
         }
 
+        // Bind shadow descriptor set at set=4
+        if (shadow_ds_) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    mesh_layout_, 4, 1, &shadow_ds_,
+                                    0, nullptr);
+        }
+
         for (auto& group : unit_renderer_.mesh_groups()) {
             if (!group.mesh || group.instance_count == 0) continue;
 
@@ -1107,6 +1586,14 @@ void Renderer::render(const sim::SimState& sim, lua_State* L) {
     if (unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           unit_pipeline_);
+
+        // Bind shadow descriptor set at set=0
+        if (shadow_ds_) {
+            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    unit_layout_, 0, 1, &shadow_ds_,
+                                    0, nullptr);
+        }
+
         vkCmdPushConstants(cmd_buf_, unit_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(f32) * 16, vp.data());
@@ -1259,6 +1746,26 @@ void Renderer::shutdown() {
     if (decal_instance_buf_.buffer)
         vmaDestroyBuffer(allocator_, decal_instance_buf_.buffer,
                          decal_instance_buf_.allocation);
+
+    // Shadow infrastructure
+    if (shadow_ds_pool_)
+        vkDestroyDescriptorPool(device_, shadow_ds_pool_, nullptr);
+    if (shadow_ds_layout_)
+        vkDestroyDescriptorSetLayout(device_, shadow_ds_layout_, nullptr);
+    vkDestroyPipeline(device_, shadow_terrain_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, shadow_terrain_layout_, nullptr);
+    vkDestroyPipeline(device_, shadow_mesh_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, shadow_mesh_layout_, nullptr);
+    vkDestroyPipeline(device_, shadow_unit_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, shadow_unit_layout_, nullptr);
+    vkDestroyFramebuffer(device_, shadow_framebuffer_, nullptr);
+    vkDestroyRenderPass(device_, shadow_render_pass_, nullptr);
+    if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
+    if (shadow_image_.view) vkDestroyImageView(device_, shadow_image_.view, nullptr);
+    if (shadow_image_.image)
+        vmaDestroyImage(allocator_, shadow_image_.image, shadow_image_.allocation);
+    if (light_ubo_.buffer)
+        vmaDestroyBuffer(allocator_, light_ubo_.buffer, light_ubo_.allocation);
 
     // Pipelines
     vkDestroyPipeline(device_, terrain_pipeline_, nullptr);

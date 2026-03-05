@@ -60,16 +60,37 @@ void Camera::update(GLFWwindow* window, f64 dt) {
     } else {
         orbiting_ = false;
     }
+
+    // Decay camera shake
+    if (shake_intensity_ > 0.01f)
+        shake_intensity_ *= 0.9f;
+    else
+        shake_intensity_ = 0;
+}
+
+void Camera::apply_shake(f32 intensity) {
+    shake_intensity_ = std::max(shake_intensity_, intensity);
 }
 
 std::array<f32, 16> Camera::view_proj(f32 aspect) const {
+    // Apply shake offset to target
+    f32 tx = target_x_;
+    f32 tz = target_z_;
+    if (shake_intensity_ > 0.01f) {
+        // Simple deterministic pseudo-random offset from intensity
+        // (varies each frame because intensity decays)
+        f32 phase = shake_intensity_ * 137.5f; // irrational-ish multiplier
+        tx += std::sin(phase * 3.7f) * shake_intensity_;
+        tz += std::cos(phase * 2.3f) * shake_intensity_;
+    }
+
     // Eye position from spherical coordinates
-    f32 eye_x = target_x_ + distance_ * std::sin(yaw_) * std::cos(pitch_);
+    f32 eye_x = tx + distance_ * std::sin(yaw_) * std::cos(pitch_);
     f32 eye_y = distance_ * std::sin(pitch_);
-    f32 eye_z = target_z_ + distance_ * std::cos(yaw_) * std::cos(pitch_);
+    f32 eye_z = tz + distance_ * std::cos(yaw_) * std::cos(pitch_);
 
     auto view = math::look_at(eye_x, eye_y, eye_z,
-                              target_x_, 0.0f, target_z_,
+                              tx, 0.0f, tz,
                               0.0f, 1.0f, 0.0f);
     auto proj = math::perspective(0.785f, aspect, 1.0f, 5000.0f); // 45 deg FOV
 
@@ -77,6 +98,7 @@ std::array<f32, 16> Camera::view_proj(f32 aspect) const {
 }
 
 void Camera::eye_position(f32& x, f32& y, f32& z) const {
+    // Use raw target (no shake) for eye position used by culling/specular
     x = target_x_ + distance_ * std::sin(yaw_) * std::cos(pitch_);
     y = distance_ * std::sin(pitch_);
     z = target_z_ + distance_ * std::cos(yaw_) * std::cos(pitch_);
@@ -128,6 +150,16 @@ std::array<f32, 16> perspective(f32 fov_rad, f32 aspect, f32 near, f32 far) {
         0,                   -1.0f / t,   0,                         0,
         0,                    0,          -far / range,              -1,
         0,                    0,          -(far * near) / range,      0
+    };
+}
+
+std::array<f32, 16> ortho(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f) {
+    // Column-major, Vulkan [0,1] depth, no Y-flip (shadow maps)
+    return {
+        2.0f / (r - l),     0,                  0,                  0,
+        0,                  2.0f / (t - b),     0,                  0,
+        0,                  0,                 -1.0f / (f - n),     0,
+        -(r + l) / (r - l), -(t + b) / (t - b), -n / (f - n),      1
     };
 }
 
