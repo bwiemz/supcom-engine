@@ -96,6 +96,7 @@ static void print_usage() {
               << "  --blend-test       Blend-weight skinning (multi-bone vertex parsing, weight validation)\n"
               << "  --ui-test          UI control system (Frame, Group, LazyVar, moho bindings)\n"
               << "  --bitmap-test      Bitmap control (SetNewTexture, solid color, UVs, animation)\n"
+              << "  --text-test        Text control (SetNewFont, SetText, font metrics, centering)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --help             Show this help message\n";
@@ -259,6 +260,7 @@ int main(int argc, char* argv[]) {
     bool blend_test = parse_flag(argc, argv, "--blend-test");
     bool ui_test = parse_flag(argc, argv, "--ui-test");
     bool bitmap_test = parse_flag(argc, argv, "--bitmap-test");
+    bool text_test = parse_flag(argc, argv, "--text-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -280,7 +282,8 @@ int main(int argc, char* argv[]) {
                     massstub4_test || spatial_test ||
                     unitsound_test || medstub_test ||
                     lowstub_test || blend_test ||
-                    ui_test || bitmap_test;
+                    ui_test || bitmap_test ||
+                    text_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -524,6 +527,7 @@ int main(int argc, char* argv[]) {
     if (blend_test && !map_path.empty()) osc::test::test_blend(test_ctx);
     if (ui_test && !map_path.empty()) osc::test::test_ui(test_ctx);
     if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(test_ctx);
+    if (text_test && !map_path.empty()) osc::test::test_text(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

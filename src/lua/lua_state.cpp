@@ -124,7 +124,7 @@ Result<void> LuaState::do_string(std::string_view code) {
         return Error(std::move(err));
     }
 
-    status = lua_pcall(L_, 0, 0, 0);
+    status = lua_pcall(L_, 0, LUA_MULTRET, 0);
     if (status != 0) {
         std::string err = lua_tostring(L_, -1);
         lua_pop(L_, 1);

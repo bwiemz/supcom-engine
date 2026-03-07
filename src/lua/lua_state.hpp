@@ -55,6 +55,8 @@ public:
     void set_global_table(const char* name);
 
     /// Execute a string of Lua code.
+    /// Return values from the Lua chunk are left on the stack (LUA_MULTRET).
+    /// Callers that use `return` in Lua code must pop the results themselves.
     Result<void> do_string(std::string_view code);
 
     /// Execute a file from the real filesystem (for init context).

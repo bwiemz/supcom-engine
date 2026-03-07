@@ -77,5 +77,6 @@ void test_lowstub(TestContext& ctx);
 void test_blend(TestContext& ctx);
 void test_ui(TestContext& ctx);
 void test_bitmap(TestContext& ctx);
+void test_text(TestContext& ctx);
 
 } // namespace osc::test

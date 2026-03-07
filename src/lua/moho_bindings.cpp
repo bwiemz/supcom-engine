@@ -7569,6 +7569,186 @@ static const MethodEntry ui_bitmap_methods[] = {
 };
 // clang-format on
 
+// ====================================================================
+// Text methods (M73)
+// ====================================================================
+
+/// Helper: parse a hex color string like "ff00ff00" or "AARRGGBB" to u32.
+static u32 parse_color_hex(const char* s) {
+    if (!s) return 0xFFFFFFFF;
+    u32 val = 0;
+    for (int i = 0; i < 8 && s[i]; i++) {
+        char c = s[i];
+        u32 nibble = 0;
+        if (c >= '0' && c <= '9') nibble = c - '0';
+        else if (c >= 'a' && c <= 'f') nibble = 10 + (c - 'a');
+        else if (c >= 'A' && c <= 'F') nibble = 10 + (c - 'A');
+        val = (val << 4) | nibble;
+    }
+    return val;
+}
+
+/// Helper: update font metrics on a control based on font family + point size.
+/// For now uses simple heuristics (ascent ≈ 0.8 * pointsize, descent ≈ 0.2 * pointsize).
+/// TODO: Replace with stb_truetype when font rendering is implemented.
+static void update_font_metrics(ui::UIControl* ctrl) {
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    ctrl->set_font_ascent(ps * 0.8f);
+    ctrl->set_font_descent(ps * 0.2f);
+    ctrl->set_font_external_leading(ps * 0.05f);
+}
+
+/// Helper: update text advance (width) for the current text content.
+/// Simple heuristic: average character width ≈ 0.6 * pointsize.
+static void update_text_advance(ui::UIControl* ctrl) {
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    f32 avg_char_width = ps * 0.6f;
+    ctrl->set_text_advance(avg_char_width * ctrl->text_content().size());
+}
+
+/// Helper: call LazyVar:Set(value) on self[name].
+/// Uses lua_gettable (not lua_rawget) to find Set through metatables.
+static void set_lazyvar_value(lua_State* L, int self_idx, const char* name, f32 value) {
+    if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
+    int top = lua_gettop(L);
+    lua_pushstring(L, name);
+    lua_rawget(L, self_idx);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Set");
+        lua_gettable(L, -2); // use gettable to check metatables
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, -2); // LazyVar self
+            lua_pushnumber(L, value);
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                lua_pop(L, 1); // pop error message
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    lua_settop(L, top); // restore stack cleanly
+}
+
+/// Helper: update FontAscent/FontDescent/FontExternalLeading/TextAdvance LazyVars
+/// on the Lua self table after font metrics change.
+static void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl) {
+    if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
+    set_lazyvar_value(L, self_idx, "FontAscent", ctrl->font_ascent());
+    set_lazyvar_value(L, self_idx, "FontDescent", ctrl->font_descent());
+    set_lazyvar_value(L, self_idx, "FontExternalLeading", ctrl->font_external_leading());
+    set_lazyvar_value(L, self_idx, "TextAdvance", ctrl->text_advance());
+}
+
+/// text:SetNewFont(family, pointsize)
+static int text_SetNewFont(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        ctrl->set_font_family(lua_tostring(L, 2));
+    }
+    if (lua_isnumber(L, 3)) {
+        ctrl->set_font_pointsize(static_cast<i32>(lua_tonumber(L, 3)));
+    }
+    update_font_metrics(ctrl);
+    update_text_advance(ctrl);
+    // Update LazyVars on self table
+    push_font_lazyvars(L, 1, ctrl);
+    return 0;
+}
+
+/// text:SetNewColor(color) — color is hex string like "ffFFFFFF"
+static int text_SetNewColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        ctrl->set_text_color(parse_color_hex(lua_tostring(L, 2)));
+    }
+    return 0;
+}
+
+/// text:SetText(text)
+static int text_SetText(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        ctrl->set_text_content(lua_tostring(L, 2));
+    } else if (lua_isnumber(L, 2)) {
+        // SetText can accept a number — convert to string
+        ctrl->set_text_content(std::to_string(static_cast<int>(lua_tonumber(L, 2))));
+    } else {
+        ctrl->set_text_content("");
+    }
+    update_text_advance(ctrl);
+    // Update TextAdvance LazyVar
+    push_font_lazyvars(L, 1, ctrl);
+    return 0;
+}
+
+/// text:GetText() → string
+static int text_GetText(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, ""); return 1; }
+    lua_pushstring(L, ctrl->text_content().c_str());
+    return 1;
+}
+
+/// text:SetDropShadow(bool)
+static int text_SetDropShadow(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_drop_shadow(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// text:SetNewClipToWidth(bool)
+static int text_SetNewClipToWidth(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_clip_to_width(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// text:SetCenteredVertically(bool)
+static int text_SetCenteredVertically(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_centered_vertically(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// text:SetCenteredHorizontally(bool)
+static int text_SetCenteredHorizontally(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_centered_horizontally(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// text:GetStringAdvance(text) → number
+/// Returns the pixel width of the given string in the current font.
+static int text_GetStringAdvance(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnumber(L, 0); return 1; }
+    if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
+    const char* s = lua_tostring(L, 2);
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    f32 avg_char_width = ps * 0.6f;
+    f32 advance = s ? (avg_char_width * std::strlen(s)) : 0.0f;
+    lua_pushnumber(L, advance);
+    return 1;
+}
+
+// clang-format off
+static const MethodEntry ui_text_methods[] = {
+    {"SetNewFont",              text_SetNewFont},
+    {"SetNewColor",             text_SetNewColor},
+    {"SetText",                 text_SetText},
+    {"GetText",                 text_GetText},
+    {"SetDropShadow",           text_SetDropShadow},
+    {"SetNewClipToWidth",       text_SetNewClipToWidth},
+    {"SetCenteredVertically",   text_SetCenteredVertically},
+    {"SetCenteredHorizontally", text_SetCenteredHorizontally},
+    {"GetStringAdvance",        text_GetStringAdvance},
+    {nullptr, nullptr},
+};
+// clang-format on
+
 // --- Factory functions (registered as globals) ---
 
 /// Helper: create a LazyVar for a control and store it as self[name].
@@ -7757,6 +7937,72 @@ static int l_InternalCreateBitmap(lua_State* L) {
     return 0;
 }
 
+/// InternalCreateText(self, parent)
+static int l_InternalCreateText(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateText: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateText: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateText: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Create 7 layout LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Create 4 font metric LazyVars
+    create_lazyvar(L, 1, "FontAscent");
+    create_lazyvar(L, 1, "FontDescent");
+    create_lazyvar(L, 1, "FontExternalLeading");
+    create_lazyvar(L, 1, "TextAdvance");
+
+    // Set initial font metrics from defaults
+    update_font_metrics(ctrl);
+    update_text_advance(ctrl);
+    push_font_lazyvars(L, 1, ctrl);
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateText: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateText: control #{}", id);
+    return 0;
+}
+
 /// GetTextureDimensions(filename, border) → width, height
 static int l_GetTextureDimensions(lua_State* L) {
     if (lua_type(L, 1) != LUA_TSTRING) {
@@ -7848,7 +8094,7 @@ static const MohoClassDef moho_classes[] = {
     {"mesh_methods",            empty_methods,  "control_methods"},
     {"movie_methods",           empty_methods,  "control_methods"},
     {"scrollbar_methods",       empty_methods,  "control_methods"},
-    {"text_methods",            empty_methods,  "control_methods"},
+    {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             empty_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   empty_methods,  nullptr},
@@ -7924,6 +8170,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("InternalCreateGroup", l_InternalCreateGroup);
     state.register_function("InternalCreateFrame", l_InternalCreateFrame);
     state.register_function("InternalCreateBitmap", l_InternalCreateBitmap);
+    state.register_function("InternalCreateText", l_InternalCreateText);
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
 
     // Cache the LazyVar.Create function in registry for fast access.

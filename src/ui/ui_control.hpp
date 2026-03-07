@@ -119,6 +119,36 @@ public:
         num_frames_ = static_cast<i32>(textures_.size());
     }
 
+    // --- Text state ---
+    const std::string& text_content() const { return text_content_; }
+    void set_text_content(const std::string& t) { text_content_ = t; }
+
+    const std::string& font_family() const { return font_family_; }
+    void set_font_family(const std::string& f) { font_family_ = f; }
+    i32 font_pointsize() const { return font_pointsize_; }
+    void set_font_pointsize(i32 s) { font_pointsize_ = s; }
+
+    u32 text_color() const { return text_color_; }
+    void set_text_color(u32 c) { text_color_ = c; }
+
+    bool drop_shadow() const { return drop_shadow_; }
+    void set_drop_shadow(bool s) { drop_shadow_ = s; }
+    bool clip_to_width() const { return clip_to_width_; }
+    void set_clip_to_width(bool c) { clip_to_width_ = c; }
+    bool centered_vertically() const { return centered_vertically_; }
+    void set_centered_vertically(bool c) { centered_vertically_ = c; }
+    bool centered_horizontally() const { return centered_horizontally_; }
+    void set_centered_horizontally(bool c) { centered_horizontally_ = c; }
+
+    f32 font_ascent() const { return font_ascent_; }
+    void set_font_ascent(f32 a) { font_ascent_ = a; }
+    f32 font_descent() const { return font_descent_; }
+    void set_font_descent(f32 d) { font_descent_ = d; }
+    f32 font_external_leading() const { return font_external_leading_; }
+    void set_font_external_leading(f32 l) { font_external_leading_ = l; }
+    f32 text_advance() const { return text_advance_; }
+    void set_text_advance(f32 a) { text_advance_ = a; }
+
 private:
     u32 control_id_ = 0;
     std::string name_;
@@ -152,6 +182,20 @@ private:
     bool anim_looping_ = false;
     std::vector<i32> frame_pattern_;
     std::vector<std::string> textures_;
+
+    // Text state
+    std::string text_content_;
+    std::string font_family_ = "Arial";
+    i32 font_pointsize_ = 14;
+    u32 text_color_ = 0xFFFFFFFF;
+    bool drop_shadow_ = false;
+    bool clip_to_width_ = false;
+    bool centered_vertically_ = false;
+    bool centered_horizontally_ = false;
+    f32 font_ascent_ = 0.0f;
+    f32 font_descent_ = 0.0f;
+    f32 font_external_leading_ = 0.0f;
+    f32 text_advance_ = 0.0f;
 };
 
 /// Registry of all live UI controls, analogous to EntityRegistry.

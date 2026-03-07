@@ -7335,4 +7335,222 @@ void test_bitmap(TestContext& ctx) {
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
 }
 
+void test_text(TestContext& ctx) {
+    spdlog::info("=== TEXT CONTROL TEST (M73) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // Test 1: InternalCreateText is a global function
+    {
+        lua_pushstring(L, "InternalCreateText");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateText is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateText not found"); }
+    }
+
+    // Test 2: moho.text_methods has SetText (real method after flattening)
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "text_methods");
+        lua_rawget(L, -2);
+        bool has_method = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetText");
+            lua_rawget(L, -2);
+            has_method = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_method) { pass++; spdlog::info("[PASS] Test 2: moho.text_methods.SetText is a function"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: text_methods.SetText missing"); }
+    }
+
+    // Test 3: moho.text_methods inherits Destroy from control_methods
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "text_methods");
+        lua_rawget(L, -2);
+        bool has_destroy = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            has_destroy = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_destroy) { pass++; spdlog::info("[PASS] Test 3: text_methods has Destroy (inherited)"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: text_methods missing inherited Destroy"); }
+    }
+
+    // Helper: create a text control (bypasses text.lua import chain)
+    const char* mk_text =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "local f = Frame('TextFrame')\n"
+        "local t = {}\n"
+        "setmetatable(t, {__index = moho.text_methods})\n"
+        "InternalCreateText(t, f)\n";
+
+    // Test 4: Create text control via InternalCreateText
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "if t._c_object then return true end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 4 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 4: Text created via InternalCreateText"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: Text creation failed"); }
+    }
+
+    // Test 5: SetText / GetText
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetText('Hello World')\n"
+            "local got = t:GetText()\n"
+            "LOG('Text content: ' .. tostring(got))\n"
+            "return (got == 'Hello World')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 5 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: SetText/GetText round-trip works"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: SetText/GetText failed"); }
+    }
+
+    // Test 6: SetText with number
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetText(42)\n"
+            "local got = t:GetText()\n"
+            "LOG('Text from number: ' .. tostring(got))\n"
+            "return (got == '42')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 6 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: SetText with number works"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: SetText with number failed"); }
+    }
+
+    // Test 7: SetNewFont updates font metrics
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetNewFont('Arial', 20)\n"
+            "local asc = t.FontAscent()\n"
+            "local desc = t.FontDescent()\n"
+            "LOG('Font metrics: ascent=' .. tostring(asc) .. ' descent=' .. tostring(desc))\n"
+            "return (asc > 0 and desc > 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 7 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: SetNewFont updates font metrics"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: SetNewFont font metrics failed"); }
+    }
+
+    // Test 8: FontAscent/FontDescent/FontExternalLeading/TextAdvance are LazyVars
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "local ok = (type(t.FontAscent) == 'table')\n"
+            "ok = ok and (type(t.FontDescent) == 'table')\n"
+            "ok = ok and (type(t.FontExternalLeading) == 'table')\n"
+            "ok = ok and (type(t.TextAdvance) == 'table')\n"
+            "return ok\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 8 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: Font metric LazyVars are tables"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: Font metric LazyVars not tables"); }
+    }
+
+    // Test 9: SetNewColor / SetDropShadow / SetNewClipToWidth
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetNewColor('ffFF0000')\n"
+            "t:SetDropShadow(true)\n"
+            "t:SetNewClipToWidth(true)\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 9 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: SetNewColor/SetDropShadow/SetNewClipToWidth work"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: Color/shadow/clip failed"); }
+    }
+
+    // Test 10: SetCenteredVertically / SetCenteredHorizontally
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetCenteredVertically(true)\n"
+            "t:SetCenteredHorizontally(true)\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 10 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: SetCenteredVertically/Horizontally work"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: Centering failed"); }
+    }
+
+    // Test 11: GetStringAdvance returns positive value for non-empty string
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetNewFont('Arial', 14)\n"
+            "local adv = t:GetStringAdvance('Hello')\n"
+            "LOG('StringAdvance for Hello: ' .. tostring(adv))\n"
+            "return (adv > 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 11 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 11: GetStringAdvance returns positive value"); }
+        else { fail++; spdlog::error("[FAIL] Test 11: GetStringAdvance failed"); }
+    }
+
+    // Test 12: TextAdvance LazyVar updates when text changes
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_text) +
+            "t:SetNewFont('Arial', 14)\n"
+            "t:SetText('AB')\n"
+            "local adv1 = t.TextAdvance()\n"
+            "t:SetText('ABCDEF')\n"
+            "local adv2 = t.TextAdvance()\n"
+            "LOG('TextAdvance: 2chars=' .. tostring(adv1) .. ' 6chars=' .. tostring(adv2))\n"
+            "return (adv2 > adv1)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 12 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 12: TextAdvance increases with text length"); }
+        else { fail++; spdlog::error("[FAIL] Test 12: TextAdvance not proportional to length"); }
+    }
+
+    // Test 13: Text parent linkage
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('TextParent')\n"
+            "f:SetName('TextParent')\n"
+            "local t = {}\n"
+            "setmetatable(t, {__index = moho.text_methods})\n"
+            "InternalCreateText(t, f)\n"
+            "local parent = t:GetParent()\n"
+            "if parent and parent:GetName() == 'TextParent' then\n"
+            "    return true\n"
+            "end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 13 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 13: Text parent linkage correct"); }
+        else { fail++; spdlog::error("[FAIL] Test 13: Text parent linkage failed"); }
+    }
+
+    spdlog::info("Text test: {}/{} passed", pass, pass + fail);
+}
+
 } // namespace osc::test
