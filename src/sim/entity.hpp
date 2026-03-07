@@ -118,6 +118,7 @@ struct ChildAttachment {
 };
 
 struct BoneData; // forward decl
+class EntityRegistry; // forward decl for grid auto-notify
 
 class Entity {
 public:
@@ -131,7 +132,7 @@ public:
     void set_army(i32 a) { army_ = a; }
 
     const Vector3& position() const { return position_; }
-    void set_position(const Vector3& p) { position_ = p; }
+    void set_position(const Vector3& p); // implemented in entity.cpp (auto-notifies spatial grid)
 
     const Quaternion& orientation() const { return orientation_; }
     void set_orientation(const Quaternion& o) { orientation_ = o; }
@@ -224,6 +225,12 @@ public:
             children_.end());
     }
 
+    // Spatial grid cell tracking (managed by EntityRegistry)
+    i32 grid_cell_x() const { return grid_cell_x_; }
+    i32 grid_cell_z() const { return grid_cell_z_; }
+    void set_grid_cell(i32 cx, i32 cz) { grid_cell_x_ = cx; grid_cell_z_ = cz; }
+    void set_registry(EntityRegistry* r) { registry_ = r; }
+
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
@@ -261,6 +268,9 @@ private:
     i32 attached_bone_ = -1;
     Vector3 parent_offset_;
     std::vector<ChildAttachment> children_;
+    i32 grid_cell_x_ = -1; // spatial grid cell, -1 = not in grid
+    i32 grid_cell_z_ = -1;
+    EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
 };
 
 } // namespace osc::sim

@@ -305,12 +305,13 @@ layout(push_constant) uniform PushConstants {
     float eyeX, eyeY, eyeZ;
 } pc;
 
-// Per-vertex (binding 0): position + normal + UV + bone_index + tangent
+// Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
-layout(location = 8) in int inBoneIndex;
-layout(location = 9) in vec3 inTangent;
+layout(location = 8) in uvec4 inBoneIndices;
+layout(location = 9) in vec4 inBoneWeights;
+layout(location = 10) in vec3 inTangent;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -329,15 +330,17 @@ layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec3 fragWorldPos;
 
 void main() {
-    // Apply skeletal skinning: bone transform before model matrix
-    uint boneIdx = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst
-                   + uint(inBoneIndex);
-    mat4 bone = boneSSBO.bones[boneIdx];
+    // Blend-weight skeletal skinning: up to 4 bone influences per vertex
+    uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
+    mat4 bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
+              + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
+              + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
+              + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.viewProj * worldPos;
     fragWorldPos = worldPos.xyz;
-    // Transform TBN vectors through bone then model
+    // Transform TBN vectors through blended bone then model
     mat3 normalMat = mat3(inModel) * mat3(bone);
     fragNormal = normalMat * inNormal;
     fragTangent = normalMat * inTangent;
@@ -490,12 +493,13 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
 } pc;
 
-// Per-vertex (binding 0): position + normal + UV + bone_index + tangent
+// Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
-layout(location = 8) in int inBoneIndex;
-layout(location = 9) in vec3 inTangent;
+layout(location = 8) in uvec4 inBoneIndices;
+layout(location = 9) in vec4 inBoneWeights;
+layout(location = 10) in vec3 inTangent;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -507,9 +511,11 @@ layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
 } boneSSBO;
 
 void main() {
-    uint boneIdx = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst
-                   + uint(inBoneIndex);
-    mat4 bone = boneSSBO.bones[boneIdx];
+    uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
+    mat4 bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
+              + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
+              + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
+              + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.lightViewProj * worldPos;

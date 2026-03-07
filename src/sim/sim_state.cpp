@@ -112,6 +112,12 @@ void SimState::build_visibility_grid() {
                  visibility_grid_->cell_size());
 }
 
+void SimState::build_spatial_grid() {
+    if (!terrain_) return;
+    entity_registry_.init_spatial_grid(
+        terrain_->map_width(), terrain_->map_height());
+}
+
 // --- Blip cache helpers ---
 
 const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,

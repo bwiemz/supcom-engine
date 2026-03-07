@@ -92,6 +92,7 @@ public:
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
     const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
     void build_visibility_grid();
+    void build_spatial_grid();
     map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
 
     // Audio

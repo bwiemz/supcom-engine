@@ -307,6 +307,88 @@ static int weapon_PlaySound(lua_State* L) {
     return 0;
 }
 
+/// Look up Blueprint.Audio[soundName] from unit table at stack index self_idx.
+/// On success pushes 3 values (Blueprint, Audio, audioEntry) and returns true.
+/// On failure pops any partial pushes and returns false.
+static bool lookup_blueprint_audio(lua_State* L, int self_idx, int sound_arg) {
+    if (lua_type(L, sound_arg) != LUA_TSTRING) return false;
+    lua_pushstring(L, "Blueprint");
+    lua_rawget(L, self_idx);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
+    lua_pushstring(L, "Audio");
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return false; }
+    lua_pushvalue(L, sound_arg);
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 3); return false; }
+    return true;
+}
+
+/// unit:PlayUnitSound(soundName) — look up Blueprint.Audio[soundName], play one-shot
+static int unit_PlayUnitSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) { lua_pushboolean(L, 0); return 1; }
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+
+    std::string bank, cue;
+    int audio_idx = lua_gettop(L);
+    if (!extract_sound_table(L, audio_idx, bank, cue)) {
+        lua_pop(L, 3);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pop(L, 3);
+
+    auto pos = e->position();
+    mgr->play(bank, cue, &pos);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// unit:PlayUnitAmbientSound(soundName) — look up Blueprint.Audio[soundName], start loop
+static int unit_PlayUnitAmbientSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) { lua_pushboolean(L, 0); return 1; }
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+
+    std::string bank, cue;
+    int audio_idx = lua_gettop(L);
+    if (!extract_sound_table(L, audio_idx, bank, cue)) {
+        lua_pop(L, 3);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pop(L, 3);
+
+    // Stop existing ambient
+    if (e->ambient_sound_handle() != 0) {
+        mgr->stop(e->ambient_sound_handle());
+        e->set_ambient_sound_handle(0);
+    }
+    auto pos = e->position();
+    auto handle = mgr->play_loop(bank, cue, &pos);
+    e->set_ambient_sound_handle(handle);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// unit:StopUnitAmbientSound() — stop current ambient loop
+static int unit_StopUnitAmbientSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) { lua_pushboolean(L, 1); return 1; }
+    if (mgr && e->ambient_sound_handle() != 0) {
+        mgr->stop(e->ambient_sound_handle());
+        e->set_ambient_sound_handle(0);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 // --- Bone helper functions ---
 
 /// Resolve bone argument (string name or integer index) → bone index.
@@ -702,6 +784,8 @@ static int entity_Destroy(lua_State* L) {
                     w->blueprint_ref = LUA_NOREF;
                 }
             }
+            // Release on-given callback refs
+            unit->clear_on_given_callbacks(L);
         }
 
         // Null out _c_object in the Lua table to prevent use-after-free
@@ -2960,6 +3044,17 @@ static int unit_RevertElevation(lua_State* L) {
     return 0;
 }
 
+// self:AddOnGivenCallback(fn)
+static int unit_AddOnGivenCallback(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    if (!lua_isfunction(L, 2)) return 0;
+    lua_pushvalue(L, 2);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    u->add_on_given_callback(ref);
+    return 0;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -3071,10 +3166,10 @@ static const MethodEntry unit_methods[] = {
     {"GetScriptBit",                unit_GetScriptBit},
     {"AddBuildRestriction",         unit_AddBuildRestriction},
     {"RemoveBuildRestriction",      unit_RemoveBuildRestriction},
-    {"AddOnGivenCallback",          stub_noop},
-    {"PlayUnitSound",               stub_noop},
-    {"PlayUnitAmbientSound",        stub_noop},
-    {"StopUnitAmbientSound",        stub_noop},
+    {"AddOnGivenCallback",          unit_AddOnGivenCallback},
+    {"PlayUnitSound",               unit_PlayUnitSound},
+    {"PlayUnitAmbientSound",        unit_PlayUnitAmbientSound},
+    {"StopUnitAmbientSound",        unit_StopUnitAmbientSound},
     {"SetDoNotTarget",              entity_SetDoNotTarget},
     {"GetGuards",                   unit_GetGuards},
     {"UpdateStat",                  unit_UpdateStat},
@@ -6773,6 +6868,7 @@ static const MethodEntry manipulator_methods[] = {
 
 static const MethodEntry aim_manipulator_methods[] = {
     {"SetFiringArc",            aim_SetFiringArc},
+    {"SetAimingArc",            aim_SetFiringArc},   // alias used by builder arm
     {"SetHeadingPitch",         aim_SetHeadingPitch},
     {"GetHeadingPitch",         aim_GetHeadingPitch},
     {"OnTarget",                aim_OnTarget},
@@ -6782,6 +6878,17 @@ static const MethodEntry aim_manipulator_methods[] = {
     {nullptr, nullptr},
 };
 
+// animator:SetBoneEnabled(boneName, enabled)
+static int anim_SetBoneEnabled(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (!m || !m->owner()) return 0;
+    auto* anim = static_cast<sim::AnimManipulator*>(m);
+    i32 bone_idx = resolve_bone_index(m->owner(), L, 2);
+    bool enabled = lua_toboolean(L, 3) != 0;
+    anim->set_bone_enabled(bone_idx, enabled);
+    return 0;
+}
+
 static const MethodEntry animation_manipulator_methods[] = {
     {"PlayAnim",                anim_PlayAnim},
     {"SetRate",                 anim_SetRate},
@@ -6790,7 +6897,7 @@ static const MethodEntry animation_manipulator_methods[] = {
     {"GetAnimationDuration",    anim_GetAnimationDuration},
     {"GetAnimationTime",        anim_GetAnimationTime},
     {"SetAnimationTime",        anim_SetAnimationTime},
-    {"SetBoneEnabled",          stub_noop},
+    {"SetBoneEnabled",          anim_SetBoneEnabled},
     {nullptr, nullptr},
 };
 
@@ -6814,14 +6921,45 @@ static const MethodEntry slide_manipulator_methods[] = {
     {nullptr, nullptr},
 };
 
+// Destroy/BeenDestroyed for tracked objects (IEffect, CollisionBeam, decal)
+// Sets _destroyed = true on the Lua self table
+static int destroy_tracked_object(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_destroyed");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
+// Checks _destroyed field on self
+static int been_destroyed_check(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_destroyed");
+        lua_rawget(L, 1);
+        bool destroyed = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        lua_pushboolean(L, destroyed ? 1 : 0);
+    } else {
+        lua_pushboolean(L, 0);
+    }
+    return 1;
+}
+
+// BuilderArmManipulator — FA scripts cache moho.BuilderArmManipulator.SetAimingArc
+static const MethodEntry builder_arm_methods[] = {
+    {"SetAimingArc",            aim_SetFiringArc},
+    {nullptr, nullptr},
+};
+
 // IEffect — chainable methods return self
 static const MethodEntry ieffect_methods[] = {
     {"ScaleEmitter",            stub_return_self},
     {"OffsetEmitter",           stub_return_self},
     {"SetEmitterParam",         stub_return_self},
     {"SetEmitterCurveParam",    stub_return_self},
-    {"Destroy",                 stub_noop},
-    {"BeenDestroyed",           stub_return_false},
+    {"Destroy",                 destroy_tracked_object},
+    {"BeenDestroyed",           been_destroyed_check},
     {nullptr, nullptr},
 };
 
@@ -6852,7 +6990,8 @@ static const MethodEntry economy_event_methods[] = {
 };
 
 static const MethodEntry decal_handle_methods[] = {
-    {"Destroy",                 stub_noop},
+    {"Destroy",                 destroy_tracked_object},
+    {"BeenDestroyed",           been_destroyed_check},
     {nullptr, nullptr},
 };
 
@@ -6865,8 +7004,8 @@ static const MethodEntry collision_beam_methods[] = {
     {"Disable",                 stub_noop},
     {"SetBeamFx",               stub_noop},
     {"IsEnabled",               stub_return_false},
-    {"Destroy",                 stub_noop},
-    {"BeenDestroyed",           stub_return_false},
+    {"Destroy",                 destroy_tracked_object},
+    {"BeenDestroyed",           been_destroyed_check},
     {nullptr, nullptr},
 };
 // clang-format on
@@ -6917,7 +7056,7 @@ static const MohoClassDef moho_classes[] = {
     // Manipulators (inherit from manipulator_methods)
     {"AimManipulator",          aim_manipulator_methods,        "manipulator_methods"},
     {"AnimationManipulator",    animation_manipulator_methods,  "manipulator_methods"},
-    {"BuilderArmManipulator",   empty_methods,                  "manipulator_methods"},
+    {"BuilderArmManipulator",   builder_arm_methods,            "manipulator_methods"},
     {"RotateManipulator",       rotate_manipulator_methods,     "manipulator_methods"},
     {"SlideManipulator",        slide_manipulator_methods,      "manipulator_methods"},
     {"SlaveManipulator",        empty_methods,                  "manipulator_methods"},

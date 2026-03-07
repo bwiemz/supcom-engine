@@ -250,7 +250,7 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
     //                vert_count, index_offset, index_count, info_offset,
     //                info_count, total_bone_count
     reader.skip(4); // bone_offset
-    reader.skip(4); // bone_count
+    u32 bone_count = reader.read_u32();
     u32 vert_offset = reader.read_u32();
     reader.skip(4); // extra_vert_offset
     u32 vert_count = reader.read_u32();
@@ -297,11 +297,20 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
         v.v = reader.read_f32();
         // Skip UV2 (2 floats = 8 bytes)
         reader.skip(8);
-        // Bone index (4 bytes — rigid skinning: first byte is bone index)
-        u8 bone_bytes[4];
-        std::memcpy(bone_bytes, file_data.data() + reader.position(), 4);
+        // Bone indices (4 bytes — up to 4 bone influences per vertex)
+        std::memcpy(v.bone_indices, file_data.data() + reader.position(), 4);
         reader.skip(4);
-        v.bone_index = static_cast<i32>(bone_bytes[0]);
+        // Clamp bone indices to valid range to prevent GPU SSBO out-of-bounds
+        u8 max_bone = bone_count > 0 ? static_cast<u8>(bone_count - 1) : 0;
+        for (int bi = 0; bi < 4; bi++)
+            if (v.bone_indices[bi] > max_bone) v.bone_indices[bi] = max_bone;
+        // Equal-weight blending: 0.25 per slot (SCM v5 has no explicit weights).
+        // When multiple slots reference the same bone, the shader naturally
+        // accumulates the correct total weight (e.g. [3,3,3,3] → 1.0×bone[3]).
+        v.bone_weights[0] = 0.25f;
+        v.bone_weights[1] = 0.25f;
+        v.bone_weights[2] = 0.25f;
+        v.bone_weights[3] = 0.25f;
     }
 
     // --- Indices (6 bytes per triangle = 3 × u16) ---

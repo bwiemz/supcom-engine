@@ -155,6 +155,13 @@ void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
     }
 }
 
+void Unit::clear_on_given_callbacks(lua_State* L) {
+    for (int ref : on_given_callbacks_) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ref);
+    }
+    on_given_callbacks_.clear();
+}
+
 void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) return;
     auto& registry = ctx.registry;

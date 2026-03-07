@@ -691,7 +691,7 @@ void Renderer::create_pipelines() {
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_index + tangent = 48 bytes)
+        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_indices + bone_weights + tangent = 64 bytes)
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -700,8 +700,8 @@ void Renderer::create_pipelines() {
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 10 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_index(8), tangent(9)
-        std::array<VkVertexInputAttributeDescription, 10> attrs{};
+        // 11 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8), bone_weights(9), tangent(10)
+        std::array<VkVertexInputAttributeDescription, 11> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -710,8 +710,9 @@ void Renderer::create_pipelines() {
         attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
         attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
         attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};   // color
-        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, offsetof(sim::SCMMesh::Vertex, bone_index)};         // bone_index
-        attrs[9] = {9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};    // tangent
+        attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(sim::SCMMesh::Vertex, bone_indices)};    // bone_indices
+        attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)}; // bone_weights
+        attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};  // tangent
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3 eye (12B) = 84B
         mesh_pipeline_ = PipelineBuilder()
@@ -841,7 +842,7 @@ void Renderer::create_shadow_pipelines() {
             .build(device_, shadow_render_pass_, &shadow_terrain_layout_);
     }
 
-    // --- Shadow mesh pipeline (depth-only, bone skinning) ---
+    // --- Shadow mesh pipeline (depth-only, blend-weight skinning) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
         bindings[0].binding = 0;
@@ -851,7 +852,7 @@ void Renderer::create_shadow_pipelines() {
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        std::array<VkVertexInputAttributeDescription, 10> attrs{};
+        std::array<VkVertexInputAttributeDescription, 11> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};
@@ -860,8 +861,9 @@ void Renderer::create_shadow_pipelines() {
         attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 8};
         attrs[6] = {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, model) + sizeof(f32) * 12};
         attrs[7] = {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshInstance, r)};
-        attrs[8] = {8, 0, VK_FORMAT_R32_SINT, offsetof(sim::SCMMesh::Vertex, bone_index)};
-        attrs[9] = {9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
+        attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(sim::SCMMesh::Vertex, bone_indices)};
+        attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)};
+        attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
 
         // Push constant 72B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4)
         shadow_mesh_pipeline_ = PipelineBuilder()

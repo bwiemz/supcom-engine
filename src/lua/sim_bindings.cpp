@@ -1778,6 +1778,41 @@ static int l_CreateAimController(lua_State* L) {
 }
 
 // ====================================================================
+// CreateBuilderArmController(unit, yawBone, pitchBone, aimBone)
+// ====================================================================
+static int l_CreateBuilderArmController(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::AimManipulator>();
+
+    // arg 2 = yawBone
+    if (lua_gettop(L) >= 2) {
+        manip->set_yaw_bone(manip_resolve_bone(unit, L, 2));
+    }
+    // arg 3 = pitchBone
+    if (lua_gettop(L) >= 3) {
+        manip->set_pitch_bone(manip_resolve_bone(unit, L, 3));
+    }
+    // arg 4 = aimBone (used as muzzle reference)
+    if (lua_gettop(L) >= 4) {
+        manip->set_muzzle_bone(manip_resolve_bone(unit, L, 4));
+    }
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    // Use AimManipulator metatable — has SetAimingArc, SetPrecedence, etc.
+    set_manip_metatable(L, tbl, "__osc_aim_mt", "AimManipulator");
+    return 1;
+}
+
+// ====================================================================
 // WaitFor(manipulator) — yield until manipulator reaches its goal
 // ====================================================================
 static int l_WaitFor(lua_State* L) {
@@ -2859,6 +2894,22 @@ static int l_ChangeUnitArmy(lua_State* L) {
     }
     lua_pop(L, 1); // ArmyBrains
 
+    // Fire on-given callbacks registered via moho AddOnGivenCallback
+    // Snapshot to guard against mutation from callbacks (push_back/clear)
+    std::vector<int> cbs_snapshot = unit->on_given_callbacks();
+    for (int ref : cbs_snapshot) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1); // pass unit table (now with new army)
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("OnGivenCallback error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+
     // Return the unit's Lua table (same entity, new army)
     lua_pushvalue(L, 1);
     return 1;
@@ -3510,7 +3561,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // on the returned objects (e.g., CreateAnimator(self):PlayAnim():SetRate(1)).
     state.register_function("CreateAnimator", l_CreateAnimator);
     state.register_function("CreateAimController", l_CreateAimController);
-    state.register_function("CreateBuilderArmController", stub_dummy_object);
+    state.register_function("CreateBuilderArmController", l_CreateBuilderArmController);
     state.register_function("CreateCollisionDetector", stub_dummy_object);
     state.register_function("CreateFootPlantController", stub_dummy_object);
     state.register_function("CreateRotator", l_CreateRotator);

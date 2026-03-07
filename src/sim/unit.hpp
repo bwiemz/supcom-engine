@@ -388,6 +388,11 @@ public:
 
     void fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L);
 
+    // OnGiven callback system
+    void add_on_given_callback(int ref) { on_given_callbacks_.push_back(ref); }
+    const std::vector<int>& on_given_callbacks() const { return on_given_callbacks_; }
+    void clear_on_given_callbacks(lua_State* L);
+
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
 
@@ -489,6 +494,8 @@ private:
     std::unordered_set<std::string> build_restrictions_;
     // Elevation override
     f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
+    // OnGiven callbacks (Lua registry refs)
+    std::vector<int> on_given_callbacks_;
 };
 
 } // namespace osc::sim

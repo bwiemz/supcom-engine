@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -109,6 +110,10 @@ public:
 
     const SCAData* sca_data() const { return sca_data_; }
 
+    /// Per-bone enable/disable (for weapon firing bone animation control).
+    void set_bone_enabled(i32 scm_idx, bool enabled);
+    bool is_bone_enabled(i32 scm_idx) const;
+
 private:
     void compute_bone_matrices();
 
@@ -121,6 +126,7 @@ private:
 
     const SCAData* sca_data_ = nullptr;
     std::vector<i32> sca_to_scm_map_;  // SCA bone → SCM bone index
+    std::unordered_set<i32> disabled_bones_;  // SCM bone indices to skip
 };
 
 // ---------------------------------------------------------------------------

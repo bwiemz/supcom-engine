@@ -53,7 +53,7 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
         return nullptr;
     }
 
-    // Upload vertex buffer (position + normal + UV + bone_index + tangent = 48 bytes per vert)
+    // Upload vertex buffer (position + normal + UV + bone_indices + bone_weights + tangent = 64 bytes per vert)
     auto vert_buf = upload_buffer(
         device_, allocator_, cmd_pool_, queue_,
         mesh->vertices.data(),

@@ -30,7 +30,7 @@ add_subdirectory(src/lua)
 add_subdirectory(src/blueprints)
 
 # Main executable
-add_executable(opensupcom src/main.cpp)
+add_executable(opensupcom src/main.cpp src/integration_tests.cpp)
 target_link_libraries(opensupcom PRIVATE
     osc::core
     osc::vfs

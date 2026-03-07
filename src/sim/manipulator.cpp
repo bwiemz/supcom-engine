@@ -227,6 +227,17 @@ bool AnimManipulator::is_at_goal() const {
     return finished_;
 }
 
+void AnimManipulator::set_bone_enabled(i32 scm_idx, bool enabled) {
+    if (enabled)
+        disabled_bones_.erase(scm_idx);
+    else
+        disabled_bones_.insert(scm_idx);
+}
+
+bool AnimManipulator::is_bone_enabled(i32 scm_idx) const {
+    return disabled_bones_.find(scm_idx) == disabled_bones_.end();
+}
+
 void AnimManipulator::compute_bone_matrices() {
     if (!sca_data_ || !owner_ || sca_data_->frames.empty()) return;
     auto& matrices = owner_->animated_bone_matrices();
@@ -283,7 +294,8 @@ void AnimManipulator::compute_bone_matrices() {
                           ? sca_to_scm_map_[i] : -1;
         if (scm_idx >= 0 &&
             scm_idx < static_cast<i32>(matrices.size()) &&
-            scm_idx < bd->bone_count()) {
+            scm_idx < bd->bone_count() &&
+            disabled_bones_.find(scm_idx) == disabled_bones_.end()) {
             f32 world_mat[16];
             quat_pos_to_mat4(world_mat, world_xforms[i].rot,
                              world_xforms[i].pos);
