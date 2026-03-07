@@ -21,6 +21,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7298,6 +7299,274 @@ static const MethodEntry ui_frame_methods[] = {
     {"GetTopmostDepth",         frame_GetTopmostDepth},
     {nullptr, nullptr},
 };
+
+// --- Bitmap methods (M72) ---
+
+/// Helper: read DDS width/height from VFS file data.
+/// DDS header: bytes 12-15 = height, bytes 16-19 = width.
+static std::pair<i32, i32> read_dds_dimensions(lua_State* L,
+                                                const std::string& path) {
+    auto* vfs = lua::LuaState::get_vfs(L);
+    if (!vfs) return {0, 0};
+    auto data = vfs->read_file(path);
+    if (!data || data->size() < 128) return {0, 0};
+    // Validate DDS magic "DDS " = 0x20534444
+    u32 magic;
+    std::memcpy(&magic, data->data(), 4);
+    if (magic != 0x20534444) return {0, 0};
+    u32 h_raw, w_raw;
+    std::memcpy(&h_raw, data->data() + 12, 4);
+    std::memcpy(&w_raw, data->data() + 16, 4);
+    if (h_raw > 65536 || w_raw > 65536) return {0, 0};
+    return {static_cast<i32>(w_raw), static_cast<i32>(h_raw)};
+}
+
+static int bitmap_SetNewTexture(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    i32 border = 1;
+    if (lua_type(L, 3) == LUA_TNUMBER) border = static_cast<i32>(lua_tonumber(L, 3));
+    ctrl->set_texture_border(border);
+
+    if (lua_type(L, 2) == LUA_TTABLE) {
+        // Array of filenames
+        std::vector<std::string> textures;
+        int n = luaL_getn(L, 2);
+        for (int i = 1; i <= n; i++) {
+            lua_rawgeti(L, 2, i);
+            if (lua_type(L, -1) == LUA_TSTRING)
+                textures.emplace_back(lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        ctrl->set_textures(std::move(textures));
+        if (!ctrl->textures().empty()) {
+            ctrl->set_texture_path(ctrl->textures()[0]);
+            auto [w, h] = read_dds_dimensions(L, ctrl->texture_path());
+            ctrl->set_bitmap_width(w);
+            ctrl->set_bitmap_height(h);
+        }
+        ctrl->set_has_solid_color(false);
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        std::string path = lua_tostring(L, 2);
+        ctrl->set_texture_path(path);
+        ctrl->set_textures({path});
+        auto [w, h] = read_dds_dimensions(L, path);
+        ctrl->set_bitmap_width(w);
+        ctrl->set_bitmap_height(h);
+        ctrl->set_has_solid_color(false);
+    }
+    return 0;
+}
+
+static int bitmap_InternalSetSolidColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* hex = lua_tostring(L, 2);
+        u32 color = static_cast<u32>(strtoul(hex, nullptr, 16));
+        ctrl->set_solid_color(color);
+        ctrl->set_has_solid_color(true);
+    }
+    return 0;
+}
+
+static int bitmap_SetColorMask(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        const char* hex = lua_tostring(L, 2);
+        u32 color = static_cast<u32>(strtoul(hex, nullptr, 16));
+        ctrl->set_color_mask(color);
+    }
+    return 0;
+}
+
+static int bitmap_SetUV(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    f32 u0 = static_cast<f32>(lua_tonumber(L, 2));
+    f32 v0 = static_cast<f32>(lua_tonumber(L, 3));
+    f32 u1 = static_cast<f32>(lua_tonumber(L, 4));
+    f32 v1 = static_cast<f32>(lua_tonumber(L, 5));
+    ctrl->set_uv(u0, v0, u1, v1);
+    return 0;
+}
+
+static int bitmap_SetTiled(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_tiled(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int bitmap_UseAlphaHitTest(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_alpha_hit_test(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int bitmap_BitmapWidth(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->bitmap_width() : 0);
+    return 1;
+}
+
+static int bitmap_BitmapHeight(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->bitmap_height() : 0);
+    return 1;
+}
+
+static int bitmap_SetFrame(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) {
+        i32 f = static_cast<i32>(lua_tonumber(L, 2));
+        i32 n = ctrl->num_frames();
+        if (n > 0) f = std::max(0, std::min(f, n - 1));
+        ctrl->set_current_frame(f);
+    }
+    return 0;
+}
+
+static int bitmap_GetFrame(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->current_frame() : 0);
+    return 1;
+}
+
+static int bitmap_GetNumFrames(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->num_frames() : 0);
+    return 1;
+}
+
+static int bitmap_SetFrameRate(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_frame_rate(static_cast<f32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+static int bitmap_SetFramePattern(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || !lua_istable(L, 2)) return 0;
+    std::vector<i32> pattern;
+    int n = luaL_getn(L, 2);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 2, i);
+        pattern.push_back(static_cast<i32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+    }
+    ctrl->set_frame_pattern(std::move(pattern));
+    return 0;
+}
+
+static int bitmap_SetForwardPattern(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || ctrl->num_frames() <= 0) return 0;
+    i32 n = ctrl->num_frames();
+    std::vector<i32> pat(n);
+    for (i32 i = 0; i < n; i++) pat[i] = i;
+    ctrl->set_frame_pattern(std::move(pat));
+    return 0;
+}
+
+static int bitmap_SetBackwardPattern(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || ctrl->num_frames() <= 0) return 0;
+    i32 n = ctrl->num_frames();
+    std::vector<i32> pat(n);
+    for (i32 i = 0; i < n; i++) pat[i] = n - 1 - i;
+    ctrl->set_frame_pattern(std::move(pat));
+    return 0;
+}
+
+static int bitmap_SetPingPongPattern(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || ctrl->num_frames() <= 0) return 0;
+    i32 n = ctrl->num_frames();
+    std::vector<i32> pat;
+    for (i32 i = 0; i < n; i++) pat.push_back(i);
+    for (i32 i = n - 2; i >= 0; i--) pat.push_back(i);
+    ctrl->set_frame_pattern(std::move(pat));
+    return 0;
+}
+
+static int bitmap_SetLoopPingPongPattern(lua_State* L) {
+    // Same as PingPong but sets looping
+    bitmap_SetPingPongPattern(L);
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_anim_looping(true);
+    return 0;
+}
+
+static int bitmap_Play(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_anim_playing(true);
+    return 0;
+}
+
+static int bitmap_Stop(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) {
+        ctrl->set_anim_playing(false);
+        // Call OnAnimationStopped callback
+        lua_pushstring(L, "OnAnimationStopped");
+        lua_rawget(L, 1);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("OnAnimationStopped error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    return 0;
+}
+
+static int bitmap_Loop(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_anim_looping(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int bitmap_ShareTextures(lua_State* L) {
+    auto* ctrl = check_control(L);
+    auto* other = check_control(L, 2);
+    if (ctrl && other) {
+        ctrl->set_textures(std::vector<std::string>(other->textures()));
+        ctrl->set_texture_path(other->texture_path());
+        ctrl->set_bitmap_width(other->bitmap_width());
+        ctrl->set_bitmap_height(other->bitmap_height());
+        ctrl->set_texture_border(other->texture_border());
+    }
+    return 0;
+}
+
+static const MethodEntry ui_bitmap_methods[] = {
+    {"SetNewTexture",           bitmap_SetNewTexture},
+    {"InternalSetSolidColor",   bitmap_InternalSetSolidColor},
+    {"SetColorMask",            bitmap_SetColorMask},
+    {"SetUV",                   bitmap_SetUV},
+    {"SetTiled",                bitmap_SetTiled},
+    {"UseAlphaHitTest",         bitmap_UseAlphaHitTest},
+    {"BitmapWidth",             bitmap_BitmapWidth},
+    {"BitmapHeight",            bitmap_BitmapHeight},
+    {"SetFrame",                bitmap_SetFrame},
+    {"GetFrame",                bitmap_GetFrame},
+    {"GetNumFrames",            bitmap_GetNumFrames},
+    {"SetFrameRate",            bitmap_SetFrameRate},
+    {"SetFramePattern",         bitmap_SetFramePattern},
+    {"SetForwardPattern",       bitmap_SetForwardPattern},
+    {"SetBackwardPattern",      bitmap_SetBackwardPattern},
+    {"SetPingPongPattern",      bitmap_SetPingPongPattern},
+    {"SetLoopPingPongPattern",  bitmap_SetLoopPingPongPattern},
+    {"Play",                    bitmap_Play},
+    {"Stop",                    bitmap_Stop},
+    {"Loop",                    bitmap_Loop},
+    {"ShareTextures",           bitmap_ShareTextures},
+    {nullptr, nullptr},
+};
 // clang-format on
 
 // --- Factory functions (registered as globals) ---
@@ -7433,6 +7702,80 @@ static int l_InternalCreateFrame(lua_State* L) {
     return 0;
 }
 
+/// InternalCreateBitmap(self, parent)
+static int l_InternalCreateBitmap(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateBitmap: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateBitmap: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateBitmap: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Create 7 LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateBitmap: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateBitmap: control #{}", id);
+    return 0;
+}
+
+/// GetTextureDimensions(filename, border) → width, height
+static int l_GetTextureDimensions(lua_State* L) {
+    if (lua_type(L, 1) != LUA_TSTRING) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+    std::string path = lua_tostring(L, 1);
+    auto [w, h] = read_dds_dimensions(L, path);
+    if (w == 0 && h == 0) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+    } else {
+        lua_pushnumber(L, w);
+        lua_pushnumber(L, h);
+    }
+    return 2;
+}
+
 // ====================================================================
 // Registration
 // ====================================================================
@@ -7493,7 +7836,7 @@ static const MohoClassDef moho_classes[] = {
     {"control_methods",         ui_control_methods, nullptr},
     {"group_methods",           ui_group_methods,  "control_methods"},
     {"frame_methods",           ui_frame_methods,  "control_methods"},
-    {"bitmap_methods",          empty_methods,  "control_methods"},
+    {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
     {"border_methods",          empty_methods,  "control_methods"},
     {"cursor_methods",          empty_methods,  nullptr},
     {"discovery_service_methods", empty_methods, nullptr},
@@ -7580,6 +7923,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Register factory globals
     state.register_function("InternalCreateGroup", l_InternalCreateGroup);
     state.register_function("InternalCreateFrame", l_InternalCreateFrame);
+    state.register_function("InternalCreateBitmap", l_InternalCreateBitmap);
+    state.register_function("GetTextureDimensions", l_GetTextureDimensions);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

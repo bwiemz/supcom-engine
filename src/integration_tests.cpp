@@ -7135,4 +7135,204 @@ void test_ui(TestContext& ctx) {
     spdlog::info("UI control test: {}/{} passed", pass, pass + fail);
 }
 
+void test_bitmap(TestContext& ctx) {
+    spdlog::info("=== BITMAP CONTROL TEST (M72) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // Test 1: InternalCreateBitmap is a global function
+    {
+        lua_pushstring(L, "InternalCreateBitmap");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateBitmap is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateBitmap not found"); }
+    }
+
+    // Test 2: GetTextureDimensions is a global function
+    {
+        lua_pushstring(L, "GetTextureDimensions");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 2: GetTextureDimensions is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: GetTextureDimensions not found"); }
+    }
+
+    // Test 3: moho.bitmap_methods has SetNewTexture (real method after flattening)
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "bitmap_methods");
+        lua_rawget(L, -2);
+        bool has_method = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetNewTexture");
+            lua_rawget(L, -2);
+            has_method = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_method) { pass++; spdlog::info("[PASS] Test 3: moho.bitmap_methods.SetNewTexture is a function"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: bitmap_methods.SetNewTexture missing"); }
+    }
+
+    // Test 4: moho.bitmap_methods inherits Destroy from control_methods
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "bitmap_methods");
+        lua_rawget(L, -2);
+        bool has_destroy = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            has_destroy = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_destroy) { pass++; spdlog::info("[PASS] Test 4: bitmap_methods has Destroy (inherited)"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: bitmap_methods missing inherited Destroy"); }
+    }
+
+    // Helper Lua snippet: create a bitmap table with bitmap_methods
+    // (bypasses bitmap.lua import which needs layouthelpers.lua chain)
+    const char* mk_bitmap =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "local f = Frame('BmpFrame')\n"
+        "local b = {}\n"
+        "setmetatable(b, {__index = moho.bitmap_methods})\n"
+        "InternalCreateBitmap(b, f)\n";
+
+    // Test 5: Create bitmap control via InternalCreateBitmap
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "if b._c_object then return true end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 5 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: Bitmap created via InternalCreateBitmap"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: Bitmap creation failed"); }
+    }
+
+    // Test 6: InternalSetSolidColor works
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "b:InternalSetSolidColor('ff00ff00')\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 6 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: InternalSetSolidColor works"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: InternalSetSolidColor failed"); }
+    }
+
+    // Test 7: BitmapWidth/BitmapHeight return 0 for no texture
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "local w = b:BitmapWidth()\n"
+            "local h = b:BitmapHeight()\n"
+            "LOG('Bitmap dims (no texture): ' .. tostring(w) .. 'x' .. tostring(h))\n"
+            "return (w == 0 and h == 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 7 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: BitmapWidth/Height = 0 with no texture"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: BitmapWidth/Height unexpected values"); }
+    }
+
+    // Test 8: SetUV / SetTiled / UseAlphaHitTest
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "b:SetUV(0.1, 0.2, 0.9, 0.8)\n"
+            "b:SetTiled(true)\n"
+            "b:UseAlphaHitTest(true)\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 8 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: SetUV/SetTiled/UseAlphaHitTest work"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: UV/tiled/alpha hit test failed"); }
+    }
+
+    // Test 9: Animation methods (SetFrame/GetFrame/GetNumFrames/SetFrameRate)
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "b:SetFrameRate(30)\n"
+            "local nf = b:GetNumFrames()\n"
+            "b:SetFrame(0)\n"
+            "local cf = b:GetFrame()\n"
+            "LOG('Anim: numFrames=' .. tostring(nf) .. ' curFrame=' .. tostring(cf))\n"
+            "return (cf == 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 9 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: Animation methods work"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: Animation methods failed"); }
+    }
+
+    // Test 10: SetNewTexture with a DDS path (reads VFS, parses header)
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "b:SetNewTexture('/textures/ui/common/game/economic-overlay_bmp.dds')\n"
+            "local w = b:BitmapWidth()\n"
+            "local h = b:BitmapHeight()\n"
+            "LOG('Bitmap tex dims: ' .. tostring(w) .. 'x' .. tostring(h))\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 10 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: SetNewTexture with DDS path works"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: SetNewTexture with DDS path failed"); }
+    }
+
+    // Test 11: Play/Stop/Loop/Pattern animation methods
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_bitmap) +
+            "b:Loop(true)\n"
+            "b:Play()\n"
+            "b:Stop()\n"
+            "b:SetForwardPattern()\n"
+            "b:SetBackwardPattern()\n"
+            "b:SetPingPongPattern()\n"
+            "b:SetLoopPingPongPattern()\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 11 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 11: Play/Stop/Loop/Pattern methods work"); }
+        else { fail++; spdlog::error("[FAIL] Test 11: Animation control methods failed"); }
+    }
+
+    // Test 12: Bitmap parent linkage
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('ParentTestFrame')\n"
+            "f:SetName('ParentTestFrame')\n"
+            "local b = {}\n"
+            "setmetatable(b, {__index = moho.bitmap_methods})\n"
+            "InternalCreateBitmap(b, f)\n"
+            "local parent = b:GetParent()\n"
+            "if parent and parent:GetName() == 'ParentTestFrame' then\n"
+            "    return true\n"
+            "end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 12 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 12: Bitmap parent linkage correct"); }
+        else { fail++; spdlog::error("[FAIL] Test 12: Bitmap parent linkage failed"); }
+    }
+
+    spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
+}
+
 } // namespace osc::test
