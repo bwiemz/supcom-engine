@@ -8798,6 +8798,506 @@ static int l_GetTextureDimensions(lua_State* L) {
 }
 
 // ====================================================================
+// M75: Border
+// ====================================================================
+
+static int border_SetNewTextures(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_border_tex_vert(lua_tostring(L, 2));
+    if (lua_type(L, 3) == LUA_TSTRING)
+        ctrl->set_border_tex_horiz(lua_tostring(L, 3));
+    if (lua_type(L, 4) == LUA_TSTRING)
+        ctrl->set_border_tex_ul(lua_tostring(L, 4));
+    if (lua_type(L, 5) == LUA_TSTRING)
+        ctrl->set_border_tex_ur(lua_tostring(L, 5));
+    if (lua_type(L, 6) == LUA_TSTRING)
+        ctrl->set_border_tex_ll(lua_tostring(L, 6));
+    if (lua_type(L, 7) == LUA_TSTRING)
+        ctrl->set_border_tex_lr(lua_tostring(L, 7));
+    return 0;
+}
+
+static int border_SetSolidColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        u32 color = parse_color_hex(lua_tostring(L, 2));
+        ctrl->set_border_solid_color(color);
+        ctrl->set_has_border_solid_color(true);
+    }
+    return 0;
+}
+
+static const MethodEntry ui_border_methods[] = {
+    {"SetNewTextures", border_SetNewTextures},
+    {"SetSolidColor",  border_SetSolidColor},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateBorder(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateBorder: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateBorder: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateBorder: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+    // Border-specific LazyVars
+    create_lazyvar(L, 1, "BorderWidth");
+    create_lazyvar(L, 1, "BorderHeight");
+
+    spdlog::debug("InternalCreateBorder: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
+// M75: Dragger
+// ====================================================================
+
+static int dragger_Destroy(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    ctrl->mark_destroyed();
+    return 0;
+}
+
+static const MethodEntry ui_dragger_methods[] = {
+    {"Destroy", dragger_Destroy},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateDragger(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateDragger: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateDragger: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateDragger: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Dragger has no parent — it's a standalone drag-tracking object
+    spdlog::debug("InternalCreateDragger: control #{}", id);
+    return 0;
+}
+
+/// PostDragger(originFrame, keycode, dragger)
+/// Registers a dragger to receive mouse events until release/cancel.
+/// For now, we just store the dragger ref so Lua side can call OnMove/OnRelease/OnCancel.
+static int l_PostDragger(lua_State* L) {
+    // Args: originFrame (table), keycode (number), dragger (table)
+    // Store dragger in registry key for the UI dispatch to find
+    if (!lua_istable(L, 3)) return 0;
+
+    lua_pushstring(L, "__osc_active_dragger");
+    lua_pushvalue(L, 3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+// ====================================================================
+// M75: Cursor
+// ====================================================================
+
+static int cursor_SetNewTexture(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_cursor_texture(lua_tostring(L, 2));
+    f32 hx = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0.0f;
+    f32 hy = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0.0f;
+    ctrl->set_cursor_hotspot(hx, hy);
+    return 0;
+}
+
+static int cursor_SetDefaultTexture(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_cursor_default_texture(lua_tostring(L, 2));
+    f32 hx = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0.0f;
+    f32 hy = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0.0f;
+    ctrl->set_cursor_default_hotspot(hx, hy);
+    return 0;
+}
+
+static int cursor_ResetToDefault(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    ctrl->set_cursor_texture(ctrl->cursor_default_texture());
+    ctrl->set_cursor_hotspot(ctrl->cursor_default_hotspot_x(),
+                              ctrl->cursor_default_hotspot_y());
+    return 0;
+}
+
+static int cursor_Show(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    ctrl->set_cursor_visible(true);
+    return 0;
+}
+
+static int cursor_Hide(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    ctrl->set_cursor_visible(false);
+    return 0;
+}
+
+static const MethodEntry ui_cursor_methods[] = {
+    {"SetNewTexture",     cursor_SetNewTexture},
+    {"SetDefaultTexture", cursor_SetDefaultTexture},
+    {"ResetToDefault",    cursor_ResetToDefault},
+    {"Show",              cursor_Show},
+    {"Hide",              cursor_Hide},
+    {nullptr, nullptr},
+};
+
+/// _c_CreateCursor(self, parent_or_nil)
+static int l_c_CreateCursor(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "_c_CreateCursor: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "_c_CreateCursor: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "_c_CreateCursor: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Cursor has no parent (standalone)
+    spdlog::debug("_c_CreateCursor: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
+// M75: Movie (stub — video playback not implemented)
+// ====================================================================
+
+static int movie_InternalSet(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_movie_filename(lua_tostring(L, 2));
+    // Always report success (file "loaded")
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int movie_IsLoaded(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? ctrl->movie_loaded() : 0);
+    return 1;
+}
+
+static int movie_Play(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_movie_playing(true);
+    return 0;
+}
+
+static int movie_Stop(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_movie_playing(false);
+    return 0;
+}
+
+static int movie_Loop(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isboolean(L, 2))
+        ctrl->set_movie_looping(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int movie_GetFrameRate(lua_State* L) {
+    lua_pushnumber(L, 30.0); // stub: report 30 fps
+    return 1;
+}
+
+static int movie_GetNumFrames(lua_State* L) {
+    lua_pushnumber(L, 0); // stub: no frames
+    return 1;
+}
+
+static const MethodEntry ui_movie_methods[] = {
+    {"InternalSet",  movie_InternalSet},
+    {"IsLoaded",     movie_IsLoaded},
+    {"Play",         movie_Play},
+    {"Stop",         movie_Stop},
+    {"Loop",         movie_Loop},
+    {"GetFrameRate", movie_GetFrameRate},
+    {"GetNumFrames", movie_GetNumFrames},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateMovie(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateMovie: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateMovie: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateMovie: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+    // Movie-specific LazyVars
+    create_lazyvar(L, 1, "MovieWidth");
+    create_lazyvar(L, 1, "MovieHeight");
+
+    spdlog::debug("InternalCreateMovie: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
+// M75: Histogram (deprecated stub)
+// ====================================================================
+
+static int histogram_SetData(lua_State* L) {
+    (void)L;
+    return 0; // no-op
+}
+
+static int histogram_SetXIncrement(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int histogram_SetYIncrement(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static const MethodEntry ui_histogram_methods[] = {
+    {"SetData",       histogram_SetData},
+    {"SetXIncrement", histogram_SetXIncrement},
+    {"SetYIncrement", histogram_SetYIncrement},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateHistogram(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateHistogram: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateHistogram: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateHistogram: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    spdlog::debug("InternalCreateHistogram: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
+// M75: WorldMesh (stub)
+// ====================================================================
+
+static int worldmesh_Destroy(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->mark_destroyed();
+    return 0;
+}
+
+static int worldmesh_SetMesh(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetStance(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetHidden(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isboolean(L, 2))
+        ctrl->set_world_mesh_hidden(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int worldmesh_IsHidden(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? ctrl->world_mesh_hidden() : 1);
+    return 1;
+}
+
+static int worldmesh_SetColor(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetScale(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetAuxiliaryParameter(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetFractionCompleteParameter(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetFractionHealthParameter(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_SetLifetimeParameter(lua_State* L) {
+    (void)L;
+    return 0;
+}
+
+static int worldmesh_GetInterpolatedPosition(lua_State* L) {
+    lua_newtable(L);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 3);
+    return 1;
+}
+
+static int worldmesh_GetInterpolatedAlignedBox(lua_State* L) {
+    return worldmesh_GetInterpolatedPosition(L);
+}
+
+static int worldmesh_GetInterpolatedOrientedBox(lua_State* L) {
+    return worldmesh_GetInterpolatedPosition(L);
+}
+
+static int worldmesh_GetInterpolatedScroll(lua_State* L) {
+    return worldmesh_GetInterpolatedPosition(L);
+}
+
+static int worldmesh_GetInterpolatedSphere(lua_State* L) {
+    return worldmesh_GetInterpolatedPosition(L);
+}
+
+static const MethodEntry ui_world_mesh_methods[] = {
+    {"Destroy",                       worldmesh_Destroy},
+    {"SetMesh",                       worldmesh_SetMesh},
+    {"SetStance",                     worldmesh_SetStance},
+    {"SetHidden",                     worldmesh_SetHidden},
+    {"IsHidden",                      worldmesh_IsHidden},
+    {"SetColor",                      worldmesh_SetColor},
+    {"SetScale",                      worldmesh_SetScale},
+    {"SetAuxiliaryParameter",         worldmesh_SetAuxiliaryParameter},
+    {"SetFractionCompleteParameter",  worldmesh_SetFractionCompleteParameter},
+    {"SetFractionHealthParameter",    worldmesh_SetFractionHealthParameter},
+    {"SetLifetimeParameter",          worldmesh_SetLifetimeParameter},
+    {"GetInterpolatedPosition",       worldmesh_GetInterpolatedPosition},
+    {"GetInterpolatedAlignedBox",     worldmesh_GetInterpolatedAlignedBox},
+    {"GetInterpolatedOrientedBox",    worldmesh_GetInterpolatedOrientedBox},
+    {"GetInterpolatedScroll",         worldmesh_GetInterpolatedScroll},
+    {"GetInterpolatedSphere",         worldmesh_GetInterpolatedSphere},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateWorldMesh(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateWorldMesh: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateWorldMesh: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateWorldMesh: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    spdlog::debug("InternalCreateWorldMesh: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
 // Registration
 // ====================================================================
 
@@ -8858,22 +9358,22 @@ static const MohoClassDef moho_classes[] = {
     {"group_methods",           ui_group_methods,  "control_methods"},
     {"frame_methods",           ui_frame_methods,  "control_methods"},
     {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
-    {"border_methods",          empty_methods,  "control_methods"},
-    {"cursor_methods",          empty_methods,  nullptr},
+    {"border_methods",          ui_border_methods,  "control_methods"},
+    {"cursor_methods",          ui_cursor_methods,  nullptr},
     {"discovery_service_methods", empty_methods, nullptr},
-    {"dragger_methods",         empty_methods,  nullptr},
+    {"dragger_methods",         ui_dragger_methods,  nullptr},
     {"edit_methods",            ui_edit_methods,  "control_methods"},
-    {"histogram_methods",       empty_methods,  "control_methods"},
+    {"histogram_methods",       ui_histogram_methods,  "control_methods"},
     {"item_list_methods",       ui_item_list_methods,  "control_methods"},
     {"lobby_methods",           empty_methods,  nullptr},
     {"mesh_methods",            empty_methods,  "control_methods"},
-    {"movie_methods",           empty_methods,  "control_methods"},
+    {"movie_methods",           ui_movie_methods,  "control_methods"},
     {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             empty_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   empty_methods,  nullptr},
-    {"world_mesh_methods",      empty_methods,  nullptr},
+    {"world_mesh_methods",      ui_world_mesh_methods,  nullptr},
 
     {nullptr, nullptr, nullptr}, // sentinel
 };
@@ -8949,6 +9449,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("InternalCreateEdit", l_InternalCreateEdit);
     state.register_function("InternalCreateItemList", l_InternalCreateItemList);
     state.register_function("InternalCreateScrollbar", l_InternalCreateScrollbar);
+    state.register_function("InternalCreateBorder", l_InternalCreateBorder);
+    state.register_function("InternalCreateDragger", l_InternalCreateDragger);
+    state.register_function("PostDragger", l_PostDragger);
+    state.register_function("_c_CreateCursor", l_c_CreateCursor);
+    state.register_function("InternalCreateMovie", l_InternalCreateMovie);
+    state.register_function("InternalCreateHistogram", l_InternalCreateHistogram);
+    state.register_function("InternalCreateWorldMesh", l_InternalCreateWorldMesh);
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
 
     // Cache the LazyVar.Create function in registry for fast access.

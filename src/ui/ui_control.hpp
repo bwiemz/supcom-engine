@@ -231,6 +231,52 @@ public:
     int scrollable_ref() const { return scrollable_ref_; }
     void set_scrollable_ref(int ref) { scrollable_ref_ = ref; }
 
+    // --- Border state ---
+    const std::string& border_tex_vert() const { return border_tex_vert_; }
+    void set_border_tex_vert(const std::string& t) { border_tex_vert_ = t; }
+    const std::string& border_tex_horiz() const { return border_tex_horiz_; }
+    void set_border_tex_horiz(const std::string& t) { border_tex_horiz_ = t; }
+    const std::string& border_tex_ul() const { return border_tex_ul_; }
+    void set_border_tex_ul(const std::string& t) { border_tex_ul_ = t; }
+    const std::string& border_tex_ur() const { return border_tex_ur_; }
+    void set_border_tex_ur(const std::string& t) { border_tex_ur_ = t; }
+    const std::string& border_tex_ll() const { return border_tex_ll_; }
+    void set_border_tex_ll(const std::string& t) { border_tex_ll_ = t; }
+    const std::string& border_tex_lr() const { return border_tex_lr_; }
+    void set_border_tex_lr(const std::string& t) { border_tex_lr_ = t; }
+    u32 border_solid_color() const { return border_solid_color_; }
+    void set_border_solid_color(u32 c) { border_solid_color_ = c; }
+    bool has_border_solid_color() const { return has_border_solid_color_; }
+    void set_has_border_solid_color(bool h) { has_border_solid_color_ = h; }
+
+    // --- Cursor state ---
+    const std::string& cursor_texture() const { return cursor_texture_; }
+    void set_cursor_texture(const std::string& t) { cursor_texture_ = t; }
+    f32 cursor_hotspot_x() const { return cursor_hotspot_x_; }
+    f32 cursor_hotspot_y() const { return cursor_hotspot_y_; }
+    void set_cursor_hotspot(f32 x, f32 y) { cursor_hotspot_x_ = x; cursor_hotspot_y_ = y; }
+    const std::string& cursor_default_texture() const { return cursor_default_texture_; }
+    void set_cursor_default_texture(const std::string& t) { cursor_default_texture_ = t; }
+    f32 cursor_default_hotspot_x() const { return cursor_default_hotspot_x_; }
+    f32 cursor_default_hotspot_y() const { return cursor_default_hotspot_y_; }
+    void set_cursor_default_hotspot(f32 x, f32 y) { cursor_default_hotspot_x_ = x; cursor_default_hotspot_y_ = y; }
+    bool cursor_visible() const { return cursor_visible_; }
+    void set_cursor_visible(bool v) { cursor_visible_ = v; }
+
+    // --- Movie state ---
+    const std::string& movie_filename() const { return movie_filename_; }
+    void set_movie_filename(const std::string& f) { movie_filename_ = f; }
+    bool movie_loaded() const { return movie_loaded_; }
+    void set_movie_loaded(bool l) { movie_loaded_ = l; }
+    bool movie_playing() const { return movie_playing_; }
+    void set_movie_playing(bool p) { movie_playing_ = p; }
+    bool movie_looping() const { return movie_looping_; }
+    void set_movie_looping(bool l) { movie_looping_ = l; }
+
+    // --- WorldMesh state ---
+    bool world_mesh_hidden() const { return world_mesh_hidden_; }
+    void set_world_mesh_hidden(bool h) { world_mesh_hidden_ = h; }
+
 private:
     u32 control_id_ = 0;
     std::string name_;
@@ -314,6 +360,34 @@ private:
     std::string sb_thumb_top_;
     std::string sb_thumb_bot_;
     int scrollable_ref_ = -2; // LUA_NOREF
+
+    // Border state
+    std::string border_tex_vert_;
+    std::string border_tex_horiz_;
+    std::string border_tex_ul_;
+    std::string border_tex_ur_;
+    std::string border_tex_ll_;
+    std::string border_tex_lr_;
+    u32 border_solid_color_ = 0;
+    bool has_border_solid_color_ = false;
+
+    // Cursor state
+    std::string cursor_texture_;
+    f32 cursor_hotspot_x_ = 0.0f;
+    f32 cursor_hotspot_y_ = 0.0f;
+    std::string cursor_default_texture_;
+    f32 cursor_default_hotspot_x_ = 0.0f;
+    f32 cursor_default_hotspot_y_ = 0.0f;
+    bool cursor_visible_ = true;
+
+    // Movie state
+    std::string movie_filename_;
+    bool movie_loaded_ = false;
+    bool movie_playing_ = false;
+    bool movie_looping_ = false;
+
+    // WorldMesh state
+    bool world_mesh_hidden_ = false;
 };
 
 /// Registry of all live UI controls, analogous to EntityRegistry.

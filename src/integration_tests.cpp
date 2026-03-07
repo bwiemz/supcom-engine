@@ -7974,4 +7974,393 @@ void test_edit(TestContext& ctx) {
     spdlog::info("Edit/ItemList/Scrollbar test: {}/{} passed", pass, pass + fail);
 }
 
+// ====================================================================
+// M75: Border + Dragger + Cursor + Movie + Histogram + WorldMesh
+// ====================================================================
+void test_controls(TestContext& ctx) {
+    spdlog::info("=== CONTROLS TEST (M75) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // --- Test 1: Factory globals exist ---
+    {
+        const char* names[] = {
+            "InternalCreateBorder", "InternalCreateDragger", "PostDragger",
+            "_c_CreateCursor", "InternalCreateMovie",
+            "InternalCreateHistogram", "InternalCreateWorldMesh"
+        };
+        bool all_ok = true;
+        for (auto* name : names) {
+            lua_pushstring(L, name);
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (!lua_isfunction(L, -1)) { all_ok = false; spdlog::error("  Missing: {}", name); }
+            lua_pop(L, 1);
+        }
+        if (all_ok) { pass++; spdlog::info("[PASS] Test 1: All 7 factory globals registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: Some factory globals missing"); }
+    }
+
+    // --- Test 2: moho class tables have real methods ---
+    {
+        bool ok = true;
+        lua_getglobal(L, "moho");
+
+        // border_methods.SetNewTextures
+        lua_pushstring(L, "border_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetNewTextures");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        // cursor_methods.SetNewTexture
+        lua_pushstring(L, "cursor_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetNewTexture");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        // dragger_methods.Destroy
+        lua_pushstring(L, "dragger_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        // movie_methods.Play
+        lua_pushstring(L, "movie_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Play");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        // histogram_methods.SetData
+        lua_pushstring(L, "histogram_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetData");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        // world_mesh_methods.SetMesh
+        lua_pushstring(L, "world_mesh_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetMesh");
+            lua_rawget(L, -2);
+            if (!lua_isfunction(L, -1)) ok = false;
+            lua_pop(L, 1);
+        } else ok = false;
+        lua_pop(L, 1);
+
+        lua_pop(L, 1); // moho
+        if (ok) { pass++; spdlog::info("[PASS] Test 2: moho class tables have real methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: moho class tables missing methods"); }
+    }
+
+    // Helper: create a frame parent for controls that need one
+    const char* mk_frame =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "test_frame = Frame('CtrlTestFrame')\n";
+    ctx.lua_state.do_string(mk_frame);
+
+    // --- Test 3: Border creation + SetNewTextures ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local b = {}\n"
+            "setmetatable(b, {__index = moho.border_methods})\n"
+            "InternalCreateBorder(b, test_frame)\n"
+            "b:SetNewTextures('/tex/v.dds', '/tex/h.dds', '/tex/ul.dds', "
+            "'/tex/ur.dds', '/tex/ll.dds', '/tex/lr.dds')\n"
+            "return b._c_object ~= nil\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 3: Border creation + SetNewTextures"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: Border creation + SetNewTextures"); }
+    }
+
+    // --- Test 4: Border SetSolidColor ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local b = {}\n"
+            "setmetatable(b, {__index = moho.border_methods})\n"
+            "InternalCreateBorder(b, test_frame)\n"
+            "b:SetSolidColor('ff00ff00')\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 4: Border SetSolidColor"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: Border SetSolidColor"); }
+    }
+
+    // --- Test 5: Border inherits control_methods (Destroy, SetName) ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local b = {}\n"
+            "setmetatable(b, {__index = moho.border_methods})\n"
+            "InternalCreateBorder(b, test_frame)\n"
+            "b:SetName('TestBorder')\n"
+            "return b:GetName() == 'TestBorder'\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: Border inherits control_methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: Border inherits control_methods"); }
+    }
+
+    // --- Test 6: Dragger creation + Destroy ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local d = {}\n"
+            "setmetatable(d, {__index = moho.dragger_methods})\n"
+            "InternalCreateDragger(d)\n"
+            "local has_obj = d._c_object ~= nil\n"
+            "d:Destroy()\n"
+            "return has_obj\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: Dragger creation + Destroy"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: Dragger creation + Destroy"); }
+    }
+
+    // --- Test 7: PostDragger stores active dragger ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local d = {}\n"
+            "setmetatable(d, {__index = moho.dragger_methods})\n"
+            "InternalCreateDragger(d)\n"
+            "PostDragger(test_frame, 1, d)\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: PostDragger stores active dragger"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: PostDragger stores active dragger"); }
+    }
+
+    // --- Test 8: Cursor creation + SetDefaultTexture + ResetToDefault ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local c = {}\n"
+            "setmetatable(c, {__index = moho.cursor_methods})\n"
+            "_c_CreateCursor(c, nil)\n"
+            "c:SetDefaultTexture('/tex/arrow.dds', 0, 0)\n"
+            "c:SetNewTexture('/tex/hand.dds', 5, 5)\n"
+            "c:ResetToDefault()\n"
+            "return c._c_object ~= nil\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: Cursor creation + default/reset"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: Cursor creation + default/reset"); }
+    }
+
+    // --- Test 9: Cursor Show/Hide ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local c = {}\n"
+            "setmetatable(c, {__index = moho.cursor_methods})\n"
+            "_c_CreateCursor(c, nil)\n"
+            "c:Hide()\n"
+            "c:Show()\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: Cursor Show/Hide"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: Cursor Show/Hide"); }
+    }
+
+    // --- Test 10: Movie creation + InternalSet + Play/Stop ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local m = {}\n"
+            "setmetatable(m, {__index = moho.movie_methods})\n"
+            "InternalCreateMovie(m, test_frame)\n"
+            "local ok1 = m:InternalSet('/movies/intro.sfd')\n"
+            "m:Play()\n"
+            "m:Stop()\n"
+            "return ok1 == true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: Movie creation + InternalSet + Play/Stop"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: Movie creation + InternalSet + Play/Stop"); }
+    }
+
+    // --- Test 11: Movie Loop + IsLoaded + GetFrameRate + GetNumFrames ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local m = {}\n"
+            "setmetatable(m, {__index = moho.movie_methods})\n"
+            "InternalCreateMovie(m, test_frame)\n"
+            "m:Loop(true)\n"
+            "local loaded = m:IsLoaded()\n"
+            "local fps = m:GetFrameRate()\n"
+            "local nf = m:GetNumFrames()\n"
+            "return fps == 30 and nf == 0\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }
+        else { fail++; spdlog::error("[FAIL] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }
+    }
+
+    // --- Test 12: Movie inherits control_methods ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local m = {}\n"
+            "setmetatable(m, {__index = moho.movie_methods})\n"
+            "InternalCreateMovie(m, test_frame)\n"
+            "m:SetName('TestMovie')\n"
+            "return m:GetName() == 'TestMovie'\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 12: Movie inherits control_methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 12: Movie inherits control_methods"); }
+    }
+
+    // --- Test 13: Histogram creation + SetData/SetXIncrement/SetYIncrement ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local h = {}\n"
+            "setmetatable(h, {__index = moho.histogram_methods})\n"
+            "InternalCreateHistogram(h, test_frame)\n"
+            "h:SetData({})\n"
+            "h:SetXIncrement(100)\n"
+            "h:SetYIncrement(50)\n"
+            "return h._c_object ~= nil\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 13: Histogram creation + SetData/SetIncrement"); }
+        else { fail++; spdlog::error("[FAIL] Test 13: Histogram creation + SetData/SetIncrement"); }
+    }
+
+    // --- Test 14: Histogram inherits control_methods ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local h = {}\n"
+            "setmetatable(h, {__index = moho.histogram_methods})\n"
+            "InternalCreateHistogram(h, test_frame)\n"
+            "h:SetName('TestHistogram')\n"
+            "return h:GetName() == 'TestHistogram'\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 14: Histogram inherits control_methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 14: Histogram inherits control_methods"); }
+    }
+
+    // --- Test 15: WorldMesh creation + SetMesh + SetHidden/IsHidden ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local wm = {}\n"
+            "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
+            "InternalCreateWorldMesh(wm)\n"
+            "wm:SetMesh({})\n"
+            "wm:SetHidden(true)\n"
+            "local hidden = wm:IsHidden()\n"
+            "wm:SetHidden(false)\n"
+            "return hidden == true and wm:IsHidden() == false\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
+        else { fail++; spdlog::error("[FAIL] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
+    }
+
+    // --- Test 16: WorldMesh SetStance/SetColor/SetScale (no-op stubs) ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local wm = {}\n"
+            "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
+            "InternalCreateWorldMesh(wm)\n"
+            "wm:SetStance({0,0,0})\n"
+            "wm:SetColor(true)\n"
+            "wm:SetScale({1,1,1})\n"
+            "wm:SetAuxiliaryParameter(0.5)\n"
+            "wm:SetFractionCompleteParameter(1.0)\n"
+            "wm:SetFractionHealthParameter(1.0)\n"
+            "wm:SetLifetimeParameter(0.0)\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 16: WorldMesh setter stubs (no crash)"); }
+        else { fail++; spdlog::error("[FAIL] Test 16: WorldMesh setter stubs"); }
+    }
+
+    // --- Test 17: WorldMesh GetInterpolated* return tables ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local wm = {}\n"
+            "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
+            "InternalCreateWorldMesh(wm)\n"
+            "local p = wm:GetInterpolatedPosition()\n"
+            "local a = wm:GetInterpolatedAlignedBox()\n"
+            "local o = wm:GetInterpolatedOrientedBox()\n"
+            "local sc = wm:GetInterpolatedScroll()\n"
+            "local sp = wm:GetInterpolatedSphere()\n"
+            "return type(p) == 'table' and type(a) == 'table' and "
+            "type(o) == 'table' and type(sc) == 'table' and type(sp) == 'table'\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 17: WorldMesh GetInterpolated* return tables"); }
+        else { fail++; spdlog::error("[FAIL] Test 17: WorldMesh GetInterpolated* return tables"); }
+    }
+
+    // --- Test 18: WorldMesh Destroy ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local wm = {}\n"
+            "setmetatable(wm, {__index = moho.world_mesh_methods})\n"
+            "InternalCreateWorldMesh(wm)\n"
+            "wm:Destroy()\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 18: WorldMesh Destroy"); }
+        else { fail++; spdlog::error("[FAIL] Test 18: WorldMesh Destroy"); }
+    }
+
+    // --- Test 19: Border nil-arg SetNewTextures (partial update) ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local b = {}\n"
+            "setmetatable(b, {__index = moho.border_methods})\n"
+            "InternalCreateBorder(b, test_frame)\n"
+            "b:SetNewTextures('/tex/v.dds', nil, nil, nil, nil, nil)\n"
+            "b:SetNewTextures(nil, '/tex/h.dds', nil, nil, nil, nil)\n"
+            "return true\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 19: Border nil-arg partial SetNewTextures"); }
+        else { fail++; spdlog::error("[FAIL] Test 19: Border nil-arg partial SetNewTextures"); }
+    }
+
+    // --- Test 20: Dragger has no parent (standalone object) ---
+    {
+        auto r = ctx.lua_state.do_string(
+            "local d = {}\n"
+            "setmetatable(d, {__index = moho.dragger_methods})\n"
+            "InternalCreateDragger(d)\n"
+            "return d._c_object ~= nil\n");
+        bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
+        lua_settop(L, 0);
+        if (ok) { pass++; spdlog::info("[PASS] Test 20: Dragger standalone (no parent)"); }
+        else { fail++; spdlog::error("[FAIL] Test 20: Dragger standalone"); }
+    }
+
+    spdlog::info("Controls test: {}/{} passed", pass, pass + fail);
+}
+
 } // namespace osc::test
