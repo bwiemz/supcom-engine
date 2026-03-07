@@ -99,6 +99,7 @@ static void print_usage() {
               << "  --text-test        Text control (SetNewFont, SetText, font metrics, centering)\n"
               << "  --edit-test        Edit/ItemList/Scrollbar controls (text input, list ops, scroll)\n"
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
+              << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --help             Show this help message\n";
@@ -265,6 +266,7 @@ int main(int argc, char* argv[]) {
     bool text_test = parse_flag(argc, argv, "--text-test");
     bool edit_test = parse_flag(argc, argv, "--edit-test");
     bool controls_test = parse_flag(argc, argv, "--controls-test");
+    bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -288,7 +290,7 @@ int main(int argc, char* argv[]) {
                     lowstub_test || blend_test ||
                     ui_test || bitmap_test ||
                     text_test || edit_test ||
-                    controls_test;
+                    controls_test || uiboot_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -535,6 +537,7 @@ int main(int argc, char* argv[]) {
     if (text_test && !map_path.empty()) osc::test::test_text(test_ctx);
     if (edit_test && !map_path.empty()) osc::test::test_edit(test_ctx);
     if (controls_test && !map_path.empty()) osc::test::test_controls(test_ctx);
+    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

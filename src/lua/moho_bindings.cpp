@@ -7256,6 +7256,28 @@ static int control_Dump(lua_State* L) {
     return 0;
 }
 
+static int control_GetRootFrame(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnil(L); return 1; }
+    // Walk up parent chain to root
+    auto* root = ctrl;
+    while (root->parent()) root = root->parent();
+    if (root->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, root->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+static int control_HitTest(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushboolean(L, 0); return 1; }
+    // Stub: always return false for now
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry ui_control_methods[] = {
     {"Destroy",                 control_Destroy},
@@ -7280,6 +7302,8 @@ static const MethodEntry ui_control_methods[] = {
     {"SetName",                 control_SetName},
     {"GetName",                 control_GetName},
     {"Dump",                    control_Dump},
+    {"GetRootFrame",            control_GetRootFrame},
+    {"HitTest",                 control_HitTest},
     {nullptr, nullptr},
 };
 
@@ -7295,8 +7319,19 @@ static int frame_GetTopmostDepth(lua_State* L) {
     return 1;
 }
 
+static int frame_GetTargetHead(lua_State* L) {
+    lua_pushnumber(L, 0); // single monitor
+    return 1;
+}
+
+static int frame_SetTargetHead(lua_State* L) {
+    return 0; // no-op, single monitor
+}
+
 static const MethodEntry ui_frame_methods[] = {
     {"GetTopmostDepth",         frame_GetTopmostDepth},
+    {"GetTargetHead",           frame_GetTargetHead},
+    {"SetTargetHead",           frame_SetTargetHead},
     {nullptr, nullptr},
 };
 
@@ -9297,6 +9332,343 @@ static int l_InternalCreateWorldMesh(lua_State* L) {
     return 0;
 }
 
+// --- WldUIProvider methods (M76) ---
+
+static int wlduiprovider_Destroy(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry ui_wlduiprovider_methods[] = {
+    {"Destroy", wlduiprovider_Destroy},
+    {nullptr, nullptr},
+};
+
+/// InternalCreateWldUIProvider(self) — standalone, no UIControl backing
+static int l_InternalCreateWldUIProvider(lua_State* L) {
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateWldUIProvider: arg 1 must be self table");
+    // Store dummy _c_object so check_control patterns see a non-nil value
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x1)));
+    lua_rawset(L, 1);
+    spdlog::debug("InternalCreateWldUIProvider: created");
+    return 0;
+}
+
+// --- UIWorldView methods (M76) ---
+
+/// __init(self, parentControl, cameraName, depth, isMiniMap, trackCamera)
+static int worldview_init(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "UIWorldView.__init: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "UIWorldView.__init: self must be table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "UIWorldView.__init: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) {
+            ctrl->set_parent(parent);
+            parent->add_child(ctrl);
+        }
+    }
+
+    // Store camera name
+    if (lua_type(L, 3) == LUA_TSTRING) {
+        ctrl->set_name(std::string("WorldView_") + lua_tostring(L, 3));
+    }
+
+    // Create 7 layout LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    spdlog::debug("UIWorldView.__init: control #{}", id);
+    return 0;
+}
+
+static int worldview_CameraReset(lua_State* /*L*/) { return 0; }
+
+static int worldview_EnableResourceRendering(lua_State* /*L*/) { return 0; }
+
+static int worldview_GetRightMouseButtonOrder(lua_State* L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+static int worldview_GetScreenPos(lua_State* L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+static int worldview_GetsGlobalCameraCommands(lua_State* /*L*/) { return 0; }
+
+static int worldview_HasHighlightCommand(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int worldview_IsCartographic(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int worldview_IsInputLocked(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int worldview_IsResourceRenderingEnabled(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int worldview_LockInput(lua_State* /*L*/) { return 0; }
+
+static int worldview_Project(lua_State* L) {
+    // Return {x=0, y=0} screen position stub
+    lua_newtable(L);
+    lua_pushstring(L, "x");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "y");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+    return 1;
+}
+
+static int worldview_ProjectMultiple(lua_State* L) {
+    // Return empty table
+    lua_newtable(L);
+    return 1;
+}
+
+static int worldview_SetCartographic(lua_State* /*L*/) { return 0; }
+static int worldview_SetCustomRender(lua_State* /*L*/) { return 0; }
+static int worldview_SetHighlightEnabled(lua_State* /*L*/) { return 0; }
+
+static int worldview_ShowConvertToPatrolCursor(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int worldview_UnlockInput(lua_State* /*L*/) { return 0; }
+static int worldview_ZoomScale(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry ui_worldview_methods[] = {
+    {"__init",                     worldview_init},
+    {"CameraReset",                worldview_CameraReset},
+    {"EnableResourceRendering",    worldview_EnableResourceRendering},
+    {"GetRightMouseButtonOrder",   worldview_GetRightMouseButtonOrder},
+    {"GetScreenPos",               worldview_GetScreenPos},
+    {"GetsGlobalCameraCommands",   worldview_GetsGlobalCameraCommands},
+    {"HasHighlightCommand",        worldview_HasHighlightCommand},
+    {"IsCartographic",             worldview_IsCartographic},
+    {"IsInputLocked",              worldview_IsInputLocked},
+    {"IsResourceRenderingEnabled", worldview_IsResourceRenderingEnabled},
+    {"LockInput",                  worldview_LockInput},
+    {"Project",                    worldview_Project},
+    {"ProjectMultiple",            worldview_ProjectMultiple},
+    {"SetCartographic",            worldview_SetCartographic},
+    {"SetCustomRender",            worldview_SetCustomRender},
+    {"SetHighlightEnabled",        worldview_SetHighlightEnabled},
+    {"ShowConvertToPatrolCursor",   worldview_ShowConvertToPatrolCursor},
+    {"UnlockInput",                worldview_UnlockInput},
+    {"ZoomScale",                  worldview_ZoomScale},
+    {nullptr, nullptr},
+};
+
+// --- Discovery service methods (M76) ---
+
+static int discovery_GetGameCount(lua_State* L) {
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
+static int discovery_Reset(lua_State* /*L*/) { return 0; }
+static int discovery_Destroy(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry ui_discovery_methods[] = {
+    {"GetGameCount", discovery_GetGameCount},
+    {"Reset",        discovery_Reset},
+    {"Destroy",      discovery_Destroy},
+    {nullptr, nullptr},
+};
+
+/// InternalCreateDiscoveryService(serviceClass) -> instance
+static int l_InternalCreateDiscoveryService(lua_State* L) {
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateDiscoveryService: arg 1 must be class table");
+
+    // Create instance table
+    lua_newtable(L);
+
+    // Set class as metatable with __index
+    lua_newtable(L); // mt
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, 1); // class
+    lua_rawset(L, -3);   // mt.__index = class
+    lua_setmetatable(L, -2); // setmetatable(instance, mt)
+
+    // Set _c_object dummy
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x2)));
+    lua_rawset(L, -3);
+
+    spdlog::debug("InternalCreateDiscoveryService: created");
+    return 1; // return instance
+}
+
+// --- Lobby methods (M76) ---
+
+static int lobby_BroadcastData(lua_State* /*L*/) { return 0; }
+static int lobby_ConnectToPeer(lua_State* /*L*/) { return 0; }
+static int lobby_DebugDump(lua_State* /*L*/) { return 0; }
+static int lobby_Destroy(lua_State* /*L*/) { return 0; }
+static int lobby_DisconnectFromPeer(lua_State* /*L*/) { return 0; }
+static int lobby_EjectPeer(lua_State* /*L*/) { return 0; }
+
+static int lobby_GetLocalPlayerID(lua_State* L) {
+    lua_pushstring(L, "0");
+    return 1;
+}
+
+static int lobby_GetLocalPlayerName(lua_State* L) {
+    lua_pushstring(L, "Player");
+    return 1;
+}
+
+static int lobby_GetLocalPort(lua_State* L) {
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
+static int lobby_GetPeer(lua_State* L) {
+    // Return empty peer table
+    lua_newtable(L);
+    return 1;
+}
+
+static int lobby_GetPeers(lua_State* L) {
+    lua_newtable(L); // empty peers list
+    return 1;
+}
+
+static int lobby_HostGame(lua_State* /*L*/) { return 0; }
+
+static int lobby_IsHost(lua_State* L) {
+    lua_pushboolean(L, 1); // always host in our engine
+    return 1;
+}
+
+static int lobby_JoinGame(lua_State* /*L*/) { return 0; }
+static int lobby_LaunchGame(lua_State* /*L*/) { return 0; }
+
+static int lobby_MakeValidGameName(lua_State* L) {
+    // Return the original name
+    if (lua_type(L, 2) == LUA_TSTRING)
+        lua_pushvalue(L, 2);
+    else
+        lua_pushstring(L, "Game");
+    return 1;
+}
+
+static int lobby_MakeValidPlayerName(lua_State* L) {
+    // Return the original name (arg 3)
+    if (lua_type(L, 3) == LUA_TSTRING)
+        lua_pushvalue(L, 3);
+    else
+        lua_pushstring(L, "Player");
+    return 1;
+}
+
+static int lobby_SendData(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry ui_lobby_methods[] = {
+    {"BroadcastData",       lobby_BroadcastData},
+    {"ConnectToPeer",       lobby_ConnectToPeer},
+    {"DebugDump",           lobby_DebugDump},
+    {"Destroy",             lobby_Destroy},
+    {"DisconnectFromPeer",  lobby_DisconnectFromPeer},
+    {"EjectPeer",           lobby_EjectPeer},
+    {"GetLocalPlayerID",    lobby_GetLocalPlayerID},
+    {"GetLocalPlayerName",  lobby_GetLocalPlayerName},
+    {"GetLocalPort",        lobby_GetLocalPort},
+    {"GetPeer",             lobby_GetPeer},
+    {"GetPeers",            lobby_GetPeers},
+    {"HostGame",            lobby_HostGame},
+    {"IsHost",              lobby_IsHost},
+    {"JoinGame",            lobby_JoinGame},
+    {"LaunchGame",          lobby_LaunchGame},
+    {"MakeValidGameName",   lobby_MakeValidGameName},
+    {"MakeValidPlayerName", lobby_MakeValidPlayerName},
+    {"SendData",            lobby_SendData},
+    {nullptr, nullptr},
+};
+
+/// InternalCreateLobby(lobbyComClass, protocol, port, maxConns, name, uid, nat) -> instance
+static int l_InternalCreateLobby(lua_State* L) {
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateLobby: arg 1 must be class table");
+
+    // Create instance table
+    lua_newtable(L);
+
+    // Set class as metatable with __index
+    lua_newtable(L); // mt
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, 1); // class
+    lua_rawset(L, -3);
+    lua_setmetatable(L, -2);
+
+    // _c_object dummy
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x3)));
+    lua_rawset(L, -3);
+
+    spdlog::debug("InternalCreateLobby: created");
+    return 1; // return instance
+}
+
+// --- UI bootstrap globals (M76) ---
+
+/// GetFrame(head) -> root frame table (only head 0 supported)
+static int l_GetFrame(lua_State* L) {
+    int head = static_cast<int>(luaL_optnumber(L, 1, 0));
+    if (head != 0) { lua_pushnil(L); return 1; }
+    lua_pushstring(L, "__osc_root_frame");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    return 1;
+}
+
+/// GetNumRootFrames() -> 1
+static int l_GetNumRootFrames(lua_State* L) {
+    lua_pushnumber(L, 1);
+    return 1;
+}
+
+/// SetCursor(cursor) — store active cursor in registry
+static int l_SetCursor(lua_State* L) {
+    lua_pushstring(L, "__osc_active_cursor");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 // ====================================================================
 // Registration
 // ====================================================================
@@ -9360,19 +9732,19 @@ static const MohoClassDef moho_classes[] = {
     {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
     {"border_methods",          ui_border_methods,  "control_methods"},
     {"cursor_methods",          ui_cursor_methods,  nullptr},
-    {"discovery_service_methods", empty_methods, nullptr},
+    {"discovery_service_methods", ui_discovery_methods, nullptr},
     {"dragger_methods",         ui_dragger_methods,  nullptr},
     {"edit_methods",            ui_edit_methods,  "control_methods"},
     {"histogram_methods",       ui_histogram_methods,  "control_methods"},
     {"item_list_methods",       ui_item_list_methods,  "control_methods"},
-    {"lobby_methods",           empty_methods,  nullptr},
+    {"lobby_methods",           ui_lobby_methods,  nullptr},
     {"mesh_methods",            empty_methods,  "control_methods"},
     {"movie_methods",           ui_movie_methods,  "control_methods"},
     {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
-    {"UIWorldView",             empty_methods,  nullptr},
+    {"UIWorldView",             ui_worldview_methods,  "control_methods"},
     {"userDecal_methods",       empty_methods,  nullptr},
-    {"WldUIProvider_methods",   empty_methods,  nullptr},
+    {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
     {"world_mesh_methods",      ui_world_mesh_methods,  nullptr},
 
     {nullptr, nullptr, nullptr}, // sentinel
@@ -9456,7 +9828,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("InternalCreateMovie", l_InternalCreateMovie);
     state.register_function("InternalCreateHistogram", l_InternalCreateHistogram);
     state.register_function("InternalCreateWorldMesh", l_InternalCreateWorldMesh);
+    state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
+    state.register_function("InternalCreateDiscoveryService", l_InternalCreateDiscoveryService);
+    state.register_function("InternalCreateLobby", l_InternalCreateLobby);
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
+    state.register_function("GetFrame", l_GetFrame);
+    state.register_function("GetNumRootFrames", l_GetNumRootFrames);
+    state.register_function("SetCursor", l_SetCursor);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
@@ -9481,6 +9859,62 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
         }
     }
     lua_settop(L, top);
+
+    // Create the root frame (GetFrame(0)) — a UIControl with frame_methods metatable
+    {
+        u32 id = registry.create();
+        auto* root_ctrl = registry.get(id);
+        if (root_ctrl) {
+            // Create a Lua table for the root frame
+            lua_newtable(L);
+
+            // Set _c_object
+            lua_pushstring(L, "_c_object");
+            lua_pushlightuserdata(L, root_ctrl);
+            lua_rawset(L, -3);
+
+            // Set metatable to moho.frame_methods (which inherits control_methods)
+            lua_getglobal(L, "moho");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "frame_methods");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    // Create metatable with __index = frame_methods
+                    lua_newtable(L); // mt
+                    lua_pushstring(L, "__index");
+                    lua_pushvalue(L, -3); // frame_methods
+                    lua_rawset(L, -3);    // mt.__index = frame_methods
+                    lua_setmetatable(L, -4); // setmetatable(frame_table, mt)
+                }
+                lua_pop(L, 1); // frame_methods
+            }
+            lua_pop(L, 1); // moho
+
+            // Store Lua table ref on the control
+            lua_pushvalue(L, -1);
+            int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            root_ctrl->set_lua_table_ref(ref);
+            root_ctrl->set_name("RootFrame");
+
+            // Create LazyVars on the frame table
+            create_lazyvar(L, -1, "Left");
+            create_lazyvar(L, -1, "Top");
+            create_lazyvar(L, -1, "Right");
+            create_lazyvar(L, -1, "Bottom");
+            create_lazyvar(L, -1, "Width");
+            create_lazyvar(L, -1, "Height");
+            create_lazyvar(L, -1, "Depth");
+
+            // Store in registry as __osc_root_frame
+            lua_pushstring(L, "__osc_root_frame");
+            lua_pushvalue(L, -2);
+            lua_rawset(L, LUA_REGISTRYINDEX);
+
+            lua_pop(L, 1); // pop frame table
+
+            spdlog::info("Created root frame (GetFrame(0)) as UIControl #{}", id);
+        }
+    }
 
     spdlog::info("Registered UI bindings ({} controls available)",
                  registry.count());

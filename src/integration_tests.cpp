@@ -18,11 +18,13 @@
 
 extern "C" {
 #include <lua.h>
+#include <lauxlib.h>
 }
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 
 namespace osc::test {
@@ -8361,6 +8363,500 @@ void test_controls(TestContext& ctx) {
     }
 
     spdlog::info("Controls test: {}/{} passed", pass, pass + fail);
+}
+
+// Helper: Lua 5.0 has no luaL_dostring
+static int do_lua_string(lua_State* L, const char* s) {
+    return luaL_loadbuffer(L, s, std::strlen(s), "=test") || lua_pcall(L, 0, 0, 0);
+}
+
+void test_uiboot(TestContext& ctx) {
+    spdlog::info("=== UI BOOT TEST (M76) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // --- Test 1: GetFrame/GetNumRootFrames/SetCursor globals exist ---
+    {
+        const char* names[] = {
+            "GetFrame", "GetNumRootFrames", "SetCursor",
+            "InternalCreateWldUIProvider", "InternalCreateDiscoveryService",
+            "InternalCreateLobby"
+        };
+        bool all_ok = true;
+        for (auto* name : names) {
+            lua_pushstring(L, name);
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (!lua_isfunction(L, -1)) { all_ok = false; spdlog::error("  Missing: {}", name); }
+            lua_pop(L, 1);
+        }
+        if (all_ok) { pass++; spdlog::info("[PASS] Test 1: All 6 bootstrap globals registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: Some bootstrap globals missing"); }
+    }
+
+    // --- Test 2: GetFrame(0) returns root frame ---
+    {
+        lua_pushstring(L, "GetFrame");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushnumber(L, 0);
+        lua_call(L, 1, 1);
+        bool ok = lua_istable(L, -1);
+        if (ok) {
+            // Verify it has _c_object
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            ok = lua_isuserdata(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 2: GetFrame(0) returns root frame with _c_object"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: GetFrame(0) invalid"); }
+    }
+
+    // --- Test 3: GetFrame(1) returns nil (single monitor) ---
+    {
+        lua_pushstring(L, "GetFrame");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushnumber(L, 1);
+        lua_call(L, 1, 1);
+        bool ok = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 3: GetFrame(1) returns nil"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: GetFrame(1) should be nil"); }
+    }
+
+    // --- Test 4: GetNumRootFrames() returns 1 ---
+    {
+        lua_pushstring(L, "GetNumRootFrames");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_call(L, 0, 1);
+        bool ok = lua_isnumber(L, -1) && lua_tonumber(L, -1) == 1;
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 4: GetNumRootFrames() == 1"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: GetNumRootFrames invalid"); }
+    }
+
+    // --- Test 5: Root frame has LazyVars ---
+    {
+        lua_pushstring(L, "GetFrame");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushnumber(L, 0);
+        lua_call(L, 1, 1);
+        bool ok = lua_istable(L, -1);
+        if (ok) {
+            const char* vars[] = {"Left", "Top", "Right", "Bottom", "Width", "Height", "Depth"};
+            for (auto* v : vars) {
+                lua_pushstring(L, v);
+                lua_rawget(L, -2);
+                if (!lua_istable(L, -1)) ok = false;
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: Root frame has 7 LazyVars"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: Root frame missing LazyVars"); }
+    }
+
+    // --- Test 6: Root frame has frame_methods (GetTopmostDepth, GetTargetHead) ---
+    {
+        lua_pushstring(L, "GetFrame");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushnumber(L, 0);
+        lua_call(L, 1, 1); // root frame on stack
+        bool ok = lua_istable(L, -1);
+        if (ok) {
+            // Call GetTopmostDepth via metatable
+            lua_pushstring(L, "GetTopmostDepth");
+            lua_gettable(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2); // self
+                lua_call(L, 1, 1);
+                ok = lua_isnumber(L, -1);
+                lua_pop(L, 1);
+            } else {
+                ok = false;
+                lua_pop(L, 1);
+            }
+        }
+        if (ok) {
+            // Call GetTargetHead
+            lua_pushstring(L, "GetTargetHead");
+            lua_gettable(L, -2); // -2 = root frame (not -1 which is the key)
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2); // self
+                lua_call(L, 1, 1);
+                ok = lua_isnumber(L, -1) && lua_tonumber(L, -1) == 0;
+                lua_pop(L, 1);
+            } else {
+                ok = false;
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1); // root frame
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: Root frame has GetTopmostDepth + GetTargetHead"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: Root frame missing frame_methods"); }
+    }
+
+    // --- Test 7: SetCursor stores cursor ---
+    {
+        lua_pushstring(L, "SetCursor");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushstring(L, "test_cursor");
+        lua_call(L, 1, 0);
+        // Verify stored in registry
+        lua_pushstring(L, "__osc_active_cursor");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        bool ok = lua_type(L, -1) == LUA_TSTRING
+                  && std::string(lua_tostring(L, -1)) == "test_cursor";
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: SetCursor stores active cursor"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: SetCursor failed"); }
+    }
+
+    // --- Test 8: moho.UIWorldView has real methods ---
+    {
+        lua_getglobal(L, "moho");
+        bool ok = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "UIWorldView");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "__init");
+                lua_rawget(L, -2);
+                ok = lua_isfunction(L, -1);
+                lua_pop(L, 1);
+                if (ok) {
+                    lua_pushstring(L, "Project");
+                    lua_rawget(L, -2);
+                    ok = lua_isfunction(L, -1);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // UIWorldView
+        }
+        lua_pop(L, 1); // moho
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: moho.UIWorldView has __init + Project"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: moho.UIWorldView missing methods"); }
+    }
+
+    // --- Test 9: WorldView creation via __init ---
+    {
+        // Create a parent group first
+        bool ok = true;
+        int err = do_lua_string(L,
+            "local parent = GetFrame(0)\n"
+            "local wv = {}\n"
+            "-- Set metatable with UIWorldView methods\n"
+            "local mt = {__index = moho.UIWorldView}\n"
+            "setmetatable(wv, mt)\n"
+            "moho.UIWorldView.__init(wv, parent, 'TestCam', 1, false)\n"
+            "_test_wv = wv\n"
+        );
+        if (err != 0) {
+            ok = false;
+            spdlog::error("  WorldView init error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) {
+            lua_getglobal(L, "_test_wv");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                ok = lua_isuserdata(L, -1);
+                lua_pop(L, 1);
+                if (ok) {
+                    // Verify LazyVars created
+                    lua_pushstring(L, "Left");
+                    lua_rawget(L, -2);
+                    ok = lua_istable(L, -1);
+                    lua_pop(L, 1);
+                }
+            } else ok = false;
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: WorldView creation + LazyVars + _c_object"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: WorldView creation failed"); }
+    }
+
+    // --- Test 10: WorldView Project returns {x,y} ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "_test_proj = moho.UIWorldView.Project(_test_wv, {0, 0, 0})\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_proj");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "x");
+                lua_rawget(L, -2);
+                ok = lua_isnumber(L, -1);
+                lua_pop(L, 1);
+                if (ok) {
+                    lua_pushstring(L, "y");
+                    lua_rawget(L, -2);
+                    ok = lua_isnumber(L, -1);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  Project error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: WorldView.Project returns {{x,y}}"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: WorldView.Project failed"); }
+    }
+
+    // --- Test 11: WorldView inherits control_methods (GetName via metatable) ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "-- UIWorldView inherits control_methods, so GetName should be available\n"
+            "local name = moho.UIWorldView.GetName(_test_wv)\n"
+            "_test_wv_name = name\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_wv_name");
+            // The name was set to "WorldView_TestCam" in __init
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                std::string n = lua_tostring(L, -1);
+                ok = (n.find("WorldView") != std::string::npos);
+            }
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  GetName error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 11: WorldView inherits control_methods (GetName)"); }
+        else { fail++; spdlog::error("[FAIL] Test 11: WorldView control_methods inheritance"); }
+    }
+
+    // --- Test 12: WorldView GetRootFrame returns root frame ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "local rf = moho.UIWorldView.GetRootFrame(_test_wv)\n"
+            "local root = GetFrame(0)\n"
+            "_test_wv_rf_match = (rf ~= nil)\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_wv_rf_match");
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  GetRootFrame error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 12: WorldView.GetRootFrame returns non-nil"); }
+        else { fail++; spdlog::error("[FAIL] Test 12: WorldView.GetRootFrame"); }
+    }
+
+    // --- Test 13: WldUIProvider creation ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "_test_wld_ui = {}\n"
+            "InternalCreateWldUIProvider(_test_wld_ui)\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_wld_ui");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                ok = lua_isuserdata(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  WldUIProvider error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 13: InternalCreateWldUIProvider sets _c_object"); }
+        else { fail++; spdlog::error("[FAIL] Test 13: WldUIProvider creation"); }
+    }
+
+    // --- Test 14: moho.WldUIProvider_methods has Destroy ---
+    {
+        lua_getglobal(L, "moho");
+        bool ok = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "WldUIProvider_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Destroy");
+                lua_rawget(L, -2);
+                ok = lua_isfunction(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 14: moho.WldUIProvider_methods.Destroy is real"); }
+        else { fail++; spdlog::error("[FAIL] Test 14: WldUIProvider_methods.Destroy"); }
+    }
+
+    // --- Test 15: moho.discovery_service_methods has real methods ---
+    {
+        lua_getglobal(L, "moho");
+        bool ok = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "discovery_service_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "GetGameCount");
+                lua_rawget(L, -2);
+                ok = lua_isfunction(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 15: moho.discovery_service_methods.GetGameCount is real"); }
+        else { fail++; spdlog::error("[FAIL] Test 15: discovery_service_methods"); }
+    }
+
+    // --- Test 16: InternalCreateDiscoveryService returns instance ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "_test_disc_class = {}\n"
+            "_test_disc_class.TestMethod = function(self) return 42 end\n"
+            "_test_disc = InternalCreateDiscoveryService(_test_disc_class)\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_disc");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                ok = lua_isuserdata(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  DiscoveryService error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 16: InternalCreateDiscoveryService returns instance"); }
+        else { fail++; spdlog::error("[FAIL] Test 16: InternalCreateDiscoveryService"); }
+    }
+
+    // --- Test 17: moho.lobby_methods has real methods ---
+    {
+        lua_getglobal(L, "moho");
+        bool ok = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "lobby_methods");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                const char* check[] = {"GetLocalPlayerID", "IsHost", "LaunchGame", "GetPeers"};
+                ok = true;
+                for (auto* m : check) {
+                    lua_pushstring(L, m);
+                    lua_rawget(L, -2);
+                    if (!lua_isfunction(L, -1)) ok = false;
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 17: moho.lobby_methods has 4 real methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 17: lobby_methods"); }
+    }
+
+    // --- Test 18: InternalCreateLobby returns instance ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "_test_lobby_class = {}\n"
+            "_test_lobby_class.Hosting = function(self) end\n"
+            "_test_lobby = InternalCreateLobby(_test_lobby_class, 'UDP', 16000, 16, 'TestPlayer')\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_lobby");
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                ok = lua_isuserdata(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        } else {
+            spdlog::error("  Lobby error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 18: InternalCreateLobby returns instance"); }
+        else { fail++; spdlog::error("[FAIL] Test 18: InternalCreateLobby"); }
+    }
+
+    // --- Test 19: Lobby stub methods return sensible defaults ---
+    {
+        bool ok = false;
+        int err = do_lua_string(L,
+            "local id = moho.lobby_methods.GetLocalPlayerID(_test_lobby)\n"
+            "local name = moho.lobby_methods.GetLocalPlayerName(_test_lobby)\n"
+            "local host = moho.lobby_methods.IsHost(_test_lobby)\n"
+            "local peers = moho.lobby_methods.GetPeers(_test_lobby)\n"
+            "_test_lobby_id = id\n"
+            "_test_lobby_name = name\n"
+            "_test_lobby_host = host\n"
+            "_test_lobby_peers = peers\n"
+        );
+        if (err == 0) {
+            lua_getglobal(L, "_test_lobby_id");
+            ok = lua_type(L, -1) == LUA_TSTRING;
+            lua_pop(L, 1);
+            if (ok) {
+                lua_getglobal(L, "_test_lobby_name");
+                ok = lua_type(L, -1) == LUA_TSTRING;
+                lua_pop(L, 1);
+            }
+            if (ok) {
+                lua_getglobal(L, "_test_lobby_host");
+                ok = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            if (ok) {
+                lua_getglobal(L, "_test_lobby_peers");
+                ok = lua_istable(L, -1);
+                lua_pop(L, 1);
+            }
+        } else {
+            spdlog::error("  Lobby stubs error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 19: Lobby stubs return sensible defaults"); }
+        else { fail++; spdlog::error("[FAIL] Test 19: Lobby stubs"); }
+    }
+
+    // --- Test 20: WorldView stub methods don't crash ---
+    {
+        bool ok = true;
+        int err = do_lua_string(L,
+            "moho.UIWorldView.CameraReset(_test_wv)\n"
+            "moho.UIWorldView.EnableResourceRendering(_test_wv, true)\n"
+            "moho.UIWorldView.GetsGlobalCameraCommands(_test_wv, true)\n"
+            "moho.UIWorldView.SetCartographic(_test_wv, false)\n"
+            "moho.UIWorldView.SetHighlightEnabled(_test_wv, true)\n"
+            "moho.UIWorldView.SetCustomRender(_test_wv, false)\n"
+            "moho.UIWorldView.ZoomScale(_test_wv, 0, 0, 120, 120)\n"
+            "local cmd = moho.UIWorldView.HasHighlightCommand(_test_wv)\n"
+            "local cart = moho.UIWorldView.IsCartographic(_test_wv)\n"
+            "local locked = moho.UIWorldView.IsInputLocked(_test_wv)\n"
+            "local resren = moho.UIWorldView.IsResourceRenderingEnabled(_test_wv)\n"
+            "local patrol = moho.UIWorldView.ShowConvertToPatrolCursor(_test_wv)\n"
+            "local rmb = moho.UIWorldView.GetRightMouseButtonOrder(_test_wv)\n"
+            "local sp = moho.UIWorldView.GetScreenPos(_test_wv, nil)\n"
+        );
+        if (err != 0) {
+            ok = false;
+            spdlog::error("  WorldView stubs error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 20: WorldView 14 stub methods don't crash"); }
+        else { fail++; spdlog::error("[FAIL] Test 20: WorldView stubs"); }
+    }
+
+    spdlog::info("UI boot test: {}/{} passed", pass, pass + fail);
 }
 
 } // namespace osc::test

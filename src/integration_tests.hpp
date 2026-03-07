@@ -80,5 +80,6 @@ void test_bitmap(TestContext& ctx);
 void test_text(TestContext& ctx);
 void test_edit(TestContext& ctx);
 void test_controls(TestContext& ctx);
+void test_uiboot(TestContext& ctx);
 
 } // namespace osc::test
