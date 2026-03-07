@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water. The full MAUI UI framework (M71-M76) has been reimplemented with 13 control types, reactive LazyVar layout, and game UI bootstrap infrastructure.
 
-**What works today (Milestones 1-71):**
+**What works today (Milestones 1-76):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -41,7 +41,7 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Transport system: air transport load/unload, cargo tracking, attach/detach lifecycle, capacity limits
 - Fog of war: per-army visibility grid, Vision/Radar/Sonar/Omni paint, alliance sharing, OnIntelChange callbacks, terrain LOS occlusion (Bresenham height ray), real blip methods with dead-reckoning
 - Radar jamming: RadarStealth/SonarStealth filtering, IsKnownFake (Omni reveals jammers), IsMaybeDead (no current intel), dead-reckoning position freeze for out-of-sight entities
-- Moho stub conversions: 111 stubs converted to real implementations across 5 milestones (M35 + M49–M51 + M65), covering brain events/utility, weapon fire/control/targeting, projectile collision/child spawning, platoon formation/targeting, damage/kill flags, command caps, movement/fuel/speed multipliers, navigator, elevation, rotation, visibility, scale, mesh override, collision shapes, attachment system, and more
+- Moho stub conversions: 111 stubs converted to real implementations across 5 milestones (M35 + M49-M51 + M65), covering brain events/utility, weapon fire/control/targeting, projectile collision/child spawning, platoon formation/targeting, damage/kill flags, command caps, movement/fuel/speed multipliers, navigator, elevation, rotation, visibility, scale, mesh override, collision shapes, attachment system, and more
 - Audio: XWB/XSB bank parsers, miniaudio backend, PlaySound/SetAmbientSound real implementations, 3D spatial audio
 - Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), team color via SpecTeam alpha mask (set=2 descriptor), water plane, RTS camera (WASD/scroll/orbit)
 - Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
@@ -55,7 +55,7 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Targeting flags: SetDoNotTarget, SetReclaimable, IsValidTarget — guards in weapon auto-targeting and reclaim
 - SCM mesh rendering: per-blueprint GPU mesh cache, real 3D unit models with directional lighting, DDS texture rendering (albedo from mesh blueprints), cube fallback for missing meshes
 - Weapon layer caps: per-weapon `FireTargetLayerCapsTable` enforcement — weapons only auto-target entities on allowed layers (Land, Water, Sub, Seabed, Air)
-- Mass stub conversions I–III: 84 stubs (weapon Change*, movement mults, fuel, projectile guidance, damage/kill flags, command caps, build restrictions, elevation, weapon targeting/priorities, brain events/utility, platoon formation/targeting)
+- Mass stub conversions I-III: 84 stubs (weapon Change*, movement mults, fuel, projectile guidance, damage/kill flags, command caps, build restrictions, elevation, weapon targeting/priorities, brain events/utility, platoon formation/targeting)
 - Mass stub conversion IV: 27 stubs (visibility flags, scale, mesh override, collision shapes, attachment system, ShakeCamera, SetUnSelectable)
 - SCA skeletal animation: SCA v5 parser, AnimCache lazy loading, per-unit bone matrices, GPU skinning via SSBO, nlerp quaternion interpolation, SCA-to-SCM bone mapping
 - Blend-weight skinning: 4 bone indices + equal weights per vertex (SCM v5 convention), GPU multi-bone matrix blending in mesh and shadow shaders, bone index clamping for safety, 64-byte vertex struct (was 48 with rigid skinning)
@@ -73,13 +73,27 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Unit sound: PlayUnitSound/PlayUnitAmbientSound/StopUnitAmbientSound with Blueprint.Audio lookup
 - Medium-priority stubs: SetBoneEnabled per-bone anim disable, AddOnGivenCallback with army transfer
 - Low-priority stubs: IEffect/CollisionBeam Destroy/BeenDestroyed state, CreateBuilderArmController
-- UI control system (M71): UIControl C++ base class with parent/children tree, moho.control_methods (22 real methods: Destroy/GetParent/SetParent/Show/Hide/SetAlpha/etc.), Group and Frame classes, InternalCreateGroup/InternalCreateFrame factories, LazyVar reactive layout properties (Left/Top/Width/Height/Depth), GLFW input event dispatch, per-frame OnFrame callbacks, UIControlRegistry
-- 22 unit tests, 55 integration test flags (`--ui-test`, `--blend-test`, `--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, `--shadow-test`, `--massstub4-test`, `--spatial-test`, `--unitsound-test`, `--medstub-test`, `--lowstub-test`, etc.)
+- **MAUI UI framework (M71-M76):**
+  - UIControl C++ base class with parent/children tree, moho.control_methods (24 real methods: Destroy/GetParent/SetParent/Show/Hide/SetAlpha/GetRootFrame/HitTest/etc.), Group and Frame classes, InternalCreateGroup/InternalCreateFrame factories, LazyVar reactive layout properties (Left/Top/Width/Height/Depth), GLFW input event dispatch, per-frame OnFrame callbacks, UIControlRegistry
+  - Bitmap control: 21 real bitmap_methods (SetNewTexture single/multi DDS, SetSolidColor, SetColorMask, SetUV, SetTiled, UseAlphaHitTest, BitmapWidth/Height via DDS header parsing, animation Play/Stop/Loop/Frame/Pattern, ShareTextures), InternalCreateBitmap factory, GetTextureDimensions global
+  - Text control: 9 real text_methods (SetNewFont, SetNewColor, SetText/GetText, SetDropShadow, SetNewClipToWidth, SetCenteredVertically/Horizontally, GetStringAdvance), InternalCreateText factory, 4 font metric LazyVars (FontAscent/FontDescent/FontExternalLeading/TextAdvance)
+  - Edit control: 31 real edit_methods (SetText/GetText/ClearText, 5 color pairs, caret, highlight, max chars, font, enable/disable, focus)
+  - ItemList control: 20 real item_list_methods (Add/Delete/Modify/GetItem, selection, font, 6-color SetNewColors, scroll, show flags)
+  - Scrollbar control: 4 real scrollbar_methods (SetScrollable with Lua ref tracking, SetNewTextures, DoScrollLines/Pages)
+  - Border control: 2 real border_methods (SetNewTextures 6-texture ninepatch, SetSolidColor), BorderWidth/BorderHeight LazyVars
+  - Dragger control: standalone mouse drag tracking (Destroy, PostDragger global for active dragger dispatch)
+  - Cursor control: 5 real cursor_methods (SetNewTexture, SetDefaultTexture, ResetToDefault, Show, Hide)
+  - Movie control: 7 stub movie_methods (InternalSet, IsLoaded, Play, Stop, Loop, GetFrameRate, GetNumFrames), MovieWidth/MovieHeight LazyVars
+  - Histogram control: 3 stub histogram_methods (SetData, SetXIncrement, SetYIncrement — deprecated)
+  - WorldMesh control: 16 real world_mesh_methods (Destroy, SetMesh, SetStance, SetHidden/IsHidden, SetColor, SetScale, 5x parameter setters, 5x GetInterpolated* returning stub tables)
+  - Game UI bootstrap: GetFrame(0) root frame with LazyVars, GetNumRootFrames, SetCursor, frame_methods (GetTopmostDepth/GetTargetHead/SetTargetHead), UIWorldView (19 methods with __init constructor, Project, CameraReset, etc.), WldUIProvider_methods, discovery_service_methods (GetGameCount/Reset/Destroy + InternalCreateDiscoveryService), lobby_methods (18 methods + InternalCreateLobby)
+- 22 unit tests, 56 integration test flags
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Full UI rendering (Bitmap, Text, Edit, Border controls — M72–M76)
+- Full UI rendering pipeline (Vulkan 2D quad pipeline for bitmaps, text glyphs, borders)
+- Font rendering (stb_truetype glyph atlas — currently using heuristic font metrics)
 - Remaining moho binding stubs (~29 renderer/VFX stubs: IEffect, CollisionBeam, emitter system)
 
 ## Prerequisites
@@ -233,6 +247,12 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--medstub-test` | Medium stubs (SetBoneEnabled, AddOnGivenCallback) |
 | `--lowstub-test` | Low-priority stubs (Destroy/BeenDestroyed, CreateBuilderArmController) |
 | `--blend-test` | Blend-weight skinning (multi-bone parsing, weight validation) |
+| `--ui-test` | UI control system (Frame, Group, LazyVar, moho bindings) |
+| `--bitmap-test` | Bitmap control (SetNewTexture, solid color, UVs, animation) |
+| `--text-test` | Text control (SetNewFont, SetText, font metrics, centering) |
+| `--edit-test` | Edit/ItemList/Scrollbar controls (text input, list ops, scroll) |
+| `--controls-test` | Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls |
+| `--uiboot-test` | UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery) |
 
 ## Project Structure
 
@@ -245,6 +265,7 @@ src/
   lua/         # Lua<->C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   audio/       # Audio system (miniaudio, XWB/XSB bank parsers, sound manager)
+  ui/          # UI control system (UIControl base, UIControlRegistry)
   renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache)
   main.cpp     # Entry point, CLI flags, test harnesses
 third_party/
