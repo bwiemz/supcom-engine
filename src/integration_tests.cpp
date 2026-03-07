@@ -7553,4 +7553,425 @@ void test_text(TestContext& ctx) {
     spdlog::info("Text test: {}/{} passed", pass, pass + fail);
 }
 
+void test_edit(TestContext& ctx) {
+    spdlog::info("=== EDIT/ITEMLIST/SCROLLBAR TEST (M74) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // Test 1: InternalCreateEdit is a global function
+    {
+        lua_pushstring(L, "InternalCreateEdit");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateEdit is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateEdit not found"); }
+    }
+
+    // Test 2: InternalCreateItemList is a global function
+    {
+        lua_pushstring(L, "InternalCreateItemList");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 2: InternalCreateItemList is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: InternalCreateItemList not found"); }
+    }
+
+    // Test 3: InternalCreateScrollbar is a global function
+    {
+        lua_pushstring(L, "InternalCreateScrollbar");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 3: InternalCreateScrollbar is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: InternalCreateScrollbar not found"); }
+    }
+
+    // Test 4: moho.edit_methods has SetText + inherited Destroy
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "edit_methods");
+        lua_rawget(L, -2);
+        bool has_set = false, has_destroy = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetText");
+            lua_rawget(L, -2);
+            has_set = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            has_destroy = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_set && has_destroy) { pass++; spdlog::info("[PASS] Test 4: edit_methods has SetText + inherited Destroy"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: edit_methods missing methods (SetText={}, Destroy={})", has_set, has_destroy); }
+    }
+
+    // Helper: create an edit control
+    const char* mk_edit =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "local f = Frame('EditFrame')\n"
+        "local e = {}\n"
+        "setmetatable(e, {__index = moho.edit_methods})\n"
+        "InternalCreateEdit(e, f)\n";
+
+    // Test 5: Create edit control, SetText/GetText
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetText('hello')\n"
+            "return (e:GetText() == 'hello')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 5 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: Edit SetText/GetText round-trip"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: Edit SetText/GetText failed"); }
+    }
+
+    // Test 6: ClearText
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetText('something')\n"
+            "e:ClearText()\n"
+            "return (e:GetText() == '')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 6 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: Edit ClearText works"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: Edit ClearText failed"); }
+    }
+
+    // Test 7: Color getters/setters
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetNewForegroundColor('ff112233')\n"
+            "e:SetNewBackgroundColor('ffaabbcc')\n"
+            "e:SetNewCaretColor('ff445566')\n"
+            "local fg = e:GetForegroundColor()\n"
+            "local bg = e:GetBackgroundColor()\n"
+            "local cc = e:GetCaretColor()\n"
+            "return (fg == 'ff112233' and bg == 'ffaabbcc' and cc == 'ff445566')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 7 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: Edit color getters/setters work"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: Edit color getters/setters failed"); }
+    }
+
+    // Test 8: Caret position + visibility
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetCaretPosition(5)\n"
+            "e:ShowCaret(false)\n"
+            "return (e:GetCaretPosition() == 5 and not e:IsCaretVisible())\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 8 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: Edit caret position + visibility"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: Edit caret position/visibility failed"); }
+    }
+
+    // Test 9: Enable/Disable input + background
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:DisableInput()\n"
+            "e:ShowBackground(false)\n"
+            "local disabled = not e:IsEnabled()\n"
+            "local bg_hidden = not e:IsBackgroundVisible()\n"
+            "e:EnableInput()\n"
+            "return (disabled and bg_hidden and e:IsEnabled())\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 9 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: Edit enable/disable + background"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: Edit enable/disable failed"); }
+    }
+
+    // Test 10: MaxChars + highlight colors
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetMaxChars(100)\n"
+            "e:SetNewHighlightForegroundColor('ff000000')\n"
+            "e:SetNewHighlightBackgroundColor('ffff0000')\n"
+            "return (e:GetMaxChars() == 100 and "
+            "e:GetHighlightForegroundColor() == 'ff000000' and "
+            "e:GetHighlightBackgroundColor() == 'ffff0000')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 10 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: Edit max chars + highlight colors"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: Edit max chars/highlight colors failed"); }
+    }
+
+    // Test 11: GetFontHeight + GetStringAdvance
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetNewFont('Zeroes', 20)\n"
+            "local fh = e:GetFontHeight()\n"
+            "local sa = e:GetStringAdvance('Test')\n"
+            "return (fh > 0 and sa > 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 11 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 11: Edit font height + string advance"); }
+        else { fail++; spdlog::error("[FAIL] Test 11: Edit font height/string advance failed"); }
+    }
+
+    // --- ItemList tests ---
+
+    const char* mk_itemlist =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "local f = Frame('ItemListFrame')\n"
+        "local il = {}\n"
+        "setmetatable(il, {__index = moho.item_list_methods})\n"
+        "InternalCreateItemList(il, f)\n";
+
+    // Test 12: ItemList AddItem/GetItem/GetItemCount
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:AddItem('Alpha')\n"
+            "il:AddItem('Beta')\n"
+            "il:AddItem('Gamma')\n"
+            "return (il:GetItemCount() == 3 and il:GetItem(0) == 'Alpha' and il:GetItem(2) == 'Gamma')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 12 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 12: ItemList AddItem/GetItem/GetItemCount"); }
+        else { fail++; spdlog::error("[FAIL] Test 12: ItemList AddItem/GetItem/GetItemCount failed"); }
+    }
+
+    // Test 13: ItemList DeleteItem + ModifyItem
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:AddItem('A')\n"
+            "il:AddItem('B')\n"
+            "il:AddItem('C')\n"
+            "il:DeleteItem(1)\n"  // removes 'B'
+            "il:ModifyItem(1, 'Z')\n"  // changes 'C' to 'Z'
+            "return (il:GetItemCount() == 2 and il:GetItem(0) == 'A' and il:GetItem(1) == 'Z')\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 13 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 13: ItemList DeleteItem + ModifyItem"); }
+        else { fail++; spdlog::error("[FAIL] Test 13: ItemList DeleteItem/ModifyItem failed"); }
+    }
+
+    // Test 14: ItemList DeleteAllItems + Empty
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:AddItem('X')\n"
+            "il:AddItem('Y')\n"
+            "local not_empty = not il:Empty()\n"
+            "il:DeleteAllItems()\n"
+            "return (not_empty and il:Empty() and il:GetItemCount() == 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 14 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 14: ItemList DeleteAllItems + Empty"); }
+        else { fail++; spdlog::error("[FAIL] Test 14: ItemList DeleteAllItems/Empty failed"); }
+    }
+
+    // Test 15: ItemList Selection
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:AddItem('A')\n"
+            "il:AddItem('B')\n"
+            "il:SetSelection(1)\n"
+            "return (il:GetSelection() == 1)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 15 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 15: ItemList selection"); }
+        else { fail++; spdlog::error("[FAIL] Test 15: ItemList selection failed"); }
+    }
+
+    // Test 16: ItemList SetNewFont + GetRowHeight + GetStringAdvance
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:SetNewFont('Arial', 16)\n"
+            "local rh = il:GetRowHeight()\n"
+            "local sa = il:GetStringAdvance('Test')\n"
+            "return (rh > 0 and sa > 0)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 16 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 16: ItemList font + metrics"); }
+        else { fail++; spdlog::error("[FAIL] Test 16: ItemList font/metrics failed"); }
+    }
+
+    // Test 17: ItemList SetNewColors + ShowSelection/ShowMouseoverItem
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "il:SetNewColors('ff111111', 'ff222222', 'ff333333', 'ff444444', 'ff555555', 'ff666666')\n"
+            "il:ShowSelection(false)\n"
+            "il:ShowMouseoverItem(false)\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 17 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 17: ItemList colors + show flags"); }
+        else { fail++; spdlog::error("[FAIL] Test 17: ItemList colors/show flags failed"); }
+    }
+
+    // Test 18: ItemList ScrollToTop/ScrollToBottom
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_itemlist) +
+            "for i = 1, 20 do il:AddItem('Item' .. i) end\n"
+            "il:ScrollToBottom()\n"
+            "il:ScrollToTop()\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 18 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 18: ItemList scroll top/bottom"); }
+        else { fail++; spdlog::error("[FAIL] Test 18: ItemList scroll failed"); }
+    }
+
+    // --- Scrollbar tests ---
+
+    const char* mk_scrollbar =
+        "local Frame = import('/lua/maui/frame.lua').Frame\n"
+        "local f = Frame('ScrollbarFrame')\n"
+        "local sb = {}\n"
+        "setmetatable(sb, {__index = moho.scrollbar_methods})\n"
+        "InternalCreateScrollbar(sb, f, 'Vert')\n";
+
+    // Test 19: Scrollbar creation + _c_object
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_scrollbar) +
+            "return (sb._c_object ~= nil)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 19 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 19: Scrollbar created with _c_object"); }
+        else { fail++; spdlog::error("[FAIL] Test 19: Scrollbar creation failed"); }
+    }
+
+    // Test 20: Scrollbar SetNewTextures
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_scrollbar) +
+            "sb:SetNewTextures('/textures/bg.dds', '/textures/mid.dds', '/textures/top.dds', '/textures/bot.dds')\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 20 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 20: Scrollbar SetNewTextures"); }
+        else { fail++; spdlog::error("[FAIL] Test 20: Scrollbar SetNewTextures failed"); }
+    }
+
+    // Test 21: Scrollbar SetScrollable + DoScrollLines
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_scrollbar) +
+            "local scroll_called = false\n"
+            "local mock_scrollable = {\n"
+            "    ScrollLines = function(self, axis, lines)\n"
+            "        scroll_called = true\n"
+            "    end\n"
+            "}\n"
+            "sb:SetScrollable(mock_scrollable)\n"
+            "sb:DoScrollLines(3)\n"
+            "return scroll_called\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 21 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 21: Scrollbar SetScrollable + DoScrollLines"); }
+        else { fail++; spdlog::error("[FAIL] Test 21: Scrollbar DoScrollLines failed"); }
+    }
+
+    // Test 22: Scrollbar DoScrollPages
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_scrollbar) +
+            "local pages_val = 0\n"
+            "local mock_scrollable = {\n"
+            "    ScrollPages = function(self, axis, pages)\n"
+            "        pages_val = pages\n"
+            "    end\n"
+            "}\n"
+            "sb:SetScrollable(mock_scrollable)\n"
+            "sb:DoScrollPages(2)\n"
+            "return (pages_val == 2)\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 22 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 22: Scrollbar DoScrollPages"); }
+        else { fail++; spdlog::error("[FAIL] Test 22: Scrollbar DoScrollPages failed"); }
+    }
+
+    // Test 23: moho.item_list_methods + scrollbar_methods have inherited methods
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "item_list_methods");
+        lua_rawget(L, -2);
+        bool il_has = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "AddItem");
+            lua_rawget(L, -2);
+            il_has = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "scrollbar_methods");
+        lua_rawget(L, -2);
+        bool sb_has = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "SetScrollable");
+            lua_rawget(L, -2);
+            sb_has = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (il_has && sb_has) { pass++; spdlog::info("[PASS] Test 23: item_list_methods + scrollbar_methods have real methods"); }
+        else { fail++; spdlog::error("[FAIL] Test 23: moho class methods missing (il={}, sb={})", il_has, sb_has); }
+    }
+
+    // Test 24: Edit SetCaretCycle
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:SetCaretCycle(0.5, 0.1, 0.9)\n"
+            "e:SetDropShadow(true)\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 24 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 24: Edit SetCaretCycle + SetDropShadow"); }
+        else { fail++; spdlog::error("[FAIL] Test 24: Edit SetCaretCycle/SetDropShadow failed"); }
+    }
+
+    // Test 25: Edit AcquireFocus / AbandonFocus
+    {
+        auto result = ctx.lua_state.do_string(
+            std::string(mk_edit) +
+            "e:AcquireFocus()\n"
+            "e:AbandonFocus()\n"
+            "return true\n");
+        bool ok = false;
+        if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
+        else spdlog::warn("Test 25 Lua error: {}", result.error().message);
+        if (ok) { pass++; spdlog::info("[PASS] Test 25: Edit AcquireFocus/AbandonFocus"); }
+        else { fail++; spdlog::error("[FAIL] Test 25: Edit AcquireFocus/AbandonFocus failed"); }
+    }
+
+    spdlog::info("Edit/ItemList/Scrollbar test: {}/{} passed", pass, pass + fail);
+}
+
 } // namespace osc::test

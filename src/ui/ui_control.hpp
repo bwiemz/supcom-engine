@@ -149,6 +149,88 @@ public:
     f32 text_advance() const { return text_advance_; }
     void set_text_advance(f32 a) { text_advance_ = a; }
 
+    // --- Edit state ---
+    u32 foreground_color() const { return foreground_color_; }
+    void set_foreground_color(u32 c) { foreground_color_ = c; }
+    u32 background_color() const { return background_color_; }
+    void set_background_color(u32 c) { background_color_ = c; }
+    u32 caret_color() const { return caret_color_; }
+    void set_caret_color(u32 c) { caret_color_ = c; }
+    u32 highlight_fg_color() const { return highlight_fg_color_; }
+    void set_highlight_fg_color(u32 c) { highlight_fg_color_ = c; }
+    u32 highlight_bg_color() const { return highlight_bg_color_; }
+    void set_highlight_bg_color(u32 c) { highlight_bg_color_ = c; }
+    i32 caret_position() const { return caret_position_; }
+    void set_caret_position(i32 p) { caret_position_ = p; }
+    bool caret_visible() const { return caret_visible_; }
+    void set_caret_visible(bool v) { caret_visible_ = v; }
+    bool bg_visible() const { return bg_visible_; }
+    void set_bg_visible(bool v) { bg_visible_ = v; }
+    bool input_enabled() const { return input_enabled_; }
+    void set_input_enabled(bool e) { input_enabled_ = e; }
+    i32 max_chars() const { return max_chars_; }
+    void set_max_chars(i32 m) { max_chars_ = m; }
+    f32 caret_cycle_secs() const { return caret_cycle_secs_; }
+    f32 caret_min_alpha() const { return caret_min_alpha_; }
+    f32 caret_max_alpha() const { return caret_max_alpha_; }
+    void set_caret_cycle(f32 secs, f32 min_a, f32 max_a) {
+        caret_cycle_secs_ = secs; caret_min_alpha_ = min_a; caret_max_alpha_ = max_a;
+    }
+
+    // --- ItemList state ---
+    const std::vector<std::string>& items() const { return items_; }
+    void add_item(const std::string& text) { items_.push_back(text); }
+    void delete_item(i32 index) {
+        if (index >= 0 && index < static_cast<i32>(items_.size()))
+            items_.erase(items_.begin() + index);
+    }
+    void delete_all_items() { items_.clear(); selection_ = -1; }
+    void modify_item(i32 index, const std::string& text) {
+        if (index >= 0 && index < static_cast<i32>(items_.size()))
+            items_[index] = text;
+    }
+    const std::string& get_item(i32 index) const {
+        static const std::string empty;
+        if (index >= 0 && index < static_cast<i32>(items_.size()))
+            return items_[index];
+        return empty;
+    }
+    i32 item_count() const { return static_cast<i32>(items_.size()); }
+    i32 selection() const { return selection_; }
+    void set_selection(i32 s) { selection_ = s; }
+    bool show_selection() const { return show_selection_; }
+    void set_show_selection(bool s) { show_selection_ = s; }
+    bool show_mouseover() const { return show_mouseover_; }
+    void set_show_mouseover(bool m) { show_mouseover_ = m; }
+    i32 scroll_top() const { return scroll_top_; }
+    void set_scroll_top(i32 t) { scroll_top_ = t; }
+    u32 item_fg_color() const { return item_fg_color_; }
+    void set_item_fg_color(u32 c) { item_fg_color_ = c; }
+    u32 item_bg_color() const { return item_bg_color_; }
+    void set_item_bg_color(u32 c) { item_bg_color_ = c; }
+    u32 item_sel_fg_color() const { return item_sel_fg_color_; }
+    void set_item_sel_fg_color(u32 c) { item_sel_fg_color_ = c; }
+    u32 item_sel_bg_color() const { return item_sel_bg_color_; }
+    void set_item_sel_bg_color(u32 c) { item_sel_bg_color_ = c; }
+    u32 item_mo_fg_color() const { return item_mo_fg_color_; }
+    void set_item_mo_fg_color(u32 c) { item_mo_fg_color_ = c; }
+    u32 item_mo_bg_color() const { return item_mo_bg_color_; }
+    void set_item_mo_bg_color(u32 c) { item_mo_bg_color_ = c; }
+
+    // --- Scrollbar state ---
+    std::string scroll_axis() const { return scroll_axis_; }
+    void set_scroll_axis(const std::string& a) { scroll_axis_ = a; }
+    const std::string& sb_bg_texture() const { return sb_bg_texture_; }
+    void set_sb_bg_texture(const std::string& t) { sb_bg_texture_ = t; }
+    const std::string& sb_thumb_mid() const { return sb_thumb_mid_; }
+    void set_sb_thumb_mid(const std::string& t) { sb_thumb_mid_ = t; }
+    const std::string& sb_thumb_top() const { return sb_thumb_top_; }
+    void set_sb_thumb_top(const std::string& t) { sb_thumb_top_ = t; }
+    const std::string& sb_thumb_bot() const { return sb_thumb_bot_; }
+    void set_sb_thumb_bot(const std::string& t) { sb_thumb_bot_ = t; }
+    int scrollable_ref() const { return scrollable_ref_; }
+    void set_scrollable_ref(int ref) { scrollable_ref_ = ref; }
+
 private:
     u32 control_id_ = 0;
     std::string name_;
@@ -196,6 +278,42 @@ private:
     f32 font_descent_ = 0.0f;
     f32 font_external_leading_ = 0.0f;
     f32 text_advance_ = 0.0f;
+
+    // Edit state
+    u32 foreground_color_ = 0xFFFFFFFF;
+    u32 background_color_ = 0xFF000000;
+    u32 caret_color_ = 0xFFFFFFFF;
+    u32 highlight_fg_color_ = 0xFFFFFFFF;
+    u32 highlight_bg_color_ = 0xFF0000FF;
+    i32 caret_position_ = 0;
+    bool caret_visible_ = true;
+    bool bg_visible_ = true;
+    bool input_enabled_ = true;
+    i32 max_chars_ = 0; // 0 = unlimited
+    f32 caret_cycle_secs_ = 1.0f;
+    f32 caret_min_alpha_ = 0.0f;
+    f32 caret_max_alpha_ = 1.0f;
+
+    // ItemList state
+    std::vector<std::string> items_;
+    i32 selection_ = -1;
+    bool show_selection_ = true;
+    bool show_mouseover_ = true;
+    i32 scroll_top_ = 0;
+    u32 item_fg_color_ = 0xFFFFFFFF;
+    u32 item_bg_color_ = 0xFF000000;
+    u32 item_sel_fg_color_ = 0xFFFFFFFF;
+    u32 item_sel_bg_color_ = 0xFF0000FF;
+    u32 item_mo_fg_color_ = 0xFFFFFFFF;
+    u32 item_mo_bg_color_ = 0xFF333333;
+
+    // Scrollbar state
+    std::string scroll_axis_ = "Vert";
+    std::string sb_bg_texture_;
+    std::string sb_thumb_mid_;
+    std::string sb_thumb_top_;
+    std::string sb_thumb_bot_;
+    int scrollable_ref_ = -2; // LUA_NOREF
 };
 
 /// Registry of all live UI controls, analogous to EntityRegistry.

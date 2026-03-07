@@ -7749,6 +7749,612 @@ static const MethodEntry ui_text_methods[] = {
 };
 // clang-format on
 
+// ====================================================================
+// Edit methods (M74)
+// ====================================================================
+
+/// edit:SetText(text)
+static int edit_SetText(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_text_content(lua_tostring(L, 2));
+    return 0;
+}
+
+/// edit:GetText() → string
+static int edit_GetText(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, ""); return 1; }
+    lua_pushstring(L, ctrl->text_content().c_str());
+    return 1;
+}
+
+/// edit:ClearText()
+static int edit_ClearText(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_text_content("");
+    return 0;
+}
+
+/// edit:SetNewFont(family, pointsize)
+static int edit_SetNewFont(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_font_family(lua_tostring(L, 2));
+    if (lua_isnumber(L, 3))
+        ctrl->set_font_pointsize(static_cast<i32>(lua_tonumber(L, 3)));
+    update_font_metrics(ctrl);
+    return 0;
+}
+
+/// edit:SetNewForegroundColor(color)
+static int edit_SetNewForegroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_foreground_color(parse_color_hex(lua_tostring(L, 2)));
+    return 0;
+}
+
+/// edit:GetForegroundColor() → string
+static int edit_GetForegroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, "ffffffff"); return 1; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", ctrl->foreground_color());
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// edit:SetNewBackgroundColor(color)
+static int edit_SetNewBackgroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_background_color(parse_color_hex(lua_tostring(L, 2)));
+    return 0;
+}
+
+/// edit:GetBackgroundColor() → string
+static int edit_GetBackgroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, "ff000000"); return 1; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", ctrl->background_color());
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// edit:ShowBackground(bool)
+static int edit_ShowBackground(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_bg_visible(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// edit:IsBackgroundVisible() → bool
+static int edit_IsBackgroundVisible(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? ctrl->bg_visible() : 0);
+    return 1;
+}
+
+/// edit:SetNewCaretColor(color)
+static int edit_SetNewCaretColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_caret_color(parse_color_hex(lua_tostring(L, 2)));
+    return 0;
+}
+
+/// edit:GetCaretColor() → string
+static int edit_GetCaretColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, "ffffffff"); return 1; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", ctrl->caret_color());
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// edit:ShowCaret(bool)
+static int edit_ShowCaret(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_caret_visible(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// edit:IsCaretVisible() → bool
+static int edit_IsCaretVisible(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? ctrl->caret_visible() : 0);
+    return 1;
+}
+
+/// edit:SetCaretPosition(pos)
+static int edit_SetCaretPosition(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->set_caret_position(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+/// edit:GetCaretPosition() → number
+static int edit_GetCaretPosition(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->caret_position() : 0);
+    return 1;
+}
+
+/// edit:SetCaretCycle(seconds, minAlpha, maxAlpha)
+static int edit_SetCaretCycle(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    f32 secs = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 1.0f;
+    f32 min_a = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0.0f;
+    f32 max_a = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 1.0f;
+    ctrl->set_caret_cycle(secs, min_a, max_a);
+    return 0;
+}
+
+/// edit:SetNewHighlightForegroundColor(color)
+static int edit_SetNewHighlightForegroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_highlight_fg_color(parse_color_hex(lua_tostring(L, 2)));
+    return 0;
+}
+
+/// edit:GetHighlightForegroundColor() → string
+static int edit_GetHighlightForegroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, "ffffffff"); return 1; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", ctrl->highlight_fg_color());
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// edit:SetNewHighlightBackgroundColor(color)
+static int edit_SetNewHighlightBackgroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_highlight_bg_color(parse_color_hex(lua_tostring(L, 2)));
+    return 0;
+}
+
+/// edit:GetHighlightBackgroundColor() → string
+static int edit_GetHighlightBackgroundColor(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, "ff0000ff"); return 1; }
+    char buf[9];
+    snprintf(buf, sizeof(buf), "%08x", ctrl->highlight_bg_color());
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// edit:SetMaxChars(size)
+static int edit_SetMaxChars(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->set_max_chars(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+/// edit:GetMaxChars() → number
+static int edit_GetMaxChars(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->max_chars() : 0);
+    return 1;
+}
+
+/// edit:SetDropShadow(bool)
+static int edit_SetDropShadow(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_drop_shadow(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// edit:EnableInput()
+static int edit_EnableInput(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_input_enabled(true);
+    return 0;
+}
+
+/// edit:DisableInput()
+static int edit_DisableInput(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_input_enabled(false);
+    return 0;
+}
+
+/// edit:IsEnabled() → bool
+static int edit_IsEnabled(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? ctrl->input_enabled() : 0);
+    return 1;
+}
+
+/// edit:GetFontHeight() → number
+static int edit_GetFontHeight(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnumber(L, 0); return 1; }
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    lua_pushnumber(L, ps); // font height ≈ point size
+    return 1;
+}
+
+/// edit:GetStringAdvance(text) → number
+static int edit_GetStringAdvance(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnumber(L, 0); return 1; }
+    if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
+    const char* s = lua_tostring(L, 2);
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    f32 advance = s ? (ps * 0.6f * std::strlen(s)) : 0.0f;
+    lua_pushnumber(L, advance);
+    return 1;
+}
+
+/// edit:AcquireFocus()
+static int edit_AcquireFocus(lua_State* L) {
+    auto* ctrl = check_control(L);
+    auto* reg = get_ui_registry(L);
+    if (ctrl && reg) {
+        reg->set_keyboard_focus(ctrl);
+        ctrl->set_keyboard_focus(true);
+    }
+    return 0;
+}
+
+/// edit:AbandonFocus()
+static int edit_AbandonFocus(lua_State* L) {
+    auto* ctrl = check_control(L);
+    auto* reg = get_ui_registry(L);
+    if (ctrl && reg) {
+        if (reg->keyboard_focus() == ctrl)
+            reg->set_keyboard_focus(nullptr);
+        ctrl->set_keyboard_focus(false);
+    }
+    return 0;
+}
+
+// clang-format off
+static const MethodEntry ui_edit_methods[] = {
+    {"SetText",                         edit_SetText},
+    {"GetText",                         edit_GetText},
+    {"ClearText",                       edit_ClearText},
+    {"SetNewFont",                      edit_SetNewFont},
+    {"SetNewForegroundColor",           edit_SetNewForegroundColor},
+    {"GetForegroundColor",              edit_GetForegroundColor},
+    {"SetNewBackgroundColor",           edit_SetNewBackgroundColor},
+    {"GetBackgroundColor",              edit_GetBackgroundColor},
+    {"ShowBackground",                  edit_ShowBackground},
+    {"IsBackgroundVisible",             edit_IsBackgroundVisible},
+    {"SetNewCaretColor",                edit_SetNewCaretColor},
+    {"GetCaretColor",                   edit_GetCaretColor},
+    {"ShowCaret",                       edit_ShowCaret},
+    {"IsCaretVisible",                  edit_IsCaretVisible},
+    {"SetCaretPosition",                edit_SetCaretPosition},
+    {"GetCaretPosition",                edit_GetCaretPosition},
+    {"SetCaretCycle",                   edit_SetCaretCycle},
+    {"SetNewHighlightForegroundColor",  edit_SetNewHighlightForegroundColor},
+    {"GetHighlightForegroundColor",     edit_GetHighlightForegroundColor},
+    {"SetNewHighlightBackgroundColor",  edit_SetNewHighlightBackgroundColor},
+    {"GetHighlightBackgroundColor",     edit_GetHighlightBackgroundColor},
+    {"SetMaxChars",                     edit_SetMaxChars},
+    {"GetMaxChars",                     edit_GetMaxChars},
+    {"SetDropShadow",                   edit_SetDropShadow},
+    {"EnableInput",                     edit_EnableInput},
+    {"DisableInput",                    edit_DisableInput},
+    {"IsEnabled",                       edit_IsEnabled},
+    {"GetFontHeight",                   edit_GetFontHeight},
+    {"GetStringAdvance",                edit_GetStringAdvance},
+    {"AcquireFocus",                    edit_AcquireFocus},
+    {"AbandonFocus",                    edit_AbandonFocus},
+    {nullptr, nullptr},
+};
+// clang-format on
+
+// ====================================================================
+// ItemList methods (M74)
+// ====================================================================
+
+/// item_list:AddItem(text)
+static int itemlist_AddItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->add_item(lua_tostring(L, 2));
+    else if (lua_isnumber(L, 2))
+        ctrl->add_item(std::to_string(static_cast<int>(lua_tonumber(L, 2))));
+    return 0;
+}
+
+/// item_list:DeleteItem(index) — 0-based
+static int itemlist_DeleteItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->delete_item(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+/// item_list:DeleteAllItems()
+static int itemlist_DeleteAllItems(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->delete_all_items();
+    return 0;
+}
+
+/// item_list:ModifyItem(index, string) — 0-based
+static int itemlist_ModifyItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    i32 idx = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) : -1;
+    if (lua_type(L, 3) == LUA_TSTRING)
+        ctrl->modify_item(idx, lua_tostring(L, 3));
+    return 0;
+}
+
+/// item_list:GetItem(index) → string — 0-based
+static int itemlist_GetItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushstring(L, ""); return 1; }
+    i32 idx = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) : -1;
+    lua_pushstring(L, ctrl->get_item(idx).c_str());
+    return 1;
+}
+
+/// item_list:GetItemCount() → number
+static int itemlist_GetItemCount(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->item_count() : 0);
+    return 1;
+}
+
+/// item_list:Empty() → bool
+static int itemlist_Empty(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl ? (ctrl->item_count() == 0) : 1);
+    return 1;
+}
+
+/// item_list:GetSelection() → number (0-based, -1 if none)
+static int itemlist_GetSelection(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->selection() : -1);
+    return 1;
+}
+
+/// item_list:SetSelection(index) — 0-based
+static int itemlist_SetSelection(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->set_selection(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+/// item_list:GetRowHeight() → number
+static int itemlist_GetRowHeight(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnumber(L, 0); return 1; }
+    // Row height ≈ font ascent + descent
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    lua_pushnumber(L, ps); // approximate row height
+    return 1;
+}
+
+/// item_list:SetNewFont(family, pointsize)
+static int itemlist_SetNewFont(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_font_family(lua_tostring(L, 2));
+    if (lua_isnumber(L, 3))
+        ctrl->set_font_pointsize(static_cast<i32>(lua_tonumber(L, 3)));
+    update_font_metrics(ctrl);
+    return 0;
+}
+
+/// item_list:SetNewColors(fg, bg, sel_fg, sel_bg, mo_fg, mo_bg)
+static int itemlist_SetNewColors(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_item_fg_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 3) == LUA_TSTRING)
+        ctrl->set_item_bg_color(parse_color_hex(lua_tostring(L, 3)));
+    if (lua_type(L, 4) == LUA_TSTRING)
+        ctrl->set_item_sel_fg_color(parse_color_hex(lua_tostring(L, 4)));
+    if (lua_type(L, 5) == LUA_TSTRING)
+        ctrl->set_item_sel_bg_color(parse_color_hex(lua_tostring(L, 5)));
+    if (lua_type(L, 6) == LUA_TSTRING)
+        ctrl->set_item_mo_fg_color(parse_color_hex(lua_tostring(L, 6)));
+    if (lua_type(L, 7) == LUA_TSTRING)
+        ctrl->set_item_mo_bg_color(parse_color_hex(lua_tostring(L, 7)));
+    return 0;
+}
+
+/// item_list:GetStringAdvance(text) → number
+static int itemlist_GetStringAdvance(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushnumber(L, 0); return 1; }
+    if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
+    const char* s = lua_tostring(L, 2);
+    f32 ps = static_cast<f32>(ctrl->font_pointsize());
+    f32 advance = s ? (ps * 0.6f * std::strlen(s)) : 0.0f;
+    lua_pushnumber(L, advance);
+    return 1;
+}
+
+/// item_list:ScrollToTop()
+static int itemlist_ScrollToTop(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_scroll_top(0);
+    return 0;
+}
+
+/// item_list:ScrollToBottom()
+static int itemlist_ScrollToBottom(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && ctrl->item_count() > 0)
+        ctrl->set_scroll_top(ctrl->item_count() - 1);
+    return 0;
+}
+
+/// item_list:ShowItem(index) — scroll to make item visible
+static int itemlist_ShowItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->set_scroll_top(static_cast<i32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+/// item_list:NeedsScrollBar() → bool
+static int itemlist_NeedsScrollBar(lua_State* L) {
+    // Always false for now (no real viewport calculation)
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+/// item_list:ShowSelection(bool)
+static int itemlist_ShowSelection(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_show_selection(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// item_list:ShowMouseoverItem(bool)
+static int itemlist_ShowMouseoverItem(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_show_mouseover(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// item_list:SetAlpha(alpha, children) — override to set bg alpha
+static int itemlist_SetAlpha(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl && lua_isnumber(L, 2))
+        ctrl->set_alpha(static_cast<f32>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+// clang-format off
+static const MethodEntry ui_item_list_methods[] = {
+    {"AddItem",             itemlist_AddItem},
+    {"DeleteItem",          itemlist_DeleteItem},
+    {"DeleteAllItems",      itemlist_DeleteAllItems},
+    {"ModifyItem",          itemlist_ModifyItem},
+    {"GetItem",             itemlist_GetItem},
+    {"GetItemCount",        itemlist_GetItemCount},
+    {"Empty",               itemlist_Empty},
+    {"GetSelection",        itemlist_GetSelection},
+    {"SetSelection",        itemlist_SetSelection},
+    {"GetRowHeight",        itemlist_GetRowHeight},
+    {"SetNewFont",          itemlist_SetNewFont},
+    {"SetNewColors",        itemlist_SetNewColors},
+    {"GetStringAdvance",    itemlist_GetStringAdvance},
+    {"ScrollToTop",         itemlist_ScrollToTop},
+    {"ScrollToBottom",      itemlist_ScrollToBottom},
+    {"ShowItem",            itemlist_ShowItem},
+    {"NeedsScrollBar",      itemlist_NeedsScrollBar},
+    {"ShowSelection",       itemlist_ShowSelection},
+    {"ShowMouseoverItem",   itemlist_ShowMouseoverItem},
+    {"SetAlpha",            itemlist_SetAlpha},
+    {nullptr, nullptr},
+};
+// clang-format on
+
+// ====================================================================
+// Scrollbar methods (M74)
+// ====================================================================
+
+/// scrollbar:SetScrollable(scrollable)
+static int scrollbar_SetScrollable(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    // Store a Lua ref to the scrollable control
+    if (lua_istable(L, 2)) {
+        // Release old ref before storing new one
+        if (ctrl->scrollable_ref() >= 0)
+            luaL_unref(L, LUA_REGISTRYINDEX, ctrl->scrollable_ref());
+        lua_pushvalue(L, 2);
+        int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        ctrl->set_scrollable_ref(ref);
+    }
+    return 0;
+}
+
+/// scrollbar:SetNewTextures(background, thumbMiddle, thumbTop, thumbBottom)
+static int scrollbar_SetNewTextures(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    if (lua_type(L, 2) == LUA_TSTRING)
+        ctrl->set_sb_bg_texture(lua_tostring(L, 2));
+    if (lua_type(L, 3) == LUA_TSTRING)
+        ctrl->set_sb_thumb_mid(lua_tostring(L, 3));
+    if (lua_type(L, 4) == LUA_TSTRING)
+        ctrl->set_sb_thumb_top(lua_tostring(L, 4));
+    if (lua_type(L, 5) == LUA_TSTRING)
+        ctrl->set_sb_thumb_bot(lua_tostring(L, 5));
+    return 0;
+}
+
+/// Helper: call scrollable:ScrollLines/ScrollPages on the scrollable ref
+static void call_scrollable_method(lua_State* L, ui::UIControl* ctrl,
+                                    const char* method, f32 amount) {
+    int ref = ctrl->scrollable_ref();
+    if (ref < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, -2); // scrollable self
+        lua_pushstring(L, ctrl->scroll_axis().c_str());
+        lua_pushnumber(L, amount);
+        if (lua_pcall(L, 3, 0, 0) != 0)
+            lua_pop(L, 1); // pop error
+        lua_pop(L, 1); // pop scrollable table
+    } else {
+        lua_pop(L, 2); // pop non-function + scrollable
+    }
+}
+
+/// scrollbar:DoScrollLines(lines)
+static int scrollbar_DoScrollLines(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    f32 lines = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
+    call_scrollable_method(L, ctrl, "ScrollLines", lines);
+    return 0;
+}
+
+/// scrollbar:DoScrollPages(pages)
+static int scrollbar_DoScrollPages(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    f32 pages = lua_isnumber(L, 2) ? static_cast<f32>(lua_tonumber(L, 2)) : 0.0f;
+    call_scrollable_method(L, ctrl, "ScrollPages", pages);
+    return 0;
+}
+
+// clang-format off
+static const MethodEntry ui_scrollbar_methods[] = {
+    {"SetScrollable",       scrollbar_SetScrollable},
+    {"SetNewTextures",      scrollbar_SetNewTextures},
+    {"DoScrollLines",       scrollbar_DoScrollLines},
+    {"DoScrollPages",       scrollbar_DoScrollPages},
+    {nullptr, nullptr},
+};
+// clang-format on
+
 // --- Factory functions (registered as globals) ---
 
 /// Helper: create a LazyVar for a control and store it as self[name].
@@ -8003,6 +8609,175 @@ static int l_InternalCreateText(lua_State* L) {
     return 0;
 }
 
+/// InternalCreateEdit(self, parent)
+static int l_InternalCreateEdit(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateEdit: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateEdit: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateEdit: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Create 7 LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateEdit: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateEdit: control #{}", id);
+    return 0;
+}
+
+/// InternalCreateItemList(self, parent)
+static int l_InternalCreateItemList(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateItemList: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateItemList: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateItemList: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Create 7 LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateItemList: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateItemList: control #{}", id);
+    return 0;
+}
+
+/// InternalCreateScrollbar(self, parent, axis)
+static int l_InternalCreateScrollbar(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateScrollbar: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateScrollbar: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateScrollbar: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Set scroll axis (arg 3)
+    if (lua_type(L, 3) == LUA_TSTRING)
+        ctrl->set_scroll_axis(lua_tostring(L, 3));
+
+    // Create 7 LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateScrollbar: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateScrollbar: control #{}", id);
+    return 0;
+}
+
 /// GetTextureDimensions(filename, border) → width, height
 static int l_GetTextureDimensions(lua_State* L) {
     if (lua_type(L, 1) != LUA_TSTRING) {
@@ -8087,13 +8862,13 @@ static const MohoClassDef moho_classes[] = {
     {"cursor_methods",          empty_methods,  nullptr},
     {"discovery_service_methods", empty_methods, nullptr},
     {"dragger_methods",         empty_methods,  nullptr},
-    {"edit_methods",            empty_methods,  "control_methods"},
+    {"edit_methods",            ui_edit_methods,  "control_methods"},
     {"histogram_methods",       empty_methods,  "control_methods"},
-    {"item_list_methods",       empty_methods,  "control_methods"},
+    {"item_list_methods",       ui_item_list_methods,  "control_methods"},
     {"lobby_methods",           empty_methods,  nullptr},
     {"mesh_methods",            empty_methods,  "control_methods"},
     {"movie_methods",           empty_methods,  "control_methods"},
-    {"scrollbar_methods",       empty_methods,  "control_methods"},
+    {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             empty_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
@@ -8171,6 +8946,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("InternalCreateFrame", l_InternalCreateFrame);
     state.register_function("InternalCreateBitmap", l_InternalCreateBitmap);
     state.register_function("InternalCreateText", l_InternalCreateText);
+    state.register_function("InternalCreateEdit", l_InternalCreateEdit);
+    state.register_function("InternalCreateItemList", l_InternalCreateItemList);
+    state.register_function("InternalCreateScrollbar", l_InternalCreateScrollbar);
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
 
     // Cache the LazyVar.Create function in registry for fast access.
