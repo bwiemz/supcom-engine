@@ -21,7 +21,7 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water.
 
-**What works today (Milestones 1-70):**
+**What works today (Milestones 1-71):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -73,12 +73,13 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
 - Unit sound: PlayUnitSound/PlayUnitAmbientSound/StopUnitAmbientSound with Blueprint.Audio lookup
 - Medium-priority stubs: SetBoneEnabled per-bone anim disable, AddOnGivenCallback with army transfer
 - Low-priority stubs: IEffect/CollisionBeam Destroy/BeenDestroyed state, CreateBuilderArmController
-- 22 unit tests, 54 integration test flags (`--blend-test`, `--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, `--shadow-test`, `--massstub4-test`, `--spatial-test`, `--unitsound-test`, `--medstub-test`, `--lowstub-test`, etc.)
+- UI control system (M71): UIControl C++ base class with parent/children tree, moho.control_methods (22 real methods: Destroy/GetParent/SetParent/Show/Hide/SetAlpha/etc.), Group and Frame classes, InternalCreateGroup/InternalCreateFrame factories, LazyVar reactive layout properties (Left/Top/Width/Height/Depth), GLFW input event dispatch, per-frame OnFrame callbacks, UIControlRegistry
+- 22 unit tests, 55 integration test flags (`--ui-test`, `--blend-test`, `--ai-test`, `--combat-test`, `--fow-test`, `--bone-test`, `--manip-test`, `--anim-test`, `--normal-test`, `--prop-test`, `--scale-test`, `--specular-test`, `--terrain-tex-test`, `--terrain-normal-test`, `--decal-test`, `--projectile-test`, `--shadow-test`, `--massstub4-test`, `--spatial-test`, `--unitsound-test`, `--medstub-test`, `--lowstub-test`, etc.)
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Full UI and input handling
+- Full UI rendering (Bitmap, Text, Edit, Border controls — M72–M76)
 - Remaining moho binding stubs (~29 renderer/VFX stubs: IEffect, CollisionBeam, emitter system)
 
 ## Prerequisites

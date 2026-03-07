@@ -75,5 +75,6 @@ void test_unitsound(TestContext& ctx);
 void test_medstub(TestContext& ctx);
 void test_lowstub(TestContext& ctx);
 void test_blend(TestContext& ctx);
+void test_ui(TestContext& ctx);
 
 } // namespace osc::test

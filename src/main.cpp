@@ -13,6 +13,8 @@
 #include "sim/anim_cache.hpp"
 #include "map/terrain.hpp"
 #include "audio/sound_manager.hpp"
+#include "lua/moho_bindings.hpp"
+#include "ui/ui_control.hpp"
 #include "renderer/renderer.hpp"
 
 extern "C" {
@@ -92,6 +94,7 @@ static void print_usage() {
               << "  --medstub-test     Medium stubs (SetBoneEnabled, AddOnGivenCallback, AddBoundedProp)\n"
               << "  --lowstub-test     Low-priority stubs (Destroy/BeenDestroyed, CreateBuilderArmController)\n"
               << "  --blend-test       Blend-weight skinning (multi-bone vertex parsing, weight validation)\n"
+              << "  --ui-test          UI control system (Frame, Group, LazyVar, moho bindings)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --help             Show this help message\n";
@@ -253,6 +256,7 @@ int main(int argc, char* argv[]) {
     bool medstub_test = parse_flag(argc, argv, "--medstub-test");
     bool lowstub_test = parse_flag(argc, argv, "--lowstub-test");
     bool blend_test = parse_flag(argc, argv, "--blend-test");
+    bool ui_test = parse_flag(argc, argv, "--ui-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -273,7 +277,8 @@ int main(int argc, char* argv[]) {
                     decal_test || projectile_test || shadow_test ||
                     massstub4_test || spatial_test ||
                     unitsound_test || medstub_test ||
-                    lowstub_test || blend_test;
+                    lowstub_test || blend_test ||
+                    ui_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -376,6 +381,10 @@ int main(int argc, char* argv[]) {
         spdlog::error("Sim boot failed: {}", sim_result.error().message);
         return 1;
     }
+
+    // UI control registry (M71)
+    osc::ui::UIControlRegistry ui_registry;
+    osc::lua::register_ui_bindings(state, ui_registry);
 
     // Terrain query test
     if (sim_state.terrain()) {
@@ -511,6 +520,7 @@ int main(int argc, char* argv[]) {
     if (medstub_test && !map_path.empty()) osc::test::test_medstub(test_ctx);
     if (lowstub_test && !map_path.empty()) osc::test::test_lowstub(test_ctx);
     if (blend_test && !map_path.empty()) osc::test::test_blend(test_ctx);
+    if (ui_test && !map_path.empty()) osc::test::test_ui(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

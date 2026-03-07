@@ -20,6 +20,7 @@
 #include "sim/weapon.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
+#include "ui/ui_control.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7011,6 +7012,428 @@ static const MethodEntry collision_beam_methods[] = {
 // clang-format on
 
 // ====================================================================
+// UI Control methods (M71)
+// ====================================================================
+
+static ui::UIControlRegistry* get_ui_registry(lua_State* L) {
+    lua_pushstring(L, "osc_ui_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<ui::UIControlRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return reg;
+}
+
+static ui::UIControl* check_control(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* ctrl = static_cast<ui::UIControl*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return ctrl;
+}
+
+static int control_Destroy(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    auto* reg = get_ui_registry(L);
+    if (!reg) return 0;
+
+    // Call OnDestroy callback on Lua side
+    lua_pushstring(L, "OnDestroy");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("OnDestroy error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    // Detach from parent
+    ctrl->set_parent(nullptr);
+    // Detach all children
+    ctrl->clear_children();
+    // Mark destroyed
+    reg->destroy(ctrl->control_id());
+    return 0;
+}
+
+static int control_GetParent(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || !ctrl->parent()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* parent = ctrl->parent();
+    if (parent->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, parent->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+static int control_SetParent(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    auto* new_parent = check_control(L, 2);
+    ctrl->set_parent(new_parent);
+    return 0;
+}
+
+static int control_ClearChildren(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->clear_children();
+    return 0;
+}
+
+static int control_Show(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_hidden(false);
+    return 0;
+}
+
+static int control_Hide(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_hidden(true);
+    return 0;
+}
+
+static int control_SetHidden(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    bool h = lua_toboolean(L, 2) != 0;
+    ctrl->set_hidden(h);
+    return 0;
+}
+
+static int control_IsHidden(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl && ctrl->hidden());
+    return 1;
+}
+
+static int control_DisableHitTest(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_hit_test_disabled(true);
+    return 0;
+}
+
+static int control_EnableHitTest(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_hit_test_disabled(false);
+    return 0;
+}
+
+static int control_IsHitTestDisabled(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl && ctrl->hit_test_disabled());
+    return 1;
+}
+
+static void set_alpha_recursive(ui::UIControl* ctrl, f32 a) {
+    ctrl->set_alpha(a);
+    for (auto* child : ctrl->children())
+        set_alpha_recursive(child, a);
+}
+
+static int control_SetAlpha(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    f32 a = static_cast<f32>(luaL_checknumber(L, 2));
+    bool apply_children = lua_toboolean(L, 3) != 0;
+    ctrl->set_alpha(a);
+    if (apply_children) {
+        for (auto* child : ctrl->children())
+            set_alpha_recursive(child, a);
+    }
+    return 0;
+}
+
+static int control_GetAlpha(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->alpha() : 1.0);
+    return 1;
+}
+
+static int control_SetRenderPass(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_render_pass(static_cast<i32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int control_GetRenderPass(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushnumber(L, ctrl ? ctrl->render_pass() : 0);
+    return 1;
+}
+
+static int control_AcquireKeyboardFocus(lua_State* L) {
+    auto* ctrl = check_control(L);
+    auto* reg = get_ui_registry(L);
+    if (!ctrl || !reg) return 0;
+
+    bool blocks = lua_toboolean(L, 2) != 0;
+    auto* prev = reg->keyboard_focus();
+    if (prev && prev != ctrl) {
+        prev->set_keyboard_focus(false);
+        // Call OnLoseKeyboardFocus on previous
+        if (prev->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, prev->lua_table_ref());
+            lua_pushstring(L, "OnLoseKeyboardFocus");
+            lua_rawget(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, -2);
+                lua_pcall(L, 1, 0, 0);
+            } else {
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+    }
+
+    ctrl->set_keyboard_focus(true);
+    ctrl->set_blocks_key_down(blocks);
+    reg->set_keyboard_focus(ctrl);
+    return 0;
+}
+
+static int control_AbandonKeyboardFocus(lua_State* L) {
+    auto* ctrl = check_control(L);
+    auto* reg = get_ui_registry(L);
+    if (!ctrl || !reg) return 0;
+
+    if (reg->keyboard_focus() == ctrl) {
+        ctrl->set_keyboard_focus(false);
+        reg->set_keyboard_focus(nullptr);
+    }
+    return 0;
+}
+
+static int control_NeedsFrameUpdate(lua_State* L) {
+    auto* ctrl = check_control(L);
+    lua_pushboolean(L, ctrl && ctrl->needs_frame_update());
+    return 1;
+}
+
+static int control_SetNeedsFrameUpdate(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_needs_frame_update(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+static int control_SetName(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    const char* n = luaL_checkstring(L, 2);
+    ctrl->set_name(n ? n : "");
+    return 0;
+}
+
+static int control_GetName(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) {
+        lua_pushstring(L, ctrl->name().c_str());
+    } else {
+        lua_pushstring(L, "");
+    }
+    return 1;
+}
+
+static int control_Dump(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) {
+        spdlog::info("UIControl#{} '{}' hidden={} alpha={:.2f} hit_test_disabled={} "
+                     "needs_update={} children={}",
+                     ctrl->control_id(), ctrl->name(), ctrl->hidden(),
+                     ctrl->alpha(), ctrl->hit_test_disabled(),
+                     ctrl->needs_frame_update(),
+                     ctrl->children().size());
+    }
+    return 0;
+}
+
+// clang-format off
+static const MethodEntry ui_control_methods[] = {
+    {"Destroy",                 control_Destroy},
+    {"GetParent",               control_GetParent},
+    {"SetParent",               control_SetParent},
+    {"ClearChildren",           control_ClearChildren},
+    {"Show",                    control_Show},
+    {"Hide",                    control_Hide},
+    {"SetHidden",               control_SetHidden},
+    {"IsHidden",                control_IsHidden},
+    {"DisableHitTest",          control_DisableHitTest},
+    {"EnableHitTest",           control_EnableHitTest},
+    {"IsHitTestDisabled",       control_IsHitTestDisabled},
+    {"SetAlpha",                control_SetAlpha},
+    {"GetAlpha",                control_GetAlpha},
+    {"SetRenderPass",           control_SetRenderPass},
+    {"GetRenderPass",           control_GetRenderPass},
+    {"AcquireKeyboardFocus",    control_AcquireKeyboardFocus},
+    {"AbandonKeyboardFocus",    control_AbandonKeyboardFocus},
+    {"NeedsFrameUpdate",        control_NeedsFrameUpdate},
+    {"SetNeedsFrameUpdate",     control_SetNeedsFrameUpdate},
+    {"SetName",                 control_SetName},
+    {"GetName",                 control_GetName},
+    {"Dump",                    control_Dump},
+    {nullptr, nullptr},
+};
+
+static const MethodEntry ui_group_methods[] = {
+    // Group has no extra methods beyond control_methods
+    {nullptr, nullptr},
+};
+
+static int frame_GetTopmostDepth(lua_State* L) {
+    // Walk all children recursively and find max Depth LazyVar value
+    // For now return a fixed value; Depth is managed in Lua LazyVars
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
+static const MethodEntry ui_frame_methods[] = {
+    {"GetTopmostDepth",         frame_GetTopmostDepth},
+    {nullptr, nullptr},
+};
+// clang-format on
+
+// --- Factory functions (registered as globals) ---
+
+/// Helper: create a LazyVar for a control and store it as self[name].
+/// Calls LazyVar.Create(0) from /lua/lazyvar.lua.
+static void create_lazyvar(lua_State* L, int self_idx, const char* name) {
+    // Normalize to absolute index before pushing anything
+    if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
+
+    // Get the LazyVar Create function from the lazyvar module
+    lua_pushstring(L, "__osc_lazyvar_create");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushnumber(L, 0);
+        lua_call(L, 1, 1); // returns LazyVar table
+    } else {
+        lua_pop(L, 1);
+        // Fallback: create a simple table with __call that returns [1]
+        lua_newtable(L);
+        lua_pushnumber(L, 0);
+        lua_rawseti(L, -2, 1);
+    }
+    lua_pushstring(L, name);
+    lua_pushvalue(L, -2); // dup LazyVar
+    lua_rawset(L, self_idx);
+    lua_pop(L, 1); // pop LazyVar
+}
+
+/// InternalCreateGroup(self, parent)
+static int l_InternalCreateGroup(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateGroup: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateGroup: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateGroup: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Set parent if provided
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    // Create 7 LazyVars: Left, Top, Right, Bottom, Width, Height, Depth
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit if it exists
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateGroup: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateGroup: control #{}", id);
+    return 0;
+}
+
+/// InternalCreateFrame(self)
+static int l_InternalCreateFrame(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateFrame: no UIControlRegistry");
+
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateFrame: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateFrame: failed to create control");
+
+    // Store Lua table reference
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    // Set _c_object lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    // Frame has no parent (it IS the root)
+
+    // Create 7 LazyVars
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    // Call OnInit
+    lua_pushstring(L, "OnInit");
+    lua_rawget(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("InternalCreateFrame: OnInit error: {}",
+                         lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::debug("InternalCreateFrame: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
 // Registration
 // ====================================================================
 
@@ -7066,23 +7489,23 @@ static const MohoClassDef moho_classes[] = {
     {"FootPlantManipulator",    empty_methods,                  "manipulator_methods"},
     {"CollisionManipulator",    empty_methods,                  "manipulator_methods"},
 
-    // UI classes — empty stubs (sim doesn't use them, but globalInit iterates all)
-    {"bitmap_methods",          empty_methods,  nullptr},
-    {"border_methods",          empty_methods,  nullptr},
-    {"control_methods",         empty_methods,  nullptr},
+    // UI classes — M71: control/group/frame are real, rest are stubs
+    {"control_methods",         ui_control_methods, nullptr},
+    {"group_methods",           ui_group_methods,  "control_methods"},
+    {"frame_methods",           ui_frame_methods,  "control_methods"},
+    {"bitmap_methods",          empty_methods,  "control_methods"},
+    {"border_methods",          empty_methods,  "control_methods"},
     {"cursor_methods",          empty_methods,  nullptr},
     {"discovery_service_methods", empty_methods, nullptr},
     {"dragger_methods",         empty_methods,  nullptr},
-    {"edit_methods",            empty_methods,  nullptr},
-    {"frame_methods",           empty_methods,  nullptr},
-    {"group_methods",           empty_methods,  nullptr},
-    {"histogram_methods",       empty_methods,  nullptr},
-    {"item_list_methods",       empty_methods,  nullptr},
+    {"edit_methods",            empty_methods,  "control_methods"},
+    {"histogram_methods",       empty_methods,  "control_methods"},
+    {"item_list_methods",       empty_methods,  "control_methods"},
     {"lobby_methods",           empty_methods,  nullptr},
-    {"mesh_methods",            empty_methods,  nullptr},
-    {"movie_methods",           empty_methods,  nullptr},
-    {"scrollbar_methods",       empty_methods,  nullptr},
-    {"text_methods",            empty_methods,  nullptr},
+    {"mesh_methods",            empty_methods,  "control_methods"},
+    {"movie_methods",           empty_methods,  "control_methods"},
+    {"scrollbar_methods",       empty_methods,  "control_methods"},
+    {"text_methods",            empty_methods,  "control_methods"},
     {"UIWorldView",             empty_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   empty_methods,  nullptr},
@@ -7144,6 +7567,46 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim) {
     lua_setglobal(L, "moho"); // set the moho global
 
     spdlog::info("Registered moho bindings");
+}
+
+void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
+    lua_State* L = state.raw();
+
+    // Store UIControlRegistry pointer in Lua registry
+    lua_pushstring(L, "osc_ui_registry");
+    lua_pushlightuserdata(L, &registry);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    // Register factory globals
+    state.register_function("InternalCreateGroup", l_InternalCreateGroup);
+    state.register_function("InternalCreateFrame", l_InternalCreateFrame);
+
+    // Cache the LazyVar.Create function in registry for fast access.
+    // We import /lua/lazyvar.lua and grab its Create function.
+    int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "/lua/lazyvar.lua");
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+            lua_pushstring(L, "Create");
+            lua_rawget(L, -2);
+            if (lua_isfunction(L, -1)) {
+                lua_pushstring(L, "__osc_lazyvar_create");
+                lua_pushvalue(L, -2);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+                spdlog::info("Cached LazyVar.Create in registry");
+            }
+            lua_pop(L, 1); // Create function
+        } else {
+            if (lua_isstring(L, -1))
+                spdlog::warn("LazyVar import failed: {}", lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
+
+    spdlog::info("Registered UI bindings ({} controls available)",
+                 registry.count());
 }
 
 } // namespace osc::lua

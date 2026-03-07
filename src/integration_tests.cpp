@@ -6957,4 +6957,182 @@ void test_blend(TestContext& ctx) {
     spdlog::info("Blend-weight skinning test: {}/{} passed", pass, pass + fail);
 }
 
+void test_ui(TestContext& ctx) {
+    spdlog::info("=== UI CONTROL TEST (M71) ===");
+    int pass = 0, fail = 0;
+    lua_State* L = ctx.L;
+
+    // Test 1: UIControlRegistry exists and is accessible
+    {
+        lua_pushstring(L, "osc_ui_registry");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        bool ok = lua_isuserdata(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 1: UIControlRegistry in Lua registry"); }
+        else { fail++; spdlog::error("[FAIL] Test 1: UIControlRegistry not found"); }
+    }
+
+    // Test 2: moho.control_methods has real methods
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "control_methods");
+        lua_rawget(L, -2);
+        bool has_destroy = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            has_destroy = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_destroy) { pass++; spdlog::info("[PASS] Test 2: moho.control_methods.Destroy is a function"); }
+        else { fail++; spdlog::error("[FAIL] Test 2: moho.control_methods.Destroy missing"); }
+    }
+
+    // Test 3: moho.group_methods has Destroy (inherited from control_methods after flattening)
+    {
+        lua_getglobal(L, "moho");
+        lua_pushstring(L, "group_methods");
+        lua_rawget(L, -2);
+        bool has_destroy = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Destroy");
+            lua_rawget(L, -2);
+            has_destroy = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2);
+        if (has_destroy) { pass++; spdlog::info("[PASS] Test 3: moho.group_methods has Destroy (inherited)"); }
+        else { fail++; spdlog::error("[FAIL] Test 3: group_methods missing inherited Destroy"); }
+    }
+
+    // Test 4: InternalCreateGroup is a global function
+    {
+        lua_pushstring(L, "InternalCreateGroup");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 4: InternalCreateGroup is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 4: InternalCreateGroup not found"); }
+    }
+
+    // Test 5: InternalCreateFrame is a global function
+    {
+        lua_pushstring(L, "InternalCreateFrame");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 5: InternalCreateFrame is registered"); }
+        else { fail++; spdlog::error("[FAIL] Test 5: InternalCreateFrame not found"); }
+    }
+
+    // Test 6: LazyVar.Create is cached in registry
+    {
+        lua_pushstring(L, "__osc_lazyvar_create");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        bool ok = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        if (ok) { pass++; spdlog::info("[PASS] Test 6: LazyVar.Create cached in registry"); }
+        else { fail++; spdlog::error("[FAIL] Test 6: LazyVar.Create not cached"); }
+    }
+
+    // Test 7: Create a Frame via Lua and verify _c_object
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('TestFrame')\n"
+            "if f._c_object then\n"
+            "    LOG('UI: Frame created with _c_object')\n"
+            "    return true\n"
+            "else\n"
+            "    WARN('UI: Frame missing _c_object')\n"
+            "    return false\n"
+            "end\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 7 Lua error: {}", result.error().message);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 7: Frame created with _c_object via Lua"); }
+        else { fail++; spdlog::error("[FAIL] Test 7: Frame creation failed"); }
+    }
+
+    // Test 8: Create a Group with parent Frame via Lua
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local Group = import('/lua/maui/group.lua').Group\n"
+            "local f = Frame('TestFrame2')\n"
+            "local g = Group(f, 'TestGroup')\n"
+            "if g._c_object and g:GetParent() then\n"
+            "    local parent = g:GetParent()\n"
+            "    if parent:GetName() == 'TestFrame2' then\n"
+            "        LOG('UI: Group parent is correct')\n"
+            "        return true\n"
+            "    end\n"
+            "end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 8 Lua error: {}", result.error().message);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 8: Group created with correct parent"); }
+        else { fail++; spdlog::error("[FAIL] Test 8: Group parent linkage failed"); }
+    }
+
+    // Test 9: LazyVar properties exist on controls
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('LazyVarTest')\n"
+            "if f.Left and f.Top and f.Width and f.Height and f.Depth then\n"
+            "    LOG('UI: All 7 LazyVars present')\n"
+            "    return true\n"
+            "end\n"
+            "return false\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 9 Lua error: {}", result.error().message);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 9: LazyVar properties present on Frame"); }
+        else { fail++; spdlog::error("[FAIL] Test 9: LazyVars missing"); }
+    }
+
+    // Test 10: Control methods (Show/Hide/SetAlpha/GetAlpha)
+    {
+        auto result = ctx.lua_state.do_string(
+            "local Frame = import('/lua/maui/frame.lua').Frame\n"
+            "local f = Frame('MethodTest')\n"
+            "f:Hide()\n"
+            "if not f:IsHidden() then return false end\n"
+            "f:Show()\n"
+            "if f:IsHidden() then return false end\n"
+            "f:SetAlpha(0.5, false)\n"
+            "local a = f:GetAlpha()\n"
+            "if math.abs(a - 0.5) > 0.01 then return false end\n"
+            "f:SetName('Renamed')\n"
+            "if f:GetName() ~= 'Renamed' then return false end\n"
+            "return true\n");
+        bool ok = false;
+        if (result) {
+            ok = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        } else {
+            spdlog::warn("Test 10 Lua error: {}", result.error().message);
+        }
+        if (ok) { pass++; spdlog::info("[PASS] Test 10: Control methods (Show/Hide/Alpha/Name) work"); }
+        else { fail++; spdlog::error("[FAIL] Test 10: Control method tests failed"); }
+    }
+
+    spdlog::info("UI control test: {}/{} passed", pass, pass + fail);
+}
+
 } // namespace osc::test
