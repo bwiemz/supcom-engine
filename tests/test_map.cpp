@@ -19,7 +19,7 @@ TEST_CASE("Heightmap grid point queries", "[map]") {
     //   100  200  300
     //   400  500  600
     //   700  800  900
-    std::vector<i16> data = {100, 200, 300, 400, 500, 600, 700, 800, 900};
+    std::vector<u16> data = {100, 200, 300, 400, 500, 600, 700, 800, 900};
     f32 scale = 1.0f; // 1:1 for easy math
 
     Heightmap hm(2, 2, scale, data);
@@ -40,7 +40,7 @@ TEST_CASE("Heightmap grid point queries", "[map]") {
 
 TEST_CASE("Heightmap bilinear interpolation", "[map]") {
     // 2x2 map → 3x3 grid, scale = 0.1
-    std::vector<i16> data = {0, 100, 0, 0, 100, 0, 0, 0, 0};
+    std::vector<u16> data = {0, 100, 0, 0, 100, 0, 0, 0, 0};
     f32 scale = 0.1f;
 
     Heightmap hm(2, 2, scale, data);
@@ -60,7 +60,7 @@ TEST_CASE("Heightmap bilinear interpolation", "[map]") {
 }
 
 TEST_CASE("Heightmap clamps out-of-range coordinates", "[map]") {
-    std::vector<i16> data = {10, 20, 30, 40};
+    std::vector<u16> data = {10, 20, 30, 40};
     Heightmap hm(1, 1, 1.0f, data); // 1x1 map → 2x2 grid
 
     // Negative coords should clamp to (0,0) = 10
@@ -73,7 +73,7 @@ TEST_CASE("Heightmap clamps out-of-range coordinates", "[map]") {
 TEST_CASE("Heightmap with real-world scale", "[map]") {
     // Typical SupCom scale: 1/128
     f32 scale = 1.0f / 128.0f;
-    std::vector<i16> data = {0, 0, 0, 3200, 0, 0, 0, 0, 0};
+    std::vector<u16> data = {0, 0, 0, 3200, 0, 0, 0, 0, 0};
     Heightmap hm(2, 2, scale, data);
 
     // Grid point (0,1) = 3200 / 128 = 25.0
@@ -87,7 +87,7 @@ TEST_CASE("Heightmap with real-world scale", "[map]") {
 namespace {
 /// Build a minimal synthetic .scmap file for testing.
 std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
-                                  const std::vector<i16>& heights,
+                                  const std::vector<u16>& heights,
                                   bool has_water = false,
                                   f32 water_elev = 0.0f) {
     std::vector<u8> buf;
@@ -177,7 +177,7 @@ std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
 TEST_CASE("SCMAP parser extracts heightmap", "[map]") {
     // 4x4 map → 5x5 grid = 25 samples
     u32 w = 4, h = 4;
-    std::vector<i16> heights;
+    std::vector<u16> heights;
     for (u32 z = 0; z <= h; z++) {
         for (u32 x = 0; x <= w; x++) {
             heights.push_back(static_cast<i16>((z * (w + 1) + x) * 100));
@@ -203,7 +203,7 @@ TEST_CASE("SCMAP parser extracts heightmap", "[map]") {
 
 TEST_CASE("SCMAP parser extracts water data", "[map]") {
     u32 w = 2, h = 2;
-    std::vector<i16> heights(9, 100);
+    std::vector<u16> heights(9, 100);
 
     auto scmap = build_test_scmap(w, h, 1.0f, heights, true, 25.0f);
     auto result = parse_scmap(scmap);
@@ -233,7 +233,7 @@ TEST_CASE("SCMAP parser rejects truncated file", "[map]") {
 
 TEST_CASE("Terrain height queries with water", "[map]") {
     // 2x2 map, all heights at 10.0, water at 20.0
-    std::vector<i16> data(9, 1280); // 1280 * (1/128) = 10.0
+    std::vector<u16> data(9, 1280); // 1280 * (1/128) = 10.0
     Heightmap hm(2, 2, 1.0f / 128.0f, data);
     Terrain terrain(std::move(hm), 20.0f, true);
 
@@ -249,7 +249,7 @@ TEST_CASE("Terrain height queries with water", "[map]") {
 
 TEST_CASE("Terrain height queries above water", "[map]") {
     // Heights at 30.0, water at 20.0 → surface = terrain (above water)
-    std::vector<i16> data(9, 3840); // 3840 * (1/128) = 30.0
+    std::vector<u16> data(9, 3840); // 3840 * (1/128) = 30.0
     Heightmap hm(2, 2, 1.0f / 128.0f, data);
     Terrain terrain(std::move(hm), 20.0f, true);
 
@@ -258,7 +258,7 @@ TEST_CASE("Terrain height queries above water", "[map]") {
 }
 
 TEST_CASE("Terrain without water", "[map]") {
-    std::vector<i16> data(9, 2560); // 2560 * (1/128) = 20.0
+    std::vector<u16> data(9, 2560); // 2560 * (1/128) = 20.0
     Heightmap hm(2, 2, 1.0f / 128.0f, data);
     Terrain terrain(std::move(hm), 0.0f);
 

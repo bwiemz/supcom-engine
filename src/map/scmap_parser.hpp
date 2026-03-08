@@ -43,7 +43,7 @@ struct ScmapData {
     u32 map_width = 0;
     u32 map_height = 0;
     f32 height_scale = 0.0f;
-    std::vector<i16> heightmap; // (map_width+1)*(map_height+1) samples
+    std::vector<u16> heightmap; // (map_width+1)*(map_height+1) samples
     bool has_water = false;
     f32 water_elevation = 0.0f;
     f32 water_deep_elevation = 0.0f;

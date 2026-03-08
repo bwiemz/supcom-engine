@@ -73,6 +73,10 @@ public:
     const Camera& camera() const { return camera_; }
     void set_player_army(i32 army) { player_army_ = army; }
     i32 player_army() const { return player_army_; }
+    void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
+    bool fog_enabled() const { return fog_enabled_; }
+    void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
+    bool decals_enabled() const { return decals_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
     u32 width() const { return window_width_; }
@@ -184,6 +188,8 @@ private:
     FontCache font_cache_;
     Camera camera_;
     i32 player_army_ = 0;
+    bool fog_enabled_ = true;
+    bool decals_enabled_ = true;
 
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};

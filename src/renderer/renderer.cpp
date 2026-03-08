@@ -1045,8 +1045,12 @@ void Renderer::build_scene(const sim::SimState& sim,
         auto& strata = terrain->strata();
         // Only strata 0-8 are blended; stratum 9 (UpperStratum) has no
         // blend map channel and is handled separately in FA.
-        for (size_t i = 0; i < 9 && i < strata.size(); i++)
+        for (size_t i = 0; i < 9 && i < strata.size(); i++) {
             terrain_strata_scales_[i] = strata[i].albedo_scale;
+            spdlog::info("Terrain stratum {}: albedo='{}' normal='{}' scale={:.1f}",
+                         i, strata[i].albedo_path, strata[i].normal_path,
+                         strata[i].albedo_scale);
+        }
 
         // Collect 20 image views:
         // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
@@ -1065,13 +1069,19 @@ void Renderer::build_scene(const sim::SimState& sim,
         views[0] = blend0 ? blend0->image.view : zero_view;  // black = no blending
         views[1] = blend1 ? blend1->image.view : zero_view;
 
+        spdlog::info("Terrain blend maps: blend0={} ({}B), blend1={} ({}B), map={}x{}",
+                     blend0 ? "OK" : "NONE", terrain->blend_dds_0().size(),
+                     blend1 ? "OK" : "NONE", terrain->blend_dds_1().size(),
+                     terrain->map_width(), terrain->map_height());
+
         // Stratum albedo textures (0-8) at bindings 2-10
+        // Empty strata use black (zero) so blend weights don't add white
         for (size_t i = 0; i < 9; i++) {
             if (i < strata.size() && !strata[i].albedo_path.empty()) {
                 auto* tex = texture_cache_.get(strata[i].albedo_path);
                 views[2 + i] = tex ? tex->image.view : white_view;
             } else {
-                views[2 + i] = white_view;
+                views[2 + i] = zero_view; // black = no color contribution
             }
         }
 
@@ -1394,7 +1404,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     auto vp = camera_.view_proj(aspect);
 
     // Stage fog of war data from visibility grid (CPU side)
-    if (fog_renderer_.initialized() && sim.visibility_grid()) {
+    if (fog_enabled_ && fog_renderer_.initialized() && sim.visibility_grid()) {
         fog_renderer_.stage(*sim.visibility_grid(), player_army_);
     }
 
@@ -1545,7 +1555,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // ==================== MAIN PASS ====================
     // Begin render pass
     std::array<VkClearValue, 2> clear_values{};
-    clear_values[0].color = {{0.1f, 0.15f, 0.3f, 1.0f}}; // dark blue sky
+    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // sky haze (matches atmos fog)
     clear_values[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rp_begin{};
@@ -1617,7 +1627,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // 2. Draw decals (textured quads on terrain)
     // stored_decals_ is pre-sorted by texture_path (in build_scene) for
     // allocation-free per-frame grouping via linear scan.
-    if (!stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_) {
+    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_) {
         f32 cam_x, cam_y, cam_z;
         camera_.eye_position(cam_x, cam_y, cam_z);
 

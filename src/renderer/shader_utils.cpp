@@ -176,14 +176,17 @@ void main() {
     vec3 s7 = texture(stratum7, uv7).rgb;
     vec3 s8 = texture(stratum8, uv8).rgb;
 
-    // Stratum 0 = base layer, weight = 1 - sum(overlay weights)
-    float total = b0.r + b0.g + b0.b + b0.a + b1.r + b1.g + b1.b + b1.a;
-    float base = max(0.0, 1.0 - total);
-
-    // Blend albedo
-    vec3 color = s0 * base
-        + s1 * b0.r + s2 * b0.g + s3 * b0.b + s4 * b0.a
-        + s5 * b1.r + s6 * b1.g + s7 * b1.b + s8 * b1.a;
+    // Sequential alpha compositing: each stratum replaces a portion
+    // of the layer below (FA blending — NOT additive)
+    vec3 color = s0;
+    color = mix(color, s1, b0.r);
+    color = mix(color, s2, b0.g);
+    color = mix(color, s3, b0.b);
+    color = mix(color, s4, b0.a);
+    color = mix(color, s5, b1.r);
+    color = mix(color, s6, b1.g);
+    color = mix(color, s7, b1.b);
+    color = mix(color, s8, b1.a);
 
     // Decode and blend per-stratum normal maps (same UV as albedo)
     vec3 n0 = decodeNormal(normalMap0, uv0);
@@ -196,13 +199,16 @@ void main() {
     vec3 n7 = decodeNormal(normalMap7, uv7);
     vec3 n8 = decodeNormal(normalMap8, uv8);
 
-    // Renormalize blend weights to avoid near-zero vectors when total != 1.0
-    float norm_w = base + b0.r + b0.g + b0.b + b0.a
-                        + b1.r + b1.g + b1.b + b1.a;
-    norm_w = max(norm_w, 0.001);
-    vec3 blendedTangentNormal = (n0 * base
-        + n1 * b0.r + n2 * b0.g + n3 * b0.b + n4 * b0.a
-        + n5 * b1.r + n6 * b1.g + n7 * b1.b + n8 * b1.a) / norm_w;
+    // Sequential alpha compositing for normals (matching albedo blend)
+    vec3 blendedTangentNormal = n0;
+    blendedTangentNormal = mix(blendedTangentNormal, n1, b0.r);
+    blendedTangentNormal = mix(blendedTangentNormal, n2, b0.g);
+    blendedTangentNormal = mix(blendedTangentNormal, n3, b0.b);
+    blendedTangentNormal = mix(blendedTangentNormal, n4, b0.a);
+    blendedTangentNormal = mix(blendedTangentNormal, n5, b1.r);
+    blendedTangentNormal = mix(blendedTangentNormal, n6, b1.g);
+    blendedTangentNormal = mix(blendedTangentNormal, n7, b1.b);
+    blendedTangentNormal = mix(blendedTangentNormal, n8, b1.a);
     blendedTangentNormal = normalize(blendedTangentNormal);
 
     // TBN: terrain UV is world-XZ-aligned, so T=(1,0,0), B=(0,0,1)
@@ -227,14 +233,18 @@ void main() {
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
 
-    // Hemisphere ambient: sky blue from above, warm brown from below
-    vec3 skyColor = vec3(0.40, 0.45, 0.55);
-    vec3 groundColor = vec3(0.20, 0.18, 0.15);
+    // Decode sRGB texture values to linear for correct lighting math
+    // (sRGB swapchain will re-encode on output)
+    color = pow(color, vec3(2.2));
+
+    // Hemisphere ambient: warm sunlit sky from above, cool shadow from below
+    vec3 skyColor = vec3(0.55, 0.52, 0.48);
+    vec3 groundColor = vec3(0.25, 0.24, 0.22);
     float hemi = worldNormal.y * 0.5 + 0.5; // remap [-1,1] to [0,1]
-    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.30;
+    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.45;
 
     // Diffuse
-    vec3 diffuse = vec3(0.70) * NdotL * shadow;
+    vec3 diffuse = vec3(0.65) * NdotL * shadow;
 
     // Blinn-Phong specular on terrain (subtle)
     vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
@@ -244,14 +254,19 @@ void main() {
 
     vec3 lit = color * (ambient + diffuse) + vec3(spec);
 
-    // Fog of war: sample visibility texture and darken terrain
+    // Fog of war: CPU-blurred texture, smooth transitions
+    // FA shows unexplored at ~45% brightness with mild desaturation
     float fogVal = texture(fogMap, blendUV).r;
-    float fogBright = mix(0.15, 1.0, fogVal);
+    float fogBright = mix(0.45, 1.0, fogVal);
+    // Mild desaturation in unexplored areas
+    float fogSat = mix(0.65, 1.0, fogVal);
+    vec3 gray = vec3(dot(lit, vec3(0.299, 0.587, 0.114)));
+    lit = mix(gray, lit, fogSat);
     lit *= fogBright;
 
     // Atmospheric distance fog: fade to haze at distance
     float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
-    float fogDensity = 0.0018;
+    float fogDensity = 0.0005;
     float atmosFog = 1.0 - exp(-dist * fogDensity);
     vec3 hazeColor = vec3(0.55, 0.62, 0.72) * fogBright;
     lit = mix(lit, hazeColor, atmosFog);
@@ -341,7 +356,7 @@ void main() {
 
     // Atmospheric distance fog
     float dist = length(vec3(upc.eyeX, upc.eyeY, upc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0018;
+    float fogDensity = 0.0005;
     float atmosFog = 1.0 - exp(-dist * fogDensity);
     vec3 hazeColor = vec3(0.55, 0.62, 0.72);
     lit = mix(lit, hazeColor, atmosFog);
@@ -452,7 +467,7 @@ void main() {
 
     // Atmospheric distance fog
     float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0018;
+    float fogDensity = 0.0005;
     float atmosFog = 1.0 - exp(-dist * fogDensity);
     vec3 hazeColor = vec3(0.55, 0.62, 0.72);
     waterColor = mix(clamp(waterColor, 0.0, 1.0), hazeColor, atmosFog);
@@ -611,7 +626,7 @@ void main() {
 
     // Atmospheric distance fog
     float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0018;
+    float fogDensity = 0.0005;
     float atmosFog = 1.0 - exp(-dist * fogDensity);
     vec3 hazeColor = vec3(0.55, 0.62, 0.72);
     lit = mix(lit, hazeColor, atmosFog);

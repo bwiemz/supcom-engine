@@ -313,6 +313,8 @@ int main(int argc, char* argv[]) {
     bool enhance_wreck_test = parse_flag(argc, argv, "--enhance-wreck-test");
     bool vfx_render_test = parse_flag(argc, argv, "--vfx-render-test");
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
+    bool no_fog = parse_flag(argc, argv, "--no-fog");
+    bool no_decals = parse_flag(argc, argv, "--no-decals");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -494,6 +496,8 @@ int main(int argc, char* argv[]) {
             osc::renderer::InputHandler input_handler;
             input_handler.set_player_army(0);
             renderer.set_player_army(0);
+            if (no_fog) renderer.set_fog_enabled(false);
+            if (no_decals) renderer.set_decals_enabled(false);
 
             double sim_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();

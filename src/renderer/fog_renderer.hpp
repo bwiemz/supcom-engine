@@ -2,6 +2,7 @@
 
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
+#include <vector>
 
 namespace osc::map { class VisibilityGrid; }
 
@@ -39,9 +40,12 @@ private:
     VkSampler sampler_ = VK_NULL_HANDLE;
     AllocatedBuffer staging_{};
     u8* staging_mapped_ = nullptr;
+    std::vector<u8> raw_grid_;   // unblurred visibility data
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;
     bool initialized_ = false;
+
+    void blur_to_staging();
 };
 
 } // namespace osc::renderer

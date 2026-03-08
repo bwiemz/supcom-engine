@@ -12,7 +12,7 @@ namespace osc::map {
 class Heightmap {
 public:
     Heightmap(u32 map_width, u32 map_height, f32 scale,
-              std::vector<i16> raw_data);
+              std::vector<u16> raw_data);
 
     /// Bilinear-interpolated height at world position (x, z).
     /// Coordinates are clamped to the valid range.
@@ -31,7 +31,7 @@ private:
     u32 grid_width_;   // map_width + 1
     u32 grid_height_;  // map_height + 1
     f32 scale_;        // raw_value * scale = world height
-    std::vector<i16> data_; // row-major [gz * grid_width + gx]
+    std::vector<u16> data_; // row-major [gz * grid_width + gx]
 };
 
 } // namespace osc::map

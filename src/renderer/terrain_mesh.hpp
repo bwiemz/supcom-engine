@@ -27,7 +27,7 @@ public:
     VkBuffer index_buffer() const { return index_buf_.buffer; }
     u32 index_count() const { return index_count_; }
 
-    static constexpr u32 DECIMATE = 4; // sample every 4th point
+    static constexpr u32 DECIMATE = 2; // sample every 2nd point
 
 private:
     AllocatedBuffer vertex_buf_{};

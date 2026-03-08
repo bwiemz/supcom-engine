@@ -7,7 +7,7 @@
 namespace osc::map {
 
 Heightmap::Heightmap(u32 map_width, u32 map_height, f32 scale,
-                     std::vector<i16> raw_data)
+                     std::vector<u16> raw_data)
     : grid_width_(map_width + 1),
       grid_height_(map_height + 1),
       scale_(scale),

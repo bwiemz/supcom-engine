@@ -93,6 +93,14 @@ public:
         return result;
     }
 
+    /// Read UInt16 array of count elements.
+    std::vector<u16> read_u16_array(size_t count) {
+        std::vector<u16> result(count);
+        std::memcpy(result.data(), data_ + pos_, count * 2);
+        pos_ += count * 2;
+        return result;
+    }
+
     const u8* data_at(size_t offset) const { return data_ + offset; }
 
 private:
@@ -411,7 +419,7 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
                      std::to_string(heightmap_bytes) + " bytes, have " +
                      std::to_string(r.remaining()) + ")");
     }
-    std::vector<i16> heightmap = r.read_i16_array(heightmap_count);
+    std::vector<u16> heightmap = r.read_u16_array(heightmap_count);
 
     // --- Skip shader/environment strings to reach water data ---
     // Format: null_byte + shader(cstr) + background(cstr) + sky(cstr)

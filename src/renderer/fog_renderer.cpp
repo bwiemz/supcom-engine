@@ -140,6 +140,10 @@ void FogRenderer::init(u32 grid_width, u32 grid_height,
 void FogRenderer::stage(const osc::map::VisibilityGrid& grid, u32 army) {
     if (!initialized_ || !staging_mapped_) return;
 
+    // Write raw visibility data to temp buffer
+    if (raw_grid_.size() != grid_width_ * grid_height_)
+        raw_grid_.resize(grid_width_ * grid_height_, 255);
+
     for (u32 gz = 0; gz < grid_height_; gz++) {
         for (u32 gx = 0; gx < grid_width_; gx++) {
             auto flags = grid.get(gx, gz, army);
@@ -151,7 +155,51 @@ void FogRenderer::stage(const osc::map::VisibilityGrid& grid, u32 army) {
                 val = 200; // radar coverage (slightly dimmed)
             else if (map::has_flag(flags, map::VisFlag::EverSeen))
                 val = 100; // explored but dark
-            staging_mapped_[gz * grid_width_ + gx] = val;
+            raw_grid_[gz * grid_width_ + gx] = val;
+        }
+    }
+
+    // Two-pass box blur (radius=2) for smooth FoW transitions
+    blur_to_staging();
+}
+
+void FogRenderer::blur_to_staging() {
+    u32 w = grid_width_;
+    u32 h = grid_height_;
+    constexpr i32 R = 2; // blur radius
+
+    // Horizontal blur: raw_grid_ -> staging
+    for (u32 y = 0; y < h; y++) {
+        for (u32 x = 0; x < w; x++) {
+            i32 sum = 0;
+            i32 count = 0;
+            for (i32 dx = -R; dx <= R; dx++) {
+                i32 sx = static_cast<i32>(x) + dx;
+                if (sx >= 0 && sx < static_cast<i32>(w)) {
+                    sum += raw_grid_[y * w + sx];
+                    count++;
+                }
+            }
+            staging_mapped_[y * w + x] = static_cast<u8>(sum / count);
+        }
+    }
+
+    // Copy staging back to raw for vertical pass
+    std::memcpy(raw_grid_.data(), staging_mapped_, w * h);
+
+    // Vertical blur: raw_grid_ -> staging
+    for (u32 y = 0; y < h; y++) {
+        for (u32 x = 0; x < w; x++) {
+            i32 sum = 0;
+            i32 count = 0;
+            for (i32 dy = -R; dy <= R; dy++) {
+                i32 sy = static_cast<i32>(y) + dy;
+                if (sy >= 0 && sy < static_cast<i32>(h)) {
+                    sum += raw_grid_[sy * w + x];
+                    count++;
+                }
+            }
+            staging_mapped_[y * w + x] = static_cast<u8>(sum / count);
         }
     }
 }
