@@ -55,6 +55,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
+    ui_dispatch_.install_callbacks(window_);
 
     // Vulkan instance (vk-bootstrap)
     vkb::InstanceBuilder inst_builder;
@@ -246,6 +247,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 
     // Shadow depth-only pipelines (need shadow_render_pass_ + bone_ds_layout_)
     create_shadow_pipelines();
+
+    // UI renderer instance buffer
+    ui_renderer_.init(device_, allocator_);
 
     initialized_ = true;
     spdlog::info("Renderer initialized ({}x{})", width, height);
@@ -790,6 +794,34 @@ void Renderer::create_pipelines() {
             .build(device_, render_pass_, &decal_layout_);
     }
 
+    // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
+    auto uiv = compile_glsl(device_, shaders::ui_vert, "ui.vert", true);
+    auto uif = compile_glsl(device_, shaders::ui_frag, "ui.frag", false);
+    if (uiv && uif) {
+        // Only per-instance input (no per-vertex — quad generated from gl_VertexIndex)
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(UIInstance);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+        std::array<VkVertexInputAttributeDescription, 3> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0};                   // rect (x,y,w,h)
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 4};     // uvRect
+        attrs[2] = {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};     // color
+
+        ui_pipeline_ = PipelineBuilder()
+            .set_shaders(uiv, uif)
+            .set_vertex_input(&binding, 1, attrs.data(),
+                              static_cast<u32>(attrs.size()))
+            .set_depth_test(false, false)
+            .set_blend(true)
+            .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+            .set_push_constant(sizeof(f32) * 2,
+                               VK_SHADER_STAGE_VERTEX_BIT)
+            .set_descriptor_set_layout(texture_ds_layout_)
+            .build(device_, render_pass_, &ui_layout_);
+    }
+
     // Destroy shader modules (already compiled into pipelines)
     vkDestroyShaderModule(device_, tv, nullptr);
     vkDestroyShaderModule(device_, tf, nullptr);
@@ -801,6 +833,8 @@ void Renderer::create_pipelines() {
     vkDestroyShaderModule(device_, mf, nullptr);
     vkDestroyShaderModule(device_, dv, nullptr);
     vkDestroyShaderModule(device_, df, nullptr);
+    if (uiv) vkDestroyShaderModule(device_, uiv, nullptr);
+    if (uif) vkDestroyShaderModule(device_, uif, nullptr);
 }
 
 void Renderer::create_shadow_pipelines() {
@@ -939,6 +973,8 @@ void Renderer::build_scene(const sim::SimState& sim,
                          vfs, sim.blueprint_store());
         texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                             texture_ds_layout_, texture_sampler_, vfs);
+        font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                         texture_ds_layout_, texture_sampler_, vfs);
         unit_renderer_.preload_meshes(sim, mesh_cache_, L);
     }
 
@@ -1178,7 +1214,8 @@ void Renderer::build_scene(const sim::SimState& sim,
     spdlog::info("Scene built");
 }
 
-void Renderer::render(sim::SimState& sim, lua_State* L) {
+void Renderer::render(sim::SimState& sim, lua_State* L,
+                      ui::UIControlRegistry* ui_registry) {
     // Wait for ALL previous GPU work (including present) to complete.
     // Using vkDeviceWaitIdle instead of fence-only sync avoids the classic
     // single-buffered semaphore race: fence signals on submit completion,
@@ -1219,6 +1256,22 @@ void Renderer::render(sim::SimState& sim, lua_State* L) {
 
     // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
     unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_);
+
+    // Update UI quads (walk control tree, read LazyVar positions)
+    if (ui_registry) {
+        f64 now = glfwGetTime();
+        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
+        last_frame_time_ = now;
+        if (dt > 0.0f && dt < 1.0f) {
+            ui_renderer_.advance_animations(L, *ui_registry, dt);
+            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
+        }
+        ui_dispatch_.dispatch_events(L, *ui_registry);
+        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
+                            window_width_, window_height_,
+                            static_cast<f32>(ui_dispatch_.mouse_x()),
+                            static_cast<f32>(ui_dispatch_.mouse_y()));
+    }
 
     // View-projection matrix
     f32 aspect = static_cast<f32>(window_width_) /
@@ -1626,6 +1679,14 @@ void Renderer::render(sim::SimState& sim, lua_State* L) {
         vkCmdDrawIndexed(cmd_buf_, water_renderer_.index_count(), 1, 0, 0, 0);
     }
 
+    // 6. Draw UI (screen-space 2D quads, last — always on top)
+    if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        ui_renderer_.render(cmd_buf_, ui_layout_,
+                            window_width_, window_height_);
+    }
+
     vkCmdEndRenderPass(cmd_buf_);
     vkEndCommandBuffer(cmd_buf_);
 
@@ -1724,6 +1785,8 @@ void Renderer::shutdown() {
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
+    ui_renderer_.destroy(device_, allocator_);
+    font_cache_.destroy(device_, allocator_);
     mesh_cache_.destroy(device_, allocator_);
     texture_cache_.destroy(device_, allocator_);
 
@@ -1780,6 +1843,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
+    if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
+    if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
 
     // Sync
     vkDestroyFence(device_, render_fence_, nullptr);

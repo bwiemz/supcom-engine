@@ -67,6 +67,10 @@ public:
     // --- Type flags ---
     virtual bool is_frame() const { return false; }
 
+    enum class ControlType : u8 { Generic, Edit, ItemList, Scrollbar };
+    ControlType control_type() const { return control_type_; }
+    void set_control_type(ControlType t) { control_type_ = t; }
+
     // --- Bitmap state ---
     const std::string& texture_path() const { return texture_path_; }
     void set_texture_path(const std::string& p) { texture_path_ = p; }
@@ -111,6 +115,10 @@ public:
     void set_anim_looping(bool l) { anim_looping_ = l; }
     const std::vector<i32>& frame_pattern() const { return frame_pattern_; }
     void set_frame_pattern(std::vector<i32> p) { frame_pattern_ = std::move(p); }
+    f32 anim_accumulator() const { return anim_accumulator_; }
+    void set_anim_accumulator(f32 a) { anim_accumulator_ = a; }
+    i32 pattern_index() const { return pattern_index_; }
+    void set_pattern_index(i32 i) { pattern_index_ = i; }
 
     // Multi-texture support (SetNewTexture can take multiple filenames)
     const std::vector<std::string>& textures() const { return textures_; }
@@ -291,6 +299,7 @@ private:
     bool has_keyboard_focus_ = false;
     bool blocks_key_down_ = false;
     bool destroyed_ = false;
+    ControlType control_type_ = ControlType::Generic;
 
     // Bitmap state
     std::string texture_path_;
@@ -308,6 +317,8 @@ private:
     f32 frame_rate_ = 10.0f;
     bool anim_playing_ = false;
     bool anim_looping_ = false;
+    f32 anim_accumulator_ = 0.0f;
+    i32 pattern_index_ = 0;
     std::vector<i32> frame_pattern_;
     std::vector<std::string> textures_;
 

@@ -100,6 +100,11 @@ static void print_usage() {
               << "  --edit-test        Edit/ItemList/Scrollbar controls (text input, list ops, scroll)\n"
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
+              << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
+              << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
+              << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
+              << "  --border-render-test Border 9-patch rendering (6-texture ninepatch)\n"
+              << "  --edit-render-test Edit control visuals (background, text, caret)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --help             Show this help message\n";
@@ -267,6 +272,19 @@ int main(int argc, char* argv[]) {
     bool edit_test = parse_flag(argc, argv, "--edit-test");
     bool controls_test = parse_flag(argc, argv, "--controls-test");
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
+    bool uirender_test = parse_flag(argc, argv, "--uirender-test");
+    bool font_test = parse_flag(argc, argv, "--font-test");
+    bool scissor_test = parse_flag(argc, argv, "--scissor-test");
+    bool border_render_test = parse_flag(argc, argv, "--border-render-test");
+    bool edit_render_test = parse_flag(argc, argv, "--edit-render-test");
+    bool itemlist_render_test = parse_flag(argc, argv, "--itemlist-render-test");
+    bool scrollbar_render_test = parse_flag(argc, argv, "--scrollbar-render-test");
+    bool anim_render_test = parse_flag(argc, argv, "--anim-render-test");
+    bool tiled_render_test = parse_flag(argc, argv, "--tiled-render-test");
+    bool input_test = parse_flag(argc, argv, "--input-test");
+    bool onframe_test = parse_flag(argc, argv, "--onframe-test");
+    bool cursor_render_test = parse_flag(argc, argv, "--cursor-render-test");
+    bool drag_render_test = parse_flag(argc, argv, "--drag-render-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -290,7 +308,14 @@ int main(int argc, char* argv[]) {
                     lowstub_test || blend_test ||
                     ui_test || bitmap_test ||
                     text_test || edit_test ||
-                    controls_test || uiboot_test;
+                    controls_test || uiboot_test ||
+                    uirender_test || font_test ||
+                    scissor_test || border_render_test ||
+                    edit_render_test || itemlist_render_test ||
+                    scrollbar_render_test || anim_render_test ||
+                    tiled_render_test || input_test ||
+                    onframe_test || cursor_render_test ||
+                    drag_render_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -449,7 +474,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 renderer.poll_events(dt);
-                renderer.render(sim_state, state.raw());
+                renderer.render(sim_state, state.raw(), &ui_registry);
             }
 
             renderer.shutdown();
@@ -538,6 +563,19 @@ int main(int argc, char* argv[]) {
     if (edit_test && !map_path.empty()) osc::test::test_edit(test_ctx);
     if (controls_test && !map_path.empty()) osc::test::test_controls(test_ctx);
     if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(test_ctx);
+    if (uirender_test && !map_path.empty()) osc::test::test_uirender(test_ctx);
+    if (font_test && !map_path.empty()) osc::test::test_font(test_ctx);
+    if (scissor_test && !map_path.empty()) osc::test::test_scissor(test_ctx);
+    if (border_render_test && !map_path.empty()) osc::test::test_border_render(test_ctx);
+    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(test_ctx);
+    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(test_ctx);
+    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(test_ctx);
+    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(test_ctx);
+    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(test_ctx);
+    if (input_test && !map_path.empty()) osc::test::test_input(test_ctx);
+    if (onframe_test && !map_path.empty()) osc::test::test_onframe(test_ctx);
+    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(test_ctx);
+    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

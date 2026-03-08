@@ -149,58 +149,189 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     lua_rawset(L, -3);
 }
 
+/// Read a LazyVar float from a control's Lua table.
+static f32 read_lazyvar_dispatch(lua_State* L, int tbl_idx, const char* field) {
+    lua_pushstring(L, field);
+    lua_rawget(L, tbl_idx);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0.0f; }
+    if (lua_pcall(L, 0, 1, 0) != 0) { lua_pop(L, 1); return 0.0f; }
+    f32 val = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return val;
+}
+
+UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y) {
+    if (!root || root->hidden() || root->destroyed()) return nullptr;
+    if (root->lua_table_ref() < 0) return nullptr;
+
+    // Walk children front-to-back (last child is topmost)
+    auto& children = root->children();
+    for (i32 i = static_cast<i32>(children.size()) - 1; i >= 0; --i) {
+        auto* hit = hit_test(L, children[i], x, y);
+        if (hit) return hit;
+    }
+
+    // Check this control's bounds
+    if (root->hit_test_disabled()) return nullptr;
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, root->lua_table_ref());
+    int tbl = lua_gettop(L);
+    f32 left = read_lazyvar_dispatch(L, tbl, "Left");
+    f32 top = read_lazyvar_dispatch(L, tbl, "Top");
+    f32 w = read_lazyvar_dispatch(L, tbl, "Width");
+    f32 h = read_lazyvar_dispatch(L, tbl, "Height");
+    lua_pop(L, 1);
+
+    f32 fx = static_cast<f32>(x);
+    f32 fy = static_cast<f32>(y);
+    if (fx >= left && fx < left + w && fy >= top && fy < top + h)
+        return root;
+    return nullptr;
+}
+
+bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
+                                    const UIEvent& ev) {
+    if (!ctrl || ctrl->lua_table_ref() < 0) return false;
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+    lua_pushstring(L, "HandleEvent");
+    lua_rawget(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2); // self
+    push_event_table(L, ev);
+    if (lua_pcall(L, 2, 1, 0) != 0) {
+        spdlog::warn("HandleEvent error: {}", lua_tostring(L, -1));
+        lua_pop(L, 2);
+        return false;
+    }
+    bool consumed = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 2); // return value + control table
+    return consumed;
+}
+
 void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     if (pending_events_.empty()) return;
 
+    // Get root frame for hit testing
+    UIControl* root = nullptr;
+    lua_pushstring(L, "__osc_root_frame");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        if (lua_islightuserdata(L, -1))
+            root = static_cast<UIControl*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
     for (const auto& ev : pending_events_) {
-        // Keyboard events go to the control with keyboard focus
+        // Check for active dragger — intercepts mouse events
+        lua_pushstring(L, "__osc_active_dragger");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        bool has_dragger = lua_istable(L, -1);
+        int dragger_idx = lua_gettop(L);
+
+        if (has_dragger) {
+            bool handled = false;
+            if (ev.type == UIEventType::MOUSE_MOTION) {
+                lua_pushstring(L, "OnMove");
+                lua_rawget(L, dragger_idx);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, dragger_idx);
+                    lua_pushnumber(L, ev.mouse_x);
+                    lua_pushnumber(L, ev.mouse_y);
+                    if (lua_pcall(L, 3, 0, 0) != 0) lua_pop(L, 1);
+                } else {
+                    lua_pop(L, 1);
+                }
+                handled = true;
+            } else if (ev.type == UIEventType::BUTTON_RELEASE) {
+                lua_pushstring(L, "OnRelease");
+                lua_rawget(L, dragger_idx);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, dragger_idx);
+                    lua_pushnumber(L, ev.mouse_x);
+                    lua_pushnumber(L, ev.mouse_y);
+                    if (lua_pcall(L, 3, 0, 0) != 0) lua_pop(L, 1);
+                } else {
+                    lua_pop(L, 1);
+                }
+                // Clear active dragger
+                lua_pushstring(L, "__osc_active_dragger");
+                lua_pushnil(L);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+                handled = true;
+            } else if (ev.type == UIEventType::KEY_DOWN && ev.key_code == 256) {
+                // ESC = GLFW_KEY_ESCAPE = 256
+                lua_pushstring(L, "OnCancel");
+                lua_rawget(L, dragger_idx);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, dragger_idx);
+                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
+                } else {
+                    lua_pop(L, 1);
+                }
+                lua_pushstring(L, "__osc_active_dragger");
+                lua_pushnil(L);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+                handled = true;
+            }
+            lua_pop(L, 1); // pop dragger table
+            if (handled) continue;
+        }
+        if (!has_dragger) lua_pop(L, 1); // pop nil
+
+        // Keyboard events go to keyboard focus control
         if (ev.type == UIEventType::KEY_DOWN ||
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             auto* focus = registry.keyboard_focus();
-            if (focus && focus->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, focus->lua_table_ref());
-                lua_pushstring(L, "HandleEvent");
-                lua_rawget(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2); // self
-                    push_event_table(L, ev);
-                    if (lua_pcall(L, 2, 1, 0) != 0) {
-                        spdlog::warn("HandleEvent error: {}",
-                                     lua_tostring(L, -1));
-                        lua_pop(L, 1);
-                    } else {
-                        lua_pop(L, 1); // return value
-                    }
-                } else {
-                    lua_pop(L, 1);
-                }
-                lua_pop(L, 1); // control table
-            }
+            if (focus) fire_handle_event(L, focus, ev);
             continue;
         }
 
-        // Mouse events: for now just dispatch to keyboard focus control
-        // (full hit-test walk deferred to when we have visual controls)
-        auto* focus = registry.keyboard_focus();
-        if (focus && focus->lua_table_ref() >= 0) {
-            lua_rawgeti(L, LUA_REGISTRYINDEX, focus->lua_table_ref());
-            lua_pushstring(L, "HandleEvent");
-            lua_rawget(L, -2);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, -2);
-                push_event_table(L, ev);
-                if (lua_pcall(L, 2, 1, 0) != 0) {
-                    spdlog::warn("HandleEvent error: {}",
-                                 lua_tostring(L, -1));
-                    lua_pop(L, 1);
+        // Mouse events: hit-test the control tree
+        UIControl* target = root ? hit_test(L, root, ev.mouse_x, ev.mouse_y)
+                                 : nullptr;
+
+        // Mouse enter/exit tracking
+        if (ev.type == UIEventType::MOUSE_MOTION && target != hover_control_) {
+            if (hover_control_ && hover_control_->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, hover_control_->lua_table_ref());
+                lua_pushstring(L, "OnMouseExit");
+                lua_rawget(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
                 } else {
                     lua_pop(L, 1);
                 }
-            } else {
                 lua_pop(L, 1);
             }
-            lua_pop(L, 1);
+            if (target && target->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                lua_pushstring(L, "OnMouseEnter");
+                lua_rawget(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
+                } else {
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1);
+            }
+            hover_control_ = target;
+        }
+
+        // Dispatch to hit target, then walk up ancestors
+        UIControl* c = target;
+        while (c) {
+            if (fire_handle_event(L, c, ev)) break;
+            c = c->parent();
         }
     }
 

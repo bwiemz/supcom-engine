@@ -81,5 +81,18 @@ void test_text(TestContext& ctx);
 void test_edit(TestContext& ctx);
 void test_controls(TestContext& ctx);
 void test_uiboot(TestContext& ctx);
+void test_uirender(TestContext& ctx);
+void test_font(TestContext& ctx);
+void test_scissor(TestContext& ctx);
+void test_border_render(TestContext& ctx);
+void test_edit_render(TestContext& ctx);
+void test_itemlist_render(TestContext& ctx);
+void test_scrollbar_render(TestContext& ctx);
+void test_anim_render(TestContext& ctx);
+void test_tiled_render(TestContext& ctx);
+void test_input(TestContext& ctx);
+void test_onframe(TestContext& ctx);
+void test_cursor_render(TestContext& ctx);
+void test_drag_render(TestContext& ctx);
 
 } // namespace osc::test

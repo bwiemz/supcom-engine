@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water. The full MAUI UI framework (M71-M76) has been reimplemented with 13 control types, reactive LazyVar layout, and game UI bootstrap infrastructure.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water. The full MAUI UI framework (M71-M89) has been reimplemented with 13 control types, reactive LazyVar layout, game UI bootstrap infrastructure, and a complete Vulkan 2D rendering pipeline — including font rendering via stb_truetype GPU atlas, scissor clipping, 9-patch borders, edit/itemlist/scrollbar visuals, bitmap animation and tiling, GLFW input dispatch with hit-testing, OnFrame update loop, cursor rendering, and drag visual feedback.
 
-**What works today (Milestones 1-76):**
+**What works today (Milestones 1-89):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -87,13 +87,26 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
   - Histogram control: 3 stub histogram_methods (SetData, SetXIncrement, SetYIncrement — deprecated)
   - WorldMesh control: 16 real world_mesh_methods (Destroy, SetMesh, SetStance, SetHidden/IsHidden, SetColor, SetScale, 5x parameter setters, 5x GetInterpolated* returning stub tables)
   - Game UI bootstrap: GetFrame(0) root frame with LazyVars, GetNumRootFrames, SetCursor, frame_methods (GetTopmostDepth/GetTargetHead/SetTargetHead), UIWorldView (19 methods with __init constructor, Project, CameraReset, etc.), WldUIProvider_methods, discovery_service_methods (GetGameCount/Reset/Destroy + InternalCreateDiscoveryService), lobby_methods (18 methods + InternalCreateLobby)
-- 22 unit tests, 56 integration test flags
+- **UI Vulkan 2D rendering pipeline (M77-M78):**
+  - UIRenderer: control tree walk, instanced textured quads (48B UIInstance), pixel-to-NDC conversion, alpha blend no depth test, depth-sorted back-to-front rendering, consecutive-texture batching
+  - Font rendering: stb_truetype GPU atlas (R8→RGBA swizzle), per-glyph quad emission with drop shadow, centering, clip-to-width, real TrueType metrics replacing all heuristic values, FontCache + FontMetricsProvider
+- **UI rendering features (M79-M89):**
+  - Scissor/clip rectangles: Vulkan dynamic scissor, clip rect stack intersection during tree walk, controls outside clip rect skipped
+  - Border 9-patch rendering: 8 quads (4 corners + 4 edges), BorderWidth/BorderHeight from DDS dimensions
+  - Edit control visuals: caret rendering (blinking vertical line), selection highlight, per-glyph cursor positioning
+  - ItemList rendering: multi-row text items, scroll offset, selection highlight row, scissor clipping
+  - Scrollbar rendering: thumb position/size from scroll state, 3-piece texture (background, thumb-top, thumb-mid)
+  - Bitmap animation rendering: accumulator-based frame timing, forward/backward/pingpong patterns, auto-stop/loop
+  - Tiled bitmap rendering: UV repeat override, sampler REPEAT wrap mode
+  - Input event dispatch: GLFW keyboard/mouse callbacks → event buffer → hit-test tree walk → HandleEvent Lua callbacks, keyboard focus routing, mouse enter/exit tracking
+  - OnFrame update loop: NeedsFrameUpdate controls get OnFrame(self, dt) per rendered frame
+  - Cursor rendering: custom cursor texture at mouse-hotspot position, topmost depth layer
+  - Drag visual feedback: active dragger intercepts mouse events (OnMove/OnRelease/OnCancel), ESC cancellation
+- 22 unit tests, 63 integration test flags
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Full UI rendering pipeline (Vulkan 2D quad pipeline for bitmaps, text glyphs, borders)
-- Font rendering (stb_truetype glyph atlas — currently using heuristic font metrics)
 - Remaining moho binding stubs (~29 renderer/VFX stubs: IEffect, CollisionBeam, emitter system)
 
 ## Prerequisites
@@ -253,6 +266,19 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--edit-test` | Edit/ItemList/Scrollbar controls (text input, list ops, scroll) |
 | `--controls-test` | Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls |
 | `--uiboot-test` | UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery) |
+| `--uirender-test` | UI Vulkan 2D rendering pipeline (instanced quads, texture batching) |
+| `--font-test` | Font rendering (stb_truetype atlas, glyph metrics, drop shadow) |
+| `--scissor-test` | Scissor/clip rectangles (dynamic scissor, clip rect intersection) |
+| `--border-render-test` | Border 9-patch rendering (corners, edges, DDS dimensions) |
+| `--edit-render-test` | Edit control visuals (caret, selection highlight, cursor positioning) |
+| `--itemlist-render-test` | ItemList rendering (rows, scroll offset, selection highlight) |
+| `--scrollbar-render-test` | Scrollbar rendering (thumb position, 3-piece textures) |
+| `--anim-render-test` | Bitmap animation rendering (frame timing, patterns, loop/stop) |
+| `--tiled-render-test` | Tiled bitmap rendering (UV repeat, sampler wrap mode) |
+| `--input-test` | Input event dispatch (hit-test, HandleEvent, keyboard focus) |
+| `--onframe-test` | OnFrame update loop (delta time, NeedsFrameUpdate) |
+| `--cursor-render-test` | Cursor rendering (texture at mouse position, topmost depth) |
+| `--drag-render-test` | Drag visual feedback (dragger intercept, OnMove/OnRelease/OnCancel) |
 
 ## Project Structure
 
@@ -265,8 +291,8 @@ src/
   lua/         # Lua<->C++ bridge (moho bindings, sim bindings, session management)
   blueprints/  # Blueprint loading and registry
   audio/       # Audio system (miniaudio, XWB/XSB bank parsers, sound manager)
-  ui/          # UI control system (UIControl base, UIControlRegistry)
-  renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache)
+  ui/          # UI control system (UIControl base, UIControlRegistry, input dispatch, font metrics)
+  renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache, UI 2D pipeline, font atlas)
   main.cpp     # Entry point, CLI flags, test harnesses
 third_party/
   lua-5.0/     # Vendored Lua 5.0 (LuaPlus fork)

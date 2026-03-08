@@ -21,6 +21,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/font_metrics_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
@@ -7623,22 +7624,36 @@ static u32 parse_color_hex(const char* s) {
     return val;
 }
 
-/// Helper: update font metrics on a control based on font family + point size.
-/// For now uses simple heuristics (ascent ≈ 0.8 * pointsize, descent ≈ 0.2 * pointsize).
-/// TODO: Replace with stb_truetype when font rendering is implemented.
+/// Helper: update font metrics on a control using stb_truetype via FontMetricsProvider.
+/// Falls back to heuristics if the font file is not available.
 static void update_font_metrics(ui::UIControl* ctrl) {
     f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    ctrl->set_font_ascent(ps * 0.8f);
-    ctrl->set_font_descent(ps * 0.2f);
-    ctrl->set_font_external_leading(ps * 0.05f);
+    auto& fmp = ui::FontMetricsProvider::instance();
+    ui::FontMetricsProvider::Metrics m;
+    if (fmp.get_metrics(ctrl->font_family(), ctrl->font_pointsize(), m)) {
+        ctrl->set_font_ascent(m.ascent);
+        ctrl->set_font_descent(m.descent);
+        ctrl->set_font_external_leading(m.external_leading);
+    } else {
+        // Heuristic fallback
+        ctrl->set_font_ascent(ps * 0.8f);
+        ctrl->set_font_descent(ps * 0.2f);
+        ctrl->set_font_external_leading(ps * 0.05f);
+    }
 }
 
 /// Helper: update text advance (width) for the current text content.
-/// Simple heuristic: average character width ≈ 0.6 * pointsize.
+/// Uses stb_truetype per-glyph advances; falls back to heuristic.
 static void update_text_advance(ui::UIControl* ctrl) {
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    f32 avg_char_width = ps * 0.6f;
-    ctrl->set_text_advance(avg_char_width * ctrl->text_content().size());
+    auto& fmp = ui::FontMetricsProvider::instance();
+    f32 adv = fmp.string_advance(ctrl->font_family(), ctrl->font_pointsize(),
+                                  ctrl->text_content());
+    if (adv >= 0.0f) {
+        ctrl->set_text_advance(adv);
+    } else {
+        f32 ps = static_cast<f32>(ctrl->font_pointsize());
+        ctrl->set_text_advance(ps * 0.6f * ctrl->text_content().size());
+    }
 }
 
 /// Helper: call LazyVar:Set(value) on self[name].
@@ -7762,10 +7777,15 @@ static int text_GetStringAdvance(lua_State* L) {
     if (!ctrl) { lua_pushnumber(L, 0); return 1; }
     if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
     const char* s = lua_tostring(L, 2);
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    f32 avg_char_width = ps * 0.6f;
-    f32 advance = s ? (avg_char_width * std::strlen(s)) : 0.0f;
-    lua_pushnumber(L, advance);
+    if (!s) { lua_pushnumber(L, 0); return 1; }
+    auto& fmp = ui::FontMetricsProvider::instance();
+    f32 adv = fmp.string_advance(ctrl->font_family(), ctrl->font_pointsize(),
+                                  std::string(s));
+    if (adv < 0.0f) {
+        f32 ps = static_cast<f32>(ctrl->font_pointsize());
+        adv = ps * 0.6f * std::strlen(s);
+    }
+    lua_pushnumber(L, adv);
     return 1;
 }
 
@@ -8031,9 +8051,15 @@ static int edit_GetStringAdvance(lua_State* L) {
     if (!ctrl) { lua_pushnumber(L, 0); return 1; }
     if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
     const char* s = lua_tostring(L, 2);
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    f32 advance = s ? (ps * 0.6f * std::strlen(s)) : 0.0f;
-    lua_pushnumber(L, advance);
+    if (!s) { lua_pushnumber(L, 0); return 1; }
+    auto& fmp = ui::FontMetricsProvider::instance();
+    f32 adv = fmp.string_advance(ctrl->font_family(), ctrl->font_pointsize(),
+                                  std::string(s));
+    if (adv < 0.0f) {
+        f32 ps = static_cast<f32>(ctrl->font_pointsize());
+        adv = ps * 0.6f * std::strlen(s);
+    }
+    lua_pushnumber(L, adv);
     return 1;
 }
 
@@ -8222,9 +8248,15 @@ static int itemlist_GetStringAdvance(lua_State* L) {
     if (!ctrl) { lua_pushnumber(L, 0); return 1; }
     if (lua_type(L, 2) != LUA_TSTRING) { lua_pushnumber(L, 0); return 1; }
     const char* s = lua_tostring(L, 2);
-    f32 ps = static_cast<f32>(ctrl->font_pointsize());
-    f32 advance = s ? (ps * 0.6f * std::strlen(s)) : 0.0f;
-    lua_pushnumber(L, advance);
+    if (!s) { lua_pushnumber(L, 0); return 1; }
+    auto& fmp = ui::FontMetricsProvider::instance();
+    f32 adv = fmp.string_advance(ctrl->font_family(), ctrl->font_pointsize(),
+                                  std::string(s));
+    if (adv < 0.0f) {
+        f32 ps = static_cast<f32>(ctrl->font_pointsize());
+        adv = ps * 0.6f * std::strlen(s);
+    }
+    lua_pushnumber(L, adv);
     return 1;
 }
 
@@ -8655,6 +8687,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     u32 id = reg->create();
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateEdit: failed to create control");
+    ctrl->set_control_type(ui::UIControl::ControlType::Edit);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);
@@ -8710,6 +8743,7 @@ static int l_InternalCreateItemList(lua_State* L) {
     u32 id = reg->create();
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateItemList: failed to create control");
+    ctrl->set_control_type(ui::UIControl::ControlType::ItemList);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);
@@ -8765,6 +8799,7 @@ static int l_InternalCreateScrollbar(lua_State* L) {
     u32 id = reg->create();
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateScrollbar: failed to create control");
+    ctrl->set_control_type(ui::UIControl::ControlType::Scrollbar);
 
     // Store Lua table reference
     lua_pushvalue(L, 1);
@@ -8851,6 +8886,43 @@ static int border_SetNewTextures(lua_State* L) {
         ctrl->set_border_tex_ll(lua_tostring(L, 6));
     if (lua_type(L, 7) == LUA_TSTRING)
         ctrl->set_border_tex_lr(lua_tostring(L, 7));
+
+    // Set BorderWidth/BorderHeight from UL corner texture dimensions
+    if (!ctrl->border_tex_ul().empty()) {
+        auto [w, h] = read_dds_dimensions(L, ctrl->border_tex_ul());
+        if (w > 0 && h > 0 && lua_istable(L, 1)) {
+            // Set BorderWidth LazyVar via lua_gettable (finds Set on metatable)
+            lua_pushstring(L, "BorderWidth");
+            lua_gettable(L, 1);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Set");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2); // LazyVar table as self
+                    lua_pushnumber(L, static_cast<f64>(w));
+                    lua_pcall(L, 2, 0, 0);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+            // Set BorderHeight LazyVar
+            lua_pushstring(L, "BorderHeight");
+            lua_gettable(L, 1);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Set");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    lua_pushnumber(L, static_cast<f64>(h));
+                    lua_pcall(L, 2, 0, 0);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+    }
     return 0;
 }
 
@@ -8969,8 +9041,13 @@ static int l_PostDragger(lua_State* L) {
 static int cursor_SetNewTexture(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_cursor_texture(lua_tostring(L, 2));
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        std::string path = lua_tostring(L, 2);
+        ctrl->set_cursor_texture(path);
+        auto [w, h] = read_dds_dimensions(L, path);
+        ctrl->set_bitmap_width(w);
+        ctrl->set_bitmap_height(h);
+    }
     f32 hx = lua_isnumber(L, 3) ? static_cast<f32>(lua_tonumber(L, 3)) : 0.0f;
     f32 hy = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : 0.0f;
     ctrl->set_cursor_hotspot(hx, hy);
@@ -9807,6 +9884,10 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim) {
 
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
+
+    // Initialize FontMetricsProvider with VFS for real TrueType metrics
+    auto* vfs = LuaState::get_vfs(L);
+    if (vfs) ui::FontMetricsProvider::instance().set_vfs(vfs);
 
     // Store UIControlRegistry pointer in Lua registry
     lua_pushstring(L, "osc_ui_registry");

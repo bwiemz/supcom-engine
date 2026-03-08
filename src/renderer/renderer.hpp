@@ -4,6 +4,9 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
 #include "renderer/texture_cache.hpp"
+#include "renderer/font_cache.hpp"
+#include "renderer/ui_renderer.hpp"
+#include "ui/ui_dispatch.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/vk_types.hpp"
@@ -37,7 +40,8 @@ public:
                      lua_State* L);
 
     /// Render one frame (updates unit instances, draws everything).
-    void render(sim::SimState& sim, lua_State* L);
+    void render(sim::SimState& sim, lua_State* L,
+                ui::UIControlRegistry* ui_registry = nullptr);
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -138,8 +142,12 @@ private:
     TerrainMesh terrain_mesh_;
     UnitRenderer unit_renderer_;
     WaterRenderer water_renderer_;
+    UIRenderer ui_renderer_;
+    ui::UIDispatch ui_dispatch_;
+    f64 last_frame_time_ = 0.0;
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
+    FontCache font_cache_;
     Camera camera_;
 
     // Decal rendering
@@ -164,6 +172,10 @@ private:
     std::vector<DecalDrawGroup> decal_groups_;
 
     static constexpr u32 MAX_DECALS = 4096;
+
+    // UI 2D pipeline
+    VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout ui_layout_ = VK_NULL_HANDLE;
 
     // Shadow mapping
     AllocatedImage shadow_image_{};

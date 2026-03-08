@@ -547,6 +547,68 @@ const char* shadow_frag = R"glsl(
 void main() {}
 )glsl";
 
+// --- 2D UI shaders ---
+
+const char* ui_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    float viewportWidth;
+    float viewportHeight;
+} pc;
+
+// Per-instance data (binding 0, instance rate)
+layout(location = 0) in vec4 inRect;    // x, y, w, h in pixels
+layout(location = 1) in vec4 inUVRect;  // u0, v0, u1, v1
+layout(location = 2) in vec4 inColor;   // r, g, b, a
+
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) out vec4 fragColor;
+
+void main() {
+    // Generate unit quad from gl_VertexIndex (6 verts = 2 triangles)
+    vec2 pos;
+    int idx = gl_VertexIndex;
+    if (idx == 0)      pos = vec2(0, 0);
+    else if (idx == 1) pos = vec2(1, 0);
+    else if (idx == 2) pos = vec2(1, 1);
+    else if (idx == 3) pos = vec2(0, 0);
+    else if (idx == 4) pos = vec2(1, 1);
+    else               pos = vec2(0, 1);
+
+    // Scale to pixel rect
+    vec2 pixel = inRect.xy + pos * inRect.zw;
+
+    // Convert to NDC [-1, 1], Vulkan Y-down
+    gl_Position = vec4(
+        pixel.x / pc.viewportWidth * 2.0 - 1.0,
+        pixel.y / pc.viewportHeight * 2.0 - 1.0,
+        0.0, 1.0
+    );
+
+    // Interpolate UV within the UV rect
+    fragUV = mix(inUVRect.xy, inUVRect.zw, pos);
+    fragColor = inColor;
+}
+)glsl";
+
+const char* ui_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texSampler;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec4 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec4 texColor = texture(texSampler, fragUV);
+    outColor = texColor * fragColor;
+    if (outColor.a < 0.01) discard;
+}
+)glsl";
+
 } // namespace shaders
 
 } // namespace osc::renderer
