@@ -7,6 +7,8 @@
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "map/terrain.hpp"
+#include "map/pathfinding_grid.hpp"
+#include "map/visibility_grid.hpp"
 
 #include <VkBootstrap.h>
 #include <GLFW/glfw3.h>
@@ -203,11 +205,11 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_);
     }
 
-    // Terrain texture descriptor set layout (set=0: 20 combined image samplers)
-    // bindings 0-1: blend maps, bindings 2-10: stratum 0-8 albedo, bindings 11-19: stratum 0-8 normal
+    // Terrain texture descriptor set layout (set=0: 21 combined image samplers)
+    // bindings 0-1: blend maps, 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war
     {
-        std::array<VkDescriptorSetLayoutBinding, 20> terrain_bindings{};
-        for (u32 i = 0; i < 20; i++) {
+        std::array<VkDescriptorSetLayoutBinding, 21> terrain_bindings{};
+        for (u32 i = 0; i < 21; i++) {
             terrain_bindings[i].binding = i;
             terrain_bindings[i].descriptorType =
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -753,23 +755,27 @@ void Renderer::create_pipelines() {
             .build(device_, render_pass_, &mesh_layout_);
     }
 
-    // --- Water pipeline ---
+    // --- Water pipeline (tessellated grid with wave animation) ---
     {
         VkVertexInputBindingDescription binding{};
         binding.binding = 0;
-        binding.stride = sizeof(f32) * 3; // position only
+        binding.stride = sizeof(f32) * 4; // position(3) + depth(1)
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription attr{};
-        attr = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
+        std::array<VkVertexInputAttributeDescription, 2> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                    // position
+        attrs[1] = {1, 0, VK_FORMAT_R32_SFLOAT, sizeof(f32) * 3};            // depth
 
         water_pipeline_ = PipelineBuilder()
             .set_shaders(wv, wf)
-            .set_vertex_input(&binding, 1, &attr, 1)
+            .set_vertex_input(&binding, 1, attrs.data(),
+                              static_cast<u32>(attrs.size()))
             .set_depth_test(true, false) // test ON, write OFF
             .set_blend(true)
             .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16)
+            .set_push_constant(WaterRenderer::PUSH_CONSTANT_SIZE,
+                               VK_SHADER_STAGE_VERTEX_BIT |
+                                   VK_SHADER_STAGE_FRAGMENT_BIT)
             .build(device_, render_pass_, &water_layout_);
     }
 
@@ -1081,7 +1087,7 @@ void Renderer::build_scene(const sim::SimState& sim,
         // Create descriptor pool and set
         VkDescriptorPoolSize pool_size{};
         pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_size.descriptorCount = 20;
+        pool_size.descriptorCount = 21;
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1123,11 +1129,36 @@ void Renderer::build_scene(const sim::SimState& sim,
     }
 
     if (terrain->has_water()) {
-        water_renderer_.build(
-            static_cast<f32>(terrain->map_width()),
-            static_cast<f32>(terrain->map_height()),
-            terrain->water_elevation(), device_, allocator_, cmd_pool_,
-            graphics_queue_);
+        water_renderer_.build(*terrain, device_, allocator_, cmd_pool_,
+                              graphics_queue_);
+    }
+
+    // Init fog of war texture (same grid dimensions as visibility grid)
+    {
+        u32 fog_w = static_cast<u32>(terrain->map_width()) /
+                        map::VisibilityGrid::CELL_SIZE + 1;
+        u32 fog_h = static_cast<u32>(terrain->map_height()) /
+                        map::VisibilityGrid::CELL_SIZE + 1;
+        fog_renderer_.init(fog_w, fog_h, device_, allocator_, cmd_pool_,
+                           graphics_queue_);
+
+        // Write fog texture to terrain descriptor set binding 20
+        if (fog_renderer_.initialized() && terrain_tex_ds_) {
+            VkDescriptorImageInfo fog_info{};
+            fog_info.sampler = fog_renderer_.sampler();
+            fog_info.imageView = fog_renderer_.image_view();
+            fog_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet fog_write{};
+            fog_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            fog_write.dstSet = terrain_tex_ds_;
+            fog_write.dstBinding = 20;
+            fog_write.descriptorCount = 1;
+            fog_write.descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            fog_write.pImageInfo = &fog_info;
+            vkUpdateDescriptorSets(device_, 1, &fog_write, 0, nullptr);
+        }
     }
 
     // Build decal quad mesh + instance buffer + populate stored decals
@@ -1280,11 +1311,71 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
                           selected_ids);
 
+    // Build preview ghost — render a semi-transparent mesh at the cursor
+    const auto& ghost_bp = sim.build_ghost_bp();
+    if (!ghost_bp.empty() && sim.terrain()) {
+        f64 mx, my;
+        mouse_position(mx, my);
+        f32 wx, wz;
+        if (camera_.screen_to_world(static_cast<f32>(mx), static_cast<f32>(my),
+                                     static_cast<f32>(window_width_),
+                                     static_cast<f32>(window_height_),
+                                     0.0f, wx, wz)) {
+            f32 size_x = sim.build_ghost_foot_x();
+            f32 size_z = sim.build_ghost_foot_z();
+
+            // Snap to grid (structures align to 1-unit grid in FA)
+            wx = std::floor(wx) + 0.5f;
+            wz = std::floor(wz) + 0.5f;
+
+            // Re-snap to footprint grid (center on even/odd footprint)
+            if (static_cast<int>(size_x) % 2 == 0)
+                wx = std::floor(wx);
+            if (static_cast<int>(size_z) % 2 == 0)
+                wz = std::floor(wz);
+
+            f32 wy = sim.terrain()->get_terrain_height(wx, wz);
+
+            // Check placement validity via pathfinding grid
+            bool valid = true;
+            auto* grid = sim.pathfinding_grid();
+            if (grid) {
+                f32 half_x = size_x * 0.5f;
+                f32 half_z = size_z * 0.5f;
+                u32 gx0, gz0, gx1, gz1;
+                grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
+                grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
+                for (u32 gz = gz0; gz <= gz1 && valid; ++gz) {
+                    for (u32 gx = gx0; gx <= gx1 && valid; ++gx) {
+                        auto cell = grid->get(gx, gz);
+                        if (cell == map::CellPassability::Impassable) {
+                            valid = false;
+                        }
+                    }
+                }
+            }
+
+            // Green = valid, Red = invalid, semi-transparent
+            f32 gr = valid ? 0.2f : 1.0f;
+            f32 gg = valid ? 0.9f : 0.2f;
+            f32 gb = valid ? 0.3f : 0.2f;
+            f32 ga = 0.35f;
+
+            const GPUMesh* ghost_mesh = mesh_cache_.get(ghost_bp, L);
+            if (ghost_mesh) {
+                unit_renderer_.inject_ghost(ghost_mesh, wx, wy, wz,
+                                            gr, gg, gb, ga, &texture_cache_);
+            }
+        }
+    }
+
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
         f64 now = glfwGetTime();
         f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
         last_frame_time_ = now;
+        total_time_ += dt;
+        frame_dt_ = dt;
         if (dt > 0.0f && dt < 1.0f) {
             ui_renderer_.advance_animations(L, *ui_registry, dt);
             ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
@@ -1301,10 +1392,15 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                  static_cast<f32>(window_height_);
     auto vp = camera_.view_proj(aspect);
 
+    // Stage fog of war data from visibility grid (CPU side)
+    if (fog_renderer_.initialized() && sim.visibility_grid()) {
+        fog_renderer_.stage(*sim.visibility_grid(), player_army_);
+    }
+
     // Update game overlays (health bars, selection circles, command lines, game over)
     overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
                              window_width_, window_height_,
-                             sim.player_result());
+                             sim.player_result(), frame_dt_);
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
     minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
@@ -1331,6 +1427,11 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd_buf_, &begin_info);
+
+    // Upload fog of war texture (barriers + copy, before any render pass)
+    if (fog_renderer_.initialized()) {
+        fog_renderer_.record_upload(cmd_buf_);
+    }
 
     // ==================== SHADOW PASS ====================
     if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_) {
@@ -1714,13 +1815,21 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
-    // 5. Draw water (last, blended)
+    // 5. Draw water (tessellated grid with wave animation, depth coloring)
     if (water_renderer_.has_water() && water_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           water_pipeline_);
+
+        WaterRenderer::WaterPushConstants wpc{};
+        std::memcpy(wpc.view_proj, vp.data(), sizeof(f32) * 16);
+        wpc.time = total_time_;
+        camera_.eye_position(wpc.eye_x, wpc.eye_y, wpc.eye_z);
+        wpc.water_elevation = water_renderer_.water_elevation();
+
         vkCmdPushConstants(cmd_buf_, water_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(f32) * 16, vp.data());
+                           VK_SHADER_STAGE_VERTEX_BIT |
+                               VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, WaterRenderer::PUSH_CONSTANT_SIZE, &wpc);
 
         VkBuffer vbufs[] = {water_renderer_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
@@ -1893,6 +2002,7 @@ void Renderer::shutdown() {
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
+    fog_renderer_.destroy(device_, allocator_);
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
@@ -1950,8 +2060,10 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
     vkDestroyPipeline(device_, unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
-    vkDestroyPipeline(device_, water_pipeline_, nullptr);
-    vkDestroyPipelineLayout(device_, water_layout_, nullptr);
+    if (water_pipeline_)
+        vkDestroyPipeline(device_, water_pipeline_, nullptr);
+    if (water_layout_)
+        vkDestroyPipelineLayout(device_, water_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);

@@ -408,6 +408,74 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
     }
 }
 
+bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
+                                 f32 r, f32 g, f32 b, f32 a,
+                                 TextureCache* tex_cache) {
+    if (!mesh || !mesh_instance_mapped_) return false;
+
+    // Count total instances already used
+    u32 total = 0;
+    for (auto& g : mesh_groups_) total += g.instance_count;
+    if (total >= MAX_INSTANCES) return false;
+
+    auto* instances = static_cast<MeshInstance*>(mesh_instance_mapped_);
+    auto& inst = instances[total];
+
+    // Identity rotation, uniform_scale from mesh
+    f32 s = mesh->uniform_scale;
+    std::memset(inst.model, 0, sizeof(inst.model));
+    inst.model[0] = s;  inst.model[5] = s;  inst.model[10] = s;  inst.model[15] = 1.0f;
+    inst.model[12] = x; inst.model[13] = y;  inst.model[14] = z;
+    inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+
+    // Find existing group for this mesh or create new one
+    MeshDrawGroup* target = nullptr;
+    for (auto& grp : mesh_groups_) {
+        if (grp.mesh == mesh &&
+            grp.instance_offset + grp.instance_count == total) {
+            target = &grp;
+            break;
+        }
+    }
+
+    if (target) {
+        target->instance_count++;
+    } else {
+        MeshDrawGroup grp;
+        grp.mesh = mesh;
+        grp.instance_offset = total;
+        grp.instance_count = 1;
+        grp.bone_base_offset = 0;
+        grp.bones_per_instance = 0;
+
+        if (tex_cache && !mesh->texture_path.empty()) {
+            auto* tex = tex_cache->get(mesh->texture_path);
+            grp.texture_ds = tex ? tex->descriptor_set
+                                 : tex_cache->fallback_descriptor();
+        } else if (tex_cache) {
+            grp.texture_ds = tex_cache->fallback_descriptor();
+        }
+        if (tex_cache && !mesh->specteam_path.empty()) {
+            auto* spec = tex_cache->get(mesh->specteam_path);
+            grp.specteam_ds = spec ? spec->descriptor_set
+                                   : tex_cache->specteam_fallback_descriptor();
+        } else if (tex_cache) {
+            grp.specteam_ds = tex_cache->specteam_fallback_descriptor();
+        }
+        if (tex_cache && !mesh->normal_path.empty()) {
+            auto* norm = tex_cache->get(mesh->normal_path);
+            grp.normal_ds = norm ? norm->descriptor_set
+                                 : tex_cache->normal_fallback_descriptor();
+        } else if (tex_cache) {
+            grp.normal_ds = tex_cache->normal_fallback_descriptor();
+        }
+
+        mesh_groups_.push_back(grp);
+    }
+
+    return true;
+}
+
 void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     auto safe_destroy = [&](AllocatedBuffer& buf) {
         if (buf.buffer)

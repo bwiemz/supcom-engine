@@ -764,6 +764,19 @@ static int entity_Destroy(lua_State* L) {
 
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
+
+        // Fire death event for renderer explosion VFX (units only)
+        if (e->is_unit()) {
+            auto pos = e->position();
+            f32 scale = 1.0f;
+            auto* u = static_cast<sim::Unit*>(e);
+            if (u->footprint_size_x() > 0)
+                scale = u->footprint_size_x() * 0.5f;
+            auto* sim = get_sim(L);
+            if (sim)
+                sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());
+        }
+
         e->mark_destroyed();
 
         // If this is a unit, clean up weapon Lua refs before freeing
@@ -9832,6 +9845,54 @@ static int worldview_ShowConvertToPatrolCursor(lua_State* L) {
 static int worldview_UnlockInput(lua_State* /*L*/) { return 0; }
 static int worldview_ZoomScale(lua_State* /*L*/) { return 0; }
 
+// worldview:SetBuildGhost(bp_id) — show placement preview for blueprint
+static int worldview_SetBuildGhost(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim || !lua_isstring(L, 2)) return 0;
+
+    std::string bp_id = lua_tostring(L, 2);
+    f32 size_x = 1.0f, size_z = 1.0f;
+
+    // Read footprint from blueprint table
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, bp_id.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            int bp = lua_gettop(L);
+            lua_pushstring(L, "Footprint");
+            lua_rawget(L, bp);
+            if (lua_istable(L, -1)) {
+                int fp = lua_gettop(L);
+                lua_pushstring(L, "SizeX");
+                lua_rawget(L, fp);
+                if (lua_isnumber(L, -1))
+                    size_x = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                lua_pushstring(L, "SizeZ");
+                lua_rawget(L, fp);
+                if (lua_isnumber(L, -1))
+                    size_z = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1); // Footprint
+        }
+        lua_pop(L, 1); // bp table
+    }
+    lua_pop(L, 1); // __blueprints
+
+    sim->set_build_ghost(bp_id, size_x, size_z);
+    return 0;
+}
+
+// worldview:ClearBuildGhost() — hide placement preview
+static int worldview_ClearBuildGhost(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (sim) sim->clear_build_ghost();
+    return 0;
+}
+
 static const MethodEntry ui_worldview_methods[] = {
     {"__init",                     worldview_init},
     {"CameraReset",                worldview_CameraReset},
@@ -9852,6 +9913,8 @@ static const MethodEntry ui_worldview_methods[] = {
     {"ShowConvertToPatrolCursor",   worldview_ShowConvertToPatrolCursor},
     {"UnlockInput",                worldview_UnlockInput},
     {"ZoomScale",                  worldview_ZoomScale},
+    {"SetBuildGhost",              worldview_SetBuildGhost},
+    {"ClearBuildGhost",            worldview_ClearBuildGhost},
     {nullptr, nullptr},
 };
 

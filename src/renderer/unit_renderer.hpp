@@ -79,6 +79,12 @@ public:
     VkBuffer mesh_instance_buffer() const { return mesh_instance_buf_.buffer; }
     VkBuffer bone_ssbo_buffer() const { return bone_ssbo_.buffer; }
 
+    /// Inject a single ghost mesh instance (for build preview).
+    /// Call after update(). Returns true if the ghost was added.
+    bool inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
+                      f32 r, f32 g, f32 b, f32 a,
+                      TextureCache* tex_cache);
+
     static constexpr u32 MAX_INSTANCES = 8192;
     static constexpr u32 MAX_BONES_PER_UNIT = 64;
 

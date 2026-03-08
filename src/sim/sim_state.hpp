@@ -178,6 +178,18 @@ public:
     const std::vector<CameraShakeEvent>& camera_shake_events() const { return camera_shake_events_; }
     void clear_camera_shake_events() { camera_shake_events_.clear(); }
 
+    // Death events (consumed by renderer for explosion VFX)
+    struct DeathEvent {
+        f32 x, y, z;    // world position
+        f32 scale;       // explosion scale (from unit footprint)
+        i32 army;        // army index (for army-colored flash)
+    };
+    void add_death_event(f32 x, f32 y, f32 z, f32 scale, i32 army) {
+        death_events_.push_back({x, y, z, scale, army});
+    }
+    const std::vector<DeathEvent>& death_events() const { return death_events_; }
+    void clear_death_events() { death_events_.clear(); }
+
 private:
     void update_economies();
     void update_entities();
@@ -207,6 +219,10 @@ private:
     bool game_ended_ = false;
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
+    std::vector<DeathEvent> death_events_;
+    std::string build_ghost_bp_;
+    f32 build_ghost_foot_x_ = 1.0f;
+    f32 build_ghost_foot_z_ = 1.0f;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
     struct EntityVisSnapshot {
@@ -224,6 +240,17 @@ private:
         blip_cache_;
 
 public:
+    // Build preview ghost (set by UI, consumed by renderer)
+    void set_build_ghost(const std::string& bp_id, f32 foot_x, f32 foot_z) {
+        build_ghost_bp_ = bp_id;
+        build_ghost_foot_x_ = foot_x;
+        build_ghost_foot_z_ = foot_z;
+    }
+    void clear_build_ghost() { build_ghost_bp_.clear(); }
+    const std::string& build_ghost_bp() const { return build_ghost_bp_; }
+    f32 build_ghost_foot_x() const { return build_ghost_foot_x_; }
+    f32 build_ghost_foot_z() const { return build_ghost_foot_z_; }
+
     /// Look up cached blip snapshot for a specific entity+army pair.
     const BlipSnapshot* get_blip_snapshot(u32 entity_id, u32 army) const;
 

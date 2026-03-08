@@ -18,6 +18,7 @@ add_library(osc_renderer STATIC
     strategic_icon_renderer.cpp
     hud_renderer.cpp
     selection_info_renderer.cpp
+    fog_renderer.cpp
 )
 add_library(osc::renderer ALIAS osc_renderer)
 

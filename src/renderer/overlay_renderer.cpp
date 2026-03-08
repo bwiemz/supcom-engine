@@ -72,12 +72,12 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-void OverlayRenderer::update(const sim::SimState& sim, const Camera& camera,
+void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                               const std::array<f32, 16>& vp_matrix,
                               const std::unordered_set<u32>* selected_ids,
                               TextureCache& tex_cache,
                               u32 viewport_w, u32 viewport_h,
-                              i32 game_result) {
+                              i32 game_result, f32 dt) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -92,6 +92,56 @@ void OverlayRenderer::update(const sim::SimState& sim, const Camera& camera,
     // Eye position for distance culling
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
+
+    // --- Consume death events and spawn explosion VFX ---
+    for (auto& de : sim.death_events()) {
+        if (explosions_.size() < MAX_EXPLOSIONS) {
+            explosions_.push_back({de.x, de.y, de.z,
+                                   std::max(de.scale, 1.0f),
+                                   0.0f,
+                                   1.0f, 0.8f, 0.3f}); // orange flash
+        }
+    }
+    sim.clear_death_events();
+
+    // Tick and render active explosions
+    for (auto it = explosions_.begin(); it != explosions_.end();) {
+        it->age += dt;
+        if (it->age >= EXPLOSION_DURATION) {
+            it = explosions_.erase(it);
+            continue;
+        }
+
+        f32 t = it->age / EXPLOSION_DURATION; // 0→1 over lifetime
+        f32 ex_sx, ex_sy;
+        if (world_to_screen(it->x, it->y, it->z, vp_matrix, sw, sh,
+                            ex_sx, ex_sy)) {
+            // Expanding flash circle (fades out)
+            f32 radius = it->scale * (10.0f + 30.0f * t); // pixels, expanding
+            f32 alpha = (1.0f - t) * 0.9f;
+            // Bright flash core
+            emit_quad(ex_sx - radius, ex_sy - radius,
+                      radius * 2.0f, radius * 2.0f,
+                      it->r, it->g, it->b, alpha * 0.5f);
+            // Smaller bright center
+            f32 inner = radius * 0.4f * (1.0f - t);
+            emit_quad(ex_sx - inner, ex_sy - inner,
+                      inner * 2.0f, inner * 2.0f,
+                      1.0f, 1.0f, 0.9f, alpha);
+
+            // Debris particles (4 per explosion, scatter outward)
+            for (int d = 0; d < 4; d++) {
+                f32 ang = static_cast<f32>(d) * 1.5708f + it->age * 2.0f;
+                f32 dist = radius * 0.7f * t;
+                f32 px = ex_sx + std::cos(ang) * dist;
+                f32 py = ex_sy + std::sin(ang) * dist;
+                f32 ps = 3.0f * (1.0f - t);
+                emit_quad(px - ps, py - ps, ps * 2.0f, ps * 2.0f,
+                          0.6f, 0.3f, 0.1f, alpha * 0.7f); // dark debris
+            }
+        }
+        ++it;
+    }
 
     auto& registry = sim.entity_registry();
 
@@ -236,50 +286,51 @@ void OverlayRenderer::update(const sim::SimState& sim, const Camera& camera,
             }
         }
 
-        // --- Selection circle ---
+        // --- Selection circle (projected 12-segment circle on ground) ---
         if (is_selected) {
-            // Project 4 ground points around the unit to form a selection ring
             constexpr f32 RING_RADIUS = 2.5f;
             constexpr f32 RING_THICK = 2.0f; // pixels
+            constexpr u32 SEL_SEGMENTS = 12;
+            constexpr f32 SEL_PI2 = 6.283185307f;
 
-            // Project ring corners on ground plane (y=pos.y)
-            f32 corners[4][2]; // screen coords of N/E/S/W points
-            bool all_visible = true;
-            f32 offsets[4][2] = {
-                {0, -RING_RADIUS}, {RING_RADIUS, 0},
-                {0, RING_RADIUS},  {-RING_RADIUS, 0}
-            };
-            for (int i = 0; i < 4; i++) {
-                if (!world_to_screen(pos.x + offsets[i][0], pos.y,
-                                     pos.z + offsets[i][1],
-                                     vp_matrix, sw, sh,
-                                     corners[i][0], corners[i][1])) {
-                    all_visible = false;
-                    break;
-                }
-            }
+            f32 prev_sx3 = 0, prev_sy3 = 0;
+            bool prev_valid3 = false;
 
-            if (all_visible) {
-                // Draw 4 line segments connecting N→E→S→W→N
-                for (int i = 0; i < 4; i++) {
-                    int j = (i + 1) % 4;
-                    f32 x0 = corners[i][0], y0 = corners[i][1];
-                    f32 x1 = corners[j][0], y1 = corners[j][1];
+            for (u32 si = 0; si <= SEL_SEGMENTS; si++) {
+                f32 angle = static_cast<f32>(si) * SEL_PI2 /
+                            static_cast<f32>(SEL_SEGMENTS);
+                f32 wx = pos.x + RING_RADIUS * std::cos(angle);
+                f32 wz = pos.z + RING_RADIUS * std::sin(angle);
 
-                    // Line as thin rotated quad
-                    f32 ldx = x1 - x0, ldy = y1 - y0;
+                f32 sx_pt = 0, sy_pt = 0;
+                bool valid = world_to_screen(wx, pos.y, wz,
+                                              vp_matrix, sw, sh,
+                                              sx_pt, sy_pt);
+
+                if (valid && prev_valid3) {
+                    // Draw segment as AABB quad
+                    f32 ldx = sx_pt - prev_sx3;
+                    f32 ldy = sy_pt - prev_sy3;
                     f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-                    if (len < 1.0f) continue;
-
-                    // Use axis-aligned bounding box of the line segment
-                    f32 min_x = std::min(x0, x1) - RING_THICK * 0.5f;
-                    f32 min_y = std::min(y0, y1) - RING_THICK * 0.5f;
-                    f32 max_x = std::max(x0, x1) + RING_THICK * 0.5f;
-                    f32 max_y = std::max(y0, y1) + RING_THICK * 0.5f;
-
-                    emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
-                              0.2f, 1.0f, 0.2f, 0.8f);
+                    if (len >= 1.0f) {
+                        f32 nx = -ldy / len * RING_THICK;
+                        f32 ny = ldx / len * RING_THICK;
+                        f32 min_x = std::min({prev_sx3 + nx, prev_sx3 - nx,
+                                              sx_pt + nx, sx_pt - nx});
+                        f32 min_y = std::min({prev_sy3 + ny, prev_sy3 - ny,
+                                              sy_pt + ny, sy_pt - ny});
+                        f32 max_x = std::max({prev_sx3 + nx, prev_sx3 - nx,
+                                              sx_pt + nx, sx_pt - nx});
+                        f32 max_y = std::max({prev_sy3 + ny, prev_sy3 - ny,
+                                              sy_pt + ny, sy_pt - ny});
+                        emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
+                                  0.2f, 1.0f, 0.2f, 0.8f);
+                    }
                 }
+
+                prev_sx3 = sx_pt;
+                prev_sy3 = sy_pt;
+                prev_valid3 = valid;
             }
 
             // --- Adjacency lines (orange lines to adjacent structures) ---
