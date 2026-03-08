@@ -185,6 +185,11 @@ public:
     /// Per-tick update: process command queue + movement + weapons.
     void update(f64 dt, SimContext& ctx);
 
+    /// Lua callback helpers: call self:method() or self:method(entity)
+    void call_lua_method(lua_State* L, const char* method_name);
+    void call_lua_method_with_entity(lua_State* L, const char* method_name,
+                                      Entity* arg_entity);
+
     /// Build helpers called from update()
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
@@ -201,6 +206,7 @@ public:
 
     /// Reclaim helpers
     u32 reclaim_target_id() const { return reclaim_target_id_; }
+    void set_reclaim_target_id(u32 id) { reclaim_target_id_ = id; }
     bool is_reclaiming() const { return reclaim_target_id_ != 0; }
     void stop_reclaiming();
     bool progress_reclaim(f64 dt, EntityRegistry& registry, lua_State* L);
@@ -208,6 +214,7 @@ public:
 
     /// Repair helpers
     u32 repair_target_id() const { return repair_target_id_; }
+    void set_repair_target_id(u32 id) { repair_target_id_ = id; }
     bool is_repairing() const { return repair_target_id_ != 0; }
     bool start_repair(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
     bool progress_repair(f64 dt, EntityRegistry& registry, lua_State* L,
@@ -216,6 +223,7 @@ public:
 
     /// Capture helpers
     u32 capture_target_id() const { return capture_target_id_; }
+    void set_capture_target_id(u32 id) { capture_target_id_ = id; }
     bool is_capturing() const { return capture_target_id_ != 0; }
     bool capturable() const { return capturable_; }
     void set_capturable(bool c) { capturable_ = c; }
@@ -235,6 +243,10 @@ public:
     bool progress_enhance(f64 dt, lua_State* L, f32 efficiency = 1.0f);
     void finish_enhance(lua_State* L);
     void cancel_enhance(lua_State* L);
+
+    // Veterancy level (0-5, set from Lua VeterancyComponent)
+    u8 vet_level() const { return vet_level_; }
+    void set_vet_level(u8 level) { vet_level_ = level; }
 
     // Stats/telemetry system
     void set_stat(const std::string& key, f64 value);
@@ -370,6 +382,7 @@ public:
     void enable_intel(const std::string& type);
     void disable_intel(const std::string& type);
     void set_intel_radius(const std::string& type, f32 radius);
+    const std::unordered_map<std::string, IntelState>& intel_states() const { return intel_states_; }
 
     // Adjacency system
     const std::unordered_set<u32>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
@@ -459,6 +472,8 @@ private:
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
     i32 transport_class_ = 0;        // cargo TransportClass (1=small, 2=medium, 3=large)
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
+    // Veterancy
+    u8 vet_level_ = 0;
     // Stats/telemetry
     std::unordered_map<std::string, f64> stats_;
     // Silo ammo counters

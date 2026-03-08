@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3, Quaternion
+#include "sim/waitable.hpp"
 
 #include <memory>
 #include <string>
@@ -17,9 +18,9 @@ struct SCAData;
 /// Base class for all manipulators (rotators, animators, sliders, aim controllers).
 /// Manipulators are lightweight C++ objects owned by Units, NOT entities.
 /// They use the _c_object lightuserdata pattern for Lua binding.
-class Manipulator {
+class Manipulator : public Waitable {
 public:
-    virtual ~Manipulator() = default;
+    ~Manipulator() override = default;
 
     Unit* owner() const { return owner_; }
     void set_owner(Unit* u) { owner_ = u; }
@@ -42,10 +43,9 @@ public:
     /// Whether the manipulator has reached its goal (for WaitFor).
     virtual bool is_at_goal() const = 0;
 
-    // WaitFor support: store coroutine registry ref waiting on this manipulator.
-    // LUA_NOREF = -2 means no one is waiting.
-    int waiting_thread_ref() const { return waiting_thread_ref_; }
-    void set_waiting_thread_ref(int ref) { waiting_thread_ref_ = ref; }
+    // Waitable interface
+    bool is_done() const override { return is_at_goal(); }
+    bool is_cancelled() const override { return destroyed_; }
 
 protected:
     Unit* owner_ = nullptr;
@@ -53,7 +53,6 @@ protected:
     i32 precedence_ = 0;
     bool enabled_ = true;
     bool destroyed_ = false;
-    int waiting_thread_ref_ = -2; // LUA_NOREF
 };
 
 // ---------------------------------------------------------------------------
@@ -185,6 +184,79 @@ private:
     f32 reset_pose_time_ = 2.0f;
     f32 aim_heading_offset_ = 0;
     bool on_target_ = false;
+};
+
+// ---------------------------------------------------------------------------
+// SlaverManipulator — slaves one bone's rotation to follow another
+// ---------------------------------------------------------------------------
+class SlaverManipulator : public Manipulator {
+public:
+    void tick(f32 /*dt*/) override {} // slaving is resolved at render time
+    bool is_at_goal() const override { return true; }
+
+    void set_slave_bone(i32 b) { slave_bone_ = b; }
+    void set_master_bone(i32 b) { master_bone_ = b; }
+    i32 slave_bone() const { return slave_bone_; }
+    i32 master_bone() const { return master_bone_; }
+
+private:
+    i32 slave_bone_ = 0;
+    i32 master_bone_ = 0;
+};
+
+// ---------------------------------------------------------------------------
+// CollisionDetectorManipulator — tracks bone positions for collision events
+// ---------------------------------------------------------------------------
+class CollisionDetectorManipulator : public Manipulator {
+public:
+    void tick(f32 /*dt*/) override {} // collision checks deferred
+    bool is_at_goal() const override { return true; }
+
+    void watch_bone(i32 bone_idx) { watched_bones_.push_back(bone_idx); }
+    const std::vector<i32>& watched_bones() const { return watched_bones_; }
+
+private:
+    std::vector<i32> watched_bones_;
+};
+
+// ---------------------------------------------------------------------------
+// FootPlantManipulator — IK foot placement on terrain
+// ---------------------------------------------------------------------------
+class FootPlantManipulator : public Manipulator {
+public:
+    void tick(f32 /*dt*/) override {} // IK deferred
+    bool is_at_goal() const override { return true; }
+
+    void set_foot_bone(i32 b) { foot_bone_ = b; }
+    void set_knee_bone(i32 b) { knee_bone_ = b; }
+    void set_hip_bone(i32 b) { hip_bone_ = b; }
+    void set_straight_legs(bool s) { straight_legs_ = s; }
+    void set_max_foot_fall(f32 m) { max_foot_fall_ = m; }
+
+private:
+    i32 foot_bone_ = 0;
+    i32 knee_bone_ = 0;
+    i32 hip_bone_ = 0;
+    bool straight_legs_ = true;
+    f32 max_foot_fall_ = 0;
+};
+
+// ---------------------------------------------------------------------------
+// StorageManipulator — visual mass/energy storage fill indicator
+// ---------------------------------------------------------------------------
+class StorageManipulator : public Manipulator {
+public:
+    void tick(f32 /*dt*/) override {} // visual only
+    bool is_at_goal() const override { return true; }
+};
+
+// ---------------------------------------------------------------------------
+// ThrustManipulator — air unit thrust visual controller
+// ---------------------------------------------------------------------------
+class ThrustManipulator : public Manipulator {
+public:
+    void tick(f32 /*dt*/) override {} // visual only
+    bool is_at_goal() const override { return true; }
 };
 
 } // namespace osc::sim

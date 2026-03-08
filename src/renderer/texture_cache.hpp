@@ -42,6 +42,11 @@ public:
     /// Key is used for caching. Returns nullptr on failure.
     const GPUTexture* get_raw(const std::string& key, const std::vector<char>& raw_dds);
 
+    /// Upload raw RGBA pixels as a cached texture.
+    /// Key is used for caching. Pixels must be width*height*4 bytes.
+    const GPUTexture* upload_rgba(const std::string& key,
+                                   const u8* pixels, u32 width, u32 height);
+
     /// Descriptor set for the 1x1 white fallback texture.
     VkDescriptorSet fallback_descriptor() const { return fallback_.descriptor_set; }
 

@@ -6,6 +6,8 @@
 #include "sim/bone_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity.hpp"
+#include "sim/economy_event.hpp"
+#include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/prop.hpp"
@@ -1516,6 +1518,322 @@ static int stub_dummy_object(lua_State* L) {
 }
 
 // ====================================================================
+// IEffect creation helpers
+// ====================================================================
+
+/// Extract Entity* from a Lua arg (table with _c_object lightuserdata).
+static sim::Entity* effect_check_entity(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* e = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    return e;
+}
+
+/// Push a new IEffect Lua table onto the stack with _c_object and __osc_ieffect_mt.
+static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
+    lua_newtable(L); // the effect table
+
+    // _c_object = lightuserdata
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, fx);
+    lua_rawset(L, -3);
+
+    // Set metatable: cached __osc_ieffect_mt in registry
+    lua_pushstring(L, "__osc_ieffect_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        // First time: build from moho.IEffect
+        lua_pop(L, 1);
+        lua_newtable(L); // metatable
+
+        // __index = moho.IEffect (after flattening, has all methods)
+        lua_pushstring(L, "__index");
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "IEffect");
+            lua_rawget(L, -2);
+            lua_remove(L, -2); // remove moho table
+        }
+        if (!lua_istable(L, -1)) {
+            // moho.IEffect not available yet — use dummy __index
+            lua_pop(L, 1);
+            lua_pushcfunction(L, [](lua_State* Ls) -> int {
+                lua_pushvalue(Ls, 1);
+                return 1;
+            });
+        }
+        lua_rawset(L, -3); // mt.__index = moho.IEffect or dummy
+
+        // Cache it
+        lua_pushstring(L, "__osc_ieffect_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+}
+
+// CreateEmitterAtEntity(entity, army, blueprintPath)
+// CreateEmitterOnEntity(entity, army, blueprintPath)  (identical semantics)
+static int l_CreateEmitterAtEntity(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* entity = effect_check_entity(L, 1);
+    i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    const char* bp = luaL_optstring(L, 3, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::EMITTER_AT_ENTITY);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateEmitterAtBone(entity, boneIndex, army, blueprintPath)
+static int l_CreateEmitterAtBone(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* entity = effect_check_entity(L, 1);
+    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    const char* bp = luaL_optstring(L, 4, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::EMITTER_AT_BONE);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_bone_index(bone);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateAttachedEmitter(entity, boneIndex, army, blueprintPath)
+static int l_CreateAttachedEmitter(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* entity = effect_check_entity(L, 1);
+    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    const char* bp = luaL_optstring(L, 4, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::ATTACHED_EMITTER);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_bone_index(bone);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateBeamEmitter(blueprintPath, army)
+static int l_CreateBeamEmitter(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    const char* bp = luaL_optstring(L, 1, "");
+    i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::BEAM_EMITTER);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateAttachedBeam(entity, bone, army, length, thickness, blueprintPath)
+static int l_CreateAttachedBeam(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* entity = effect_check_entity(L, 1);
+    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    // length and thickness at args 4,5 stored as params for future rendering
+    const char* bp = luaL_optstring(L, 6, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::ATTACHED_BEAM);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_bone_index(bone);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    fx->set_param("LENGTH", luaL_optnumber(L, 4, 1.0));
+    fx->set_param("THICKNESS", luaL_optnumber(L, 5, 0.1));
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// AttachBeamToEntity(emitter, entity, bone, army) → emitter (modified in place)
+static int l_AttachBeamToEntity(lua_State* L) {
+    // arg1 = emitter (IEffect table), arg2 = entity, arg3 = bone, arg4 = army
+    // Read _c_object from emitter
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 1);
+        auto* fx = static_cast<sim::IEffect*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (fx) {
+            auto* entity = effect_check_entity(L, 2);
+            fx->set_entity_id(entity ? entity->entity_id() : 0);
+            fx->set_bone_index(static_cast<i32>(luaL_optnumber(L, 3, -1)));
+        }
+    }
+    lua_pushvalue(L, 1); // return emitter
+    return 1;
+}
+
+// AttachBeamEntityToEntity(startEntity, startBone, endEntity, endBone, army, bp)
+// Also used as CreateBeamEntityToEntity
+static int l_AttachBeamEntityToEntity(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* start_ent = effect_check_entity(L, 1);
+    i32 start_bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    auto* end_ent = effect_check_entity(L, 3);
+    i32 end_bone = static_cast<i32>(luaL_optnumber(L, 4, -1));
+    i32 army = static_cast<i32>(luaL_optnumber(L, 5, 0));
+    const char* bp = luaL_optstring(L, 6, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::BEAM_ENTITY_TO_ENTITY);
+    fx->set_entity_id(start_ent ? start_ent->entity_id() : 0);
+    fx->set_bone_index(start_bone);
+    fx->set_target_entity_id(end_ent ? end_ent->entity_id() : 0);
+    fx->set_target_bone_index(end_bone);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateLightParticle(entity, bone, army, size, duration, glowTex, rampTex)
+// CreateLightParticleIntel — identical signature
+static int l_CreateLightParticle(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    auto* entity = effect_check_entity(L, 1);
+    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    f32 size = static_cast<f32>(luaL_optnumber(L, 4, 1.0));
+    f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 1.0));
+    const char* glow = luaL_optstring(L, 6, "");
+    const char* ramp = luaL_optstring(L, 7, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::LIGHT_PARTICLE);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_bone_index(bone);
+    fx->set_army(army);
+    fx->set_light_size(size);
+    fx->set_light_duration(duration);
+    fx->set_glow_texture(glow);
+    fx->set_ramp_texture(ramp);
+    // Light particles are fire-and-forget, no method chaining needed.
+    // Return nil (same as original stub_noop) — FA doesn't use the return value.
+    return 0;
+}
+
+// CreateDecal(position, heading, tex1, tex2, shaderType, sizeX, sizeZ, lod, duration, army, fidelity)
+static int l_CreateDecal(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::DECAL);
+    // position at arg 1 (table with [1],[2],[3])
+    if (lua_istable(L, 1)) {
+        lua_rawgeti(L, 1, 1); lua_rawgeti(L, 1, 2); lua_rawgeti(L, 1, 3);
+        fx->set_offset(
+            static_cast<f32>(lua_tonumber(L, -3)),
+            static_cast<f32>(lua_tonumber(L, -2)),
+            static_cast<f32>(lua_tonumber(L, -1)));
+        lua_pop(L, 3);
+    }
+    fx->set_param("ROTATION", luaL_optnumber(L, 2, 0));
+    fx->set_blueprint_path(luaL_optstring(L, 3, ""));     // tex1 (albedo)
+    fx->set_glow_texture(luaL_optstring(L, 4, ""));       // tex2 (normals)
+    fx->set_ramp_texture(luaL_optstring(L, 5, "Albedo")); // shader type
+    fx->set_param("WIDTH", luaL_optnumber(L, 6, 1));
+    fx->set_param("HEIGHT", luaL_optnumber(L, 7, 1));
+    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 8, 200));
+    f64 lifetime = luaL_optnumber(L, 9, 0);
+    fx->set_param("LIFETIME", lifetime);
+    if (lifetime > 0) fx->set_birth_time(sim->game_time());
+    fx->set_army(static_cast<i32>(luaL_optnumber(L, 10, -1)));
+    fx->set_param("FIDELITY", luaL_optnumber(L, 11, 0));
+    // Return CDecalHandle (for TrashBag)
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateSplat(position, heading, texture, sizeX, sizeZ, lod, duration, army, fidelity)
+static int l_CreateSplat(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::SPLAT);
+    if (lua_istable(L, 1)) {
+        lua_rawgeti(L, 1, 1); lua_rawgeti(L, 1, 2); lua_rawgeti(L, 1, 3);
+        fx->set_offset(
+            static_cast<f32>(lua_tonumber(L, -3)),
+            static_cast<f32>(lua_tonumber(L, -2)),
+            static_cast<f32>(lua_tonumber(L, -1)));
+        lua_pop(L, 3);
+    }
+    fx->set_param("ROTATION", luaL_optnumber(L, 2, 0));
+    fx->set_blueprint_path(luaL_optstring(L, 3, ""));
+    fx->set_param("WIDTH", luaL_optnumber(L, 4, 1));
+    fx->set_param("HEIGHT", luaL_optnumber(L, 5, 1));
+    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 6, 200));
+    f64 lifetime = luaL_optnumber(L, 7, 0);
+    fx->set_param("LIFETIME", lifetime);
+    if (lifetime > 0) fx->set_birth_time(sim->game_time());
+    fx->set_army(static_cast<i32>(luaL_optnumber(L, 8, -1)));
+    fx->set_param("FIDELITY", luaL_optnumber(L, 9, 0));
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateSplatOnBone(entity, offset, bone, texture, sizeX, sizeZ, lod, duration, army)
+static int l_CreateSplatOnBone(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    // arg1 = entity table, arg2 = offset vector, arg3 = bone index
+    auto* entity = effect_check_entity(L, 1);
+    f32 ox = 0, oy = 0, oz = 0;
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1); lua_rawgeti(L, 2, 2); lua_rawgeti(L, 2, 3);
+        ox = static_cast<f32>(lua_tonumber(L, -3));
+        oy = static_cast<f32>(lua_tonumber(L, -2));
+        oz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 3);
+    }
+    i32 bone = static_cast<i32>(luaL_optnumber(L, 3, 0));
+
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::SPLAT);
+    if (entity) {
+        fx->set_entity_id(entity->entity_id());
+        // Use entity position + offset as splat position
+        const auto& pos = entity->position();
+        fx->set_offset(pos.x + ox, pos.y + oy, pos.z + oz);
+    } else {
+        fx->set_offset(ox, oy, oz);
+    }
+    fx->set_bone_index(bone);
+    fx->set_blueprint_path(luaL_optstring(L, 4, ""));
+    fx->set_param("WIDTH", luaL_optnumber(L, 5, 1));
+    fx->set_param("HEIGHT", luaL_optnumber(L, 6, 1));
+    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 7, 200));
+    f64 lifetime = luaL_optnumber(L, 8, 0);
+    fx->set_param("LIFETIME", lifetime);
+    if (lifetime > 0) fx->set_birth_time(sim->game_time());
+    fx->set_army(static_cast<i32>(luaL_optnumber(L, 9, -1)));
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// ====================================================================
 // Manipulator helpers — extract unit from self, resolve bones, set metatable
 // ====================================================================
 
@@ -1813,29 +2131,220 @@ static int l_CreateBuilderArmController(lua_State* L) {
 }
 
 // ====================================================================
-// WaitFor(manipulator) — yield until manipulator reaches its goal
+// CreateCollisionDetector(unit) -> collision detector manipulator
+// ====================================================================
+static int l_CreateCollisionDetector(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::CollisionDetectorManipulator>();
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_coldet_mt", "CollisionManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateFootPlantController(unit, footBone, kneeBone, hipBone,
+//                           straightLegs, maxFootFall) -> manipulator
+// ====================================================================
+static int l_CreateFootPlantController(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::FootPlantManipulator>();
+    if (lua_gettop(L) >= 2) manip->set_foot_bone(manip_resolve_bone(unit, L, 2));
+    if (lua_gettop(L) >= 3) manip->set_knee_bone(manip_resolve_bone(unit, L, 3));
+    if (lua_gettop(L) >= 4) manip->set_hip_bone(manip_resolve_bone(unit, L, 4));
+    if (lua_gettop(L) >= 5) manip->set_straight_legs(lua_toboolean(L, 5) != 0);
+    if (lua_gettop(L) >= 6) manip->set_max_foot_fall(static_cast<f32>(luaL_optnumber(L, 6, 0.0)));
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_footplant_mt", "FootPlantManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateSlaver(unit, slaveBone, masterBone) -> slaver manipulator
+// ====================================================================
+static int l_CreateSlaver(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::SlaverManipulator>();
+    if (lua_gettop(L) >= 2) manip->set_slave_bone(manip_resolve_bone(unit, L, 2));
+    if (lua_gettop(L) >= 3) manip->set_master_bone(manip_resolve_bone(unit, L, 3));
+
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_slaver_mt", "SlaveManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateStorageManipulator(unit) -> storage manipulator (visual)
+// ====================================================================
+static int l_CreateStorageManipulator(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::StorageManipulator>();
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_storage_mt", "StorageManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateThrustController(unit) -> thrust manipulator (visual)
+// ====================================================================
+static int l_CreateThrustController(lua_State* L) {
+    auto* unit = manip_check_unit(L, 1);
+    if (!unit) return stub_dummy_object(L);
+
+    auto manip = std::make_unique<sim::ThrustManipulator>();
+    auto* raw = unit->add_manipulator(std::move(manip));
+
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, tbl);
+
+    set_manip_metatable(L, tbl, "__osc_thrust_mt", "ThrustManipulator");
+    return 1;
+}
+
+// ====================================================================
+// CreateResourceDeposit(type, x, y, z, size) -> nil
+// ====================================================================
+static int l_CreateResourceDeposit(lua_State* L) {
+    auto* sim_state = get_sim(L);
+    if (!sim_state) return 0;
+
+    const char* type_str = luaL_optstring(L, 1, "Mass");
+    f32 x = static_cast<f32>(luaL_optnumber(L, 2, 0.0));
+    f32 y = static_cast<f32>(luaL_optnumber(L, 3, 0.0));
+    f32 z = static_cast<f32>(luaL_optnumber(L, 4, 0.0));
+    f32 size = static_cast<f32>(luaL_optnumber(L, 5, 1.0));
+
+    sim::ResourceDeposit dep;
+    dep.x = x;
+    dep.y = y;
+    dep.z = z;
+    dep.size = size;
+    if (type_str && (type_str[0] == 'H' || type_str[0] == 'h'))
+        dep.type = sim::ResourceDeposit::Hydrocarbon;
+    else
+        dep.type = sim::ResourceDeposit::Mass;
+
+    sim_state->add_resource_deposit(dep);
+    return 0;
+}
+
+// ====================================================================
+// WaitFor(waitable) — yield until manipulator/economy event completes
 // ====================================================================
 static int l_WaitFor(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
 
     lua_pushstring(L, "_c_object");
     lua_rawget(L, 1);
-    auto* manip = lua_isuserdata(L, -1)
-                      ? static_cast<sim::Manipulator*>(lua_touserdata(L, -1))
-                      : nullptr;
+    auto* waitable = lua_isuserdata(L, -1)
+                         ? static_cast<sim::Waitable*>(lua_touserdata(L, -1))
+                         : nullptr;
     lua_pop(L, 1);
 
-    if (!manip || manip->is_destroyed()) return 0;
+    if (!waitable || waitable->is_cancelled()) return 0;
 
-    // If already at goal, return immediately (no yield)
-    if (manip->is_at_goal()) return 0;
+    // If already done, return immediately (no yield)
+    if (waitable->is_done()) return 0;
 
-    // Yield with the manipulator pointer as a lightuserdata sentinel.
+    // Yield with the waitable pointer as a lightuserdata sentinel.
     // ThreadManager::resume_all() recognizes this and sets wait_until_tick
-    // to INT32_MAX. The manipulator's tick_manipulators() will wake the
-    // thread when the manipulator reaches its goal.
-    lua_pushlightuserdata(L, manip);
+    // to INT32_MAX. The owner (manipulator tick or economy event tick)
+    // will wake the thread when the waitable completes.
+    lua_pushlightuserdata(L, waitable);
     return lua_yield(L, 1);
+}
+
+// ====================================================================
+// CreateEconomyEvent(unit, massAmount, energyAmount, duration) -> handle
+// ====================================================================
+static int l_CreateEconomyEvent(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    auto* unit = extract_entity(L, 1);
+    u32 unit_id = (unit && !unit->destroyed()) ? unit->entity_id() : 0;
+    f64 energy = luaL_optnumber(L, 2, 0.0);
+    f64 mass = luaL_optnumber(L, 3, 0.0);
+    f64 duration = luaL_optnumber(L, 4, 0.0);
+
+    auto* evt = sim->economy_events().create(unit_id, mass, energy, duration);
+
+    // Return a Lua table with _c_object = lightuserdata(EconomyEvent*)
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, static_cast<sim::Waitable*>(evt));
+    lua_rawset(L, -3);
+    return 1;
+}
+
+// EconomyEventIsDone(handle) -> bool
+static int l_EconomyEventIsDone(lua_State* L) {
+    if (!lua_istable(L, 1)) { lua_pushboolean(L, 1); return 1; }
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    auto* waitable = lua_isuserdata(L, -1)
+                         ? static_cast<sim::Waitable*>(lua_touserdata(L, -1))
+                         : nullptr;
+    lua_pop(L, 1);
+    lua_pushboolean(L, (!waitable || waitable->is_done() || waitable->is_cancelled()) ? 1 : 0);
+    return 1;
+}
+
+// RemoveEconomyEvent(unit, handle) — cancel the economy event
+static int l_RemoveEconomyEvent(lua_State* L) {
+    // arg1 = unit (not used), arg2 = handle table
+    int handle_idx = lua_istable(L, 2) ? 2 : 1;
+    if (!lua_istable(L, handle_idx)) return 0;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, handle_idx);
+    auto* waitable = lua_isuserdata(L, -1)
+                         ? static_cast<sim::Waitable*>(lua_touserdata(L, -1))
+                         : nullptr;
+    lua_pop(L, 1);
+    if (waitable) {
+        auto* evt = dynamic_cast<sim::EconomyEvent*>(waitable);
+        if (evt) evt->cancel();
+    }
+    return 0;
 }
 
 // ArmyIsCivilian(army_index) -> bool
@@ -3424,7 +3933,91 @@ static int l_IssueTransportUnload(lua_State* L) {
     return 0;
 }
 
-static int l_IssueCommand(lua_State*) { return 0; }
+// IssueNuke(units_table, position) — fire nuke from silo
+static int l_IssueNuke(lua_State* L) {
+    auto target_pos = extract_position(L, 2);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Nuke;
+    cmd.target_pos = target_pos;
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueTactical(units_table, target) — fire tactical missile (entity or position)
+static int l_IssueTactical(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Tactical;
+
+    // Target can be entity or position
+    auto* target = extract_entity(L, 2);
+    if (target && !target->destroyed()) {
+        cmd.target_id = target->entity_id();
+        cmd.target_pos = target->position();
+    } else {
+        cmd.target_pos = extract_position(L, 2);
+    }
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueOvercharge(units_table, target_entity) — overcharge attack
+static int l_IssueOvercharge(lua_State* L) {
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed()) return 0;
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Overcharge;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueSacrifice(units_table, target_entity) — sacrifice unit to build target
+static int l_IssueSacrifice(lua_State* L) {
+    auto* target = extract_entity(L, 2);
+    if (!target || target->destroyed() || !target->is_unit()) return 0;
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Sacrifice;
+    cmd.target_id = target->entity_id();
+    cmd.target_pos = target->position();
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueTeleport(units_table, location) — teleport to position
+static int l_IssueTeleport(lua_State* L) {
+    auto target_pos = extract_position(L, 2);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Teleport;
+    cmd.target_pos = target_pos;
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
+    }, &cmd);
+    return 0;
+}
+
+// IssueFerry(units_table, waypoint) — ferry route waypoint for transports
+static int l_IssueFerry(lua_State* L) {
+    auto target_pos = extract_position(L, 2);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Ferry;
+    cmd.target_pos = target_pos;
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
+        // Ferry appends like Patrol, doesn't clear
+        u->push_command(*static_cast<sim::UnitCommand*>(c), false);
+    }, &cmd);
+    return 0;
+}
 
 // ====================================================================
 // Registration
@@ -3543,42 +4136,45 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("DrawLine", stub_noop);
     state.register_function("DebugGetSelection", stub_nil);
 
-    // Effects (stubs)
-    state.register_function("CreateEmitterAtBone", stub_nil);
-    state.register_function("CreateEmitterAtEntity", stub_nil);
-    state.register_function("CreateEmitterOnEntity", stub_nil);
-    state.register_function("CreateAttachedEmitter", stub_nil);
-    state.register_function("CreateAttachedBeam", stub_nil);
-    state.register_function("AttachBeamToEntity", stub_nil);
-    state.register_function("AttachBeamEntityToEntity", stub_nil);
-    state.register_function("CreateBeamEmitter", stub_nil);
-    state.register_function("CreateLightParticle", stub_noop);
-    state.register_function("CreateLightParticleIntel", stub_noop);
-    state.register_function("CreateDecal", stub_nil);
-    state.register_function("CreateSplat", stub_nil);
+    // Effects — real IEffect creation (state tracking, rendering deferred)
+    state.register_function("CreateEmitterAtBone", l_CreateEmitterAtBone);
+    state.register_function("CreateEmitterAtEntity", l_CreateEmitterAtEntity);
+    state.register_function("CreateEmitterOnEntity", l_CreateEmitterAtEntity); // same semantics
+    state.register_function("CreateAttachedEmitter", l_CreateAttachedEmitter);
+    state.register_function("CreateAttachedBeam", l_CreateAttachedBeam);
+    state.register_function("AttachBeamToEntity", l_AttachBeamToEntity);
+    state.register_function("AttachBeamEntityToEntity", l_AttachBeamEntityToEntity);
+    state.register_function("CreateBeamEntityToEntity", l_AttachBeamEntityToEntity); // same
+    state.register_function("CreateBeamEmitter", l_CreateBeamEmitter);
+    state.register_function("CreateBeamEmitterOnEntity", l_CreateAttachedEmitter); // same sig as attached
+    state.register_function("CreateLightParticle", l_CreateLightParticle);
+    state.register_function("CreateLightParticleIntel", l_CreateLightParticle); // same
+    state.register_function("CreateDecal", l_CreateDecal);
+    state.register_function("CreateSplat", l_CreateSplat);
+    state.register_function("CreateSplatOnBone", l_CreateSplatOnBone);
     // These Create* functions return dummy objects whose methods are
     // no-ops that return self for chaining.  FA Lua code calls methods
     // on the returned objects (e.g., CreateAnimator(self):PlayAnim():SetRate(1)).
     state.register_function("CreateAnimator", l_CreateAnimator);
     state.register_function("CreateAimController", l_CreateAimController);
     state.register_function("CreateBuilderArmController", l_CreateBuilderArmController);
-    state.register_function("CreateCollisionDetector", stub_dummy_object);
-    state.register_function("CreateFootPlantController", stub_dummy_object);
+    state.register_function("CreateCollisionDetector", l_CreateCollisionDetector);
+    state.register_function("CreateFootPlantController", l_CreateFootPlantController);
     state.register_function("CreateRotator", l_CreateRotator);
     state.register_function("CreateSlider", l_CreateSlider);
-    state.register_function("CreateSlaver", stub_dummy_object);
-    state.register_function("CreateStorageManipulator", stub_dummy_object);
-    state.register_function("CreateThrustController", stub_dummy_object);
+    state.register_function("CreateSlaver", l_CreateSlaver);
+    state.register_function("CreateStorageManipulator", l_CreateStorageManipulator);
+    state.register_function("CreateThrustController", l_CreateThrustController);
 
     // WaitFor(manipulator) — real implementation with yield/resume
     state.register_function("WaitFor", l_WaitFor);
     state.register_function("CreateProp", l_CreateProp);
     state.register_function("CreatePropHPR", l_CreatePropHPR);
 
-    // Economy stubs
-    state.register_function("CreateEconomyEvent", stub_nil);
-    state.register_function("EconomyEventIsDone", stub_true);
-    state.register_function("RemoveEconomyEvent", stub_noop);
+    // Economy events — real implementations
+    state.register_function("CreateEconomyEvent", l_CreateEconomyEvent);
+    state.register_function("EconomyEventIsDone", l_EconomyEventIsDone);
+    state.register_function("RemoveEconomyEvent", l_RemoveEconomyEvent);
 
     // Army — real implementations
     state.register_function("SetAlliance", l_SetAlliance);
@@ -3623,15 +4219,15 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueTransportLoad", l_IssueTransportLoad);
     state.register_function("IssueTransportUnload", l_IssueTransportUnload);
     state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnload);
-    state.register_function("IssueFerry", l_IssueCommand);
-    state.register_function("IssueNuke", l_IssueCommand);
-    state.register_function("IssueTactical", l_IssueCommand);
-    state.register_function("IssueOvercharge", l_IssueCommand);
-    state.register_function("IssueSacrifice", l_IssueCommand);
-    state.register_function("IssueTeleport", l_IssueCommand);
+    state.register_function("IssueFerry", l_IssueFerry);
+    state.register_function("IssueNuke", l_IssueNuke);
+    state.register_function("IssueTactical", l_IssueTactical);
+    state.register_function("IssueOvercharge", l_IssueOvercharge);
+    state.register_function("IssueSacrifice", l_IssueSacrifice);
+    state.register_function("IssueTeleport", l_IssueTeleport);
     state.register_function("IssueUpgrade", l_IssueUpgrade);
-    state.register_function("IssuePause", l_IssueCommand);
-    state.register_function("IssueScript", l_IssueCommand);
+    state.register_function("IssuePause", stub_noop);  // unused in FA
+    state.register_function("IssueScript", stub_noop);  // EnhanceTask uses IssueEnhancement
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);
 
@@ -3645,7 +4241,15 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
 
     // Misc stubs
     state.register_function("ResetSyncTable", stub_noop);
-    state.register_function("EndGame", stub_noop);
+    state.register_function("EndGame", [](lua_State* L) -> int {
+        auto* sim = get_sim(L);
+        if (sim) {
+            sim->set_game_ended(true);
+            spdlog::info("EndGame called — game ended at tick {}",
+                         sim->tick_count());
+        }
+        return 0;
+    });
     state.register_function("GetVersion", [](lua_State* L) -> int {
         lua_pushstring(L, "OpenSupCom 0.1.0");
         return 1;
@@ -3705,7 +4309,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyAIPersonality", stub_noop);
     state.register_function("SetIgnoreArmyUnitCap", stub_noop);
     state.register_function("SetPlayableRect", stub_noop);
-    state.register_function("CreateResourceDeposit", stub_noop);
+    state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
     state.register_function("CreatePropInSimCallback", stub_noop);
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);
     state.register_function("ArmyIsOutOfGame", l_ArmyIsOutOfGame);

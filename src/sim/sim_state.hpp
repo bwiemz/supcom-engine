@@ -2,11 +2,14 @@
 
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/ieffect.hpp"
 #include "sim/thread_manager.hpp"
 
 #include <array>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -58,6 +61,13 @@ struct BlipSnapshot {
     std::string blueprint_id;
     i32 entity_army = -1; // 0-based
     bool entity_dead = false;
+};
+
+/// Resource deposit (mass/hydrocarbon point on map).
+struct ResourceDeposit {
+    f32 x = 0, y = 0, z = 0;
+    f32 size = 1.0f;
+    enum Type : u8 { Mass = 0, Hydrocarbon = 1 } type = Mass;
 };
 
 /// Lightweight context passed to Unit::update() each tick.
@@ -139,10 +149,29 @@ public:
     u32 tick_count() const { return tick_count_; }
     f64 game_time() const { return game_time_; }
 
+    // Game end state
+    bool game_ended() const { return game_ended_; }
+    void set_game_ended(bool v) { game_ended_ = v; }
+
+    /// Check if player army (index 0) won, lost, or game still in progress.
+    /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
+    i32 player_result() const;
+
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
     /// Monotonically increasing command ID for IsCommandsActive tracking.
     u32 next_command_id() { return ++next_command_id_; }
+
+    // VFX / IEffect registry
+    IEffectRegistry& effect_registry() { return effect_registry_; }
+    const IEffectRegistry& effect_registry() const { return effect_registry_; }
+
+    // Economy event registry
+    EconomyEventRegistry& economy_events() { return economy_events_; }
+
+    // Resource deposits
+    void add_resource_deposit(const ResourceDeposit& d) { resource_deposits_.push_back(d); }
+    const std::vector<ResourceDeposit>& resource_deposits() const { return resource_deposits_; }
 
     // Camera shake events (consumed by renderer each frame)
     void add_camera_shake(const CameraShakeEvent& e) { camera_shake_events_.push_back(e); }
@@ -153,6 +182,7 @@ private:
     void update_economies();
     void update_entities();
     void update_visibility();
+    void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);
 
@@ -168,11 +198,15 @@ private:
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;
+    IEffectRegistry effect_registry_;
+    EconomyEventRegistry economy_events_;
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
     u32 next_command_id_ = 0;
+    bool game_ended_ = false;
     std::vector<CameraShakeEvent> camera_shake_events_;
+    std::vector<ResourceDeposit> resource_deposits_;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
     struct EntityVisSnapshot {

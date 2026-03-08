@@ -16,12 +16,16 @@
 #include "lua/moho_bindings.hpp"
 #include "ui/ui_control.hpp"
 #include "renderer/renderer.hpp"
+#include "renderer/input_handler.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
+#include <GLFW/glfw3.h>
+
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -107,6 +111,18 @@ static void print_usage() {
               << "  --edit-render-test Edit control visuals (background, text, caret)\n"
               << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
+              << "  --emitter-test     IEffect/emitter system (Create*Emitter, beams, decals, chaining)\n"
+              << "  --collision-test   CollisionBeam entity (__init, Enable/Disable, SetBeamFx, GetLauncher)\n"
+              << "  --decalsplat-test  Decal/Splat system (CreateDecal, CreateSplat, CreateSplatOnBone, lifetime)\n"
+              << "  --cmd-test         Issue commands + economy events (Nuke/Tactical/Teleport/Ferry/Sacrifice)\n"
+              << "  --deposit-test     Resource deposits + manipulator stub conversions\n"
+              << "  --beam-test        Beam rendering (construction/reclaim/repair/capture/collision)\n"
+              << "  --shield-render-test Shield bubble rendering (projected circles)\n"
+              << "  --vet-adj-render-test Veterancy indicators + adjacency lines\n"
+              << "  --intel-overlay-test Intel range overlay (radar/sonar/omni circles)\n"
+              << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"
+              << "  --vfx-render-test  VFX/emitter particle rendering\n"
+              << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
               << "  --help             Show this help message\n";
 }
 
@@ -285,6 +301,18 @@ int main(int argc, char* argv[]) {
     bool onframe_test = parse_flag(argc, argv, "--onframe-test");
     bool cursor_render_test = parse_flag(argc, argv, "--cursor-render-test");
     bool drag_render_test = parse_flag(argc, argv, "--drag-render-test");
+    bool emitter_test = parse_flag(argc, argv, "--emitter-test");
+    bool collision_test = parse_flag(argc, argv, "--collision-test");
+    bool decalsplat_test = parse_flag(argc, argv, "--decalsplat-test");
+    bool cmd_test = parse_flag(argc, argv, "--cmd-test");
+    bool deposit_test = parse_flag(argc, argv, "--deposit-test");
+    bool beam_test = parse_flag(argc, argv, "--beam-test");
+    bool shield_render_test = parse_flag(argc, argv, "--shield-render-test");
+    bool vet_adj_render_test = parse_flag(argc, argv, "--vet-adj-render-test");
+    bool intel_overlay_test = parse_flag(argc, argv, "--intel-overlay-test");
+    bool enhance_wreck_test = parse_flag(argc, argv, "--enhance-wreck-test");
+    bool vfx_render_test = parse_flag(argc, argv, "--vfx-render-test");
+    bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -315,7 +343,13 @@ int main(int argc, char* argv[]) {
                     scrollbar_render_test || anim_render_test ||
                     tiled_render_test || input_test ||
                     onframe_test || cursor_render_test ||
-                    drag_render_test;
+                    drag_render_test || emitter_test ||
+                    collision_test || decalsplat_test ||
+                    cmd_test || deposit_test ||
+                    beam_test || shield_render_test ||
+                    vet_adj_render_test || intel_overlay_test ||
+                    enhance_wreck_test || vfx_render_test ||
+                    transport_silo_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -456,8 +490,22 @@ int main(int argc, char* argv[]) {
         if (renderer.init(1600, 900, "OpenSupCom")) {
             renderer.build_scene(sim_state, &vfs, state.raw());
 
+            // Player input handler (ARMY_1 = index 0)
+            osc::renderer::InputHandler input_handler;
+            input_handler.set_player_army(0);
+            renderer.set_player_army(0);
+
             double sim_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();
+            bool sim_paused = false;
+            double sim_speed = 1.0;  // 1.0 = normal, 0.5 = half, 2.0 = double
+            bool p_was_pressed = false;
+            bool plus_was_pressed = false;
+            bool minus_was_pressed = false;
+            double title_update_timer = 0.0;
+            double fps_accum = 0.0;
+            int fps_frames = 0;
+            double display_fps = 0.0;
 
             while (!renderer.should_close()) {
                 auto now = std::chrono::high_resolution_clock::now();
@@ -466,15 +514,94 @@ int main(int argc, char* argv[]) {
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
 
-                sim_accumulator += dt;
-                while (sim_accumulator >=
-                       osc::sim::SimState::SECONDS_PER_TICK) {
-                    sim_state.tick();
-                    sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+                // FPS tracking
+                fps_accum += dt;
+                fps_frames++;
+                if (fps_accum >= 0.5) {
+                    display_fps = fps_frames / fps_accum;
+                    fps_accum = 0.0;
+                    fps_frames = 0;
+                }
+
+                // Pause toggle (P key, edge-triggered)
+                bool p_pressed = renderer.is_key_pressed(GLFW_KEY_P);
+                if (p_pressed && !p_was_pressed) {
+                    sim_paused = !sim_paused;
+                    spdlog::info("Sim {}", sim_paused ? "PAUSED" : "RESUMED");
+                }
+                p_was_pressed = p_pressed;
+
+                // Speed control (+/- keys, edge-triggered)
+                bool plus_pressed = renderer.is_key_pressed(GLFW_KEY_EQUAL) ||
+                                    renderer.is_key_pressed(GLFW_KEY_KP_ADD);
+                if (plus_pressed && !plus_was_pressed) {
+                    if (sim_speed < 10.0) {
+                        sim_speed = std::min(sim_speed * 2.0, 10.0);
+                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
+                    }
+                }
+                plus_was_pressed = plus_pressed;
+
+                bool minus_pressed = renderer.is_key_pressed(GLFW_KEY_MINUS) ||
+                                     renderer.is_key_pressed(GLFW_KEY_KP_SUBTRACT);
+                if (minus_pressed && !minus_was_pressed) {
+                    if (sim_speed > 0.125) {
+                        sim_speed = std::max(sim_speed * 0.5, 0.125);
+                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
+                    }
+                }
+                minus_was_pressed = minus_pressed;
+
+                // Auto-pause when game ends
+                osc::i32 game_result = sim_state.player_result();
+                if (game_result != 0 && !sim_paused) {
+                    sim_paused = true;
+                    const char* result_str =
+                        game_result == 1 ? "VICTORY" :
+                        game_result == 2 ? "DEFEAT" : "DRAW";
+                    spdlog::info("Game over: {}", result_str);
+                }
+
+                // Fixed-timestep sim ticking (scaled by sim_speed)
+                if (!sim_paused) {
+                    sim_accumulator += dt * sim_speed;
+                    while (sim_accumulator >=
+                           osc::sim::SimState::SECONDS_PER_TICK) {
+                        sim_state.tick();
+                        sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+                    }
                 }
 
                 renderer.poll_events(dt);
-                renderer.render(sim_state, state.raw(), &ui_registry);
+
+                // Player input: selection + commands
+                input_handler.update(renderer, sim_state, dt);
+
+                const auto& sel = input_handler.selected();
+                renderer.render(sim_state, state.raw(), &ui_registry,
+                                sel.empty() ? nullptr : &sel);
+
+                // Update window title periodically
+                title_update_timer += dt;
+                if (title_update_timer >= 0.25) {
+                    title_update_timer = 0.0;
+                    char title[256];
+                    const char* status_str =
+                        game_result == 1 ? "VICTORY " :
+                        game_result == 2 ? "DEFEAT " :
+                        game_result == 3 ? "DRAW " :
+                        sim_paused ? "PAUSED " : "";
+                    std::snprintf(title, sizeof(title),
+                        "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
+                        status_str,
+                        sim_speed,
+                        sim_state.tick_count(),
+                        sim_state.game_time(),
+                        sim_state.entity_registry().count(),
+                        sel.size(),
+                        display_fps);
+                    renderer.set_window_title(title);
+                }
             }
 
             renderer.shutdown();
@@ -576,6 +703,18 @@ int main(int argc, char* argv[]) {
     if (onframe_test && !map_path.empty()) osc::test::test_onframe(test_ctx);
     if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(test_ctx);
     if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(test_ctx);
+    if (emitter_test && !map_path.empty()) osc::test::test_emitter(test_ctx);
+    if (collision_test && !map_path.empty()) osc::test::test_collision_beam(test_ctx);
+    if (decalsplat_test && !map_path.empty()) osc::test::test_decal_splat(test_ctx);
+    if (cmd_test && !map_path.empty()) osc::test::test_commands(test_ctx);
+    if (deposit_test && !map_path.empty()) osc::test::test_deposits(test_ctx);
+    if (beam_test && !map_path.empty()) osc::test::test_beams(test_ctx);
+    if (shield_render_test && !map_path.empty()) osc::test::test_shield_render(test_ctx);
+    if (vet_adj_render_test && !map_path.empty()) osc::test::test_vet_adj_render(test_ctx);
+    if (intel_overlay_test && !map_path.empty()) osc::test::test_intel_overlay(test_ctx);
+    if (enhance_wreck_test && !map_path.empty()) osc::test::test_enhance_wreck_render(test_ctx);
+    if (vfx_render_test && !map_path.empty()) osc::test::test_vfx_render(test_ctx);
+    if (transport_silo_test && !map_path.empty()) osc::test::test_transport_silo_render(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

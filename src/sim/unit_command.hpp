@@ -23,6 +23,12 @@ enum class CommandType : u8 {
     Enhance = 50,      // ACU/SACU self-enhancement (same unit)
     TransportLoad = 60,    // ground unit → load into transport (target_id = transport)
     TransportUnload = 61,  // transport → unload all cargo at position
+    Nuke = 70,             // fire nuke from silo at target position
+    Tactical = 71,         // fire tactical missile from silo at target/entity
+    Overcharge = 72,       // overcharge attack (ACU ability)
+    Sacrifice = 73,        // sacrifice unit to speed up construction
+    Teleport = 74,         // teleport to target position
+    Ferry = 75,            // ferry route waypoint (transport loop)
 };
 
 struct UnitCommand {

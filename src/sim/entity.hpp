@@ -196,6 +196,10 @@ public:
     const std::string& mesh_override() const { return mesh_override_; }
     void set_mesh_override(const std::string& path) { mesh_override_ = path; }
 
+    // Wreckage flag (set by SetMaxReclaimValues to visually distinguish wrecks)
+    bool is_wreckage() const { return is_wreckage_; }
+    void set_is_wreckage(bool b) { is_wreckage_ = b; }
+
     // Selection
     bool unselectable() const { return unselectable_; }
     void set_unselectable(bool b) { unselectable_ = b; }
@@ -235,6 +239,18 @@ public:
     virtual bool is_projectile() const { return false; }
     virtual bool is_prop() const { return false; }
     virtual bool is_shield() const { return false; }
+    bool is_collision_beam() const { return is_collision_beam_; }
+    void set_collision_beam(bool b) { is_collision_beam_ = b; }
+
+    // CollisionBeam-specific fields
+    bool beam_enabled() const { return beam_enabled_; }
+    void set_beam_enabled(bool b) { beam_enabled_ = b; }
+    const Vector3& beam_endpoint() const { return beam_endpoint_; }
+    void set_beam_endpoint(const Vector3& p) { beam_endpoint_ = p; }
+    u32 beam_launcher_id() const { return beam_launcher_id_; }
+    void set_beam_launcher_id(u32 id) { beam_launcher_id_ = id; }
+    int beam_fx_ref() const { return beam_fx_ref_; }
+    void set_beam_fx_ref(int r) { beam_fx_ref_ = r; }
 
 private:
     u32 entity_id_ = 0;
@@ -263,6 +279,7 @@ private:
     CollisionShape collision_shape_;
     std::string mesh_override_;
     bool unselectable_ = false;
+    bool is_wreckage_ = false;
     u32 parent_entity_id_ = 0;
     i32 parent_bone_ = -1;
     i32 attached_bone_ = -1;
@@ -271,6 +288,12 @@ private:
     i32 grid_cell_x_ = -1; // spatial grid cell, -1 = not in grid
     i32 grid_cell_z_ = -1;
     EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
+    // CollisionBeam fields
+    bool is_collision_beam_ = false;
+    bool beam_enabled_ = false;
+    Vector3 beam_endpoint_;
+    u32 beam_launcher_id_ = 0;
+    int beam_fx_ref_ = -2; // LUA_NOREF — stored IEffect Lua table ref
 };
 
 } // namespace osc::sim

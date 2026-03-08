@@ -12,6 +12,12 @@ add_library(osc_renderer STATIC
     vk_utils.cpp
     ui_renderer.cpp
     font_cache.cpp
+    input_handler.cpp
+    overlay_renderer.cpp
+    minimap_renderer.cpp
+    strategic_icon_renderer.cpp
+    hud_renderer.cpp
+    selection_info_renderer.cpp
 )
 add_library(osc::renderer ALIAS osc_renderer)
 

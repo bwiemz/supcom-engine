@@ -5,6 +5,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
@@ -4143,6 +4144,10 @@ static int prop_SetMaxReclaimValues(lua_State* L) {
     lua_pushnumber(L, 1.0);
     lua_rawset(L, 1);
 
+    // Mark entity as wreckage for visual distinction in renderer
+    auto* e = check_entity(L);
+    if (e) e->set_is_wreckage(true);
+
     return 0;
 }
 
@@ -6955,13 +6960,85 @@ static const MethodEntry builder_arm_methods[] = {
     {nullptr, nullptr},
 };
 
-// IEffect — chainable methods return self
+// IEffect — real methods that update C++ state and return self for chaining.
+// _c_object lightuserdata points to sim::IEffect*.
+
+static sim::IEffect* check_ieffect(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* fx = lua_isuserdata(L, -1)
+                   ? static_cast<sim::IEffect*>(lua_touserdata(L, -1))
+                   : nullptr;
+    lua_pop(L, 1);
+    return fx;
+}
+
+// ScaleEmitter(scale) → self
+static int ieffect_ScaleEmitter(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) fx->set_scale(static_cast<f32>(luaL_optnumber(L, 2, 1.0)));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// OffsetEmitter(x, y, z) → self
+static int ieffect_OffsetEmitter(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) fx->set_offset(
+        static_cast<f32>(luaL_optnumber(L, 2, 0)),
+        static_cast<f32>(luaL_optnumber(L, 3, 0)),
+        static_cast<f32>(luaL_optnumber(L, 4, 0)));
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// SetEmitterParam(paramName, value) → self
+static int ieffect_SetEmitterParam(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) {
+        const char* name = luaL_optstring(L, 2, "");
+        f64 value = luaL_optnumber(L, 3, 0);
+        fx->set_param(name, value);
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// SetEmitterCurveParam(curveName, keyIndex, value) → self
+static int ieffect_SetEmitterCurveParam(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) {
+        const char* curve = luaL_optstring(L, 2, "");
+        i32 key = static_cast<i32>(luaL_optnumber(L, 3, 0));
+        f64 value = luaL_optnumber(L, 4, 0);
+        // Store as "CURVE:key" for future rendering
+        std::string param_key = std::string(curve) + ":" + std::to_string(key);
+        fx->set_param(param_key, value);
+    }
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+// Destroy — mark C++ object destroyed + set _destroyed on Lua table
+static int ieffect_Destroy(lua_State* L) {
+    auto* fx = check_ieffect(L);
+    if (fx) fx->mark_destroyed();
+    // Also set _destroyed on Lua table for BeenDestroyed check
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_destroyed");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
 static const MethodEntry ieffect_methods[] = {
-    {"ScaleEmitter",            stub_return_self},
-    {"OffsetEmitter",           stub_return_self},
-    {"SetEmitterParam",         stub_return_self},
-    {"SetEmitterCurveParam",    stub_return_self},
-    {"Destroy",                 destroy_tracked_object},
+    {"ScaleEmitter",            ieffect_ScaleEmitter},
+    {"OffsetEmitter",           ieffect_OffsetEmitter},
+    {"SetEmitterParam",         ieffect_SetEmitterParam},
+    {"SetEmitterCurveParam",    ieffect_SetEmitterCurveParam},
+    {"Destroy",                 ieffect_Destroy},
     {"BeenDestroyed",           been_destroyed_check},
     {nullptr, nullptr},
 };
@@ -6979,6 +7056,23 @@ static const MethodEntry navigator_methods[] = {
     {"SetGoal",                 nav_SetGoal},
     {"GetGoal",                 nav_GetGoal},
     {"AbortMove",               nav_AbortMove},
+    {nullptr, nullptr},
+};
+
+// CollisionManipulator: WatchBone(boneName)
+static int coldet_WatchBone(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (!m || !m->owner()) return 0;
+    auto* cd = static_cast<sim::CollisionDetectorManipulator*>(m);
+    i32 bone_idx = resolve_bone_index(m->owner(), L, 2);
+    cd->watch_bone(bone_idx);
+    // Return self for chaining
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
+static const MethodEntry collision_manipulator_methods[] = {
+    {"WatchBone",               coldet_WatchBone},
     {nullptr, nullptr},
 };
 
@@ -7002,12 +7096,204 @@ static const MethodEntry entity_category_methods[] = {
     {nullptr, nullptr},
 };
 
+// ====================================================================
+// CollisionBeam — real implementations (M91)
+// ====================================================================
+
+/// __init(self, spec) — C++ factory for CollisionBeamEntity.
+/// Called from ClassFactory when `CollisionBeam(beamSpec)` is instantiated.
+/// spec = { Weapon = weaponTable, BeamBone = 0, CollisionCheckInterval = N, OtherBone = muzzle }
+/// Creates a C++ Entity marked as collision beam and sets _c_object.
+static int collision_beam_init(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    if (!lua_istable(L, 1)) return luaL_error(L, "CollisionBeamEntity.__init: self must be table");
+
+    // Extract launcher (weapon's unit) from spec.Weapon.unit
+    u32 launcher_id = 0;
+    i32 army = 0;
+    if (lua_istable(L, 2)) {
+        lua_pushstring(L, "Weapon");
+        lua_rawget(L, 2);
+        if (lua_istable(L, -1)) {
+            int weapon_idx = lua_gettop(L); // absolute index of Weapon table
+            lua_pushstring(L, "unit");
+            lua_rawget(L, weapon_idx);
+            if (lua_istable(L, -1)) {
+                int unit_idx = lua_gettop(L); // absolute index of unit table
+                auto* unit = check_entity(L, unit_idx);
+                if (unit) {
+                    launcher_id = unit->entity_id();
+                    army = unit->army();
+                }
+            }
+            lua_pop(L, 1); // pop unit
+        }
+        lua_pop(L, 1); // pop Weapon
+    }
+
+    // Create entity in registry
+    auto& reg = sim->entity_registry();
+    auto entity = std::make_unique<sim::Entity>();
+    entity->set_collision_beam(true);
+    entity->set_army(army);
+    entity->set_beam_launcher_id(launcher_id);
+    // Copy launcher position as initial beam origin
+    if (launcher_id) {
+        auto* launcher = reg.find(launcher_id);
+        if (launcher) entity->set_position(launcher->position());
+    }
+
+    u32 id = reg.register_entity(std::move(entity));
+    auto* ent = reg.find(id);
+    if (!ent) return luaL_error(L, "CollisionBeamEntity.__init: failed to register entity");
+
+    // Store Lua table ref
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ent->set_lua_table_ref(ref);
+
+    // Set _c_object on self
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ent);
+    lua_rawset(L, 1);
+
+    spdlog::debug("CollisionBeamEntity.__init: entity #{} army={} launcher={}",
+                  id, army, launcher_id);
+    return 0;
+}
+
+/// Enable() — activates the beam and fires OnEnable callback
+static int collision_beam_Enable(lua_State* L) {
+    auto* ent = check_entity(L);
+    if (!ent || !ent->is_collision_beam()) return 0;
+    if (ent->beam_enabled()) return 0; // already enabled
+    ent->set_beam_enabled(true);
+
+    // Fire OnEnable callback on Lua table
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "OnEnable");
+        lua_rawget(L, 1);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1); // self
+            lua_pcall(L, 1, 0, 0);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    return 0;
+}
+
+/// Disable() — deactivates the beam and fires OnDisable callback
+static int collision_beam_Disable(lua_State* L) {
+    auto* ent = check_entity(L);
+    if (!ent || !ent->is_collision_beam()) return 0;
+    if (!ent->beam_enabled()) return 0; // already disabled
+    ent->set_beam_enabled(false);
+
+    // Fire OnDisable callback on Lua table
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "OnDisable");
+        lua_rawget(L, 1);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1); // self
+            lua_pcall(L, 1, 0, 0);
+        } else {
+            lua_pop(L, 1);
+        }
+    }
+    return 0;
+}
+
+/// IsEnabled() → bool
+static int collision_beam_IsEnabled(lua_State* L) {
+    auto* ent = check_entity(L);
+    lua_pushboolean(L, (ent && ent->is_collision_beam() && ent->beam_enabled()) ? 1 : 0);
+    return 1;
+}
+
+/// SetBeamFx(beamEmitter, bCollideOnStart) — stores beam emitter ref on entity
+static int collision_beam_SetBeamFx(lua_State* L) {
+    auto* ent = check_entity(L);
+    if (!ent || !ent->is_collision_beam()) return 0;
+
+    // arg2 = beam emitter table (IEffect), store registry ref
+    if (lua_istable(L, 2)) {
+        // Unref old beam fx if any
+        if (ent->beam_fx_ref() >= 0) {
+            luaL_unref(L, LUA_REGISTRYINDEX, ent->beam_fx_ref());
+        }
+        lua_pushvalue(L, 2);
+        int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        ent->set_beam_fx_ref(ref);
+    }
+
+    // arg3 = bCollideOnStart (bool) — if true, trigger immediate collision check
+    // For now we store the flag; actual raycast collision comes in a future milestone
+    if (lua_toboolean(L, 3)) {
+        // Fire OnImpact('Terrain', nil) as initial collision
+        if (lua_istable(L, 1)) {
+            lua_pushstring(L, "OnImpact");
+            lua_rawget(L, 1);
+            if (lua_isfunction(L, -1)) {
+                lua_pushvalue(L, 1);       // self
+                lua_pushstring(L, "Terrain"); // impactType
+                lua_pushnil(L);            // targetEntity
+                lua_pcall(L, 3, 0, 0);
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+    }
+    return 0;
+}
+
+/// GetLauncher() → unit Lua table or nil
+static int collision_beam_GetLauncher(lua_State* L) {
+    auto* ent = check_entity(L);
+    if (!ent || !ent->is_collision_beam() || ent->beam_launcher_id() == 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* launcher = sim->entity_registry().find(ent->beam_launcher_id());
+    if (!launcher || launcher->destroyed() || launcher->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, launcher->lua_table_ref());
+    return 1;
+}
+
+/// Destroy — mark entity destroyed + set _destroyed on Lua table + unref beam fx
+static int collision_beam_Destroy(lua_State* L) {
+    auto* ent = check_entity(L);
+    if (ent && ent->is_collision_beam()) {
+        ent->mark_destroyed();
+        // Unref beam fx
+        if (ent->beam_fx_ref() >= 0) {
+            luaL_unref(L, LUA_REGISTRYINDEX, ent->beam_fx_ref());
+            ent->set_beam_fx_ref(-2);
+        }
+    }
+    // Also set _destroyed on Lua table
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_destroyed");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
 static const MethodEntry collision_beam_methods[] = {
-    {"Enable",                  stub_noop},
-    {"Disable",                 stub_noop},
-    {"SetBeamFx",               stub_noop},
-    {"IsEnabled",               stub_return_false},
-    {"Destroy",                 destroy_tracked_object},
+    {"__init",                  collision_beam_init},
+    {"Enable",                  collision_beam_Enable},
+    {"Disable",                 collision_beam_Disable},
+    {"IsEnabled",               collision_beam_IsEnabled},
+    {"SetBeamFx",               collision_beam_SetBeamFx},
+    {"GetLauncher",             collision_beam_GetLauncher},
+    {"Destroy",                 collision_beam_Destroy},
     {"BeenDestroyed",           been_destroyed_check},
     {nullptr, nullptr},
 };
@@ -9800,7 +10086,7 @@ static const MohoClassDef moho_classes[] = {
     {"BoneEntityManipulator",   empty_methods,                  "manipulator_methods"},
     {"StorageManipulator",      empty_methods,                  "manipulator_methods"},
     {"FootPlantManipulator",    empty_methods,                  "manipulator_methods"},
-    {"CollisionManipulator",    empty_methods,                  "manipulator_methods"},
+    {"CollisionManipulator",    collision_manipulator_methods,   "manipulator_methods"},
 
     // UI classes — M71: control/group/frame are real, rest are stubs
     {"control_methods",         ui_control_methods, nullptr},

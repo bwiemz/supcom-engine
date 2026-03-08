@@ -19,9 +19,9 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water. The full MAUI UI framework (M71-M89) has been reimplemented with 13 control types, reactive LazyVar layout, game UI bootstrap infrastructure, and a complete Vulkan 2D rendering pipeline — including font rendering via stb_truetype GPU atlas, scissor clipping, 9-patch borders, edit/itemlist/scrollbar visuals, bitmap animation and tiling, GLFW input dispatch with hit-testing, OnFrame update loop, cursor rendering, and drag visual feedback.
+The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, shadow mapping, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, and water. The full MAUI UI framework (M71-M89) has been reimplemented with 13 control types, reactive LazyVar layout, game UI bootstrap infrastructure, and a complete Vulkan 2D rendering pipeline — including font rendering via stb_truetype GPU atlas, scissor clipping, 9-patch borders, edit/itemlist/scrollbar visuals, bitmap animation and tiling, GLFW input dispatch with hit-testing, OnFrame update loop, cursor rendering, and drag visual feedback. An interactive game HUD (M90-M112) provides a fully playable RTS experience with VFX/emitter/beam systems, player input command pipeline (click/drag select, right-click move/attack), minimap with click-to-jump, strategic zoom icons, economy bars, selection info panel, command queue visualization, control groups, camera bookmarks, health/selection/command overlays, beam and shield rendering, veterancy/adjacency/intel range indicators, wreckage desaturation, VFX particle billboards, and transport cargo/silo ammo dots.
 
-**What works today (Milestones 1-89):**
+**What works today (Milestones 1-112):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -102,12 +102,41 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
   - OnFrame update loop: NeedsFrameUpdate controls get OnFrame(self, dt) per rendered frame
   - Cursor rendering: custom cursor texture at mouse-hotspot position, topmost depth layer
   - Drag visual feedback: active dragger intercepts mouse events (OnMove/OnRelease/OnCancel), ESC cancellation
-- 22 unit tests, 63 integration test flags
+- **VFX & Command Systems (M90-M96):**
+  - VFX/emitter system: 14 Create* globals (CreateEmitterAtEntity/AtBone/Attached, CreateBeamEmitter/AttachedBeam, CreateLightParticle, CreateDecal/Splat), IEffect tracked objects with parameter overrides, IEffectRegistry with auto-expiry GC
+  - CollisionBeam entity system: beam enable/disable, endpoint tracking, Lua lifecycle
+  - Decal/Splat system: CreateDecal/CreateSplat Lua globals with tracked IEffect objects
+  - Issue commands from Lua: IssueMove/Attack/Guard/Patrol/Reclaim/Repair/Capture/Build/Enhance/Dive/TransportLoad/TransportUnload/Nuke/Tactical, economy event tracking
+  - Resource deposits: mass/hydrocarbon deposit entities with Lua queries
+  - Interactive game loop: pause/resume, sim speed control (0.5x-10x), title bar stats display
+  - Player input command pipeline: left-click unit selection, Shift+click additive selection, drag-box area selection, right-click move/attack commands, minimap click-to-jump
+- **Game HUD & Overlays (M97-M112):**
+  - Interactive RTS camera: arrow+WASD+mouse-edge scrolling, middle-mouse orbit, scroll-wheel zoom with acceleration, camera speed scales with altitude
+  - Game overlays: health bars (green/yellow/red by HP fraction), selection rings (army-colored diamonds), command queue lines (8 command types with distinct colors), build progress bars, waypoint markers
+  - Win/lose detection: EndGame/defeat checks, game-over banner overlay (victory/defeat/draw)
+  - Minimap: heightmap texture rendering, army-colored unit dots, camera frustum outline, click-to-jump and drag-to-pan
+  - Strategic icons: procedural 224x32 icon atlas (7 shapes), zoom-based 3D mesh→2D icon switch at 250u altitude, army-colored
+  - Resource economy HUD: mass/energy bars with fill+income indicators, format_number display, DrawGroup-based font switching
+  - Selection info panel: single-unit (icon+name+HP bar) and multi-unit (grid of type-grouped icons with counts) display modes
+  - Command queue visualization: full command chain lines, 8 command types with distinct colors, entity-targeted projection, waypoint markers
+  - Control groups: Ctrl+0-9 assign, 0-9 recall, dead unit pruning on recall
+  - Camera bookmarks: Ctrl+Shift+0-9 save, Shift+0-9 recall
+  - Beam rendering: construction/reclaim/repair/capture operation beams + CollisionBeam weapon beams (army-colored, AABB quad approximation)
+  - Shield bubble rendering: projected 16-segment circle outline, army-colored, HP-based alpha, filled center quad
+  - Veterancy indicators: gold chevron squares above health bars (capped at 5)
+  - Adjacency lines: orange lines between adjacent selected buildings (dedup by lower-ID draws)
+  - Intel range circles: 24-segment projected circles for Radar (teal), Sonar (blue), Omni (yellow), Vision (faint green)
+  - Wreckage desaturation: BT.601 luminance-based color reduction for prop wreckage meshes
+  - VFX particle rendering: billboard emitter particles at entity+offset positions, beam lines between entities, light particles as larger glowing squares
+  - Transport cargo indicators: light blue dots below unit (capped at 8)
+  - Silo ammo indicators: nuke (red, left) and tactical (blue, right) dots (capped at 5 each)
+- 22 unit tests, 68 integration test flags
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Remaining moho binding stubs (~29 renderer/VFX stubs: IEffect, CollisionBeam, emitter system)
+- Full particle system rendering (currently billboard approximation)
+- Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites
 
@@ -279,6 +308,18 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--onframe-test` | OnFrame update loop (delta time, NeedsFrameUpdate) |
 | `--cursor-render-test` | Cursor rendering (texture at mouse position, topmost depth) |
 | `--drag-render-test` | Drag visual feedback (dragger intercept, OnMove/OnRelease/OnCancel) |
+| `--emitter-test` | VFX/emitter system (IEffect creation, parameters, lifecycle) |
+| `--collision-test` | CollisionBeam entity system (enable/disable, endpoints) |
+| `--decalsplat-test` | Decal/Splat system (CreateDecal, CreateSplat, IEffect tracking) |
+| `--cmd-test` | Issue commands + economy events (6 command types from Lua) |
+| `--deposit-test` | Resource deposits (mass/hydrocarbon entities, Lua queries) |
+| `--beam-test` | Beam rendering (operation beams + CollisionBeam weapon beams) |
+| `--shield-render-test` | Shield bubble rendering (projected circles, HP-based alpha) |
+| `--vet-adj-render-test` | Veterancy indicators + adjacency lines |
+| `--intel-overlay-test` | Intel range overlay (radar/sonar/omni/vision circles) |
+| `--enhance-wreck-test` | Enhancement mesh switching + wreckage desaturation |
+| `--vfx-render-test` | VFX particle rendering (emitter billboards, beam lines) |
+| `--transport-silo-test` | Transport cargo dots + nuke/tactical silo ammo indicators |
 
 ## Project Structure
 
@@ -292,10 +333,11 @@ src/
   blueprints/  # Blueprint loading and registry
   audio/       # Audio system (miniaudio, XWB/XSB bank parsers, sound manager)
   ui/          # UI control system (UIControl base, UIControlRegistry, input dispatch, font metrics)
-  renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache, UI 2D pipeline, font atlas)
+  renderer/    # Vulkan renderer (terrain mesh, SCM mesh units, water plane, camera, shaders, mesh cache, UI 2D pipeline, font atlas, HUD, minimap, overlays, strategic icons, selection info, input handler)
   main.cpp     # Entry point, CLI flags, test harnesses
 third_party/
   lua-5.0/     # Vendored Lua 5.0 (LuaPlus fork)
+  stb/         # stb_truetype for font rendering
 tests/         # Catch2 unit tests
 ```
 

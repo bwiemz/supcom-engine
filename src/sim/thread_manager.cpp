@@ -1,5 +1,5 @@
 #include "sim/thread_manager.hpp"
-#include "sim/manipulator.hpp"
+#include "sim/waitable.hpp"
 
 #include <climits>
 #include <cstring>
@@ -201,11 +201,11 @@ void ThreadManager::resume_all(u32 current_tick) {
                             1,
                             static_cast<i32>(lua_tonumber(t.coroutine, -1)));
                     } else if (lua_type(t.coroutine, -1) == LUA_TLIGHTUSERDATA) {
-                        // WaitFor(manipulator) — store thread ref on
-                        // manipulator, sleep until manipulator reaches goal
-                        auto* manip = static_cast<Manipulator*>(
+                        // WaitFor(waitable) — store thread ref on
+                        // waitable, sleep until it completes
+                        auto* waitable = static_cast<Waitable*>(
                             lua_touserdata(t.coroutine, -1));
-                        manip->set_waiting_thread_ref(t.lua_ref);
+                        waitable->set_waiting_thread_ref(t.lua_ref);
                         lua_settop(t.coroutine, 0);
                         t.wait_until_tick = INT32_MAX;
                         continue;

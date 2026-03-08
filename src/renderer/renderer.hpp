@@ -6,6 +6,11 @@
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/ui_renderer.hpp"
+#include "renderer/overlay_renderer.hpp"
+#include "renderer/minimap_renderer.hpp"
+#include "renderer/strategic_icon_renderer.hpp"
+#include "renderer/hud_renderer.hpp"
+#include "renderer/selection_info_renderer.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/water_renderer.hpp"
@@ -14,6 +19,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct GLFWwindow;
@@ -41,7 +47,8 @@ public:
 
     /// Render one frame (updates unit instances, draws everything).
     void render(sim::SimState& sim, lua_State* L,
-                ui::UIControlRegistry* ui_registry = nullptr);
+                ui::UIControlRegistry* ui_registry = nullptr,
+                const std::unordered_set<u32>* selected_ids = nullptr);
 
     /// Returns true if the window close was requested.
     bool should_close() const;
@@ -55,8 +62,26 @@ public:
     /// Mouse scroll callback (called from GLFW callback).
     void on_scroll(f64 y_offset);
 
+    /// Check if a GLFW key is currently pressed.
+    bool is_key_pressed(int glfw_key) const;
+
+    /// Update the window title bar text.
+    void set_window_title(const char* title);
+
     Camera& camera() { return camera_; }
+    const Camera& camera() const { return camera_; }
+    void set_player_army(i32 army) { player_army_ = army; }
+    i32 player_army() const { return player_army_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
+    const MinimapRenderer& minimap() const { return minimap_renderer_; }
+    u32 width() const { return window_width_; }
+    u32 height() const { return window_height_; }
+
+    /// Get current mouse position in screen pixels.
+    void mouse_position(f64& x, f64& y) const;
+
+    /// Check if a mouse button is currently pressed.
+    bool is_mouse_pressed(int glfw_button) const;
 
     static constexpr u32 SHADOW_MAP_SIZE = 2048;
 
@@ -143,12 +168,18 @@ private:
     UnitRenderer unit_renderer_;
     WaterRenderer water_renderer_;
     UIRenderer ui_renderer_;
+    OverlayRenderer overlay_renderer_;
+    MinimapRenderer minimap_renderer_;
+    StrategicIconRenderer strategic_icon_renderer_;
+    HudRenderer hud_renderer_;
+    SelectionInfoRenderer selection_info_renderer_;
     ui::UIDispatch ui_dispatch_;
     f64 last_frame_time_ = 0.0;
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
     FontCache font_cache_;
     Camera camera_;
+    i32 player_army_ = 0;
 
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};

@@ -186,16 +186,48 @@ void SimState::tick() {
     update_entities();
     update_visibility();
 
+    // Defeat detection: mark armies with no living units as defeated
+    // (simplified demoralization — FA's CheckVictory Lua thread handles real logic)
+    if (!game_ended_ && tick_count_ > 50) { // grace period: skip first 5 seconds
+        for (auto& army : armies_) {
+            if (army->is_defeated() || army->is_civilian()) continue;
+            if (army->get_unit_cost_total(entity_registry_) == 0) {
+                army->set_state(BrainState::Defeat);
+                spdlog::info("Army {} ({}) defeated — no units remaining",
+                             army->index(), army->name());
+            }
+        }
+    }
+
     // Audio: clean up finished one-shot sounds
     if (sound_manager_) {
         sound_manager_->gc();
     }
+
+    // Economy events: tick drains, wake waiting threads on completion
+    tick_economy_events();
+
+    // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
+    effect_registry_.expire_timed(game_time_);
+    effect_registry_.gc();
 }
 
 void SimState::update_economies() {
     for (auto& army : armies_) {
         army->update_economy(entity_registry_, SECONDS_PER_TICK);
     }
+}
+
+void SimState::tick_economy_events() {
+    economy_events_.tick(SECONDS_PER_TICK);
+    // Wake threads waiting on completed/cancelled events
+    economy_events_.for_each([&](EconomyEvent& evt) {
+        if ((evt.is_done() || evt.is_cancelled()) && evt.waiting_thread_ref() >= 0) {
+            thread_manager_.wake_thread(evt.waiting_thread_ref(), tick_count_);
+            evt.set_waiting_thread_ref(-2);
+        }
+    });
+    economy_events_.gc();
 }
 
 void SimState::update_entities() {
@@ -453,6 +485,38 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
     }
 
     lua_pop(L_, 1); // pop brain_tbl
+}
+
+i32 SimState::player_result() const {
+    if (!game_ended_) {
+        // Check if player army (index 0) is defeated
+        auto* player = army_at(0);
+        if (player && player->is_defeated()) return 2; // defeat
+
+        // Check if all non-civilian enemy armies are defeated
+        bool all_enemies_dead = true;
+        for (size_t i = 0; i < army_count(); i++) {
+            auto* brain = army_at(i);
+            if (!brain || brain->is_civilian()) continue;
+            if (static_cast<i32>(i) == 0) continue; // skip player
+            if (player && player->is_ally(static_cast<i32>(i))) continue;
+            if (!brain->is_defeated()) {
+                all_enemies_dead = false;
+                break;
+            }
+        }
+        if (all_enemies_dead && army_count() > 1) return 1; // victory
+
+        return 0; // in progress
+    }
+
+    // Game ended — determine result from brain states
+    auto* player = army_at(0);
+    if (!player) return 3; // draw
+    if (player->state() == BrainState::Victory) return 1;
+    if (player->state() == BrainState::Defeat ||
+        player->state() == BrainState::Recalled) return 2;
+    return 3; // draw
 }
 
 } // namespace osc::sim

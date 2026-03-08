@@ -805,6 +805,155 @@ void Unit::update(f64 dt, SimContext& ctx) {
             continue;
         }
 
+        case CommandType::Nuke: {
+            // Fire nuke from silo — decrement ammo, fire via weapon
+            if (nuke_silo_ammo_ <= 0) {
+                command_queue_.pop_front();
+                continue;
+            }
+            remove_nuke_silo_ammo(1);
+            // Set weapon target to position & fire
+            if (!weapons_.empty()) {
+                weapons_[0]->target_entity_id = 0;
+                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->try_fire(*this, registry, L);
+            }
+            call_lua_method(L, "OnSiloBuildFinish");
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::Tactical: {
+            // Fire tactical missile from silo
+            if (tactical_silo_ammo_ <= 0) {
+                command_queue_.pop_front();
+                continue;
+            }
+            remove_tactical_silo_ammo(1);
+            if (!weapons_.empty()) {
+                weapons_[0]->target_entity_id = cmd.target_id;
+                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->try_fire(*this, registry, L);
+            }
+            call_lua_method(L, "OnSiloBuildFinish");
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::Overcharge: {
+            // Overcharge: attack with special damage
+            if (cmd.target_id == 0) {
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* target = registry.find(cmd.target_id);
+            if (!target || target->destroyed()) {
+                command_queue_.pop_front();
+                continue;
+            }
+            // Move into weapon range first
+            f32 range = weapons_.empty() ? 22.0f : weapons_[0]->max_range;
+            f32 dx = target->position().x - position().x;
+            f32 dz = target->position().z - position().z;
+            f32 dist2 = dx * dx + dz * dz;
+            if (dist2 > range * range) {
+                if (!navigator_.is_moving()) {
+                    navigator_.set_goal(target->position(), ctx.pathfinder,
+                                        position(), layer_);
+                }
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+                goto done_commands;
+            }
+            navigator_.abort_move();
+            // Fire the first available weapon at target
+            for (auto& w : weapons_) {
+                if (w->max_range > 0) {
+                    w->target_entity_id = cmd.target_id;
+                    w->fire_cooldown = 0;
+                    w->try_fire(*this, registry, L);
+                    break;
+                }
+            }
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::Sacrifice: {
+            // Move to target, then sacrifice (transfer mass value, kill self)
+            if (cmd.target_id == 0) {
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* target = registry.find(cmd.target_id);
+            if (!target || target->destroyed() || !target->is_unit()) {
+                call_lua_method(L, "OnStopSacrifice");
+                command_queue_.pop_front();
+                continue;
+            }
+            auto* target_unit = static_cast<Unit*>(target);
+            // Move into range
+            constexpr f32 sacrifice_range = 5.0f;
+            f32 sdx = target->position().x - position().x;
+            f32 sdz = target->position().z - position().z;
+            f32 sdist2 = sdx * sdx + sdz * sdz;
+            if (sdist2 > sacrifice_range * sacrifice_range) {
+                if (!navigator_.is_moving()) {
+                    navigator_.set_goal(target->position(), ctx.pathfinder,
+                                        position(), layer_);
+                }
+                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+                // Fire OnStartSacrifice on first tick
+                if (!has_unit_state("Sacrificing")) {
+                    set_unit_state("Sacrificing", true);
+                    call_lua_method_with_entity(L, "OnStartSacrifice", target);
+                }
+                goto done_commands;
+            }
+            navigator_.abort_move();
+            // Transfer build progress: sacrifice unit's mass value → target build
+            if (target_unit->is_being_built()) {
+                f32 mass_value = static_cast<f32>(build_cost_mass_);
+                f32 progress_add = mass_value / static_cast<f32>(
+                    target_unit->build_cost_mass() > 0 ? target_unit->build_cost_mass() : 1.0);
+                f32 new_progress = std::min(1.0f,
+                    target_unit->work_progress() + progress_add);
+                target_unit->set_work_progress(new_progress);
+            }
+            // Fire OnStopSacrifice then kill self
+            call_lua_method_with_entity(L, "OnStopSacrifice", target);
+            set_unit_state("Sacrificing", false);
+            set_health(0);
+            mark_destroyed();
+            return; // unit is dead, stop processing
+        }
+
+        case CommandType::Teleport: {
+            // Teleport: instant move to target position
+            // FA handles energy drain via economy events in Lua; we just move
+            set_position(cmd.target_pos);
+            call_lua_method(L, "OnTeleportUnit");
+            command_queue_.pop_front();
+            continue;
+        }
+
+        case CommandType::Ferry: {
+            // Ferry: patrol-like looping waypoint for transports
+            if (!navigator_.is_moving() ||
+                navigator_.goal().x != cmd.target_pos.x ||
+                navigator_.goal().z != cmd.target_pos.z) {
+                navigator_.set_goal(cmd.target_pos, ctx.pathfinder,
+                                    position(), layer_);
+            }
+            navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+            if (!navigator_.is_moving()) {
+                // Reached waypoint — cycle to end of queue
+                auto finished = cmd;
+                command_queue_.pop_front();
+                command_queue_.push_back(finished);
+            }
+            goto done_commands;
+        }
+
         default:
             command_queue_.pop_front();
             continue;
@@ -2190,6 +2339,52 @@ void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
         }
         lua_pop(L, 1); // tbl
     }
+}
+
+// ---------------------------------------------------------------------------
+// Lua callback helpers
+// ---------------------------------------------------------------------------
+
+void Unit::call_lua_method(lua_State* L, const char* method_name) {
+    if (lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, method_name);
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl); // self
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("{} error: {}", method_name, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1); // non-function
+    }
+    lua_pop(L, 1); // tbl
+}
+
+void Unit::call_lua_method_with_entity(lua_State* L, const char* method_name,
+                                        Entity* arg_entity) {
+    if (lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, method_name);
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl); // self
+        if (arg_entity && arg_entity->lua_table_ref() >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, arg_entity->lua_table_ref());
+        } else {
+            lua_pushnil(L);
+        }
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            spdlog::warn("{} error: {}", method_name, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1); // non-function
+    }
+    lua_pop(L, 1); // tbl
 }
 
 // ---------------------------------------------------------------------------

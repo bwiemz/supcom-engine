@@ -6,6 +6,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct lua_State;
@@ -56,9 +57,11 @@ public:
                         lua_State* L);
 
     /// Update per-frame instance data from sim state.
+    /// If selected_ids is non-null, those units get a selection highlight.
     void update(const sim::SimState& sim, MeshCache& mesh_cache,
                 lua_State* L, TextureCache* tex_cache = nullptr,
-                const Camera* camera = nullptr);
+                const Camera* camera = nullptr,
+                const std::unordered_set<u32>* selected_ids = nullptr);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

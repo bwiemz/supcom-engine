@@ -94,5 +94,17 @@ void test_input(TestContext& ctx);
 void test_onframe(TestContext& ctx);
 void test_cursor_render(TestContext& ctx);
 void test_drag_render(TestContext& ctx);
+void test_emitter(TestContext& ctx);
+void test_collision_beam(TestContext& ctx);
+void test_decal_splat(TestContext& ctx);
+void test_commands(TestContext& ctx);
+void test_deposits(TestContext& ctx);
+void test_beams(TestContext& ctx);
+void test_shield_render(TestContext& ctx);
+void test_vet_adj_render(TestContext& ctx);
+void test_intel_overlay(TestContext& ctx);
+void test_enhance_wreck_render(TestContext& ctx);
+void test_vfx_render(TestContext& ctx);
+void test_transport_silo_render(TestContext& ctx);
 
 } // namespace osc::test

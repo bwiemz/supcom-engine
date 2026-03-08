@@ -28,6 +28,17 @@ public:
     /// Compute camera eye position from spherical coordinates.
     void eye_position(f32& out_x, f32& out_y, f32& out_z) const;
     void set_distance(f32 d) { distance_ = d; }
+    void set_target(f32 x, f32 z) { target_x_ = x; target_z_ = z; }
+
+    /// Unproject screen pixel to world XZ plane (y = ground_y).
+    /// Returns true if intersection found, writes world x/z.
+    bool screen_to_world(f32 screen_x, f32 screen_y,
+                         f32 window_w, f32 window_h,
+                         f32 ground_y,
+                         f32& out_x, f32& out_z) const;
+
+    f32 yaw() const { return yaw_; }
+    f32 pitch() const { return pitch_; }
 
     /// Accumulate camera shake intensity (called from renderer per frame).
     void apply_shake(f32 intensity);

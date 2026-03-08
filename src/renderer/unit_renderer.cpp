@@ -195,7 +195,8 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
 
 void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                            lua_State* L, TextureCache* tex_cache,
-                           const Camera* camera) {
+                           const Camera* camera,
+                           const std::unordered_set<u32>* selected_ids) {
     mesh_groups_.clear();
 
     if (!cube_instance_mapped_ || !mesh_instance_mapped_) return;
@@ -260,6 +261,20 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             f32 sz = entity.scale_z() * gpu->uniform_scale;
             build_model_matrix(inst.model, entity.position(),
                                entity.orientation(), sx, sy, sz);
+            // Wreckage: desaturate + darken to distinguish from live units
+            if (entity.is_wreckage()) {
+                f32 lum = 0.299f * r + 0.587f * g + 0.114f * b;
+                r = lum * 0.5f + r * 0.15f;
+                g = lum * 0.5f + g * 0.15f;
+                b = lum * 0.5f + b * 0.15f;
+            }
+            // Selection highlight: brighten team color
+            if (selected_ids && entity.is_unit() &&
+                selected_ids->count(entity.entity_id())) {
+                r = r * 0.5f + 0.5f;
+                g = g * 0.5f + 0.5f;
+                b = b * 0.5f + 0.5f;
+            }
             inst.r = r; inst.g = g; inst.b = b; inst.a = a;
 
             auto& gd = mesh_groups[gpu];

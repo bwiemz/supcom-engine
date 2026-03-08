@@ -251,6 +251,21 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     // UI renderer instance buffer
     ui_renderer_.init(device_, allocator_);
 
+    // Overlay renderer (health bars, selection, command lines)
+    overlay_renderer_.init(device_, allocator_);
+
+    // Minimap renderer
+    minimap_renderer_.init(device_, allocator_);
+
+    // Strategic icon renderer
+    strategic_icon_renderer_.init(device_, allocator_);
+
+    // HUD renderer (economy bars)
+    hud_renderer_.init(device_, allocator_);
+
+    // Selection info panel
+    selection_info_renderer_.init(device_, allocator_);
+
     initialized_ = true;
     spdlog::info("Renderer initialized ({}x{})", width, height);
     return true;
@@ -1208,6 +1223,12 @@ void Renderer::build_scene(const sim::SimState& sim,
         } // else (vma success)
     }
 
+    // Build minimap terrain texture
+    minimap_renderer_.build_terrain_texture(*terrain, texture_cache_);
+
+    // Build strategic icon atlas
+    strategic_icon_renderer_.build_atlas(texture_cache_);
+
     camera_.init(static_cast<f32>(terrain->map_width()),
                  static_cast<f32>(terrain->map_height()));
 
@@ -1215,7 +1236,8 @@ void Renderer::build_scene(const sim::SimState& sim,
 }
 
 void Renderer::render(sim::SimState& sim, lua_State* L,
-                      ui::UIControlRegistry* ui_registry) {
+                      ui::UIControlRegistry* ui_registry,
+                      const std::unordered_set<u32>* selected_ids) {
     // Wait for ALL previous GPU work (including present) to complete.
     // Using vkDeviceWaitIdle instead of fence-only sync avoids the classic
     // single-buffered semaphore race: fence signals on submit completion,
@@ -1255,7 +1277,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
-    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_);
+    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
+                          selected_ids);
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
@@ -1277,6 +1300,29 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     f32 aspect = static_cast<f32>(window_width_) /
                  static_cast<f32>(window_height_);
     auto vp = camera_.view_proj(aspect);
+
+    // Update game overlays (health bars, selection circles, command lines, game over)
+    overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
+                             window_width_, window_height_,
+                             sim.player_result());
+
+    // Update minimap (terrain bg, unit dots, camera frustum box)
+    minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
+                              window_width_, window_height_);
+
+    // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
+    strategic_icon_renderer_.update(sim, camera_, vp, selected_ids,
+                                     texture_cache_,
+                                     window_width_, window_height_);
+
+    // Update economy HUD
+    hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
+                          window_width_, window_height_);
+
+    // Update selection info panel
+    selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
+                                    strategic_icon_renderer_.atlas_descriptor(),
+                                    window_width_, window_height_);
 
     // Record command buffer
     vkResetCommandBuffer(cmd_buf_, 0);
@@ -1331,8 +1377,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
         }
 
-        // Shadow meshes
-        if (!unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_) {
+        // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
+        if (!strategic_icon_renderer_.is_strategic_zoom() &&
+            !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_) {
             vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_mesh_pipeline_);
 
@@ -1371,8 +1418,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             }
         }
 
-        // Shadow cubes
-        if (unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
+        // Shadow cubes (skip when strategic zoom active)
+        if (!strategic_icon_renderer_.is_strategic_zoom() &&
+            unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
             vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_unit_pipeline_);
             vkCmdPushConstants(cmd_buf_, shadow_unit_layout_,
@@ -1532,7 +1580,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 3. Draw mesh units (real SCM models with GPU skinning)
-    if (!unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
+    //    Skip when strategic zoom replaces 3D units with 2D icons.
+    if (!strategic_icon_renderer_.is_strategic_zoom() &&
+        !unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           mesh_pipeline_);
 
@@ -1637,8 +1687,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         }
     }
 
-    // 4. Draw cube fallback units
-    if (unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
+    // 4. Draw cube fallback units (skip when strategic zoom active)
+    if (!strategic_icon_renderer_.is_strategic_zoom() &&
+        unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           unit_pipeline_);
 
@@ -1679,7 +1730,47 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         vkCmdDrawIndexed(cmd_buf_, water_renderer_.index_count(), 1, 0, 0, 0);
     }
 
-    // 6. Draw UI (screen-space 2D quads, last — always on top)
+    // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
+    if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        strategic_icon_renderer_.render(cmd_buf_, ui_layout_,
+                                         window_width_, window_height_);
+    }
+
+    // 7. Draw game overlays (health bars, selection, command lines)
+    if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        overlay_renderer_.render(cmd_buf_, ui_layout_,
+                                 window_width_, window_height_);
+    }
+
+    // 8. Draw minimap (terrain bg + unit dots + camera box)
+    if (ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        minimap_renderer_.render(cmd_buf_, ui_layout_,
+                                  window_width_, window_height_);
+    }
+
+    // 9. Draw economy HUD (resource bars + text at top of screen)
+    if (ui_pipeline_ && hud_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        hud_renderer_.render(cmd_buf_, ui_layout_,
+                              window_width_, window_height_);
+    }
+
+    // 10. Draw selection info panel (bottom-center unit details)
+    if (ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        selection_info_renderer_.render(cmd_buf_, ui_layout_,
+                                         window_width_, window_height_);
+    }
+
+    // 11. Draw UI (screen-space 2D quads, last — always on top)
     if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
@@ -1722,6 +1813,23 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
 bool Renderer::should_close() const {
     return window_ && glfwWindowShouldClose(window_);
+}
+
+bool Renderer::is_key_pressed(int glfw_key) const {
+    return window_ && glfwGetKey(window_, glfw_key) == GLFW_PRESS;
+}
+
+void Renderer::set_window_title(const char* title) {
+    if (window_) glfwSetWindowTitle(window_, title);
+}
+
+void Renderer::mouse_position(f64& x, f64& y) const {
+    if (window_) glfwGetCursorPos(window_, &x, &y);
+    else { x = 0; y = 0; }
+}
+
+bool Renderer::is_mouse_pressed(int glfw_button) const {
+    return window_ && glfwGetMouseButton(window_, glfw_button) == GLFW_PRESS;
 }
 
 void Renderer::poll_events(f64 dt) {
@@ -1786,6 +1894,11 @@ void Renderer::shutdown() {
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
     ui_renderer_.destroy(device_, allocator_);
+    overlay_renderer_.destroy(device_, allocator_);
+    minimap_renderer_.destroy(device_, allocator_);
+    strategic_icon_renderer_.destroy(device_, allocator_);
+    hud_renderer_.destroy(device_, allocator_);
+    selection_info_renderer_.destroy(device_, allocator_);
     font_cache_.destroy(device_, allocator_);
     mesh_cache_.destroy(device_, allocator_);
     texture_cache_.destroy(device_, allocator_);
