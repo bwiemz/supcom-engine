@@ -84,7 +84,7 @@ public:
     /// Check if a mouse button is currently pressed.
     bool is_mouse_pressed(int glfw_button) const;
 
-    static constexpr u32 SHADOW_MAP_SIZE = 2048;
+    static constexpr u32 SHADOW_MAP_SIZE = 4096;
 
 private:
     bool create_swapchain(u32 width, u32 height);

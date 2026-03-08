@@ -69,6 +69,7 @@ layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
     float scales[9];
+    float eyeX, eyeY, eyeZ;
 } pc;
 
 // Blend maps
@@ -116,7 +117,23 @@ float calcShadow(vec3 worldPos) {
     vec2 uv = pc2.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
         return 1.0;
-    return texture(shadowMap, vec3(uv, pc2.z));
+    // 4x4 PCF soft shadows
+    float shadow = 0.0;
+    float ts = 1.0 / 4096.0;
+    for (int x = -2; x <= 1; x++) {
+        for (int y = -2; y <= 1; y++) {
+            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
+            shadow += texture(shadowMap, vec3(uv + off, pc2.z));
+        }
+    }
+    shadow /= 16.0;
+    // Smooth fade at shadow map frustum edges
+    float fadeRange = 0.05;
+    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
+                   * smoothstep(0.0, fadeRange, uv.y)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
+    return mix(1.0, shadow, edgeFade);
 }
 
 // Decode FA DXT5nm normal map: X=Green, Y=Alpha, Z=derived
@@ -204,21 +221,42 @@ void main() {
 
     vec3 worldNormal = normalize(TBN * blendedTangentNormal);
 
-    // Lambertian lighting with perturbed normal + shadow
+    // Lighting with perturbed normal + shadow
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
     float NdotL = max(dot(worldNormal, lightDir), 0.0);
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
-    float lighting = 0.3 + 0.7 * NdotL * shadow;
+
+    // Hemisphere ambient: sky blue from above, warm brown from below
+    vec3 skyColor = vec3(0.40, 0.45, 0.55);
+    vec3 groundColor = vec3(0.20, 0.18, 0.15);
+    float hemi = worldNormal.y * 0.5 + 0.5; // remap [-1,1] to [0,1]
+    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.30;
+
+    // Diffuse
+    vec3 diffuse = vec3(0.70) * NdotL * shadow;
+
+    // Blinn-Phong specular on terrain (subtle)
+    vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
+    vec3 halfDir = normalize(lightDir + viewDir);
+    float NdotH = max(dot(worldNormal, halfDir), 0.0);
+    float spec = pow(NdotH, 24.0) * 0.15 * shadow;
+
+    vec3 lit = color * (ambient + diffuse) + vec3(spec);
 
     // Fog of war: sample visibility texture and darken terrain
-    // fogMap UV = world position / map size (same as blendUV)
     float fogVal = texture(fogMap, blendUV).r;
-    // fogVal: 1.0 = fully visible, ~0.78 = radar, ~0.39 = explored, 0.0 = unexplored
-    // Map to brightness: visible=1.0, radar=0.7, explored=0.35, unexplored=0.15
     float fogBright = mix(0.15, 1.0, fogVal);
+    lit *= fogBright;
 
-    outColor = vec4(color * lighting * fogBright, 1.0);
+    // Atmospheric distance fog: fade to haze at distance
+    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
+    float fogDensity = 0.0018;
+    float atmosFog = 1.0 - exp(-dist * fogDensity);
+    vec3 hazeColor = vec3(0.55, 0.62, 0.72) * fogBright;
+    lit = mix(lit, hazeColor, atmosFog);
+
+    outColor = vec4(lit, 1.0);
 }
 )glsl";
 
@@ -227,6 +265,7 @@ const char* unit_vert = R"glsl(
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
+    float eyeX, eyeY, eyeZ;
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -252,6 +291,11 @@ void main() {
 const char* unit_frag = R"glsl(
 #version 450
 
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    float eyeX, eyeY, eyeZ;
+} upc;
+
 // Shadow map (set=0)
 layout(set = 0, binding = 0) uniform sampler2DShadow shadowMap;
 layout(set = 0, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
@@ -268,7 +312,23 @@ float calcShadow(vec3 worldPos) {
     vec2 uv = pc.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
         return 1.0;
-    return texture(shadowMap, vec3(uv, pc.z));
+    // 4x4 PCF soft shadows
+    float shadow = 0.0;
+    float ts = 1.0 / 4096.0;
+    for (int x = -2; x <= 1; x++) {
+        for (int y = -2; y <= 1; y++) {
+            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
+            shadow += texture(shadowMap, vec3(uv + off, pc.z));
+        }
+    }
+    shadow /= 16.0;
+    // Smooth fade at shadow map frustum edges
+    float fadeRange = 0.05;
+    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
+                   * smoothstep(0.0, fadeRange, uv.y)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
+    return mix(1.0, shadow, edgeFade);
 }
 
 void main() {
@@ -277,7 +337,16 @@ void main() {
     float shadow = calcShadow(fragWorldPos);
     float lighting = 0.4 + 0.6 * NdotL * shadow;
 
-    outColor = vec4(fragColor.rgb * lighting, fragColor.a);
+    vec3 lit = fragColor.rgb * lighting;
+
+    // Atmospheric distance fog
+    float dist = length(vec3(upc.eyeX, upc.eyeY, upc.eyeZ) - fragWorldPos);
+    float fogDensity = 0.0018;
+    float atmosFog = 1.0 - exp(-dist * fogDensity);
+    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
+    lit = mix(lit, hazeColor, atmosFog);
+
+    outColor = vec4(lit, fragColor.a);
 }
 )glsl";
 
@@ -381,7 +450,15 @@ void main() {
     // Alpha: more opaque in deep water, semi-transparent at shore
     float alpha = mix(0.45, 0.85, d);
 
-    outColor = vec4(clamp(waterColor, 0.0, 1.0), alpha);
+    // Atmospheric distance fog
+    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
+    float fogDensity = 0.0018;
+    float atmosFog = 1.0 - exp(-dist * fogDensity);
+    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
+    waterColor = mix(clamp(waterColor, 0.0, 1.0), hazeColor, atmosFog);
+    alpha = mix(alpha, 1.0, atmosFog); // fog is opaque at distance
+
+    outColor = vec4(waterColor, alpha);
 }
 )glsl";
 
@@ -475,7 +552,23 @@ float calcShadow(vec3 worldPos) {
     vec2 uv = pc2.xy * 0.5 + 0.5;
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0)
         return 1.0;
-    return texture(shadowMap, vec3(uv, pc2.z));
+    // 4x4 PCF soft shadows
+    float shadow = 0.0;
+    float ts = 1.0 / 4096.0;
+    for (int x = -2; x <= 1; x++) {
+        for (int y = -2; y <= 1; y++) {
+            vec2 off = vec2(float(x) + 0.5, float(y) + 0.5) * ts;
+            shadow += texture(shadowMap, vec3(uv + off, pc2.z));
+        }
+    }
+    shadow /= 16.0;
+    // Smooth fade at shadow map frustum edges
+    float fadeRange = 0.05;
+    float edgeFade = smoothstep(0.0, fadeRange, uv.x)
+                   * smoothstep(0.0, fadeRange, uv.y)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.x)
+                   * smoothstep(0.0, fadeRange, 1.0 - uv.y);
+    return mix(1.0, shadow, edgeFade);
 }
 
 void main() {
@@ -514,7 +607,16 @@ void main() {
     float specIntensity = specTeam.r;
     float spec = pow(NdotH, 32.0) * specIntensity * shadow;
 
-    outColor = vec4(blended * lighting + vec3(spec), texColor.a * fragColor.a);
+    vec3 lit = blended * lighting + vec3(spec);
+
+    // Atmospheric distance fog
+    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
+    float fogDensity = 0.0018;
+    float atmosFog = 1.0 - exp(-dist * fogDensity);
+    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
+    lit = mix(lit, hazeColor, atmosFog);
+
+    outColor = vec4(lit, texColor.a * fragColor.a);
 }
 )glsl";
 

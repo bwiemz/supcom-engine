@@ -669,7 +669,7 @@ void Renderer::create_pipelines() {
                               static_cast<u32>(attrs.size()))
             .set_depth_test(true, true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(108,
+            .set_push_constant(120,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
             .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
@@ -704,7 +704,8 @@ void Renderer::create_pipelines() {
             .set_depth_test(true, true)
             .set_blend(true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16)
+            .set_push_constant(sizeof(f32) * 19,  // viewProj(64) + eye(12) = 76B
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(shadow_ds_layout_)   // set=0: shadow
             .build(device_, render_pass_, &unit_layout_);
     }
@@ -1573,17 +1574,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj + mapWidth + mapHeight + scales[9] = 108B
+        // Push constants: viewProj + mapWidth + mapHeight + scales[9] + eye(3) = 120B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
             f32 scales[9];
+            f32 eyeX, eyeY, eyeZ;
         } tpc{};
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
         std::memcpy(tpc.scales, terrain_strata_scales_, sizeof(f32) * 9);
+        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
         vkCmdPushConstants(cmd_buf_, terrain_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT |
@@ -1801,9 +1804,16 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                     0, nullptr);
         }
 
+        struct UnitPC {
+            f32 viewProj[16];
+            f32 eyeX, eyeY, eyeZ;
+        } upc{};
+        std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
+        camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
         vkCmdPushConstants(cmd_buf_, unit_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT, 0,
-                           sizeof(f32) * 16, vp.data());
+                           VK_SHADER_STAGE_VERTEX_BIT |
+                               VK_SHADER_STAGE_FRAGMENT_BIT,
+                           0, sizeof(upc), &upc);
 
         VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                             unit_renderer_.cube_instance_buffer()};
