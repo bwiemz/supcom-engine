@@ -258,6 +258,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 
     // Bloom post-processing resources
     create_bloom_resources();
+    create_bloom_pipelines();
 
     // UI renderer instance buffer
     ui_renderer_.init(device_, allocator_);
@@ -1025,15 +1026,42 @@ void Renderer::create_bloom_resources() {
         vkCreateImageView(device_, &view_ci, nullptr, &img.view);
     };
 
-    create_hdr_image(scene_color_image_, w, h);
+    // Scene color uses swapchain format for render pass compatibility with
+    // existing pipelines (terrain, unit, mesh, water, decal, particle).
+    // Bloom intermediates use HDR for precision.
+    {
+        VkImageCreateInfo img_ci{};
+        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_ci.imageType = VK_IMAGE_TYPE_2D;
+        img_ci.format = swapchain_format_;
+        img_ci.extent = {w, h, 1};
+        img_ci.mipLevels = 1;
+        img_ci.arrayLayers = 1;
+        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &scene_color_image_.image, &scene_color_image_.allocation, nullptr);
+
+        VkImageViewCreateInfo view_ci{};
+        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_ci.image = scene_color_image_.image;
+        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_ci.format = swapchain_format_;
+        view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCreateImageView(device_, &view_ci, nullptr, &scene_color_image_.view);
+    }
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
     create_hdr_image(bloom_blur_v_image_, half_w, half_h);
 
-    // Scene render pass (color HDR + depth)
+    // Scene render pass (color + depth, swapchain format for pipeline compatibility)
     {
         VkAttachmentDescription color_att{};
-        color_att.format = hdr_format;
+        color_att.format = swapchain_format_;
         color_att.samples = VK_SAMPLE_COUNT_1_BIT;
         color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1239,6 +1267,57 @@ void Renderer::destroy_bloom_resources() {
     scene_framebuffer_ = VK_NULL_HANDLE;
     bloom_render_pass_ = VK_NULL_HANDLE;
     scene_render_pass_ = VK_NULL_HANDLE;
+}
+
+void Renderer::create_bloom_pipelines() {
+    // Compile bloom shaders from embedded GLSL
+    auto bright_v = compile_glsl(device_, shaders::bloom_bright_vert, "bloom_bright.vert", true);
+    auto bright_f = compile_glsl(device_, shaders::bloom_bright_frag, "bloom_bright.frag", false);
+    auto blur_f = compile_glsl(device_, shaders::bloom_blur_frag, "bloom_blur.frag", false);
+    auto comp_f = compile_glsl(device_, shaders::bloom_composite_frag, "bloom_composite.frag", false);
+
+    if (!bright_v || !bright_f || !blur_f || !comp_f) {
+        spdlog::error("One or more bloom shaders failed to compile");
+        auto safe_destroy = [&](VkShaderModule m) {
+            if (m) vkDestroyShaderModule(device_, m, nullptr);
+        };
+        safe_destroy(bright_v); safe_destroy(bright_f);
+        safe_destroy(blur_f); safe_destroy(comp_f);
+        return;
+    }
+
+    // Bright pass pipeline (extract bright pixels from scene)
+    bloom_bright_pipeline_ = PipelineBuilder()
+        .set_shaders(bright_v, bright_f)
+        .set_depth_test(false, false)
+        .set_push_constant(8, VK_SHADER_STAGE_FRAGMENT_BIT)
+        .set_descriptor_set_layout(texture_ds_layout_)
+        .build(device_, bloom_render_pass_, &bloom_bright_layout_);
+
+    // Blur pipeline (separable Gaussian, used for both H and V passes)
+    bloom_blur_pipeline_ = PipelineBuilder()
+        .set_shaders(bright_v, blur_f)
+        .set_depth_test(false, false)
+        .set_push_constant(8, VK_SHADER_STAGE_FRAGMENT_BIT)
+        .set_descriptor_set_layout(texture_ds_layout_)
+        .build(device_, bloom_render_pass_, &bloom_blur_layout_);
+
+    // Composite pipeline (blend scene + bloom onto swapchain)
+    bloom_composite_pipeline_ = PipelineBuilder()
+        .set_shaders(bright_v, comp_f)
+        .set_depth_test(false, false)
+        .set_push_constant(4, VK_SHADER_STAGE_FRAGMENT_BIT)
+        .set_descriptor_set_layout(texture_ds_layout_)    // set 0: scene
+        .add_descriptor_set_layout(texture_ds_layout_)     // set 1: bloom
+        .build(device_, render_pass_, &bloom_composite_layout_);
+
+    // Clean up shader modules
+    vkDestroyShaderModule(device_, bright_v, nullptr);
+    vkDestroyShaderModule(device_, bright_f, nullptr);
+    vkDestroyShaderModule(device_, blur_f, nullptr);
+    vkDestroyShaderModule(device_, comp_f, nullptr);
+
+    spdlog::info("Bloom pipelines created");
 }
 
 void Renderer::build_scene(const sim::SimState& sim,
@@ -1944,15 +2023,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     // ==================== MAIN PASS ====================
     PROFILE_ZONE("Render::main_pass");
-    // Begin render pass
+
+    bool do_bloom = bloom_enabled_ && bloom_bright_pipeline_;
+
+    // Begin render pass — scene_render_pass_ (offscreen) when bloom is on,
+    // render_pass_ (swapchain) when bloom is off.
     std::array<VkClearValue, 2> clear_values{};
     clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // sky haze (matches atmos fog)
     clear_values[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = render_pass_;
-    rp_begin.framebuffer = framebuffers_[image_index];
+    rp_begin.renderPass = do_bloom ? scene_render_pass_ : render_pass_;
+    rp_begin.framebuffer = do_bloom ? scene_framebuffer_ : framebuffers_[image_index];
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
     rp_begin.pClearValues = clear_values.data();
@@ -2273,6 +2356,117 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                   vp.data(), cam_right, cam_up, fi);
     }
 
+    // ==================== BLOOM PASSES ====================
+    // When bloom is enabled: end scene pass, run bright extract + blur, then
+    // begin swapchain pass with composite fullscreen triangle before UI layers.
+    if (do_bloom) {
+        vkCmdEndRenderPass(cmd_buf_[fi]);
+
+        u32 half_w = std::max(window_width_ / 2, 1u);
+        u32 half_h = std::max(window_height_ / 2, 1u);
+
+        VkViewport bloom_vp{};
+        bloom_vp.width = static_cast<f32>(half_w);
+        bloom_vp.height = static_cast<f32>(half_h);
+        bloom_vp.maxDepth = 1.0f;
+        VkRect2D bloom_sc{};
+        bloom_sc.extent = {half_w, half_h};
+
+        // Bright pass — extract bright pixels from scene
+        {
+            VkRenderPassBeginInfo bright_rp{};
+            bright_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            bright_rp.renderPass = bloom_render_pass_;
+            bright_rp.framebuffer = bloom_bright_fb_;
+            bright_rp.renderArea.extent = {half_w, half_h};
+            vkCmdBeginRenderPass(cmd_buf_[fi], &bright_rp, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_bright_pipeline_);
+            vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
+            vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
+
+            struct { f32 threshold; f32 intensity; } bright_pc = {bloom_threshold_, bloom_intensity_};
+            vkCmdPushConstants(cmd_buf_[fi], bloom_bright_layout_,
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(bright_pc), &bright_pc);
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    bloom_bright_layout_, 0, 1, &scene_ds_, 0, nullptr);
+            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+            vkCmdEndRenderPass(cmd_buf_[fi]);
+        }
+
+        // Blur H pass — horizontal Gaussian blur
+        {
+            VkRenderPassBeginInfo blur_h_rp{};
+            blur_h_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            blur_h_rp.renderPass = bloom_render_pass_;
+            blur_h_rp.framebuffer = bloom_blur_h_fb_;
+            blur_h_rp.renderArea.extent = {half_w, half_h};
+            vkCmdBeginRenderPass(cmd_buf_[fi], &blur_h_rp, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_blur_pipeline_);
+            vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
+            vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
+
+            struct { f32 dx, dy; } blur_h_pc = {1.0f / static_cast<f32>(half_w), 0.0f};
+            vkCmdPushConstants(cmd_buf_[fi], bloom_blur_layout_,
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blur_h_pc), &blur_h_pc);
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    bloom_blur_layout_, 0, 1, &bloom_bright_ds_, 0, nullptr);
+            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+            vkCmdEndRenderPass(cmd_buf_[fi]);
+        }
+
+        // Blur V pass — vertical Gaussian blur
+        {
+            VkRenderPassBeginInfo blur_v_rp{};
+            blur_v_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            blur_v_rp.renderPass = bloom_render_pass_;
+            blur_v_rp.framebuffer = bloom_blur_v_fb_;
+            blur_v_rp.renderArea.extent = {half_w, half_h};
+            vkCmdBeginRenderPass(cmd_buf_[fi], &blur_v_rp, VK_SUBPASS_CONTENTS_INLINE);
+
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_blur_pipeline_);
+            vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
+            vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
+
+            struct { f32 dx, dy; } blur_v_pc = {0.0f, 1.0f / static_cast<f32>(half_h)};
+            vkCmdPushConstants(cmd_buf_[fi], bloom_blur_layout_,
+                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blur_v_pc), &blur_v_pc);
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    bloom_blur_layout_, 0, 1, &bloom_blur_h_ds_, 0, nullptr);
+            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+            vkCmdEndRenderPass(cmd_buf_[fi]);
+        }
+
+        // Begin swapchain render pass for composite + UI
+        std::array<VkClearValue, 2> swap_clear{};
+        swap_clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        swap_clear[1].depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo swap_rp{};
+        swap_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        swap_rp.renderPass = render_pass_;
+        swap_rp.framebuffer = framebuffers_[image_index];
+        swap_rp.renderArea.extent = {window_width_, window_height_};
+        swap_rp.clearValueCount = static_cast<u32>(swap_clear.size());
+        swap_rp.pClearValues = swap_clear.data();
+        vkCmdBeginRenderPass(cmd_buf_[fi], &swap_rp, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
+        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
+
+        // Composite fullscreen triangle — blend scene + bloom onto swapchain
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_composite_pipeline_);
+        f32 strength = bloom_strength_;
+        vkCmdPushConstants(cmd_buf_[fi], bloom_composite_layout_,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(strength), &strength);
+        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                bloom_composite_layout_, 0, 1, &scene_ds_, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                bloom_composite_layout_, 1, 1, &bloom_blur_v_ds_, 0, nullptr);
+        vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
+    }
+
     // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
     if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -2395,6 +2589,15 @@ void Renderer::poll_events(f64 dt) {
     if (glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS)
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
 
+    // Toggle bloom with B key
+    static bool b_was_pressed = false;
+    bool b_pressed = glfwGetKey(window_, GLFW_KEY_B) == GLFW_PRESS;
+    if (b_pressed && !b_was_pressed) {
+        bloom_enabled_ = !bloom_enabled_;
+        spdlog::info("Bloom {}", bloom_enabled_ ? "enabled" : "disabled");
+    }
+    b_was_pressed = b_pressed;
+
     camera_.update(window_, dt);
 }
 
@@ -2408,6 +2611,9 @@ void Renderer::recreate_swapchain() {
     }
 
     vkDeviceWaitIdle(device_);
+
+    // Destroy bloom resources (depend on window size)
+    destroy_bloom_resources();
 
     // Destroy old framebuffers and depth image
     for (auto fb : framebuffers_)
@@ -2431,6 +2637,10 @@ void Renderer::recreate_swapchain() {
         vkDestroySwapchainKHR(device_, old_sc, nullptr);
     create_depth_image();
     create_framebuffers();
+
+    // Recreate bloom resources at new resolution
+    create_bloom_resources();
+    create_bloom_pipelines();
 }
 
 void Renderer::shutdown() {
