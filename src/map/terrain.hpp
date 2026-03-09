@@ -24,6 +24,14 @@ struct DecalInfo {
     f32 cut_off_lod = 1000.0f;
 };
 
+/// A normal-map decal for terrain normal perturbation (decal_type == 2).
+struct NormalDecalInfo {
+    std::string texture_path;
+    f32 position_x, position_z;  // World-space XZ center
+    f32 scale_x, scale_z;        // World-space footprint
+    f32 rotation_y;              // Y-axis rotation in radians
+};
+
 /// Terrain system combining heightmap and water data.
 /// Provides the queries used by simulation code (GetTerrainHeight, GetSurfaceHeight).
 class Terrain {
@@ -55,6 +63,9 @@ public:
     void set_decals(std::vector<DecalInfo> decals);
     const std::vector<DecalInfo>& decals() const { return decals_; }
 
+    void set_normal_decals(std::vector<NormalDecalInfo> decals);
+    const std::vector<NormalDecalInfo>& normal_decals() const { return normal_decals_; }
+
 private:
     Heightmap heightmap_;
     f32 water_elevation_;
@@ -63,6 +74,7 @@ private:
     std::vector<char> blend_dds_0_;
     std::vector<char> blend_dds_1_;
     std::vector<DecalInfo> decals_;
+    std::vector<NormalDecalInfo> normal_decals_;
 };
 
 } // namespace osc::map

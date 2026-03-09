@@ -251,20 +251,35 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
 
     // Pass decal data for rendering
     if (!scmap.decals.empty()) {
-        std::vector<map::DecalInfo> decal_info;
-        decal_info.reserve(scmap.decals.size());
+        std::vector<map::DecalInfo> albedo_decals;
+        std::vector<map::NormalDecalInfo> normal_decals;
+        albedo_decals.reserve(scmap.decals.size());
+
         for (auto& d : scmap.decals) {
             if (d.texture1_path.empty()) continue;
-            decal_info.push_back({
-                d.texture1_path,
-                d.position_x, d.position_y, d.position_z,
-                d.scale_x, d.scale_y, d.scale_z,
-                d.rotation_x, d.rotation_y, d.rotation_z,
-                d.cut_off_lod
-            });
+
+            if (d.decal_type == 2) {
+                normal_decals.push_back({
+                    d.texture1_path,
+                    d.position_x, d.position_z,
+                    d.scale_x, d.scale_z,
+                    d.rotation_y
+                });
+            } else {
+                albedo_decals.push_back({
+                    d.texture1_path,
+                    d.position_x, d.position_y, d.position_z,
+                    d.scale_x, d.scale_y, d.scale_z,
+                    d.rotation_x, d.rotation_y, d.rotation_z,
+                    d.cut_off_lod
+                });
+            }
         }
-        terrain->set_decals(std::move(decal_info));
-        spdlog::info("  Terrain decals: {} loaded", terrain->decals().size());
+
+        terrain->set_decals(std::move(albedo_decals));
+        terrain->set_normal_decals(std::move(normal_decals));
+        spdlog::info("  Terrain decals: {} albedo, {} normal",
+                     terrain->decals().size(), terrain->normal_decals().size());
     }
 
     sim.set_terrain(std::move(terrain));
