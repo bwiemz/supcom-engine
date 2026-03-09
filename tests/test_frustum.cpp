@@ -21,9 +21,16 @@ TEST_CASE("Frustum: sphere at origin is visible from above", "[frustum]") {
     CHECK(f.is_sphere_visible(0, 0, 0, 5.0f));
 }
 
-TEST_CASE("Frustum: sphere far behind camera is not visible", "[frustum]") {
+TEST_CASE("Frustum: sphere above camera (opposite view direction) is not visible", "[frustum]") {
     Frustum f(make_test_vp());
+    // Camera at Y=100 looking down. Sphere at Y=200 is above eye, outside frustum.
     CHECK_FALSE(f.is_sphere_visible(0, 200, 0, 5.0f));
+}
+
+TEST_CASE("Frustum: sphere just behind near plane is not visible", "[frustum]") {
+    Frustum f(make_test_vp());
+    // Camera at Y=100 looking down, near=1.0. Sphere at Y=100.5 is behind near plane.
+    CHECK_FALSE(f.is_sphere_visible(0, 100.5f, 0, 0.1f));
 }
 
 TEST_CASE("Frustum: sphere far outside laterally is not visible", "[frustum]") {

@@ -17,8 +17,8 @@ Frustum::Frustum(const std::array<f32, 16>& m) {
     planes_[2] = {m[3] + m[1], m[7] + m[5], m[11] + m[9],  m[15] + m[13]};
     // Top:    row3 - row1
     planes_[3] = {m[3] - m[1], m[7] - m[5], m[11] - m[9],  m[15] - m[13]};
-    // Near:   row3 + row2
-    planes_[4] = {m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]};
+    // Near:   row2 only (Vulkan [0,1] depth convention, not OpenGL [-1,1])
+    planes_[4] = {m[2], m[6], m[10], m[14]};
     // Far:    row3 - row2
     planes_[5] = {m[3] - m[2], m[7] - m[6], m[11] - m[10], m[15] - m[14]};
 
