@@ -8,6 +8,7 @@ add_library(osc_renderer STATIC
     dds_parser.cpp
     dds_decode.cpp
     camera.cpp
+    frustum.cpp
     shader_utils.cpp
     pipeline_builder.cpp
     vk_utils.cpp
