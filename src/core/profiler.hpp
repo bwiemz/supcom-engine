@@ -2,6 +2,8 @@
 
 #include "core/types.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -255,4 +257,6 @@ struct ProfileScope {
 } // namespace osc
 
 /// Convenience macro for scoped profiling. Uses a static string literal.
-#define PROFILE_ZONE(name) ::osc::ProfileScope _profile_scope_##__LINE__(name)
+#define PROFILE_CONCAT_(a, b) a##b
+#define PROFILE_CONCAT(a, b) PROFILE_CONCAT_(a, b)
+#define PROFILE_ZONE(name) ::osc::ProfileScope PROFILE_CONCAT(_profile_scope_, __LINE__)(name)
