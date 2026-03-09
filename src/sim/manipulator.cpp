@@ -237,14 +237,15 @@ void AnimManipulator::tick(f32 dt) {
         }
     }
 
-    // Compute bone matrices after fraction update
-    compute_bone_matrices();
-
-    // Advance cross-fade blend
+    // Advance cross-fade blend BEFORE computing bone matrices,
+    // so the first tick after play_anim() uses weight < 1.0 (not frozen on old pose).
     if (blend_remaining_ > 0.0f) {
         blend_remaining_ -= dt;
         if (blend_remaining_ < 0.0f) blend_remaining_ = 0.0f;
     }
+
+    // Compute bone matrices after fraction update
+    compute_bone_matrices();
 }
 
 bool AnimManipulator::is_at_goal() const {
@@ -329,7 +330,7 @@ void AnimManipulator::compute_bone_matrices() {
     }
 
     // Apply cross-fade blending if active
-    if (blend_remaining_ > 0.0f && !blend_from_matrices_.empty()) {
+    if (blend_remaining_ > 0.0f && blend_time_ > 0.0f && !blend_from_matrices_.empty()) {
         f32 weight = blend_remaining_ / blend_time_; // 1.0 → 0.0 over blend duration
         for (u32 i = 0; i < num_sca_bones; i++) {
             i32 scm_idx = (i < sca_to_scm_map_.size())

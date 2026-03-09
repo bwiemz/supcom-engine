@@ -117,41 +117,26 @@ TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
     anim.set_rate(1.0f);
 
     // Tick 0.1s into the blend.
-    // Inside tick: compute_bone_matrices() runs BEFORE blend_remaining_ is decremented.
-    // So on this first tick, blend_remaining_=0.4, weight=0.4/0.4=1.0 (pure "from" snapshot).
-    // After compute, blend_remaining_ decremented to 0.3.
+    // Inside tick: blend_remaining_ decremented BEFORE compute_bone_matrices().
+    // blend_remaining: 0.4 - 0.1 = 0.3, weight = 0.3/0.4 = 0.75
+    // anim_b fraction=0.1, so "to" Y = 0.1*2 = 0.2, "to" X = 0
+    // "from" snapshot: X=1, Y=0
+    // Blended X = lerp(0, 1, 0.75) = 0.75, Y = lerp(0.2, 0, 0.75) = 0.05
     anim.tick(0.1f);
 
-    // weight=1.0 during compute => output is entirely the snapshot: X=1, Y=0
     {
         auto& mat = unit.animated_bone_matrices()[0];
-        CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(1.0, 0.01));
-        CHECK_THAT(static_cast<double>(mat[13]), WithinAbs(0.0, 0.01));
+        CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.75, 0.01));
+        CHECK_THAT(static_cast<double>(mat[13]), WithinAbs(0.05, 0.01));
     }
 
-    // Tick 0.2s more (total 0.3s into anim_b, blend_remaining_=0.3 at compute time)
-    // fraction=0.3, anim_b Y=0.3*2=0.6, weight=0.3/0.4=0.75
-    // Blended X = 0 + 0.75*1 = 0.75, Y = 0.6 + 0.75*(0-0.6) = 0.15
-    anim.tick(0.2f);
-    {
-        auto& mat = unit.animated_bone_matrices()[0];
-        CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.75, 0.05));
-        CHECK_THAT(static_cast<double>(mat[13]), WithinAbs(0.15, 0.05));
-    }
-
-    // Advance past blend completion: tick 0.3s more (total 0.6s, blend_remaining_
-    // was 0.1 at start of this tick, so compute uses weight=0.1/0.4=0.25,
-    // then blend_remaining_ goes to 0). One more tick to get pure output.
+    // Tick 0.3s more — blend_remaining: 0.3 - 0.3 = 0, blend complete.
+    // fraction=0.4, anim_b Y = 0.4*2 = 0.8, pure new anim (no blend).
     anim.tick(0.3f);
-    // Now blend_remaining_ = 0, but the compute during that tick still used
-    // a small weight. Tick once more to get truly unblended output.
-    anim.tick(0.1f);
-
-    // Pure anim_b at fraction=0.7 => Y=0.7*2=1.4, X=0
     {
         auto& mat = unit.animated_bone_matrices()[0];
         CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.0, 0.01));
-        CHECK_THAT(static_cast<double>(mat[13]), WithinAbs(1.4, 0.05));
+        CHECK_THAT(static_cast<double>(mat[13]), WithinAbs(0.8, 0.01));
     }
 }
 
