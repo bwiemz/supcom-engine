@@ -2,6 +2,7 @@
 
 #include "audio/sound_manager.hpp"
 #include "blueprints/blueprint_store.hpp"
+#include "core/profiler.hpp"
 #include "core/types.hpp"
 #include "lua/lua_state.hpp"
 #include "map/pathfinding_grid.hpp"
@@ -13704,6 +13705,166 @@ void test_transport_silo_render(TestContext& ctx) {
     }
 
     spdlog::info("Transport/silo render test: {}/{} passed", pass, pass + fail);
+}
+
+void test_profile(TestContext& ctx) {
+    spdlog::info("=== Profile Integration Test ===");
+    int pass = 0, fail = 0;
+
+    // Test 1: Profiler starts disabled
+    {
+        auto& p = osc::Profiler::instance();
+        if (!p.enabled()) {
+            pass++; spdlog::info("[PASS] Test 1: Profiler starts disabled");
+        } else {
+            fail++; spdlog::error("[FAIL] Test 1: Profiler should start disabled");
+        }
+    }
+
+    // Test 2: Enable/disable
+    {
+        auto& p = osc::Profiler::instance();
+        p.set_enabled(true);
+        if (p.enabled()) {
+            pass++; spdlog::info("[PASS] Test 2: Profiler can be enabled");
+        } else {
+            fail++; spdlog::error("[FAIL] Test 2: set_enabled(true) failed");
+        }
+    }
+
+    // Test 3: begin/end frame increments frame count
+    {
+        auto& p = osc::Profiler::instance();
+        u32 before = p.frame_count();
+        p.begin_frame();
+        p.end_frame();
+        if (p.frame_count() == before + 1) {
+            pass++; spdlog::info("[PASS] Test 3: Frame count incremented");
+        } else {
+            fail++; spdlog::error("[FAIL] Test 3: Frame count not incremented");
+        }
+    }
+
+    // Test 4: PROFILE_ZONE creates measurable zone
+    {
+        auto& p = osc::Profiler::instance();
+        p.begin_frame();
+        {
+            PROFILE_ZONE("TestZone");
+            // Busy work to ensure measurable time
+            volatile int x = 0;
+            for (int i = 0; i < 100000; ++i) x += i;
+        }
+        p.end_frame();
+
+        bool found = false;
+        for (u32 i = 0; i < p.zone_count(); ++i) {
+            if (std::strcmp(p.zone_stats()[i].name, "TestZone") == 0) {
+                found = true;
+                if (p.zone_stats()[i].last_us > 0) {
+                    pass++; spdlog::info("[PASS] Test 4: TestZone recorded {:.1f}us",
+                                         p.zone_stats()[i].last_us);
+                } else {
+                    fail++; spdlog::error("[FAIL] Test 4: TestZone time is 0");
+                }
+                break;
+            }
+        }
+        if (!found) {
+            fail++; spdlog::error("[FAIL] Test 4: TestZone not found in stats");
+        }
+    }
+
+    // Test 5: Nested zones track depth
+    {
+        auto& p = osc::Profiler::instance();
+        p.begin_frame();
+        {
+            PROFILE_ZONE("Outer");
+            {
+                PROFILE_ZONE("Inner");
+                volatile int x = 0;
+                for (int i = 0; i < 10000; ++i) x += i;
+            }
+        }
+        p.end_frame();
+
+        u32 outer_depth = 999, inner_depth = 999;
+        for (u32 i = 0; i < p.zone_count(); ++i) {
+            if (std::strcmp(p.zone_stats()[i].name, "Outer") == 0)
+                outer_depth = p.zone_stats()[i].depth;
+            if (std::strcmp(p.zone_stats()[i].name, "Inner") == 0)
+                inner_depth = p.zone_stats()[i].depth;
+        }
+
+        if (inner_depth > outer_depth) {
+            pass++; spdlog::info("[PASS] Test 5: Inner depth ({}) > Outer depth ({})",
+                                 inner_depth, outer_depth);
+        } else {
+            fail++; spdlog::error("[FAIL] Test 5: Bad nesting (outer={}, inner={})",
+                                  outer_depth, inner_depth);
+        }
+    }
+
+    // Test 6: Sim tick creates profiling zones when enabled
+    {
+        auto& p = osc::Profiler::instance();
+        p.begin_frame();
+        ctx.sim.tick();
+        p.end_frame();
+
+        bool found_tick = false;
+        for (u32 i = 0; i < p.zone_count(); ++i) {
+            if (std::strcmp(p.zone_stats()[i].name, "Sim::tick") == 0) {
+                found_tick = true;
+                break;
+            }
+        }
+        if (found_tick) {
+            pass++; spdlog::info("[PASS] Test 6: Sim::tick zone recorded");
+        } else {
+            fail++; spdlog::error("[FAIL] Test 6: Sim::tick zone not found");
+        }
+    }
+
+    // Test 7: Rolling average converges
+    {
+        auto& p = osc::Profiler::instance();
+        for (int i = 0; i < 10; ++i) {
+            p.begin_frame();
+            {
+                PROFILE_ZONE("AvgTest");
+                volatile int x = 0;
+                for (int j = 0; j < 50000; ++j) x += j;
+            }
+            p.end_frame();
+        }
+
+        f64 avg = 0;
+        for (u32 i = 0; i < p.zone_count(); ++i) {
+            if (std::strcmp(p.zone_stats()[i].name, "AvgTest") == 0) {
+                avg = p.zone_stats()[i].avg_us;
+                break;
+            }
+        }
+        if (avg > 0) {
+            pass++; spdlog::info("[PASS] Test 7: Rolling avg = {:.1f}us", avg);
+        } else {
+            fail++; spdlog::error("[FAIL] Test 7: Rolling avg is 0");
+        }
+    }
+
+    // Test 8: log_summary doesn't crash
+    {
+        auto& p = osc::Profiler::instance();
+        p.log_summary();
+        pass++; spdlog::info("[PASS] Test 8: log_summary() completed");
+    }
+
+    // Cleanup: disable profiler
+    osc::Profiler::instance().set_enabled(false);
+
+    spdlog::info("Profile test: {}/{} passed", pass, pass + fail);
 }
 
 } // namespace osc::test

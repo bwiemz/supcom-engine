@@ -106,5 +106,6 @@ void test_intel_overlay(TestContext& ctx);
 void test_enhance_wreck_render(TestContext& ctx);
 void test_vfx_render(TestContext& ctx);
 void test_transport_silo_render(TestContext& ctx);
+void test_profile(TestContext& ctx);
 
 } // namespace osc::test

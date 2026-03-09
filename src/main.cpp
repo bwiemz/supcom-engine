@@ -1,4 +1,5 @@
 #include "core/log.hpp"
+#include "core/profiler.hpp"
 #include "core/types.hpp"
 #include "integration_tests.hpp"
 #include "lua/lua_state.hpp"
@@ -123,6 +124,8 @@ static void print_usage() {
               << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"
               << "  --vfx-render-test  VFX/emitter particle rendering\n"
               << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
+              << "  --profile          Enable performance profiling (prints summary at exit)\n"
+              << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
 }
 
@@ -315,6 +318,8 @@ int main(int argc, char* argv[]) {
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
     bool no_fog = parse_flag(argc, argv, "--no-fog");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
+    bool profile_enabled = parse_flag(argc, argv, "--profile");
+    bool profile_test = parse_flag(argc, argv, "--profile-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -351,7 +356,8 @@ int main(int argc, char* argv[]) {
                     beam_test || shield_render_test ||
                     vet_adj_render_test || intel_overlay_test ||
                     enhance_wreck_test || vfx_render_test ||
-                    transport_silo_test;
+                    transport_silo_test ||
+                    profile_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -486,6 +492,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Enable profiler if requested
+    if (profile_enabled) {
+        osc::Profiler::instance().set_enabled(true);
+        spdlog::info("Performance profiling enabled");
+    }
+
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
@@ -512,6 +524,7 @@ int main(int argc, char* argv[]) {
             double display_fps = 0.0;
 
             while (!renderer.should_close()) {
+                osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
                 prev_time = now;
@@ -606,6 +619,8 @@ int main(int argc, char* argv[]) {
                         display_fps);
                     renderer.set_window_title(title);
                 }
+
+                osc::Profiler::instance().end_frame();
             }
 
             renderer.shutdown();
@@ -623,7 +638,9 @@ int main(int argc, char* argv[]) {
                      tick_count,
                      tick_count * osc::sim::SimState::SECONDS_PER_TICK);
         for (osc::u32 i = 0; i < tick_count; i++) {
+            osc::Profiler::instance().begin_frame();
             sim_state.tick();
+            osc::Profiler::instance().end_frame();
         }
     }
 
@@ -719,6 +736,7 @@ int main(int argc, char* argv[]) {
     if (enhance_wreck_test && !map_path.empty()) osc::test::test_enhance_wreck_render(test_ctx);
     if (vfx_render_test && !map_path.empty()) osc::test::test_vfx_render(test_ctx);
     if (transport_silo_test && !map_path.empty()) osc::test::test_transport_silo_render(test_ctx);
+    if (profile_test && !map_path.empty()) osc::test::test_profile(test_ctx);
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "
@@ -728,6 +746,11 @@ int main(int argc, char* argv[]) {
                  sim_state.thread_manager().active_count(),
                  sim_state.tick_count(),
                  sim_state.game_time());
+
+    // Print profiling summary if enabled
+    if (profile_enabled) {
+        osc::Profiler::instance().log_summary();
+    }
 
     osc::log::shutdown();
     return 0;

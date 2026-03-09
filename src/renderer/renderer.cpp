@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "core/profiler.hpp"
 #include "renderer/pipeline_builder.hpp"
 #include "renderer/shader_utils.hpp"
 #include "renderer/terrain_mesh.hpp"
@@ -274,6 +275,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 
     // Selection info panel
     selection_info_renderer_.init(device_, allocator_);
+
+    // Profile overlay
+    profile_overlay_.init(device_, allocator_);
 
     initialized_ = true;
     spdlog::info("Renderer initialized ({}x{})", width, height);
@@ -1286,11 +1290,15 @@ void Renderer::build_scene(const sim::SimState& sim,
 void Renderer::render(sim::SimState& sim, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
+    PROFILE_ZONE("Render::frame");
     // Select current frame's sync objects
     u32 fi = frame_index_;
 
     // Wait for this frame's previous GPU work to complete
-    vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+    {
+        PROFILE_ZONE("Render::gpu_wait");
+        vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+    }
 
     // Acquire swapchain image
     u32 image_index = 0;
@@ -1326,8 +1334,11 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
-    unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
-                          selected_ids);
+    {
+        PROFILE_ZONE("Render::unit_update");
+        unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
+                              selected_ids);
+    }
 
     // Build preview ghost — render a semi-transparent mesh at the cursor
     const auto& ghost_bp = sim.build_ghost_bp();
@@ -1389,6 +1400,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     // Update UI quads (walk control tree, read LazyVar positions)
     if (ui_registry) {
+        PROFILE_ZONE("Render::ui_update");
         f64 now = glfwGetTime();
         f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
         last_frame_time_ = now;
@@ -1416,13 +1428,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // Update game overlays (health bars, selection circles, command lines, game over)
-    overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
-                             window_width_, window_height_,
-                             sim.player_result(), frame_dt_);
+    {
+        PROFILE_ZONE("Render::overlay_update");
+        overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
+                                 window_width_, window_height_,
+                                 sim.player_result(), frame_dt_);
+    }
 
     // Update particle system (sync effects, step physics, build GPU data)
-    particle_system_.sync_effects(sim, emitter_bp_cache_, L);
-    particle_system_.update(frame_dt_);
+    {
+        PROFILE_ZONE("Render::particle_update");
+        particle_system_.sync_effects(sim, emitter_bp_cache_, L);
+        particle_system_.update(frame_dt_);
+    }
     f32 p_eye_x, p_eye_y, p_eye_z;
     camera_.eye_position(p_eye_x, p_eye_y, p_eye_z);
     const auto& particle_instances = particle_system_.build_instances(
@@ -1447,6 +1465,11 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                     strategic_icon_renderer_.atlas_descriptor(),
                                     window_width_, window_height_);
 
+    // Update profile overlay
+    profile_overlay_.set_frame_index(fi);
+    profile_overlay_.update(font_cache_, texture_cache_,
+                             window_width_, window_height_);
+
     // Record command buffer
     vkResetCommandBuffer(cmd_buf_[fi], 0);
 
@@ -1462,6 +1485,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     // ==================== SHADOW PASS ====================
     if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_) {
+        PROFILE_ZONE("Render::shadow_pass");
         // Update light UBO
         auto light_vp = compute_light_vp();
         std::memcpy(light_ubo_mapped_, light_vp.data(), sizeof(f32) * 16);
@@ -1569,6 +1593,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // ==================== MAIN PASS ====================
+    PROFILE_ZONE("Render::main_pass");
     // Begin render pass
     std::array<VkClearValue, 2> clear_values{};
     clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // sky haze (matches atmos fog)
@@ -1945,10 +1970,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                             window_width_, window_height_);
     }
 
+    // 12. Draw profile overlay (topmost, after all other UI)
+    if (ui_pipeline_ && profile_overlay_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          ui_pipeline_);
+        profile_overlay_.render(cmd_buf_[fi], ui_layout_,
+                                window_width_, window_height_);
+    }
+
     vkCmdEndRenderPass(cmd_buf_[fi]);
     vkEndCommandBuffer(cmd_buf_[fi]);
 
     // Submit
+    PROFILE_ZONE("Render::submit");
     VkPipelineStageFlags wait_stage =
         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
@@ -2071,6 +2105,7 @@ void Renderer::shutdown() {
     strategic_icon_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);
     selection_info_renderer_.destroy(device_, allocator_);
+    profile_overlay_.destroy(device_, allocator_);
     font_cache_.destroy(device_, allocator_);
     mesh_cache_.destroy(device_, allocator_);
     texture_cache_.destroy(device_, allocator_);

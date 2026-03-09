@@ -331,6 +331,7 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--enhance-wreck-test` | Enhancement mesh switching + wreckage desaturation |
 | `--vfx-render-test` | VFX particle rendering (emitter billboards, beam lines) |
 | `--transport-silo-test` | Transport cargo dots + nuke/tactical silo ammo indicators |
+| `--profile-test` | Profiler system (zones, nesting, rolling stats) |
 
 ## Project Structure
 
