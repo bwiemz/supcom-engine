@@ -163,8 +163,33 @@ void Unit::clear_on_given_callbacks(lua_State* L) {
     on_given_callbacks_.clear();
 }
 
+void Unit::begin_dying(f32 duration) {
+    dying_ = true;
+    death_timer_ = duration;
+    death_duration_ = duration;
+    command_queue_.clear();
+    set_do_not_target(true);
+}
+
+void Unit::tick_dying(f32 dt) {
+    if (!dying_) return;
+    death_timer_ -= dt;
+    if (death_timer_ <= 0.0f) {
+        death_timer_ = 0.0f;
+        set_is_wreckage(true);
+        dying_ = false;
+    }
+}
+
 void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) return;
+
+    // Dying units only tick manipulators (for death animation) — skip everything else
+    if (dying_) {
+        tick_dying(static_cast<f32>(dt));
+        tick_manipulators(static_cast<f32>(dt), ctx.L);
+        return;
+    }
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 

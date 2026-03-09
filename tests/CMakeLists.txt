@@ -9,6 +9,7 @@ add_executable(osc_tests
     test_normal_overlay.cpp
     test_frustum.cpp
     test_lod.cpp
+    test_death_anim.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

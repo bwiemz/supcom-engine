@@ -319,6 +319,12 @@ public:
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
+    // Death animation state
+    bool is_dying() const { return dying_; }
+    f32 death_timer() const { return death_timer_; }
+    void begin_dying(f32 duration);
+    void tick_dying(f32 dt);
+
     // Damage/kill flags
     bool can_take_damage() const { return can_take_damage_; }
     void set_can_take_damage(bool b) { can_take_damage_ = b; }
@@ -512,6 +518,10 @@ private:
     std::unordered_set<std::string> build_restrictions_;
     // Elevation override
     f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
+    // Death animation
+    bool dying_ = false;
+    f32 death_timer_ = 0.0f;
+    f32 death_duration_ = 0.0f;
     // OnGiven callbacks (Lua registry refs)
     std::vector<int> on_given_callbacks_;
 };
