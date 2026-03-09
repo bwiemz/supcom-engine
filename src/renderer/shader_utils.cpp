@@ -46,6 +46,7 @@ const char* terrain_vert = R"glsl(
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
+    float _pad0, _pad1;   // explicit padding to match vec4 alignment
     vec4 scales0_3;
     vec4 scales4_7;
     vec4 scales8_pad;
@@ -73,6 +74,7 @@ const char* terrain_frag = R"glsl(
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
+    float _pad0, _pad1;   // explicit padding to match vec4 alignment
     vec4 scales0_3;
     vec4 scales4_7;
     vec4 scales8_pad;
@@ -107,6 +109,9 @@ layout(set = 0, binding = 19) uniform sampler2D normalMap8;
 
 // Fog of war (binding 20)
 layout(set = 0, binding = 20) uniform sampler2D fogMap;
+
+// Normal overlay from baked decal normal maps (binding 21)
+layout(set = 0, binding = 21) uniform sampler2D normalOverlay;
 
 // Shadow map (set=1)
 layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
@@ -217,6 +222,20 @@ void main() {
     blendedTangentNormal = mix(blendedTangentNormal, n7, b1.b);
     blendedTangentNormal = mix(blendedTangentNormal, n8, b1.a);
     blendedTangentNormal = normalize(blendedTangentNormal);
+
+    // Apply baked normal overlay from decal normal maps
+    {
+        vec2 overlayUV = fragWorldXZ / vec2(pc.mapWidth, pc.mapHeight);
+        vec2 overlayVal = texture(normalOverlay, overlayUV).rg;
+        // Decode from [0,1] RGBA8 back to [-1,1] perturbation
+        vec2 perturbation = overlayVal * 2.0 - 1.0;
+        // Only apply if non-neutral (avoid perturbing where no decals exist)
+        if (abs(perturbation.x) > 0.004 || abs(perturbation.y) > 0.004) {
+            blendedTangentNormal.x += perturbation.x;
+            blendedTangentNormal.y += perturbation.y;
+            blendedTangentNormal = normalize(blendedTangentNormal);
+        }
+    }
 
     // TBN: terrain UV is world-XZ-aligned, so T=(1,0,0), B=(0,0,1)
     // Gram-Schmidt orthogonalize against vertex normal for slopes
@@ -540,12 +559,17 @@ layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec3 fragWorldPos;
 
 void main() {
-    // Blend-weight skeletal skinning: up to 4 bone influences per vertex
-    uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
-    mat4 bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
-              + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
-              + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
-              + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
+    // Blend-weight skeletal skinning: skip for unskinned meshes (bonesPerInst == 0)
+    mat4 bone;
+    if (pc.bonesPerInst > 0u) {
+        uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
+        bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
+             + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
+             + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
+             + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
+    } else {
+        bone = mat4(1.0); // identity — no skinning for props/unskinned meshes
+    }
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.viewProj * worldPos;
@@ -748,11 +772,16 @@ layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
 } boneSSBO;
 
 void main() {
-    uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
-    mat4 bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
-              + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
-              + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
-              + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
+    mat4 bone;
+    if (pc.bonesPerInst > 0u) {
+        uint base = pc.boneBase + uint(gl_InstanceIndex) * pc.bonesPerInst;
+        bone = inBoneWeights[0] * boneSSBO.bones[base + inBoneIndices[0]]
+             + inBoneWeights[1] * boneSSBO.bones[base + inBoneIndices[1]]
+             + inBoneWeights[2] * boneSSBO.bones[base + inBoneIndices[2]]
+             + inBoneWeights[3] * boneSSBO.bones[base + inBoneIndices[3]];
+    } else {
+        bone = mat4(1.0);
+    }
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.lightViewProj * worldPos;
