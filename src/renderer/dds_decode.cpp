@@ -1,6 +1,5 @@
 #include "renderer/dds_decode.hpp"
 
-#include <algorithm>
 #include <cstring>
 
 namespace osc::renderer {
