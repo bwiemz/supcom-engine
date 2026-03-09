@@ -1,4 +1,5 @@
 #include "renderer/particle_system.hpp"
+#include "renderer/frustum.hpp"
 
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
@@ -232,12 +233,22 @@ void ParticleSystem::update(f32 dt) {
 // ---------------------------------------------------------------------------
 
 const std::vector<ParticleInstance>&
-ParticleSystem::build_instances(f32 /*cam_x*/, f32 /*cam_y*/, f32 /*cam_z*/) {
+ParticleSystem::build_instances(f32 /*cam_x*/, f32 /*cam_y*/, f32 /*cam_z*/,
+                               const Frustum* frustum) {
     instances_.clear();
     instances_.reserve(particle_count());
 
     for (const auto& es : emitters_) {
         if (!es.blueprint) continue;
+
+        // Frustum cull: skip entire emitter if origin is outside frustum
+        if (frustum) {
+            f32 max_spread = 50.0f; // conservative: particles drift from origin
+            if (!frustum->is_sphere_visible(es.origin_x, es.origin_y, es.origin_z,
+                                             max_spread)) {
+                continue;
+            }
+        }
         const auto& bp = *es.blueprint;
 
         u32 frame_count = bp.texture_frame_count;

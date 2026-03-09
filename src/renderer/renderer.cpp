@@ -1541,7 +1541,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     f32 p_eye_x, p_eye_y, p_eye_z;
     camera_.eye_position(p_eye_x, p_eye_y, p_eye_z);
     const auto& particle_instances = particle_system_.build_instances(
-        p_eye_x, p_eye_y, p_eye_z);
+        p_eye_x, p_eye_y, p_eye_z, &frustum);
     particle_renderer_.update(particle_instances, particle_system_, texture_cache_, fi);
 
     // Update minimap (terrain bg, unit dots, camera frustum box)

@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "renderer/emitter_blueprint.hpp"
+#include "renderer/frustum.hpp"
 
 #include <vector>
 
@@ -68,7 +69,8 @@ public:
     /// Build GPU instance buffer data from live particles.
     /// Call after update(). Returns the instance array for upload.
     const std::vector<ParticleInstance>& build_instances(
-        f32 cam_x, f32 cam_y, f32 cam_z);
+        f32 cam_x, f32 cam_y, f32 cam_z,
+        const Frustum* frustum = nullptr);
 
     u32 emitter_count() const { return static_cast<u32>(emitters_.size()); }
     u32 particle_count() const;
