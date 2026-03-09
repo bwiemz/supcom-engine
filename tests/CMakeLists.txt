@@ -8,6 +8,7 @@ add_executable(osc_tests
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp
+    test_lod.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
