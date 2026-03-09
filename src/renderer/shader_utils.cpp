@@ -240,14 +240,18 @@ void main() {
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
 
+    // Fill light from opposite side to soften steep slope darkness
+    vec3 fillDir = normalize(vec3(-0.4, 0.6, -0.2));
+    float fillNdotL = max(dot(worldNormal, fillDir), 0.0);
+
     // Hemisphere ambient: warm sunlit sky from above, cool shadow from below
     vec3 skyColor = vec3(0.55, 0.52, 0.48);
-    vec3 groundColor = vec3(0.25, 0.24, 0.22);
+    vec3 groundColor = vec3(0.30, 0.28, 0.26);
     float hemi = worldNormal.y * 0.5 + 0.5; // remap [-1,1] to [0,1]
-    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.45;
+    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.50;
 
-    // Diffuse
-    vec3 diffuse = vec3(0.65) * NdotL * shadow;
+    // Diffuse (main sun + fill light)
+    vec3 diffuse = vec3(0.55) * NdotL * shadow + vec3(0.15) * fillNdotL;
 
     // Blinn-Phong specular on terrain (subtle)
     vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
@@ -431,11 +435,15 @@ layout(location = 2) in vec3 fragNormal;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    // Depth-based color: shallow = light teal, deep = dark blue
+    // Depth-based color: FA-style teal shallow to dark blue deep
     float d = clamp(fragDepth / 12.0, 0.0, 1.0);
-    vec3 shallowColor = vec3(0.15, 0.45, 0.55);
-    vec3 deepColor    = vec3(0.03, 0.10, 0.30);
-    vec3 waterColor   = mix(shallowColor, deepColor, d);
+    vec3 shallowColor = vec3(0.12, 0.38, 0.42);
+    vec3 midColor     = vec3(0.06, 0.22, 0.38);
+    vec3 deepColor    = vec3(0.02, 0.08, 0.22);
+    // Two-stage depth gradient for richer transitions
+    vec3 waterColor = d < 0.4
+        ? mix(shallowColor, midColor, d / 0.4)
+        : mix(midColor, deepColor, (d - 0.4) / 0.6);
 
     // Sun direction (same as terrain/mesh shaders)
     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
@@ -443,22 +451,39 @@ void main() {
 
     // Diffuse shading on water surface
     float NdotL = max(dot(N, lightDir), 0.0);
-    waterColor *= 0.7 + 0.3 * NdotL;
+    waterColor *= 0.75 + 0.25 * NdotL;
 
-    // Fresnel-based specular (sun glint)
+    // View-dependent effects
     vec3 eyePos = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
     vec3 viewDir = normalize(eyePos - fragWorldPos);
     vec3 halfDir = normalize(lightDir + viewDir);
     float NdotH = max(dot(N, halfDir), 0.0);
-    float spec = pow(NdotH, 64.0) * 0.8;
+    float NdotV = max(dot(viewDir, N), 0.0);
 
-    // Fresnel: more reflection at grazing angles
-    float fresnel = pow(1.0 - max(dot(viewDir, N), 0.0), 3.0) * 0.4;
+    // Sun specular: tight highlight + broader sun streak
+    float specTight = pow(NdotH, 128.0) * 1.2;
+    float specBroad = pow(NdotH, 16.0) * 0.15;
+    float spec = specTight + specBroad;
 
-    waterColor += vec3(spec + fresnel);
+    // Fresnel: Schlick approximation — more reflective at grazing angles
+    float fresnel = 0.02 + 0.40 * pow(1.0 - NdotV, 4.0);
+
+    // Sky reflection color (tinted blue, stronger at grazing angles)
+    vec3 skyReflect = vec3(0.35, 0.45, 0.58) * fresnel;
+    waterColor = mix(waterColor, skyReflect, fresnel);
+    waterColor += vec3(1.0, 0.95, 0.85) * spec;
+
+    // Animated caustic-like pattern on shallow water (subtle)
+    float caustic1 = sin(fragWorldPos.x * 0.5 + pc.time * 0.8)
+                   * cos(fragWorldPos.z * 0.6 - pc.time * 0.5);
+    float caustic2 = sin(fragWorldPos.x * 0.3 - pc.time * 0.6)
+                   * cos(fragWorldPos.z * 0.4 + pc.time * 0.7);
+    float caustic = (caustic1 + caustic2) * 0.5;
+    float causticMask = (1.0 - d) * 0.08; // only visible in shallow water
+    waterColor += vec3(caustic * causticMask);
 
     // Shore foam: white band where depth is very shallow
-    float foam = smoothstep(0.8, 0.0, fragDepth) * 0.4;
+    float foam = smoothstep(0.8, 0.0, fragDepth) * 0.35;
     // Animated foam sparkle
     float sparkle = sin(fragWorldPos.x * 2.0 + pc.time * 3.0)
                   * cos(fragWorldPos.z * 2.5 + pc.time * 2.0);
@@ -466,7 +491,7 @@ void main() {
     waterColor += vec3(foam);
 
     // Alpha: more opaque in deep water, semi-transparent at shore
-    float alpha = mix(0.45, 0.85, d);
+    float alpha = mix(0.50, 0.88, d);
 
     // Atmospheric distance fog
     float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);

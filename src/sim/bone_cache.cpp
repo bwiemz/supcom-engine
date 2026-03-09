@@ -5,6 +5,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 extern "C" {
 #include "lua.h"
 }
@@ -90,6 +92,10 @@ std::string BoneCache::resolve_mesh_path(const std::string& bp_id,
     lua_pop(L, 3); // MeshBlueprint + Display + bp_table
 
     if (mesh_bp_id.empty()) return {};
+
+    // __blueprints keys are lowercased — normalize before lookup
+    std::transform(mesh_bp_id.begin(), mesh_bp_id.end(), mesh_bp_id.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
 
     // Look up mesh blueprint in __blueprints global
     lua_pushstring(L, "__blueprints");
