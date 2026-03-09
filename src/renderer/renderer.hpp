@@ -19,6 +19,7 @@
 #include "renderer/particle_system.hpp"
 #include "renderer/particle_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
+#include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
 

@@ -8,6 +8,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "map/terrain.hpp"
+#include "renderer/normal_overlay.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/visibility_grid.hpp"
 
@@ -209,11 +210,11 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_);
     }
 
-    // Terrain texture descriptor set layout (set=0: 21 combined image samplers)
-    // bindings 0-1: blend maps, 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war
+    // Terrain texture descriptor set layout (set=0: 22 combined image samplers)
+    // bindings 0-1: blend maps, 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: normal overlay
     {
-        std::array<VkDescriptorSetLayoutBinding, 21> terrain_bindings{};
-        for (u32 i = 0; i < 21; i++) {
+        std::array<VkDescriptorSetLayoutBinding, 22> terrain_bindings{};
+        for (u32 i = 0; i < 22; i++) {
             terrain_bindings[i].binding = i;
             terrain_bindings[i].descriptorType =
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -287,7 +288,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 bool Renderer::create_swapchain(u32 width, u32 height) {
     vkb::SwapchainBuilder builder(physical_device_, device_, surface_);
     auto sc_ret = builder
-        .set_desired_format({VK_FORMAT_B8G8R8A8_SRGB,
+        .set_desired_format({VK_FORMAT_B8G8R8A8_UNORM,
                              VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
         .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(width, height)
@@ -672,14 +673,14 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
-        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + 3*vec4 scales(48) + eye(12) = 132B
+        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + 3*vec4 scales(48) + eye(12) = 140B
         terrain_pipeline_ = PipelineBuilder()
             .set_shaders(tv, tf)
             .set_vertex_input(&binding, 1, attrs.data(),
                               static_cast<u32>(attrs.size()))
             .set_depth_test(true, true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(132,
+            .set_push_constant(140,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
             .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
@@ -1108,7 +1109,7 @@ void Renderer::build_scene(const sim::SimState& sim,
         // Create descriptor pool and set
         VkDescriptorPoolSize pool_size{};
         pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_size.descriptorCount = 21;
+        pool_size.descriptorCount = 22;
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1180,6 +1181,80 @@ void Renderer::build_scene(const sim::SimState& sim,
             fog_write.pImageInfo = &fog_info;
             vkUpdateDescriptorSets(device_, 1, &fog_write, 0, nullptr);
         }
+    }
+
+    // Bake and upload normal overlay from type-2 decals
+    {
+        auto& nd = terrain->normal_decals();
+        u32 ow = terrain->map_width();
+        u32 oh = terrain->map_height();
+
+        // Convert map::NormalDecalInfo to renderer::NormalDecalInfo
+        std::vector<renderer::NormalDecalInfo> render_decals;
+        render_decals.reserve(nd.size());
+        for (auto& d : nd) {
+            render_decals.push_back({d.texture_path, d.position_x, d.position_z,
+                                     d.scale_x, d.scale_z, d.rotation_y});
+        }
+
+        auto overlay = bake_normal_overlay(render_decals, ow, oh, vfs);
+
+        // Encode float perturbations to RGBA8: R = nx*0.5+0.5, G = ny*0.5+0.5
+        // Neutral = (128, 128, 0, 255)
+        std::vector<u8> rgba(ow * oh * 4);
+        for (u32 i = 0; i < ow * oh; i++) {
+            f32 nx = overlay.pixels[i * 2 + 0];
+            f32 ny = overlay.pixels[i * 2 + 1];
+            rgba[i * 4 + 0] = static_cast<u8>(
+                std::clamp((nx * 0.5f + 0.5f) * 255.0f, 0.0f, 255.0f));
+            rgba[i * 4 + 1] = static_cast<u8>(
+                std::clamp((ny * 0.5f + 0.5f) * 255.0f, 0.0f, 255.0f));
+            rgba[i * 4 + 2] = 0;
+            rgba[i * 4 + 3] = 255;
+        }
+
+        // Use texture_cache to upload as RGBA texture
+        auto* tex = texture_cache_.upload_rgba("__normal_overlay__",
+                                               rgba.data(), ow, oh);
+
+        // Write binding 21 of terrain descriptor set
+        if (tex && terrain_tex_ds_) {
+            VkDescriptorImageInfo info{};
+            info.sampler = texture_sampler_;
+            info.imageView = tex->image.view;
+            info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = terrain_tex_ds_;
+            write.dstBinding = 21;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        } else if (terrain_tex_ds_) {
+            // No normal decals or upload failed — bind fallback (neutral)
+            u8 neutral[] = {128, 128, 0, 255};
+            auto* fb = texture_cache_.upload_rgba("__normal_overlay__",
+                                                  neutral, 1, 1);
+            if (fb) {
+                VkDescriptorImageInfo info{};
+                info.sampler = texture_sampler_;
+                info.imageView = fb->image.view;
+                info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+                VkWriteDescriptorSet write{};
+                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                write.dstSet = terrain_tex_ds_;
+                write.dstBinding = 21;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                write.pImageInfo = &info;
+                vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            }
+        }
+
+        spdlog::info("Normal overlay: {}x{} ({} decals baked)", ow, oh, nd.size());
     }
 
     // Build decal quad mesh + instance buffer + populate stored decals
@@ -1307,9 +1382,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         VK_NULL_HANDLE, &image_index);
 
     if (acq_result == VK_ERROR_OUT_OF_DATE_KHR) {
-        vkResetFences(device_, 1, &render_fence_[fi]);
         recreate_swapchain();
-        return;
+        return;  // don't reset fence — no submission this frame
     }
 
     vkResetFences(device_, 1, &render_fence_[fi]);
@@ -1332,6 +1406,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             camera_.apply_shake(total_intensity);
         }
     }
+
+    // Finalize any async texture loads that completed this frame
+    texture_cache_.flush_uploads(4);
 
     // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
     {
@@ -1625,11 +1702,12 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj(64) + mapW(4) + mapH(4) + 3*vec4 scales(48) + eye(12) = 132B
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + pad(8) + 3*vec4 scales(48) + eye(12) = 140B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
+            f32 _pad0, _pad1;  // align scales to vec4 boundary (GLSL std430)
             f32 scales0_3[4];
             f32 scales4_7[4];
             f32 scales8_pad[4];
