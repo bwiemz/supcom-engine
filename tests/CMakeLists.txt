@@ -6,6 +6,7 @@ add_executable(osc_tests
     test_map.cpp
     test_anim_blend.cpp
     test_dds_decode.cpp
+    test_normal_overlay.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
