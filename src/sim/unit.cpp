@@ -7,6 +7,7 @@
 #include "map/pathfinding_grid.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <spdlog/spdlog.h>
 
@@ -924,6 +925,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
             set_unit_state("Sacrificing", false);
             set_health(0);
             mark_destroyed();
+            {
+                u32 eid = entity_id();
+                registry.unregister_entity(eid);
+            }
             return; // unit is dead, stop processing
         }
 
@@ -1370,6 +1375,7 @@ void Unit::call_on_reclaimed(u32 target_id, EntityRegistry& registry,
     target = registry.find(target_id);
     if (target && !target->destroyed()) {
         target->mark_destroyed();
+        registry.unregister_entity(target_id);
     }
 }
 
@@ -2408,6 +2414,15 @@ void Unit::remove_manipulator(Manipulator* m) {
 }
 
 void Unit::tick_manipulators(f32 dt, lua_State* L) {
+    // Reset bone matrices to identity before manipulators write their bones.
+    // Each animator/rotator/slider writes only the bones it owns; unowned bones
+    // stay at identity rather than carrying stale data from a previous tick.
+    static constexpr std::array<f32, 16> IDENTITY = {
+        1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    for (auto& m : animated_bone_matrices_) {
+        m = IDENTITY;
+    }
+
     for (auto& m : manipulators_) {
         if (m->is_destroyed() || !m->enabled()) continue;
         bool was_at_goal = m->is_at_goal();
