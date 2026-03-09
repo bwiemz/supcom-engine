@@ -31,6 +31,10 @@ extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)
 extern const char* particle_vert;     // 3D billboard particle (instanced)
 extern const char* particle_frag;     // textured particle with alpha/additive
+extern const char* bloom_bright_vert;     // fullscreen triangle (no VBO)
+extern const char* bloom_bright_frag;     // brightness extraction
+extern const char* bloom_blur_frag;       // separable Gaussian blur
+extern const char* bloom_composite_frag;  // additive composite
 } // namespace shaders
 
 } // namespace osc::renderer

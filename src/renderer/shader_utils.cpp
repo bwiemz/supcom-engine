@@ -953,6 +953,83 @@ void main() {
 }
 )glsl";
 
+const char* bloom_bright_vert = R"glsl(
+#version 450
+
+layout(location = 0) out vec2 fragUV;
+
+void main() {
+    fragUV = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+    gl_Position = vec4(fragUV * 2.0 - 1.0, 0.0, 1.0);
+    fragUV.y = 1.0 - fragUV.y; // flip Y for Vulkan
+}
+)glsl";
+
+const char* bloom_bright_frag = R"glsl(
+#version 450
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform sampler2D sceneTex;
+
+layout(push_constant) uniform PC {
+    float threshold;
+    float intensity;
+} pc;
+
+void main() {
+    vec3 color = texture(sceneTex, fragUV).rgb;
+    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    vec3 bright = max(color - vec3(pc.threshold), vec3(0.0));
+    outColor = vec4(bright * pc.intensity, 1.0);
+}
+)glsl";
+
+const char* bloom_blur_frag = R"glsl(
+#version 450
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform sampler2D inputTex;
+
+layout(push_constant) uniform PC {
+    vec2 direction; // (1/w, 0) for horizontal, (0, 1/h) for vertical
+} pc;
+
+void main() {
+    const float weights[5] = float[](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
+    vec3 result = texture(inputTex, fragUV).rgb * weights[0];
+    for (int i = 1; i < 5; i++) {
+        vec2 offset = pc.direction * float(i);
+        result += texture(inputTex, fragUV + offset).rgb * weights[i];
+        result += texture(inputTex, fragUV - offset).rgb * weights[i];
+    }
+    outColor = vec4(result, 1.0);
+}
+)glsl";
+
+const char* bloom_composite_frag = R"glsl(
+#version 450
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 0) out vec4 outColor;
+
+layout(set = 0, binding = 0) uniform sampler2D sceneTex;
+layout(set = 1, binding = 0) uniform sampler2D bloomTex;
+
+layout(push_constant) uniform PC {
+    float bloomStrength;
+} pc;
+
+void main() {
+    vec3 scene = texture(sceneTex, fragUV).rgb;
+    vec3 bloom = texture(bloomTex, fragUV).rgb;
+    outColor = vec4(scene + bloom * pc.bloomStrength, 1.0);
+}
+)glsl";
+
 } // namespace shaders
 
 } // namespace osc::renderer
