@@ -164,9 +164,31 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
         proj->set_blueprint_id(projectile_bp_id);
     }
 
-    // Velocity-align: set initial orientation facing fire direction.
-    // TODO: Read Physics.VelocityAlign from projectile blueprint when bp parsing exists.
+    // Velocity-align: read from projectile blueprint, default true
     proj->velocity_align = true;
+    if (L && !projectile_bp_id.empty()) {
+        lua_pushstring(L, "__blueprints");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, projectile_bp_id.c_str());
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Physics");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "VelocityAlign");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
+                        proj->velocity_align = lua_toboolean(L, -1) != 0;
+                    }
+                    lua_pop(L, 1); // VelocityAlign
+                }
+                lua_pop(L, 1); // Physics
+            }
+            lua_pop(L, 1); // bp table
+        }
+        lua_pop(L, 1); // __blueprints
+    }
     f32 heading = std::atan2(vel.x, vel.z);
     proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
 
