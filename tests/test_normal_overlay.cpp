@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "renderer/normal_overlay.hpp"
+#include "map/terrain.hpp"
 
 #include <cmath>
 #include <vector>
 
 using namespace osc;
+using namespace osc::map;
 using namespace osc::renderer;
 
 /// Build a 4x4 RGBA texture where every pixel has the same G and A values.

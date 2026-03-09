@@ -1189,15 +1189,32 @@ void Renderer::build_scene(const sim::SimState& sim,
         u32 ow = terrain->map_width();
         u32 oh = terrain->map_height();
 
-        // Convert map::NormalDecalInfo to renderer::NormalDecalInfo
-        std::vector<renderer::NormalDecalInfo> render_decals;
-        render_decals.reserve(nd.size());
-        for (auto& d : nd) {
-            render_decals.push_back({d.texture_path, d.position_x, d.position_z,
-                                     d.scale_x, d.scale_z, d.rotation_y});
-        }
+        if (nd.empty()) {
+            // No normal decals — upload 1x1 neutral fallback directly
+            if (terrain_tex_ds_) {
+                u8 neutral[] = {128, 128, 0, 255};
+                auto* fb = texture_cache_.upload_rgba("__normal_overlay__",
+                                                      neutral, 1, 1);
+                if (fb) {
+                    VkDescriptorImageInfo info{};
+                    info.sampler = texture_sampler_;
+                    info.imageView = fb->image.view;
+                    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        auto overlay = bake_normal_overlay(render_decals, ow, oh, vfs);
+                    VkWriteDescriptorSet write{};
+                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write.dstSet = terrain_tex_ds_;
+                    write.dstBinding = 21;
+                    write.descriptorCount = 1;
+                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    write.pImageInfo = &info;
+                    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+                }
+            }
+            spdlog::info("Normal overlay: no decals, using neutral fallback");
+        } else {
+
+        auto overlay = bake_normal_overlay(nd, ow, oh, vfs);
 
         // Encode float perturbations to RGBA8: R = nx*0.5+0.5, G = ny*0.5+0.5
         // Neutral = (128, 128, 0, 255)
@@ -1255,6 +1272,7 @@ void Renderer::build_scene(const sim::SimState& sim,
         }
 
         spdlog::info("Normal overlay: {}x{} ({} decals baked)", ow, oh, nd.size());
+        } // else (non-empty decals)
     }
 
     // Build decal quad mesh + instance buffer + populate stored decals

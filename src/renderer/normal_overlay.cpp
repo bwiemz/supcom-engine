@@ -29,7 +29,7 @@ void sample_dxt5nm(const DecodedTexture& tex, u32 px, u32 py, f32& nx, f32& ny) 
 
 /// Core baking logic shared by both entry points.
 NormalOverlay bake_impl(
-    const std::vector<NormalDecalInfo>& decals,
+    const std::vector<osc::map::NormalDecalInfo>& decals,
     u32 overlay_w, u32 overlay_h,
     const std::unordered_map<std::string, DecodedTexture>& textures)
 {
@@ -139,7 +139,7 @@ NormalOverlay bake_impl(
 } // anonymous namespace
 
 NormalOverlay bake_normal_overlay(
-    const std::vector<NormalDecalInfo>& decals,
+    const std::vector<osc::map::NormalDecalInfo>& decals,
     u32 overlay_w, u32 overlay_h,
     vfs::VirtualFileSystem* vfs)
 {
@@ -187,7 +187,7 @@ NormalOverlay bake_normal_overlay(
 }
 
 NormalOverlay bake_normal_overlay_with_predecoded(
-    const std::vector<NormalDecalInfo>& decals,
+    const std::vector<osc::map::NormalDecalInfo>& decals,
     u32 overlay_w, u32 overlay_h,
     const std::vector<PredecodedNormal>& predecoded)
 {
