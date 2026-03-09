@@ -9,6 +9,7 @@
 #include "sim/entity.hpp"
 #include "map/terrain.hpp"
 #include "renderer/normal_overlay.hpp"
+#include "renderer/frustum.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/visibility_grid.hpp"
 
@@ -1428,11 +1429,17 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // Finalize any async texture loads that completed this frame
     texture_cache_.flush_uploads(4);
 
-    // Update unit instances (mesh + cube fallback + texture resolution + prop culling)
+    // View-projection matrix (computed early for frustum culling)
+    f32 aspect = static_cast<f32>(window_width_) /
+                 static_cast<f32>(window_height_);
+    auto vp = camera_.view_proj(aspect);
+    Frustum frustum(vp);
+
+    // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
         unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
-                              selected_ids);
+                              selected_ids, &frustum);
     }
 
     // Build preview ghost — render a semi-transparent mesh at the cursor
@@ -1511,11 +1518,6 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                             static_cast<f32>(ui_dispatch_.mouse_x()),
                             static_cast<f32>(ui_dispatch_.mouse_y()));
     }
-
-    // View-projection matrix
-    f32 aspect = static_cast<f32>(window_width_) /
-                 static_cast<f32>(window_height_);
-    auto vp = camera_.view_proj(aspect);
 
     // Stage fog of war data from visibility grid (CPU side)
     if (fog_enabled_ && fog_renderer_.initialized() && sim.visibility_grid()) {

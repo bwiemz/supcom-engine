@@ -2,6 +2,7 @@
 
 #include "renderer/vk_types.hpp"
 #include "renderer/mesh_cache.hpp"
+#include "renderer/frustum.hpp"
 #include "core/types.hpp"
 
 #include <string>
@@ -61,7 +62,8 @@ public:
     void update(const sim::SimState& sim, MeshCache& mesh_cache,
                 lua_State* L, TextureCache* tex_cache = nullptr,
                 const Camera* camera = nullptr,
-                const std::unordered_set<u32>* selected_ids = nullptr);
+                const std::unordered_set<u32>* selected_ids = nullptr,
+                const Frustum* frustum = nullptr);
 
     void destroy(VkDevice device, VmaAllocator allocator);
 

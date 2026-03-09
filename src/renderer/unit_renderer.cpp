@@ -208,7 +208,8 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
 void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                            lua_State* L, TextureCache* tex_cache,
                            const Camera* camera,
-                           const std::unordered_set<u32>* selected_ids) {
+                           const std::unordered_set<u32>* selected_ids,
+                           const Frustum* frustum) {
     mesh_groups_.clear();
 
     if (!cube_instance_mapped_[fi_] || !mesh_instance_mapped_[fi_]) return;
@@ -220,14 +221,7 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
     u32 cube_count = 0;
     u32 mesh_count = 0;
 
-    // Camera eye XZ for ground-plane distance culling (props only)
-    f32 cam_x = 0, cam_z = 0;
-    constexpr f32 PROP_CULL_DIST_SQ = 600.0f * 600.0f;
-    if (camera) {
-        f32 cam_y = 0;
-        camera->eye_position(cam_x, cam_y, cam_z);
-        (void)cam_y; // XZ-only culling is intentional for RTS ground-plane
-    }
+    // Frustum culling replaces old distance-only prop culling
 
     // Per-instance bone info (parallel to mesh_groups entries)
     struct InstanceBones {
@@ -248,11 +242,20 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         if (cube_count + mesh_count >= MAX_INSTANCES)
             return;
 
-        // Distance-cull props (units always render)
-        if (entity.is_prop() && camera) {
-            f32 dx = entity.position().x - cam_x;
-            f32 dz = entity.position().z - cam_z;
-            if (dx * dx + dz * dz > PROP_CULL_DIST_SQ) return;
+        // Frustum cull all entities (units, props, projectiles)
+        if (frustum) {
+            f32 bound_radius = 5.0f; // default for projectiles
+            if (entity.is_unit()) {
+                auto* unit = static_cast<const sim::Unit*>(&entity);
+                f32 fp = unit->footprint_size_x();
+                bound_radius = std::max(fp * 0.5f, 2.0f);
+            } else if (entity.is_prop()) {
+                bound_radius = std::max(entity.scale_x() * 2.0f, 2.0f);
+            }
+            const auto& pos = entity.position();
+            if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, bound_radius)) {
+                return;
+            }
         }
 
         f32 r, g, b, a;
