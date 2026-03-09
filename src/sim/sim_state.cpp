@@ -140,13 +140,6 @@ const BlipSnapshot* SimState::get_blip_snapshot(u32 entity_id,
     return snap.entity_army >= 0 ? &snap : nullptr;
 }
 
-void SimState::mark_entity_dead_in_cache(u32 entity_id) {
-    auto it = blip_cache_.find(entity_id);
-    if (it == blip_cache_.end()) return;
-    for (auto& snap : it->second)
-        snap.entity_dead = true;
-}
-
 // --- Stealth-aware intel query helpers ---
 
 bool SimState::has_effective_radar(const Entity* entity,

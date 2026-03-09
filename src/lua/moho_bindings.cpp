@@ -777,6 +777,16 @@ static int entity_Destroy(lua_State* L) {
                 sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());
         }
 
+        // If dying unit was capturing, clear being_captured on its target
+        if (e->is_unit()) {
+            auto* dying_unit = static_cast<sim::Unit*>(e);
+            if (dying_unit->is_capturing()) {
+                auto* sim = get_sim(L);
+                if (sim)
+                    dying_unit->stop_capturing(L, sim->entity_registry(), true);
+            }
+        }
+
         e->mark_destroyed();
 
         // If this is a unit, clean up weapon Lua refs before freeing

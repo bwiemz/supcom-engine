@@ -254,9 +254,6 @@ public:
     /// Look up cached blip snapshot for a specific entity+army pair.
     const BlipSnapshot* get_blip_snapshot(u32 entity_id, u32 army) const;
 
-    /// Mark entity as dead in all army blip cache entries.
-    void mark_entity_dead_in_cache(u32 entity_id);
-
     /// Stealth-aware intel queries (check RadarStealth/SonarStealth).
     bool has_effective_radar(const Entity* entity, u32 req_army) const;
     bool has_effective_sonar(const Entity* entity, u32 req_army) const;

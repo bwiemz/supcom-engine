@@ -248,7 +248,7 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             if (entity.is_unit()) {
                 auto* unit = static_cast<const sim::Unit*>(&entity);
                 f32 fp = unit->footprint_size_x();
-                bound_radius = std::max(fp * 0.5f, 2.0f);
+                bound_radius = std::max(fp * 1.5f, 5.0f);
             } else if (entity.is_prop()) {
                 bound_radius = std::max(entity.scale_x() * 2.0f, 2.0f);
             }

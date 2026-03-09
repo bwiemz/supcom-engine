@@ -123,11 +123,8 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
             energy_consumption += econ.consumption_energy;
         }
 
-        if (econ.maintenance_active) {
-            f64 maint_energy = (econ.energy_maintenance_override >= 0.0)
-                                   ? econ.energy_maintenance_override
-                                   : econ.consumption_energy;
-            energy_consumption += maint_energy;
+        if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0) {
+            energy_consumption += econ.energy_maintenance_override;
         }
 
         // Storage contribution always counted
