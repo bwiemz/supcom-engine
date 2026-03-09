@@ -56,19 +56,24 @@ void MinimapRenderer::init(VkDevice device, VmaAllocator allocator) {
     VmaAllocationCreateInfo alloc_info{};
     alloc_info.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
     alloc_info.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    alloc_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    VmaAllocationInfo info{};
-    vmaCreateBuffer(allocator, &buf_info, &alloc_info,
-                    &instance_buf_.buffer, &instance_buf_.allocation, &info);
-    instance_mapped_ = info.pMappedData;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        VmaAllocationInfo info{};
+        vmaCreateBuffer(allocator, &buf_info, &alloc_info,
+                        &instance_buf_[i].buffer, &instance_buf_[i].allocation, &info);
+        instance_mapped_[i] = info.pMappedData;
+    }
 }
 
 void MinimapRenderer::destroy(VkDevice /*device*/, VmaAllocator allocator) {
-    if (instance_buf_.buffer)
-        vmaDestroyBuffer(allocator, instance_buf_.buffer,
-                         instance_buf_.allocation);
-    instance_buf_ = {};
-    instance_mapped_ = nullptr;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        if (instance_buf_[i].buffer)
+            vmaDestroyBuffer(allocator, instance_buf_[i].buffer,
+                             instance_buf_[i].allocation);
+        instance_buf_[i] = {};
+        instance_mapped_[i] = nullptr;
+    }
 }
 
 void MinimapRenderer::build_terrain_texture(
@@ -262,9 +267,9 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
     }
 
     // Upload to GPU
-    if (!quads_.empty() && instance_mapped_) {
+    if (!quads_.empty() && instance_mapped_[fi_]) {
         u32 count = std::min(quad_count_, MAX_MINIMAP_QUADS);
-        std::memcpy(instance_mapped_, quads_.data(),
+        std::memcpy(instance_mapped_[fi_], quads_.data(),
                     count * sizeof(UIInstance));
     }
 }
@@ -280,7 +285,7 @@ void MinimapRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
                        sizeof(f32) * 2, vp);
 
     // Bind instance buffer
-    VkBuffer buf = instance_buf_.buffer;
+    VkBuffer buf = instance_buf_[fi_].buffer;
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buf, &offset);
 

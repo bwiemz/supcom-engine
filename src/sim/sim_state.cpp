@@ -22,7 +22,16 @@ namespace osc::sim {
 SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     : L_(L), thread_manager_(L), blueprint_store_(store) {}
 
-SimState::~SimState() = default;
+SimState::~SimState() {
+    // Clear sound manager lightuserdata from Lua registry before the
+    // unique_ptr is destroyed, preventing a dangling pointer if any
+    // Lua __gc metamethods fire during VM shutdown.
+    if (L_ && sound_manager_) {
+        lua_pushstring(L_, "osc_sound_manager");
+        lua_pushnil(L_);
+        lua_rawset(L_, LUA_REGISTRYINDEX);
+    }
+}
 
 void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     terrain_ = std::move(terrain);

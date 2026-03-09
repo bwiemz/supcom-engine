@@ -88,16 +88,16 @@ public:
     /// Read Int16 array of count elements.
     std::vector<i16> read_i16_array(size_t count) {
         std::vector<i16> result(count);
-        std::memcpy(result.data(), data_ + pos_, count * 2);
-        pos_ += count * 2;
+        std::memcpy(result.data(), data_ + pos_, count * sizeof(i16));
+        pos_ += count * sizeof(i16);
         return result;
     }
 
     /// Read UInt16 array of count elements.
     std::vector<u16> read_u16_array(size_t count) {
         std::vector<u16> result(count);
-        std::memcpy(result.data(), data_ + pos_, count * 2);
-        pos_ += count * 2;
+        std::memcpy(result.data(), data_ + pos_, count * sizeof(u16));
+        pos_ += count * sizeof(u16);
         return result;
     }
 

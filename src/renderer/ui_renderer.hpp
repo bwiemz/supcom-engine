@@ -66,9 +66,12 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    void set_frame_index(u32 fi) { fi_ = fi; }
+
     u32 quad_count() const { return quad_count_; }
 
     static constexpr u32 MAX_UI_QUADS = 2048;
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// Read a LazyVar float from a control's Lua table.
     static f32 read_lazyvar(lua_State* L, int table_idx, const char* field);
@@ -114,8 +117,9 @@ private:
     void emit_cursor_quad(lua_State* L, TextureCache& tex_cache,
                           u32 vp_w, u32 vp_h, const ClipRect& viewport_clip);
 
-    AllocatedBuffer instance_buf_{};
-    void* instance_mapped_ = nullptr;
+    AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    u32 fi_ = 0;
 
     struct QuadEntry {
         UIInstance inst;

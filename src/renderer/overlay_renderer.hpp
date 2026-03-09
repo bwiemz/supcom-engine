@@ -38,9 +38,12 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    void set_frame_index(u32 fi) { fi_ = fi; }
+
     u32 quad_count() const { return quad_count_; }
 
     static constexpr u32 MAX_OVERLAY_QUADS = 8192;
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
     /// Project world position to screen pixel coordinates.
@@ -53,8 +56,9 @@ private:
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a);
 
-    AllocatedBuffer instance_buf_{};
-    void* instance_mapped_ = nullptr;
+    AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    u32 fi_ = 0;
 
     std::vector<UIInstance> quads_;
     u32 quad_count_ = 0;

@@ -37,9 +37,12 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    void set_frame_index(u32 fi) { fi_ = fi; }
+
     u32 quad_count() const { return quad_count_; }
 
     static constexpr u32 MAX_INFO_QUADS = 2048;
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
     struct DrawGroup {
@@ -74,8 +77,9 @@ private:
                           VkDescriptorSet icon_atlas_ds,
                           f32 panel_x, f32 panel_y, f32 panel_w, f32 panel_h);
 
-    AllocatedBuffer instance_buf_{};
-    void* instance_mapped_ = nullptr;
+    AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    u32 fi_ = 0;
 
     std::vector<UIInstance> quads_;
     std::vector<DrawGroup> groups_;

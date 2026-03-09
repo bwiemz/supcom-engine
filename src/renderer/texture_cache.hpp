@@ -5,7 +5,9 @@
 
 #include <vulkan/vulkan.h>
 
+#include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -35,12 +37,23 @@ public:
               vfs::VirtualFileSystem* vfs);
 
     /// Get or lazily load a GPU texture for a VFS path.
-    /// Returns nullptr if the texture cannot be loaded.
+    /// Returns nullptr if the texture is still loading or cannot be loaded.
+    /// On first miss, starts an async VFS read; call flush_uploads() each
+    /// frame to finalize completed loads.
     const GPUTexture* get(const std::string& vfs_path);
+
+    /// Synchronous load — blocks until the texture is ready.
+    /// Use for one-time init (terrain textures in build_scene).
+    const GPUTexture* get_blocking(const std::string& vfs_path);
 
     /// Get or lazily load a GPU texture from raw DDS bytes (not VFS).
     /// Key is used for caching. Returns nullptr on failure.
+    /// Always synchronous (data already in memory).
     const GPUTexture* get_raw(const std::string& key, const std::vector<char>& raw_dds);
+
+    /// Process completed async texture loads (up to max_per_frame).
+    /// Call once per frame from the render loop.
+    void flush_uploads(u32 max_per_frame = 4);
 
     /// Upload raw RGBA pixels as a cached texture.
     /// Key is used for caching. Pixels must be width*height*4 bytes.
@@ -70,8 +83,18 @@ private:
     void create_normal_fallback();
     VkDescriptorSet allocate_and_write_descriptor(VkImageView view);
 
+    const GPUTexture* finalize_load(const std::string& path,
+                                    const std::vector<char>& file_data);
+
     std::unordered_map<std::string, std::unique_ptr<GPUTexture>> cache_;
     std::unordered_set<std::string> failed_;
+
+    struct AsyncLoad {
+        std::string path;
+        std::future<std::optional<std::vector<char>>> future;
+    };
+    std::vector<AsyncLoad> async_loads_;
+    std::unordered_set<std::string> pending_;
 
     GPUTexture fallback_{};
     GPUTexture specteam_fallback_{};

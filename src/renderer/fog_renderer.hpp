@@ -33,13 +33,17 @@ public:
 
     u32 grid_width() const { return grid_width_; }
     u32 grid_height() const { return grid_height_; }
+    void set_frame_index(u32 fi) { fi_ = fi; }
+
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    u32 fi_ = 0;
     AllocatedImage image_{};
     VkImageView image_view_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
-    AllocatedBuffer staging_{};
-    u8* staging_mapped_ = nullptr;
+    AllocatedBuffer staging_[FRAMES_IN_FLIGHT] = {};
+    u8* staging_mapped_[FRAMES_IN_FLIGHT] = {};
     std::vector<u8> raw_grid_;   // unblurred visibility data
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;

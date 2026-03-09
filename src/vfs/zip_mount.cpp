@@ -68,6 +68,9 @@ std::optional<std::vector<char>> ZipMount::read_file(
         return std::nullopt;
     }
 
+    // Lock for the entire locate→open→read→close sequence (zip_handle_ is stateful)
+    std::lock_guard<std::mutex> lock(zip_mutex_);
+
     // Locate file in the ZIP by its original name
     if (unzLocateFile(static_cast<unzFile>(zip_handle_),
                       it->second.original_name.c_str(), 2) != UNZ_OK) {

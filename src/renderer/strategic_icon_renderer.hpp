@@ -52,6 +52,8 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    void set_frame_index(u32 fi) { fi_ = fi; }
+
     u32 quad_count() const { return quad_count_; }
     bool is_strategic_zoom() const { return strategic_zoom_active_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
@@ -59,6 +61,7 @@ public:
     /// Camera distance threshold for switching to strategic icons.
     static constexpr f32 ZOOM_THRESHOLD = 250.0f;
     static constexpr u32 MAX_ICON_QUADS = 4096;
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// Classify a unit into an icon type based on its categories.
     static StrategicIconType classify_unit(const sim::Unit& unit);
@@ -85,8 +88,9 @@ private:
                                 u32 cell_x, u32 cell_y, u32 cell_size,
                                 StrategicIconType type);
 
-    AllocatedBuffer instance_buf_{};
-    void* instance_mapped_ = nullptr;
+    AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    u32 fi_ = 0;
 
     std::vector<UIInstance> quads_;
     u32 quad_count_ = 0;

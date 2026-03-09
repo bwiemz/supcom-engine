@@ -89,6 +89,7 @@ public:
     bool is_mouse_pressed(int glfw_button) const;
 
     static constexpr u32 SHADOW_MAP_SIZE = 4096;
+    static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
     bool create_swapchain(u32 width, u32 height);
@@ -118,7 +119,7 @@ private:
 
     // Swapchain
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
-    VkFormat swapchain_format_ = VK_FORMAT_B8G8R8A8_SRGB;
+    VkFormat swapchain_format_ = VK_FORMAT_B8G8R8A8_UNORM;
     std::vector<VkImage> swapchain_images_;
     std::vector<VkImageView> swapchain_image_views_;
 
@@ -130,14 +131,14 @@ private:
     VkRenderPass render_pass_ = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers_;
 
-    // Command pool & buffer
+    // Command pool & per-frame command buffers
     VkCommandPool cmd_pool_ = VK_NULL_HANDLE;
-    VkCommandBuffer cmd_buf_ = VK_NULL_HANDLE;
+    VkCommandBuffer cmd_buf_[FRAMES_IN_FLIGHT] = {};
 
-    // Sync
-    VkFence render_fence_ = VK_NULL_HANDLE;
-    VkSemaphore present_semaphore_ = VK_NULL_HANDLE;
-    VkSemaphore render_semaphore_ = VK_NULL_HANDLE;
+    // Per-frame sync objects
+    VkFence render_fence_[FRAMES_IN_FLIGHT] = {};
+    VkSemaphore present_semaphore_[FRAMES_IN_FLIGHT] = {};
+    VkSemaphore render_semaphore_[FRAMES_IN_FLIGHT] = {};
 
     // Pipelines
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;
@@ -155,10 +156,10 @@ private:
     VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
     VkSampler texture_sampler_ = VK_NULL_HANDLE;
 
-    // Bone SSBO infrastructure (set=1 for mesh pipeline)
+    // Bone SSBO infrastructure (set=1 for mesh pipeline, per-frame)
     VkDescriptorSetLayout bone_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet bone_ds_ = VK_NULL_HANDLE;
+    VkDescriptorSet bone_ds_[FRAMES_IN_FLIGHT] = {};
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
@@ -194,8 +195,8 @@ private:
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};
     AllocatedBuffer decal_quad_indices_{};
-    AllocatedBuffer decal_instance_buf_{};
-    void* decal_instance_mapped_ = nullptr;
+    AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
 
     struct StoredDecal {
         std::string texture_path;
@@ -233,10 +234,13 @@ private:
 
     VkDescriptorSetLayout shadow_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool shadow_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet shadow_ds_ = VK_NULL_HANDLE;
+    VkDescriptorSet shadow_ds_[FRAMES_IN_FLIGHT] = {};
 
-    AllocatedBuffer light_ubo_{};
-    void* light_ubo_mapped_ = nullptr;
+    AllocatedBuffer light_ubo_[FRAMES_IN_FLIGHT] = {};
+    void* light_ubo_mapped_[FRAMES_IN_FLIGHT] = {};
+
+    // Frame-in-flight tracking
+    u32 frame_index_ = 0;
 
     // Cleanup
     DeletionQueue deletion_queue_;

@@ -3,6 +3,7 @@
 #include "vfs/mount_point.hpp"
 
 #include <filesystem>
+#include <mutex>
 #include <unordered_map>
 
 namespace osc::vfs {
@@ -35,6 +36,7 @@ private:
 
     std::filesystem::path archive_path_;
     void* zip_handle_ = nullptr; // unzFile from minizip
+    mutable std::mutex zip_mutex_; // protects zip_handle_ for concurrent reads
 
     /// Index of all files in the archive, keyed by lowercase normalized path.
     std::unordered_map<std::string, ZipEntryInfo> entries_;

@@ -142,6 +142,7 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
         alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
         alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
                          VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
         VmaAllocationInfo info{};
         vmaCreateBuffer(allocator, &ci, &alloc_ci,
@@ -149,12 +150,14 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
         mapped = info.pMappedData;
     };
 
-    create_instance_buf(cube_instance_buf_, cube_instance_mapped_,
-                        sizeof(CubeInstance));
-    create_instance_buf(mesh_instance_buf_, mesh_instance_mapped_,
-                        sizeof(MeshInstance));
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        create_instance_buf(cube_instance_buf_[i], cube_instance_mapped_[i],
+                            sizeof(CubeInstance));
+        create_instance_buf(mesh_instance_buf_[i], mesh_instance_mapped_[i],
+                            sizeof(MeshInstance));
+    }
 
-    // Bone SSBO (persistently mapped, for GPU skinning)
+    // Bone SSBO (persistently mapped, for GPU skinning, per-frame)
     {
         VkBufferCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -167,11 +170,15 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
         alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
         alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
                          VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+        alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-        VmaAllocationInfo info{};
-        vmaCreateBuffer(allocator, &ci, &alloc_ci,
-                        &bone_ssbo_.buffer, &bone_ssbo_.allocation, &info);
-        bone_ssbo_mapped_ = info.pMappedData;
+        for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+            VmaAllocationInfo info{};
+            vmaCreateBuffer(allocator, &ci, &alloc_ci,
+                            &bone_ssbo_[i].buffer, &bone_ssbo_[i].allocation,
+                            &info);
+            bone_ssbo_mapped_[i] = info.pMappedData;
+        }
     }
 }
 
@@ -199,12 +206,12 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                            const std::unordered_set<u32>* selected_ids) {
     mesh_groups_.clear();
 
-    if (!cube_instance_mapped_ || !mesh_instance_mapped_) return;
+    if (!cube_instance_mapped_[fi_] || !mesh_instance_mapped_[fi_]) return;
 
-    auto* cube_instances = static_cast<CubeInstance*>(cube_instance_mapped_);
-    auto* mesh_instances = static_cast<MeshInstance*>(mesh_instance_mapped_);
-    auto* bone_data = bone_ssbo_mapped_
-                          ? static_cast<f32*>(bone_ssbo_mapped_) : nullptr;
+    auto* cube_instances = static_cast<CubeInstance*>(cube_instance_mapped_[fi_]);
+    auto* mesh_instances = static_cast<MeshInstance*>(mesh_instance_mapped_[fi_]);
+    auto* bone_data = bone_ssbo_mapped_[fi_]
+                          ? static_cast<f32*>(bone_ssbo_mapped_[fi_]) : nullptr;
     u32 cube_count = 0;
     u32 mesh_count = 0;
 
@@ -411,14 +418,14 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
                                  f32 r, f32 g, f32 b, f32 a,
                                  TextureCache* tex_cache) {
-    if (!mesh || !mesh_instance_mapped_) return false;
+    if (!mesh || !mesh_instance_mapped_[fi_]) return false;
 
     // Count total instances already used
     u32 total = 0;
     for (auto& g : mesh_groups_) total += g.instance_count;
     if (total >= MAX_INSTANCES) return false;
 
-    auto* instances = static_cast<MeshInstance*>(mesh_instance_mapped_);
+    auto* instances = static_cast<MeshInstance*>(mesh_instance_mapped_[fi_]);
     auto& inst = instances[total];
 
     // Identity rotation, uniform_scale from mesh
@@ -485,13 +492,14 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
 
     safe_destroy(cube_verts_);
     safe_destroy(cube_indices_);
-    safe_destroy(cube_instance_buf_);
-    safe_destroy(mesh_instance_buf_);
-    safe_destroy(bone_ssbo_);
-
-    cube_instance_mapped_ = nullptr;
-    mesh_instance_mapped_ = nullptr;
-    bone_ssbo_mapped_ = nullptr;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        safe_destroy(cube_instance_buf_[i]);
+        safe_destroy(mesh_instance_buf_[i]);
+        safe_destroy(bone_ssbo_[i]);
+        cube_instance_mapped_[i] = nullptr;
+        mesh_instance_mapped_[i] = nullptr;
+        bone_ssbo_mapped_[i] = nullptr;
+    }
     cube_instance_count_ = 0;
     mesh_groups_.clear();
 }

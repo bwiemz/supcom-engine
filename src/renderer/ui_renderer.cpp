@@ -33,15 +33,18 @@ void UIRenderer::init(VkDevice device, VmaAllocator allocator) {
     alloc_info.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
     alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                        VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    alloc_info.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    VmaAllocationInfo result_info{};
-    if (vmaCreateBuffer(allocator, &buf_info, &alloc_info,
-                        &instance_buf_.buffer, &instance_buf_.allocation,
-                        &result_info) != VK_SUCCESS) {
-        spdlog::error("UIRenderer: failed to create instance buffer");
-        return;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        VmaAllocationInfo result_info{};
+        if (vmaCreateBuffer(allocator, &buf_info, &alloc_info,
+                            &instance_buf_[i].buffer, &instance_buf_[i].allocation,
+                            &result_info) != VK_SUCCESS) {
+            spdlog::error("UIRenderer: failed to create instance buffer");
+            return;
+        }
+        instance_mapped_[i] = result_info.pMappedData;
     }
-    instance_mapped_ = result_info.pMappedData;
 }
 
 f32 UIRenderer::read_lazyvar(lua_State* L, int table_idx, const char* field) {
@@ -626,7 +629,7 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     groups_.clear();
     quad_count_ = 0;
 
-    if (!instance_mapped_) return;
+    if (!instance_mapped_[fi_]) return;
 
     // Find the root frame from Lua registry
     lua_pushstring(L, "__osc_root_frame");
@@ -662,7 +665,7 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                      });
 
     // Upload instances and build draw groups (batch by consecutive same texture)
-    auto* dst = static_cast<UIInstance*>(instance_mapped_);
+    auto* dst = static_cast<UIInstance*>(instance_mapped_[fi_]);
     u32 count = static_cast<u32>(quads_.size());
     if (count > MAX_UI_QUADS) count = MAX_UI_QUADS;
 
@@ -694,7 +697,7 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
 
 void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
                         u32 viewport_w, u32 viewport_h) {
-    if (groups_.empty() || !instance_buf_.buffer) return;
+    if (groups_.empty() || !instance_buf_[fi_].buffer) return;
 
     // Push viewport dimensions
     f32 push[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
@@ -702,7 +705,7 @@ void UIRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
     // Bind instance buffer at binding 0
     VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_.buffer, &offset);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi_].buffer, &offset);
 
     // Track current scissor to avoid redundant state changes
     ClipRect current_scissor{-1, -1, -1, -1};
@@ -837,11 +840,13 @@ void UIRenderer::advance_animations(lua_State* L,
 }
 
 void UIRenderer::destroy(VkDevice device, VmaAllocator allocator) {
-    if (instance_buf_.buffer) {
-        vmaDestroyBuffer(allocator, instance_buf_.buffer, instance_buf_.allocation);
-        instance_buf_ = {};
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        if (instance_buf_[i].buffer) {
+            vmaDestroyBuffer(allocator, instance_buf_[i].buffer, instance_buf_[i].allocation);
+            instance_buf_[i] = {};
+        }
+        instance_mapped_[i] = nullptr;
     }
-    instance_mapped_ = nullptr;
 }
 
 } // namespace osc::renderer

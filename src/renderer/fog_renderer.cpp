@@ -62,14 +62,16 @@ void FogRenderer::init(u32 grid_width, u32 grid_height,
     VmaAllocationCreateInfo staging_alloc{};
     staging_alloc.usage = VMA_MEMORY_USAGE_CPU_ONLY;
     staging_alloc.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    staging_alloc.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
-    VmaAllocationInfo staging_info{};
-    vmaCreateBuffer(allocator, &buf_ci, &staging_alloc,
-                    &staging_.buffer, &staging_.allocation, &staging_info);
-    staging_mapped_ = static_cast<u8*>(staging_info.pMappedData);
-
-    // Initialize to fully explored+visible (white) so fog starts clear
-    std::memset(staging_mapped_, 255, pixel_count);
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        VmaAllocationInfo staging_info{};
+        vmaCreateBuffer(allocator, &buf_ci, &staging_alloc,
+                        &staging_[i].buffer, &staging_[i].allocation,
+                        &staging_info);
+        staging_mapped_[i] = static_cast<u8*>(staging_info.pMappedData);
+        std::memset(staging_mapped_[i], 255, pixel_count);
+    }
 
     // Initial upload: transition to TRANSFER_DST, copy, transition to SHADER_READ
     VkCommandBufferAllocateInfo cmd_ai{};
@@ -105,7 +107,7 @@ void FogRenderer::init(u32 grid_width, u32 grid_height,
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = {grid_width_, grid_height_, 1};
-    vkCmdCopyBufferToImage(cmd, staging_.buffer, image_.image,
+    vkCmdCopyBufferToImage(cmd, staging_[0].buffer, image_.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     // Transition TRANSFER_DST -> SHADER_READ
@@ -138,7 +140,7 @@ void FogRenderer::init(u32 grid_width, u32 grid_height,
 }
 
 void FogRenderer::stage(const osc::map::VisibilityGrid& grid, u32 army) {
-    if (!initialized_ || !staging_mapped_) return;
+    if (!initialized_ || !staging_mapped_[fi_]) return;
 
     // Write raw visibility data to temp buffer
     if (raw_grid_.size() != grid_width_ * grid_height_)
@@ -180,12 +182,12 @@ void FogRenderer::blur_to_staging() {
                     count++;
                 }
             }
-            staging_mapped_[y * w + x] = static_cast<u8>(sum / count);
+            staging_mapped_[fi_][y * w + x] = static_cast<u8>(sum / count);
         }
     }
 
     // Copy staging back to raw for vertical pass
-    std::memcpy(raw_grid_.data(), staging_mapped_, w * h);
+    std::memcpy(raw_grid_.data(), staging_mapped_[fi_], w * h);
 
     // Vertical blur: raw_grid_ -> staging
     for (u32 y = 0; y < h; y++) {
@@ -199,7 +201,7 @@ void FogRenderer::blur_to_staging() {
                     count++;
                 }
             }
-            staging_mapped_[y * w + x] = static_cast<u8>(sum / count);
+            staging_mapped_[fi_][y * w + x] = static_cast<u8>(sum / count);
         }
     }
 }
@@ -226,7 +228,7 @@ void FogRenderer::record_upload(VkCommandBuffer cmd) {
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent = {grid_width_, grid_height_, 1};
-    vkCmdCopyBufferToImage(cmd, staging_.buffer, image_.image,
+    vkCmdCopyBufferToImage(cmd, staging_[fi_].buffer, image_.image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
     // TRANSFER_DST -> SHADER_READ
@@ -249,12 +251,16 @@ void FogRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     if (sampler_) vkDestroySampler(device, sampler_, nullptr);
     if (image_view_) vkDestroyImageView(device, image_view_, nullptr);
     if (image_.image) vmaDestroyImage(allocator, image_.image, image_.allocation);
-    if (staging_.buffer) vmaDestroyBuffer(allocator, staging_.buffer, staging_.allocation);
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; i++) {
+        if (staging_[i].buffer)
+            vmaDestroyBuffer(allocator, staging_[i].buffer,
+                             staging_[i].allocation);
+        staging_[i] = {};
+        staging_mapped_[i] = nullptr;
+    }
     sampler_ = VK_NULL_HANDLE;
     image_view_ = VK_NULL_HANDLE;
     image_ = {};
-    staging_ = {};
-    staging_mapped_ = nullptr;
     initialized_ = false;
 }
 

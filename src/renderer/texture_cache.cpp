@@ -782,13 +782,91 @@ const GPUTexture* TextureCache::upload_rgba(const std::string& key,
     return result;
 }
 
+const GPUTexture* TextureCache::finalize_load(const std::string& path,
+                                              const std::vector<char>& file_data) {
+    auto dds = parse_dds(file_data);
+    if (!dds) {
+        spdlog::debug("TextureCache: DDS parse failed for '{}'", path);
+        failed_.insert(path);
+        return nullptr;
+    }
+
+    auto image = upload_dds(*dds);
+    if (!image.image) {
+        spdlog::debug("TextureCache: upload failed for '{}'", path);
+        failed_.insert(path);
+        return nullptr;
+    }
+
+    auto ds = allocate_and_write_descriptor(image.view);
+    if (ds == VK_NULL_HANDLE) {
+        vkDestroyImageView(device_, image.view, nullptr);
+        vmaDestroyImage(allocator_, image.image, image.allocation);
+        failed_.insert(path);
+        return nullptr;
+    }
+
+    auto gpu = std::make_unique<GPUTexture>();
+    gpu->image = image;
+    gpu->descriptor_set = ds;
+
+    spdlog::debug("TextureCache: loaded '{}' ({}x{}, {} mips)",
+                   path, dds->width, dds->height, dds->mip_count);
+
+    auto* raw = gpu.get();
+    cache_[path] = std::move(gpu);
+    return raw;
+}
+
 const GPUTexture* TextureCache::get(const std::string& vfs_path) {
     if (device_ == VK_NULL_HANDLE) return nullptr;
 
     auto it = cache_.find(vfs_path);
     if (it != cache_.end()) return it->second.get();
 
+    if (failed_.count(vfs_path) || pending_.count(vfs_path)) return nullptr;
+
+    if (!vfs_) {
+        failed_.insert(vfs_path);
+        return nullptr;
+    }
+
+    // Launch async VFS read on a background thread
+    pending_.insert(vfs_path);
+    auto* vfs = vfs_;
+    async_loads_.push_back({vfs_path,
+        std::async(std::launch::async, [vfs, vfs_path]()
+            -> std::optional<std::vector<char>> {
+            return vfs->read_file(vfs_path);
+        })
+    });
+    return nullptr;
+}
+
+const GPUTexture* TextureCache::get_blocking(const std::string& vfs_path) {
+    if (device_ == VK_NULL_HANDLE) return nullptr;
+
+    auto it = cache_.find(vfs_path);
+    if (it != cache_.end()) return it->second.get();
+
     if (failed_.count(vfs_path)) return nullptr;
+
+    // If already pending async, block until that specific future completes
+    if (pending_.count(vfs_path)) {
+        for (auto it2 = async_loads_.begin(); it2 != async_loads_.end(); ++it2) {
+            if (it2->path == vfs_path) {
+                auto file_data = it2->future.get(); // truly blocks
+                auto path = std::move(it2->path);
+                async_loads_.erase(it2);
+                pending_.erase(path);
+                if (file_data)
+                    return finalize_load(path, *file_data);
+                failed_.insert(path);
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
 
     if (!vfs_) {
         failed_.insert(vfs_path);
@@ -802,41 +880,43 @@ const GPUTexture* TextureCache::get(const std::string& vfs_path) {
         return nullptr;
     }
 
-    auto dds = parse_dds(*file_data);
-    if (!dds) {
-        spdlog::debug("TextureCache: DDS parse failed for '{}'", vfs_path);
-        failed_.insert(vfs_path);
-        return nullptr;
+    return finalize_load(vfs_path, *file_data);
+}
+
+void TextureCache::flush_uploads(u32 max_per_frame) {
+    u32 processed = 0;
+
+    for (auto it = async_loads_.begin();
+         it != async_loads_.end() && processed < max_per_frame; ) {
+        // Check if the future is ready (non-blocking)
+        auto status = it->future.wait_for(std::chrono::seconds(0));
+        if (status != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+
+        auto file_data = it->future.get();
+        auto path = std::move(it->path);
+        it = async_loads_.erase(it);
+        pending_.erase(path);
+
+        if (!file_data) {
+            spdlog::debug("TextureCache: async VFS read failed for '{}'", path);
+            failed_.insert(path);
+        } else {
+            finalize_load(path, *file_data);
+        }
+        processed++;
     }
-
-    auto image = upload_dds(*dds);
-    if (!image.image) {
-        spdlog::debug("TextureCache: upload failed for '{}'", vfs_path);
-        failed_.insert(vfs_path);
-        return nullptr;
-    }
-
-    auto ds = allocate_and_write_descriptor(image.view);
-    if (ds == VK_NULL_HANDLE) {
-        vkDestroyImageView(device_, image.view, nullptr);
-        vmaDestroyImage(allocator_, image.image, image.allocation);
-        failed_.insert(vfs_path);
-        return nullptr;
-    }
-
-    auto gpu = std::make_unique<GPUTexture>();
-    gpu->image = image;
-    gpu->descriptor_set = ds;
-
-    spdlog::debug("TextureCache: loaded '{}' ({}x{}, {} mips)",
-                   vfs_path, dds->width, dds->height, dds->mip_count);
-
-    auto* raw = gpu.get();
-    cache_[vfs_path] = std::move(gpu);
-    return raw;
 }
 
 void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
+    // Drain all in-flight async loads before tearing down Vulkan resources
+    for (auto& al : async_loads_)
+        al.future.wait();
+    async_loads_.clear();
+    pending_.clear();
+
     for (auto& [path, gpu] : cache_) {
         if (gpu->image.view)
             vkDestroyImageView(device, gpu->image.view, nullptr);
