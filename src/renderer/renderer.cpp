@@ -256,6 +256,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     // Shadow depth-only pipelines (need shadow_render_pass_ + bone_ds_layout_)
     create_shadow_pipelines();
 
+    // Bloom post-processing resources
+    create_bloom_resources();
+
     // UI renderer instance buffer
     ui_renderer_.init(device_, allocator_);
 
@@ -986,6 +989,256 @@ void Renderer::create_shadow_pipelines() {
     vkDestroyShaderModule(device_, sf, nullptr);
 
     spdlog::info("Shadow pipelines created (terrain + mesh + unit)");
+}
+
+void Renderer::create_bloom_resources() {
+    u32 w = window_width_;
+    u32 h = window_height_;
+    u32 half_w = std::max(w / 2, 1u);
+    u32 half_h = std::max(h / 2, 1u);
+    VkFormat hdr_format = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+    // Helper to create an HDR image + view
+    auto create_hdr_image = [&](AllocatedImage& img, u32 iw, u32 ih) {
+        VkImageCreateInfo img_ci{};
+        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_ci.imageType = VK_IMAGE_TYPE_2D;
+        img_ci.format = hdr_format;
+        img_ci.extent = {iw, ih, 1};
+        img_ci.mipLevels = 1;
+        img_ci.arrayLayers = 1;
+        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &img.image, &img.allocation, nullptr);
+
+        VkImageViewCreateInfo view_ci{};
+        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_ci.image = img.image;
+        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_ci.format = hdr_format;
+        view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCreateImageView(device_, &view_ci, nullptr, &img.view);
+    };
+
+    create_hdr_image(scene_color_image_, w, h);
+    create_hdr_image(bloom_bright_image_, half_w, half_h);
+    create_hdr_image(bloom_blur_h_image_, half_w, half_h);
+    create_hdr_image(bloom_blur_v_image_, half_w, half_h);
+
+    // Scene render pass (color HDR + depth)
+    {
+        VkAttachmentDescription color_att{};
+        color_att.format = hdr_format;
+        color_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        color_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        color_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        color_att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentDescription depth_att{};
+        depth_att.format = depth_format_;
+        depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth_att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depth_ref{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_ref;
+        subpass.pDepthStencilAttachment = &depth_ref;
+
+        std::array<VkAttachmentDescription, 2> attachments = {color_att, depth_att};
+
+        VkSubpassDependency dep{};
+        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        dep.dstSubpass = 0;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo rp_ci{};
+        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp_ci.attachmentCount = static_cast<u32>(attachments.size());
+        rp_ci.pAttachments = attachments.data();
+        rp_ci.subpassCount = 1;
+        rp_ci.pSubpasses = &subpass;
+        rp_ci.dependencyCount = 1;
+        rp_ci.pDependencies = &dep;
+
+        vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_);
+    }
+
+    // Scene framebuffer (full resolution, scene_render_pass_)
+    {
+        std::array<VkImageView, 2> views = {scene_color_image_.view, depth_image_.view};
+        VkFramebufferCreateInfo fb_ci{};
+        fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fb_ci.renderPass = scene_render_pass_;
+        fb_ci.attachmentCount = static_cast<u32>(views.size());
+        fb_ci.pAttachments = views.data();
+        fb_ci.width = w;
+        fb_ci.height = h;
+        fb_ci.layers = 1;
+        vkCreateFramebuffer(device_, &fb_ci, nullptr, &scene_framebuffer_);
+    }
+
+    // Bloom render pass (single color, no depth)
+    {
+        VkAttachmentDescription att{};
+        att.format = hdr_format;
+        att.samples = VK_SAMPLE_COUNT_1_BIT;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        att.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkAttachmentReference color_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkSubpassDescription subpass{};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_ref;
+
+        VkRenderPassCreateInfo rp_ci{};
+        rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        rp_ci.attachmentCount = 1;
+        rp_ci.pAttachments = &att;
+        rp_ci.subpassCount = 1;
+        rp_ci.pSubpasses = &subpass;
+        vkCreateRenderPass(device_, &rp_ci, nullptr, &bloom_render_pass_);
+    }
+
+    // Bloom framebuffers (half resolution)
+    auto create_fb = [&](VkFramebuffer& fb, VkImageView view, u32 fw, u32 fh, VkRenderPass rp) {
+        VkFramebufferCreateInfo fb_ci{};
+        fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fb_ci.renderPass = rp;
+        fb_ci.attachmentCount = 1;
+        fb_ci.pAttachments = &view;
+        fb_ci.width = fw;
+        fb_ci.height = fh;
+        fb_ci.layers = 1;
+        vkCreateFramebuffer(device_, &fb_ci, nullptr, &fb);
+    };
+
+    create_fb(bloom_bright_fb_, bloom_bright_image_.view, half_w, half_h, bloom_render_pass_);
+    create_fb(bloom_blur_h_fb_, bloom_blur_h_image_.view, half_w, half_h, bloom_render_pass_);
+    create_fb(bloom_blur_v_fb_, bloom_blur_v_image_.view, half_w, half_h, bloom_render_pass_);
+
+    // Descriptor pool + sets
+    {
+        VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
+        VkDescriptorPoolCreateInfo pool_ci{};
+        pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_ci.maxSets = 4;
+        pool_ci.poolSizeCount = 1;
+        pool_ci.pPoolSizes = &pool_size;
+        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bloom_ds_pool_);
+
+        VkDescriptorSetLayout layouts[4] = {texture_ds_layout_, texture_ds_layout_,
+                                             texture_ds_layout_, texture_ds_layout_};
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorPool = bloom_ds_pool_;
+        alloc.descriptorSetCount = 4;
+        alloc.pSetLayouts = layouts;
+        VkDescriptorSet sets[4];
+        vkAllocateDescriptorSets(device_, &alloc, sets);
+        scene_ds_ = sets[0];
+        bloom_bright_ds_ = sets[1];
+        bloom_blur_h_ds_ = sets[2];
+        bloom_blur_v_ds_ = sets[3];
+
+        auto write_ds = [&](VkDescriptorSet ds, VkImageView view) {
+            VkDescriptorImageInfo img_info{};
+            img_info.sampler = texture_sampler_;
+            img_info.imageView = view;
+            img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = ds;
+            write.dstBinding = 0;
+            write.descriptorCount = 1;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            write.pImageInfo = &img_info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        };
+
+        write_ds(scene_ds_, scene_color_image_.view);
+        write_ds(bloom_bright_ds_, bloom_bright_image_.view);
+        write_ds(bloom_blur_h_ds_, bloom_blur_h_image_.view);
+        write_ds(bloom_blur_v_ds_, bloom_blur_v_image_.view);
+    }
+
+    spdlog::info("Bloom resources created ({}x{}, half {}x{})", w, h, half_w, half_h);
+}
+
+void Renderer::destroy_bloom_resources() {
+    // Descriptor pool (frees all allocated sets)
+    if (bloom_ds_pool_) {
+        vkDestroyDescriptorPool(device_, bloom_ds_pool_, nullptr);
+        bloom_ds_pool_ = VK_NULL_HANDLE;
+    }
+
+    // Pipelines (may be VK_NULL_HANDLE if not yet created -- safe to destroy)
+    if (bloom_bright_pipeline_) vkDestroyPipeline(device_, bloom_bright_pipeline_, nullptr);
+    if (bloom_bright_layout_) vkDestroyPipelineLayout(device_, bloom_bright_layout_, nullptr);
+    if (bloom_blur_pipeline_) vkDestroyPipeline(device_, bloom_blur_pipeline_, nullptr);
+    if (bloom_blur_layout_) vkDestroyPipelineLayout(device_, bloom_blur_layout_, nullptr);
+    if (bloom_composite_pipeline_) vkDestroyPipeline(device_, bloom_composite_pipeline_, nullptr);
+    if (bloom_composite_layout_) vkDestroyPipelineLayout(device_, bloom_composite_layout_, nullptr);
+
+    // Framebuffers
+    if (bloom_bright_fb_) vkDestroyFramebuffer(device_, bloom_bright_fb_, nullptr);
+    if (bloom_blur_h_fb_) vkDestroyFramebuffer(device_, bloom_blur_h_fb_, nullptr);
+    if (bloom_blur_v_fb_) vkDestroyFramebuffer(device_, bloom_blur_v_fb_, nullptr);
+    if (scene_framebuffer_) vkDestroyFramebuffer(device_, scene_framebuffer_, nullptr);
+
+    // Render passes
+    if (bloom_render_pass_) vkDestroyRenderPass(device_, bloom_render_pass_, nullptr);
+    if (scene_render_pass_) vkDestroyRenderPass(device_, scene_render_pass_, nullptr);
+
+    // Images
+    auto destroy_img = [&](AllocatedImage& img) {
+        if (img.view) vkDestroyImageView(device_, img.view, nullptr);
+        if (img.image) vmaDestroyImage(allocator_, img.image, img.allocation);
+        img = {};
+    };
+    destroy_img(scene_color_image_);
+    destroy_img(bloom_bright_image_);
+    destroy_img(bloom_blur_h_image_);
+    destroy_img(bloom_blur_v_image_);
+
+    // Reset handles
+    bloom_bright_pipeline_ = VK_NULL_HANDLE;
+    bloom_bright_layout_ = VK_NULL_HANDLE;
+    bloom_blur_pipeline_ = VK_NULL_HANDLE;
+    bloom_blur_layout_ = VK_NULL_HANDLE;
+    bloom_composite_pipeline_ = VK_NULL_HANDLE;
+    bloom_composite_layout_ = VK_NULL_HANDLE;
+    bloom_bright_fb_ = VK_NULL_HANDLE;
+    bloom_blur_h_fb_ = VK_NULL_HANDLE;
+    bloom_blur_v_fb_ = VK_NULL_HANDLE;
+    scene_framebuffer_ = VK_NULL_HANDLE;
+    bloom_render_pass_ = VK_NULL_HANDLE;
+    scene_render_pass_ = VK_NULL_HANDLE;
 }
 
 void Renderer::build_scene(const sim::SimState& sim,
@@ -2249,6 +2502,9 @@ void Renderer::shutdown() {
         vmaDestroyImage(allocator_, shadow_image_.image, shadow_image_.allocation);
     if (light_ubo_.buffer)
         vmaDestroyBuffer(allocator_, light_ubo_.buffer, light_ubo_.allocation);
+
+    // Bloom resources
+    destroy_bloom_resources();
 
     // Pipelines
     vkDestroyPipeline(device_, terrain_pipeline_, nullptr);

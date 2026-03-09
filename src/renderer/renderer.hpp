@@ -82,6 +82,8 @@ public:
     bool fog_enabled() const { return fog_enabled_; }
     void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
     bool decals_enabled() const { return decals_enabled_; }
+    void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
+    bool bloom_enabled() const { return bloom_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
     u32 width() const { return window_width_; }
@@ -249,6 +251,46 @@ private:
     ParticleSystem particle_system_;
     ParticleRenderer particle_renderer_;
     EmitterBlueprintCache emitter_bp_cache_;
+
+    // Bloom post-processing
+    bool bloom_enabled_ = true;
+    f32 bloom_threshold_ = 0.8f;
+    f32 bloom_intensity_ = 1.2f;
+    f32 bloom_strength_ = 0.3f;
+
+    // Offscreen scene image (rendered instead of swapchain, then composited)
+    AllocatedImage scene_color_image_{};
+    VkRenderPass scene_render_pass_ = VK_NULL_HANDLE;
+    VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
+
+    // Bloom intermediate images (half resolution)
+    AllocatedImage bloom_bright_image_{};
+    AllocatedImage bloom_blur_h_image_{};
+    AllocatedImage bloom_blur_v_image_{};
+
+    VkRenderPass bloom_render_pass_ = VK_NULL_HANDLE;  // single-color-attachment pass
+    VkFramebuffer bloom_bright_fb_ = VK_NULL_HANDLE;
+    VkFramebuffer bloom_blur_h_fb_ = VK_NULL_HANDLE;
+    VkFramebuffer bloom_blur_v_fb_ = VK_NULL_HANDLE;
+
+    // Bloom pipelines (will be created in Task 9, declare here for cleanup)
+    VkPipeline bloom_bright_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout bloom_bright_layout_ = VK_NULL_HANDLE;
+    VkPipeline bloom_blur_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout bloom_blur_layout_ = VK_NULL_HANDLE;
+    VkPipeline bloom_composite_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout bloom_composite_layout_ = VK_NULL_HANDLE;
+
+    // Bloom descriptors
+    VkDescriptorPool bloom_ds_pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet scene_ds_ = VK_NULL_HANDLE;        // samples scene_color_image_
+    VkDescriptorSet bloom_bright_ds_ = VK_NULL_HANDLE;  // samples bloom_bright_image_
+    VkDescriptorSet bloom_blur_h_ds_ = VK_NULL_HANDLE;  // samples bloom_blur_h_image_
+    VkDescriptorSet bloom_blur_v_ds_ = VK_NULL_HANDLE;  // samples bloom_blur_v_image_
+
+    void create_bloom_resources();
+    void create_bloom_pipelines();
+    void destroy_bloom_resources();
 
     // Frame-in-flight tracking
     u32 frame_index_ = 0;
