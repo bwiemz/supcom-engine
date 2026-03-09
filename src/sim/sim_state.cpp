@@ -2,6 +2,7 @@
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "audio/sound_manager.hpp"
+#include "core/profiler.hpp"
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
@@ -188,9 +189,15 @@ bool SimState::has_any_intel(const Entity* entity, u32 req_army) const {
 }
 
 void SimState::tick() {
+    PROFILE_ZONE("Sim::tick");
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
-    thread_manager_.resume_all(tick_count_);
+
+    {
+        PROFILE_ZONE("Sim::threads");
+        thread_manager_.resume_all(tick_count_);
+    }
+
     update_economies();
     update_entities();
     update_visibility();
@@ -210,18 +217,26 @@ void SimState::tick() {
 
     // Audio: clean up finished one-shot sounds
     if (sound_manager_) {
+        PROFILE_ZONE("Sim::audio_gc");
         sound_manager_->gc();
     }
 
     // Economy events: tick drains, wake waiting threads on completion
-    tick_economy_events();
+    {
+        PROFILE_ZONE("Sim::econ_events");
+        tick_economy_events();
+    }
 
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
-    effect_registry_.expire_timed(game_time_);
-    effect_registry_.gc();
+    {
+        PROFILE_ZONE("Sim::vfx_gc");
+        effect_registry_.expire_timed(game_time_);
+        effect_registry_.gc();
+    }
 }
 
 void SimState::update_economies() {
+    PROFILE_ZONE("Sim::economy");
     for (auto& army : armies_) {
         army->update_economy(entity_registry_, SECONDS_PER_TICK);
     }
@@ -240,6 +255,7 @@ void SimState::tick_economy_events() {
 }
 
 void SimState::update_entities() {
+    PROFILE_ZONE("Sim::entities");
     // Snapshot IDs to avoid iterator invalidation if update() triggers removal
     std::vector<u32> ids;
     ids.reserve(entity_registry_.count());
@@ -268,6 +284,7 @@ void SimState::update_entities() {
 }
 
 void SimState::update_visibility() {
+    PROFILE_ZONE("Sim::visibility");
     if (!visibility_grid_) return;
 
     // 1. Clear transient flags (keep EverSeen)

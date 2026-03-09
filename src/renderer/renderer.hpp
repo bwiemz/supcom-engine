@@ -10,6 +10,7 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/hud_renderer.hpp"
+#include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "renderer/unit_renderer.hpp"
@@ -183,6 +184,7 @@ private:
     StrategicIconRenderer strategic_icon_renderer_;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;
+    ProfileOverlay profile_overlay_;
     ui::UIDispatch ui_dispatch_;
     f64 last_frame_time_ = 0.0;
     f32 total_time_ = 0.0f;
