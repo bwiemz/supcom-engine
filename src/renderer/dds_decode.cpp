@@ -17,25 +17,25 @@ static void decode_alpha_block(const u8* src, u8 alpha_out[16]) {
     table[0] = a0;
     table[1] = a1;
     if (a0 > a1) {
-        table[2] = static_cast<u8>((6 * a0 + 1 * a1) / 7);
-        table[3] = static_cast<u8>((5 * a0 + 2 * a1) / 7);
-        table[4] = static_cast<u8>((4 * a0 + 3 * a1) / 7);
-        table[5] = static_cast<u8>((3 * a0 + 4 * a1) / 7);
-        table[6] = static_cast<u8>((2 * a0 + 5 * a1) / 7);
-        table[7] = static_cast<u8>((1 * a0 + 6 * a1) / 7);
+        // 8-value mode: rounded division per BC3 spec (+ 3) / 7
+        table[2] = static_cast<u8>((6 * a0 + 1 * a1 + 3) / 7);
+        table[3] = static_cast<u8>((5 * a0 + 2 * a1 + 3) / 7);
+        table[4] = static_cast<u8>((4 * a0 + 3 * a1 + 3) / 7);
+        table[5] = static_cast<u8>((3 * a0 + 4 * a1 + 3) / 7);
+        table[6] = static_cast<u8>((2 * a0 + 5 * a1 + 3) / 7);
+        table[7] = static_cast<u8>((1 * a0 + 6 * a1 + 3) / 7);
     } else {
-        table[2] = static_cast<u8>((4 * a0 + 1 * a1) / 5);
-        table[3] = static_cast<u8>((3 * a0 + 2 * a1) / 5);
-        table[4] = static_cast<u8>((2 * a0 + 3 * a1) / 5);
-        table[5] = static_cast<u8>((1 * a0 + 4 * a1) / 5);
+        // 6-value mode: rounded division per BC3 spec (+ 2) / 5
+        table[2] = static_cast<u8>((4 * a0 + 1 * a1 + 2) / 5);
+        table[3] = static_cast<u8>((3 * a0 + 2 * a1 + 2) / 5);
+        table[4] = static_cast<u8>((2 * a0 + 3 * a1 + 2) / 5);
+        table[5] = static_cast<u8>((1 * a0 + 4 * a1 + 2) / 5);
         table[6] = 0;
         table[7] = 255;
     }
 
-    // 6 bytes of 3-bit indices (48 bits = 16 pixels)
-    // Packed as 3 groups of 2 bytes = 3 groups of 8 pixels? No:
-    // 48 bits packed across 6 bytes, 3 bits per pixel, row by row.
-    // Bytes 2..7 contain the indices. Each group of 3 bytes holds 8 indices.
+    // 6 bytes of 3-bit indices (48 bits = 16 pixels).
+    // Each group of 3 bytes holds 8 indices (24 bits / 3 bits each).
     const u8* idx_bytes = src + 2;
     for (u32 group = 0; group < 2; ++group) {
         u32 packed = static_cast<u32>(idx_bytes[group * 3 + 0])
@@ -72,15 +72,15 @@ static void decode_color_block(const u8* src, u8 rgb_out[16 * 3]) {
     expand565(c1_raw, colors[1][0], colors[1][1], colors[1][2]);
 
     if (c0_raw > c1_raw) {
-        // 4-color mode: 2 interpolated
+        // 4-color mode: 2 interpolated, rounded division per BC spec
         for (u32 ch = 0; ch < 3; ++ch) {
-            colors[2][ch] = static_cast<u8>((2 * colors[0][ch] + colors[1][ch]) / 3);
-            colors[3][ch] = static_cast<u8>((colors[0][ch] + 2 * colors[1][ch]) / 3);
+            colors[2][ch] = static_cast<u8>((2 * colors[0][ch] + colors[1][ch] + 1) / 3);
+            colors[3][ch] = static_cast<u8>((colors[0][ch] + 2 * colors[1][ch] + 1) / 3);
         }
     } else {
-        // 3-color + transparent mode
+        // 3-color + transparent mode, rounded division
         for (u32 ch = 0; ch < 3; ++ch) {
-            colors[2][ch] = static_cast<u8>((colors[0][ch] + colors[1][ch]) / 2);
+            colors[2][ch] = static_cast<u8>((colors[0][ch] + colors[1][ch] + 1) / 2);
             colors[3][ch] = 0;
         }
     }
