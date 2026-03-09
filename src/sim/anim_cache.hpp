@@ -22,6 +22,11 @@ public:
     /// Get parsed SCA data for a VFS path. Returns nullptr on failure.
     const SCAData* get(const std::string& vfs_path);
 
+    /// Inject pre-built SCA data for testing (no VFS read).
+    void inject(const std::string& path, SCAData data) {
+        cache_[path] = std::make_unique<SCAData>(std::move(data));
+    }
+
 private:
     vfs::VirtualFileSystem* vfs_;
     std::unordered_map<std::string, std::unique_ptr<SCAData>> cache_;
