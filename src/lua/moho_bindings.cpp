@@ -6910,6 +6910,16 @@ static int anim_SetBoneEnabled(lua_State* L) {
     return 0;
 }
 
+static int anim_SetBlendTime(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) {
+        f32 seconds = static_cast<f32>(luaL_checknumber(L, 2));
+        if (seconds < 0.0f) seconds = 0.0f;
+        static_cast<sim::AnimManipulator*>(m)->set_blend_time(seconds);
+    }
+    return 0;
+}
+
 static const MethodEntry animation_manipulator_methods[] = {
     {"PlayAnim",                anim_PlayAnim},
     {"SetRate",                 anim_SetRate},
@@ -6919,6 +6929,7 @@ static const MethodEntry animation_manipulator_methods[] = {
     {"GetAnimationTime",        anim_GetAnimationTime},
     {"SetAnimationTime",        anim_SetAnimationTime},
     {"SetBoneEnabled",          anim_SetBoneEnabled},
+    {"SetBlendTime",            anim_SetBlendTime},
     {nullptr, nullptr},
 };
 
