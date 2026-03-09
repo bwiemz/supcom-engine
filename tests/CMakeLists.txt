@@ -5,6 +5,7 @@ add_executable(osc_tests
     test_blueprint_loading.cpp
     test_map.cpp
     test_anim_blend.cpp
+    test_dds_decode.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
@@ -15,6 +16,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::lua
     osc::blueprints
     osc::sim
+    osc::renderer
 )
 
 include(Catch)

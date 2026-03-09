@@ -6,6 +6,7 @@ add_library(osc_renderer STATIC
     mesh_cache.cpp
     texture_cache.cpp
     dds_parser.cpp
+    dds_decode.cpp
     camera.cpp
     shader_utils.cpp
     pipeline_builder.cpp
