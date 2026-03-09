@@ -261,12 +261,23 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         f32 r, g, b, a;
         get_army_color(entity, sim, r, g, b, a);
 
+        // Compute camera distance for LOD selection
+        f32 cam_dist = 0.0f;
+        if (camera) {
+            f32 ex, ey, ez;
+            camera->eye_position(ex, ey, ez);
+            f32 dx = entity.position().x - ex;
+            f32 dy = entity.position().y - ey;
+            f32 dz = entity.position().z - ez;
+            cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
         // Try mesh lookup (mesh_override from SetMesh takes priority)
         const GPUMesh* gpu = nullptr;
         if (!entity.mesh_override().empty())
-            gpu = mesh_cache.get(entity.mesh_override(), L);
+            gpu = mesh_cache.get_lod(entity.mesh_override(), cam_dist, L);
         if (!gpu && !entity.blueprint_id().empty())
-            gpu = mesh_cache.get(entity.blueprint_id(), L);
+            gpu = mesh_cache.get_lod(entity.blueprint_id(), cam_dist, L);
 
         if (gpu) {
             if (mesh_count >= MAX_INSTANCES) return;
