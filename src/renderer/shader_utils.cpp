@@ -45,6 +45,11 @@ const char* terrain_vert = R"glsl(
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
+    float mapWidth, mapHeight;
+    vec4 scales0_3;
+    vec4 scales4_7;
+    vec4 scales8_pad;
+    float eyeX, eyeY, eyeZ;
 } pc;
 
 layout(location = 0) in vec3 inPosition;
@@ -68,7 +73,9 @@ const char* terrain_frag = R"glsl(
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
-    float scales[9];
+    vec4 scales0_3;
+    vec4 scales4_7;
+    vec4 scales8_pad;
     float eyeX, eyeY, eyeZ;
 } pc;
 
@@ -155,15 +162,15 @@ void main() {
     vec4 b1 = texture(blendMap1, blendUV);
 
     // Per-stratum UV (reuse albedo scale for normal maps)
-    vec2 uv0 = fragWorldXZ / max(pc.scales[0], 1.0);
-    vec2 uv1 = fragWorldXZ / max(pc.scales[1], 1.0);
-    vec2 uv2 = fragWorldXZ / max(pc.scales[2], 1.0);
-    vec2 uv3 = fragWorldXZ / max(pc.scales[3], 1.0);
-    vec2 uv4 = fragWorldXZ / max(pc.scales[4], 1.0);
-    vec2 uv5 = fragWorldXZ / max(pc.scales[5], 1.0);
-    vec2 uv6 = fragWorldXZ / max(pc.scales[6], 1.0);
-    vec2 uv7 = fragWorldXZ / max(pc.scales[7], 1.0);
-    vec2 uv8 = fragWorldXZ / max(pc.scales[8], 1.0);
+    vec2 uv0 = fragWorldXZ / max(pc.scales0_3.x, 1.0);
+    vec2 uv1 = fragWorldXZ / max(pc.scales0_3.y, 1.0);
+    vec2 uv2 = fragWorldXZ / max(pc.scales0_3.z, 1.0);
+    vec2 uv3 = fragWorldXZ / max(pc.scales0_3.w, 1.0);
+    vec2 uv4 = fragWorldXZ / max(pc.scales4_7.x, 1.0);
+    vec2 uv5 = fragWorldXZ / max(pc.scales4_7.y, 1.0);
+    vec2 uv6 = fragWorldXZ / max(pc.scales4_7.z, 1.0);
+    vec2 uv7 = fragWorldXZ / max(pc.scales4_7.w, 1.0);
+    vec2 uv8 = fragWorldXZ / max(pc.scales8_pad.x, 1.0);
 
     // Sample each stratum albedo
     vec3 s0 = texture(stratum0, uv0).rgb;
@@ -232,10 +239,6 @@ void main() {
     float NdotL = max(dot(worldNormal, lightDir), 0.0);
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
-
-    // Decode sRGB texture values to linear for correct lighting math
-    // (sRGB swapchain will re-encode on output)
-    color = pow(color, vec3(2.2));
 
     // Hemisphere ambient: warm sunlit sky from above, cool shadow from below
     vec3 skyColor = vec3(0.55, 0.52, 0.48);
@@ -631,7 +634,9 @@ void main() {
     vec3 hazeColor = vec3(0.55, 0.62, 0.72);
     lit = mix(lit, hazeColor, atmosFog);
 
-    outColor = vec4(lit, texColor.a * fragColor.a);
+    float finalAlpha = texColor.a * fragColor.a;
+    if (finalAlpha < 0.1) discard;
+    outColor = vec4(lit, finalAlpha);
 }
 )glsl";
 

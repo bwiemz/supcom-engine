@@ -668,15 +668,14 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
-        // Push constant: mat4 viewProj(64) + float mapW(4) + float mapH(4)
-        //                + float scales[9](36) = 108 bytes
+        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + 3*vec4 scales(48) + eye(12) = 132B
         terrain_pipeline_ = PipelineBuilder()
             .set_shaders(tv, tf)
             .set_vertex_input(&binding, 1, attrs.data(),
                               static_cast<u32>(attrs.size()))
             .set_depth_test(true, true)
             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(120,
+            .set_push_constant(132,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
             .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
@@ -1601,18 +1600,22 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj + mapWidth + mapHeight + scales[9] + eye(3) = 120B
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + 3*vec4 scales(48) + eye(12) = 132B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
-            f32 scales[9];
+            f32 scales0_3[4];
+            f32 scales4_7[4];
+            f32 scales8_pad[4];
             f32 eyeX, eyeY, eyeZ;
         } tpc{};
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
-        std::memcpy(tpc.scales, terrain_strata_scales_, sizeof(f32) * 9);
+        std::memcpy(tpc.scales0_3, &terrain_strata_scales_[0], sizeof(f32) * 4);
+        std::memcpy(tpc.scales4_7, &terrain_strata_scales_[4], sizeof(f32) * 4);
+        tpc.scales8_pad[0] = terrain_strata_scales_[8];
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
         vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,
