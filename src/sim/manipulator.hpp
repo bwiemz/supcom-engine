@@ -4,6 +4,7 @@
 #include "sim/entity.hpp" // Vector3, Quaternion
 #include "sim/waitable.hpp"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -113,6 +114,10 @@ public:
     void set_bone_enabled(i32 scm_idx, bool enabled);
     bool is_bone_enabled(i32 scm_idx) const;
 
+    /// Set cross-fade blend duration for animation transitions.
+    void set_blend_time(f32 seconds) { blend_time_ = seconds; }
+    f32 blend_time() const { return blend_time_; }
+
 private:
     void compute_bone_matrices();
 
@@ -126,6 +131,11 @@ private:
     const SCAData* sca_data_ = nullptr;
     std::vector<i32> sca_to_scm_map_;  // SCA bone → SCM bone index
     std::unordered_set<i32> disabled_bones_;  // SCM bone indices to skip
+
+    // Cross-fade blending state
+    f32 blend_time_ = 0.2f;        // default cross-fade duration (seconds)
+    f32 blend_remaining_ = 0.0f;   // time left in current cross-fade (0 = no blend)
+    std::vector<std::array<f32, 16>> blend_from_matrices_; // snapshot of "from" pose
 };
 
 // ---------------------------------------------------------------------------
