@@ -82,7 +82,8 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                               const std::unordered_set<u32>* selected_ids,
                               TextureCache& tex_cache,
                               u32 viewport_w, u32 viewport_h,
-                              i32 game_result, f32 dt) {
+                              i32 game_result, f32 dt,
+                              const Frustum* frustum) {
     quads_.clear();
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
@@ -157,11 +158,8 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
 
         auto pos = entity.position();
 
-        // Distance cull
-        f32 dx = pos.x - eye_x;
-        f32 dz = pos.z - eye_z;
-        f32 dist2 = dx * dx + dz * dz;
-        if (dist2 > 800.0f * 800.0f) return; // cull beyond 800 units
+        // Frustum cull
+        if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 10.0f)) return;
 
         bool is_selected = selected_ids &&
                            selected_ids->count(entity.entity_id()) > 0;
@@ -673,10 +671,8 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
 
             auto pos = owner->position();
 
-            // Distance cull
-            f32 dx = pos.x - eye_x;
-            f32 dz = pos.z - eye_z;
-            if (dx * dx + dz * dz > 800.0f * 800.0f) return;
+            // Frustum cull
+            if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 20.0f)) return;
 
             f32 radius = shield->size;
             if (radius < 1.0f) return;

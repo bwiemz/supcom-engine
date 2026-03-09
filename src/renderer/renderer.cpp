@@ -1529,7 +1529,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         PROFILE_ZONE("Render::overlay_update");
         overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_,
-                                 sim.player_result(), frame_dt_);
+                                 sim.player_result(), frame_dt_, &frustum);
     }
 
     // Update particle system (sync effects, step physics, build GPU data)

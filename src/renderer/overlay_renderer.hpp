@@ -2,6 +2,7 @@
 
 #include "renderer/vk_types.hpp"
 #include "renderer/ui_renderer.hpp" // UIInstance, UIDrawGroup, ClipRect
+#include "renderer/frustum.hpp"
 #include "core/types.hpp"
 
 #include <array>
@@ -30,7 +31,8 @@ public:
                 const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache,
                 u32 viewport_w, u32 viewport_h,
-                i32 game_result = 0, f32 dt = 0.0f);
+                i32 game_result = 0, f32 dt = 0.0f,
+                const Frustum* frustum = nullptr);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
