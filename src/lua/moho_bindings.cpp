@@ -939,7 +939,7 @@ static int unit_IsUnitState(lua_State* L) {
         else if (std::strcmp(state, "Capturing") == 0)
             result = u->is_capturing();
         else if (std::strcmp(state, "BeingCaptured") == 0)
-            result = false; // TODO: track being_captured state if needed
+            result = u->is_being_captured();
         else if (std::strcmp(state, "Diving") == 0)
             result = u->layer() == "Sub" || u->layer() == "Seabed";
         else if (std::strcmp(state, "Enhancing") == 0)

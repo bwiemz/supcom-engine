@@ -225,6 +225,8 @@ public:
     u32 capture_target_id() const { return capture_target_id_; }
     void set_capture_target_id(u32 id) { capture_target_id_ = id; }
     bool is_capturing() const { return capture_target_id_ != 0; }
+    bool is_being_captured() const { return being_captured_; }
+    void set_being_captured(bool v) { being_captured_ = v; }
     bool capturable() const { return capturable_; }
     void set_capturable(bool c) { capturable_ = c; }
     bool start_capture(const UnitCommand& cmd, EntityRegistry& registry, lua_State* L);
@@ -437,6 +439,7 @@ private:
     f64 capture_time_ = 0;        // total seconds to capture
     f64 capture_energy_cost_ = 0; // total energy drain
     bool capturable_ = true;      // can this unit be captured?
+    bool being_captured_ = false;  // is this unit currently being captured?
     f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
     f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
     bool paused_ = false;

@@ -1649,6 +1649,7 @@ bool Unit::start_capture(const UnitCommand& cmd, EntityRegistry& registry,
     if (capture_time_ <= 0) capture_time_ = 0.01;
     capture_energy_cost_ = build_cost_energy;
     capture_target_id_ = cmd.target_id;
+    target_unit->set_being_captured(true);
     work_progress_ = 0.0f;
 
     // Set economy: energy-only drain (zero mass to clear any stale value)
@@ -1739,6 +1740,10 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
         i32 target_old_army = -1;
         if (target->is_unit())
             target_old_army = static_cast<Unit*>(target)->army();
+
+        // Clear being_captured on target
+        if (target->is_unit())
+            static_cast<Unit*>(target)->set_being_captured(false);
 
         // Zero capture state BEFORE lua_pcall (re-entrancy protection)
         capture_target_id_ = 0;
@@ -1843,6 +1848,10 @@ void Unit::stop_capturing(lua_State* L, EntityRegistry& registry, bool failed) {
 
     auto* target = registry.find(target_id);
     if (!target || target->destroyed()) return;
+
+    // Clear being_captured on target
+    if (target->is_unit())
+        static_cast<Unit*>(target)->set_being_captured(false);
 
     if (failed) {
         // Call self:OnFailedCapture(target)
