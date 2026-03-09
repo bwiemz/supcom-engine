@@ -199,6 +199,7 @@ private:
     i32 player_army_ = 0;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
+    bool b_key_was_pressed_ = false;
 
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};

@@ -1091,15 +1091,23 @@ void Renderer::create_bloom_resources() {
 
         std::array<VkAttachmentDescription, 2> attachments = {color_att, depth_att};
 
-        VkSubpassDependency dep{};
-        dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-        dep.dstSubpass = 0;
-        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        std::array<VkSubpassDependency, 2> deps{};
+        // Incoming: external writes complete before we start
+        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass = 0;
+        deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        // Outgoing: finalLayout transition visible to subsequent fragment reads
+        deps[1].srcSubpass = 0;
+        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         VkRenderPassCreateInfo rp_ci{};
         rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1107,8 +1115,8 @@ void Renderer::create_bloom_resources() {
         rp_ci.pAttachments = attachments.data();
         rp_ci.subpassCount = 1;
         rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = 1;
-        rp_ci.pDependencies = &dep;
+        rp_ci.dependencyCount = static_cast<u32>(deps.size());
+        rp_ci.pDependencies = deps.data();
 
         vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_);
     }
@@ -1143,12 +1151,23 @@ void Renderer::create_bloom_resources() {
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &color_ref;
 
+        // Outgoing: finalLayout transition visible to subsequent fragment reads
+        VkSubpassDependency bloom_dep{};
+        bloom_dep.srcSubpass = 0;
+        bloom_dep.dstSubpass = VK_SUBPASS_EXTERNAL;
+        bloom_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        bloom_dep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        bloom_dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        bloom_dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
         VkRenderPassCreateInfo rp_ci{};
         rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         rp_ci.attachmentCount = 1;
         rp_ci.pAttachments = &att;
         rp_ci.subpassCount = 1;
         rp_ci.pSubpasses = &subpass;
+        rp_ci.dependencyCount = 1;
+        rp_ci.pDependencies = &bloom_dep;
         vkCreateRenderPass(device_, &rp_ci, nullptr, &bloom_render_pass_);
     }
 
@@ -2590,13 +2609,12 @@ void Renderer::poll_events(f64 dt) {
         glfwSetWindowShouldClose(window_, GLFW_TRUE);
 
     // Toggle bloom with B key
-    static bool b_was_pressed = false;
     bool b_pressed = glfwGetKey(window_, GLFW_KEY_B) == GLFW_PRESS;
-    if (b_pressed && !b_was_pressed) {
+    if (b_pressed && !b_key_was_pressed_) {
         bloom_enabled_ = !bloom_enabled_;
         spdlog::info("Bloom {}", bloom_enabled_ ? "enabled" : "disabled");
     }
-    b_was_pressed = b_pressed;
+    b_key_was_pressed_ = b_pressed;
 
     camera_.update(window_, dt);
 }
