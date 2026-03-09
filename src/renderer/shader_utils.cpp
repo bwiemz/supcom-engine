@@ -816,6 +816,84 @@ void main() {
 }
 )glsl";
 
+// ---------------------------------------------------------------------------
+// Particle billboard shaders
+// ---------------------------------------------------------------------------
+
+const char* particle_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec3 camRight;
+    float _pad0;
+    vec3 camUp;
+    float _pad1;
+} pc;
+
+// Per-instance data (binding 0, instance rate)
+layout(location = 0) in vec3 inPos;       // world position
+layout(location = 1) in float inSize;     // billboard half-extent
+layout(location = 2) in float inRotation; // rotation in radians
+layout(location = 3) in float inAlpha;
+layout(location = 4) in vec2 inUVOffset;  // texture frame offset
+layout(location = 5) in vec2 inUVSize;    // texture frame size
+layout(location = 6) in vec3 inColor;     // tint
+
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) out vec4 fragColor;
+
+void main() {
+    // 6 vertices per quad (2 triangles)
+    vec2 corner;
+    int idx = gl_VertexIndex;
+    if (idx == 0)      corner = vec2(-1, -1);
+    else if (idx == 1) corner = vec2( 1, -1);
+    else if (idx == 2) corner = vec2( 1,  1);
+    else if (idx == 3) corner = vec2(-1, -1);
+    else if (idx == 4) corner = vec2( 1,  1);
+    else               corner = vec2(-1,  1);
+
+    // Apply rotation
+    float c = cos(inRotation);
+    float s = sin(inRotation);
+    vec2 rotated = vec2(
+        corner.x * c - corner.y * s,
+        corner.x * s + corner.y * c
+    );
+
+    // Billboard offset in world space
+    vec3 worldPos = inPos
+        + pc.camRight * rotated.x * inSize
+        + pc.camUp    * rotated.y * inSize;
+
+    gl_Position = pc.viewProj * vec4(worldPos, 1.0);
+
+    // UV: map corner [-1,1] to [0,1] then scale to frame
+    vec2 uv01 = corner * 0.5 + 0.5;
+    fragUV = inUVOffset + uv01 * inUVSize;
+
+    fragColor = vec4(inColor, inAlpha);
+}
+)glsl";
+
+const char* particle_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texSampler;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec4 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec4 texColor = texture(texSampler, fragUV);
+    outColor = texColor * fragColor;
+    if (outColor.a < 0.01) discard;
+}
+)glsl";
+
 } // namespace shaders
 
 } // namespace osc::renderer

@@ -15,6 +15,9 @@
 #include "renderer/unit_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
+#include "renderer/particle_system.hpp"
+#include "renderer/particle_renderer.hpp"
+#include "renderer/emitter_blueprint.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
 
@@ -159,7 +162,7 @@ private:
     // Bone SSBO infrastructure (set=1 for mesh pipeline, per-frame)
     VkDescriptorSetLayout bone_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet bone_ds_[FRAMES_IN_FLIGHT] = {};
+    VkDescriptorSet bone_ds_ = VK_NULL_HANDLE;
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
@@ -195,8 +198,8 @@ private:
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};
     AllocatedBuffer decal_quad_indices_{};
-    AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
-    void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    AllocatedBuffer decal_instance_buf_{};
+    void* decal_instance_mapped_ = nullptr;
 
     struct StoredDecal {
         std::string texture_path;
@@ -234,10 +237,15 @@ private:
 
     VkDescriptorSetLayout shadow_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool shadow_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet shadow_ds_[FRAMES_IN_FLIGHT] = {};
+    VkDescriptorSet shadow_ds_ = VK_NULL_HANDLE;
 
-    AllocatedBuffer light_ubo_[FRAMES_IN_FLIGHT] = {};
-    void* light_ubo_mapped_[FRAMES_IN_FLIGHT] = {};
+    AllocatedBuffer light_ubo_{};
+    void* light_ubo_mapped_ = nullptr;
+
+    // Particle system
+    ParticleSystem particle_system_;
+    ParticleRenderer particle_renderer_;
+    EmitterBlueprintCache emitter_bp_cache_;
 
     // Frame-in-flight tracking
     u32 frame_index_ = 0;

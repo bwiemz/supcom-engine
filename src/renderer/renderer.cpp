@@ -161,19 +161,22 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cmd_ai.commandPool = cmd_pool_;
     cmd_ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_ai.commandBufferCount = 1;
-    vkAllocateCommandBuffers(device_, &cmd_ai, &cmd_buf_);
+    cmd_ai.commandBufferCount = FRAMES_IN_FLIGHT;
+    vkAllocateCommandBuffers(device_, &cmd_ai, cmd_buf_);
 
-    // Sync objects
+    // Sync objects (one set per frame in flight)
     VkFenceCreateInfo fence_ci{};
     fence_ci.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fence_ci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    vkCreateFence(device_, &fence_ci, nullptr, &render_fence_);
 
     VkSemaphoreCreateInfo sem_ci{};
     sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_);
-    vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_);
+
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        vkCreateFence(device_, &fence_ci, nullptr, &render_fence_[i]);
+        vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_[i]);
+        vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_[i]);
+    }
 
     // Texture descriptor set layout (set=0, binding=0: combined image sampler)
     {
@@ -255,6 +258,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 
     // Overlay renderer (health bars, selection, command lines)
     overlay_renderer_.init(device_, allocator_);
+
+    // Particle renderer (emitter-driven billboard particles)
+    particle_renderer_.init(device_, allocator_, render_pass_,
+                            texture_ds_layout_, texture_sampler_);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -1280,24 +1287,25 @@ void Renderer::build_scene(const sim::SimState& sim,
 void Renderer::render(sim::SimState& sim, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
-    // Wait for ALL previous GPU work (including present) to complete.
-    // Using vkDeviceWaitIdle instead of fence-only sync avoids the classic
-    // single-buffered semaphore race: fence signals on submit completion,
-    // but present may not have consumed render_semaphore_ yet.
-    vkDeviceWaitIdle(device_);
+    // Select current frame's sync objects
+    u32 fi = frame_index_;
+
+    // Wait for this frame's previous GPU work to complete
+    vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 
     // Acquire swapchain image
     u32 image_index = 0;
     VkResult acq_result = vkAcquireNextImageKHR(
-        device_, swapchain_, UINT64_MAX, present_semaphore_,
+        device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
         VK_NULL_HANDLE, &image_index);
 
     if (acq_result == VK_ERROR_OUT_OF_DATE_KHR) {
+        vkResetFences(device_, 1, &render_fence_[fi]);
         recreate_swapchain();
         return;
     }
 
-    vkResetFences(device_, 1, &render_fence_);
+    vkResetFences(device_, 1, &render_fence_[fi]);
 
     // Process camera shake events from sim
     {
@@ -1413,6 +1421,15 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                              window_width_, window_height_,
                              sim.player_result(), frame_dt_);
 
+    // Update particle system (sync effects, step physics, build GPU data)
+    particle_system_.sync_effects(sim, emitter_bp_cache_, L);
+    particle_system_.update(frame_dt_);
+    f32 p_eye_x, p_eye_y, p_eye_z;
+    camera_.eye_position(p_eye_x, p_eye_y, p_eye_z);
+    const auto& particle_instances = particle_system_.build_instances(
+        p_eye_x, p_eye_y, p_eye_z);
+    particle_renderer_.update(particle_instances, particle_system_, texture_cache_, fi);
+
     // Update minimap (terrain bg, unit dots, camera frustum box)
     minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
                               window_width_, window_height_);
@@ -1432,16 +1449,16 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                     window_width_, window_height_);
 
     // Record command buffer
-    vkResetCommandBuffer(cmd_buf_, 0);
+    vkResetCommandBuffer(cmd_buf_[fi], 0);
 
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd_buf_, &begin_info);
+    vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
 
     // Upload fog of war texture (barriers + copy, before any render pass)
     if (fog_renderer_.initialized()) {
-        fog_renderer_.record_upload(cmd_buf_);
+        fog_renderer_.record_upload(cmd_buf_[fi]);
     }
 
     // ==================== SHADOW PASS ====================
@@ -1460,43 +1477,43 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         shadow_rp.renderArea.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
         shadow_rp.clearValueCount = 1;
         shadow_rp.pClearValues = &shadow_clear;
-        vkCmdBeginRenderPass(cmd_buf_, &shadow_rp, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(cmd_buf_[fi], &shadow_rp, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport shadow_vp{};
         shadow_vp.width = static_cast<f32>(SHADOW_MAP_SIZE);
         shadow_vp.height = static_cast<f32>(SHADOW_MAP_SIZE);
         shadow_vp.minDepth = 0.0f;
         shadow_vp.maxDepth = 1.0f;
-        vkCmdSetViewport(cmd_buf_, 0, 1, &shadow_vp);
+        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &shadow_vp);
 
         VkRect2D shadow_sc{};
         shadow_sc.extent = {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE};
-        vkCmdSetScissor(cmd_buf_, 0, 1, &shadow_sc);
+        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &shadow_sc);
 
         // Shadow terrain
         if (terrain_mesh_.index_count() > 0 && shadow_terrain_pipeline_) {
-            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_terrain_pipeline_);
-            vkCmdPushConstants(cmd_buf_, shadow_terrain_layout_,
+            vkCmdPushConstants(cmd_buf_[fi], shadow_terrain_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT,
                                0, sizeof(f32) * 16, light_vp.data());
 
             VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
             VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(cmd_buf_, 0, 1, vbufs, offsets);
-            vkCmdBindIndexBuffer(cmd_buf_, terrain_mesh_.index_buffer(), 0,
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
+            vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
         }
 
         // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
         if (!strategic_icon_renderer_.is_strategic_zoom() &&
             !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_) {
-            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_mesh_pipeline_);
 
             // Bind bone SSBO at set=0
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     shadow_mesh_layout_, 0, 1, &bone_ds_,
                                     0, nullptr);
 
@@ -1512,7 +1529,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
-                vkCmdPushConstants(cmd_buf_, shadow_mesh_layout_,
+                vkCmdPushConstants(cmd_buf_[fi], shadow_mesh_layout_,
                                    VK_SHADER_STAGE_VERTEX_BIT,
                                    0, sizeof(spc), &spc);
 
@@ -1522,10 +1539,10 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                     0,
                     static_cast<VkDeviceSize>(group.instance_offset) *
                         sizeof(MeshInstance)};
-                vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
-                vkCmdBindIndexBuffer(cmd_buf_, group.mesh->index_buf.buffer, 0,
+                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
+                vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
                                      VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd_buf_, group.mesh->index_count,
+                vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count,
                                  group.instance_count, 0, 0, 0);
             }
         }
@@ -1533,23 +1550,23 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         // Shadow cubes (skip when strategic zoom active)
         if (!strategic_icon_renderer_.is_strategic_zoom() &&
             unit_renderer_.cube_instance_count() > 0 && shadow_unit_pipeline_) {
-            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_unit_pipeline_);
-            vkCmdPushConstants(cmd_buf_, shadow_unit_layout_,
+            vkCmdPushConstants(cmd_buf_[fi], shadow_unit_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT,
                                0, sizeof(f32) * 16, light_vp.data());
 
             VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                                 unit_renderer_.cube_instance_buffer()};
             VkDeviceSize offsets[] = {0, 0};
-            vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, offsets);
-            vkCmdBindIndexBuffer(cmd_buf_, unit_renderer_.cube_index_buffer(), 0,
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
+            vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_, unit_renderer_.cube_index_count(),
+            vkCmdDrawIndexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
                              unit_renderer_.cube_instance_count(), 0, 0, 0);
         }
 
-        vkCmdEndRenderPass(cmd_buf_);
+        vkCmdEndRenderPass(cmd_buf_[fi]);
     }
 
     // ==================== MAIN PASS ====================
@@ -1565,7 +1582,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
     rp_begin.pClearValues = clear_values.data();
-    vkCmdBeginRenderPass(cmd_buf_, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRenderPass(cmd_buf_[fi], &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
     // Dynamic viewport + scissor
     VkViewport viewport{};
@@ -1573,15 +1590,15 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     viewport.height = static_cast<f32>(window_height_);
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(cmd_buf_, 0, 1, &viewport);
+    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
 
     VkRect2D scissor{};
     scissor.extent = {window_width_, window_height_};
-    vkCmdSetScissor(cmd_buf_, 0, 1, &scissor);
+    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
     // 1. Draw terrain
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
         // Push constants: viewProj + mapWidth + mapHeight + scales[9] + eye(3) = 120B
@@ -1598,30 +1615,30 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         std::memcpy(tpc.scales, terrain_strata_scales_, sizeof(f32) * 9);
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
-        vkCmdPushConstants(cmd_buf_, terrain_layout_,
+        vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT |
                                VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(tpc), &tpc);
 
         // Bind terrain texture descriptor set (set=0)
         if (terrain_tex_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     terrain_layout_, 0, 1, &terrain_tex_ds_,
                                     0, nullptr);
         }
         // Bind shadow descriptor set (set=1)
         if (shadow_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     terrain_layout_, 1, 1, &shadow_ds_,
                                     0, nullptr);
         }
 
         VkBuffer vbufs[] = {terrain_mesh_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_, 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_, terrain_mesh_.index_buffer(), 0,
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_, terrain_mesh_.index_count(), 1, 0, 0, 0);
+        vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
     // 2. Draw decals (textured quads on terrain)
@@ -1664,9 +1681,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         }
 
         if (total_instances > 0) {
-            vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               decal_pipeline_);
-            vkCmdPushConstants(cmd_buf_, decal_layout_,
+            vkCmdPushConstants(cmd_buf_[fi], decal_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT |
                                    VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(f32) * 16, vp.data());
@@ -1675,7 +1692,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             VkBuffer inst_buf = decal_instance_buf_.buffer;
 
             for (auto& group : decal_groups_) {
-                vkCmdBindDescriptorSets(cmd_buf_,
+                vkCmdBindDescriptorSets(cmd_buf_[fi],
                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         decal_layout_, 0, 1,
                                         &group.texture_ds, 0, nullptr);
@@ -1685,10 +1702,10 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                     0,
                     static_cast<VkDeviceSize>(group.instance_offset) *
                         sizeof(f32) * 16};
-                vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
-                vkCmdBindIndexBuffer(cmd_buf_, decal_quad_indices_.buffer, 0,
+                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
+                vkCmdBindIndexBuffer(cmd_buf_[fi], decal_quad_indices_.buffer, 0,
                                      VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd_buf_, 6, group.instance_count, 0, 0, 0);
+                vkCmdDrawIndexed(cmd_buf_[fi], 6, group.instance_count, 0, 0, 0);
             }
         }
     }
@@ -1697,7 +1714,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     //    Skip when strategic zoom replaces 3D units with 2D icons.
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
         !unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           mesh_pipeline_);
 
         // Push viewProj as first 64 bytes (bone offsets per-group below)
@@ -1713,14 +1730,14 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
         VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
         if (fallback_ds) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     mesh_layout_, 0, 1, &fallback_ds,
                                     0, nullptr);
         }
 
         // Bind bone SSBO at set=1 (once for all groups)
         if (bone_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     mesh_layout_, 1, 1, &bone_ds_,
                                     0, nullptr);
         }
@@ -1729,7 +1746,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         VkDescriptorSet specteam_fallback =
             texture_cache_.specteam_fallback_descriptor();
         if (specteam_fallback) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     mesh_layout_, 2, 1, &specteam_fallback,
                                     0, nullptr);
         }
@@ -1738,14 +1755,14 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         VkDescriptorSet normal_fallback =
             texture_cache_.normal_fallback_descriptor();
         if (normal_fallback) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     mesh_layout_, 3, 1, &normal_fallback,
                                     0, nullptr);
         }
 
         // Bind shadow descriptor set at set=4
         if (shadow_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     mesh_layout_, 4, 1, &shadow_ds_,
                                     0, nullptr);
         }
@@ -1757,7 +1774,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             // stale set=0 from prior group)
             VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
             if (albedo_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         mesh_layout_, 0, 1, &albedo_ds,
                                         0, nullptr);
             }
@@ -1766,7 +1783,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             // stale set=2 from prior group)
             VkDescriptorSet spec_ds = group.specteam_ds ? group.specteam_ds : specteam_fallback;
             if (spec_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         mesh_layout_, 2, 1, &spec_ds,
                                         0, nullptr);
             }
@@ -1775,7 +1792,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             // stale set=3 from prior group)
             VkDescriptorSet norm_ds = group.normal_ds ? group.normal_ds : normal_fallback;
             if (norm_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         mesh_layout_, 3, 1, &norm_ds,
                                         0, nullptr);
             }
@@ -1783,7 +1800,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             // Push bone offsets per group
             mesh_pc.boneBase = group.bone_base_offset;
             mesh_pc.bonesPerInst = group.bones_per_instance;
-            vkCmdPushConstants(cmd_buf_, mesh_layout_,
+            vkCmdPushConstants(cmd_buf_[fi], mesh_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(mesh_pc), &mesh_pc);
 
@@ -1793,10 +1810,10 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                 0,
                 static_cast<VkDeviceSize>(group.instance_offset) *
                     sizeof(MeshInstance)};
-            vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, buf_offsets);
-            vkCmdBindIndexBuffer(cmd_buf_, group.mesh->index_buf.buffer, 0,
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
+            vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_, group.mesh->index_count,
+            vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count,
                              group.instance_count, 0, 0, 0);
         }
     }
@@ -1804,12 +1821,12 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // 4. Draw cube fallback units (skip when strategic zoom active)
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
         unit_renderer_.cube_instance_count() > 0 && unit_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           unit_pipeline_);
 
         // Bind shadow descriptor set at set=0
         if (shadow_ds_) {
-            vkCmdBindDescriptorSets(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     unit_layout_, 0, 1, &shadow_ds_,
                                     0, nullptr);
         }
@@ -1820,7 +1837,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         } upc{};
         std::memcpy(upc.viewProj, vp.data(), sizeof(f32) * 16);
         camera_.eye_position(upc.eyeX, upc.eyeY, upc.eyeZ);
-        vkCmdPushConstants(cmd_buf_, unit_layout_,
+        vkCmdPushConstants(cmd_buf_[fi], unit_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT |
                                VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(upc), &upc);
@@ -1828,16 +1845,16 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         VkBuffer vbufs[] = {unit_renderer_.cube_vertex_buffer(),
                             unit_renderer_.cube_instance_buffer()};
         VkDeviceSize offsets[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd_buf_, 0, 2, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_, unit_renderer_.cube_index_buffer(), 0,
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], unit_renderer_.cube_index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_, unit_renderer_.cube_index_count(),
+        vkCmdDrawIndexed(cmd_buf_[fi], unit_renderer_.cube_index_count(),
                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
     // 5. Draw water (tessellated grid with wave animation, depth coloring)
     if (water_renderer_.has_water() && water_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           water_pipeline_);
 
         WaterRenderer::WaterPushConstants wpc{};
@@ -1846,69 +1863,87 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         camera_.eye_position(wpc.eye_x, wpc.eye_y, wpc.eye_z);
         wpc.water_elevation = water_renderer_.water_elevation();
 
-        vkCmdPushConstants(cmd_buf_, water_layout_,
+        vkCmdPushConstants(cmd_buf_[fi], water_layout_,
                            VK_SHADER_STAGE_VERTEX_BIT |
                                VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, WaterRenderer::PUSH_CONSTANT_SIZE, &wpc);
 
         VkBuffer vbufs[] = {water_renderer_.vertex_buffer()};
         VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_, 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_, water_renderer_.index_buffer(), 0,
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], water_renderer_.index_buffer(), 0,
                              VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_, water_renderer_.index_count(), 1, 0, 0, 0);
+        vkCmdDrawIndexed(cmd_buf_[fi], water_renderer_.index_count(), 1, 0, 0, 0);
+    }
+
+    // 5b. Draw particles (billboard emitter effects)
+    if (particle_renderer_.draw_count() > 0) {
+        // Extract camera right and up vectors from the view matrix
+        // View matrix row 0 = right, row 1 = up (transposed from columns)
+        f32 eye_x, eye_y, eye_z;
+        camera_.eye_position(eye_x, eye_y, eye_z);
+        auto view = math::look_at(eye_x, eye_y, eye_z,
+                            camera_.target_x(), 0.0f, camera_.target_z(),
+                            0.0f, 1.0f, 0.0f);
+        // Column-major: col 0 = right, col 1 = up
+        f32 cam_right[3] = {view[0], view[1], view[2]};
+        f32 cam_up[3] = {view[4], view[5], view[6]};
+
+        particle_renderer_.render(cmd_buf_[fi],
+                                  window_width_, window_height_,
+                                  vp.data(), cam_right, cam_up, fi);
     }
 
     // 6. Draw strategic icons (when zoomed out, replaces 3D unit meshes)
     if (ui_pipeline_ && strategic_icon_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        strategic_icon_renderer_.render(cmd_buf_, ui_layout_,
+        strategic_icon_renderer_.render(cmd_buf_[fi], ui_layout_,
                                          window_width_, window_height_);
     }
 
     // 7. Draw game overlays (health bars, selection, command lines)
     if (ui_pipeline_ && overlay_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        overlay_renderer_.render(cmd_buf_, ui_layout_,
+        overlay_renderer_.render(cmd_buf_[fi], ui_layout_,
                                  window_width_, window_height_);
     }
 
     // 8. Draw minimap (terrain bg + unit dots + camera box)
     if (ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        minimap_renderer_.render(cmd_buf_, ui_layout_,
+        minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
                                   window_width_, window_height_);
     }
 
     // 9. Draw economy HUD (resource bars + text at top of screen)
     if (ui_pipeline_ && hud_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        hud_renderer_.render(cmd_buf_, ui_layout_,
+        hud_renderer_.render(cmd_buf_[fi], ui_layout_,
                               window_width_, window_height_);
     }
 
     // 10. Draw selection info panel (bottom-center unit details)
     if (ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        selection_info_renderer_.render(cmd_buf_, ui_layout_,
+        selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
                                          window_width_, window_height_);
     }
 
     // 11. Draw UI (screen-space 2D quads, last — always on top)
     if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-        vkCmdBindPipeline(cmd_buf_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
-        ui_renderer_.render(cmd_buf_, ui_layout_,
+        ui_renderer_.render(cmd_buf_[fi], ui_layout_,
                             window_width_, window_height_);
     }
 
-    vkCmdEndRenderPass(cmd_buf_);
-    vkEndCommandBuffer(cmd_buf_);
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+    vkEndCommandBuffer(cmd_buf_[fi]);
 
     // Submit
     VkPipelineStageFlags wait_stage =
@@ -1916,19 +1951,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     VkSubmitInfo submit{};
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.waitSemaphoreCount = 1;
-    submit.pWaitSemaphores = &present_semaphore_;
+    submit.pWaitSemaphores = &present_semaphore_[fi];
     submit.pWaitDstStageMask = &wait_stage;
     submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd_buf_;
+    submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_semaphore_;
-    vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_);
+    submit.pSignalSemaphores = &render_semaphore_[fi];
+    vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
 
     // Present
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_semaphore_;
+    present.pWaitSemaphores = &render_semaphore_[fi];
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
@@ -1938,6 +1973,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         pres_result == VK_SUBOPTIMAL_KHR) {
         recreate_swapchain();
     }
+
+    // Advance frame index for next frame
+    frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
 bool Renderer::should_close() const {
@@ -2025,6 +2063,7 @@ void Renderer::shutdown() {
     fog_renderer_.destroy(device_, allocator_);
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
+    particle_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);
@@ -2091,10 +2130,12 @@ void Renderer::shutdown() {
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
     if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
 
-    // Sync
-    vkDestroyFence(device_, render_fence_, nullptr);
-    vkDestroySemaphore(device_, present_semaphore_, nullptr);
-    vkDestroySemaphore(device_, render_semaphore_, nullptr);
+    // Sync (per-frame)
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        vkDestroyFence(device_, render_fence_[i], nullptr);
+        vkDestroySemaphore(device_, present_semaphore_[i], nullptr);
+        vkDestroySemaphore(device_, render_semaphore_[i], nullptr);
+    }
 
     // Command pool
     vkDestroyCommandPool(device_, cmd_pool_, nullptr);

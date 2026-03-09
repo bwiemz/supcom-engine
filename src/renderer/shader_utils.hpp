@@ -29,6 +29,8 @@ extern const char* shadow_unit_vert;  // cube shadow (instanced + lightVP)
 extern const char* shadow_frag;       // empty (depth-only write)
 extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)
+extern const char* particle_vert;     // 3D billboard particle (instanced)
+extern const char* particle_frag;     // textured particle with alpha/additive
 } // namespace shaders
 
 } // namespace osc::renderer
