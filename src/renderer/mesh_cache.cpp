@@ -5,11 +5,19 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 extern "C" {
 #include "lua.h"
 }
 
 namespace osc::renderer {
+
+/// Lowercase a string in-place (blueprint IDs in __blueprints are lowercased).
+static void to_lower(std::string& s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+}
 
 void MeshCache::init(VkDevice device, VmaAllocator allocator,
                      VkCommandPool cmd_pool, VkQueue queue,
@@ -34,21 +42,31 @@ const GPUMesh* MeshCache::get(const std::string& blueprint_id,
 
     std::string mesh_path = resolve_mesh_path(blueprint_id, L);
     if (mesh_path.empty()) {
-        spdlog::debug("MeshCache: no mesh path for '{}'", blueprint_id);
+        // Log first few failures at INFO level for debugging
+        if (failed_.size() < 5)
+            spdlog::info("MeshCache: no mesh path for '{}' (cube fallback)", blueprint_id);
+        else
+            spdlog::debug("MeshCache: no mesh path for '{}'", blueprint_id);
         failed_.insert(blueprint_id);
         return nullptr;
     }
 
     auto file_data = vfs_->read_file(mesh_path);
     if (!file_data) {
-        spdlog::debug("MeshCache: VFS read failed for '{}'", mesh_path);
+        if (failed_.size() < 5)
+            spdlog::info("MeshCache: VFS read failed for '{}' (cube fallback)", mesh_path);
+        else
+            spdlog::debug("MeshCache: VFS read failed for '{}'", mesh_path);
         failed_.insert(blueprint_id);
         return nullptr;
     }
 
     auto mesh = sim::parse_scm_mesh(*file_data);
     if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) {
-        spdlog::debug("MeshCache: SCM mesh parse failed for '{}'", mesh_path);
+        if (failed_.size() < 5)
+            spdlog::info("MeshCache: SCM parse failed for '{}' (cube fallback)", mesh_path);
+        else
+            spdlog::debug("MeshCache: SCM mesh parse failed for '{}'", mesh_path);
         failed_.insert(blueprint_id);
         return nullptr;
     }
@@ -123,6 +141,9 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
     lua_pop(L, 3);
 
     if (mesh_bp_id.empty()) return {};
+
+    // __blueprints keys are lowercased — normalize before lookup
+    to_lower(mesh_bp_id);
 
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -200,6 +221,7 @@ std::string MeshCache::resolve_mesh_bp_id(const std::string& bp_id,
     std::string result;
     if (lua_type(L, -1) == LUA_TSTRING) {
         result = lua_tostring(L, -1);
+        to_lower(result); // __blueprints keys are lowercased
     }
     lua_pop(L, 3);
     return result;

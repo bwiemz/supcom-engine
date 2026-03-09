@@ -54,7 +54,7 @@ static void get_army_color(const sim::Entity& entity,
             r = g = b = 0.7f;
         }
     } else {
-        r = g = b = 1.0f; // neutral/props: white (albedo shows through)
+        r = g = b = 1.0f; // neutral/props: white (albedo shows through for mesh)
     }
     a = (entity.fraction_complete() < 1.0f) ? 0.4f : 1.0f;
 }
@@ -193,11 +193,16 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
         }
     });
 
+    u32 loaded = 0, failed = 0;
     for (auto& id : bp_ids) {
-        mesh_cache.get(id, L);
+        if (mesh_cache.get(id, L))
+            loaded++;
+        else
+            failed++;
     }
 
-    spdlog::info("MeshCache: preloaded {} unique blueprints", bp_ids.size());
+    spdlog::info("MeshCache: preloaded {} unique blueprints ({} loaded, {} failed)",
+                 bp_ids.size(), loaded, failed);
 }
 
 void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
@@ -305,7 +310,12 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             inst.y = entity.position().y;
             inst.z = entity.position().z;
             inst.scale = 2.0f;
-            inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+            // Use muted green for props (trees/rocks) to avoid white cube sea
+            if (entity.is_prop()) {
+                inst.r = 0.28f; inst.g = 0.42f; inst.b = 0.18f; inst.a = a;
+            } else {
+                inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+            }
             cube_count++;
         }
     });
