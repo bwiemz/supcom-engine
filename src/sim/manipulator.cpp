@@ -152,10 +152,28 @@ void mat4_multiply(f32* C, const f32* A, const f32* B) {
     }
 }
 
+/// Component-wise linear interpolation of 4x4 matrices.
+/// Sufficient for short blend durations where rotation error is imperceptible.
+void mat4_lerp(f32* out, const f32* a, const f32* b, f32 t) {
+    for (int i = 0; i < 16; i++) {
+        out[i] = a[i] + t * (b[i] - a[i]);
+    }
+}
+
 } // anonymous namespace
 
 void AnimManipulator::play_anim(const std::string& anim, bool loop,
                                  AnimCache* cache) {
+    // Snapshot current bone matrices for cross-fade blending
+    // (only if we're already playing an animation with bone data)
+    if (owner_ && !current_anim_.empty() && sca_data_ && blend_time_ > 0.0f) {
+        blend_from_matrices_ = owner_->animated_bone_matrices();
+        blend_remaining_ = blend_time_;
+    } else {
+        blend_from_matrices_.clear();
+        blend_remaining_ = 0.0f;
+    }
+
     current_anim_ = anim;
     looping_ = loop;
     fraction_ = 0.0f;
@@ -221,6 +239,12 @@ void AnimManipulator::tick(f32 dt) {
 
     // Compute bone matrices after fraction update
     compute_bone_matrices();
+
+    // Advance cross-fade blend
+    if (blend_remaining_ > 0.0f) {
+        blend_remaining_ -= dt;
+        if (blend_remaining_ < 0.0f) blend_remaining_ = 0.0f;
+    }
 }
 
 bool AnimManipulator::is_at_goal() const {
@@ -301,6 +325,26 @@ void AnimManipulator::compute_bone_matrices() {
                              world_xforms[i].pos);
             mat4_multiply(matrices[scm_idx].data(), world_mat,
                           bd->bones[scm_idx].inverse_bind_pose.data());
+        }
+    }
+
+    // Apply cross-fade blending if active
+    if (blend_remaining_ > 0.0f && !blend_from_matrices_.empty()) {
+        f32 weight = blend_remaining_ / blend_time_; // 1.0 → 0.0 over blend duration
+        for (u32 i = 0; i < num_sca_bones; i++) {
+            i32 scm_idx = (i < sca_to_scm_map_.size())
+                              ? sca_to_scm_map_[i] : -1;
+            if (scm_idx >= 0 &&
+                scm_idx < static_cast<i32>(matrices.size()) &&
+                scm_idx < static_cast<i32>(blend_from_matrices_.size()) &&
+                disabled_bones_.find(scm_idx) == disabled_bones_.end()) {
+                f32 blended[16];
+                mat4_lerp(blended,
+                          matrices[scm_idx].data(),        // "to" (new anim)
+                          blend_from_matrices_[scm_idx].data(), // "from" (snapshot)
+                          weight);
+                std::memcpy(matrices[scm_idx].data(), blended, sizeof(f32) * 16);
+            }
         }
     }
 }
