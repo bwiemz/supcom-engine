@@ -831,8 +831,20 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                 f32 sx0, sy0, sx1, sy1;
                 if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0))
                     continue;
-                // TODO: use entity heading instead of +Z when orientation is available
-                if (!world_to_screen(wx, wy, wz + beam_len,
+                // Use entity heading to orient the beam
+                f32 fwd_x = 0.0f, fwd_y = 0.0f, fwd_z = 1.0f;
+                if (fx_ptr->entity_id() > 0) {
+                    auto* beam_parent = registry.find(fx_ptr->entity_id());
+                    if (beam_parent && !beam_parent->destroyed()) {
+                        const auto& q = beam_parent->orientation();
+                        fwd_x = 2.0f * (q.x * q.z + q.w * q.y);
+                        fwd_y = 2.0f * (q.y * q.z - q.w * q.x);
+                        fwd_z = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
+                    }
+                }
+                if (!world_to_screen(wx + fwd_x * beam_len,
+                                      wy + fwd_y * beam_len,
+                                      wz + fwd_z * beam_len,
                                       vp_matrix, sw, sh, sx1, sy1))
                     continue;
 
