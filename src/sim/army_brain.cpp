@@ -123,9 +123,12 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
             energy_consumption += econ.consumption_energy;
         }
 
-        // TODO: separate maintenance consumption (shields, radar) gated by
-        // maintenance_active + energy_maintenance_override. Deferred until
-        // shields/radar are implemented — currently no units have maintenance.
+        if (econ.maintenance_active) {
+            f64 maint_energy = (econ.energy_maintenance_override >= 0.0)
+                                   ? econ.energy_maintenance_override
+                                   : econ.consumption_energy;
+            energy_consumption += maint_energy;
+        }
 
         // Storage contribution always counted
         total_storage_mass += econ.storage_mass;
