@@ -791,10 +791,10 @@ static int entity_Destroy(lua_State* L) {
                 if (entry) {
                     store->push_lua_table(*entry, L);
                     lua_pushstring(L, "Display");
-                    lua_gettable(L, -2);
+                    lua_rawget(L, -2);
                     if (lua_istable(L, -1)) {
                         lua_pushstring(L, "AnimationDeath");
-                        lua_gettable(L, -2);
+                        lua_rawget(L, -2);
                         if (lua_type(L, -1) == LUA_TSTRING)
                             has_death_anim = true;
                         lua_pop(L, 1); // AnimationDeath

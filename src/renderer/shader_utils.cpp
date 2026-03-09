@@ -980,7 +980,6 @@ layout(push_constant) uniform PC {
 
 void main() {
     vec3 color = texture(sceneTex, fragUV).rgb;
-    float brightness = dot(color, vec3(0.2126, 0.7152, 0.0722));
     vec3 bright = max(color - vec3(pc.threshold), vec3(0.0));
     outColor = vec4(bright * pc.intensity, 1.0);
 }
