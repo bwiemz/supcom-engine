@@ -777,6 +777,37 @@ static int entity_Destroy(lua_State* L) {
                 sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());
         }
 
+        // Check if unit should enter dying state (death animation) instead of
+        // immediate destruction. Must be a fully-built unit that isn't already
+        // dying or wreckage, with a blueprint AnimationDeath path.
+        if (e->is_unit() && !e->is_wreckage() &&
+            e->fraction_complete() >= 1.0f) {
+            auto* dying_unit = static_cast<sim::Unit*>(e);
+            if (!dying_unit->is_dying()) {
+                auto* sim = get_sim(L);
+                auto* store = sim ? sim->blueprint_store() : nullptr;
+                auto* entry = store ? store->find(e->blueprint_id()) : nullptr;
+                bool has_death_anim = false;
+                if (entry) {
+                    store->push_lua_table(*entry, L);
+                    lua_pushstring(L, "Display");
+                    lua_gettable(L, -2);
+                    if (lua_istable(L, -1)) {
+                        lua_pushstring(L, "AnimationDeath");
+                        lua_gettable(L, -2);
+                        if (lua_type(L, -1) == LUA_TSTRING)
+                            has_death_anim = true;
+                        lua_pop(L, 1); // AnimationDeath
+                    }
+                    lua_pop(L, 2); // Display + bp table
+                }
+                if (has_death_anim) {
+                    dying_unit->begin_dying(2.0f);
+                    return 0;
+                }
+            }
+        }
+
         // If dying unit was capturing, clear being_captured on its target
         if (e->is_unit()) {
             auto* dying_unit = static_cast<sim::Unit*>(e);
