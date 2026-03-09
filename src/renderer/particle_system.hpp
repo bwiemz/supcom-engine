@@ -76,7 +76,7 @@ public:
     static constexpr u32 MAX_PARTICLES = 16384;
 
 private:
-    void emit_particles(EmitterState& es, f32 dt);
+    void emit_particles(EmitterState& es, f32 dt, u32& running_total);
     void step_particles(EmitterState& es, f32 dt);
 
     std::vector<EmitterState> emitters_;

@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace osc::renderer {
 
@@ -19,16 +21,36 @@ void ParticleSystem::sync_effects(const sim::SimState& sim,
                                   lua_State* L) {
     const auto& effects = sim.effect_registry().all();
 
-    // Mark emitters whose effect was destroyed
+    // Build ID→effect map once (O(E)) to avoid O(N*E) nested loops
+    std::unordered_map<u32, const sim::IEffect*> effect_map;
+    effect_map.reserve(effects.size());
+    for (const auto& fx : effects) {
+        if (fx && !fx->destroyed())
+            effect_map[fx->id()] = fx.get();
+    }
+
+    // Build set of tracked effect IDs for O(1) "already tracked?" check
+    std::unordered_set<u32> tracked_ids;
+    tracked_ids.reserve(emitters_.size());
+
+    // Mark emitters whose effect was destroyed + update positions (single pass)
     for (auto& es : emitters_) {
-        bool found = false;
-        for (const auto& fx : effects) {
-            if (fx && !fx->destroyed() && fx->id() == es.effect_id) {
-                found = true;
-                break;
+        auto it = effect_map.find(es.effect_id);
+        if (it == effect_map.end()) {
+            es.active = false;
+        } else if (es.active) {
+            // Update position for attached emitters
+            const auto* fx = it->second;
+            if (fx->entity_id() > 0) {
+                auto* ent = sim.entity_registry().find(fx->entity_id());
+                if (ent) {
+                    es.origin_x = ent->position().x + fx->offset_x();
+                    es.origin_y = ent->position().y + fx->offset_y();
+                    es.origin_z = ent->position().z + fx->offset_z();
+                }
             }
         }
-        if (!found) es.active = false;
+        tracked_ids.insert(es.effect_id);
     }
 
     // Remove inactive emitters with no live particles
@@ -39,11 +61,8 @@ void ParticleSystem::sync_effects(const sim::SimState& sim,
                        }),
         emitters_.end());
 
-    // Create emitters for new effects
-    for (const auto& fx : effects) {
-        if (!fx || fx->destroyed()) continue;
-
-        // Only emitter types
+    // Create emitters for new effects (O(E) with O(1) tracked check)
+    for (const auto& [id, fx] : effect_map) {
         auto t = fx->type();
         if (t != sim::EffectType::EMITTER_AT_ENTITY &&
             t != sim::EffectType::EMITTER_AT_BONE &&
@@ -51,43 +70,18 @@ void ParticleSystem::sync_effects(const sim::SimState& sim,
             continue;
         }
 
-        // Already tracked?
-        bool exists = false;
-        for (const auto& es : emitters_) {
-            if (es.effect_id == fx->id()) { exists = true; break; }
-        }
-        if (exists) continue;
+        if (tracked_ids.count(id)) continue;
 
-        // Load blueprint
         const auto* bp = bp_cache.get(fx->blueprint_path(), L);
         if (!bp) continue;
 
         EmitterState es;
         es.blueprint = bp;
-        es.effect_id = fx->id();
+        es.effect_id = id;
         es.origin_x = fx->offset_x();
         es.origin_y = fx->offset_y();
         es.origin_z = fx->offset_z();
         emitters_.push_back(std::move(es));
-    }
-
-    // Update positions for attached emitters
-    for (auto& es : emitters_) {
-        if (!es.active) continue;
-        for (const auto& fx : effects) {
-            if (fx && fx->id() == es.effect_id && !fx->destroyed()) {
-                // Get entity position if entity is attached
-                if (fx->entity_id() > 0) {
-                    auto* ent = sim.entity_registry().find(fx->entity_id());
-                    if (ent) {
-                        es.origin_x = ent->position().x + fx->offset_x();
-                        es.origin_y = ent->position().y + fx->offset_y();
-                        es.origin_z = ent->position().z + fx->offset_z();
-                    }
-                }
-                break;
-            }
-        }
     }
 }
 
@@ -95,7 +89,8 @@ void ParticleSystem::sync_effects(const sim::SimState& sim,
 // emit_particles -- spawn new particles from emitter curves
 // ---------------------------------------------------------------------------
 
-void ParticleSystem::emit_particles(EmitterState& es, f32 dt) {
+void ParticleSystem::emit_particles(EmitterState& es, f32 dt,
+                                     u32& running_total) {
     if (!es.active || !es.blueprint) return;
     const auto& bp = *es.blueprint;
 
@@ -109,9 +104,8 @@ void ParticleSystem::emit_particles(EmitterState& es, f32 dt) {
 
     es.emit_accumulator += rate * dt;
 
-    u32 total = particle_count();
-    while (es.emit_accumulator >= 1.0f && total < MAX_PARTICLES) {
-        ++total;
+    while (es.emit_accumulator >= 1.0f && running_total < MAX_PARTICLES) {
+        ++running_total;
         es.emit_accumulator -= 1.0f;
 
         Particle p;
@@ -203,6 +197,7 @@ void ParticleSystem::step_particles(EmitterState& es, f32 dt) {
 // ---------------------------------------------------------------------------
 
 void ParticleSystem::update(f32 dt) {
+    u32 running_total = particle_count(); // compute once, not per-emitter
     for (auto& es : emitters_) {
         if (es.active) {
             es.emitter_time += dt;
@@ -217,7 +212,7 @@ void ParticleSystem::update(f32 dt) {
                 }
             }
 
-            emit_particles(es, dt);
+            emit_particles(es, dt, running_total);
         }
 
         step_particles(es, dt);

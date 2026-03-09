@@ -378,7 +378,7 @@ void SimState::update_visibility() {
         }
     });
 
-    // Mark destroyed entities in blip cache
+    // Erase destroyed entities from blip cache (prevents unbounded growth)
     {
         std::vector<u32> dead_ids;
         for (auto& [eid, _] : blip_cache_) {
@@ -387,7 +387,7 @@ void SimState::update_visibility() {
                 dead_ids.push_back(eid);
         }
         for (u32 eid : dead_ids)
-            mark_entity_dead_in_cache(eid);
+            blip_cache_.erase(eid);
     }
 
     // 4. Detect changes and fire OnIntelChange (stealth-aware)

@@ -267,7 +267,9 @@ EmitterBlueprintCache::get(const std::string& bp_path, lua_State* L) {
                      lua_tostring(L, -1));
         // Restore old EmitterBlueprint
         lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_setglobal(L, "EmitterBlueprint");
+        lua_pushstring(L, "EmitterBlueprint");
+        lua_insert(L, -2);
+        lua_rawset(L, LUA_GLOBALSINDEX);
         luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
         lua_settop(L, top);
         return nullptr;
@@ -277,7 +279,9 @@ EmitterBlueprintCache::get(const std::string& bp_path, lua_State* L) {
         spdlog::warn("EmitterBlueprint: {} did not return a table",
                      bp_path);
         lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_setglobal(L, "EmitterBlueprint");
+        lua_pushstring(L, "EmitterBlueprint");
+        lua_insert(L, -2);
+        lua_rawset(L, LUA_GLOBALSINDEX);
         luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
         lua_settop(L, top);
         return nullptr;
@@ -288,7 +292,9 @@ EmitterBlueprintCache::get(const std::string& bp_path, lua_State* L) {
 
     // Restore old EmitterBlueprint global
     lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-    lua_setglobal(L, "EmitterBlueprint");
+    lua_pushstring(L, "EmitterBlueprint");
+    lua_insert(L, -2);
+    lua_rawset(L, LUA_GLOBALSINDEX);
     luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
     lua_settop(L, top);
 
