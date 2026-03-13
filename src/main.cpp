@@ -23,6 +23,7 @@
 #include "lua/beat_system.hpp"
 #include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/keymap.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
@@ -843,6 +844,15 @@ int main(int argc, char* argv[]) {
                 lua_State* uL = ui_lua_state.raw();
                 lua_pushstring(uL, "__osc_scenario_path");
                 lua_pushstring(uL, map_path.c_str());
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // Key map registry for hotkey dispatch (M150b)
+            osc::ui::KeyMapRegistry keymap_registry;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_keymap_registry");
+                lua_pushlightuserdata(uL, &keymap_registry);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 

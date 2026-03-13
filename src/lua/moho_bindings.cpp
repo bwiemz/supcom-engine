@@ -26,6 +26,7 @@
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 #include "ui/font_metrics_provider.hpp"
+#include "ui/keymap.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
@@ -11415,6 +11416,28 @@ static int l_IsKeyDown(lua_State* L) {
     return 1;
 }
 
+/// IN_AddKeyMapTable(keymap) — register a key map table for hotkey dispatch.
+static int l_IN_AddKeyMapTable(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "__osc_keymap_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<osc::ui::KeyMapRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (reg) reg->add(L, 1);
+    return 0;
+}
+
+/// IN_RemoveKeyMapTable(keymap) — unregister a previously added key map table.
+static int l_IN_RemoveKeyMapTable(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "__osc_keymap_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<osc::ui::KeyMapRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (reg) reg->remove_by_ref(L, 1);
+    return 0;
+}
+
 /// EntityCategoryGetUnitList(category) — ui_L version (M140a)
 /// Returns an array of blueprint IDs whose CategoriesHash matches the given category expression.
 static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
@@ -12458,6 +12481,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddCommandFeedbackBlip",   l_AddCommandFeedbackBlip);
     state.register_function("GetUnitById",              l_GetUnitById);
     state.register_function("IsKeyDown",                l_IsKeyDown);
+    state.register_function("IN_AddKeyMapTable",        l_IN_AddKeyMapTable);
+    state.register_function("IN_RemoveKeyMapTable",     l_IN_RemoveKeyMapTable);
 
     // Blueprint query globals (M140)
     state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);

@@ -30,6 +30,7 @@ struct UIEvent {
     i32 modifiers = 0;    // GLFW mod bits
     f64 wheel_delta = 0;
     u32 char_code = 0;    // Unicode codepoint for CHAR events
+    bool is_repeat = false; // GLFW_REPEAT (held key) vs fresh press
 };
 
 /// Manages GLFW input → UI event dispatch.

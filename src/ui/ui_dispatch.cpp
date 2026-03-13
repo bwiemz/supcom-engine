@@ -1,5 +1,6 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/keymap.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
@@ -42,6 +43,7 @@ void UIDispatch::on_key(i32 key, i32 action, i32 mods) {
     e.mouse_x = mouse_x_;
     e.mouse_y = mouse_y_;
     e.modifiers = mods;
+    e.is_repeat = (action == GLFW_REPEAT);
     pending_events_.push_back(e);
 }
 
@@ -285,12 +287,29 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
         if (!has_dragger) lua_pop(L, 1); // pop nil
 
-        // Keyboard events go to keyboard focus control
+        // Keyboard events go to keyboard focus control first
         if (ev.type == UIEventType::KEY_DOWN ||
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             auto* focus = registry.keyboard_focus();
-            if (focus) fire_handle_event(L, focus, ev);
+            bool consumed = false;
+            if (focus) consumed = fire_handle_event(L, focus, ev);
+
+            // If fresh KEY_DOWN not consumed by UI, try key map registry (hotkeys)
+            // Skip repeats (held keys) — hotkeys should only fire on initial press
+            if (!consumed && ev.type == UIEventType::KEY_DOWN && !ev.is_repeat) {
+                lua_pushstring(L, "__osc_keymap_registry");
+                lua_rawget(L, LUA_REGISTRYINDEX);
+                auto* km = static_cast<KeyMapRegistry*>(lua_touserdata(L, -1));
+                lua_pop(L, 1);
+                if (km) {
+                    std::string key_name = KeyMapRegistry::glfw_to_key_name(
+                        ev.key_code, ev.modifiers);
+                    if (!key_name.empty()) {
+                        km->dispatch(L, key_name);
+                    }
+                }
+            }
             continue;
         }
 

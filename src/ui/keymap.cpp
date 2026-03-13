@@ -142,6 +142,14 @@ void KeyMapRegistry::clear(lua_State* L) {
 }
 
 std::string KeyMapRegistry::glfw_to_key_name(int glfw_key, int mods) {
+    // Skip bare modifier key presses — no actionable key name
+    if (glfw_key == GLFW_KEY_LEFT_SHIFT || glfw_key == GLFW_KEY_RIGHT_SHIFT ||
+        glfw_key == GLFW_KEY_LEFT_CONTROL || glfw_key == GLFW_KEY_RIGHT_CONTROL ||
+        glfw_key == GLFW_KEY_LEFT_ALT || glfw_key == GLFW_KEY_RIGHT_ALT ||
+        glfw_key == GLFW_KEY_LEFT_SUPER || glfw_key == GLFW_KEY_RIGHT_SUPER) {
+        return {};
+    }
+
     std::string name;
 
     // Modifier prefixes
