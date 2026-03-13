@@ -738,6 +738,24 @@ int main(int argc, char* argv[]) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
+    // GameStateManager — outer scope for headless test access (M144b)
+    osc::GameStateManager game_state_mgr;
+    if (!map_path.empty()) {
+        game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
+        {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_game_state_mgr");
+            lua_pushlightuserdata(uL, &game_state_mgr);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+        {
+            lua_State* sL = sim_lua_state.raw();
+            lua_pushstring(sL, "__osc_game_state_mgr");
+            lua_pushlightuserdata(sL, &game_state_mgr);
+            lua_rawset(sL, LUA_REGISTRYINDEX);
+        }
+    }
+
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
@@ -798,25 +816,7 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
-            // GameStateManager pointer for UI bindings (M144b)
-            osc::GameStateManager game_state_mgr;
-            game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
-            {
-                lua_State* uL = ui_lua_state.raw();
-                lua_pushstring(uL, "__osc_game_state_mgr");
-                lua_pushlightuserdata(uL, &game_state_mgr);
-                lua_rawset(uL, LUA_REGISTRYINDEX);
-            }
-
-            // GameStateManager pointer for sim bindings (M145d)
-            {
-                lua_State* sL = sim_lua_state.raw();
-                lua_pushstring(sL, "__osc_game_state_mgr");
-                lua_pushlightuserdata(sL, &game_state_mgr);
-                lua_rawset(sL, LUA_REGISTRYINDEX);
-            }
-
-            // BeatFunctionRegistry already declared at outer scope and registered (M145b)
+            // GameStateManager and BeatFunctionRegistry already declared at outer scope (M144b, M145b)
 
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);

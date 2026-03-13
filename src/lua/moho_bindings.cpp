@@ -11895,7 +11895,10 @@ static int l_ConExecute(lua_State* L) {
         auto* mgr = get_game_state_mgr(L);
         if (mgr) {
             f64 speed = 1.0;
-            if (s.size() > 14) speed = std::stod(s.substr(14));
+            if (s.size() > 14) {
+                try { speed = std::stod(s.substr(14)); }
+                catch (...) { spdlog::warn("ConExecute: invalid speed in '{}'", cmd); }
+            }
             mgr->set_speed(speed);
         }
     } else {
