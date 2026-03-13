@@ -11410,29 +11410,26 @@ static int l_GetBlueprintIconPath(lua_State* L) {
     const char* bp_id = luaL_checkstring(L, 1);
     auto* store = lua::LuaState::get_blueprint_store(L);
     if (store) {
-        auto entries = store->get_all(blueprints::BlueprintType::Unit);
-        for (const auto* entry : entries) {
-            if (entry->id == bp_id) {
-                store->push_lua_table(*entry, L);
+        const auto* entry = store->find(bp_id);
+        if (entry) {
+            store->push_lua_table(*entry, L);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Display");
+                lua_rawget(L, -2);
                 if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Display");
+                    lua_pushstring(L, "IconPath");
                     lua_rawget(L, -2);
-                    if (lua_istable(L, -1)) {
-                        lua_pushstring(L, "IconPath");
-                        lua_rawget(L, -2);
-                        if (lua_type(L, -1) == LUA_TSTRING) {
-                            std::string path(lua_tostring(L, -1));
-                            lua_pop(L, 3); // IconPath, Display, bp table
-                            lua_pushstring(L, path.c_str());
-                            return 1;
-                        }
-                        lua_pop(L, 1); // nil IconPath
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string path(lua_tostring(L, -1));
+                        lua_pop(L, 3); // IconPath, Display, bp table
+                        lua_pushstring(L, path.c_str());
+                        return 1;
                     }
-                    lua_pop(L, 1); // Display or nil
+                    lua_pop(L, 1); // nil IconPath
                 }
-                lua_pop(L, 1); // bp table
-                break;
+                lua_pop(L, 1); // Display or nil
             }
+            lua_pop(L, 1); // bp table
         }
     }
     // Default path convention
@@ -11774,12 +11771,12 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // EnhancementCommon table (M142c)
     {
+        lua_pushstring(L, "EnhancementCommon");
         lua_newtable(L);
         lua_pushstring(L, "GetEnhancements");
         lua_pushcfunction(L, l_GetEnhancements);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "EnhancementCommon");
-        lua_rawset(L, LUA_GLOBALSINDEX);
+        lua_rawset(L, -3);          // table["GetEnhancements"] = cfunc
+        lua_rawset(L, LUA_GLOBALSINDEX);  // _G["EnhancementCommon"] = table
     }
 
     // Tooltip/cursor text (M143a)
