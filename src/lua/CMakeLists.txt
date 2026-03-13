@@ -15,4 +15,5 @@ add_library(osc::lua ALIAS osc_lua)
 target_include_directories(osc_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_lua
     PUBLIC osc::core osc::vfs osc::sim osc::map osc::audio osc::ui lua50
+    PRIVATE osc::renderer
 )

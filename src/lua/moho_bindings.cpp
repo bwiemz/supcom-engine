@@ -22,8 +22,11 @@
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/world_view.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "ui/wld_ui_provider.hpp"
+#include "renderer/renderer.hpp"
+#include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
@@ -7388,6 +7391,20 @@ static ui::UIControl* check_control(lua_State* L, int idx = 1) {
     return ctrl;
 }
 
+static ui::WorldView* check_world_view(lua_State* L, int idx = 1) {
+    auto* ctrl = check_control(L, idx);
+    if (!ctrl) return nullptr;
+    return dynamic_cast<ui::WorldView*>(ctrl);
+}
+
+static renderer::Renderer* get_renderer(lua_State* L) {
+    lua_pushstring(L, "__osc_renderer");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* r = static_cast<renderer::Renderer*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return r;
+}
+
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
@@ -9856,30 +9873,35 @@ static int worldview_init(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "UIWorldView.__init: self must be table");
 
-    u32 id = reg->create();
-    auto* ctrl = reg->get(id);
-    if (!ctrl) return luaL_error(L, "UIWorldView.__init: failed to create control");
+    // Create a WorldView subclass instead of a generic UIControl
+    auto wv = std::make_unique<ui::WorldView>();
+    auto* wv_ptr = wv.get();
+    u32 id = reg->add(std::move(wv));
 
     lua_pushvalue(L, 1);
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    ctrl->set_lua_table_ref(ref);
+    wv_ptr->set_lua_table_ref(ref);
 
     lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, ctrl);
+    lua_pushlightuserdata(L, wv_ptr);
     lua_rawset(L, 1);
 
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
         if (parent) {
-            ctrl->set_parent(parent);
-            parent->add_child(ctrl);
+            wv_ptr->set_parent(parent); // set_parent already calls add_child
         }
     }
 
-    // Store camera name
+    // Store camera name and check minimap flag
+    std::string cam_name = "WorldCamera";
     if (lua_type(L, 3) == LUA_TSTRING) {
-        ctrl->set_name(std::string("WorldView_") + lua_tostring(L, 3));
+        cam_name = lua_tostring(L, 3);
+        wv_ptr->set_name(std::string("WorldView_") + cam_name);
+    }
+    if (lua_isboolean(L, 5) && lua_toboolean(L, 5)) {
+        wv_ptr->set_minimap(true);
     }
 
     // Create 7 layout LazyVars
@@ -9891,7 +9913,8 @@ static int worldview_init(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    spdlog::debug("UIWorldView.__init: control #{}", id);
+    spdlog::debug("UIWorldView.__init: WorldView control #{}, camera='{}'",
+                  id, cam_name);
     return 0;
 }
 
@@ -9909,7 +9932,15 @@ static int worldview_GetScreenPos(lua_State* L) {
     return 1;
 }
 
-static int worldview_GetsGlobalCameraCommands(lua_State* /*L*/) { return 0; }
+static int worldview_GetsGlobalCameraCommands(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) {
+        lua_pushboolean(L, wv->gets_global_camera_commands() ? 1 : 0);
+        return 1;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
 
 static int worldview_HasHighlightCommand(lua_State* L) {
     lua_pushboolean(L, 0);
@@ -9917,12 +9948,14 @@ static int worldview_HasHighlightCommand(lua_State* L) {
 }
 
 static int worldview_IsCartographic(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushboolean(L, (wv && wv->is_cartographic()) ? 1 : 0);
     return 1;
 }
 
 static int worldview_IsInputLocked(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushboolean(L, (wv && wv->is_input_locked()) ? 1 : 0);
     return 1;
 }
 
@@ -9931,37 +9964,137 @@ static int worldview_IsResourceRenderingEnabled(lua_State* L) {
     return 1;
 }
 
-static int worldview_LockInput(lua_State* /*L*/) { return 0; }
+static int worldview_LockInput(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_input_locked(true);
+    return 0;
+}
 
 static int worldview_Project(lua_State* L) {
-    // Return {x=0, y=0} screen position stub
+    auto* wv = check_world_view(L);
+    if (!wv || !wv->camera()) {
+        // Fallback: return {x=0, y=0}
+        lua_newtable(L);
+        lua_pushstring(L, "x");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "y");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        return 1;
+    }
+
+    // Update viewport from renderer if available
+    auto* r = get_renderer(L);
+    if (r) wv->set_viewport(r->width(), r->height());
+
+    // Args: self, Vector {x,y,z}
+    f32 wx = 0, wy = 0, wz = 0;
+    if (lua_istable(L, 2)) {
+        lua_pushstring(L, "x");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushstring(L, "y");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wy = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushstring(L, "z");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    f32 sx = 0, sy = 0;
+    wv->project(wx, wy, wz, sx, sy);
+
     lua_newtable(L);
     lua_pushstring(L, "x");
-    lua_pushnumber(L, 0);
+    lua_pushnumber(L, static_cast<lua_Number>(sx));
     lua_rawset(L, -3);
     lua_pushstring(L, "y");
-    lua_pushnumber(L, 0);
+    lua_pushnumber(L, static_cast<lua_Number>(sy));
     lua_rawset(L, -3);
     return 1;
 }
 
 static int worldview_ProjectMultiple(lua_State* L) {
-    // Return empty table
+    // Return empty table for now (rarely used)
     lua_newtable(L);
     return 1;
 }
 
-static int worldview_SetCartographic(lua_State* /*L*/) { return 0; }
+static int worldview_SetCartographic(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv && lua_isboolean(L, 2))
+        wv->set_cartographic(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 static int worldview_SetCustomRender(lua_State* /*L*/) { return 0; }
-static int worldview_SetHighlightEnabled(lua_State* /*L*/) { return 0; }
+
+static int worldview_SetHighlightEnabled(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv && lua_isboolean(L, 2))
+        wv->set_highlight_enabled(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 
 static int worldview_ShowConvertToPatrolCursor(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
 
-static int worldview_UnlockInput(lua_State* /*L*/) { return 0; }
-static int worldview_ZoomScale(lua_State* /*L*/) { return 0; }
+static int worldview_UnlockInput(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_input_locked(false);
+    return 0;
+}
+
+static int worldview_ZoomScale(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (!wv) return 0;
+    // Args: self, x, y, wheelRotation, wheelDelta
+    f32 x = static_cast<f32>(luaL_optnumber(L, 2, 0));
+    f32 y = static_cast<f32>(luaL_optnumber(L, 3, 0));
+    f32 rotation = static_cast<f32>(luaL_optnumber(L, 4, 0));
+    f32 delta = static_cast<f32>(luaL_optnumber(L, 5, 0));
+    wv->zoom_scale(x, y, rotation, delta);
+    return 0;
+}
+
+/// worldview:HitTest(x, y) — always returns true (the world view covers its area)
+static int worldview_HitTest(lua_State* L) {
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// worldview:Register(cameraName, terrain, ...) — associate with renderer camera/terrain
+static int worldview_Register(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (!wv) return 0;
+
+    auto* r = get_renderer(L);
+    if (r) {
+        wv->set_renderer(r);
+        wv->register_camera("WorldCamera", &r->camera());
+        wv->set_viewport(r->width(), r->height());
+    }
+
+    // Set terrain from sim state for raycasting
+    auto* sim = get_sim(L);
+    if (sim && sim->terrain()) {
+        wv->set_terrain(sim->terrain());
+    }
+
+    // Store this WorldView in registry for GetMouseWorldPos / GetCamera access
+    lua_pushstring(L, "__osc_world_view");
+    lua_pushlightuserdata(L, wv);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::debug("WorldView::Register: camera='{}', viewport={}x{}",
+                  wv->camera_name(), wv->viewport_width(), wv->viewport_height());
+    return 0;
+}
 
 // worldview:SetBuildGhost(bp_id) — show placement preview for blueprint
 static int worldview_SetBuildGhost(lua_State* L) {
@@ -10019,12 +10152,14 @@ static const MethodEntry ui_worldview_methods[] = {
     {"GetScreenPos",               worldview_GetScreenPos},
     {"GetsGlobalCameraCommands",   worldview_GetsGlobalCameraCommands},
     {"HasHighlightCommand",        worldview_HasHighlightCommand},
+    {"HitTest",                    worldview_HitTest},
     {"IsCartographic",             worldview_IsCartographic},
     {"IsInputLocked",              worldview_IsInputLocked},
     {"IsResourceRenderingEnabled", worldview_IsResourceRenderingEnabled},
     {"LockInput",                  worldview_LockInput},
     {"Project",                    worldview_Project},
     {"ProjectMultiple",            worldview_ProjectMultiple},
+    {"Register",                   worldview_Register},
     {"SetCartographic",            worldview_SetCartographic},
     {"SetCustomRender",            worldview_SetCustomRender},
     {"SetHighlightEnabled",        worldview_SetHighlightEnabled},
@@ -10213,6 +10348,126 @@ static int l_SetCursor(lua_State* L) {
     return 0;
 }
 
+// --- Camera methods (M136a) ---
+
+static int camera_SaveSettings(lua_State* /*L*/) { return 0; }
+static int camera_RestoreSettings(lua_State* /*L*/) { return 0; }
+
+static int camera_SetZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) return 0;
+    f32 zoom = static_cast<f32>(luaL_checknumber(L, 2));
+    constexpr f32 MIN_DIST = 10.0f;
+    constexpr f32 MAX_DIST = 1000.0f;
+    if (zoom < MIN_DIST) zoom = MIN_DIST;
+    if (zoom > MAX_DIST) zoom = MAX_DIST;
+    r->camera().set_distance(zoom);
+    return 0;
+}
+
+static int camera_GetZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) { lua_pushnumber(L, 300); return 1; }
+    lua_pushnumber(L, static_cast<lua_Number>(r->camera().distance()));
+    return 1;
+}
+
+static int camera_RevertRotation(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry camera_methods[] = {
+    {"SaveSettings",    camera_SaveSettings},
+    {"RestoreSettings", camera_RestoreSettings},
+    {"SetZoom",         camera_SetZoom},
+    {"GetZoom",         camera_GetZoom},
+    {"RevertRotation",  camera_RevertRotation},
+    {nullptr, nullptr},
+};
+
+// --- GetMouseWorldPos global (M136a) ---
+// FA calls this as a standalone function: GetMouseWorldPos()
+static int l_GetMouseWorldPos(lua_State* L) {
+    // Get WorldView from registry
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    if (!wv || !wv->camera()) {
+        // Return zero vector
+        lua_newtable(L);
+        lua_pushstring(L, "x");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "y");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "z");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        return 1;
+    }
+
+    // Get mouse position from renderer
+    auto* r = get_renderer(L);
+    f32 mx = 0, my = 0;
+    if (r) {
+        f64 dx = 0, dy = 0;
+        r->mouse_position(dx, dy);
+        mx = static_cast<f32>(dx);
+        my = static_cast<f32>(dy);
+        wv->set_viewport(r->width(), r->height());
+    }
+
+    f32 wx = 0, wy = 0, wz = 0;
+    wv->get_mouse_world_pos(mx, my, wx, wy, wz);
+
+    lua_newtable(L);
+    lua_pushstring(L, "x");
+    lua_pushnumber(L, static_cast<lua_Number>(wx));
+    lua_rawset(L, -3);
+    lua_pushstring(L, "y");
+    lua_pushnumber(L, static_cast<lua_Number>(wy));
+    lua_rawset(L, -3);
+    lua_pushstring(L, "z");
+    lua_pushnumber(L, static_cast<lua_Number>(wz));
+    lua_rawset(L, -3);
+    return 1;
+}
+
+// --- GetCamera global (M136a) ---
+// FA calls GetCamera(cameraName) and gets back a camera object with methods.
+static int l_GetCamera(lua_State* L) {
+    // Create a table with camera_methods metatable
+    lua_newtable(L);
+
+    // Store renderer pointer as _c_object for camera methods to use
+    auto* r = get_renderer(L);
+    if (r) {
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, r);
+        lua_rawset(L, -3);
+    }
+
+    // Set metatable to moho.camera_methods
+    lua_pushstring(L, "moho");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "camera_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_newtable(L); // mt
+            lua_pushstring(L, "__index");
+            lua_pushvalue(L, -3); // camera_methods
+            lua_rawset(L, -3);    // mt.__index = camera_methods
+            lua_setmetatable(L, -4); // setmetatable(cam_table, mt)
+        }
+        lua_pop(L, 1); // camera_methods
+    }
+    lua_pop(L, 1); // moho
+
+    return 1;
+}
+
 // ====================================================================
 // Registration
 // ====================================================================
@@ -10287,6 +10542,7 @@ static const MohoClassDef moho_classes[] = {
     {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             ui_worldview_methods,  "control_methods"},
+    {"camera_methods",          camera_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
     {"world_mesh_methods",      ui_world_mesh_methods,  nullptr},
@@ -10524,6 +10780,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetFrame", l_GetFrame);
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
+    state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("GetCamera", l_GetCamera);
 
     // Localization globals
     state.register_function("LOC", l_LOC);

@@ -738,6 +738,14 @@ int main(int argc, char* argv[]) {
         if (renderer.init(1600, 900, "OpenSupCom")) {
             renderer.build_scene(sim_state, &vfs, ui_lua_state.raw());
 
+            // Store renderer pointer in UI Lua registry for WorldView/GetCamera
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_renderer");
+                lua_pushlightuserdata(uL, &renderer);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
             // Player input handler (ARMY_1 = index 0)
             osc::renderer::InputHandler input_handler;
             input_handler.set_player_army(0);
