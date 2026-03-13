@@ -12040,6 +12040,70 @@ static int l_HideGameUI(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Audio globals for UI (M147b)
+// ====================================================================
+
+/// PlaySound(soundTable) → handle
+/// soundTable = {Cue='UI_Menu_Click_01', Bank='Interface'} or string cue name
+static int l_PlaySound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) { lua_pushnumber(L, 0); return 1; }
+
+    std::string bank, cue;
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        cue = lua_tostring(L, 1);
+        bank = "Interface"; // default bank for string-only calls
+    } else if (lua_istable(L, 1)) {
+        if (!extract_sound_table(L, 1, bank, cue)) {
+            lua_pushnumber(L, 0);
+            return 1;
+        }
+    } else {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    // Play as non-positional (nullptr pos = 2D)
+    auto handle = mgr->play(bank, cue, nullptr);
+    lua_pushnumber(L, handle);
+    return 1;
+}
+
+/// StopSound(handle) — stop a playing sound
+static int l_StopSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (mgr) {
+        auto handle = static_cast<osc::audio::SoundHandle>(
+            static_cast<osc::u32>(luaL_checknumber(L, 1)));
+        mgr->stop(handle);
+    }
+    return 0;
+}
+
+/// PlayVoice(soundTable) — play a voice cue (delegates to PlaySound)
+static int l_PlayVoice(lua_State* L) {
+    return l_PlaySound(L);
+}
+
+/// PauseSound(bank, pause) — pause/resume all sounds in a bank
+static int l_PauseSound(lua_State* L) {
+    spdlog::debug("PauseSound: stub");
+    return 0;
+}
+
+/// PauseVoice(bank, pause) — pause/resume voice
+static int l_PauseVoice(lua_State* L) {
+    spdlog::debug("PauseVoice: stub");
+    return 0;
+}
+
+/// EnableWorldSounds(enable) — toggle 3D world audio
+static int l_EnableWorldSounds(lua_State* L) {
+    spdlog::debug("EnableWorldSounds: {}", lua_toboolean(L, 1) ? "on" : "off");
+    return 0;
+}
+
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
@@ -12212,6 +12276,14 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Exit/return (M146d)
     state.register_function("ExitGame", l_ExitGame);
     state.register_function("ExitApplication", l_ExitApplication);
+
+    // Audio globals (M147b)
+    state.register_function("PlaySound", l_PlaySound);
+    state.register_function("StopSound", l_StopSound);
+    state.register_function("PlayVoice", l_PlayVoice);
+    state.register_function("PauseSound", l_PauseSound);
+    state.register_function("PauseVoice", l_PauseVoice);
+    state.register_function("EnableWorldSounds", l_EnableWorldSounds);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
