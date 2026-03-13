@@ -14,6 +14,7 @@
 #include "sim/anim_cache.hpp"
 #include "map/terrain.hpp"
 #include "audio/sound_manager.hpp"
+#include "core/localization.hpp"
 #include "lua/moho_bindings.hpp"
 #include "ui/ui_control.hpp"
 #include "renderer/renderer.hpp"
@@ -484,6 +485,16 @@ int main(int argc, char* argv[]) {
 
     // Register moho class tables on UI state (unit_methods, etc.)
     osc::lua::register_moho_bindings(ui_lua_state, sim_state);
+
+    // Localization cache — load strings from VFS, then store pointer in UI registry
+    osc::core::Localization loc_cache;
+    loc_cache.load_from_vfs(ui_lua_state.raw(), &vfs);
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_loc_cache");
+        lua_pushlightuserdata(uL, &loc_cache);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
 
     // UI control registry (M71)
     osc::ui::UIControlRegistry ui_registry;

@@ -24,6 +24,7 @@
 #include "ui/ui_control.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "core/localization.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10283,6 +10284,49 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim) {
     spdlog::info("Registered moho bindings");
 }
 
+// ====================================================================
+// Localization helpers: LOC / LOCF
+// ====================================================================
+
+static osc::core::Localization* get_loc(lua_State* L) {
+    lua_pushstring(L, "__osc_loc_cache");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* loc = static_cast<osc::core::Localization*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return loc;
+}
+
+static int l_LOC(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* loc = get_loc(L);
+    if (loc) {
+        const auto& result = loc->lookup(key);
+        lua_pushstring(L, result.c_str());
+    } else {
+        lua_pushvalue(L, 1); // return key as-is
+    }
+    return 1;
+}
+
+static int l_LOCF(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* loc = get_loc(L);
+    if (!loc) { lua_pushvalue(L, 1); return 1; }
+
+    int top = lua_gettop(L);
+    int nargs = top - 1;
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(nargs));
+    for (int i = 2; i <= top; ++i) {
+        const char* s = lua_tostring(L, i);
+        args.push_back(s ? s : "");
+    }
+
+    auto result = loc->format(key, args);
+    lua_pushstring(L, result.c_str());
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -10317,6 +10361,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetFrame", l_GetFrame);
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
+
+    // Localization globals
+    state.register_function("LOC", l_LOC);
+    state.register_function("LOCF", l_LOCF);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
