@@ -26,6 +26,7 @@
 #include "ui/font_metrics_provider.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
+#include "renderer/input_handler.hpp"
 #include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "core/localization.hpp"
@@ -10746,6 +10747,178 @@ static int l_ui_WaitTicks(lua_State* L) {
     return lua_yield(L, 1);
 }
 
+// ====================================================================
+// Selection↔Lua bridge (M137)
+// ====================================================================
+
+static renderer::InputHandler* get_input_handler(lua_State* L) {
+    lua_pushstring(L, "__osc_input_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* ih = static_cast<renderer::InputHandler*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return ih;
+}
+
+/// Push a unit table for the UI Lua state with _c_object, EntityId, Army fields
+/// and moho.unit_methods metatable (cached as __osc_ui_unit_mt).
+static void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+
+    // _c_object
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, entity);
+    lua_rawset(L, tbl);
+
+    // EntityId
+    lua_pushstring(L, "EntityId");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_rawset(L, tbl);
+
+    // Army (1-based for Lua)
+    lua_pushstring(L, "Army");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->army() + 1));
+    lua_rawset(L, tbl);
+
+    // Set metatable: get or create cached __osc_ui_unit_mt
+    lua_pushstring(L, "__osc_ui_unit_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        // Build: { __index = moho.unit_methods }
+        lua_newtable(L); // mt
+        lua_pushstring(L, "__index");
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "unit_methods");
+            lua_rawget(L, -2);
+            lua_remove(L, -2); // remove moho table
+        }
+        lua_rawset(L, -3); // mt.__index = unit_methods (or nil if moho missing)
+
+        // Cache it
+        lua_pushstring(L, "__osc_ui_unit_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, tbl);
+}
+
+static int l_GetSelectedUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    if (!ih || !sim) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    const auto& selected = ih->selected();
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int idx = 1;
+    for (u32 eid : selected) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            push_unit_for_ui(L, entity);
+            lua_rawseti(L, result, idx++);
+        }
+    }
+    return 1;
+}
+
+static int l_SelectUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    if (!ih || !lua_istable(L, 1)) return 0;
+
+    std::unordered_set<u32> new_sel;
+    int n = luaL_getn(L, 1); // Lua 5.0: no lua_objlen
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                new_sel.insert(static_cast<u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1); // EntityId value
+        }
+        lua_pop(L, 1); // unit table
+    }
+    ih->set_selected(new_sel);
+    return 0;
+}
+
+static int l_AddSelectUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    if (!ih || !lua_istable(L, 1)) return 0;
+
+    auto sel = ih->selected(); // copy
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                sel.insert(static_cast<u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    ih->set_selected(sel);
+    return 0;
+}
+
+static int l_AddOnSelectionChangedCallback(lua_State* L) {
+    if (!lua_isfunction(L, 1)) return 0;
+    lua_pushstring(L, "__osc_sel_changed_cb");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+static int l_ValidateUnitsList(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    if (!lua_istable(L, 1) || !sim) return 1;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (e && !e->destroyed()) {
+                lua_rawseti(L, result, out_idx++);
+                continue;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    return 1;
+}
+
+static int l_GetFocusArmy(lua_State* L) {
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) {
+        // Convert 0-based to 1-based
+        lua_pushnumber(L, lua_tonumber(L, -1) + 1);
+        lua_remove(L, -2);
+        return 1;
+    }
+    lua_pop(L, 1);
+    lua_pushnumber(L, 1); // default army 1
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -10795,6 +10968,14 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("ForkThread", l_ui_ForkThread);
     state.register_function("WaitSeconds", l_ui_WaitSeconds);
     state.register_function("WaitTicks", l_ui_WaitTicks);
+
+    // Selection↔Lua bridge globals (M137)
+    state.register_function("GetSelectedUnits", l_GetSelectedUnits);
+    state.register_function("SelectUnits", l_SelectUnits);
+    state.register_function("AddSelectUnits", l_AddSelectUnits);
+    state.register_function("AddOnSelectionChangedCallback", l_AddOnSelectionChangedCallback);
+    state.register_function("ValidateUnitsList", l_ValidateUnitsList);
+    state.register_function("GetFocusArmy", l_GetFocusArmy);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

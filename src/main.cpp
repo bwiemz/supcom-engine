@@ -750,6 +750,13 @@ int main(int argc, char* argv[]) {
             osc::renderer::InputHandler input_handler;
             input_handler.set_player_army(0);
             renderer.set_player_army(0);
+            // Store input_handler pointer in UI Lua registry for selection globals
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_input_handler");
+                lua_pushlightuserdata(uL, &input_handler);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 
@@ -849,6 +856,47 @@ int main(int argc, char* argv[]) {
 
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);
+
+                // Fire OnSelectionChanged callback if selection changed
+                {
+                    static std::unordered_set<osc::u32> prev_selection;
+                    const auto& cur_sel = input_handler.selected();
+                    if (cur_sel != prev_selection) {
+                        prev_selection = cur_sel;
+                        lua_State* uL = ui_lua_state.raw();
+                        lua_pushstring(uL, "__osc_sel_changed_cb");
+                        lua_rawget(uL, LUA_REGISTRYINDEX);
+                        if (lua_isfunction(uL, -1)) {
+                            // Build the current selection array as argument
+                            lua_newtable(uL);
+                            int sel_tbl = lua_gettop(uL);
+                            int sel_idx = 1;
+                            for (osc::u32 eid : cur_sel) {
+                                auto* entity = sim_state.entity_registry().find(eid);
+                                if (entity && entity->is_unit() && !entity->destroyed()) {
+                                    lua_newtable(uL);
+                                    lua_pushstring(uL, "_c_object");
+                                    lua_pushlightuserdata(uL, entity);
+                                    lua_rawset(uL, -3);
+                                    lua_pushstring(uL, "EntityId");
+                                    lua_pushnumber(uL, static_cast<lua_Number>(entity->entity_id()));
+                                    lua_rawset(uL, -3);
+                                    lua_pushstring(uL, "Army");
+                                    lua_pushnumber(uL, static_cast<lua_Number>(entity->army() + 1));
+                                    lua_rawset(uL, -3);
+                                    lua_rawseti(uL, sel_tbl, sel_idx++);
+                                }
+                            }
+                            if (lua_pcall(uL, 1, 0, 0) != 0) {
+                                std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
+                                spdlog::warn("OnSelectionChanged error: {}", err);
+                                lua_pop(uL, 1);
+                            }
+                        } else {
+                            lua_pop(uL, 1);
+                        }
+                    }
+                }
 
                 const auto& sel = input_handler.selected();
                 renderer.render(sim_state, ui_lua_state.raw(), &ui_registry,
