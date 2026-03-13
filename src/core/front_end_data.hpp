@@ -14,6 +14,8 @@ namespace osc {
 /// Used by GetFrontEndData / SetFrontEndData to pass data between
 /// front-end (lobby) and loading/game states.
 /// Values are stored as Lua registry refs.
+/// Note: No destructor — this object shares lifetime with the Lua state
+/// in main(). Call clear(L) explicitly if reusing across game sessions.
 class FrontEndData {
 public:
     void set(lua_State* L, const std::string& key, int value_idx);

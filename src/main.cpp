@@ -1158,7 +1158,10 @@ int main(int argc, char* argv[]) {
 
                         if (!launch_scenario.empty()) {
                             spdlog::info("Launch requested: {}", launch_scenario);
-                            // Transition to LOADING then GAME
+                            // TODO(M150+): Actually load the selected map and
+                            // create a new SimState here. Currently this only
+                            // updates the state machine and scenario path —
+                            // the sim uses whatever was loaded at startup.
                             game_state_mgr.transition_to(
                                 osc::GameState::LOADING, uiL);
                             // Store scenario path for SessionGetScenarioInfo
@@ -1167,7 +1170,6 @@ int main(int argc, char* argv[]) {
                             lua_rawset(uiL, LUA_REGISTRYINDEX);
                             game_state_mgr.transition_to(
                                 osc::GameState::GAME, uiL);
-                            // Call StartGameUI
                             osc::core::call_start_game_ui(uiL);
                         }
                     } else {
