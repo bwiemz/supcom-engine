@@ -2,6 +2,7 @@ add_library(osc_core STATIC
     log.cpp
     preferences.cpp
     localization.cpp
+    game_state.cpp
 )
 add_library(osc::core ALIAS osc_core)
 

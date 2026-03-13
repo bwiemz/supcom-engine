@@ -8,26 +8,41 @@ extern "C" {
 #include <lauxlib.h>
 }
 
-namespace osc::core {
+namespace osc {
 
 enum class GameState : u8 {
     INIT,
     FRONT_END,
     LOADING,
     GAME,
-    SCORE
+    SCORE,
 };
 
-inline const char* game_state_string(GameState state) {
-    switch (state) {
-        case GameState::INIT:      return "init";
-        case GameState::FRONT_END: return "front-end";
-        case GameState::LOADING:   return "loading";
-        case GameState::GAME:      return "game";
-        case GameState::SCORE:     return "score";
-    }
-    return "unknown";
-}
+const char* game_state_to_string(GameState s);
+
+class GameStateManager {
+public:
+    GameState current() const { return state_; }
+    bool transition_to(GameState new_state, lua_State* ui_L);
+    bool paused() const { return paused_; }
+    void set_paused(bool p, lua_State* ui_L);
+    f64 speed() const { return speed_; }
+    void set_speed(f64 s);
+    bool game_over() const { return game_over_; }
+    void set_game_over(bool v) { game_over_ = v; }
+
+private:
+    GameState state_ = GameState::INIT;
+    bool paused_ = false;
+    bool game_over_ = false;
+    f64 speed_ = 1.0;
+    static void call_setup_ui(lua_State* ui_L);
+};
+
+} // namespace osc
+
+// Legacy helpers in osc::core namespace (used by existing main.cpp call sites)
+namespace osc::core {
 
 inline void call_lua_global(lua_State* L, const char* name) {
     lua_pushstring(L, name);
