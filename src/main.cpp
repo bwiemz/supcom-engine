@@ -1,3 +1,4 @@
+#include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
 #include "core/types.hpp"
@@ -34,6 +35,137 @@ extern "C" {
 #include <fstream>
 #include <iostream>
 #include <spdlog/spdlog.h>
+
+// ── Engine global Lua C functions (file-static, outside main) ──
+
+static int l_GetCurrentUIState(lua_State* L) {
+    lua_pushstring(L, "__osc_game_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isstring(L, -1)) return 1; // return registry value directly
+    lua_pop(L, 1);
+    lua_pushstring(L, "game"); // fallback
+    return 1;
+}
+
+static int l_WorldIsLoading(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int l_FlushEvents(lua_State*) { return 0; }
+
+static int l_SessionIsReplay(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int l_SessionGetScenarioInfo(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim || !sim->terrain()) return 1;
+
+    lua_pushstring(L, "name");
+    lua_pushstring(L, "Skirmish");
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "map");
+    lua_pushstring(L, "");
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "size");
+    lua_pushnumber(L, sim->terrain()->map_width());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "PlayableArea");
+    lua_newtable(L);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, sim->terrain()->map_width()); lua_rawseti(L, -2, 3);
+    lua_pushnumber(L, sim->terrain()->map_height()); lua_rawseti(L, -2, 4);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
+static int l_GetEconomyTotals(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    int army = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim) return 1;
+    auto* brain = sim->get_army(army);
+    if (!brain) return 1;
+
+    auto set_field = [&](const char* name, osc::f64 val) {
+        lua_pushstring(L, name);
+        lua_pushnumber(L, val);
+        lua_rawset(L, -3);
+    };
+    set_field("income_mass", brain->get_economy_income("MASS"));
+    set_field("income_energy", brain->get_economy_income("ENERGY"));
+    set_field("expense_mass", brain->get_economy_usage("MASS"));
+    set_field("expense_energy", brain->get_economy_usage("ENERGY"));
+    set_field("stored_mass", brain->get_economy_stored("MASS"));
+    set_field("stored_energy", brain->get_economy_stored("ENERGY"));
+    set_field("max_mass", brain->economy().mass.max_storage);
+    set_field("max_energy", brain->economy().energy.max_storage);
+
+    return 1;
+}
+
+static int l_GetArmiesTable(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim) return 1;
+
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        auto* brain = sim->army_at(i);
+        if (!brain) continue;
+
+        lua_newtable(L);
+        lua_pushstring(L, "nickname");
+        lua_pushstring(L, brain->nickname().c_str());
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "ArmyName");
+        lua_pushstring(L, brain->name().c_str());
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "armyIndex");
+        lua_pushnumber(L, static_cast<int>(i));
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "human");
+        lua_pushboolean(L, brain->is_human() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "civilian");
+        lua_pushboolean(L, brain->is_civilian() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "outOfGame");
+        lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
 
 static void print_usage() {
     std::cout << "OpenSupCom v0.1.0\n"
@@ -535,6 +667,36 @@ int main(int argc, char* argv[]) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
+    // ── Engine state machine ──
+    // Store game state string in UI registry (source of truth for GetCurrentUIState)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_game_state");
+        lua_pushstring(uL, "game");
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Set focus army (0 = ARMY_1)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_focus_army");
+        lua_pushnumber(uL, 0);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Register engine globals on UI Lua state
+    ui_lua_state.register_function("GetCurrentUIState", l_GetCurrentUIState);
+    ui_lua_state.register_function("WorldIsLoading", l_WorldIsLoading);
+    ui_lua_state.register_function("FlushEvents", l_FlushEvents);
+    ui_lua_state.register_function("SessionIsReplay", l_SessionIsReplay);
+    ui_lua_state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
+    ui_lua_state.register_function("GetEconomyTotals", l_GetEconomyTotals);
+    ui_lua_state.register_function("GetArmiesTable", l_GetArmiesTable);
+
+    // State transition: INIT → GAME (call SetupUI / StartGameUI if defined)
+    osc::core::call_setup_ui(ui_lua_state.raw());
+    osc::core::call_start_game_ui(ui_lua_state.raw());
+
     spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
@@ -661,11 +823,21 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // OnFirstUpdate — fire once after first sim tick
+                static bool first_update_fired = false;
+                if (!first_update_fired && sim_state.tick_count() > 0) {
+                    osc::core::call_on_first_update(ui_lua_state.raw());
+                    first_update_fired = true;
+                }
+
                 renderer.poll_events(dt);
 
                 // Resume UI coroutines
                 ++ui_frame_count;
                 ui_thread_manager.resume_all(ui_frame_count);
+
+                // OnBeat — UI heartbeat each frame
+                osc::core::call_on_beat(ui_lua_state.raw(), dt);
 
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);
