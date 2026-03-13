@@ -12025,6 +12025,26 @@ static int l_HideGameUI(lua_State* L) {
     return 0;
 }
 
+// ── Exit/return (M146d) ───────────────────────────────────────────────────────
+
+/// ExitGame() — return from score screen to front-end menu
+static int l_ExitGame(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
+    auto* beat = get_beat_registry(L);
+    if (beat) beat->clear(L);
+    spdlog::info("ExitGame: returning to front-end (stub — real menu in M147)");
+    return 0;
+}
+
+/// ExitApplication() — clean shutdown
+static int l_ExitApplication(lua_State* L) {
+    lua_pushstring(L, "__osc_exit_requested");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -12161,6 +12181,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("EscapeHandler", l_EscapeHandler);
     state.register_function("SetEscapeHandler", l_SetEscapeHandler);
     state.register_function("HideGameUI", l_HideGameUI);
+
+    // Exit/return (M146d)
+    state.register_function("ExitGame", l_ExitGame);
+    state.register_function("ExitApplication", l_ExitApplication);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

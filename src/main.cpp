@@ -1089,6 +1089,18 @@ int main(int argc, char* argv[]) {
                     renderer.set_window_title(title);
                 }
 
+                // Check for exit request (M146d)
+                {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_exit_requested");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_toboolean(uiL, -1)) {
+                        lua_pop(uiL, 1);
+                        break;
+                    }
+                    lua_pop(uiL, 1);
+                }
+
                 osc::Profiler::instance().end_frame();
             }
 
