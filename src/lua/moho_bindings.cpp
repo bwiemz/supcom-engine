@@ -25,6 +25,7 @@
 #include "ui/font_metrics_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "core/localization.hpp"
+#include "core/preferences.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10327,6 +10328,65 @@ static int l_LOCF(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Preferences helpers: GetPreference / SetPreference
+// ====================================================================
+
+static osc::core::Preferences* get_prefs(lua_State* L) {
+    lua_pushstring(L, "__osc_preferences");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* p = static_cast<osc::core::Preferences*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return p;
+}
+
+static int l_GetPreference(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* prefs = get_prefs(L);
+    if (!prefs) {
+        if (lua_gettop(L) >= 2) lua_pushvalue(L, 2);
+        else lua_pushnil(L);
+        return 1;
+    }
+
+    if (lua_gettop(L) >= 2) {
+        int t = lua_type(L, 2);
+        if (t == LUA_TSTRING) {
+            auto val = prefs->get_string(key, lua_tostring(L, 2));
+            lua_pushstring(L, val.c_str());
+        } else if (t == LUA_TBOOLEAN) {
+            bool val = prefs->get_bool(key, lua_toboolean(L, 2) != 0);
+            lua_pushboolean(L, val ? 1 : 0);
+        } else if (t == LUA_TNUMBER) {
+            float val = prefs->get_float(key,
+                static_cast<float>(lua_tonumber(L, 2)));
+            lua_pushnumber(L, val);
+        } else {
+            lua_pushvalue(L, 2);
+        }
+    } else {
+        auto val = prefs->get_string(key, "");
+        if (val.empty()) lua_pushnil(L);
+        else lua_pushstring(L, val.c_str());
+    }
+    return 1;
+}
+
+static int l_SetPreference(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* prefs = get_prefs(L);
+    if (!prefs) return 0;
+
+    int t = lua_type(L, 2);
+    if (t == LUA_TSTRING)
+        prefs->set_string(key, lua_tostring(L, 2));
+    else if (t == LUA_TBOOLEAN)
+        prefs->set_bool(key, lua_toboolean(L, 2) != 0);
+    else if (t == LUA_TNUMBER)
+        prefs->set_float(key, static_cast<float>(lua_tonumber(L, 2)));
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -10365,6 +10425,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Localization globals
     state.register_function("LOC", l_LOC);
     state.register_function("LOCF", l_LOCF);
+
+    // Preference globals
+    state.register_function("GetPreference", l_GetPreference);
+    state.register_function("SetPreference", l_SetPreference);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

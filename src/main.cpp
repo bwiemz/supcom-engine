@@ -15,6 +15,7 @@
 #include "map/terrain.hpp"
 #include "audio/sound_manager.hpp"
 #include "core/localization.hpp"
+#include "core/preferences.hpp"
 #include "lua/moho_bindings.hpp"
 #include "ui/ui_control.hpp"
 #include "renderer/renderer.hpp"
@@ -493,6 +494,16 @@ int main(int argc, char* argv[]) {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_loc_cache");
         lua_pushlightuserdata(uL, &loc_cache);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Preferences — load Game.prefs if present, store pointer in UI registry
+    osc::core::Preferences prefs;
+    prefs.load("Game.prefs");
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_preferences");
+        lua_pushlightuserdata(uL, &prefs);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
