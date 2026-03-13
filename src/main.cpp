@@ -869,7 +869,7 @@ int main(int argc, char* argv[]) {
                 }
                 minus_was_pressed = minus_pressed;
 
-                // Auto-pause when game ends
+                // Auto-pause when game ends (M146a)
                 osc::i32 game_result = sim_state.player_result();
                 if (game_result != 0 && !game_state_mgr.game_over()) {
                     game_state_mgr.set_game_over(true);
@@ -878,6 +878,24 @@ int main(int argc, char* argv[]) {
                         game_result == 1 ? "VICTORY" :
                         game_result == 2 ? "DEFEAT" : "DRAW";
                     spdlog::info("Game over: {}", result_str);
+
+                    // Set observer mode
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_focus_army");
+                    lua_pushnumber(uiL, -1);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                    // Call NoteGameOver() in ui_L
+                    lua_pushstring(uiL, "NoteGameOver");
+                    lua_rawget(uiL, LUA_GLOBALSINDEX);
+                    if (lua_isfunction(uiL, -1)) {
+                        if (lua_pcall(uiL, 0, 0, 0) != 0) {
+                            spdlog::warn("NoteGameOver error: {}", lua_tostring(uiL, -1));
+                            lua_pop(uiL, 1);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
                 }
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
