@@ -11668,6 +11668,17 @@ static int l_StartCursorText(lua_State* L) {
     return 0;
 }
 
+// AddBeatFunction and RemoveBeatFunction stubs (real implementation in M145)
+static int l_AddBeatFunction_stub(lua_State* L) {
+    spdlog::debug("AddBeatFunction: stub (will be real in M145)");
+    return 0;
+}
+
+static int l_RemoveBeatFunction_stub(lua_State* L) {
+    spdlog::debug("RemoveBeatFunction: stub (will be real in M145)");
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11773,6 +11784,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Tooltip/cursor text (M143a)
     state.register_function("StartCursorText", l_StartCursorText);
+
+    // Beat function stubs (M143b)
+    state.register_function("AddBeatFunction", l_AddBeatFunction_stub);
+    state.register_function("RemoveBeatFunction", l_RemoveBeatFunction_stub);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
