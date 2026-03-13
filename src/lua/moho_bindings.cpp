@@ -11331,6 +11331,80 @@ static int l_IsKeyDown(lua_State* L) {
     return 1;
 }
 
+/// EntityCategoryGetUnitList(category) — ui_L version (M140a)
+/// Returns an array of blueprint IDs whose CategoriesHash matches the given category expression.
+static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    auto* store = lua::LuaState::get_blueprint_store(L);
+    if (!store || !lua_istable(L, 1)) return 1;
+
+    auto entries = store->get_all(blueprints::BlueprintType::Unit);
+    for (const auto* entry : entries) {
+        store->push_lua_table(*entry, L);
+        int bp_tbl = lua_gettop(L);
+
+        lua_pushstring(L, "CategoriesHash");
+        lua_gettable(L, bp_tbl);
+        if (lua_istable(L, -1)) {
+            std::unordered_set<std::string> bp_cats;
+            int hash_tbl = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, hash_tbl) != 0) {
+                if (lua_type(L, -2) == LUA_TSTRING)
+                    bp_cats.insert(lua_tostring(L, -2));
+                lua_pop(L, 1);
+            }
+
+            if (osc::lua::categories_match(L, 1, bp_cats)) {
+                lua_pushnumber(L, out_idx++);
+                lua_pushstring(L, entry->id.c_str());
+                lua_rawset(L, result);
+            }
+        }
+        lua_pop(L, 2); // CategoriesHash + bp_table
+    }
+    return 1;
+}
+
+/// GetBlueprintIconPath(bpId) — resolve a blueprint's icon DDS path (M140b)
+static int l_GetBlueprintIconPath(lua_State* L) {
+    const char* bp_id = luaL_checkstring(L, 1);
+    auto* store = lua::LuaState::get_blueprint_store(L);
+    if (store) {
+        auto entries = store->get_all(blueprints::BlueprintType::Unit);
+        for (const auto* entry : entries) {
+            if (entry->id == bp_id) {
+                store->push_lua_table(*entry, L);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "Display");
+                    lua_rawget(L, -2);
+                    if (lua_istable(L, -1)) {
+                        lua_pushstring(L, "IconPath");
+                        lua_rawget(L, -2);
+                        if (lua_type(L, -1) == LUA_TSTRING) {
+                            std::string path(lua_tostring(L, -1));
+                            lua_pop(L, 3); // IconPath, Display, bp table
+                            lua_pushstring(L, path.c_str());
+                            return 1;
+                        }
+                        lua_pop(L, 1); // nil IconPath
+                    }
+                    lua_pop(L, 1); // Display or nil
+                }
+                lua_pop(L, 1); // bp table
+                break;
+            }
+        }
+    }
+    // Default path convention
+    std::string path = std::string("/textures/ui/common/icons/units/") + bp_id + "_icon.dds";
+    lua_pushstring(L, path.c_str());
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11407,6 +11481,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddCommandFeedbackBlip",   l_AddCommandFeedbackBlip);
     state.register_function("GetUnitById",              l_GetUnitById);
     state.register_function("IsKeyDown",                l_IsKeyDown);
+
+    // Blueprint query globals (M140)
+    state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);
+    state.register_function("GetBlueprintIconPath",      l_GetBlueprintIconPath);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
