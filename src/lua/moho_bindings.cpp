@@ -11613,6 +11613,26 @@ static int l_GetRolloverInfo(lua_State* L) {
     return 1;
 }
 
+/// EnhancementCommon.GetEnhancements(entityId) → table of installed enhancements (M142c)
+/// Returns: {Back="AdvancedEngineering", RCH="CoolingUpgrade", ...} (slot → enhName)
+static int l_GetEnhancements(lua_State* L) {
+    auto* sim = get_sim(L);
+    u32 entity_id = static_cast<u32>(luaL_checknumber(L, 1));
+    lua_newtable(L);
+
+    if (!sim) return 1;
+    auto* entity = sim->entity_registry().find(entity_id);
+    if (!entity || !entity->is_unit()) return 1;
+    auto* unit = static_cast<osc::sim::Unit*>(entity);
+
+    for (const auto& [slot, name] : unit->enhancements()) {
+        lua_pushstring(L, slot.c_str());
+        lua_pushstring(L, name.c_str());
+        lua_rawset(L, -3);
+    }
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11705,6 +11725,16 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Unit rollover info (M142a)
     state.register_function("GetRolloverInfo", l_GetRolloverInfo);
+
+    // EnhancementCommon table (M142c)
+    {
+        lua_newtable(L);
+        lua_pushstring(L, "GetEnhancements");
+        lua_pushcfunction(L, l_GetEnhancements);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "EnhancementCommon");
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
