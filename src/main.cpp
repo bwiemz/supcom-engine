@@ -858,25 +858,36 @@ int main(int argc, char* argv[]) {
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);
 
-                // Fire OnSelectionChanged callback if selection changed
+                // Fire OnSelectionChanged callbacks if selection changed
                 {
                     const auto& cur_sel = input_handler.selected();
                     if (cur_sel != prev_selection) {
                         prev_selection = cur_sel;
                         lua_State* uL = ui_lua_state.raw();
-                        lua_pushstring(uL, "__osc_sel_changed_cb");
+                        lua_pushstring(uL, "__osc_sel_changed_cbs");
                         lua_rawget(uL, LUA_REGISTRYINDEX);
-                        if (lua_isfunction(uL, -1)) {
-                            // Build unit array with proper metatables via push_selected_units_for_ui
+                        if (lua_istable(uL, -1)) {
+                            int cbs_idx = lua_gettop(uL); // index of the callbacks table
+                            // Build the unit array once; we'll push copies for each call
                             osc::lua::push_selected_units_for_ui(uL);
-                            if (lua_pcall(uL, 1, 0, 0) != 0) {
-                                std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
-                                spdlog::warn("OnSelectionChanged error: {}", err);
-                                lua_pop(uL, 1);
+                            int arr_idx = lua_gettop(uL); // index of the selection array
+                            int n = luaL_getn(uL, cbs_idx); // Lua 5.0: no lua_objlen
+                            for (int ci = 1; ci <= n; ci++) {
+                                lua_rawgeti(uL, cbs_idx, ci);
+                                if (lua_isfunction(uL, -1)) {
+                                    lua_pushvalue(uL, arr_idx); // copy of selection array
+                                    if (lua_pcall(uL, 1, 0, 0) != 0) {
+                                        std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
+                                        spdlog::warn("OnSelectionChanged[{}] error: {}", ci, err);
+                                        lua_pop(uL, 1); // pop error string
+                                    }
+                                } else {
+                                    lua_pop(uL, 1); // pop non-function
+                                }
                             }
-                        } else {
-                            lua_pop(uL, 1);
+                            lua_pop(uL, 1); // pop selection array
                         }
+                        lua_pop(uL, 1); // pop callbacks table (or nil)
                     }
                 }
 

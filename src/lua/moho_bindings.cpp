@@ -10834,6 +10834,7 @@ void osc::lua::push_selected_units_for_ui(lua_State* L) {
 
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
     if (!ih || !lua_istable(L, 1)) return 0;
 
     std::unordered_set<u32> new_sel;
@@ -10844,7 +10845,15 @@ static int l_SelectUnits(lua_State* L) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
             if (lua_isnumber(L, -1)) {
-                new_sel.insert(static_cast<u32>(lua_tonumber(L, -1)));
+                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                if (sim) {
+                    auto* entity = sim->entity_registry().find(eid);
+                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                        new_sel.insert(eid);
+                    }
+                } else {
+                    new_sel.insert(eid);
+                }
             }
             lua_pop(L, 1); // EntityId value
         }
@@ -10856,6 +10865,7 @@ static int l_SelectUnits(lua_State* L) {
 
 static int l_AddSelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
     if (!ih || !lua_istable(L, 1)) return 0;
 
     auto sel = ih->selected(); // copy
@@ -10866,7 +10876,15 @@ static int l_AddSelectUnits(lua_State* L) {
             lua_pushstring(L, "EntityId");
             lua_rawget(L, -2);
             if (lua_isnumber(L, -1)) {
-                sel.insert(static_cast<u32>(lua_tonumber(L, -1)));
+                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                if (sim) {
+                    auto* entity = sim->entity_registry().find(eid);
+                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                        sel.insert(eid);
+                    }
+                } else {
+                    sel.insert(eid);
+                }
             }
             lua_pop(L, 1);
         }
@@ -10878,9 +10896,22 @@ static int l_AddSelectUnits(lua_State* L) {
 
 static int l_AddOnSelectionChangedCallback(lua_State* L) {
     if (!lua_isfunction(L, 1)) return 0;
-    lua_pushstring(L, "__osc_sel_changed_cb");
-    lua_pushvalue(L, 1);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    // Get or create the callbacks table at __osc_sel_changed_cbs
+    lua_pushstring(L, "__osc_sel_changed_cbs");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1); // pop nil/non-table
+        lua_newtable(L);
+        lua_pushstring(L, "__osc_sel_changed_cbs");
+        lua_pushvalue(L, -2); // dup table
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    // table is on top; append the function
+    int idx = luaL_getn(L, -1) + 1; // Lua 5.0: no lua_objlen
+    lua_pushvalue(L, 1); // dup function arg
+    lua_rawseti(L, -2, idx);
+    lua_pop(L, 1); // pop table
     return 0;
 }
 
