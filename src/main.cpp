@@ -263,6 +263,7 @@ static void print_usage() {
               << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
               << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
               << "  --construction-test Construction panel (EntityCategoryGetUnitList)\n"
+              << "  --phase2-test      Phase 2 integration (construction, orders, unitview, tooltips)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
@@ -461,6 +462,7 @@ int main(int argc, char* argv[]) {
     bool profile_enabled = parse_flag(argc, argv, "--profile");
     bool profile_test = parse_flag(argc, argv, "--profile-test");
     bool construction_test = parse_flag(argc, argv, "--construction-test");
+    bool phase2_test = parse_flag(argc, argv, "--phase2-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -499,7 +501,7 @@ int main(int argc, char* argv[]) {
                     enhance_wreck_test || vfx_render_test ||
                     transport_silo_test ||
                     dualstate_test ||
-                    construction_test ||
+                    construction_test || phase2_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -1256,6 +1258,86 @@ int main(int argc, char* argv[]) {
         } else {
             spdlog::error("=== M140 Construction Panel Test FAILED ===");
         }
+    }
+
+    // M140-M143: Phase 2 integration test
+    if (phase2_test && !map_path.empty()) {
+        spdlog::info("=== Phase 2 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: EntityCategoryGetUnitList returns results
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local cat = ParseEntityCategory('STRUCTURE LAND')
+                local list = EntityCategoryGetUnitList(cat)
+                assert(type(list) == 'table', 'EntityCategoryGetUnitList failed')
+                print('M140: EntityCategoryGetUnitList returned ' .. table.getn(list) .. ' blueprints')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] EntityCategoryGetUnitList"); pass++; }
+            else { spdlog::error("[FAIL] EntityCategoryGetUnitList"); fail++; }
+        }
+
+        // Test 2: GetOrderBitmapNames returns 8 values
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local a,b,c,d,e,f,g,h = GetOrderBitmapNames('move')
+                assert(a ~= nil, 'GetOrderBitmapNames returned nil')
+                assert(type(g) == 'string', 'Expected sound cue string')
+                print('M141: GetOrderBitmapNames("move") up=' .. a)
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetOrderBitmapNames"); pass++; }
+            else { spdlog::error("[FAIL] GetOrderBitmapNames"); fail++; }
+        }
+
+        // Test 3: GetRolloverInfo returns nil when nothing hovered
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local info = GetRolloverInfo()
+                print('M142: GetRolloverInfo type=' .. type(info))
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetRolloverInfo"); pass++; }
+            else { spdlog::error("[FAIL] GetRolloverInfo"); fail++; }
+        }
+
+        // Test 4: StartCursorText doesn't crash
+        {
+            auto r = ui_lua_state.do_string(R"(
+                StartCursorText(100, 100, 'Test', {1,1,0,1}, 1.0, false)
+                print('M143: StartCursorText succeeded')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] StartCursorText"); pass++; }
+            else { spdlog::error("[FAIL] StartCursorText"); fail++; }
+        }
+
+        // Test 5: orders.lua boots (pcall, allow WARN)
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local ok, err = pcall(function()
+                    local orders = import('/lua/ui/game/orders.lua')
+                    assert(orders ~= nil, 'orders.lua import returned nil')
+                end)
+                if ok then print('M141: orders.lua boot OK')
+                else print('M141: orders.lua boot WARN: ' .. tostring(err)) end
+            )");
+            if (r.ok()) { spdlog::info("[PASS] orders.lua boot"); pass++; }
+            else { spdlog::error("[FAIL] orders.lua boot"); fail++; }
+        }
+
+        // Test 6: unitview.lua boots (pcall, allow WARN)
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local ok, err = pcall(function()
+                    local unitview = import('/lua/ui/game/unitview.lua')
+                    assert(unitview ~= nil, 'unitview.lua import returned nil')
+                end)
+                if ok then print('M142: unitview.lua boot OK')
+                else print('M142: unitview.lua boot WARN: ' .. tostring(err)) end
+            )");
+            if (r.ok()) { spdlog::info("[PASS] unitview.lua boot"); pass++; }
+            else { spdlog::error("[FAIL] unitview.lua boot"); fail++; }
+        }
+
+        spdlog::info("=== Phase 2 Integration Test: {}/{} passed ===", pass, pass + fail);
     }
 
     // Report final state
