@@ -1570,6 +1570,128 @@ int main(int argc, char* argv[]) {
         spdlog::info("=== Phase 3 Integration Test: {}/{} passed ===", pass, pass + fail);
     }
 
+    // M147-M149: Phase 4 integration test
+    if (phase4_test && !map_path.empty()) {
+        spdlog::info("=== Phase 4 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: FrontEndData round-trip
+        {
+            auto r = ui_lua_state.do_string(R"(
+                SetFrontEndData('testKey', {value=42, name='test'})
+                local d = GetFrontEndData('testKey')
+                assert(d ~= nil, 'FrontEndData lost')
+                assert(d.value == 42, 'FrontEndData value mismatch')
+                print('M147: FrontEndData round-trip OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] FrontEndData"); pass++; }
+            else { spdlog::error("[FAIL] FrontEndData"); fail++; }
+        }
+
+        // Test 2: HasCommandLineArg
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local has = HasCommandLineArg('--phase4-test')
+                assert(has == true, 'Expected --phase4-test to be present')
+                local no = HasCommandLineArg('--nonexistent')
+                assert(no == false, 'Expected --nonexistent to be absent')
+                print('M147: HasCommandLineArg OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] HasCommandLineArg"); pass++; }
+            else { spdlog::error("[FAIL] HasCommandLineArg"); fail++; }
+        }
+
+        // Test 3: PlaySound doesn't crash
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local h = PlaySound('test_click')
+                assert(type(h) == 'number', 'PlaySound should return handle')
+                print('M147: PlaySound OK (handle=' .. h .. ')')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }
+            else { spdlog::error("[FAIL] PlaySound"); fail++; }
+        }
+
+        // Test 4: Skin selection
+        {
+            auto r = ui_lua_state.do_string(R"(
+                UIUtil.SetCurrentSkin('cybran')
+                local skin = UIUtil.GetCurrentSkin()
+                assert(skin == 'cybran', 'Skin mismatch: ' .. tostring(skin))
+                print('M149: Skin selection OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Skin selection"); pass++; }
+            else { spdlog::error("[FAIL] Skin selection"); fail++; }
+        }
+
+        // Test 5: Layout preference
+        {
+            auto r = ui_lua_state.do_string(R"(
+                UIUtil.SetLayoutPreference('right')
+                local layout = UIUtil.GetLayoutPreference()
+                assert(layout == 'right', 'Layout mismatch: ' .. tostring(layout))
+                print('M149: Layout preference OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Layout preference"); pass++; }
+            else { spdlog::error("[FAIL] Layout preference"); fail++; }
+        }
+
+        // Test 6: GetKeyBindings returns table
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local kb = GetKeyBindings()
+                assert(type(kb) == 'table', 'GetKeyBindings should return table')
+                assert(kb.attack == 'A', 'attack binding wrong')
+                assert(kb.move == 'M', 'move binding wrong')
+                print('M149: GetKeyBindings OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetKeyBindings"); pass++; }
+            else { spdlog::error("[FAIL] GetKeyBindings"); fail++; }
+        }
+
+        // Test 7: Prefs table exists
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(type(Prefs) == 'table', 'Prefs not found')
+                assert(type(Prefs.GetFromCurrentProfile) == 'function', 'GetFromCurrentProfile missing')
+                assert(type(Prefs.SetToCurrentProfile) == 'function', 'SetToCurrentProfile missing')
+                print('M149: Prefs table OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Prefs table"); pass++; }
+            else { spdlog::error("[FAIL] Prefs table"); fail++; }
+        }
+
+        // Test 8: LaunchSinglePlayerSession sets launch signal
+        {
+            auto r = ui_lua_state.do_string(R"(
+                LaunchSinglePlayerSession({ScenarioFile='/maps/test/test_scenario.lua'})
+                print('M148: LaunchSinglePlayerSession OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] LaunchSinglePlayerSession"); pass++; }
+            else { spdlog::error("[FAIL] LaunchSinglePlayerSession"); fail++; }
+
+            // Clear the launch flag so we don't actually try to launch
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_launch_requested");
+            lua_pushnil(uL);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+
+        // Test 9: DiskFindFiles accessible on ui_L
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(type(DiskFindFiles) == 'function', 'DiskFindFiles not on ui_L')
+                assert(type(DiskGetFileInfo) == 'function', 'DiskGetFileInfo not on ui_L')
+                assert(type(exists) == 'function', 'exists not on ui_L')
+                print('M148: File I/O on ui_L OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] File I/O on ui_L"); pass++; }
+            else { spdlog::error("[FAIL] File I/O on ui_L"); fail++; }
+        }
+
+        spdlog::info("=== Phase 4 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
+
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "
                  "{} ticks ({:.1f}s game time)",
