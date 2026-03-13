@@ -39,6 +39,8 @@ public:
 
     f32 yaw() const { return yaw_; }
     f32 pitch() const { return pitch_; }
+    void set_yaw(f32 y) { yaw_ = y; }
+    void set_pitch(f32 p) { pitch_ = p; }
 
     /// Accumulate camera shake intensity (called from renderer per frame).
     void apply_shake(f32 intensity);

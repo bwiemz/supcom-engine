@@ -10429,8 +10429,44 @@ static int l_SetCursor(lua_State* L) {
 
 // --- Camera methods (M136a) ---
 
-static int camera_SaveSettings(lua_State* /*L*/) { return 0; }
-static int camera_RestoreSettings(lua_State* /*L*/) { return 0; }
+/// camera:SaveSettings() -> table with camera state
+static int camera_SaveSettings(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) { lua_newtable(L); return 1; }
+    auto& cam = r->camera();
+    lua_newtable(L);
+    lua_pushstring(L, "target_x"); lua_pushnumber(L, cam.target_x()); lua_rawset(L, -3);
+    lua_pushstring(L, "target_z"); lua_pushnumber(L, cam.target_z()); lua_rawset(L, -3);
+    lua_pushstring(L, "distance"); lua_pushnumber(L, cam.distance()); lua_rawset(L, -3);
+    lua_pushstring(L, "yaw");      lua_pushnumber(L, cam.yaw());      lua_rawset(L, -3);
+    lua_pushstring(L, "pitch");    lua_pushnumber(L, cam.pitch());    lua_rawset(L, -3);
+    return 1;
+}
+
+/// camera:RestoreSettings(settings) — self at index 1, settings at index 2
+static int camera_RestoreSettings(lua_State* L) {
+    if (!lua_istable(L, 2)) return 0;
+    auto* r = get_renderer(L);
+    if (!r) return 0;
+    auto& cam = r->camera();
+
+    lua_pushstring(L, "target_x"); lua_rawget(L, 2);
+    f32 tx = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    lua_pushstring(L, "target_z"); lua_rawget(L, 2);
+    f32 tz = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    lua_pushstring(L, "distance"); lua_rawget(L, 2);
+    f32 d = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    lua_pushstring(L, "yaw"); lua_rawget(L, 2);
+    f32 yaw = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    lua_pushstring(L, "pitch"); lua_rawget(L, 2);
+    f32 pitch = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+
+    cam.set_target(tx, tz);
+    cam.set_distance(d);
+    cam.set_yaw(yaw);
+    cam.set_pitch(pitch);
+    return 0;
+}
 
 static int camera_SetZoom(lua_State* L) {
     auto* r = get_renderer(L);
@@ -10461,6 +10497,41 @@ static const MethodEntry camera_methods[] = {
     {"RevertRotation",  camera_RevertRotation},
     {nullptr, nullptr},
 };
+
+/// UIZoomTo(units, duration) — animate camera to center on units.
+/// units is a Lua array of unit objects with _c_object lightuserdata.
+static int l_UIZoomTo(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    auto* r = get_renderer(L);
+    if (!r) return 0;
+
+    f32 sum_x = 0, sum_z = 0;
+    int count = 0;
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            if (lua_islightuserdata(L, -1)) {
+                auto* unit = static_cast<osc::sim::Unit*>(lua_touserdata(L, -1));
+                if (unit) {
+                    auto pos = unit->position();
+                    sum_x += pos.x;
+                    sum_z += pos.z;
+                    ++count;
+                }
+            }
+            lua_pop(L, 1); // _c_object
+        }
+        lua_pop(L, 1); // array element
+    }
+
+    if (count > 0) {
+        r->camera().set_target(sum_x / count, sum_z / count);
+    }
+    return 0;
+}
 
 // --- GetMouseWorldPos global (M136a) ---
 // FA calls this as a standalone function: GetMouseWorldPos()
@@ -12483,6 +12554,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("IsKeyDown",                l_IsKeyDown);
     state.register_function("IN_AddKeyMapTable",        l_IN_AddKeyMapTable);
     state.register_function("IN_RemoveKeyMapTable",     l_IN_RemoveKeyMapTable);
+    state.register_function("UIZoomTo",                 l_UIZoomTo);
 
     // Blueprint query globals (M140)
     state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);
