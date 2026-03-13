@@ -1,5 +1,6 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/category_utils.hpp"
+#include "lua/factory_queue.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_data.hpp"
@@ -11405,6 +11406,64 @@ static int l_GetBlueprintIconPath(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Factory queue display bindings (M140c)
+// ====================================================================
+
+static lua::FactoryQueueDisplay* get_factory_queue(lua_State* L) {
+    lua_pushstring(L, "__osc_factory_queue");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* fq = static_cast<lua::FactoryQueueDisplay*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return fq;
+}
+
+static int l_SetCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* unit = check_unit(L, 1);
+    if (fq && unit) {
+        fq->set_current(L, unit);
+    } else {
+        lua_newtable(L);
+    }
+    return 1;
+}
+
+static int l_PeekCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* unit = check_unit(L, 1);
+    if (fq && unit) {
+        fq->peek(L, unit);
+    } else {
+        lua_newtable(L);
+    }
+    return 1;
+}
+
+static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    if (fq) fq->clear();
+    return 0;
+}
+
+static int l_DecreaseBuildCountInQueue(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* sim = get_sim(L);
+    if (!fq || !sim) return 0;
+
+    int index = static_cast<int>(luaL_checknumber(L, 1));
+    int count = static_cast<int>(luaL_optnumber(L, 2, 1));
+
+    u32 fid = fq->current_factory_id();
+    if (fid > 0) {
+        auto* entity = sim->entity_registry().find(fid);
+        if (entity && entity->is_unit()) {
+            fq->decrease_count(static_cast<sim::Unit*>(entity), index, count);
+        }
+    }
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11485,6 +11544,12 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Blueprint query globals (M140)
     state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);
     state.register_function("GetBlueprintIconPath",      l_GetBlueprintIconPath);
+
+    // Factory queue display globals (M140c)
+    state.register_function("SetCurrentFactoryForQueueDisplay",   l_SetCurrentFactoryForQueueDisplay);
+    state.register_function("PeekCurrentFactoryForQueueDisplay",  l_PeekCurrentFactoryForQueueDisplay);
+    state.register_function("ClearCurrentFactoryForQueueDisplay", l_ClearCurrentFactoryForQueueDisplay);
+    state.register_function("DecreaseBuildCountInQueue",          l_DecreaseBuildCountInQueue);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

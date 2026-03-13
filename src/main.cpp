@@ -18,6 +18,7 @@
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
@@ -756,6 +757,15 @@ int main(int argc, char* argv[]) {
                 lua_State* uL = ui_lua_state.raw();
                 lua_pushstring(uL, "__osc_input_handler");
                 lua_pushlightuserdata(uL, &input_handler);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // Factory queue display (M140c)
+            osc::lua::FactoryQueueDisplay factory_queue;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_factory_queue");
+                lua_pushlightuserdata(uL, &factory_queue);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 

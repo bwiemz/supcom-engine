@@ -9,6 +9,7 @@ add_library(osc_lua STATIC
     scenario_loader.cpp
     session_manager.cpp
     category_utils.cpp
+    factory_queue.cpp
 )
 add_library(osc::lua ALIAS osc_lua)
 
