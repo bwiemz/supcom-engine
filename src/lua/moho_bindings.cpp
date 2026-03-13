@@ -35,6 +35,7 @@
 #include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
+#include "lua/beat_system.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11674,14 +11675,35 @@ static int l_StartCursorText(lua_State* L) {
     return 0;
 }
 
-// AddBeatFunction and RemoveBeatFunction stubs (real implementation in M145)
-static int l_AddBeatFunction_stub(lua_State* L) {
-    spdlog::debug("AddBeatFunction: stub (will be real in M145)");
+static osc::lua::BeatFunctionRegistry* get_beat_registry(lua_State* L) {
+    lua_pushstring(L, "__osc_beat_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<osc::lua::BeatFunctionRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return reg;
+}
+
+/// AddBeatFunction(func, name) — register a per-frame callback
+static int l_AddBeatFunction(lua_State* L) {
+    auto* reg = get_beat_registry(L);
+    if (!reg || !lua_isfunction(L, 1)) return 0;
+    std::string name;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        name = lua_tostring(L, 2);
+    }
+    reg->add(L, 1, name);
     return 0;
 }
 
-static int l_RemoveBeatFunction_stub(lua_State* L) {
-    spdlog::debug("RemoveBeatFunction: stub (will be real in M145)");
+/// RemoveBeatFunction(func_or_name) — unregister a per-frame callback
+static int l_RemoveBeatFunction(lua_State* L) {
+    auto* reg = get_beat_registry(L);
+    if (!reg) return 0;
+    if (lua_isfunction(L, 1)) {
+        reg->remove(L, 1);
+    } else if (lua_type(L, 1) == LUA_TSTRING) {
+        reg->remove_by_name(lua_tostring(L, 1), L);
+    }
     return 0;
 }
 
@@ -11843,9 +11865,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Tooltip/cursor text (M143a)
     state.register_function("StartCursorText", l_StartCursorText);
 
-    // Beat function stubs (M143b)
-    state.register_function("AddBeatFunction", l_AddBeatFunction_stub);
-    state.register_function("RemoveBeatFunction", l_RemoveBeatFunction_stub);
+    // Beat functions (M145b)
+    state.register_function("AddBeatFunction", l_AddBeatFunction);
+    state.register_function("RemoveBeatFunction", l_RemoveBeatFunction);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

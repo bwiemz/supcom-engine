@@ -18,6 +18,7 @@
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/beat_system.hpp"
 #include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -787,6 +788,15 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
+            // BeatFunctionRegistry for per-frame Lua callbacks (M145b)
+            osc::lua::BeatFunctionRegistry beat_registry;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_beat_registry");
+                lua_pushlightuserdata(uL, &beat_registry);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 
@@ -961,6 +971,9 @@ int main(int argc, char* argv[]) {
 
                 // OnBeat — UI heartbeat each frame
                 osc::core::call_on_beat(ui_lua_state.raw(), dt);
+
+                // Fire beat functions each frame (M145b)
+                beat_registry.fire_all(ui_lua_state.raw());
 
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);
