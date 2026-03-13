@@ -1,6 +1,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/factory_queue.hpp"
+#include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_data.hpp"
@@ -2849,6 +2850,39 @@ static int unit_RemoveTacticalSiloAmmo(lua_State* L) {
     return 0;
 }
 
+static int unit_GetMissileInfo(lua_State* L) {
+    auto* unit = check_unit(L);
+    if (!unit) { lua_newtable(L); return 1; }
+
+    lua_newtable(L);
+
+    lua_pushstring(L, "nukeSiloStorageCount");
+    lua_pushnumber(L, unit->nuke_silo_ammo());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "nukeSiloMaxStorageCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloStorageCount");
+    lua_pushnumber(L, unit->tactical_silo_ammo());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloMaxStorageCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "nukeSiloBuildCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloBuildCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
 // --- Targeting / reclaimable flags ---
 
 static int entity_SetDoNotTarget(lua_State* L) {
@@ -3215,6 +3249,7 @@ static const MethodEntry unit_methods[] = {
     {"GiveTacticalSiloAmmo",        unit_GiveTacticalSiloAmmo},
     {"RemoveNukeSiloAmmo",          unit_RemoveNukeSiloAmmo},
     {"RemoveTacticalSiloAmmo",      unit_RemoveTacticalSiloAmmo},
+    {"GetMissileInfo",              unit_GetMissileInfo},
     // Armor
     {"GetArmorMult",                unit_GetArmorMult},
     {"AlterArmor",                  unit_AlterArmor},
@@ -11464,6 +11499,21 @@ static int l_DecreaseBuildCountInQueue(lua_State* L) {
     return 0;
 }
 
+/// GetOrderBitmapNames(bitmapId) → 8 return values
+static int l_GetOrderBitmapNames(lua_State* L) {
+    const char* id = luaL_checkstring(L, 1);
+    auto paths = lua::get_order_bitmap_paths(id);
+    lua_pushstring(L, paths.up.c_str());
+    lua_pushstring(L, paths.up_sel.c_str());
+    lua_pushstring(L, paths.over.c_str());
+    lua_pushstring(L, paths.over_sel.c_str());
+    lua_pushstring(L, paths.dis.c_str());
+    lua_pushstring(L, paths.dis_sel.c_str());
+    lua_pushstring(L, paths.sound_click);
+    lua_pushstring(L, paths.sound_rollover);
+    return 8;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11550,6 +11600,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PeekCurrentFactoryForQueueDisplay",  l_PeekCurrentFactoryForQueueDisplay);
     state.register_function("ClearCurrentFactoryForQueueDisplay", l_ClearCurrentFactoryForQueueDisplay);
     state.register_function("DecreaseBuildCountInQueue",          l_DecreaseBuildCountInQueue);
+
+    // Order bitmap helpers (M141a)
+    state.register_function("GetOrderBitmapNames", l_GetOrderBitmapNames);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

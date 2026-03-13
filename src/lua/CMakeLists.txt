@@ -10,6 +10,7 @@ add_library(osc_lua STATIC
     session_manager.cpp
     category_utils.cpp
     factory_queue.cpp
+    order_helpers.cpp
 )
 add_library(osc::lua ALIAS osc_lua)
 
