@@ -10,6 +10,7 @@ add_executable(osc_tests
     test_frustum.cpp
     test_lod.cpp
     test_death_anim.cpp
+    test_preferences.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
