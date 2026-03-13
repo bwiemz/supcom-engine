@@ -11752,11 +11752,23 @@ static int l_StartGameUI(lua_State* L) {
     return 0;
 }
 
-/// StartFrontEndUI() — stub for M147
+/// StartFrontEndUI() — transition to FRONT_END, call main.lua:CreateUI()
 static int l_StartFrontEndUI(lua_State* L) {
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
-    spdlog::info("StartFrontEndUI: stub (real in M147)");
+
+    // Call CreateUI() from main.lua
+    lua_pushstring(L, "CreateUI");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("CreateUI error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+        spdlog::warn("StartFrontEndUI: CreateUI not found (main.lua not loaded?)");
+    }
     return 0;
 }
 
@@ -12036,7 +12048,19 @@ static int l_ExitGame(lua_State* L) {
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
     auto* beat = get_beat_registry(L);
     if (beat) beat->clear(L);
-    spdlog::info("ExitGame: returning to front-end (stub — real menu in M147)");
+    spdlog::info("ExitGame: returning to front-end");
+
+    // Call CreateUI() to rebuild the main menu
+    lua_pushstring(L, "CreateUI");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("ExitGame CreateUI error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
     return 0;
 }
 
