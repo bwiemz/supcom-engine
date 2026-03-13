@@ -12,6 +12,7 @@ add_executable(osc_tests
     test_death_anim.cpp
     test_preferences.cpp
     test_localization.cpp
+    test_terrain_quadtree.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
