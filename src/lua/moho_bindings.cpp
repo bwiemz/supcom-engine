@@ -32,6 +32,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
 
@@ -10796,6 +10797,14 @@ static renderer::InputHandler* get_input_handler(lua_State* L) {
     return ih;
 }
 
+static osc::GameStateManager* get_game_state_mgr(lua_State* L) {
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return mgr;
+}
+
 /// Push a unit table for the UI Lua state with _c_object, EntityId, Army fields
 /// and moho.unit_methods metatable (cached as __osc_ui_unit_mt).
 static void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
@@ -11676,6 +11685,58 @@ static int l_RemoveBeatFunction_stub(lua_State* L) {
     return 0;
 }
 
+// Engine state query bindings (M144c)
+
+/// GetCurrentUIState() → "front-end" | "game" | "score" etc.
+static int l_GetCurrentUIState(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) {
+        lua_pushstring(L, osc::game_state_to_string(mgr->current()));
+    } else {
+        lua_pushstring(L, "game");
+    }
+    return 1;
+}
+
+/// WorldIsLoading() → boolean
+static int l_WorldIsLoading(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, mgr && mgr->current() == osc::GameState::LOADING ? 1 : 0);
+    return 1;
+}
+
+/// LaunchSinglePlayerSession(sessionConfig) — stub for M147
+static int l_LaunchSinglePlayerSession(lua_State* L) {
+    spdlog::info("LaunchSinglePlayerSession: stub (real in M147)");
+    return 0;
+}
+
+/// StartGameUI() — transition to GAME state, call CreateWldUIProvider
+static int l_StartGameUI(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::GAME, L);
+
+    lua_pushstring(L, "CreateWldUIProvider");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("CreateWldUIProvider error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/// StartFrontEndUI() — stub for M147
+static int l_StartFrontEndUI(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
+    spdlog::info("StartFrontEndUI: stub (real in M147)");
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11785,6 +11846,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Beat function stubs (M143b)
     state.register_function("AddBeatFunction", l_AddBeatFunction_stub);
     state.register_function("RemoveBeatFunction", l_RemoveBeatFunction_stub);
+
+    // Engine state queries (M144c)
+    state.register_function("GetCurrentUIState", l_GetCurrentUIState);
+    state.register_function("WorldIsLoading", l_WorldIsLoading);
+    state.register_function("LaunchSinglePlayerSession", l_LaunchSinglePlayerSession);
+    state.register_function("StartGameUI", l_StartGameUI);
+    state.register_function("StartFrontEndUI", l_StartFrontEndUI);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

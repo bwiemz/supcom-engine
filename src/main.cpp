@@ -39,20 +39,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 // ── Engine global Lua C functions (file-static, outside main) ──
-
-static int l_GetCurrentUIState(lua_State* L) {
-    lua_pushstring(L, "__osc_game_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_isstring(L, -1)) return 1; // return registry value directly
-    lua_pop(L, 1);
-    lua_pushstring(L, "game"); // fallback
-    return 1;
-}
-
-static int l_WorldIsLoading(lua_State* L) {
-    lua_pushboolean(L, 0);
-    return 1;
-}
+// Note: GetCurrentUIState and WorldIsLoading moved to moho_bindings.cpp (M144c)
 
 static int l_FlushEvents(lua_State*) { return 0; }
 
@@ -692,8 +679,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Register engine globals on UI Lua state
-    ui_lua_state.register_function("GetCurrentUIState", l_GetCurrentUIState);
-    ui_lua_state.register_function("WorldIsLoading", l_WorldIsLoading);
+    // Note: GetCurrentUIState and WorldIsLoading are registered by register_ui_bindings (M144c)
     ui_lua_state.register_function("FlushEvents", l_FlushEvents);
     ui_lua_state.register_function("SessionIsReplay", l_SessionIsReplay);
     ui_lua_state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
