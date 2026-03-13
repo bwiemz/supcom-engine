@@ -11029,6 +11029,254 @@ static int l_GetFocusArmy(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Command data + issuance globals (M138b)
+// ====================================================================
+
+/// GetUnitCommandData(units) → availableOrders, availableToggles, buildableCategories
+/// Returns three tables based on the intersection of command caps across all units.
+static int l_GetUnitCommandData(lua_State* L) {
+    auto* sim = get_sim(L);
+
+    // Push the three return tables up front so their stack indices are stable.
+    lua_newtable(L); // index: top-2  (orders)
+    lua_newtable(L); // index: top-1  (toggles)
+    lua_newtable(L); // index: top    (buildable – empty for now)
+
+    if (!sim || !lua_istable(L, 1)) return 3;
+
+    static const char* all_caps[] = {
+        "RULEUCC_Move", "RULEUCC_Attack", "RULEUCC_Guard", "RULEUCC_Patrol",
+        "RULEUCC_Stop", "RULEUCC_RetaliateToggle", "RULEUCC_Repair",
+        "RULEUCC_Capture", "RULEUCC_Reclaim", "RULEUCC_Overcharge",
+        "RULEUCC_Transport", "RULEUCC_Ferry", "RULEUCC_Sacrifice",
+        "RULEUCC_Nuke", "RULEUCC_Tactical", "RULEUCC_Teleport",
+        "RULEUCC_Dive", "RULEUCC_Pause", nullptr
+    };
+
+    bool first_unit = true;
+    std::unordered_set<std::string> common_caps;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+        lua_pop(L, 1); // _c_object value
+
+        if (!entity || !entity->is_unit() || entity->destroyed()) {
+            lua_pop(L, 1); // unit table
+            continue;
+        }
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        if (first_unit) {
+            for (const char** cap = all_caps; *cap; ++cap) {
+                if (unit->has_command_cap(*cap)) {
+                    common_caps.insert(*cap);
+                }
+            }
+            first_unit = false;
+        } else {
+            // Intersect: remove caps the current unit doesn't have
+            auto it = common_caps.begin();
+            while (it != common_caps.end()) {
+                if (!unit->has_command_cap(*it)) {
+                    it = common_caps.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        lua_pop(L, 1); // unit table
+    }
+
+    // The 3 return tables are at stack positions (top-2), (top-1), (top).
+    // lua_gettop(L) == orders_idx + 2.
+    int orders_tbl   = lua_gettop(L) - 2;
+    int toggles_tbl  = lua_gettop(L) - 1;
+
+    // Fill orders table
+    int oidx = 1;
+    for (const auto& cap : common_caps) {
+        lua_pushstring(L, cap.c_str());
+        lua_rawseti(L, orders_tbl, oidx++);
+    }
+
+    // Toggle caps: these become toggle buttons in the UI
+    static const char* toggle_caps[] = {
+        "RULEUCC_Pause", "RULEUCC_RetaliateToggle", "RULEUCC_Dive", nullptr
+    };
+    int tidx = 1;
+    for (const char** tc = toggle_caps; *tc; ++tc) {
+        if (common_caps.count(*tc)) {
+            lua_pushstring(L, *tc);
+            lua_rawseti(L, toggles_tbl, tidx++);
+        }
+    }
+
+    return 3;
+}
+
+/// GetUnitCommandFromCommandCap("RULEUCC_Move") → "Move"
+/// Strips the "RULEUCC_" prefix to produce a command type string.
+static int l_GetUnitCommandFromCommandCap(lua_State* L) {
+    const char* cap = luaL_checkstring(L, 1);
+    static const char prefix[] = "RULEUCC_";
+    static const size_t plen = sizeof(prefix) - 1; // exclude NUL
+    if (strncmp(cap, prefix, plen) == 0) {
+        lua_pushstring(L, cap + plen);
+    } else {
+        lua_pushvalue(L, 1); // return as-is
+    }
+    return 1;
+}
+
+/// IssueUnitCommand(units, commandString)
+/// Routes a command for specific units through SimCallbackQueue.
+static int l_IssueUnitCommand(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+    const char* cmd_raw = luaL_checkstring(L, 2);
+    std::string cmd(cmd_raw); // copy before stack ops
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1); // EntityId
+        }
+        lua_pop(L, 1); // unit table
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueUnitCommandToUnit(unit, commandString) — single-unit variant
+static int l_IssueUnitCommandToUnit(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+    const char* cmd_raw = luaL_checkstring(L, 2);
+    std::string cmd(cmd_raw);
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    lua_pushstring(L, "EntityId");
+    lua_rawget(L, 1);
+    if (lua_isnumber(L, -1)) {
+        entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+    }
+    lua_pop(L, 1);
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueCommand(commandString [, argsTable])
+/// Issues a command to the currently selected units.
+static int l_IssueCommand(lua_State* L) {
+    auto* ih    = get_input_handler(L);
+    auto* queue = get_callback_queue(L);
+    if (!ih || !queue) return 0;
+
+    const char* cmd_raw = luaL_checkstring(L, 1);
+    std::string cmd(cmd_raw);
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    const auto& selected = ih->selected();
+    entry.unit_ids.reserve(selected.size());
+    for (u32 eid : selected) {
+        entry.unit_ids.push_back(eid);
+    }
+
+    // Optional second arg: table of extra args (e.g. target position)
+    if (lua_istable(L, 2)) {
+        int args_tbl = 2;
+        lua_pushnil(L);
+        while (lua_next(L, args_tbl) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                const char* key = lua_tostring(L, -2);
+                std::string key_str(key);
+                int vtype = lua_type(L, -1);
+                if (vtype == LUA_TSTRING) {
+                    entry.args[key_str] = std::string(lua_tostring(L, -1));
+                } else if (vtype == LUA_TNUMBER) {
+                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
+                } else if (vtype == LUA_TBOOLEAN) {
+                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
+                }
+            }
+            lua_pop(L, 1); // pop value, keep key
+        }
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueBuildMobile(units, position, bpId)
+/// Queues a BuildMobile SimCallback with unit IDs, position {x,y,z}, and blueprint ID.
+static int l_IssueBuildMobile(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue) return 0;
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = "BuildMobile";
+
+    // Arg 1: units table
+    if (lua_istable(L, 1)) {
+        int n = luaL_getn(L, 1);
+        for (int i = 1; i <= n; i++) {
+            lua_rawgeti(L, 1, i);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "EntityId");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+                }
+                lua_pop(L, 1); // EntityId
+            }
+            lua_pop(L, 1); // unit table
+        }
+    }
+
+    // Arg 2: position table — try array {x,y,z} then named fields
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        if (lua_isnumber(L, -1)) entry.args["x"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 2);
+        if (lua_isnumber(L, -1)) entry.args["y"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        if (lua_isnumber(L, -1)) entry.args["z"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    // Arg 3: blueprint ID string
+    if (lua_type(L, 3) == LUA_TSTRING) {
+        const char* bp = lua_tostring(L, 3);
+        entry.args["blueprint"] = std::string(bp);
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11089,6 +11337,14 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // SimCallback UI→Sim bridge (M138a)
     state.register_function("SimCallback", l_SimCallback);
+
+    // Command data + issuance globals (M138b)
+    state.register_function("GetUnitCommandData",          l_GetUnitCommandData);
+    state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
+    state.register_function("IssueUnitCommand",            l_IssueUnitCommand);
+    state.register_function("IssueUnitCommandToUnit",      l_IssueUnitCommandToUnit);
+    state.register_function("IssueCommand",                l_IssueCommand);
+    state.register_function("IssueBuildMobile",            l_IssueBuildMobile);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
