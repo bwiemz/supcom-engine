@@ -12225,6 +12225,131 @@ static int l_MapPreview(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Profile system — Prefs table (M149a)
+// ====================================================================
+
+/// Prefs.GetFromCurrentProfile(key [, default]) -> value
+static int l_GetFromCurrentProfile(lua_State* L) {
+    int nargs = lua_gettop(L);
+    const char* key = luaL_checkstring(L, 1);
+    std::string full_key = std::string("profile.") + key;
+
+    lua_pushstring(L, "GetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, full_key.c_str());
+        if (nargs >= 2) {
+            lua_pushvalue(L, 2);
+        } else {
+            lua_pushnil(L);
+        }
+        if (lua_pcall(L, 2, 1, 0) == 0) return 1;
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+/// Prefs.SetToCurrentProfile(key, val)
+static int l_SetToCurrentProfile(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    std::string full_key = std::string("profile.") + key;
+
+    lua_pushstring(L, "SetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, full_key.c_str());
+        lua_pushvalue(L, 2);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+// ====================================================================
+// Skin selection stub (M149b)
+// ====================================================================
+
+/// SetCurrentSkin(skinName)
+static int l_SetCurrentSkin(lua_State* L) {
+    const char* skin = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_current_skin");
+    lua_pushstring(L, skin);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("SetCurrentSkin: {}", skin);
+    return 0;
+}
+
+/// GetCurrentSkin() -> string
+static int l_GetCurrentSkin(lua_State* L) {
+    lua_pushstring(L, "__osc_current_skin");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "uef"); // default skin
+    }
+    return 1;
+}
+
+// ====================================================================
+// Key binding display (M149c)
+// ====================================================================
+
+/// GetKeyBindings() -> table of {action=key} pairs (read-only)
+static int l_GetKeyBindings(lua_State* L) {
+    lua_newtable(L);
+
+    auto set = [&](const char* action, const char* key) {
+        lua_pushstring(L, action);
+        lua_pushstring(L, key);
+        lua_rawset(L, -3);
+    };
+
+    set("attack", "A");
+    set("move", "M");
+    set("stop", "S");
+    set("patrol", "P");
+    set("guard", "G");
+    set("reclaim", "R");
+    set("repair", "E");
+    set("capture", "C");
+    set("select_all_on_screen", "Ctrl+A");
+    set("select_all", "Ctrl+Shift+A");
+    set("toggle_pause", "Pause");
+
+    return 1;
+}
+
+// ====================================================================
+// Layout preference (M149d)
+// ====================================================================
+
+/// SetLayoutPreference(layout) — store preferred panel layout
+static int l_SetLayoutPreference(lua_State* L) {
+    const char* layout = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_layout_pref");
+    lua_pushstring(L, layout);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// GetLayoutPreference() -> string ("bottom" default)
+static int l_GetLayoutPreference(lua_State* L) {
+    lua_pushstring(L, "__osc_layout_pref");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "bottom");
+    }
+    return 1;
+}
+
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
@@ -12415,6 +12540,49 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PauseSound", l_PauseSound);
     state.register_function("PauseVoice", l_PauseVoice);
     state.register_function("EnableWorldSounds", l_EnableWorldSounds);
+
+    // Prefs table (M149a)
+    {
+        lua_pushstring(L, "Prefs");
+        lua_newtable(L);
+        lua_pushstring(L, "GetFromCurrentProfile");
+        lua_pushcfunction(L, l_GetFromCurrentProfile);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "SetToCurrentProfile");
+        lua_pushcfunction(L, l_SetToCurrentProfile);
+        lua_rawset(L, -3);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
+
+    // UIUtil table — skin and layout (M149b, M149d)
+    {
+        // Create or get existing UIUtil table
+        lua_pushstring(L, "UIUtil");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+        }
+        lua_pushstring(L, "SetCurrentSkin");
+        lua_pushcfunction(L, l_SetCurrentSkin);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "GetCurrentSkin");
+        lua_pushcfunction(L, l_GetCurrentSkin);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "SetLayoutPreference");
+        lua_pushcfunction(L, l_SetLayoutPreference);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "GetLayoutPreference");
+        lua_pushcfunction(L, l_GetLayoutPreference);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "UIUtil");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+        lua_pop(L, 1); // pop the table
+    }
+
+    // Key bindings (M149c)
+    state.register_function("GetKeyBindings", l_GetKeyBindings);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
