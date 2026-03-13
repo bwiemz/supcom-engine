@@ -145,6 +145,14 @@ static audio::SoundManager* get_sound_mgr(lua_State* L) {
     return mgr;
 }
 
+static osc::FrontEndData* get_front_end_data(lua_State* L) {
+    lua_pushstring(L, "__osc_front_end_data");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* d = static_cast<osc::FrontEndData*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return d;
+}
+
 /// Extract Bank and Cue strings from a sound table at the given stack index.
 /// Returns false if the table is missing or lacks Bank/Cue keys.
 static bool extract_sound_table(lua_State* L, int idx,
@@ -11730,9 +11738,43 @@ static int l_WorldIsLoading(lua_State* L) {
     return 1;
 }
 
-/// LaunchSinglePlayerSession(sessionConfig) — stub for M147
+/// LaunchSinglePlayerSession(sessionConfig) — launch a game from lobby config.
+/// Reads ScenarioFile from config, stores config in FrontEndData, signals main loop.
 static int l_LaunchSinglePlayerSession(lua_State* L) {
-    spdlog::info("LaunchSinglePlayerSession: stub (real in M147)");
+    if (!lua_istable(L, 1)) {
+        spdlog::warn("LaunchSinglePlayerSession: expected table arg");
+        return 0;
+    }
+
+    // Read scenario file path
+    lua_pushstring(L, "ScenarioFile");
+    lua_rawget(L, 1);
+    std::string scenario;
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        scenario = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+
+    if (scenario.empty()) {
+        spdlog::warn("LaunchSinglePlayerSession: no ScenarioFile in config");
+        return 0;
+    }
+
+    // Store session config in FrontEndData for loader
+    auto* fed = get_front_end_data(L);
+    if (fed) fed->set(L, "sessionConfig", 1);
+
+    // Store scenario path in registry for main loop
+    lua_pushstring(L, "__osc_launch_scenario");
+    lua_pushstring(L, scenario.c_str());
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    // Signal main loop to transition FRONT_END -> LOADING -> GAME
+    lua_pushstring(L, "__osc_launch_requested");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::info("LaunchSinglePlayerSession: scenario={}", scenario);
     return 0;
 }
 
@@ -12109,14 +12151,6 @@ static int l_EnableWorldSounds(lua_State* L) {
 // ====================================================================
 // FrontEndData cross-state store (M147c)
 // ====================================================================
-
-static osc::FrontEndData* get_front_end_data(lua_State* L) {
-    lua_pushstring(L, "__osc_front_end_data");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* d = static_cast<osc::FrontEndData*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return d;
-}
 
 /// GetFrontEndData(key) -> value
 static int l_GetFrontEndData(lua_State* L) {

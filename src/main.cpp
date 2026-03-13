@@ -1132,6 +1132,45 @@ int main(int argc, char* argv[]) {
                     lua_pop(uiL, 1);
                 }
 
+                // Check for game launch request from lobby (M148a)
+                {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_launch_requested");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_toboolean(uiL, -1)) {
+                        lua_pop(uiL, 1);
+
+                        // Clear the flag
+                        lua_pushstring(uiL, "__osc_launch_requested");
+                        lua_pushnil(uiL);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                        // Read scenario path
+                        lua_pushstring(uiL, "__osc_launch_scenario");
+                        lua_rawget(uiL, LUA_REGISTRYINDEX);
+                        const char* sc = lua_tostring(uiL, -1);
+                        std::string launch_scenario = sc ? sc : "";
+                        lua_pop(uiL, 1);
+
+                        if (!launch_scenario.empty()) {
+                            spdlog::info("Launch requested: {}", launch_scenario);
+                            // Transition to LOADING then GAME
+                            game_state_mgr.transition_to(
+                                osc::GameState::LOADING, uiL);
+                            // Store scenario path for SessionGetScenarioInfo
+                            lua_pushstring(uiL, "__osc_scenario_path");
+                            lua_pushstring(uiL, launch_scenario.c_str());
+                            lua_rawset(uiL, LUA_REGISTRYINDEX);
+                            game_state_mgr.transition_to(
+                                osc::GameState::GAME, uiL);
+                            // Call StartGameUI
+                            osc::core::call_start_game_ui(uiL);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
+                }
+
                 osc::Profiler::instance().end_frame();
             }
 
