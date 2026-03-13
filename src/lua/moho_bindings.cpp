@@ -11633,6 +11633,41 @@ static int l_GetEnhancements(lua_State* L) {
     return 1;
 }
 
+/// StartCursorText(x, y, text, color, time, flash) — floating text near cursor
+/// Used for brief notifications like "Invalid target" or build placement feedback.
+static int l_StartCursorText(lua_State* L) {
+    f32 x = static_cast<f32>(luaL_optnumber(L, 1, 0));
+    f32 y = static_cast<f32>(luaL_optnumber(L, 2, 0));
+    const char* text = luaL_optstring(L, 3, "");
+    // Color is a table {r, g, b, a} or string
+    f32 r = 1, g = 1, b = 1, a = 1;
+    if (lua_istable(L, 4)) {
+        lua_rawgeti(L, 4, 1); r = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 2); g = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3); b = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 4); a = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    }
+    f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 2.0));
+    // bool flash = lua_toboolean(L, 6) != 0;  // not used yet
+
+    // Store cursor text in registry for overlay renderer to display
+    lua_pushstring(L, "__osc_cursor_text");
+    lua_newtable(L);
+    lua_pushstring(L, "text"); lua_pushstring(L, text); lua_rawset(L, -3);
+    lua_pushstring(L, "x"); lua_pushnumber(L, x); lua_rawset(L, -3);
+    lua_pushstring(L, "y"); lua_pushnumber(L, y); lua_rawset(L, -3);
+    lua_pushstring(L, "r"); lua_pushnumber(L, r); lua_rawset(L, -3);
+    lua_pushstring(L, "g"); lua_pushnumber(L, g); lua_rawset(L, -3);
+    lua_pushstring(L, "b"); lua_pushnumber(L, b); lua_rawset(L, -3);
+    lua_pushstring(L, "a"); lua_pushnumber(L, a); lua_rawset(L, -3);
+    lua_pushstring(L, "duration"); lua_pushnumber(L, duration); lua_rawset(L, -3);
+    lua_pushstring(L, "time"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::debug("StartCursorText: '{}' at ({:.0f},{:.0f}) for {:.1f}s", text, x, y, duration);
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11735,6 +11770,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
         lua_pushstring(L, "EnhancementCommon");
         lua_rawset(L, LUA_GLOBALSINDEX);
     }
+
+    // Tooltip/cursor text (M143a)
+    state.register_function("StartCursorText", l_StartCursorText);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
