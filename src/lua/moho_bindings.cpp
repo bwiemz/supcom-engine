@@ -11277,6 +11277,60 @@ static int l_IssueBuildMobile(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Build mode / command mode globals (M139)
+// ====================================================================
+
+/// ClearBuildTemplates() — called when exiting build mode; clears build ghost.
+static int l_ClearBuildTemplates(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (sim) sim->clear_build_ghost();
+    return 0;
+}
+
+/// GetActiveBuildTemplate() — returns nil (no active template).
+static int l_GetActiveBuildTemplate(lua_State* L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+/// SetActiveBuildTemplate(template) — stub; build templates not needed for basic build mode.
+static int l_SetActiveBuildTemplate(lua_State* /*L*/) {
+    return 0;
+}
+
+/// AddCommandFeedbackBlip(blipTable) — visual feedback stub; cosmetic only.
+static int l_AddCommandFeedbackBlip(lua_State* /*L*/) {
+    return 0;
+}
+
+/// GetUnitById(entityId) — retrieves a unit table by entity ID.
+static int l_GetUnitById(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    u32 eid = static_cast<u32>(luaL_checknumber(L, 1));
+    auto* entity = sim->entity_registry().find(eid);
+    if (!entity || entity->destroyed()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    push_unit_for_ui(L, entity);
+    return 1;
+}
+
+/// IsKeyDown(keyCode) — checks if a GLFW key is currently pressed.
+static int l_IsKeyDown(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) { lua_pushboolean(L, 0); return 1; }
+
+    // FA key codes map to GLFW key codes for most keys
+    int key_code = static_cast<int>(luaL_checknumber(L, 1));
+    lua_pushboolean(L, r->is_key_pressed(key_code) ? 1 : 0);
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11345,6 +11399,14 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("IssueUnitCommandToUnit",      l_IssueUnitCommandToUnit);
     state.register_function("IssueCommand",                l_IssueCommand);
     state.register_function("IssueBuildMobile",            l_IssueBuildMobile);
+
+    // Build mode / command mode globals (M139)
+    state.register_function("ClearBuildTemplates",      l_ClearBuildTemplates);
+    state.register_function("GetActiveBuildTemplate",   l_GetActiveBuildTemplate);
+    state.register_function("SetActiveBuildTemplate",   l_SetActiveBuildTemplate);
+    state.register_function("AddCommandFeedbackBlip",   l_AddCommandFeedbackBlip);
+    state.register_function("GetUnitById",              l_GetUnitById);
+    state.register_function("IsKeyDown",                l_IsKeyDown);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
