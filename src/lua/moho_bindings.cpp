@@ -12506,6 +12506,29 @@ static int l_SessionSendChatMessage(lua_State* L) {
     return 0;
 }
 
+/// SendSystemMessage(text) — display a system announcement in chat.
+/// Calls the registered chat function with sender = "System".
+static int l_SendSystemMessage(lua_State* L) {
+    const char* text = luaL_checkstring(L, 1);
+
+    lua_pushstring(L, "__osc_chat_func");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isfunction(L, -1)) {
+        // Build a message table: {from = "System", text = text}
+        lua_newtable(L);
+        lua_pushstring(L, "from"); lua_pushstring(L, "System"); lua_rawset(L, -3);
+        lua_pushstring(L, "text"); lua_pushstring(L, text); lua_rawset(L, -3);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("SendSystemMessage error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+        spdlog::info("System: {}", text);
+    }
+    return 0;
+}
+
 /// GetSessionClients() → table of connected players.
 /// In single-player, returns just the local player.
 static int l_GetSessionClients(lua_State* L) {
@@ -12723,9 +12746,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Key bindings (M149c)
     state.register_function("GetKeyBindings", l_GetKeyBindings);
 
-    // Chat stubs (M151a)
+    // Chat stubs (M151a-b)
     state.register_function("RegisterChatFunc", l_RegisterChatFunc);
     state.register_function("SessionSendChatMessage", l_SessionSendChatMessage);
+    state.register_function("SendSystemMessage", l_SendSystemMessage);
     state.register_function("GetSessionClients", l_GetSessionClients);
 
     // Engine state queries (M144c)

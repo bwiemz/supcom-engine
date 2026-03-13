@@ -608,6 +608,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Register GiveResources SimCallback handler (M151b)
+    {
+        auto give_res = sim_lua_state.do_string(R"(
+            SimCallbacks = SimCallbacks or {}
+            SimCallbacks.GiveResources = function(args)
+                if not args or not args.From or not args.To then return end
+                LOG('GiveResources: army ' .. tostring(args.From) .. ' -> army ' .. tostring(args.To) ..
+                    ' mass=' .. tostring(args.Mass or 0) .. ' energy=' .. tostring(args.Energy or 0))
+            end
+        )");
+        if (!give_res) {
+            spdlog::warn("GiveResources SimCallback registration error: {}", give_res.error().message);
+        }
+    }
+
     // === UI Lua State ===
     osc::lua::LuaState ui_lua_state;
     ui_lua_state.set_vfs(&vfs);
