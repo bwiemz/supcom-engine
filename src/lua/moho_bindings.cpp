@@ -23,6 +23,7 @@
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/font_metrics_provider.hpp"
+#include "ui/wld_ui_provider.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
@@ -9762,24 +9763,87 @@ static int l_InternalCreateWorldMesh(lua_State* L) {
     return 0;
 }
 
-// --- WldUIProvider methods (M76) ---
+// --- WldUIProvider methods (M76 → M135g) ---
+
+static ui::WldUIProvider* check_wld_provider(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* p = static_cast<ui::WldUIProvider*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return p;
+}
+
+static int wld_CreateGameInterface(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    bool is_replay = lua_toboolean(L, 2) != 0;
+    if (p) p->create_game_interface(L, is_replay);
+    return 0;
+}
+
+static int wld_DestroyGameInterface(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->destroy_game_interface(L);
+    return 0;
+}
+
+static int wld_StartLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->start_loading_dialog(L);
+    return 0;
+}
+
+static int wld_UpdateLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->update_loading_dialog(L, static_cast<f32>(luaL_optnumber(L, 2, 0.0)));
+    return 0;
+}
+
+static int wld_StopLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->stop_loading_dialog(L);
+    return 0;
+}
+
+static int wld_GetPrefetchTextures(lua_State* L) {
+    lua_newtable(L); // empty table — no prefetch needed
+    return 1;
+}
 
 static int wlduiprovider_Destroy(lua_State* /*L*/) { return 0; }
 
 static const MethodEntry ui_wlduiprovider_methods[] = {
+    {"CreateGameInterface", wld_CreateGameInterface},
     {"Destroy", wlduiprovider_Destroy},
+    {"DestroyGameInterface", wld_DestroyGameInterface},
+    {"GetPrefetchTextures", wld_GetPrefetchTextures},
+    {"StartLoadingDialog", wld_StartLoadingDialog},
+    {"StopLoadingDialog", wld_StopLoadingDialog},
+    {"UpdateLoadingDialog", wld_UpdateLoadingDialog},
     {nullptr, nullptr},
 };
 
-/// InternalCreateWldUIProvider(self) — standalone, no UIControl backing
+/// InternalCreateWldUIProvider(self) — real WldUIProvider backing
 static int l_InternalCreateWldUIProvider(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "InternalCreateWldUIProvider: arg 1 must be self table");
-    // Store dummy _c_object so check_control patterns see a non-nil value
+
+    // Retrieve the long-lived WldUIProvider stored in registry by main.cpp
+    lua_pushstring(L, "__osc_wld_ui_provider");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* provider = static_cast<ui::WldUIProvider*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!provider) return luaL_error(L, "WldUIProvider not initialized");
+
+    // Store as _c_object lightuserdata
     lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x1)));
+    lua_pushlightuserdata(L, provider);
     lua_rawset(L, 1);
-    spdlog::debug("InternalCreateWldUIProvider: created");
+
+    // Don't set metatable — FA's ClassUI system handles metatables via __index chain.
+    // Setting it here would overwrite the class hierarchy and break Lua-side overrides.
+
+    spdlog::info("InternalCreateWldUIProvider: created real provider");
     return 0;
 }
 

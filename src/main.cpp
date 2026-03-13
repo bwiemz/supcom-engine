@@ -18,6 +18,7 @@
 #include "core/preferences.hpp"
 #include "lua/moho_bindings.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
 
@@ -504,6 +505,15 @@ int main(int argc, char* argv[]) {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_preferences");
         lua_pushlightuserdata(uL, &prefs);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider
+    osc::ui::WldUIProvider wld_provider;
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_wld_ui_provider");
+        lua_pushlightuserdata(uL, &wld_provider);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
