@@ -18,6 +18,7 @@
 #include "audio/sound_manager.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
+#include "lua/engine_bindings.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/beat_system.hpp"
 #include "lua/factory_queue.hpp"
@@ -659,6 +660,9 @@ int main(int argc, char* argv[]) {
     // UI control registry (M71)
     osc::ui::UIControlRegistry ui_registry;
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
+
+    // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
+    osc::lua::register_blueprint_bindings(ui_lua_state);
 
     // UI-side thread manager (reuses ThreadManager with frame counts instead of sim ticks)
     osc::sim::ThreadManager ui_thread_manager(ui_lua_state.raw());

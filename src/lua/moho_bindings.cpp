@@ -12214,6 +12214,17 @@ static int l_HasCommandLineArg(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Map preview stub (M148d)
+// ====================================================================
+
+/// MapPreview(scenarioFile) -> nil (stub — no heightmap rendering yet)
+static int l_MapPreview(lua_State* L) {
+    spdlog::debug("MapPreview: stub (no heightmap rendering yet)");
+    lua_pushnil(L);
+    return 1;
+}
+
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
@@ -12393,6 +12404,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // HasCommandLineArg (M147d)
     state.register_function("HasCommandLineArg", l_HasCommandLineArg);
+
+    // Map preview stub (M148d)
+    state.register_function("MapPreview", l_MapPreview);
 
     // Audio globals (M147b)
     state.register_function("PlaySound", l_PlaySound);
