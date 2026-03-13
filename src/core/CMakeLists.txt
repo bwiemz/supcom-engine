@@ -1,6 +1,7 @@
 add_library(osc_core STATIC
     log.cpp
     preferences.cpp
+    localization.cpp
 )
 add_library(osc::core ALIAS osc_core)
 
