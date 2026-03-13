@@ -10827,6 +10827,11 @@ static int l_GetSelectedUnits(lua_State* L) {
     return 1;
 }
 
+void osc::lua::push_selected_units_for_ui(lua_State* L) {
+    l_GetSelectedUnits(L);
+    // l_GetSelectedUnits pushes 1 table; nothing else to do
+}
+
 static int l_SelectUnits(lua_State* L) {
     auto* ih = get_input_handler(L);
     if (!ih || !lua_istable(L, 1)) return 0;

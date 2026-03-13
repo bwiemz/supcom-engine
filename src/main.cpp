@@ -771,6 +771,7 @@ int main(int argc, char* argv[]) {
             double fps_accum = 0.0;
             int fps_frames = 0;
             double display_fps = 0.0;
+            std::unordered_set<osc::u32> prev_selection;
 
             while (!renderer.should_close()) {
                 osc::Profiler::instance().begin_frame();
@@ -859,7 +860,6 @@ int main(int argc, char* argv[]) {
 
                 // Fire OnSelectionChanged callback if selection changed
                 {
-                    static std::unordered_set<osc::u32> prev_selection;
                     const auto& cur_sel = input_handler.selected();
                     if (cur_sel != prev_selection) {
                         prev_selection = cur_sel;
@@ -867,26 +867,8 @@ int main(int argc, char* argv[]) {
                         lua_pushstring(uL, "__osc_sel_changed_cb");
                         lua_rawget(uL, LUA_REGISTRYINDEX);
                         if (lua_isfunction(uL, -1)) {
-                            // Build the current selection array as argument
-                            lua_newtable(uL);
-                            int sel_tbl = lua_gettop(uL);
-                            int sel_idx = 1;
-                            for (osc::u32 eid : cur_sel) {
-                                auto* entity = sim_state.entity_registry().find(eid);
-                                if (entity && entity->is_unit() && !entity->destroyed()) {
-                                    lua_newtable(uL);
-                                    lua_pushstring(uL, "_c_object");
-                                    lua_pushlightuserdata(uL, entity);
-                                    lua_rawset(uL, -3);
-                                    lua_pushstring(uL, "EntityId");
-                                    lua_pushnumber(uL, static_cast<lua_Number>(entity->entity_id()));
-                                    lua_rawset(uL, -3);
-                                    lua_pushstring(uL, "Army");
-                                    lua_pushnumber(uL, static_cast<lua_Number>(entity->army() + 1));
-                                    lua_rawset(uL, -3);
-                                    lua_rawseti(uL, sel_tbl, sel_idx++);
-                                }
-                            }
+                            // Build unit array with proper metatables via push_selected_units_for_ui
+                            osc::lua::push_selected_units_for_ui(uL);
                             if (lua_pcall(uL, 1, 0, 0) != 0) {
                                 std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
                                 spdlog::warn("OnSelectionChanged error: {}", err);
