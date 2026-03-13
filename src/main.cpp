@@ -22,6 +22,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/sim_callback_queue.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -757,6 +758,15 @@ int main(int argc, char* argv[]) {
                 lua_pushlightuserdata(uL, &input_handler);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
+
+            // SimCallback queue (UI→Sim bridge, M138a)
+            osc::sim::SimCallbackQueue sim_callback_queue;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_sim_callback_queue");
+                lua_pushlightuserdata(uL, &sim_callback_queue);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 
@@ -836,6 +846,88 @@ int main(int argc, char* argv[]) {
                            osc::sim::SimState::SECONDS_PER_TICK) {
                         sim_state.tick();
                         sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+                    }
+                }
+
+                // Process SimCallbacks from UI (M138a)
+                if (!sim_callback_queue.empty()) {
+                    auto callbacks = sim_callback_queue.drain();
+                    lua_State* sL = sim_lua_state.raw();
+
+                    // Import SimCallbacks module once for the batch
+                    lua_pushstring(sL, "import");
+                    lua_rawget(sL, LUA_GLOBALSINDEX);
+                    bool have_module = false;
+                    if (lua_isfunction(sL, -1)) {
+                        lua_pushstring(sL, "/lua/SimCallbacks.lua");
+                        if (lua_pcall(sL, 1, 1, 0) == 0 && lua_istable(sL, -1)) {
+                            have_module = true;
+                        } else {
+                            if (lua_isstring(sL, -1))
+                                spdlog::warn("SimCallback import error: {}", lua_tostring(sL, -1));
+                            lua_pop(sL, 1);
+                        }
+                    } else {
+                        lua_pop(sL, 1);
+                    }
+
+                    if (have_module) {
+                        int mod = lua_gettop(sL);
+                        for (const auto& cb : callbacks) {
+                            // Get DoCallback function (re-fetch each time since pcall may error)
+                            lua_pushstring(sL, "DoCallback");
+                            lua_rawget(sL, mod);
+                            if (!lua_isfunction(sL, -1)) {
+                                lua_pop(sL, 1);
+                                continue;
+                            }
+
+                            // Arg 1: func name
+                            lua_pushstring(sL, cb.func_name.c_str());
+
+                            // Arg 2: args table
+                            lua_newtable(sL);
+                            for (const auto& [key, val] : cb.args) {
+                                lua_pushstring(sL, key.c_str());
+                                std::visit([&](const auto& v) {
+                                    using T = std::decay_t<decltype(v)>;
+                                    if constexpr (std::is_same_v<T, std::string>) {
+                                        lua_pushstring(sL, v.c_str());
+                                    } else if constexpr (std::is_same_v<T, osc::f64>) {
+                                        lua_pushnumber(sL, static_cast<lua_Number>(v));
+                                    } else if constexpr (std::is_same_v<T, bool>) {
+                                        lua_pushboolean(sL, v ? 1 : 0);
+                                    }
+                                }, val);
+                                lua_rawset(sL, -3);
+                            }
+
+                            // Arg 3: units table (array of unit entity tables), or nil
+                            if (!cb.unit_ids.empty()) {
+                                lua_newtable(sL);
+                                int units_tbl = lua_gettop(sL);
+                                int idx = 1;
+                                for (osc::u32 eid : cb.unit_ids) {
+                                    auto* entity = sim_state.entity_registry().find(eid);
+                                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                                        if (entity->lua_table_ref() >= 0) {
+                                            lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
+                                            lua_rawseti(sL, units_tbl, idx++);
+                                        }
+                                    }
+                                }
+                            } else {
+                                lua_pushnil(sL); // no units
+                            }
+
+                            // Call DoCallback(name, args, units)
+                            if (lua_pcall(sL, 3, 0, 0) != 0) {
+                                const char* err = lua_tostring(sL, -1);
+                                spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
+                                lua_pop(sL, 1);
+                            }
+                        }
+                        lua_pop(sL, 1); // pop module table
                     }
                 }
 

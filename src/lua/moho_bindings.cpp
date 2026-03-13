@@ -27,6 +27,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "core/localization.hpp"
@@ -10941,6 +10942,79 @@ static int l_ValidateUnitsList(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// SimCallback UI→Sim bridge (M138a)
+// ====================================================================
+
+// Helper: get SimCallbackQueue from registry
+static sim::SimCallbackQueue* get_callback_queue(lua_State* L) {
+    lua_pushstring(L, "__osc_sim_callback_queue");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* q = static_cast<sim::SimCallbackQueue*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return q;
+}
+
+// SimCallback({Func="name", Args={...}}, addUnitSelection)
+// Serializes the Lua table into a C++ SimCallbackEntry and queues it.
+static int l_SimCallback(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+
+    sim::SimCallbackEntry entry;
+
+    // Read Func field
+    lua_pushstring(L, "Func");
+    lua_rawget(L, 1);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        entry.func_name = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+
+    if (entry.func_name.empty()) return 0; // no function name = skip
+
+    // Read Args field (table of key→value)
+    lua_pushstring(L, "Args");
+    lua_rawget(L, 1);
+    if (lua_istable(L, -1)) {
+        int args_tbl = lua_gettop(L);
+        lua_pushnil(L); // first key
+        while (lua_next(L, args_tbl) != 0) {
+            // key at -2, value at -1
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                const char* key = lua_tostring(L, -2);
+                std::string key_str(key);
+                int vtype = lua_type(L, -1);
+                if (vtype == LUA_TSTRING) {
+                    entry.args[key_str] = std::string(lua_tostring(L, -1));
+                } else if (vtype == LUA_TNUMBER) {
+                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
+                } else if (vtype == LUA_TBOOLEAN) {
+                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
+                }
+                // Other types (tables, functions, etc.) are silently skipped
+            }
+            lua_pop(L, 1); // pop value, keep key for next iteration
+        }
+    }
+    lua_pop(L, 1); // pop Args table (or nil)
+
+    // Check addUnitSelection (arg 2)
+    if (lua_toboolean(L, 2)) {
+        auto* ih = get_input_handler(L);
+        if (ih) {
+            const auto& selected = ih->selected();
+            entry.unit_ids.reserve(selected.size());
+            for (u32 eid : selected) {
+                entry.unit_ids.push_back(eid);
+            }
+        }
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
 static int l_GetFocusArmy(lua_State* L) {
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -11012,6 +11086,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddOnSelectionChangedCallback", l_AddOnSelectionChangedCallback);
     state.register_function("ValidateUnitsList", l_ValidateUnitsList);
     state.register_function("GetFocusArmy", l_GetFocusArmy);
+
+    // SimCallback UI→Sim bridge (M138a)
+    state.register_function("SimCallback", l_SimCallback);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
