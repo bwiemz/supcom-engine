@@ -11918,6 +11918,76 @@ static int l_SessionResume(lua_State* L) {
     return 0;
 }
 
+// ── Score screen data (M146b) ────────────────────────────────────────────────
+
+/// GetArmyScore(armyIndex) → table with army stats for score screen
+static int l_GetArmyScore(lua_State* L) {
+    auto* sim = get_sim(L);
+    int army_idx = static_cast<int>(luaL_checknumber(L, 1));
+
+    lua_newtable(L);
+    if (!sim) return 1;
+
+    auto* brain = sim->get_army(army_idx);
+    if (!brain) return 1;
+
+    auto set_num = [&](const char* k, f64 v) {
+        lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
+    };
+
+    // general subtable
+    lua_pushstring(L, "general");
+    lua_newtable(L);
+    set_num("score", 0); // no score() method yet
+    set_num("currentunits", 0); // simplified
+    set_num("currentcap", brain->unit_cap());
+    lua_rawset(L, -3);
+
+    // resources subtable
+    lua_pushstring(L, "resources");
+    lua_newtable(L);
+
+    auto push_rate_table = [&](const char* name, f64 rate) {
+        lua_pushstring(L, name);
+        lua_newtable(L);
+        lua_pushstring(L, "rate"); lua_pushnumber(L, rate); lua_rawset(L, -3);
+        lua_rawset(L, -3);
+    };
+
+    auto& econ = brain->economy();
+    push_rate_table("massin", econ.mass.income);
+    push_rate_table("massout", econ.mass.requested);
+    push_rate_table("energyin", econ.energy.income);
+    push_rate_table("energyout", econ.energy.requested);
+
+    // storage subtable
+    lua_pushstring(L, "storage");
+    lua_newtable(L);
+    set_num("maxMass", econ.mass.max_storage);
+    set_num("storedMass", econ.mass.stored);
+    set_num("maxEnergy", econ.energy.max_storage);
+    set_num("storedEnergy", econ.energy.stored);
+    lua_rawset(L, -3); // set storage
+    lua_rawset(L, -3); // set resources
+
+    // Defeated flag
+    lua_pushstring(L, "Defeated");
+    lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
+/// IsObserver() → boolean (true if focus army is -1)
+static int l_IsObserver(lua_State* L) {
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    int army = lua_isnil(L, -1) ? 0 : static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, army < 0 ? 1 : 0);
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -12045,6 +12115,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("ConExecute", l_ConExecute);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);
+
+    // Score screen data (M146b)
+    state.register_function("GetArmyScore", l_GetArmyScore);
+    state.register_function("IsObserver", l_IsObserver);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
