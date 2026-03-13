@@ -124,6 +124,7 @@ static void print_usage() {
               << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"
               << "  --vfx-render-test  VFX/emitter particle rendering\n"
               << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
+              << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
@@ -316,6 +317,7 @@ int main(int argc, char* argv[]) {
     bool enhance_wreck_test = parse_flag(argc, argv, "--enhance-wreck-test");
     bool vfx_render_test = parse_flag(argc, argv, "--vfx-render-test");
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
+    bool dualstate_test = parse_flag(argc, argv, "--dualstate-test");
     bool no_fog = parse_flag(argc, argv, "--no-fog");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
@@ -357,6 +359,7 @@ int main(int argc, char* argv[]) {
                     vet_adj_render_test || intel_overlay_test ||
                     enhance_wreck_test || vfx_render_test ||
                     transport_silo_test ||
+                    dualstate_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -375,21 +378,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Phase 1: Init + VFS
-    osc::lua::LuaState state;
+    // Phase 1: Init + VFS (sim Lua state)
+    osc::lua::LuaState sim_lua_state;
     osc::vfs::VirtualFileSystem vfs;
     osc::lua::InitLoader loader;
 
-    auto init_result = loader.execute_init(state, config, vfs);
+    auto init_result = loader.execute_init(sim_lua_state, config, vfs);
     if (!init_result) {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
 
-    // Phase 2: Blueprint loading
-    osc::blueprints::BlueprintStore store(state.raw());
+    // Phase 2: Blueprint loading (sim Lua state owns the store)
+    osc::blueprints::BlueprintStore store(sim_lua_state.raw());
 
-    auto bp_result = loader.load_blueprints(state, vfs, store);
+    auto bp_result = loader.load_blueprints(sim_lua_state, vfs, store);
     if (!bp_result) {
         spdlog::error("Blueprint loading failed: {}",
                        bp_result.error().message);
@@ -409,13 +412,13 @@ int main(int argc, char* argv[]) {
     spdlog::info("OpenSupCom initialization complete.");
 
     // Phase 3: Map + Sim boot
-    osc::sim::SimState sim_state(state.raw(), &store);
+    osc::sim::SimState sim_state(sim_lua_state.raw(), &store);
 
     // Audio system
     auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
         config.fa_path / "sounds");
     {
-        lua_State* L = state.raw();
+        lua_State* L = sim_lua_state.raw();
         lua_pushstring(L, "osc_sound_manager");
         lua_pushlightuserdata(L, sound_mgr.get());
         lua_rawset(L, LUA_REGISTRYINDEX);
@@ -435,7 +438,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty()) {
         osc::lua::ScenarioLoader scenario_loader;
         auto meta_result = scenario_loader.load_scenario(
-            state, vfs, map_path, sim_state);
+            sim_lua_state, vfs, map_path, sim_state);
         if (!meta_result) {
             spdlog::error("Scenario load failed: {}",
                           meta_result.error().message);
@@ -455,15 +458,38 @@ int main(int argc, char* argv[]) {
     }
 
     osc::lua::SimLoader sim_loader;
-    auto sim_result = sim_loader.boot_sim(state, vfs, sim_state);
+    auto sim_result = sim_loader.boot_sim(sim_lua_state, vfs, sim_state);
     if (!sim_result) {
         spdlog::error("Sim boot failed: {}", sim_result.error().message);
         return 1;
     }
 
+    // === UI Lua State ===
+    osc::lua::LuaState ui_lua_state;
+    ui_lua_state.set_vfs(&vfs);
+    ui_lua_state.set_blueprint_store(&store);
+
+    // Run init sequence on UI state (polyfills, config, class system, import)
+    auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
+    if (!ui_init_result) {
+        spdlog::error("UI Lua init failed: {}", ui_init_result.error().message);
+        return 1;
+    }
+
+    // Load blueprints into UI state (needed for GetBlueprint lookups)
+    auto ui_bp_result = loader.load_blueprints(ui_lua_state, vfs, store);
+    if (!ui_bp_result) {
+        spdlog::warn("UI blueprint load: {}", ui_bp_result.error().message);
+    }
+
+    // Register moho class tables on UI state (unit_methods, etc.)
+    osc::lua::register_moho_bindings(ui_lua_state, sim_state);
+
     // UI control registry (M71)
     osc::ui::UIControlRegistry ui_registry;
-    osc::lua::register_ui_bindings(state, ui_registry);
+    osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
+
+    spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
     if (sim_state.terrain()) {
@@ -484,7 +510,7 @@ int main(int argc, char* argv[]) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
         auto session_result = session_mgr.start_session(
-            state, vfs, sim_state, scenario_meta);
+            sim_lua_state, vfs, sim_state, scenario_meta);
         if (!session_result) {
             spdlog::error("Session start failed: {}",
                           session_result.error().message);
@@ -502,7 +528,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
         if (renderer.init(1600, 900, "OpenSupCom")) {
-            renderer.build_scene(sim_state, &vfs, state.raw());
+            renderer.build_scene(sim_state, &vfs, ui_lua_state.raw());
 
             // Player input handler (ARMY_1 = index 0)
             osc::renderer::InputHandler input_handler;
@@ -595,7 +621,7 @@ int main(int argc, char* argv[]) {
                 input_handler.update(renderer, sim_state, dt);
 
                 const auto& sel = input_handler.selected();
-                renderer.render(sim_state, state.raw(), &ui_registry,
+                renderer.render(sim_state, ui_lua_state.raw(), &ui_registry,
                                 sel.empty() ? nullptr : &sel);
 
                 // Update window title periodically
@@ -646,7 +672,7 @@ int main(int argc, char* argv[]) {
 
 
     // ── Integration tests ──
-    osc::test::TestContext test_ctx{sim_state, state, state.raw(), vfs, store};
+    osc::test::TestContext test_ctx{sim_state, sim_lua_state, sim_lua_state.raw(), vfs, store};
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
     if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
@@ -737,6 +763,96 @@ int main(int argc, char* argv[]) {
     if (vfx_render_test && !map_path.empty()) osc::test::test_vfx_render(test_ctx);
     if (transport_silo_test && !map_path.empty()) osc::test::test_transport_silo_render(test_ctx);
     if (profile_test && !map_path.empty()) osc::test::test_profile(test_ctx);
+
+    // Dual-state isolation test (does not require map)
+    if (dualstate_test) {
+        spdlog::info("=== Dual Lua State Test ===");
+        int pass = 0, fail = 0;
+
+        // 1. Both states initialized
+        if (sim_lua_state.raw() && ui_lua_state.raw()) {
+            spdlog::info("[PASS] Both Lua states initialized");
+            pass++;
+        } else {
+            spdlog::error("[FAIL] Lua state initialization");
+            fail++;
+        }
+
+        // 2. sim_L has CreateUnit but NOT InternalCreateGroup
+        //    Use lua_rawget on globals index to avoid __index metamethod
+        //    (config.lua locks globals and errors on undefined access)
+        {
+            lua_State* sL = sim_lua_state.raw();
+            lua_pushstring(sL, "CreateUnit");
+            lua_rawget(sL, LUA_GLOBALSINDEX);
+            bool sim_has_create_unit = !lua_isnil(sL, -1);
+            lua_pop(sL, 1);
+            lua_pushstring(sL, "InternalCreateGroup");
+            lua_rawget(sL, LUA_GLOBALSINDEX);
+            bool sim_has_ui_func = !lua_isnil(sL, -1);
+            lua_pop(sL, 1);
+
+            if (sim_has_create_unit) {
+                spdlog::info("[PASS] sim_L has CreateUnit");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] sim_L missing CreateUnit");
+                fail++;
+            }
+            if (!sim_has_ui_func) {
+                spdlog::info("[PASS] sim_L does NOT have InternalCreateGroup");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] sim_L has InternalCreateGroup (should be ui_L only)");
+                fail++;
+            }
+        }
+
+        // 3. ui_L has InternalCreateGroup but NOT CreateUnit
+        {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "InternalCreateGroup");
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            bool ui_has_create_group = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+            lua_pushstring(uL, "CreateUnit");
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            bool ui_has_sim_func = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+
+            if (ui_has_create_group) {
+                spdlog::info("[PASS] ui_L has InternalCreateGroup");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] ui_L missing InternalCreateGroup");
+                fail++;
+            }
+            if (!ui_has_sim_func) {
+                spdlog::info("[PASS] ui_L does NOT have CreateUnit");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] ui_L has CreateUnit (should be sim_L only)");
+                fail++;
+            }
+        }
+
+        // 4. Both share the same VFS
+        {
+            auto* sim_vfs = osc::lua::LuaState::get_vfs(sim_lua_state.raw());
+            auto* ui_vfs = osc::lua::LuaState::get_vfs(ui_lua_state.raw());
+            if (sim_vfs && ui_vfs && sim_vfs == ui_vfs) {
+                spdlog::info("[PASS] Both states share the same VFS");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] VFS mismatch (sim={}, ui={})",
+                              static_cast<void*>(sim_vfs),
+                              static_cast<void*>(ui_vfs));
+                fail++;
+            }
+        }
+
+        spdlog::info("=== Dual State Test: {} passed, {} failed ===", pass, fail);
+    }
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "
