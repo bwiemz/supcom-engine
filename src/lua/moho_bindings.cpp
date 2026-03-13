@@ -10278,6 +10278,19 @@ static int lobby_GetLocalPlayerID(lua_State* L) {
 }
 
 static int lobby_GetLocalPlayerName(lua_State* L) {
+    // Try to read player name from preferences
+    lua_pushstring(L, "GetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "profile.playerName");
+        lua_pushstring(L, "Player");
+        if (lua_pcall(L, 2, 1, 0) == 0) {
+            return 1; // leave result on stack
+        }
+        lua_pop(L, 1); // pop error
+    } else {
+        lua_pop(L, 1);
+    }
     lua_pushstring(L, "Player");
     return 1;
 }
@@ -10306,7 +10319,21 @@ static int lobby_IsHost(lua_State* L) {
 }
 
 static int lobby_JoinGame(lua_State* /*L*/) { return 0; }
-static int lobby_LaunchGame(lua_State* /*L*/) { return 0; }
+/// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession
+static int lobby_LaunchGame(lua_State* L) {
+    lua_pushstring(L, "LaunchSinglePlayerSession");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 2); // push config arg
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("lobby LaunchGame error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
 
 static int lobby_MakeValidGameName(lua_State* L) {
     // Return the original name
