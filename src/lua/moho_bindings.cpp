@@ -11814,6 +11814,57 @@ static int l_GetSystemTimeSeconds(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// SessionGetScenarioInfo (M145c2)
+// ====================================================================
+
+/// SessionGetScenarioInfo() → table with scenario metadata
+static int l_ui_SessionGetScenarioInfo(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_newtable(L); return 1; }
+
+    lua_newtable(L);
+    auto set_str = [&](const char* k, const char* v) {
+        lua_pushstring(L, k); lua_pushstring(L, v); lua_rawset(L, -3);
+    };
+    auto set_num = [&](const char* k, f64 v) {
+        lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
+    };
+
+    // Read scenario path from registry
+    lua_pushstring(L, "__osc_scenario_path");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const char* path = lua_isnil(L, -1) ? "" : lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    set_str("name", path);
+    set_str("file", path);
+
+    // Map size from terrain
+    auto* terrain = sim->terrain();
+    if (terrain) {
+        set_num("size_x", terrain->map_width());
+        set_num("size_z", terrain->map_height());
+    }
+
+    // Armies subtable
+    lua_pushstring(L, "Armies");
+    lua_newtable(L);
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        auto* brain = sim->army_at(i);
+        if (brain) {
+            lua_newtable(L);
+            lua_pushstring(L, "name");
+            lua_pushstring(L, brain->name().c_str());
+            lua_rawset(L, -3);
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
+    }
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11931,6 +11982,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetSimRate", l_GetSimRate);
     state.register_function("CurrentTime", l_CurrentTime);
     state.register_function("GetSystemTimeSeconds", l_GetSystemTimeSeconds);
+
+    // Scenario info (M145c2)
+    state.register_function("SessionGetScenarioInfo", l_ui_SessionGetScenarioInfo);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

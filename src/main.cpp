@@ -778,6 +778,14 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
+            // Store scenario path for SessionGetScenarioInfo (M145c2)
+            if (!map_path.empty()) {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_scenario_path");
+                lua_pushstring(uL, map_path.c_str());
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
             // GameStateManager pointer for UI bindings (M144b)
             osc::GameStateManager game_state_mgr;
             game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
