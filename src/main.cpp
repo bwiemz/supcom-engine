@@ -796,6 +796,14 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
+            // GameStateManager pointer for sim bindings (M145d)
+            {
+                lua_State* sL = sim_lua_state.raw();
+                lua_pushstring(sL, "__osc_game_state_mgr");
+                lua_pushlightuserdata(sL, &game_state_mgr);
+                lua_rawset(sL, LUA_REGISTRYINDEX);
+            }
+
             // BeatFunctionRegistry for per-frame Lua callbacks (M145b)
             osc::lua::BeatFunctionRegistry beat_registry;
             {

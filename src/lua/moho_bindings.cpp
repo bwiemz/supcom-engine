@@ -11865,6 +11865,59 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
     return 1;
 }
 
+// ====================================================================
+// Speed/pause control bindings (M145d)
+// ====================================================================
+
+/// SetGameSpeed(speed) — set sim speed multiplier (0.0-10.0)
+static int l_SetGameSpeed(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) {
+        f64 speed = luaL_checknumber(L, 1);
+        mgr->set_speed(speed);
+        spdlog::debug("SetGameSpeed: {:.2f}", speed);
+    }
+    return 0;
+}
+
+/// GetGameSpeed() → number (current speed multiplier)
+static int l_GetGameSpeed(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushnumber(L, mgr ? mgr->speed() : 1.0);
+    return 1;
+}
+
+/// ConExecute(cmd) — execute a console command string
+static int l_ConExecute(lua_State* L) {
+    const char* cmd = luaL_checkstring(L, 1);
+    std::string s(cmd);
+    if (s.rfind("WLD_GameSpeed", 0) == 0) {
+        auto* mgr = get_game_state_mgr(L);
+        if (mgr) {
+            f64 speed = 1.0;
+            if (s.size() > 14) speed = std::stod(s.substr(14));
+            mgr->set_speed(speed);
+        }
+    } else {
+        spdlog::debug("ConExecute: '{}' (unhandled)", cmd);
+    }
+    return 0;
+}
+
+/// SessionRequestPause() — request the sim to pause
+static int l_SessionRequestPause(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->set_paused(true, L);
+    return 0;
+}
+
+/// SessionResume() — resume the sim
+static int l_SessionResume(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->set_paused(false, L);
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11985,6 +12038,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Scenario info (M145c2)
     state.register_function("SessionGetScenarioInfo", l_ui_SessionGetScenarioInfo);
+
+    // Speed/pause control (M145d)
+    state.register_function("SetGameSpeed", l_SetGameSpeed);
+    state.register_function("GetGameSpeed", l_GetGameSpeed);
+    state.register_function("ConExecute", l_ConExecute);
+    state.register_function("SessionRequestPause", l_SessionRequestPause);
+    state.register_function("SessionResume", l_SessionResume);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
