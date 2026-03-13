@@ -38,6 +38,7 @@
 #include "lua/beat_system.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -11759,6 +11760,60 @@ static int l_StartFrontEndUI(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// Time query bindings (M145c)
+// ====================================================================
+
+/// GetGameTimeSeconds() → number (seconds since game start)
+static int l_ui_GetGameTimeSeconds(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushnumber(L, sim ? sim->game_time() : 0.0);
+    return 1;
+}
+
+/// GameTick() → integer (current sim tick)
+static int l_ui_GameTick(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushnumber(L, sim ? sim->tick_count() : 0);
+    return 1;
+}
+
+/// GetGameTime() → formatted string "MM:SS"
+static int l_GetGameTime(lua_State* L) {
+    auto* sim = get_sim(L);
+    f64 t = sim ? sim->game_time() : 0.0;
+    int minutes = static_cast<int>(t) / 60;
+    int seconds = static_cast<int>(t) % 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// GetSimRate() → number (sim ticks per second, typically 10)
+static int l_GetSimRate(lua_State* L) {
+    lua_pushnumber(L, 10.0);
+    return 1;
+}
+
+/// CurrentTime() → number (wall-clock seconds for UI animations)
+static int l_CurrentTime(lua_State* L) {
+    using namespace std::chrono;
+    auto now = high_resolution_clock::now().time_since_epoch();
+    double secs = duration<double>(now).count();
+    lua_pushnumber(L, secs);
+    return 1;
+}
+
+/// GetSystemTimeSeconds() → number (same as CurrentTime)
+static int l_GetSystemTimeSeconds(lua_State* L) {
+    using namespace std::chrono;
+    auto now = high_resolution_clock::now().time_since_epoch();
+    double secs = duration<double>(now).count();
+    lua_pushnumber(L, secs);
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11868,6 +11923,14 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Beat functions (M145b)
     state.register_function("AddBeatFunction", l_AddBeatFunction);
     state.register_function("RemoveBeatFunction", l_RemoveBeatFunction);
+
+    // Time queries (M145c)
+    state.register_function("GetGameTimeSeconds", l_ui_GetGameTimeSeconds);
+    state.register_function("GameTick", l_ui_GameTick);
+    state.register_function("GetGameTime", l_GetGameTime);
+    state.register_function("GetSimRate", l_GetSimRate);
+    state.register_function("CurrentTime", l_CurrentTime);
+    state.register_function("GetSystemTimeSeconds", l_GetSystemTimeSeconds);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
