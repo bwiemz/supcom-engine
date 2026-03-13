@@ -511,6 +511,20 @@ int main(int argc, char* argv[]) {
     osc::ui::UIControlRegistry ui_registry;
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
 
+    // UI-side thread manager (reuses ThreadManager with frame counts instead of sim ticks)
+    osc::sim::ThreadManager ui_thread_manager(ui_lua_state.raw());
+    ui_thread_manager.register_in_registry(ui_lua_state.raw());
+    osc::u32 ui_frame_count = 0;
+
+    // Also store under __osc_ui_thread_manager for ForkThread lookup.
+    // register_in_registry stores under "osc_thread_mgr" for Destroy() support.
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_ui_thread_manager");
+        lua_pushlightuserdata(uL, &ui_thread_manager);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
     spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
@@ -638,6 +652,10 @@ int main(int argc, char* argv[]) {
                 }
 
                 renderer.poll_events(dt);
+
+                // Resume UI coroutines
+                ++ui_frame_count;
+                ui_thread_manager.resume_all(ui_frame_count);
 
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);

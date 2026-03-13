@@ -10387,6 +10387,45 @@ static int l_SetPreference(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// UI-side thread/coroutine system
+// ====================================================================
+
+static sim::ThreadManager* get_ui_threads(lua_State* L) {
+    lua_pushstring(L, "__osc_ui_thread_manager");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* tm = static_cast<sim::ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return tm;
+}
+
+static int l_ui_ForkThread(lua_State* L) {
+    auto* tm = get_ui_threads(L);
+    if (!tm) { lua_pushnil(L); return 1; }
+    return tm->fork_thread(L);
+}
+
+/// WaitSeconds(n): convert seconds to frame count, yield with frame count.
+/// ThreadManager::resume_all() interprets yielded numbers as RELATIVE wait counts.
+static constexpr f64 UI_FRAMES_PER_SECOND = 60.0;
+
+static int l_ui_WaitSeconds(lua_State* L) {
+    f64 seconds = luaL_checknumber(L, 1);
+    if (seconds < 0.0) seconds = 0.0;
+    u32 frames = static_cast<u32>(seconds * UI_FRAMES_PER_SECOND + 0.5);
+    if (frames < 1) frames = 1;
+    lua_pushnumber(L, static_cast<lua_Number>(frames));
+    return lua_yield(L, 1);
+}
+
+/// WaitTicks(n): in UI context, 1 tick = 1 frame.
+static int l_ui_WaitTicks(lua_State* L) {
+    int ticks = static_cast<int>(luaL_checknumber(L, 1));
+    if (ticks < 1) ticks = 1;
+    lua_pushnumber(L, static_cast<lua_Number>(ticks));
+    return lua_yield(L, 1);
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -10429,6 +10468,11 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Preference globals
     state.register_function("GetPreference", l_GetPreference);
     state.register_function("SetPreference", l_SetPreference);
+
+    // UI thread/coroutine globals
+    state.register_function("ForkThread", l_ui_ForkThread);
+    state.register_function("WaitSeconds", l_ui_WaitSeconds);
+    state.register_function("WaitTicks", l_ui_WaitTicks);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
