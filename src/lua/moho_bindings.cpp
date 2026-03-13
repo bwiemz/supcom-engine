@@ -12476,6 +12476,48 @@ static int l_ExitApplication(lua_State* L) {
     return 0;
 }
 
+// ── Chat stubs (M151a) ────────────────────────────────────────────────────────
+
+/// RegisterChatFunc(func, name) — register a chat message handler.
+/// In single-player, this receives system announcements.
+static int l_RegisterChatFunc(lua_State* L) {
+    if (!lua_isfunction(L, 1)) return 0;
+    lua_pushstring(L, "__osc_chat_func");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("RegisterChatFunc: handler registered");
+    return 0;
+}
+
+/// SessionSendChatMessage(clients, msgTable) — send a chat message.
+/// In single-player, echoes to the registered chat function.
+static int l_SessionSendChatMessage(lua_State* L) {
+    lua_pushstring(L, "__osc_chat_func");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 2); // msgTable
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("ChatFunc error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/// GetSessionClients() → table of connected players.
+/// In single-player, returns just the local player.
+static int l_GetSessionClients(lua_State* L) {
+    lua_newtable(L);
+    lua_newtable(L); // client 1
+    lua_pushstring(L, "id"); lua_pushstring(L, "0"); lua_rawset(L, -3);
+    lua_pushstring(L, "name"); lua_pushstring(L, "Player"); lua_rawset(L, -3);
+    lua_pushstring(L, "army"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+    lua_rawseti(L, -2, 1);
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -12680,6 +12722,11 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Key bindings (M149c)
     state.register_function("GetKeyBindings", l_GetKeyBindings);
+
+    // Chat stubs (M151a)
+    state.register_function("RegisterChatFunc", l_RegisterChatFunc);
+    state.register_function("SessionSendChatMessage", l_SessionSendChatMessage);
+    state.register_function("GetSessionClients", l_GetSessionClients);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
