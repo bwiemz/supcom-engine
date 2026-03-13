@@ -30,6 +30,9 @@ public:
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
 
+    /// Replace the current selection (called from Lua SelectUnits).
+    void set_selected(const std::unordered_set<u32>& sel) { selected_ = sel; }
+
     /// Whether a drag-selection box is active.
     bool is_dragging() const { return dragging_; }
 

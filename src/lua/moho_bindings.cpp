@@ -1,5 +1,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/category_utils.hpp"
+#include "lua/factory_queue.hpp"
+#include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_data.hpp"
@@ -22,12 +24,25 @@
 #include "blueprints/blueprint_store.hpp"
 #include "audio/sound_manager.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/world_view.hpp"
 #include "ui/font_metrics_provider.hpp"
+#include "ui/wld_ui_provider.hpp"
+#include "renderer/renderer.hpp"
+#include "renderer/input_handler.hpp"
+#include "sim/sim_callback_queue.hpp"
+#include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "core/front_end_data.hpp"
+#include "core/game_state.hpp"
+#include "core/localization.hpp"
+#include "core/preferences.hpp"
+#include "lua/beat_system.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <vector>
 #include <spdlog/spdlog.h>
 
@@ -128,6 +143,14 @@ static audio::SoundManager* get_sound_mgr(lua_State* L) {
     auto* mgr = static_cast<audio::SoundManager*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return mgr;
+}
+
+static osc::FrontEndData* get_front_end_data(lua_State* L) {
+    lua_pushstring(L, "__osc_front_end_data");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* d = static_cast<osc::FrontEndData*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return d;
 }
 
 /// Extract Bank and Cue strings from a sound table at the given stack index.
@@ -2840,6 +2863,39 @@ static int unit_RemoveTacticalSiloAmmo(lua_State* L) {
     return 0;
 }
 
+static int unit_GetMissileInfo(lua_State* L) {
+    auto* unit = check_unit(L);
+    if (!unit) { lua_newtable(L); return 1; }
+
+    lua_newtable(L);
+
+    lua_pushstring(L, "nukeSiloStorageCount");
+    lua_pushnumber(L, unit->nuke_silo_ammo());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "nukeSiloMaxStorageCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloStorageCount");
+    lua_pushnumber(L, unit->tactical_silo_ammo());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloMaxStorageCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "nukeSiloBuildCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "tacticalSiloBuildCount");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
 // --- Targeting / reclaimable flags ---
 
 static int entity_SetDoNotTarget(lua_State* L) {
@@ -3206,6 +3262,7 @@ static const MethodEntry unit_methods[] = {
     {"GiveTacticalSiloAmmo",        unit_GiveTacticalSiloAmmo},
     {"RemoveNukeSiloAmmo",          unit_RemoveNukeSiloAmmo},
     {"RemoveTacticalSiloAmmo",      unit_RemoveTacticalSiloAmmo},
+    {"GetMissileInfo",              unit_GetMissileInfo},
     // Armor
     {"GetArmorMult",                unit_GetArmorMult},
     {"AlterArmor",                  unit_AlterArmor},
@@ -7385,6 +7442,20 @@ static ui::UIControl* check_control(lua_State* L, int idx = 1) {
     return ctrl;
 }
 
+static ui::WorldView* check_world_view(lua_State* L, int idx = 1) {
+    auto* ctrl = check_control(L, idx);
+    if (!ctrl) return nullptr;
+    return dynamic_cast<ui::WorldView*>(ctrl);
+}
+
+static renderer::Renderer* get_renderer(lua_State* L) {
+    lua_pushstring(L, "__osc_renderer");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* r = static_cast<renderer::Renderer*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return r;
+}
+
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
@@ -9760,24 +9831,87 @@ static int l_InternalCreateWorldMesh(lua_State* L) {
     return 0;
 }
 
-// --- WldUIProvider methods (M76) ---
+// --- WldUIProvider methods (M76 → M135g) ---
+
+static ui::WldUIProvider* check_wld_provider(lua_State* L, int idx = 1) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* p = static_cast<ui::WldUIProvider*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return p;
+}
+
+static int wld_CreateGameInterface(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    bool is_replay = lua_toboolean(L, 2) != 0;
+    if (p) p->create_game_interface(L, is_replay);
+    return 0;
+}
+
+static int wld_DestroyGameInterface(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->destroy_game_interface(L);
+    return 0;
+}
+
+static int wld_StartLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->start_loading_dialog(L);
+    return 0;
+}
+
+static int wld_UpdateLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->update_loading_dialog(L, static_cast<f32>(luaL_optnumber(L, 2, 0.0)));
+    return 0;
+}
+
+static int wld_StopLoadingDialog(lua_State* L) {
+    auto* p = check_wld_provider(L);
+    if (p) p->stop_loading_dialog(L);
+    return 0;
+}
+
+static int wld_GetPrefetchTextures(lua_State* L) {
+    lua_newtable(L); // empty table — no prefetch needed
+    return 1;
+}
 
 static int wlduiprovider_Destroy(lua_State* /*L*/) { return 0; }
 
 static const MethodEntry ui_wlduiprovider_methods[] = {
+    {"CreateGameInterface", wld_CreateGameInterface},
     {"Destroy", wlduiprovider_Destroy},
+    {"DestroyGameInterface", wld_DestroyGameInterface},
+    {"GetPrefetchTextures", wld_GetPrefetchTextures},
+    {"StartLoadingDialog", wld_StartLoadingDialog},
+    {"StopLoadingDialog", wld_StopLoadingDialog},
+    {"UpdateLoadingDialog", wld_UpdateLoadingDialog},
     {nullptr, nullptr},
 };
 
-/// InternalCreateWldUIProvider(self) — standalone, no UIControl backing
+/// InternalCreateWldUIProvider(self) — real WldUIProvider backing
 static int l_InternalCreateWldUIProvider(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "InternalCreateWldUIProvider: arg 1 must be self table");
-    // Store dummy _c_object so check_control patterns see a non-nil value
+
+    // Retrieve the long-lived WldUIProvider stored in registry by main.cpp
+    lua_pushstring(L, "__osc_wld_ui_provider");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* provider = static_cast<ui::WldUIProvider*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!provider) return luaL_error(L, "WldUIProvider not initialized");
+
+    // Store as _c_object lightuserdata
     lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x1)));
+    lua_pushlightuserdata(L, provider);
     lua_rawset(L, 1);
-    spdlog::debug("InternalCreateWldUIProvider: created");
+
+    // Don't set metatable — FA's ClassUI system handles metatables via __index chain.
+    // Setting it here would overwrite the class hierarchy and break Lua-side overrides.
+
+    spdlog::info("InternalCreateWldUIProvider: created real provider");
     return 0;
 }
 
@@ -9790,30 +9924,35 @@ static int worldview_init(lua_State* L) {
     if (!lua_istable(L, 1))
         return luaL_error(L, "UIWorldView.__init: self must be table");
 
-    u32 id = reg->create();
-    auto* ctrl = reg->get(id);
-    if (!ctrl) return luaL_error(L, "UIWorldView.__init: failed to create control");
+    // Create a WorldView subclass instead of a generic UIControl
+    auto wv = std::make_unique<ui::WorldView>();
+    auto* wv_ptr = wv.get();
+    u32 id = reg->add(std::move(wv));
 
     lua_pushvalue(L, 1);
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    ctrl->set_lua_table_ref(ref);
+    wv_ptr->set_lua_table_ref(ref);
 
     lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, ctrl);
+    lua_pushlightuserdata(L, wv_ptr);
     lua_rawset(L, 1);
 
     // Set parent if provided
     if (lua_istable(L, 2)) {
         auto* parent = check_control(L, 2);
         if (parent) {
-            ctrl->set_parent(parent);
-            parent->add_child(ctrl);
+            wv_ptr->set_parent(parent); // set_parent already calls add_child
         }
     }
 
-    // Store camera name
+    // Store camera name and check minimap flag
+    std::string cam_name = "WorldCamera";
     if (lua_type(L, 3) == LUA_TSTRING) {
-        ctrl->set_name(std::string("WorldView_") + lua_tostring(L, 3));
+        cam_name = lua_tostring(L, 3);
+        wv_ptr->set_name(std::string("WorldView_") + cam_name);
+    }
+    if (lua_isboolean(L, 5) && lua_toboolean(L, 5)) {
+        wv_ptr->set_minimap(true);
     }
 
     // Create 7 layout LazyVars
@@ -9825,7 +9964,8 @@ static int worldview_init(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    spdlog::debug("UIWorldView.__init: control #{}", id);
+    spdlog::debug("UIWorldView.__init: WorldView control #{}, camera='{}'",
+                  id, cam_name);
     return 0;
 }
 
@@ -9843,7 +9983,15 @@ static int worldview_GetScreenPos(lua_State* L) {
     return 1;
 }
 
-static int worldview_GetsGlobalCameraCommands(lua_State* /*L*/) { return 0; }
+static int worldview_GetsGlobalCameraCommands(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) {
+        lua_pushboolean(L, wv->gets_global_camera_commands() ? 1 : 0);
+        return 1;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
 
 static int worldview_HasHighlightCommand(lua_State* L) {
     lua_pushboolean(L, 0);
@@ -9851,12 +9999,14 @@ static int worldview_HasHighlightCommand(lua_State* L) {
 }
 
 static int worldview_IsCartographic(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushboolean(L, (wv && wv->is_cartographic()) ? 1 : 0);
     return 1;
 }
 
 static int worldview_IsInputLocked(lua_State* L) {
-    lua_pushboolean(L, 0);
+    auto* wv = check_world_view(L);
+    lua_pushboolean(L, (wv && wv->is_input_locked()) ? 1 : 0);
     return 1;
 }
 
@@ -9865,37 +10015,137 @@ static int worldview_IsResourceRenderingEnabled(lua_State* L) {
     return 1;
 }
 
-static int worldview_LockInput(lua_State* /*L*/) { return 0; }
+static int worldview_LockInput(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_input_locked(true);
+    return 0;
+}
 
 static int worldview_Project(lua_State* L) {
-    // Return {x=0, y=0} screen position stub
+    auto* wv = check_world_view(L);
+    if (!wv || !wv->camera()) {
+        // Fallback: return {x=0, y=0}
+        lua_newtable(L);
+        lua_pushstring(L, "x");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "y");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        return 1;
+    }
+
+    // Update viewport from renderer if available
+    auto* r = get_renderer(L);
+    if (r) wv->set_viewport(r->width(), r->height());
+
+    // Args: self, Vector {x,y,z}
+    f32 wx = 0, wy = 0, wz = 0;
+    if (lua_istable(L, 2)) {
+        lua_pushstring(L, "x");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushstring(L, "y");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wy = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_pushstring(L, "z");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1)) wz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    f32 sx = 0, sy = 0;
+    wv->project(wx, wy, wz, sx, sy);
+
     lua_newtable(L);
     lua_pushstring(L, "x");
-    lua_pushnumber(L, 0);
+    lua_pushnumber(L, static_cast<lua_Number>(sx));
     lua_rawset(L, -3);
     lua_pushstring(L, "y");
-    lua_pushnumber(L, 0);
+    lua_pushnumber(L, static_cast<lua_Number>(sy));
     lua_rawset(L, -3);
     return 1;
 }
 
 static int worldview_ProjectMultiple(lua_State* L) {
-    // Return empty table
+    // Return empty table for now (rarely used)
     lua_newtable(L);
     return 1;
 }
 
-static int worldview_SetCartographic(lua_State* /*L*/) { return 0; }
+static int worldview_SetCartographic(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv && lua_isboolean(L, 2))
+        wv->set_cartographic(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 static int worldview_SetCustomRender(lua_State* /*L*/) { return 0; }
-static int worldview_SetHighlightEnabled(lua_State* /*L*/) { return 0; }
+
+static int worldview_SetHighlightEnabled(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv && lua_isboolean(L, 2))
+        wv->set_highlight_enabled(lua_toboolean(L, 2) != 0);
+    return 0;
+}
 
 static int worldview_ShowConvertToPatrolCursor(lua_State* L) {
     lua_pushboolean(L, 0);
     return 1;
 }
 
-static int worldview_UnlockInput(lua_State* /*L*/) { return 0; }
-static int worldview_ZoomScale(lua_State* /*L*/) { return 0; }
+static int worldview_UnlockInput(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (wv) wv->set_input_locked(false);
+    return 0;
+}
+
+static int worldview_ZoomScale(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (!wv) return 0;
+    // Args: self, x, y, wheelRotation, wheelDelta
+    f32 x = static_cast<f32>(luaL_optnumber(L, 2, 0));
+    f32 y = static_cast<f32>(luaL_optnumber(L, 3, 0));
+    f32 rotation = static_cast<f32>(luaL_optnumber(L, 4, 0));
+    f32 delta = static_cast<f32>(luaL_optnumber(L, 5, 0));
+    wv->zoom_scale(x, y, rotation, delta);
+    return 0;
+}
+
+/// worldview:HitTest(x, y) — always returns true (the world view covers its area)
+static int worldview_HitTest(lua_State* L) {
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// worldview:Register(cameraName, terrain, ...) — associate with renderer camera/terrain
+static int worldview_Register(lua_State* L) {
+    auto* wv = check_world_view(L);
+    if (!wv) return 0;
+
+    auto* r = get_renderer(L);
+    if (r) {
+        wv->set_renderer(r);
+        wv->register_camera("WorldCamera", &r->camera());
+        wv->set_viewport(r->width(), r->height());
+    }
+
+    // Set terrain from sim state for raycasting
+    auto* sim = get_sim(L);
+    if (sim && sim->terrain()) {
+        wv->set_terrain(sim->terrain());
+    }
+
+    // Store this WorldView in registry for GetMouseWorldPos / GetCamera access
+    lua_pushstring(L, "__osc_world_view");
+    lua_pushlightuserdata(L, wv);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::debug("WorldView::Register: camera='{}', viewport={}x{}",
+                  wv->camera_name(), wv->viewport_width(), wv->viewport_height());
+    return 0;
+}
 
 // worldview:SetBuildGhost(bp_id) — show placement preview for blueprint
 static int worldview_SetBuildGhost(lua_State* L) {
@@ -9953,12 +10203,14 @@ static const MethodEntry ui_worldview_methods[] = {
     {"GetScreenPos",               worldview_GetScreenPos},
     {"GetsGlobalCameraCommands",   worldview_GetsGlobalCameraCommands},
     {"HasHighlightCommand",        worldview_HasHighlightCommand},
+    {"HitTest",                    worldview_HitTest},
     {"IsCartographic",             worldview_IsCartographic},
     {"IsInputLocked",              worldview_IsInputLocked},
     {"IsResourceRenderingEnabled", worldview_IsResourceRenderingEnabled},
     {"LockInput",                  worldview_LockInput},
     {"Project",                    worldview_Project},
     {"ProjectMultiple",            worldview_ProjectMultiple},
+    {"Register",                   worldview_Register},
     {"SetCartographic",            worldview_SetCartographic},
     {"SetCustomRender",            worldview_SetCustomRender},
     {"SetHighlightEnabled",        worldview_SetHighlightEnabled},
@@ -10026,6 +10278,19 @@ static int lobby_GetLocalPlayerID(lua_State* L) {
 }
 
 static int lobby_GetLocalPlayerName(lua_State* L) {
+    // Try to read player name from preferences
+    lua_pushstring(L, "GetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "profile.playerName");
+        lua_pushstring(L, "Player");
+        if (lua_pcall(L, 2, 1, 0) == 0) {
+            return 1; // leave result on stack
+        }
+        lua_pop(L, 1); // pop error
+    } else {
+        lua_pop(L, 1);
+    }
     lua_pushstring(L, "Player");
     return 1;
 }
@@ -10054,7 +10319,21 @@ static int lobby_IsHost(lua_State* L) {
 }
 
 static int lobby_JoinGame(lua_State* /*L*/) { return 0; }
-static int lobby_LaunchGame(lua_State* /*L*/) { return 0; }
+/// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession
+static int lobby_LaunchGame(lua_State* L) {
+    lua_pushstring(L, "LaunchSinglePlayerSession");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 2); // push config arg
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("lobby LaunchGame error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
 
 static int lobby_MakeValidGameName(lua_State* L) {
     // Return the original name
@@ -10147,6 +10426,126 @@ static int l_SetCursor(lua_State* L) {
     return 0;
 }
 
+// --- Camera methods (M136a) ---
+
+static int camera_SaveSettings(lua_State* /*L*/) { return 0; }
+static int camera_RestoreSettings(lua_State* /*L*/) { return 0; }
+
+static int camera_SetZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) return 0;
+    f32 zoom = static_cast<f32>(luaL_checknumber(L, 2));
+    constexpr f32 MIN_DIST = 10.0f;
+    constexpr f32 MAX_DIST = 1000.0f;
+    if (zoom < MIN_DIST) zoom = MIN_DIST;
+    if (zoom > MAX_DIST) zoom = MAX_DIST;
+    r->camera().set_distance(zoom);
+    return 0;
+}
+
+static int camera_GetZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) { lua_pushnumber(L, 300); return 1; }
+    lua_pushnumber(L, static_cast<lua_Number>(r->camera().distance()));
+    return 1;
+}
+
+static int camera_RevertRotation(lua_State* /*L*/) { return 0; }
+
+static const MethodEntry camera_methods[] = {
+    {"SaveSettings",    camera_SaveSettings},
+    {"RestoreSettings", camera_RestoreSettings},
+    {"SetZoom",         camera_SetZoom},
+    {"GetZoom",         camera_GetZoom},
+    {"RevertRotation",  camera_RevertRotation},
+    {nullptr, nullptr},
+};
+
+// --- GetMouseWorldPos global (M136a) ---
+// FA calls this as a standalone function: GetMouseWorldPos()
+static int l_GetMouseWorldPos(lua_State* L) {
+    // Get WorldView from registry
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    if (!wv || !wv->camera()) {
+        // Return zero vector
+        lua_newtable(L);
+        lua_pushstring(L, "x");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "y");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "z");
+        lua_pushnumber(L, 0);
+        lua_rawset(L, -3);
+        return 1;
+    }
+
+    // Get mouse position from renderer
+    auto* r = get_renderer(L);
+    f32 mx = 0, my = 0;
+    if (r) {
+        f64 dx = 0, dy = 0;
+        r->mouse_position(dx, dy);
+        mx = static_cast<f32>(dx);
+        my = static_cast<f32>(dy);
+        wv->set_viewport(r->width(), r->height());
+    }
+
+    f32 wx = 0, wy = 0, wz = 0;
+    wv->get_mouse_world_pos(mx, my, wx, wy, wz);
+
+    lua_newtable(L);
+    lua_pushstring(L, "x");
+    lua_pushnumber(L, static_cast<lua_Number>(wx));
+    lua_rawset(L, -3);
+    lua_pushstring(L, "y");
+    lua_pushnumber(L, static_cast<lua_Number>(wy));
+    lua_rawset(L, -3);
+    lua_pushstring(L, "z");
+    lua_pushnumber(L, static_cast<lua_Number>(wz));
+    lua_rawset(L, -3);
+    return 1;
+}
+
+// --- GetCamera global (M136a) ---
+// FA calls GetCamera(cameraName) and gets back a camera object with methods.
+static int l_GetCamera(lua_State* L) {
+    // Create a table with camera_methods metatable
+    lua_newtable(L);
+
+    // Store renderer pointer as _c_object for camera methods to use
+    auto* r = get_renderer(L);
+    if (r) {
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, r);
+        lua_rawset(L, -3);
+    }
+
+    // Set metatable to moho.camera_methods
+    lua_pushstring(L, "moho");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "camera_methods");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_newtable(L); // mt
+            lua_pushstring(L, "__index");
+            lua_pushvalue(L, -3); // camera_methods
+            lua_rawset(L, -3);    // mt.__index = camera_methods
+            lua_setmetatable(L, -4); // setmetatable(cam_table, mt)
+        }
+        lua_pop(L, 1); // camera_methods
+    }
+    lua_pop(L, 1); // moho
+
+    return 1;
+}
+
 // ====================================================================
 // Registration
 // ====================================================================
@@ -10221,6 +10620,7 @@ static const MohoClassDef moho_classes[] = {
     {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             ui_worldview_methods,  "control_methods"},
+    {"camera_methods",          camera_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
     {"world_mesh_methods",      ui_world_mesh_methods,  nullptr},
@@ -10283,6 +10683,1705 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim) {
     spdlog::info("Registered moho bindings");
 }
 
+// ====================================================================
+// Localization helpers: LOC / LOCF
+// ====================================================================
+
+static osc::core::Localization* get_loc(lua_State* L) {
+    lua_pushstring(L, "__osc_loc_cache");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* loc = static_cast<osc::core::Localization*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return loc;
+}
+
+static int l_LOC(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* loc = get_loc(L);
+    if (loc) {
+        const auto& result = loc->lookup(key);
+        lua_pushstring(L, result.c_str());
+    } else {
+        lua_pushvalue(L, 1); // return key as-is
+    }
+    return 1;
+}
+
+static int l_LOCF(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* loc = get_loc(L);
+    if (!loc) { lua_pushvalue(L, 1); return 1; }
+
+    int top = lua_gettop(L);
+    int nargs = top - 1;
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(nargs));
+    for (int i = 2; i <= top; ++i) {
+        const char* s = lua_tostring(L, i);
+        args.push_back(s ? s : "");
+    }
+
+    auto result = loc->format(key, args);
+    lua_pushstring(L, result.c_str());
+    return 1;
+}
+
+// ====================================================================
+// Preferences helpers: GetPreference / SetPreference
+// ====================================================================
+
+static osc::core::Preferences* get_prefs(lua_State* L) {
+    lua_pushstring(L, "__osc_preferences");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* p = static_cast<osc::core::Preferences*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return p;
+}
+
+static int l_GetPreference(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* prefs = get_prefs(L);
+    if (!prefs) {
+        if (lua_gettop(L) >= 2) lua_pushvalue(L, 2);
+        else lua_pushnil(L);
+        return 1;
+    }
+
+    if (lua_gettop(L) >= 2) {
+        int t = lua_type(L, 2);
+        if (t == LUA_TSTRING) {
+            auto val = prefs->get_string(key, lua_tostring(L, 2));
+            lua_pushstring(L, val.c_str());
+        } else if (t == LUA_TBOOLEAN) {
+            bool val = prefs->get_bool(key, lua_toboolean(L, 2) != 0);
+            lua_pushboolean(L, val ? 1 : 0);
+        } else if (t == LUA_TNUMBER) {
+            float val = prefs->get_float(key,
+                static_cast<float>(lua_tonumber(L, 2)));
+            lua_pushnumber(L, val);
+        } else {
+            lua_pushvalue(L, 2);
+        }
+    } else {
+        auto val = prefs->get_string(key, "");
+        if (val.empty()) lua_pushnil(L);
+        else lua_pushstring(L, val.c_str());
+    }
+    return 1;
+}
+
+static int l_SetPreference(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* prefs = get_prefs(L);
+    if (!prefs) return 0;
+
+    int t = lua_type(L, 2);
+    if (t == LUA_TSTRING)
+        prefs->set_string(key, lua_tostring(L, 2));
+    else if (t == LUA_TBOOLEAN)
+        prefs->set_bool(key, lua_toboolean(L, 2) != 0);
+    else if (t == LUA_TNUMBER)
+        prefs->set_float(key, static_cast<float>(lua_tonumber(L, 2)));
+    return 0;
+}
+
+// ====================================================================
+// UI-side thread/coroutine system
+// ====================================================================
+
+static sim::ThreadManager* get_ui_threads(lua_State* L) {
+    lua_pushstring(L, "__osc_ui_thread_manager");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* tm = static_cast<sim::ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return tm;
+}
+
+static int l_ui_ForkThread(lua_State* L) {
+    auto* tm = get_ui_threads(L);
+    if (!tm) { lua_pushnil(L); return 1; }
+    return tm->fork_thread(L);
+}
+
+/// WaitSeconds(n): convert seconds to frame count, yield with frame count.
+/// ThreadManager::resume_all() interprets yielded numbers as RELATIVE wait counts.
+static constexpr f64 UI_FRAMES_PER_SECOND = 60.0;
+
+static int l_ui_WaitSeconds(lua_State* L) {
+    f64 seconds = luaL_checknumber(L, 1);
+    if (seconds < 0.0) seconds = 0.0;
+    u32 frames = static_cast<u32>(seconds * UI_FRAMES_PER_SECOND + 0.5);
+    if (frames < 1) frames = 1;
+    lua_pushnumber(L, static_cast<lua_Number>(frames));
+    return lua_yield(L, 1);
+}
+
+/// WaitTicks(n): in UI context, 1 tick = 1 frame.
+static int l_ui_WaitTicks(lua_State* L) {
+    int ticks = static_cast<int>(luaL_checknumber(L, 1));
+    if (ticks < 1) ticks = 1;
+    lua_pushnumber(L, static_cast<lua_Number>(ticks));
+    return lua_yield(L, 1);
+}
+
+// ====================================================================
+// Selection↔Lua bridge (M137)
+// ====================================================================
+
+static renderer::InputHandler* get_input_handler(lua_State* L) {
+    lua_pushstring(L, "__osc_input_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* ih = static_cast<renderer::InputHandler*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return ih;
+}
+
+static osc::GameStateManager* get_game_state_mgr(lua_State* L) {
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return mgr;
+}
+
+/// Push a unit table for the UI Lua state with _c_object, EntityId, Army fields
+/// and moho.unit_methods metatable (cached as __osc_ui_unit_mt).
+static void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+
+    // _c_object
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, entity);
+    lua_rawset(L, tbl);
+
+    // EntityId
+    lua_pushstring(L, "EntityId");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_rawset(L, tbl);
+
+    // Army (1-based for Lua)
+    lua_pushstring(L, "Army");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->army() + 1));
+    lua_rawset(L, tbl);
+
+    // Set metatable: get or create cached __osc_ui_unit_mt
+    lua_pushstring(L, "__osc_ui_unit_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        // Build: { __index = moho.unit_methods }
+        lua_newtable(L); // mt
+        lua_pushstring(L, "__index");
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "unit_methods");
+            lua_rawget(L, -2);
+            lua_remove(L, -2); // remove moho table
+        }
+        lua_rawset(L, -3); // mt.__index = unit_methods (or nil if moho missing)
+
+        // Cache it
+        lua_pushstring(L, "__osc_ui_unit_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, tbl);
+}
+
+static int l_GetSelectedUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    if (!ih || !sim) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    const auto& selected = ih->selected();
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int idx = 1;
+    for (u32 eid : selected) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            push_unit_for_ui(L, entity);
+            lua_rawseti(L, result, idx++);
+        }
+    }
+    return 1;
+}
+
+void osc::lua::push_selected_units_for_ui(lua_State* L) {
+    l_GetSelectedUnits(L);
+    // l_GetSelectedUnits pushes 1 table; nothing else to do
+}
+
+static int l_SelectUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    if (!ih || !lua_istable(L, 1)) return 0;
+
+    std::unordered_set<u32> new_sel;
+    int n = luaL_getn(L, 1); // Lua 5.0: no lua_objlen
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                if (sim) {
+                    auto* entity = sim->entity_registry().find(eid);
+                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                        new_sel.insert(eid);
+                    }
+                } else {
+                    new_sel.insert(eid);
+                }
+            }
+            lua_pop(L, 1); // EntityId value
+        }
+        lua_pop(L, 1); // unit table
+    }
+    ih->set_selected(new_sel);
+    return 0;
+}
+
+static int l_AddSelectUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    if (!ih || !lua_istable(L, 1)) return 0;
+
+    auto sel = ih->selected(); // copy
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                auto eid = static_cast<u32>(lua_tonumber(L, -1));
+                if (sim) {
+                    auto* entity = sim->entity_registry().find(eid);
+                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                        sel.insert(eid);
+                    }
+                } else {
+                    sel.insert(eid);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    ih->set_selected(sel);
+    return 0;
+}
+
+static int l_AddOnSelectionChangedCallback(lua_State* L) {
+    if (!lua_isfunction(L, 1)) return 0;
+
+    // Get or create the callbacks table at __osc_sel_changed_cbs
+    lua_pushstring(L, "__osc_sel_changed_cbs");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1); // pop nil/non-table
+        lua_newtable(L);
+        lua_pushstring(L, "__osc_sel_changed_cbs");
+        lua_pushvalue(L, -2); // dup table
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    // table is on top; append the function
+    int idx = luaL_getn(L, -1) + 1; // Lua 5.0: no lua_objlen
+    lua_pushvalue(L, 1); // dup function arg
+    lua_rawseti(L, -2, idx);
+    lua_pop(L, 1); // pop table
+    return 0;
+}
+
+static int l_ValidateUnitsList(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    if (!lua_istable(L, 1) || !sim) return 1;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (e && !e->destroyed()) {
+                lua_rawseti(L, result, out_idx++);
+                continue;
+            }
+        }
+        lua_pop(L, 1);
+    }
+    return 1;
+}
+
+// ====================================================================
+// SimCallback UI→Sim bridge (M138a)
+// ====================================================================
+
+// Helper: get SimCallbackQueue from registry
+static sim::SimCallbackQueue* get_callback_queue(lua_State* L) {
+    lua_pushstring(L, "__osc_sim_callback_queue");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* q = static_cast<sim::SimCallbackQueue*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return q;
+}
+
+// SimCallback({Func="name", Args={...}}, addUnitSelection)
+// Serializes the Lua table into a C++ SimCallbackEntry and queues it.
+static int l_SimCallback(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+
+    sim::SimCallbackEntry entry;
+
+    // Read Func field
+    lua_pushstring(L, "Func");
+    lua_rawget(L, 1);
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        entry.func_name = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+
+    if (entry.func_name.empty()) return 0; // no function name = skip
+
+    // Read Args field (table of key→value)
+    lua_pushstring(L, "Args");
+    lua_rawget(L, 1);
+    if (lua_istable(L, -1)) {
+        int args_tbl = lua_gettop(L);
+        lua_pushnil(L); // first key
+        while (lua_next(L, args_tbl) != 0) {
+            // key at -2, value at -1
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                const char* key = lua_tostring(L, -2);
+                std::string key_str(key);
+                int vtype = lua_type(L, -1);
+                if (vtype == LUA_TSTRING) {
+                    entry.args[key_str] = std::string(lua_tostring(L, -1));
+                } else if (vtype == LUA_TNUMBER) {
+                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
+                } else if (vtype == LUA_TBOOLEAN) {
+                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
+                }
+                // Other types (tables, functions, etc.) are silently skipped
+            }
+            lua_pop(L, 1); // pop value, keep key for next iteration
+        }
+    }
+    lua_pop(L, 1); // pop Args table (or nil)
+
+    // Check addUnitSelection (arg 2)
+    if (lua_toboolean(L, 2)) {
+        auto* ih = get_input_handler(L);
+        if (ih) {
+            const auto& selected = ih->selected();
+            entry.unit_ids.reserve(selected.size());
+            for (u32 eid : selected) {
+                entry.unit_ids.push_back(eid);
+            }
+        }
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+static int l_GetFocusArmy(lua_State* L) {
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) {
+        // Convert 0-based to 1-based
+        lua_pushnumber(L, lua_tonumber(L, -1) + 1);
+        lua_remove(L, -2);
+        return 1;
+    }
+    lua_pop(L, 1);
+    lua_pushnumber(L, 1); // default army 1
+    return 1;
+}
+
+// ====================================================================
+// Command data + issuance globals (M138b)
+// ====================================================================
+
+/// GetUnitCommandData(units) → availableOrders, availableToggles, buildableCategories
+/// Returns three tables based on the intersection of command caps across all units.
+static int l_GetUnitCommandData(lua_State* L) {
+    auto* sim = get_sim(L);
+
+    // Push the three return tables up front so their stack indices are stable.
+    lua_newtable(L); // index: top-2  (orders)
+    lua_newtable(L); // index: top-1  (toggles)
+    lua_newtable(L); // index: top    (buildable – empty for now)
+
+    if (!sim || !lua_istable(L, 1)) return 3;
+
+    static const char* all_caps[] = {
+        "RULEUCC_Move", "RULEUCC_Attack", "RULEUCC_Guard", "RULEUCC_Patrol",
+        "RULEUCC_Stop", "RULEUCC_RetaliateToggle", "RULEUCC_Repair",
+        "RULEUCC_Capture", "RULEUCC_Reclaim", "RULEUCC_Overcharge",
+        "RULEUCC_Transport", "RULEUCC_Ferry", "RULEUCC_Sacrifice",
+        "RULEUCC_Nuke", "RULEUCC_Tactical", "RULEUCC_Teleport",
+        "RULEUCC_Dive", "RULEUCC_Pause", nullptr
+    };
+
+    bool first_unit = true;
+    std::unordered_set<std::string> common_caps;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+        lua_pop(L, 1); // _c_object value
+
+        if (!entity || !entity->is_unit() || entity->destroyed()) {
+            lua_pop(L, 1); // unit table
+            continue;
+        }
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        if (first_unit) {
+            for (const char** cap = all_caps; *cap; ++cap) {
+                if (unit->has_command_cap(*cap)) {
+                    common_caps.insert(*cap);
+                }
+            }
+            first_unit = false;
+        } else {
+            // Intersect: remove caps the current unit doesn't have
+            auto it = common_caps.begin();
+            while (it != common_caps.end()) {
+                if (!unit->has_command_cap(*it)) {
+                    it = common_caps.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        lua_pop(L, 1); // unit table
+    }
+
+    // The 3 return tables are at stack positions (top-2), (top-1), (top).
+    // lua_gettop(L) == orders_idx + 2.
+    int orders_tbl   = lua_gettop(L) - 2;
+    int toggles_tbl  = lua_gettop(L) - 1;
+
+    // Fill orders table
+    int oidx = 1;
+    for (const auto& cap : common_caps) {
+        lua_pushstring(L, cap.c_str());
+        lua_rawseti(L, orders_tbl, oidx++);
+    }
+
+    // Toggle caps: these become toggle buttons in the UI
+    static const char* toggle_caps[] = {
+        "RULEUCC_Pause", "RULEUCC_RetaliateToggle", "RULEUCC_Dive", nullptr
+    };
+    int tidx = 1;
+    for (const char** tc = toggle_caps; *tc; ++tc) {
+        if (common_caps.count(*tc)) {
+            lua_pushstring(L, *tc);
+            lua_rawseti(L, toggles_tbl, tidx++);
+        }
+    }
+
+    return 3;
+}
+
+/// GetUnitCommandFromCommandCap("RULEUCC_Move") → "Move"
+/// Strips the "RULEUCC_" prefix to produce a command type string.
+static int l_GetUnitCommandFromCommandCap(lua_State* L) {
+    const char* cap = luaL_checkstring(L, 1);
+    static const char prefix[] = "RULEUCC_";
+    static const size_t plen = sizeof(prefix) - 1; // exclude NUL
+    if (strncmp(cap, prefix, plen) == 0) {
+        lua_pushstring(L, cap + plen);
+    } else {
+        lua_pushvalue(L, 1); // return as-is
+    }
+    return 1;
+}
+
+/// IssueUnitCommand(units, commandString)
+/// Routes a command for specific units through SimCallbackQueue.
+static int l_IssueUnitCommand(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+    const char* cmd_raw = luaL_checkstring(L, 2);
+    std::string cmd(cmd_raw); // copy before stack ops
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) {
+                entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+            }
+            lua_pop(L, 1); // EntityId
+        }
+        lua_pop(L, 1); // unit table
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueUnitCommandToUnit(unit, commandString) — single-unit variant
+static int l_IssueUnitCommandToUnit(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue || !lua_istable(L, 1)) return 0;
+    const char* cmd_raw = luaL_checkstring(L, 2);
+    std::string cmd(cmd_raw);
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    lua_pushstring(L, "EntityId");
+    lua_rawget(L, 1);
+    if (lua_isnumber(L, -1)) {
+        entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+    }
+    lua_pop(L, 1);
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueCommand(commandString [, argsTable])
+/// Issues a command to the currently selected units.
+static int l_IssueCommand(lua_State* L) {
+    auto* ih    = get_input_handler(L);
+    auto* queue = get_callback_queue(L);
+    if (!ih || !queue) return 0;
+
+    const char* cmd_raw = luaL_checkstring(L, 1);
+    std::string cmd(cmd_raw);
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = std::string("UnitCommand_") + cmd;
+
+    const auto& selected = ih->selected();
+    entry.unit_ids.reserve(selected.size());
+    for (u32 eid : selected) {
+        entry.unit_ids.push_back(eid);
+    }
+
+    // Optional second arg: table of extra args (e.g. target position)
+    if (lua_istable(L, 2)) {
+        int args_tbl = 2;
+        lua_pushnil(L);
+        while (lua_next(L, args_tbl) != 0) {
+            if (lua_type(L, -2) == LUA_TSTRING) {
+                const char* key = lua_tostring(L, -2);
+                std::string key_str(key);
+                int vtype = lua_type(L, -1);
+                if (vtype == LUA_TSTRING) {
+                    entry.args[key_str] = std::string(lua_tostring(L, -1));
+                } else if (vtype == LUA_TNUMBER) {
+                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
+                } else if (vtype == LUA_TBOOLEAN) {
+                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
+                }
+            }
+            lua_pop(L, 1); // pop value, keep key
+        }
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// IssueBuildMobile(units, position, bpId)
+/// Queues a BuildMobile SimCallback with unit IDs, position {x,y,z}, and blueprint ID.
+static int l_IssueBuildMobile(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    if (!queue) return 0;
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = "BuildMobile";
+
+    // Arg 1: units table
+    if (lua_istable(L, 1)) {
+        int n = luaL_getn(L, 1);
+        for (int i = 1; i <= n; i++) {
+            lua_rawgeti(L, 1, i);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "EntityId");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
+                }
+                lua_pop(L, 1); // EntityId
+            }
+            lua_pop(L, 1); // unit table
+        }
+    }
+
+    // Arg 2: position table — try array {x,y,z} then named fields
+    if (lua_istable(L, 2)) {
+        lua_rawgeti(L, 2, 1);
+        if (lua_isnumber(L, -1)) entry.args["x"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 2);
+        if (lua_isnumber(L, -1)) entry.args["y"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 2, 3);
+        if (lua_isnumber(L, -1)) entry.args["z"] = static_cast<f64>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    // Arg 3: blueprint ID string
+    if (lua_type(L, 3) == LUA_TSTRING) {
+        const char* bp = lua_tostring(L, 3);
+        entry.args["blueprint"] = std::string(bp);
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+// ====================================================================
+// Build mode / command mode globals (M139)
+// ====================================================================
+
+/// ClearBuildTemplates() — called when exiting build mode; clears build ghost.
+static int l_ClearBuildTemplates(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (sim) sim->clear_build_ghost();
+    return 0;
+}
+
+/// GetActiveBuildTemplate() — returns nil (no active template).
+static int l_GetActiveBuildTemplate(lua_State* L) {
+    lua_pushnil(L);
+    return 1;
+}
+
+/// SetActiveBuildTemplate(template) — stub; build templates not needed for basic build mode.
+static int l_SetActiveBuildTemplate(lua_State* /*L*/) {
+    return 0;
+}
+
+/// AddCommandFeedbackBlip(blipTable) — visual feedback stub; cosmetic only.
+static int l_AddCommandFeedbackBlip(lua_State* /*L*/) {
+    return 0;
+}
+
+/// GetUnitById(entityId) — retrieves a unit table by entity ID.
+static int l_GetUnitById(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    u32 eid = static_cast<u32>(luaL_checknumber(L, 1));
+    auto* entity = sim->entity_registry().find(eid);
+    if (!entity || entity->destroyed()) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    push_unit_for_ui(L, entity);
+    return 1;
+}
+
+/// IsKeyDown(keyCode) — checks if a GLFW key is currently pressed.
+static int l_IsKeyDown(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) { lua_pushboolean(L, 0); return 1; }
+
+    // FA key codes map to GLFW key codes for most keys
+    int key_code = static_cast<int>(luaL_checknumber(L, 1));
+    lua_pushboolean(L, r->is_key_pressed(key_code) ? 1 : 0);
+    return 1;
+}
+
+/// EntityCategoryGetUnitList(category) — ui_L version (M140a)
+/// Returns an array of blueprint IDs whose CategoriesHash matches the given category expression.
+static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    auto* store = lua::LuaState::get_blueprint_store(L);
+    if (!store || !lua_istable(L, 1)) return 1;
+
+    auto entries = store->get_all(blueprints::BlueprintType::Unit);
+    for (const auto* entry : entries) {
+        store->push_lua_table(*entry, L);
+        int bp_tbl = lua_gettop(L);
+
+        lua_pushstring(L, "CategoriesHash");
+        lua_gettable(L, bp_tbl);
+        if (lua_istable(L, -1)) {
+            std::unordered_set<std::string> bp_cats;
+            int hash_tbl = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, hash_tbl) != 0) {
+                if (lua_type(L, -2) == LUA_TSTRING)
+                    bp_cats.insert(lua_tostring(L, -2));
+                lua_pop(L, 1);
+            }
+
+            if (osc::lua::categories_match(L, 1, bp_cats)) {
+                lua_pushnumber(L, out_idx++);
+                lua_pushstring(L, entry->id.c_str());
+                lua_rawset(L, result);
+            }
+        }
+        lua_pop(L, 2); // CategoriesHash + bp_table
+    }
+    return 1;
+}
+
+/// GetBlueprintIconPath(bpId) — resolve a blueprint's icon DDS path (M140b)
+static int l_GetBlueprintIconPath(lua_State* L) {
+    const char* bp_id = luaL_checkstring(L, 1);
+    auto* store = lua::LuaState::get_blueprint_store(L);
+    if (store) {
+        const auto* entry = store->find(bp_id);
+        if (entry) {
+            store->push_lua_table(*entry, L);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Display");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "IconPath");
+                    lua_rawget(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        std::string path(lua_tostring(L, -1));
+                        lua_pop(L, 3); // IconPath, Display, bp table
+                        lua_pushstring(L, path.c_str());
+                        return 1;
+                    }
+                    lua_pop(L, 1); // nil IconPath
+                }
+                lua_pop(L, 1); // Display or nil
+            }
+            lua_pop(L, 1); // bp table
+        }
+    }
+    // Default path convention
+    std::string path = std::string("/textures/ui/common/icons/units/") + bp_id + "_icon.dds";
+    lua_pushstring(L, path.c_str());
+    return 1;
+}
+
+// ====================================================================
+// Factory queue display bindings (M140c)
+// ====================================================================
+
+static lua::FactoryQueueDisplay* get_factory_queue(lua_State* L) {
+    lua_pushstring(L, "__osc_factory_queue");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* fq = static_cast<lua::FactoryQueueDisplay*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return fq;
+}
+
+static int l_SetCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* unit = check_unit(L, 1);
+    if (fq && unit) {
+        fq->set_current(L, unit);
+    } else {
+        lua_newtable(L);
+    }
+    return 1;
+}
+
+static int l_PeekCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* unit = check_unit(L, 1);
+    if (fq && unit) {
+        fq->peek(L, unit);
+    } else {
+        lua_newtable(L);
+    }
+    return 1;
+}
+
+static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    if (fq) fq->clear();
+    return 0;
+}
+
+static int l_DecreaseBuildCountInQueue(lua_State* L) {
+    auto* fq = get_factory_queue(L);
+    auto* sim = get_sim(L);
+    if (!fq || !sim) return 0;
+
+    int index = static_cast<int>(luaL_checknumber(L, 1));
+    int count = static_cast<int>(luaL_optnumber(L, 2, 1));
+
+    u32 fid = fq->current_factory_id();
+    if (fid > 0) {
+        auto* entity = sim->entity_registry().find(fid);
+        if (entity && entity->is_unit()) {
+            fq->decrease_count(static_cast<sim::Unit*>(entity), index, count);
+        }
+    }
+    return 0;
+}
+
+/// GetOrderBitmapNames(bitmapId) → 8 return values
+static int l_GetOrderBitmapNames(lua_State* L) {
+    const char* id = luaL_checkstring(L, 1);
+    auto paths = lua::get_order_bitmap_paths(id);
+    lua_pushstring(L, paths.up.c_str());
+    lua_pushstring(L, paths.up_sel.c_str());
+    lua_pushstring(L, paths.over.c_str());
+    lua_pushstring(L, paths.over_sel.c_str());
+    lua_pushstring(L, paths.dis.c_str());
+    lua_pushstring(L, paths.dis_sel.c_str());
+    lua_pushstring(L, paths.sound_click);
+    lua_pushstring(L, paths.sound_rollover);
+    return 8;
+}
+
+/// GetRolloverInfo() — returns a rich table describing the hovered or first-selected unit (M142a).
+/// Checks __osc_hover_entity_id registry key first; falls back to first selected unit.
+static int l_GetRolloverInfo(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    sim::Unit* unit = nullptr;
+
+    // 1. Try hover entity from WorldView HitTest
+    lua_pushstring(L, "__osc_hover_entity_id");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) {
+        u32 hover_id = static_cast<u32>(lua_tonumber(L, -1));
+        if (hover_id != 0) {
+            auto* entity = sim->entity_registry().find(hover_id);
+            if (entity && entity->is_unit() && !entity->destroyed())
+                unit = static_cast<sim::Unit*>(entity);
+        }
+    }
+    lua_pop(L, 1);
+
+    // 2. Fall back to first selected unit
+    if (!unit) {
+        auto* input = get_input_handler(L);
+        if (input && !input->selected().empty()) {
+            u32 first_id = *input->selected().begin();
+            auto* entity = sim->entity_registry().find(first_id);
+            if (entity && entity->is_unit() && !entity->destroyed())
+                unit = static_cast<sim::Unit*>(entity);
+        }
+    }
+
+    if (!unit) { lua_pushnil(L); return 1; }
+
+    // Helper lambdas for building the result table
+    auto set_str = [&](const char* key, const char* val) {
+        lua_pushstring(L, key);
+        lua_pushstring(L, val);
+        lua_rawset(L, -3);
+    };
+    auto set_num = [&](const char* key, lua_Number val) {
+        lua_pushstring(L, key);
+        lua_pushnumber(L, val);
+        lua_rawset(L, -3);
+    };
+
+    lua_newtable(L); // result table
+
+    set_str("blueprintId",    unit->blueprint_id().c_str());
+    set_num("entityId",       static_cast<lua_Number>(unit->entity_id()));
+    set_num("health",         static_cast<lua_Number>(unit->health()));
+    set_num("maxHealth",      static_cast<lua_Number>(unit->max_health()));
+    set_num("kills",          0);
+    set_num("armyIndex",      static_cast<lua_Number>(unit->army()));
+    set_num("workProgress",   static_cast<lua_Number>(unit->work_progress()));
+    set_num("shieldRatio",    static_cast<lua_Number>(unit->shield_ratio()));
+    set_num("fuelRatio",      1.0);
+
+    const auto& econ = unit->economy();
+    set_num("massProduced",     static_cast<lua_Number>(econ.production_mass));
+    set_num("massConsumed",     static_cast<lua_Number>(econ.consumption_mass));
+    set_num("energyProduced",   static_cast<lua_Number>(econ.production_energy));
+    set_num("energyConsumed",   static_cast<lua_Number>(econ.consumption_energy));
+    set_num("massRequested",    static_cast<lua_Number>(econ.consumption_mass));
+    set_num("energyRequested",  static_cast<lua_Number>(econ.consumption_energy));
+
+    set_num("tacticalSiloStorageCount",    static_cast<lua_Number>(unit->tactical_silo_ammo()));
+    set_num("tacticalSiloMaxStorageCount", 0);
+    set_num("nukeSiloStorageCount",        static_cast<lua_Number>(unit->nuke_silo_ammo()));
+    set_num("nukeSiloMaxStorageCount",     0);
+    set_num("tacticalSiloBuildCount",      0);
+    set_num("nukeSiloBuildCount",          0);
+
+    // userUnit: full UI unit table with _c_object + metatable
+    lua_pushstring(L, "userUnit");
+    push_unit_for_ui(L, unit);
+    lua_rawset(L, -3);
+
+    // focus: if unit is building something, include a sub-table for the target
+    u32 focus_id = unit->build_target_id();
+    if (focus_id != 0) {
+        auto* focus_entity = sim->entity_registry().find(focus_id);
+        if (focus_entity && focus_entity->is_unit() && !focus_entity->destroyed()) {
+            auto* focus_unit = static_cast<sim::Unit*>(focus_entity);
+            lua_pushstring(L, "focus");
+            lua_newtable(L); // focus sub-table
+            lua_pushstring(L, "blueprintId");
+            lua_pushstring(L, focus_unit->blueprint_id().c_str());
+            lua_rawset(L, -3);
+            lua_pushstring(L, "entityId");
+            lua_pushnumber(L, static_cast<lua_Number>(focus_unit->entity_id()));
+            lua_rawset(L, -3);
+            lua_rawset(L, -3); // result["focus"] = focus_sub_table
+        }
+    }
+
+    return 1;
+}
+
+/// EnhancementCommon.GetEnhancements(entityId) → table of installed enhancements (M142c)
+/// Returns: {Back="AdvancedEngineering", RCH="CoolingUpgrade", ...} (slot → enhName)
+static int l_GetEnhancements(lua_State* L) {
+    auto* sim = get_sim(L);
+    u32 entity_id = static_cast<u32>(luaL_checknumber(L, 1));
+    lua_newtable(L);
+
+    if (!sim) return 1;
+    auto* entity = sim->entity_registry().find(entity_id);
+    if (!entity || !entity->is_unit()) return 1;
+    auto* unit = static_cast<osc::sim::Unit*>(entity);
+
+    for (const auto& [slot, name] : unit->enhancements()) {
+        lua_pushstring(L, slot.c_str());
+        lua_pushstring(L, name.c_str());
+        lua_rawset(L, -3);
+    }
+    return 1;
+}
+
+/// StartCursorText(x, y, text, color, time, flash) — floating text near cursor
+/// Used for brief notifications like "Invalid target" or build placement feedback.
+static int l_StartCursorText(lua_State* L) {
+    f32 x = static_cast<f32>(luaL_optnumber(L, 1, 0));
+    f32 y = static_cast<f32>(luaL_optnumber(L, 2, 0));
+    const char* text = luaL_optstring(L, 3, "");
+    // Color is a table {r, g, b, a} or string
+    f32 r = 1, g = 1, b = 1, a = 1;
+    if (lua_istable(L, 4)) {
+        lua_rawgeti(L, 4, 1); r = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 2); g = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3); b = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        lua_rawgeti(L, 4, 4); a = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+    }
+    f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 2.0));
+    // bool flash = lua_toboolean(L, 6) != 0;  // not used yet
+
+    // Store cursor text in registry for overlay renderer to display
+    lua_pushstring(L, "__osc_cursor_text");
+    lua_newtable(L);
+    lua_pushstring(L, "text"); lua_pushstring(L, text); lua_rawset(L, -3);
+    lua_pushstring(L, "x"); lua_pushnumber(L, x); lua_rawset(L, -3);
+    lua_pushstring(L, "y"); lua_pushnumber(L, y); lua_rawset(L, -3);
+    lua_pushstring(L, "r"); lua_pushnumber(L, r); lua_rawset(L, -3);
+    lua_pushstring(L, "g"); lua_pushnumber(L, g); lua_rawset(L, -3);
+    lua_pushstring(L, "b"); lua_pushnumber(L, b); lua_rawset(L, -3);
+    lua_pushstring(L, "a"); lua_pushnumber(L, a); lua_rawset(L, -3);
+    lua_pushstring(L, "duration"); lua_pushnumber(L, duration); lua_rawset(L, -3);
+    lua_pushstring(L, "time"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::debug("StartCursorText: '{}' at ({:.0f},{:.0f}) for {:.1f}s", text, x, y, duration);
+    return 0;
+}
+
+static osc::lua::BeatFunctionRegistry* get_beat_registry(lua_State* L) {
+    lua_pushstring(L, "__osc_beat_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* reg = static_cast<osc::lua::BeatFunctionRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return reg;
+}
+
+/// AddBeatFunction(func, name) — register a per-frame callback
+static int l_AddBeatFunction(lua_State* L) {
+    auto* reg = get_beat_registry(L);
+    if (!reg || !lua_isfunction(L, 1)) return 0;
+    std::string name;
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        name = lua_tostring(L, 2);
+    }
+    reg->add(L, 1, name);
+    return 0;
+}
+
+/// RemoveBeatFunction(func_or_name) — unregister a per-frame callback
+static int l_RemoveBeatFunction(lua_State* L) {
+    auto* reg = get_beat_registry(L);
+    if (!reg) return 0;
+    if (lua_isfunction(L, 1)) {
+        reg->remove(L, 1);
+    } else if (lua_type(L, 1) == LUA_TSTRING) {
+        reg->remove_by_name(lua_tostring(L, 1), L);
+    }
+    return 0;
+}
+
+// Engine state query bindings (M144c)
+
+/// GetCurrentUIState() → "front-end" | "game" | "score" etc.
+static int l_GetCurrentUIState(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) {
+        lua_pushstring(L, osc::game_state_to_string(mgr->current()));
+    } else {
+        lua_pushstring(L, "game");
+    }
+    return 1;
+}
+
+/// WorldIsLoading() → boolean
+static int l_WorldIsLoading(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, mgr && mgr->current() == osc::GameState::LOADING ? 1 : 0);
+    return 1;
+}
+
+/// LaunchSinglePlayerSession(sessionConfig) — launch a game from lobby config.
+/// Reads ScenarioFile from config, stores config in FrontEndData, signals main loop.
+static int l_LaunchSinglePlayerSession(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        spdlog::warn("LaunchSinglePlayerSession: expected table arg");
+        return 0;
+    }
+
+    // Read scenario file path
+    lua_pushstring(L, "ScenarioFile");
+    lua_rawget(L, 1);
+    std::string scenario;
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        scenario = lua_tostring(L, -1);
+    }
+    lua_pop(L, 1);
+
+    if (scenario.empty()) {
+        spdlog::warn("LaunchSinglePlayerSession: no ScenarioFile in config");
+        return 0;
+    }
+
+    // Store session config in FrontEndData for loader
+    auto* fed = get_front_end_data(L);
+    if (fed) fed->set(L, "sessionConfig", 1);
+
+    // Store scenario path in registry for main loop
+    lua_pushstring(L, "__osc_launch_scenario");
+    lua_pushstring(L, scenario.c_str());
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    // Signal main loop to transition FRONT_END -> LOADING -> GAME
+    lua_pushstring(L, "__osc_launch_requested");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    spdlog::info("LaunchSinglePlayerSession: scenario={}", scenario);
+    return 0;
+}
+
+/// StartGameUI() — transition to GAME state, call CreateWldUIProvider
+static int l_StartGameUI(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::GAME, L);
+
+    lua_pushstring(L, "CreateWldUIProvider");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("CreateWldUIProvider error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/// StartFrontEndUI() — transition to FRONT_END, call main.lua:CreateUI()
+static int l_StartFrontEndUI(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
+
+    // Call CreateUI() from main.lua
+    lua_pushstring(L, "CreateUI");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("CreateUI error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+        spdlog::warn("StartFrontEndUI: CreateUI not found (main.lua not loaded?)");
+    }
+    return 0;
+}
+
+// ====================================================================
+// Time query bindings (M145c)
+// ====================================================================
+
+/// GetGameTimeSeconds() → number (seconds since game start)
+static int l_ui_GetGameTimeSeconds(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushnumber(L, sim ? sim->game_time() : 0.0);
+    return 1;
+}
+
+/// GameTick() → integer (current sim tick)
+static int l_ui_GameTick(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushnumber(L, sim ? sim->tick_count() : 0);
+    return 1;
+}
+
+/// GetGameTime() → formatted string "MM:SS"
+static int l_GetGameTime(lua_State* L) {
+    auto* sim = get_sim(L);
+    f64 t = sim ? sim->game_time() : 0.0;
+    int minutes = static_cast<int>(t) / 60;
+    int seconds = static_cast<int>(t) % 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
+    lua_pushstring(L, buf);
+    return 1;
+}
+
+/// GetSimRate() → number (sim ticks per second, typically 10)
+static int l_GetSimRate(lua_State* L) {
+    lua_pushnumber(L, 10.0);
+    return 1;
+}
+
+/// CurrentTime() → number (wall-clock seconds for UI animations)
+static int l_CurrentTime(lua_State* L) {
+    using namespace std::chrono;
+    auto now = high_resolution_clock::now().time_since_epoch();
+    double secs = duration<double>(now).count();
+    lua_pushnumber(L, secs);
+    return 1;
+}
+
+/// GetSystemTimeSeconds() → number (same as CurrentTime)
+static int l_GetSystemTimeSeconds(lua_State* L) {
+    using namespace std::chrono;
+    auto now = high_resolution_clock::now().time_since_epoch();
+    double secs = duration<double>(now).count();
+    lua_pushnumber(L, secs);
+    return 1;
+}
+
+// ====================================================================
+// SessionGetScenarioInfo (M145c2)
+// ====================================================================
+
+/// SessionGetScenarioInfo() → table with scenario metadata
+static int l_ui_SessionGetScenarioInfo(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_newtable(L); return 1; }
+
+    lua_newtable(L);
+    auto set_str = [&](const char* k, const char* v) {
+        lua_pushstring(L, k); lua_pushstring(L, v); lua_rawset(L, -3);
+    };
+    auto set_num = [&](const char* k, f64 v) {
+        lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
+    };
+
+    // Read scenario path from registry
+    lua_pushstring(L, "__osc_scenario_path");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const char* path = lua_isnil(L, -1) ? "" : lua_tostring(L, -1);
+    lua_pop(L, 1);
+
+    set_str("name", path);
+    set_str("file", path);
+
+    // Map size from terrain
+    auto* terrain = sim->terrain();
+    if (terrain) {
+        set_num("size_x", terrain->map_width());
+        set_num("size_z", terrain->map_height());
+    }
+
+    // Armies subtable
+    lua_pushstring(L, "Armies");
+    lua_newtable(L);
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        auto* brain = sim->army_at(i);
+        if (brain) {
+            lua_newtable(L);
+            lua_pushstring(L, "name");
+            lua_pushstring(L, brain->name().c_str());
+            lua_rawset(L, -3);
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
+    }
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
+// ====================================================================
+// Speed/pause control bindings (M145d)
+// ====================================================================
+
+/// SetGameSpeed(speed) — set sim speed multiplier (0.0-10.0)
+static int l_SetGameSpeed(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) {
+        f64 speed = luaL_checknumber(L, 1);
+        mgr->set_speed(speed);
+        spdlog::debug("SetGameSpeed: {:.2f}", speed);
+    }
+    return 0;
+}
+
+/// GetGameSpeed() → number (current speed multiplier)
+static int l_GetGameSpeed(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushnumber(L, mgr ? mgr->speed() : 1.0);
+    return 1;
+}
+
+/// ConExecute(cmd) — execute a console command string
+static int l_ConExecute(lua_State* L) {
+    const char* cmd = luaL_checkstring(L, 1);
+    std::string s(cmd);
+    if (s.rfind("WLD_GameSpeed", 0) == 0) {
+        auto* mgr = get_game_state_mgr(L);
+        if (mgr) {
+            f64 speed = 1.0;
+            if (s.size() > 14) {
+                try { speed = std::stod(s.substr(14)); }
+                catch (...) { spdlog::warn("ConExecute: invalid speed in '{}'", cmd); }
+            }
+            mgr->set_speed(speed);
+        }
+    } else {
+        spdlog::debug("ConExecute: '{}' (unhandled)", cmd);
+    }
+    return 0;
+}
+
+/// SessionRequestPause() — request the sim to pause
+static int l_SessionRequestPause(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->set_paused(true, L);
+    return 0;
+}
+
+/// SessionResume() — resume the sim
+static int l_SessionResume(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->set_paused(false, L);
+    return 0;
+}
+
+// ── Score screen data (M146b) ────────────────────────────────────────────────
+
+/// GetArmyScore(armyIndex) → table with army stats for score screen
+static int l_GetArmyScore(lua_State* L) {
+    auto* sim = get_sim(L);
+    int army_idx = static_cast<int>(luaL_checknumber(L, 1));
+
+    lua_newtable(L);
+    if (!sim) return 1;
+
+    auto* brain = sim->get_army(army_idx);
+    if (!brain) return 1;
+
+    auto set_num = [&](const char* k, f64 v) {
+        lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
+    };
+
+    // general subtable
+    lua_pushstring(L, "general");
+    lua_newtable(L);
+    set_num("score", 0); // no score() method yet
+    set_num("currentunits", 0); // simplified
+    set_num("currentcap", brain->unit_cap());
+    lua_rawset(L, -3);
+
+    // resources subtable
+    lua_pushstring(L, "resources");
+    lua_newtable(L);
+
+    auto push_rate_table = [&](const char* name, f64 rate) {
+        lua_pushstring(L, name);
+        lua_newtable(L);
+        lua_pushstring(L, "rate"); lua_pushnumber(L, rate); lua_rawset(L, -3);
+        lua_rawset(L, -3);
+    };
+
+    auto& econ = brain->economy();
+    push_rate_table("massin", econ.mass.income);
+    push_rate_table("massout", econ.mass.requested);
+    push_rate_table("energyin", econ.energy.income);
+    push_rate_table("energyout", econ.energy.requested);
+
+    // storage subtable
+    lua_pushstring(L, "storage");
+    lua_newtable(L);
+    set_num("maxMass", econ.mass.max_storage);
+    set_num("storedMass", econ.mass.stored);
+    set_num("maxEnergy", econ.energy.max_storage);
+    set_num("storedEnergy", econ.energy.stored);
+    lua_rawset(L, -3); // set storage
+    lua_rawset(L, -3); // set resources
+
+    // Defeated flag
+    lua_pushstring(L, "Defeated");
+    lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
+/// IsObserver() → boolean (true if focus army is -1)
+static int l_IsObserver(lua_State* L) {
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    int army = lua_isnil(L, -1) ? 0 : static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, army < 0 ? 1 : 0);
+    return 1;
+}
+
+// ── Escape handler / HideGameUI (M146c) ──────────────────────────────────────
+
+/// EscapeHandler() — called when ESC is pressed
+static int l_EscapeHandler(lua_State* L) {
+    lua_pushstring(L, "__osc_escape_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("EscapeHandler error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+        spdlog::debug("EscapeHandler: no handler registered");
+    }
+    return 0;
+}
+
+/// SetEscapeHandler(func) — register the ESC key handler
+static int l_SetEscapeHandler(lua_State* L) {
+    if (!lua_isfunction(L, 1)) return 0;
+    lua_pushstring(L, "__osc_escape_handler");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// HideGameUI(hide) — show/hide the game HUD panels
+static int l_HideGameUI(lua_State* L) {
+    bool hide = lua_toboolean(L, 1) != 0;
+    lua_pushstring(L, "__osc_hide_game_ui");
+    lua_pushboolean(L, hide ? 1 : 0);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("HideGameUI: {}", hide ? "hidden" : "visible");
+    return 0;
+}
+
+// ====================================================================
+// Audio globals for UI (M147b)
+// ====================================================================
+
+/// PlaySound(soundTable) → handle
+/// soundTable = {Cue='UI_Menu_Click_01', Bank='Interface'} or string cue name
+static int l_PlaySound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (!mgr) { lua_pushnumber(L, 0); return 1; }
+
+    std::string bank, cue;
+    if (lua_type(L, 1) == LUA_TSTRING) {
+        cue = lua_tostring(L, 1);
+        bank = "Interface"; // default bank for string-only calls
+    } else if (lua_istable(L, 1)) {
+        if (!extract_sound_table(L, 1, bank, cue)) {
+            lua_pushnumber(L, 0);
+            return 1;
+        }
+    } else {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    // Play as non-positional (nullptr pos = 2D)
+    auto handle = mgr->play(bank, cue, nullptr);
+    lua_pushnumber(L, handle);
+    return 1;
+}
+
+/// StopSound(handle) — stop a playing sound
+static int l_StopSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (mgr) {
+        auto handle = static_cast<osc::audio::SoundHandle>(
+            static_cast<osc::u32>(luaL_checknumber(L, 1)));
+        mgr->stop(handle);
+    }
+    return 0;
+}
+
+/// PlayVoice(soundTable) — play a voice cue (delegates to PlaySound)
+static int l_PlayVoice(lua_State* L) {
+    return l_PlaySound(L);
+}
+
+/// PauseSound(bank, pause) — pause/resume all sounds in a bank
+static int l_PauseSound(lua_State* L) {
+    spdlog::debug("PauseSound: stub");
+    return 0;
+}
+
+/// PauseVoice(bank, pause) — pause/resume voice
+static int l_PauseVoice(lua_State* L) {
+    spdlog::debug("PauseVoice: stub");
+    return 0;
+}
+
+/// EnableWorldSounds(enable) — toggle 3D world audio
+static int l_EnableWorldSounds(lua_State* L) {
+    spdlog::debug("EnableWorldSounds: {}", lua_toboolean(L, 1) ? "on" : "off");
+    return 0;
+}
+
+// ====================================================================
+// FrontEndData cross-state store (M147c)
+// ====================================================================
+
+/// GetFrontEndData(key) -> value
+static int l_GetFrontEndData(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* fed = get_front_end_data(L);
+    if (fed) {
+        fed->get(L, key);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+/// SetFrontEndData(key, value)
+static int l_SetFrontEndData(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* fed = get_front_end_data(L);
+    if (fed) fed->set(L, key, 2);
+    return 0;
+}
+
+// ====================================================================
+// HasCommandLineArg (M147d)
+// ====================================================================
+
+/// HasCommandLineArg(arg) -> boolean
+static int l_HasCommandLineArg(lua_State* L) {
+    const char* arg = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_cmdline_args");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* args = static_cast<std::set<std::string>*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, args && args->count(arg) > 0 ? 1 : 0);
+    return 1;
+}
+
+// ====================================================================
+// Map preview stub (M148d)
+// ====================================================================
+
+/// MapPreview(scenarioFile) -> nil (stub — no heightmap rendering yet)
+static int l_MapPreview(lua_State* L) {
+    spdlog::debug("MapPreview: stub (no heightmap rendering yet)");
+    lua_pushnil(L);
+    return 1;
+}
+
+// ====================================================================
+// Profile system — Prefs table (M149a)
+// ====================================================================
+
+/// Prefs.GetFromCurrentProfile(key [, default]) -> value
+static int l_GetFromCurrentProfile(lua_State* L) {
+    int nargs = lua_gettop(L);
+    const char* key = luaL_checkstring(L, 1);
+    std::string full_key = std::string("profile.") + key;
+
+    lua_pushstring(L, "GetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, full_key.c_str());
+        if (nargs >= 2) {
+            lua_pushvalue(L, 2);
+        } else {
+            lua_pushnil(L);
+        }
+        if (lua_pcall(L, 2, 1, 0) == 0) return 1;
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+/// Prefs.SetToCurrentProfile(key, val)
+static int l_SetToCurrentProfile(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    std::string full_key = std::string("profile.") + key;
+
+    lua_pushstring(L, "SetPreference");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, full_key.c_str());
+        lua_pushvalue(L, 2);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+// ====================================================================
+// Skin selection stub (M149b)
+// ====================================================================
+
+/// SetCurrentSkin(skinName)
+static int l_SetCurrentSkin(lua_State* L) {
+    const char* skin = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_current_skin");
+    lua_pushstring(L, skin);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("SetCurrentSkin: {}", skin);
+    return 0;
+}
+
+/// GetCurrentSkin() -> string
+static int l_GetCurrentSkin(lua_State* L) {
+    lua_pushstring(L, "__osc_current_skin");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "uef"); // default skin
+    }
+    return 1;
+}
+
+// ====================================================================
+// Key binding display (M149c)
+// ====================================================================
+
+/// GetKeyBindings() -> table of {action=key} pairs (read-only)
+static int l_GetKeyBindings(lua_State* L) {
+    lua_newtable(L);
+
+    auto set = [&](const char* action, const char* key) {
+        lua_pushstring(L, action);
+        lua_pushstring(L, key);
+        lua_rawset(L, -3);
+    };
+
+    set("attack", "A");
+    set("move", "M");
+    set("stop", "S");
+    set("patrol", "P");
+    set("guard", "G");
+    set("reclaim", "R");
+    set("repair", "E");
+    set("capture", "C");
+    set("select_all_on_screen", "Ctrl+A");
+    set("select_all", "Ctrl+Shift+A");
+    set("toggle_pause", "Pause");
+
+    return 1;
+}
+
+// ====================================================================
+// Layout preference (M149d)
+// ====================================================================
+
+/// SetLayoutPreference(layout) — store preferred panel layout
+static int l_SetLayoutPreference(lua_State* L) {
+    const char* layout = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_layout_pref");
+    lua_pushstring(L, layout);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// GetLayoutPreference() -> string ("bottom" default)
+static int l_GetLayoutPreference(lua_State* L) {
+    lua_pushstring(L, "__osc_layout_pref");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "bottom");
+    }
+    return 1;
+}
+
+// ── Exit/return (M146d) ───────────────────────────────────────────────────────
+
+/// ExitGame() — return from score screen to front-end menu
+static int l_ExitGame(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
+    auto* beat = get_beat_registry(L);
+    if (beat) beat->clear(L);
+    spdlog::info("ExitGame: returning to front-end");
+
+    // Call CreateUI() to rebuild the main menu
+    lua_pushstring(L, "CreateUI");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("ExitGame CreateUI error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/// ExitApplication() — clean shutdown
+static int l_ExitApplication(lua_State* L) {
+    lua_pushstring(L, "__osc_exit_requested");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -10317,6 +12416,180 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetFrame", l_GetFrame);
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
+    state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("GetCamera", l_GetCamera);
+
+    // Localization globals
+    state.register_function("LOC", l_LOC);
+    state.register_function("LOCF", l_LOCF);
+
+    // Preference globals
+    state.register_function("GetPreference", l_GetPreference);
+    state.register_function("SetPreference", l_SetPreference);
+
+    // UI thread/coroutine globals
+    state.register_function("ForkThread", l_ui_ForkThread);
+    state.register_function("WaitSeconds", l_ui_WaitSeconds);
+    state.register_function("WaitTicks", l_ui_WaitTicks);
+
+    // Selection↔Lua bridge globals (M137)
+    state.register_function("GetSelectedUnits", l_GetSelectedUnits);
+    state.register_function("SelectUnits", l_SelectUnits);
+    state.register_function("AddSelectUnits", l_AddSelectUnits);
+    state.register_function("AddOnSelectionChangedCallback", l_AddOnSelectionChangedCallback);
+    state.register_function("ValidateUnitsList", l_ValidateUnitsList);
+    state.register_function("GetFocusArmy", l_GetFocusArmy);
+
+    // SimCallback UI→Sim bridge (M138a)
+    state.register_function("SimCallback", l_SimCallback);
+
+    // Command data + issuance globals (M138b)
+    state.register_function("GetUnitCommandData",          l_GetUnitCommandData);
+    state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
+    state.register_function("IssueUnitCommand",            l_IssueUnitCommand);
+    state.register_function("IssueUnitCommandToUnit",      l_IssueUnitCommandToUnit);
+    state.register_function("IssueCommand",                l_IssueCommand);
+    state.register_function("IssueBuildMobile",            l_IssueBuildMobile);
+
+    // Build mode / command mode globals (M139)
+    state.register_function("ClearBuildTemplates",      l_ClearBuildTemplates);
+    state.register_function("GetActiveBuildTemplate",   l_GetActiveBuildTemplate);
+    state.register_function("SetActiveBuildTemplate",   l_SetActiveBuildTemplate);
+    state.register_function("AddCommandFeedbackBlip",   l_AddCommandFeedbackBlip);
+    state.register_function("GetUnitById",              l_GetUnitById);
+    state.register_function("IsKeyDown",                l_IsKeyDown);
+
+    // Blueprint query globals (M140)
+    state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);
+    state.register_function("GetBlueprintIconPath",      l_GetBlueprintIconPath);
+
+    // Factory queue display globals (M140c)
+    state.register_function("SetCurrentFactoryForQueueDisplay",   l_SetCurrentFactoryForQueueDisplay);
+    state.register_function("PeekCurrentFactoryForQueueDisplay",  l_PeekCurrentFactoryForQueueDisplay);
+    state.register_function("ClearCurrentFactoryForQueueDisplay", l_ClearCurrentFactoryForQueueDisplay);
+    state.register_function("DecreaseBuildCountInQueue",          l_DecreaseBuildCountInQueue);
+
+    // Order bitmap helpers (M141a)
+    state.register_function("GetOrderBitmapNames", l_GetOrderBitmapNames);
+
+    // Unit rollover info (M142a)
+    state.register_function("GetRolloverInfo", l_GetRolloverInfo);
+
+    // EnhancementCommon table (M142c)
+    {
+        lua_pushstring(L, "EnhancementCommon");
+        lua_newtable(L);
+        lua_pushstring(L, "GetEnhancements");
+        lua_pushcfunction(L, l_GetEnhancements);
+        lua_rawset(L, -3);          // table["GetEnhancements"] = cfunc
+        lua_rawset(L, LUA_GLOBALSINDEX);  // _G["EnhancementCommon"] = table
+    }
+
+    // Tooltip/cursor text (M143a)
+    state.register_function("StartCursorText", l_StartCursorText);
+
+    // Beat functions (M145b)
+    state.register_function("AddBeatFunction", l_AddBeatFunction);
+    state.register_function("RemoveBeatFunction", l_RemoveBeatFunction);
+
+    // Time queries (M145c)
+    state.register_function("GetGameTimeSeconds", l_ui_GetGameTimeSeconds);
+    state.register_function("GameTick", l_ui_GameTick);
+    state.register_function("GetGameTime", l_GetGameTime);
+    state.register_function("GetSimRate", l_GetSimRate);
+    state.register_function("CurrentTime", l_CurrentTime);
+    state.register_function("GetSystemTimeSeconds", l_GetSystemTimeSeconds);
+
+    // Scenario info (M145c2)
+    state.register_function("SessionGetScenarioInfo", l_ui_SessionGetScenarioInfo);
+
+    // Speed/pause control (M145d)
+    state.register_function("SetGameSpeed", l_SetGameSpeed);
+    state.register_function("GetGameSpeed", l_GetGameSpeed);
+    state.register_function("ConExecute", l_ConExecute);
+    state.register_function("SessionRequestPause", l_SessionRequestPause);
+    state.register_function("SessionResume", l_SessionResume);
+
+    // Score screen data (M146b)
+    state.register_function("GetArmyScore", l_GetArmyScore);
+    state.register_function("IsObserver", l_IsObserver);
+
+    // Escape handler / HideGameUI (M146c)
+    state.register_function("EscapeHandler", l_EscapeHandler);
+    state.register_function("SetEscapeHandler", l_SetEscapeHandler);
+    state.register_function("HideGameUI", l_HideGameUI);
+
+    // Exit/return (M146d)
+    state.register_function("ExitGame", l_ExitGame);
+    state.register_function("ExitApplication", l_ExitApplication);
+
+    // FrontEndData cross-state store (M147c)
+    state.register_function("GetFrontEndData", l_GetFrontEndData);
+    state.register_function("SetFrontEndData", l_SetFrontEndData);
+
+    // HasCommandLineArg (M147d)
+    state.register_function("HasCommandLineArg", l_HasCommandLineArg);
+
+    // Map preview stub (M148d)
+    state.register_function("MapPreview", l_MapPreview);
+
+    // Audio globals (M147b)
+    state.register_function("PlaySound", l_PlaySound);
+    state.register_function("StopSound", l_StopSound);
+    state.register_function("PlayVoice", l_PlayVoice);
+    state.register_function("PauseSound", l_PauseSound);
+    state.register_function("PauseVoice", l_PauseVoice);
+    state.register_function("EnableWorldSounds", l_EnableWorldSounds);
+
+    // Prefs table (M149a)
+    {
+        lua_pushstring(L, "Prefs");
+        lua_newtable(L);
+        lua_pushstring(L, "GetFromCurrentProfile");
+        lua_pushcfunction(L, l_GetFromCurrentProfile);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "SetToCurrentProfile");
+        lua_pushcfunction(L, l_SetToCurrentProfile);
+        lua_rawset(L, -3);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
+
+    // UIUtil table — skin and layout (M149b, M149d)
+    {
+        // Create or get existing UIUtil table
+        lua_pushstring(L, "UIUtil");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+        }
+        lua_pushstring(L, "SetCurrentSkin");
+        lua_pushcfunction(L, l_SetCurrentSkin);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "GetCurrentSkin");
+        lua_pushcfunction(L, l_GetCurrentSkin);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "SetLayoutPreference");
+        lua_pushcfunction(L, l_SetLayoutPreference);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "GetLayoutPreference");
+        lua_pushcfunction(L, l_GetLayoutPreference);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "UIUtil");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+        lua_pop(L, 1); // pop the table
+    }
+
+    // Key bindings (M149c)
+    state.register_function("GetKeyBindings", l_GetKeyBindings);
+
+    // Engine state queries (M144c)
+    state.register_function("GetCurrentUIState", l_GetCurrentUIState);
+    state.register_function("WorldIsLoading", l_WorldIsLoading);
+    state.register_function("LaunchSinglePlayerSession", l_LaunchSinglePlayerSession);
+    state.register_function("StartGameUI", l_StartGameUI);
+    state.register_function("StartFrontEndUI", l_StartFrontEndUI);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.

@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -406,6 +407,9 @@ class UIControlRegistry {
 public:
     /// Create a new control, return its ID.
     u32 create();
+
+    /// Add a pre-created control (for subclasses like WorldView).
+    u32 add(std::unique_ptr<UIControl> ctrl);
 
     /// Get control by ID, nullptr if invalid.
     UIControl* get(u32 id);

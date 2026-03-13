@@ -15,6 +15,7 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(VulkanMemoryAllocator CONFIG REQUIRED)
 find_package(vk-bootstrap CONFIG REQUIRED)
 find_package(unofficial-shaderc CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Vendored Lua 5.0
 add_subdirectory(third_party/lua-5.0)

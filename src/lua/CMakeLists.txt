@@ -9,10 +9,14 @@ add_library(osc_lua STATIC
     scenario_loader.cpp
     session_manager.cpp
     category_utils.cpp
+    factory_queue.cpp
+    order_helpers.cpp
+    beat_system.cpp
 )
 add_library(osc::lua ALIAS osc_lua)
 
 target_include_directories(osc_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_lua
     PUBLIC osc::core osc::vfs osc::sim osc::map osc::audio osc::ui lua50
+    PRIVATE osc::renderer
 )

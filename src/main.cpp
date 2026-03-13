@@ -1,3 +1,5 @@
+#include "core/front_end_data.hpp"
+#include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
 #include "core/types.hpp"
@@ -14,10 +16,17 @@
 #include "sim/anim_cache.hpp"
 #include "map/terrain.hpp"
 #include "audio/sound_manager.hpp"
+#include "core/localization.hpp"
+#include "core/preferences.hpp"
+#include "lua/engine_bindings.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/beat_system.hpp"
+#include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/sim_callback_queue.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -30,7 +39,126 @@ extern "C" {
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <spdlog/spdlog.h>
+
+// ── Engine global Lua C functions (file-static, outside main) ──
+// Note: GetCurrentUIState and WorldIsLoading moved to moho_bindings.cpp (M144c)
+
+static int l_FlushEvents(lua_State*) { return 0; }
+
+static int l_SessionIsReplay(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int l_SessionGetScenarioInfo(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim || !sim->terrain()) return 1;
+
+    lua_pushstring(L, "name");
+    lua_pushstring(L, "Skirmish");
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "map");
+    lua_pushstring(L, "");
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "size");
+    lua_pushnumber(L, sim->terrain()->map_width());
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "PlayableArea");
+    lua_newtable(L);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, 0); lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, sim->terrain()->map_width()); lua_rawseti(L, -2, 3);
+    lua_pushnumber(L, sim->terrain()->map_height()); lua_rawseti(L, -2, 4);
+    lua_rawset(L, -3);
+
+    return 1;
+}
+
+static int l_GetEconomyTotals(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    int army = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim) return 1;
+    auto* brain = sim->get_army(army);
+    if (!brain) return 1;
+
+    auto set_field = [&](const char* name, osc::f64 val) {
+        lua_pushstring(L, name);
+        lua_pushnumber(L, val);
+        lua_rawset(L, -3);
+    };
+    set_field("income_mass", brain->get_economy_income("MASS"));
+    set_field("income_energy", brain->get_economy_income("ENERGY"));
+    set_field("expense_mass", brain->get_economy_usage("MASS"));
+    set_field("expense_energy", brain->get_economy_usage("ENERGY"));
+    set_field("stored_mass", brain->get_economy_stored("MASS"));
+    set_field("stored_energy", brain->get_economy_stored("ENERGY"));
+    set_field("max_mass", brain->economy().mass.max_storage);
+    set_field("max_energy", brain->economy().energy.max_storage);
+
+    return 1;
+}
+
+static int l_GetArmiesTable(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    lua_newtable(L);
+    if (!sim) return 1;
+
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        auto* brain = sim->army_at(i);
+        if (!brain) continue;
+
+        lua_newtable(L);
+        lua_pushstring(L, "nickname");
+        lua_pushstring(L, brain->nickname().c_str());
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "ArmyName");
+        lua_pushstring(L, brain->name().c_str());
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "armyIndex");
+        lua_pushnumber(L, static_cast<int>(i));
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "human");
+        lua_pushboolean(L, brain->is_human() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "civilian");
+        lua_pushboolean(L, brain->is_civilian() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_pushstring(L, "outOfGame");
+        lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
+        lua_rawset(L, -3);
+
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    return 1;
+}
 
 static void print_usage() {
     std::cout << "OpenSupCom v0.1.0\n"
@@ -124,6 +252,10 @@ static void print_usage() {
               << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"
               << "  --vfx-render-test  VFX/emitter particle rendering\n"
               << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
+              << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
+              << "  --construction-test Construction panel (EntityCategoryGetUnitList)\n"
+              << "  --phase2-test      Phase 2 integration (construction, orders, unitview, tooltips)\n"
+              << "  --phase3-test      Phase 3 integration (state machine, beat system, score flow)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
@@ -316,10 +448,21 @@ int main(int argc, char* argv[]) {
     bool enhance_wreck_test = parse_flag(argc, argv, "--enhance-wreck-test");
     bool vfx_render_test = parse_flag(argc, argv, "--vfx-render-test");
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
+    bool dualstate_test = parse_flag(argc, argv, "--dualstate-test");
     bool no_fog = parse_flag(argc, argv, "--no-fog");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
     bool profile_test = parse_flag(argc, argv, "--profile-test");
+    bool construction_test = parse_flag(argc, argv, "--construction-test");
+    bool phase2_test = parse_flag(argc, argv, "--phase2-test");
+    bool phase3_test = parse_flag(argc, argv, "--phase3-test");
+    bool phase4_test = parse_flag(argc, argv, "--phase4-test");
+
+    // Collect all command-line args for HasCommandLineArg (M147d)
+    std::set<std::string> cmdline_args;
+    for (int i = 1; i < argc; ++i) {
+        cmdline_args.insert(argv[i]);
+    }
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -357,6 +500,9 @@ int main(int argc, char* argv[]) {
                     vet_adj_render_test || intel_overlay_test ||
                     enhance_wreck_test || vfx_render_test ||
                     transport_silo_test ||
+                    dualstate_test ||
+                    construction_test || phase2_test ||
+                    phase3_test || phase4_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -375,21 +521,21 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Phase 1: Init + VFS
-    osc::lua::LuaState state;
+    // Phase 1: Init + VFS (sim Lua state)
+    osc::lua::LuaState sim_lua_state;
     osc::vfs::VirtualFileSystem vfs;
     osc::lua::InitLoader loader;
 
-    auto init_result = loader.execute_init(state, config, vfs);
+    auto init_result = loader.execute_init(sim_lua_state, config, vfs);
     if (!init_result) {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
 
-    // Phase 2: Blueprint loading
-    osc::blueprints::BlueprintStore store(state.raw());
+    // Phase 2: Blueprint loading (sim Lua state owns the store)
+    osc::blueprints::BlueprintStore store(sim_lua_state.raw());
 
-    auto bp_result = loader.load_blueprints(state, vfs, store);
+    auto bp_result = loader.load_blueprints(sim_lua_state, vfs, store);
     if (!bp_result) {
         spdlog::error("Blueprint loading failed: {}",
                        bp_result.error().message);
@@ -409,13 +555,13 @@ int main(int argc, char* argv[]) {
     spdlog::info("OpenSupCom initialization complete.");
 
     // Phase 3: Map + Sim boot
-    osc::sim::SimState sim_state(state.raw(), &store);
+    osc::sim::SimState sim_state(sim_lua_state.raw(), &store);
 
     // Audio system
     auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
         config.fa_path / "sounds");
     {
-        lua_State* L = state.raw();
+        lua_State* L = sim_lua_state.raw();
         lua_pushstring(L, "osc_sound_manager");
         lua_pushlightuserdata(L, sound_mgr.get());
         lua_rawset(L, LUA_REGISTRYINDEX);
@@ -435,7 +581,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty()) {
         osc::lua::ScenarioLoader scenario_loader;
         auto meta_result = scenario_loader.load_scenario(
-            state, vfs, map_path, sim_state);
+            sim_lua_state, vfs, map_path, sim_state);
         if (!meta_result) {
             spdlog::error("Scenario load failed: {}",
                           meta_result.error().message);
@@ -455,15 +601,113 @@ int main(int argc, char* argv[]) {
     }
 
     osc::lua::SimLoader sim_loader;
-    auto sim_result = sim_loader.boot_sim(state, vfs, sim_state);
+    auto sim_result = sim_loader.boot_sim(sim_lua_state, vfs, sim_state);
     if (!sim_result) {
         spdlog::error("Sim boot failed: {}", sim_result.error().message);
         return 1;
     }
 
+    // === UI Lua State ===
+    osc::lua::LuaState ui_lua_state;
+    ui_lua_state.set_vfs(&vfs);
+    ui_lua_state.set_blueprint_store(&store);
+
+    // Run init sequence on UI state (polyfills, config, class system, import)
+    auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
+    if (!ui_init_result) {
+        spdlog::error("UI Lua init failed: {}", ui_init_result.error().message);
+        return 1;
+    }
+
+    // Load blueprints into UI state (needed for GetBlueprint lookups)
+    auto ui_bp_result = loader.load_blueprints(ui_lua_state, vfs, store);
+    if (!ui_bp_result) {
+        spdlog::warn("UI blueprint load: {}", ui_bp_result.error().message);
+    }
+
+    // Register moho class tables on UI state (unit_methods, etc.)
+    osc::lua::register_moho_bindings(ui_lua_state, sim_state);
+
+    // Localization cache — load strings from VFS, then store pointer in UI registry
+    osc::core::Localization loc_cache;
+    loc_cache.load_from_vfs(ui_lua_state.raw(), &vfs);
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_loc_cache");
+        lua_pushlightuserdata(uL, &loc_cache);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Preferences — load Game.prefs if present, store pointer in UI registry
+    osc::core::Preferences prefs;
+    prefs.load("Game.prefs");
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_preferences");
+        lua_pushlightuserdata(uL, &prefs);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider
+    osc::ui::WldUIProvider wld_provider;
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_wld_ui_provider");
+        lua_pushlightuserdata(uL, &wld_provider);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
     // UI control registry (M71)
     osc::ui::UIControlRegistry ui_registry;
-    osc::lua::register_ui_bindings(state, ui_registry);
+    osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
+
+    // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
+    osc::lua::register_blueprint_bindings(ui_lua_state);
+
+    // UI-side thread manager (reuses ThreadManager with frame counts instead of sim ticks)
+    osc::sim::ThreadManager ui_thread_manager(ui_lua_state.raw());
+    ui_thread_manager.register_in_registry(ui_lua_state.raw());
+    osc::u32 ui_frame_count = 0;
+
+    // Also store under __osc_ui_thread_manager for ForkThread lookup.
+    // register_in_registry stores under "osc_thread_mgr" for Destroy() support.
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_ui_thread_manager");
+        lua_pushlightuserdata(uL, &ui_thread_manager);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // ── Engine state machine ──
+    // Store game state string in UI registry (source of truth for GetCurrentUIState)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_game_state");
+        lua_pushstring(uL, "game");
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Set focus army (0 = ARMY_1)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_focus_army");
+        lua_pushnumber(uL, 0);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Register engine globals on UI Lua state
+    // Note: GetCurrentUIState and WorldIsLoading are registered by register_ui_bindings (M144c)
+    ui_lua_state.register_function("FlushEvents", l_FlushEvents);
+    ui_lua_state.register_function("SessionIsReplay", l_SessionIsReplay);
+    ui_lua_state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
+    ui_lua_state.register_function("GetEconomyTotals", l_GetEconomyTotals);
+    ui_lua_state.register_function("GetArmiesTable", l_GetArmiesTable);
+
+    // State transition: INIT → GAME (call SetupUI / StartGameUI if defined)
+    osc::core::call_setup_ui(ui_lua_state.raw());
+    osc::core::call_start_game_ui(ui_lua_state.raw());
+
+    spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
     if (sim_state.terrain()) {
@@ -484,7 +728,7 @@ int main(int argc, char* argv[]) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
         auto session_result = session_mgr.start_session(
-            state, vfs, sim_state, scenario_meta);
+            sim_lua_state, vfs, sim_state, scenario_meta);
         if (!session_result) {
             spdlog::error("Session start failed: {}",
                           session_result.error().message);
@@ -498,30 +742,126 @@ int main(int argc, char* argv[]) {
         spdlog::info("Performance profiling enabled");
     }
 
+    // BeatFunctionRegistry for per-frame Lua callbacks (M145b) — outer scope for headless test access
+    osc::lua::BeatFunctionRegistry beat_registry;
+    if (!map_path.empty()) {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_beat_registry");
+        lua_pushlightuserdata(uL, &beat_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // FrontEndData — cross-state key-value store (M147c)
+    osc::FrontEndData front_end_data;
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_front_end_data");
+        lua_pushlightuserdata(uL, &front_end_data);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Command-line args for HasCommandLineArg (M147d)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_cmdline_args");
+        lua_pushlightuserdata(uL, &cmdline_args);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // GameStateManager — outer scope for headless test access (M144b)
+    osc::GameStateManager game_state_mgr;
+    if (!map_path.empty()) {
+        game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
+        {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_game_state_mgr");
+            lua_pushlightuserdata(uL, &game_state_mgr);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+        {
+            lua_State* sL = sim_lua_state.raw();
+            lua_pushstring(sL, "__osc_game_state_mgr");
+            lua_pushlightuserdata(sL, &game_state_mgr);
+            lua_rawset(sL, LUA_REGISTRYINDEX);
+        }
+    }
+
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
         if (renderer.init(1600, 900, "OpenSupCom")) {
-            renderer.build_scene(sim_state, &vfs, state.raw());
+            renderer.build_scene(sim_state, &vfs, ui_lua_state.raw());
+
+            // Store renderer pointer in UI Lua registry for WorldView/GetCamera
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_renderer");
+                lua_pushlightuserdata(uL, &renderer);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
 
             // Player input handler (ARMY_1 = index 0)
             osc::renderer::InputHandler input_handler;
             input_handler.set_player_army(0);
             renderer.set_player_army(0);
+            // Store input_handler pointer in UI Lua registry for selection globals
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_input_handler");
+                lua_pushlightuserdata(uL, &input_handler);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // Factory queue display (M140c)
+            osc::lua::FactoryQueueDisplay factory_queue;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_factory_queue");
+                lua_pushlightuserdata(uL, &factory_queue);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // SimCallback queue (UI→Sim bridge, M138a)
+            osc::sim::SimCallbackQueue sim_callback_queue;
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_sim_callback_queue");
+                lua_pushlightuserdata(uL, &sim_callback_queue);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // Initialize hover entity ID to 0 (updated by WorldView HitTest, M142a)
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_hover_entity_id");
+                lua_pushnumber(uL, 0);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // Store scenario path for SessionGetScenarioInfo (M145c2)
+            if (!map_path.empty()) {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_scenario_path");
+                lua_pushstring(uL, map_path.c_str());
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
+            // GameStateManager and BeatFunctionRegistry already declared at outer scope (M144b, M145b)
+
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 
             double sim_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();
-            bool sim_paused = false;
-            double sim_speed = 1.0;  // 1.0 = normal, 0.5 = half, 2.0 = double
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
             bool minus_was_pressed = false;
+            bool esc_was_pressed = false;
             double title_update_timer = 0.0;
             double fps_accum = 0.0;
             int fps_frames = 0;
             double display_fps = 0.0;
+            std::unordered_set<osc::u32> prev_selection;
 
             while (!renderer.should_close()) {
                 osc::Profiler::instance().begin_frame();
@@ -543,8 +883,8 @@ int main(int argc, char* argv[]) {
                 // Pause toggle (P key, edge-triggered)
                 bool p_pressed = renderer.is_key_pressed(GLFW_KEY_P);
                 if (p_pressed && !p_was_pressed) {
-                    sim_paused = !sim_paused;
-                    spdlog::info("Sim {}", sim_paused ? "PAUSED" : "RESUMED");
+                    game_state_mgr.set_paused(!game_state_mgr.paused(), ui_lua_state.raw());
+                    spdlog::info("Sim {}", game_state_mgr.paused() ? "PAUSED" : "RESUMED");
                 }
                 p_was_pressed = p_pressed;
 
@@ -552,36 +892,68 @@ int main(int argc, char* argv[]) {
                 bool plus_pressed = renderer.is_key_pressed(GLFW_KEY_EQUAL) ||
                                     renderer.is_key_pressed(GLFW_KEY_KP_ADD);
                 if (plus_pressed && !plus_was_pressed) {
-                    if (sim_speed < 10.0) {
-                        sim_speed = std::min(sim_speed * 2.0, 10.0);
-                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
-                    }
+                    game_state_mgr.set_speed(std::min(game_state_mgr.speed() * 2.0, 10.0));
+                    spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
                 }
                 plus_was_pressed = plus_pressed;
 
                 bool minus_pressed = renderer.is_key_pressed(GLFW_KEY_MINUS) ||
                                      renderer.is_key_pressed(GLFW_KEY_KP_SUBTRACT);
                 if (minus_pressed && !minus_was_pressed) {
-                    if (sim_speed > 0.125) {
-                        sim_speed = std::max(sim_speed * 0.5, 0.125);
-                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
-                    }
+                    game_state_mgr.set_speed(std::max(game_state_mgr.speed() * 0.5, 0.125));
+                    spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
                 }
                 minus_was_pressed = minus_pressed;
 
-                // Auto-pause when game ends
+                // ESC key — call escape handler (M146c)
+                bool esc_pressed = renderer.is_key_pressed(GLFW_KEY_ESCAPE);
+                if (esc_pressed && !esc_was_pressed) {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_escape_handler");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_isfunction(uiL, -1)) {
+                        if (lua_pcall(uiL, 0, 0, 0) != 0) {
+                            spdlog::warn("ESC handler error: {}", lua_tostring(uiL, -1));
+                            lua_pop(uiL, 1);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
+                }
+                esc_was_pressed = esc_pressed;
+
+                // Auto-pause when game ends (M146a)
                 osc::i32 game_result = sim_state.player_result();
-                if (game_result != 0 && !sim_paused) {
-                    sim_paused = true;
+                if (game_result != 0 && !game_state_mgr.game_over()) {
+                    game_state_mgr.set_game_over(true);
+                    game_state_mgr.set_paused(true, ui_lua_state.raw());
                     const char* result_str =
                         game_result == 1 ? "VICTORY" :
                         game_result == 2 ? "DEFEAT" : "DRAW";
                     spdlog::info("Game over: {}", result_str);
+
+                    // Set observer mode
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_focus_army");
+                    lua_pushnumber(uiL, -1);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                    // Call NoteGameOver() in ui_L
+                    lua_pushstring(uiL, "NoteGameOver");
+                    lua_rawget(uiL, LUA_GLOBALSINDEX);
+                    if (lua_isfunction(uiL, -1)) {
+                        if (lua_pcall(uiL, 0, 0, 0) != 0) {
+                            spdlog::warn("NoteGameOver error: {}", lua_tostring(uiL, -1));
+                            lua_pop(uiL, 1);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
                 }
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
-                if (!sim_paused) {
-                    sim_accumulator += dt * sim_speed;
+                if (!game_state_mgr.paused()) {
+                    sim_accumulator += dt * game_state_mgr.speed();
                     while (sim_accumulator >=
                            osc::sim::SimState::SECONDS_PER_TICK) {
                         sim_state.tick();
@@ -589,13 +961,145 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // Process SimCallbacks from UI (M138a)
+                if (!sim_callback_queue.empty()) {
+                    auto callbacks = sim_callback_queue.drain();
+                    lua_State* sL = sim_lua_state.raw();
+
+                    // Import SimCallbacks module once for the batch
+                    lua_pushstring(sL, "import");
+                    lua_rawget(sL, LUA_GLOBALSINDEX);
+                    bool have_module = false;
+                    if (lua_isfunction(sL, -1)) {
+                        lua_pushstring(sL, "/lua/SimCallbacks.lua");
+                        if (lua_pcall(sL, 1, 1, 0) == 0 && lua_istable(sL, -1)) {
+                            have_module = true;
+                        } else {
+                            if (lua_isstring(sL, -1))
+                                spdlog::warn("SimCallback import error: {}", lua_tostring(sL, -1));
+                            lua_pop(sL, 1);
+                        }
+                    } else {
+                        lua_pop(sL, 1);
+                    }
+
+                    if (have_module) {
+                        int mod = lua_gettop(sL);
+                        for (const auto& cb : callbacks) {
+                            // Get DoCallback function (re-fetch each time since pcall may error)
+                            lua_pushstring(sL, "DoCallback");
+                            lua_rawget(sL, mod);
+                            if (!lua_isfunction(sL, -1)) {
+                                lua_pop(sL, 1);
+                                continue;
+                            }
+
+                            // Arg 1: func name
+                            lua_pushstring(sL, cb.func_name.c_str());
+
+                            // Arg 2: args table
+                            lua_newtable(sL);
+                            for (const auto& [key, val] : cb.args) {
+                                lua_pushstring(sL, key.c_str());
+                                std::visit([&](const auto& v) {
+                                    using T = std::decay_t<decltype(v)>;
+                                    if constexpr (std::is_same_v<T, std::string>) {
+                                        lua_pushstring(sL, v.c_str());
+                                    } else if constexpr (std::is_same_v<T, osc::f64>) {
+                                        lua_pushnumber(sL, static_cast<lua_Number>(v));
+                                    } else if constexpr (std::is_same_v<T, bool>) {
+                                        lua_pushboolean(sL, v ? 1 : 0);
+                                    }
+                                }, val);
+                                lua_rawset(sL, -3);
+                            }
+
+                            // Arg 3: units table (array of unit entity tables), or nil
+                            if (!cb.unit_ids.empty()) {
+                                lua_newtable(sL);
+                                int units_tbl = lua_gettop(sL);
+                                int idx = 1;
+                                for (osc::u32 eid : cb.unit_ids) {
+                                    auto* entity = sim_state.entity_registry().find(eid);
+                                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                                        if (entity->lua_table_ref() >= 0) {
+                                            lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
+                                            lua_rawseti(sL, units_tbl, idx++);
+                                        }
+                                    }
+                                }
+                            } else {
+                                lua_pushnil(sL); // no units
+                            }
+
+                            // Call DoCallback(name, args, units)
+                            if (lua_pcall(sL, 3, 0, 0) != 0) {
+                                const char* err = lua_tostring(sL, -1);
+                                spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
+                                lua_pop(sL, 1);
+                            }
+                        }
+                        lua_pop(sL, 1); // pop module table
+                    }
+                }
+
+                // OnFirstUpdate — fire once after first sim tick
+                static bool first_update_fired = false;
+                if (!first_update_fired && sim_state.tick_count() > 0) {
+                    osc::core::call_on_first_update(ui_lua_state.raw());
+                    first_update_fired = true;
+                }
+
                 renderer.poll_events(dt);
+
+                // Resume UI coroutines
+                ++ui_frame_count;
+                ui_thread_manager.resume_all(ui_frame_count);
+
+                // OnBeat — UI heartbeat each frame
+                osc::core::call_on_beat(ui_lua_state.raw(), dt);
+
+                // Fire beat functions each frame (M145b)
+                beat_registry.fire_all(ui_lua_state.raw());
 
                 // Player input: selection + commands
                 input_handler.update(renderer, sim_state, dt);
 
+                // Fire OnSelectionChanged callbacks if selection changed
+                {
+                    const auto& cur_sel = input_handler.selected();
+                    if (cur_sel != prev_selection) {
+                        prev_selection = cur_sel;
+                        lua_State* uL = ui_lua_state.raw();
+                        lua_pushstring(uL, "__osc_sel_changed_cbs");
+                        lua_rawget(uL, LUA_REGISTRYINDEX);
+                        if (lua_istable(uL, -1)) {
+                            int cbs_idx = lua_gettop(uL); // index of the callbacks table
+                            // Build the unit array once; we'll push copies for each call
+                            osc::lua::push_selected_units_for_ui(uL);
+                            int arr_idx = lua_gettop(uL); // index of the selection array
+                            int n = luaL_getn(uL, cbs_idx); // Lua 5.0: no lua_objlen
+                            for (int ci = 1; ci <= n; ci++) {
+                                lua_rawgeti(uL, cbs_idx, ci);
+                                if (lua_isfunction(uL, -1)) {
+                                    lua_pushvalue(uL, arr_idx); // copy of selection array
+                                    if (lua_pcall(uL, 1, 0, 0) != 0) {
+                                        std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
+                                        spdlog::warn("OnSelectionChanged[{}] error: {}", ci, err);
+                                        lua_pop(uL, 1); // pop error string
+                                    }
+                                } else {
+                                    lua_pop(uL, 1); // pop non-function
+                                }
+                            }
+                            lua_pop(uL, 1); // pop selection array
+                        }
+                        lua_pop(uL, 1); // pop callbacks table (or nil)
+                    }
+                }
+
                 const auto& sel = input_handler.selected();
-                renderer.render(sim_state, state.raw(), &ui_registry,
+                renderer.render(sim_state, ui_lua_state.raw(), &ui_registry,
                                 sel.empty() ? nullptr : &sel);
 
                 // Update window title periodically
@@ -607,17 +1111,70 @@ int main(int argc, char* argv[]) {
                         game_result == 1 ? "VICTORY " :
                         game_result == 2 ? "DEFEAT " :
                         game_result == 3 ? "DRAW " :
-                        sim_paused ? "PAUSED " : "";
+                        game_state_mgr.paused() ? "PAUSED " : "";
                     std::snprintf(title, sizeof(title),
                         "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
                         status_str,
-                        sim_speed,
+                        game_state_mgr.speed(),
                         sim_state.tick_count(),
                         sim_state.game_time(),
                         sim_state.entity_registry().count(),
                         sel.size(),
                         display_fps);
                     renderer.set_window_title(title);
+                }
+
+                // Check for exit request (M146d)
+                {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_exit_requested");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_toboolean(uiL, -1)) {
+                        lua_pop(uiL, 1);
+                        break;
+                    }
+                    lua_pop(uiL, 1);
+                }
+
+                // Check for game launch request from lobby (M148a)
+                {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_launch_requested");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_toboolean(uiL, -1)) {
+                        lua_pop(uiL, 1);
+
+                        // Clear the flag
+                        lua_pushstring(uiL, "__osc_launch_requested");
+                        lua_pushnil(uiL);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                        // Read scenario path
+                        lua_pushstring(uiL, "__osc_launch_scenario");
+                        lua_rawget(uiL, LUA_REGISTRYINDEX);
+                        const char* sc = lua_tostring(uiL, -1);
+                        std::string launch_scenario = sc ? sc : "";
+                        lua_pop(uiL, 1);
+
+                        if (!launch_scenario.empty()) {
+                            spdlog::info("Launch requested: {}", launch_scenario);
+                            // TODO(M150+): Actually load the selected map and
+                            // create a new SimState here. Currently this only
+                            // updates the state machine and scenario path —
+                            // the sim uses whatever was loaded at startup.
+                            game_state_mgr.transition_to(
+                                osc::GameState::LOADING, uiL);
+                            // Store scenario path for SessionGetScenarioInfo
+                            lua_pushstring(uiL, "__osc_scenario_path");
+                            lua_pushstring(uiL, launch_scenario.c_str());
+                            lua_rawset(uiL, LUA_REGISTRYINDEX);
+                            game_state_mgr.transition_to(
+                                osc::GameState::GAME, uiL);
+                            osc::core::call_start_game_ui(uiL);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
                 }
 
                 osc::Profiler::instance().end_frame();
@@ -646,7 +1203,7 @@ int main(int argc, char* argv[]) {
 
 
     // ── Integration tests ──
-    osc::test::TestContext test_ctx{sim_state, state, state.raw(), vfs, store};
+    osc::test::TestContext test_ctx{sim_state, sim_lua_state, sim_lua_state.raw(), vfs, store};
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
     if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
@@ -737,6 +1294,405 @@ int main(int argc, char* argv[]) {
     if (vfx_render_test && !map_path.empty()) osc::test::test_vfx_render(test_ctx);
     if (transport_silo_test && !map_path.empty()) osc::test::test_transport_silo_render(test_ctx);
     if (profile_test && !map_path.empty()) osc::test::test_profile(test_ctx);
+
+    // Dual-state isolation test (does not require map)
+    if (dualstate_test) {
+        spdlog::info("=== Dual Lua State Test ===");
+        int pass = 0, fail = 0;
+
+        // 1. Both states initialized
+        if (sim_lua_state.raw() && ui_lua_state.raw()) {
+            spdlog::info("[PASS] Both Lua states initialized");
+            pass++;
+        } else {
+            spdlog::error("[FAIL] Lua state initialization");
+            fail++;
+        }
+
+        // 2. sim_L has CreateUnit but NOT InternalCreateGroup
+        //    Use lua_rawget on globals index to avoid __index metamethod
+        //    (config.lua locks globals and errors on undefined access)
+        {
+            lua_State* sL = sim_lua_state.raw();
+            lua_pushstring(sL, "CreateUnit");
+            lua_rawget(sL, LUA_GLOBALSINDEX);
+            bool sim_has_create_unit = !lua_isnil(sL, -1);
+            lua_pop(sL, 1);
+            lua_pushstring(sL, "InternalCreateGroup");
+            lua_rawget(sL, LUA_GLOBALSINDEX);
+            bool sim_has_ui_func = !lua_isnil(sL, -1);
+            lua_pop(sL, 1);
+
+            if (sim_has_create_unit) {
+                spdlog::info("[PASS] sim_L has CreateUnit");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] sim_L missing CreateUnit");
+                fail++;
+            }
+            if (!sim_has_ui_func) {
+                spdlog::info("[PASS] sim_L does NOT have InternalCreateGroup");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] sim_L has InternalCreateGroup (should be ui_L only)");
+                fail++;
+            }
+        }
+
+        // 3. ui_L has InternalCreateGroup but NOT CreateUnit
+        {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "InternalCreateGroup");
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            bool ui_has_create_group = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+            lua_pushstring(uL, "CreateUnit");
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            bool ui_has_sim_func = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+
+            if (ui_has_create_group) {
+                spdlog::info("[PASS] ui_L has InternalCreateGroup");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] ui_L missing InternalCreateGroup");
+                fail++;
+            }
+            if (!ui_has_sim_func) {
+                spdlog::info("[PASS] ui_L does NOT have CreateUnit");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] ui_L has CreateUnit (should be sim_L only)");
+                fail++;
+            }
+        }
+
+        // 4. Both share the same VFS
+        {
+            auto* sim_vfs = osc::lua::LuaState::get_vfs(sim_lua_state.raw());
+            auto* ui_vfs = osc::lua::LuaState::get_vfs(ui_lua_state.raw());
+            if (sim_vfs && ui_vfs && sim_vfs == ui_vfs) {
+                spdlog::info("[PASS] Both states share the same VFS");
+                pass++;
+            } else {
+                spdlog::error("[FAIL] VFS mismatch (sim={}, ui={})",
+                              static_cast<void*>(sim_vfs),
+                              static_cast<void*>(ui_vfs));
+                fail++;
+            }
+        }
+
+        spdlog::info("=== Dual State Test: {} passed, {} failed ===", pass, fail);
+    }
+
+    // M140d: Construction panel integration test
+    if (construction_test && !map_path.empty()) {
+        spdlog::info("=== M140 Construction Panel Test ===");
+
+        auto result = ui_lua_state.do_string(R"(
+            local cat = ParseEntityCategory('FACTORY LAND TECH1')
+            local units = EntityCategoryGetUnitList(cat)
+            assert(type(units) == 'table', 'Expected table from EntityCategoryGetUnitList')
+            print('EntityCategoryGetUnitList returned ' .. table.getn(units) .. ' entries')
+            for i, id in ipairs(units) do
+                if i <= 5 then print('  ' .. id) end
+            end
+        )");
+        if (result.ok()) {
+            spdlog::info("=== M140 Construction Panel Test PASSED ===");
+        } else {
+            spdlog::error("=== M140 Construction Panel Test FAILED ===");
+        }
+    }
+
+    // M140-M143: Phase 2 integration test
+    if (phase2_test && !map_path.empty()) {
+        spdlog::info("=== Phase 2 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: EntityCategoryGetUnitList returns results
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local cat = ParseEntityCategory('STRUCTURE LAND')
+                local list = EntityCategoryGetUnitList(cat)
+                assert(type(list) == 'table', 'EntityCategoryGetUnitList failed')
+                print('M140: EntityCategoryGetUnitList returned ' .. table.getn(list) .. ' blueprints')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] EntityCategoryGetUnitList"); pass++; }
+            else { spdlog::error("[FAIL] EntityCategoryGetUnitList"); fail++; }
+        }
+
+        // Test 2: GetOrderBitmapNames returns 8 values
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local a,b,c,d,e,f,g,h = GetOrderBitmapNames('move')
+                assert(a ~= nil, 'GetOrderBitmapNames returned nil')
+                assert(type(g) == 'string', 'Expected sound cue string')
+                print('M141: GetOrderBitmapNames("move") up=' .. a)
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetOrderBitmapNames"); pass++; }
+            else { spdlog::error("[FAIL] GetOrderBitmapNames"); fail++; }
+        }
+
+        // Test 3: GetRolloverInfo returns nil when nothing hovered
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local info = GetRolloverInfo()
+                print('M142: GetRolloverInfo type=' .. type(info))
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetRolloverInfo"); pass++; }
+            else { spdlog::error("[FAIL] GetRolloverInfo"); fail++; }
+        }
+
+        // Test 4: StartCursorText doesn't crash
+        {
+            auto r = ui_lua_state.do_string(R"(
+                StartCursorText(100, 100, 'Test', {1,1,0,1}, 1.0, false)
+                print('M143: StartCursorText succeeded')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] StartCursorText"); pass++; }
+            else { spdlog::error("[FAIL] StartCursorText"); fail++; }
+        }
+
+        // Test 5: orders.lua boots (pcall, allow WARN)
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local ok, err = pcall(function()
+                    local orders = import('/lua/ui/game/orders.lua')
+                    assert(orders ~= nil, 'orders.lua import returned nil')
+                end)
+                if ok then print('M141: orders.lua boot OK')
+                else print('M141: orders.lua boot WARN: ' .. tostring(err)) end
+            )");
+            if (r.ok()) { spdlog::info("[PASS] orders.lua boot"); pass++; }
+            else { spdlog::error("[FAIL] orders.lua boot"); fail++; }
+        }
+
+        // Test 6: unitview.lua boots (pcall, allow WARN)
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local ok, err = pcall(function()
+                    local unitview = import('/lua/ui/game/unitview.lua')
+                    assert(unitview ~= nil, 'unitview.lua import returned nil')
+                end)
+                if ok then print('M142: unitview.lua boot OK')
+                else print('M142: unitview.lua boot WARN: ' .. tostring(err)) end
+            )");
+            if (r.ok()) { spdlog::info("[PASS] unitview.lua boot"); pass++; }
+            else { spdlog::error("[FAIL] unitview.lua boot"); fail++; }
+        }
+
+        spdlog::info("=== Phase 2 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
+
+    // M144-M146: Phase 3 integration test
+    if (phase3_test && !map_path.empty()) {
+        spdlog::info("=== Phase 3 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: GetCurrentUIState returns "game"
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local state = GetCurrentUIState()
+                assert(state == 'game', 'Expected "game", got: ' .. tostring(state))
+                print('M144: GetCurrentUIState = ' .. state)
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetCurrentUIState"); pass++; }
+            else { spdlog::error("[FAIL] GetCurrentUIState"); fail++; }
+        }
+
+        // Test 2: AddBeatFunction registers and fires
+        {
+            auto r = ui_lua_state.do_string(R"(
+                __test_beat_called = false
+                local function myBeat() __test_beat_called = true end
+                AddBeatFunction(myBeat, 'test_beat')
+                print('M145: AddBeatFunction registered')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] AddBeatFunction registration"); pass++; }
+            else { spdlog::error("[FAIL] AddBeatFunction registration"); fail++; }
+        }
+
+        // Fire beat functions
+        beat_registry.fire_all(ui_lua_state.raw());
+
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(__test_beat_called == true, 'BeatFunction was not called')
+                RemoveBeatFunction('test_beat')
+                print('M145: BeatFunction fired and removed OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] BeatFunction fire + remove"); pass++; }
+            else { spdlog::error("[FAIL] BeatFunction fire + remove"); fail++; }
+        }
+
+        // Test 3: Time queries
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local t = GetGameTimeSeconds()
+                local tick = GameTick()
+                local gt = GetGameTime()
+                local rate = GetSimRate()
+                assert(type(t) == 'number', 'GetGameTimeSeconds failed')
+                assert(type(tick) == 'number', 'GameTick failed')
+                assert(type(gt) == 'string', 'GetGameTime should return string')
+                assert(rate == 10, 'GetSimRate should be 10')
+                print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Time queries"); pass++; }
+            else { spdlog::error("[FAIL] Time queries"); fail++; }
+        }
+
+        // Test 4: Speed control
+        {
+            auto r = ui_lua_state.do_string(R"(
+                SetGameSpeed(2.0)
+                local spd = GetGameSpeed()
+                assert(spd == 2.0, 'SetGameSpeed failed: got ' .. tostring(spd))
+                SetGameSpeed(1.0)
+                print('M145: Speed control OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Speed control"); pass++; }
+            else { spdlog::error("[FAIL] Speed control"); fail++; }
+        }
+
+        // Test 5: EscapeHandler
+        {
+            auto r = ui_lua_state.do_string(R"(
+                __test_esc_called = false
+                SetEscapeHandler(function() __test_esc_called = true end)
+                EscapeHandler()
+                assert(__test_esc_called, 'EscapeHandler not called')
+                print('M146: EscapeHandler OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] EscapeHandler"); pass++; }
+            else { spdlog::error("[FAIL] EscapeHandler"); fail++; }
+        }
+
+        spdlog::info("=== Phase 3 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
+
+    // M147-M149: Phase 4 integration test
+    if (phase4_test && !map_path.empty()) {
+        spdlog::info("=== Phase 4 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: FrontEndData round-trip
+        {
+            auto r = ui_lua_state.do_string(R"(
+                SetFrontEndData('testKey', {value=42, name='test'})
+                local d = GetFrontEndData('testKey')
+                assert(d ~= nil, 'FrontEndData lost')
+                assert(d.value == 42, 'FrontEndData value mismatch')
+                print('M147: FrontEndData round-trip OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] FrontEndData"); pass++; }
+            else { spdlog::error("[FAIL] FrontEndData"); fail++; }
+        }
+
+        // Test 2: HasCommandLineArg
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local has = HasCommandLineArg('--phase4-test')
+                assert(has == true, 'Expected --phase4-test to be present')
+                local no = HasCommandLineArg('--nonexistent')
+                assert(no == false, 'Expected --nonexistent to be absent')
+                print('M147: HasCommandLineArg OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] HasCommandLineArg"); pass++; }
+            else { spdlog::error("[FAIL] HasCommandLineArg"); fail++; }
+        }
+
+        // Test 3: PlaySound doesn't crash
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local h = PlaySound('test_click')
+                assert(type(h) == 'number', 'PlaySound should return handle')
+                print('M147: PlaySound OK (handle=' .. h .. ')')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }
+            else { spdlog::error("[FAIL] PlaySound"); fail++; }
+        }
+
+        // Test 4: Skin selection
+        {
+            auto r = ui_lua_state.do_string(R"(
+                UIUtil.SetCurrentSkin('cybran')
+                local skin = UIUtil.GetCurrentSkin()
+                assert(skin == 'cybran', 'Skin mismatch: ' .. tostring(skin))
+                print('M149: Skin selection OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Skin selection"); pass++; }
+            else { spdlog::error("[FAIL] Skin selection"); fail++; }
+        }
+
+        // Test 5: Layout preference
+        {
+            auto r = ui_lua_state.do_string(R"(
+                UIUtil.SetLayoutPreference('right')
+                local layout = UIUtil.GetLayoutPreference()
+                assert(layout == 'right', 'Layout mismatch: ' .. tostring(layout))
+                print('M149: Layout preference OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Layout preference"); pass++; }
+            else { spdlog::error("[FAIL] Layout preference"); fail++; }
+        }
+
+        // Test 6: GetKeyBindings returns table
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local kb = GetKeyBindings()
+                assert(type(kb) == 'table', 'GetKeyBindings should return table')
+                assert(kb.attack == 'A', 'attack binding wrong')
+                assert(kb.move == 'M', 'move binding wrong')
+                print('M149: GetKeyBindings OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetKeyBindings"); pass++; }
+            else { spdlog::error("[FAIL] GetKeyBindings"); fail++; }
+        }
+
+        // Test 7: Prefs table exists
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(type(Prefs) == 'table', 'Prefs not found')
+                assert(type(Prefs.GetFromCurrentProfile) == 'function', 'GetFromCurrentProfile missing')
+                assert(type(Prefs.SetToCurrentProfile) == 'function', 'SetToCurrentProfile missing')
+                print('M149: Prefs table OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Prefs table"); pass++; }
+            else { spdlog::error("[FAIL] Prefs table"); fail++; }
+        }
+
+        // Test 8: LaunchSinglePlayerSession sets launch signal
+        {
+            auto r = ui_lua_state.do_string(R"(
+                LaunchSinglePlayerSession({ScenarioFile='/maps/test/test_scenario.lua'})
+                print('M148: LaunchSinglePlayerSession OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] LaunchSinglePlayerSession"); pass++; }
+            else { spdlog::error("[FAIL] LaunchSinglePlayerSession"); fail++; }
+
+            // Clear the launch flag so we don't actually try to launch
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_launch_requested");
+            lua_pushnil(uL);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+
+        // Test 9: DiskFindFiles accessible on ui_L
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(type(DiskFindFiles) == 'function', 'DiskFindFiles not on ui_L')
+                assert(type(DiskGetFileInfo) == 'function', 'DiskGetFileInfo not on ui_L')
+                assert(type(exists) == 'function', 'exists not on ui_L')
+                print('M148: File I/O on ui_L OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] File I/O on ui_L"); pass++; }
+            else { spdlog::error("[FAIL] File I/O on ui_L"); fail++; }
+        }
+
+        spdlog::info("=== Phase 4 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
 
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "

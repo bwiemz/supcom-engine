@@ -40,6 +40,13 @@ u32 UIControlRegistry::create() {
     return id;
 }
 
+u32 UIControlRegistry::add(std::unique_ptr<UIControl> ctrl) {
+    u32 id = next_id_++;
+    ctrl->set_control_id(id);
+    controls_.push_back(std::move(ctrl));
+    return id;
+}
+
 UIControl* UIControlRegistry::get(u32 id) {
     for (auto& c : controls_) {
         if (c && c->control_id() == id && !c->destroyed())

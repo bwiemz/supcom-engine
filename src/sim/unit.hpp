@@ -31,6 +31,11 @@ struct IntelState {
     bool enabled = false;
 };
 
+struct BuildQueueEntry {
+    std::string blueprint_id;
+    int count = 1;
+};
+
 struct UnitEconomy {
     f64 production_mass = 0.0;
     f64 production_energy = 0.0;
@@ -169,6 +174,10 @@ public:
     void set_air_threat(f32 t) { air_threat_ = t; }
     void set_sub_threat(f32 t) { sub_threat_ = t; }
     void set_economy_threat(f32 t) { economy_threat_ = t; }
+
+    // Build queue (factory production queue)
+    std::vector<BuildQueueEntry>& build_queue() { return build_queue_; }
+    const std::vector<BuildQueueEntry>& build_queue() const { return build_queue_; }
 
     // Command queue
     const std::deque<UnitCommand>& command_queue() const {
@@ -524,6 +533,8 @@ private:
     f32 death_duration_ = 0.0f;
     // OnGiven callbacks (Lua registry refs)
     std::vector<int> on_given_callbacks_;
+    // Build queue (factory production queue)
+    std::vector<BuildQueueEntry> build_queue_;
 };
 
 } // namespace osc::sim

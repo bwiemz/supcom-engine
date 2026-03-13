@@ -2,6 +2,8 @@ add_library(osc_ui STATIC
     ui_control.cpp
     ui_dispatch.cpp
     font_metrics_provider.cpp
+    wld_ui_provider.cpp
+    world_view.cpp
 )
 add_library(osc::ui ALIAS osc_ui)
 
@@ -11,5 +13,5 @@ target_include_directories(osc_ui
 )
 target_link_libraries(osc_ui
     PUBLIC osc::core
-    PRIVATE glfw lua50 spdlog::spdlog osc::vfs
+    PRIVATE glfw lua50 spdlog::spdlog osc::vfs osc::map
 )

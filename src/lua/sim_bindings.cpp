@@ -1,6 +1,7 @@
 #include "lua/sim_bindings.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/lua_state.hpp"
+#include "core/game_state.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/bone_cache.hpp"
@@ -935,11 +936,23 @@ static int l_ListArmies(lua_State* L) {
 }
 
 static int l_GetFocusArmy(lua_State* L) {
-    lua_pushnumber(L, -1); // observer
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushnumber(L, 0); // default: player army 0
+    }
     return 1;
 }
 
-static int l_SetFocusArmy(lua_State*) { return 0; }
+static int l_SetFocusArmy(lua_State* L) {
+    int army = static_cast<int>(luaL_checknumber(L, 1));
+    lua_pushstring(L, "__osc_focus_army");
+    lua_pushnumber(L, army);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("SetFocusArmy: {}", army);
+    return 0;
+}
 
 static int l_GetArmyBrain(lua_State* L) {
     auto* sim = get_sim(L);
@@ -1448,6 +1461,28 @@ static int l_DamageRing(lua_State* L) {
 
         call_ondamage(L, ref, 1, amount, 6);
     }
+    return 0;
+}
+
+// ====================================================================
+// Speed/pause control (M145d)
+// ====================================================================
+
+static int l_sim_RequestPause(lua_State* L) {
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (mgr) mgr->set_paused(true, nullptr);
+    return 0;
+}
+
+static int l_sim_ResumeSim(lua_State* L) {
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (mgr) mgr->set_paused(false, nullptr);
     return 0;
 }
 
@@ -4287,12 +4322,12 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SessionIsReplay", stub_false);
     state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
     state.register_function("GetCurrentCommandSource", stub_zero);
-    state.register_function("RequestPause", stub_noop);
+    state.register_function("RequestPause", l_sim_RequestPause);
     state.register_function("SimConExecute", stub_noop);
     state.register_function("BeginLogging", stub_noop);
     state.register_function("EndLogging", stub_noop);
     state.register_function("SuspendSim", stub_noop);
-    state.register_function("ResumeSim", stub_noop);
+    state.register_function("ResumeSim", l_sim_ResumeSim);
 
     // Time/profiling
     state.register_function("GetSystemTimeSecondsOnlyUseForProfileUseRealClock",
