@@ -458,6 +458,7 @@ int main(int argc, char* argv[]) {
     bool phase2_test = parse_flag(argc, argv, "--phase2-test");
     bool phase3_test = parse_flag(argc, argv, "--phase3-test");
     bool phase4_test = parse_flag(argc, argv, "--phase4-test");
+    bool phase5_test = parse_flag(argc, argv, "--phase5-test");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
     std::set<std::string> cmdline_args;
@@ -503,7 +504,7 @@ int main(int argc, char* argv[]) {
                     transport_silo_test ||
                     dualstate_test ||
                     construction_test || phase2_test ||
-                    phase3_test || phase4_test ||
+                    phase3_test || phase4_test || phase5_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -609,10 +610,23 @@ int main(int argc, char* argv[]) {
     }
 
     // Register GiveResources SimCallback handler (M151b)
+    // Use rawget/rawset to bypass config.lua global lock
     {
+        lua_State* sL = sim_lua_state.raw();
+        // Get or create SimCallbacks table
+        lua_pushstring(sL, "SimCallbacks");
+        lua_rawget(sL, LUA_GLOBALSINDEX);
+        if (!lua_istable(sL, -1)) {
+            lua_pop(sL, 1);
+            lua_newtable(sL);
+            lua_pushstring(sL, "SimCallbacks");
+            lua_pushvalue(sL, -2);
+            lua_rawset(sL, LUA_GLOBALSINDEX);
+        }
+        // Register GiveResources function
         auto give_res = sim_lua_state.do_string(R"(
-            SimCallbacks = SimCallbacks or {}
-            SimCallbacks.GiveResources = function(args)
+            local sc = rawget(_G, 'SimCallbacks')
+            sc.GiveResources = function(args)
                 if not args or not args.From or not args.To then return end
                 LOG('GiveResources: army ' .. tostring(args.From) .. ' -> army ' .. tostring(args.To) ..
                     ' mass=' .. tostring(args.Mass or 0) .. ' energy=' .. tostring(args.Energy or 0))
@@ -621,6 +635,7 @@ int main(int argc, char* argv[]) {
         if (!give_res) {
             spdlog::warn("GiveResources SimCallback registration error: {}", give_res.error().message);
         }
+        lua_settop(sL, 0); // clean stack
     }
 
     // === UI Lua State ===
@@ -767,6 +782,15 @@ int main(int argc, char* argv[]) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
+    // Key map registry for hotkey dispatch (M150b) — outer scope for headless test access
+    osc::ui::KeyMapRegistry keymap_registry;
+    if (!map_path.empty()) {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_keymap_registry");
+        lua_pushlightuserdata(uL, &keymap_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
     // FrontEndData — cross-state key-value store (M147c)
     osc::FrontEndData front_end_data;
     {
@@ -862,14 +886,7 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
-            // Key map registry for hotkey dispatch (M150b)
-            osc::ui::KeyMapRegistry keymap_registry;
-            {
-                lua_State* uL = ui_lua_state.raw();
-                lua_pushstring(uL, "__osc_keymap_registry");
-                lua_pushlightuserdata(uL, &keymap_registry);
-                lua_rawset(uL, LUA_REGISTRYINDEX);
-            }
+            // keymap_registry already stored in registry at outer scope
 
             // GameStateManager and BeatFunctionRegistry already declared at outer scope (M144b, M145b)
 
@@ -1717,6 +1734,128 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("=== Phase 4 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
+
+    // M150-M152: Phase 5 integration test
+    if (phase5_test && !map_path.empty()) {
+        spdlog::info("=== Phase 5 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: IN_AddKeyMapTable / IN_RemoveKeyMapTable
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local action_called = false
+                local km = {A = function() action_called = true end}
+                IN_AddKeyMapTable(km)
+                IN_RemoveKeyMapTable(km)
+                print('M150: IN_AddKeyMapTable/IN_RemoveKeyMapTable OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] KeyMap add/remove"); pass++; }
+            else { spdlog::error("[FAIL] KeyMap add/remove"); fail++; }
+        }
+
+        // Test 2: IsKeyDown exists and returns boolean
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local down = IsKeyDown(65)  -- GLFW_KEY_A = 65
+                assert(type(down) == 'boolean', 'IsKeyDown should return boolean')
+                print('M150: IsKeyDown OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] IsKeyDown"); pass++; }
+            else { spdlog::error("[FAIL] IsKeyDown"); fail++; }
+        }
+
+        // Test 3: Camera SaveSettings / RestoreSettings
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local cam = GetCamera('WorldCamera')
+                if cam then
+                    local settings = cam:SaveSettings()
+                    assert(type(settings) == 'table', 'SaveSettings should return table')
+                    if settings.distance ~= nil then
+                        -- Full camera available (renderer present)
+                        assert(settings.target_x ~= nil, 'Missing target_x field')
+                        cam:RestoreSettings(settings)
+                        print('M150: Camera Save/RestoreSettings OK')
+                    else
+                        -- Headless mode: SaveSettings returns empty table
+                        print('M150: Camera headless (empty settings) - OK')
+                    end
+                else
+                    print('M150: Camera not available (headless) - skipping')
+                end
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Camera Save/RestoreSettings"); pass++; }
+            else { spdlog::error("[FAIL] Camera Save/RestoreSettings"); fail++; }
+        }
+
+        // Test 4: UIZoomTo exists
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(type(UIZoomTo) == 'function', 'UIZoomTo not registered')
+                UIZoomTo({})  -- empty array, should not crash
+                print('M150: UIZoomTo OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] UIZoomTo"); pass++; }
+            else { spdlog::error("[FAIL] UIZoomTo"); fail++; }
+        }
+
+        // Test 5: RegisterChatFunc + SessionSendChatMessage
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local received = nil
+                RegisterChatFunc(function(msg) received = msg end, 'test')
+                SessionSendChatMessage({}, {text='hello', from='Player'})
+                assert(received ~= nil, 'Chat func not called')
+                assert(received.text == 'hello', 'Chat text mismatch')
+                print('M151: Chat system OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Chat system"); pass++; }
+            else { spdlog::error("[FAIL] Chat system"); fail++; }
+        }
+
+        // Test 6: SendSystemMessage
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local sys_msg = nil
+                RegisterChatFunc(function(msg) sys_msg = msg end, 'sys')
+                SendSystemMessage('Test announcement')
+                assert(sys_msg ~= nil, 'System message not received')
+                assert(sys_msg.from == 'System', 'Expected from=System')
+                assert(sys_msg.text == 'Test announcement', 'Text mismatch')
+                print('M151: SendSystemMessage OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] SendSystemMessage"); pass++; }
+            else { spdlog::error("[FAIL] SendSystemMessage"); fail++; }
+        }
+
+        // Test 7: GetSessionClients returns table with player
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local clients = GetSessionClients()
+                assert(type(clients) == 'table', 'GetSessionClients should return table')
+                assert(clients[1] ~= nil, 'Expected at least one client')
+                assert(clients[1].name ~= nil, 'Client needs name')
+                print('M151: GetSessionClients OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetSessionClients"); pass++; }
+            else { spdlog::error("[FAIL] GetSessionClients"); fail++; }
+        }
+
+        // Test 8: GiveResources SimCallback exists
+        {
+            auto r = sim_lua_state.do_string(R"(
+                local sc = rawget(_G, 'SimCallbacks')
+                assert(type(sc) == 'table', 'SimCallbacks not found')
+                assert(type(sc.GiveResources) == 'function', 'GiveResources missing')
+                sc.GiveResources({From=1, To=2, Mass=100, Energy=200})
+                print('M151: GiveResources SimCallback OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GiveResources SimCallback"); pass++; }
+            else { spdlog::error("[FAIL] GiveResources SimCallback"); fail++; }
+        }
+
+        spdlog::info("=== Phase 5 Integration Test: {}/{} passed ===", pass, pass + fail);
     }
 
     // Report final state
