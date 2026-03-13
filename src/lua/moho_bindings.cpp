@@ -11988,6 +11988,43 @@ static int l_IsObserver(lua_State* L) {
     return 1;
 }
 
+// ── Escape handler / HideGameUI (M146c) ──────────────────────────────────────
+
+/// EscapeHandler() — called when ESC is pressed
+static int l_EscapeHandler(lua_State* L) {
+    lua_pushstring(L, "__osc_escape_handler");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isfunction(L, -1)) {
+        if (lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("EscapeHandler error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+        spdlog::debug("EscapeHandler: no handler registered");
+    }
+    return 0;
+}
+
+/// SetEscapeHandler(func) — register the ESC key handler
+static int l_SetEscapeHandler(lua_State* L) {
+    if (!lua_isfunction(L, 1)) return 0;
+    lua_pushstring(L, "__osc_escape_handler");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// HideGameUI(hide) — show/hide the game HUD panels
+static int l_HideGameUI(lua_State* L) {
+    bool hide = lua_toboolean(L, 1) != 0;
+    lua_pushstring(L, "__osc_hide_game_ui");
+    lua_pushboolean(L, hide ? 1 : 0);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("HideGameUI: {}", hide ? "hidden" : "visible");
+    return 0;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -12119,6 +12156,11 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Score screen data (M146b)
     state.register_function("GetArmyScore", l_GetArmyScore);
     state.register_function("IsObserver", l_IsObserver);
+
+    // Escape handler / HideGameUI (M146c)
+    state.register_function("EscapeHandler", l_EscapeHandler);
+    state.register_function("SetEscapeHandler", l_SetEscapeHandler);
+    state.register_function("HideGameUI", l_HideGameUI);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

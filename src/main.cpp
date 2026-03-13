@@ -821,6 +821,7 @@ int main(int argc, char* argv[]) {
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
             bool minus_was_pressed = false;
+            bool esc_was_pressed = false;
             double title_update_timer = 0.0;
             double fps_accum = 0.0;
             int fps_frames = 0;
@@ -868,6 +869,23 @@ int main(int argc, char* argv[]) {
                     spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
                 }
                 minus_was_pressed = minus_pressed;
+
+                // ESC key — call escape handler (M146c)
+                bool esc_pressed = renderer.is_key_pressed(GLFW_KEY_ESCAPE);
+                if (esc_pressed && !esc_was_pressed) {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_escape_handler");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_isfunction(uiL, -1)) {
+                        if (lua_pcall(uiL, 0, 0, 0) != 0) {
+                            spdlog::warn("ESC handler error: {}", lua_tostring(uiL, -1));
+                            lua_pop(uiL, 1);
+                        }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
+                }
+                esc_was_pressed = esc_pressed;
 
                 // Auto-pause when game ends (M146a)
                 osc::i32 game_result = sim_state.player_result();
