@@ -262,6 +262,7 @@ static void print_usage() {
               << "  --vfx-render-test  VFX/emitter particle rendering\n"
               << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
               << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
+              << "  --construction-test Construction panel (EntityCategoryGetUnitList)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
@@ -459,6 +460,7 @@ int main(int argc, char* argv[]) {
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
     bool profile_test = parse_flag(argc, argv, "--profile-test");
+    bool construction_test = parse_flag(argc, argv, "--construction-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -497,6 +499,7 @@ int main(int argc, char* argv[]) {
                     enhance_wreck_test || vfx_render_test ||
                     transport_silo_test ||
                     dualstate_test ||
+                    construction_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -1233,6 +1236,26 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("=== Dual State Test: {} passed, {} failed ===", pass, fail);
+    }
+
+    // M140d: Construction panel integration test
+    if (construction_test && !map_path.empty()) {
+        spdlog::info("=== M140 Construction Panel Test ===");
+
+        auto result = ui_lua_state.do_string(R"(
+            local cat = ParseEntityCategory('FACTORY LAND TECH1')
+            local units = EntityCategoryGetUnitList(cat)
+            assert(type(units) == 'table', 'Expected table from EntityCategoryGetUnitList')
+            print('EntityCategoryGetUnitList returned ' .. table.getn(units) .. ' entries')
+            for i, id in ipairs(units) do
+                if i <= 5 then print('  ' .. id) end
+            end
+        )");
+        if (result.ok()) {
+            spdlog::info("=== M140 Construction Panel Test PASSED ===");
+        } else {
+            spdlog::error("=== M140 Construction Panel Test FAILED ===");
+        }
     }
 
     // Report final state
