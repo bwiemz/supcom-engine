@@ -777,6 +777,14 @@ int main(int argc, char* argv[]) {
                 lua_pushlightuserdata(uL, &sim_callback_queue);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
+
+            // Initialize hover entity ID to 0 (updated by WorldView HitTest, M142a)
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_hover_entity_id");
+                lua_pushnumber(uL, 0);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 

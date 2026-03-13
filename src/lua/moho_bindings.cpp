@@ -11514,6 +11514,105 @@ static int l_GetOrderBitmapNames(lua_State* L) {
     return 8;
 }
 
+/// GetRolloverInfo() — returns a rich table describing the hovered or first-selected unit (M142a).
+/// Checks __osc_hover_entity_id registry key first; falls back to first selected unit.
+static int l_GetRolloverInfo(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+
+    sim::Unit* unit = nullptr;
+
+    // 1. Try hover entity from WorldView HitTest
+    lua_pushstring(L, "__osc_hover_entity_id");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) {
+        u32 hover_id = static_cast<u32>(lua_tonumber(L, -1));
+        if (hover_id != 0) {
+            auto* entity = sim->entity_registry().find(hover_id);
+            if (entity && entity->is_unit() && !entity->destroyed())
+                unit = static_cast<sim::Unit*>(entity);
+        }
+    }
+    lua_pop(L, 1);
+
+    // 2. Fall back to first selected unit
+    if (!unit) {
+        auto* input = get_input_handler(L);
+        if (input && !input->selected().empty()) {
+            u32 first_id = *input->selected().begin();
+            auto* entity = sim->entity_registry().find(first_id);
+            if (entity && entity->is_unit() && !entity->destroyed())
+                unit = static_cast<sim::Unit*>(entity);
+        }
+    }
+
+    if (!unit) { lua_pushnil(L); return 1; }
+
+    // Helper lambdas for building the result table
+    auto set_str = [&](const char* key, const char* val) {
+        lua_pushstring(L, key);
+        lua_pushstring(L, val);
+        lua_rawset(L, -3);
+    };
+    auto set_num = [&](const char* key, lua_Number val) {
+        lua_pushstring(L, key);
+        lua_pushnumber(L, val);
+        lua_rawset(L, -3);
+    };
+
+    lua_newtable(L); // result table
+
+    set_str("blueprintId",    unit->blueprint_id().c_str());
+    set_num("entityId",       static_cast<lua_Number>(unit->entity_id()));
+    set_num("health",         static_cast<lua_Number>(unit->health()));
+    set_num("maxHealth",      static_cast<lua_Number>(unit->max_health()));
+    set_num("kills",          0);
+    set_num("armyIndex",      static_cast<lua_Number>(unit->army()));
+    set_num("workProgress",   static_cast<lua_Number>(unit->work_progress()));
+    set_num("shieldRatio",    static_cast<lua_Number>(unit->shield_ratio()));
+    set_num("fuelRatio",      1.0);
+
+    const auto& econ = unit->economy();
+    set_num("massProduced",     static_cast<lua_Number>(econ.production_mass));
+    set_num("massConsumed",     static_cast<lua_Number>(econ.consumption_mass));
+    set_num("energyProduced",   static_cast<lua_Number>(econ.production_energy));
+    set_num("energyConsumed",   static_cast<lua_Number>(econ.consumption_energy));
+    set_num("massRequested",    static_cast<lua_Number>(econ.consumption_mass));
+    set_num("energyRequested",  static_cast<lua_Number>(econ.consumption_energy));
+
+    set_num("tacticalSiloStorageCount",    static_cast<lua_Number>(unit->tactical_silo_ammo()));
+    set_num("tacticalSiloMaxStorageCount", 0);
+    set_num("nukeSiloStorageCount",        static_cast<lua_Number>(unit->nuke_silo_ammo()));
+    set_num("nukeSiloMaxStorageCount",     0);
+    set_num("tacticalSiloBuildCount",      0);
+    set_num("nukeSiloBuildCount",          0);
+
+    // userUnit: full UI unit table with _c_object + metatable
+    lua_pushstring(L, "userUnit");
+    push_unit_for_ui(L, unit);
+    lua_rawset(L, -3);
+
+    // focus: if unit is building something, include a sub-table for the target
+    u32 focus_id = unit->build_target_id();
+    if (focus_id != 0) {
+        auto* focus_entity = sim->entity_registry().find(focus_id);
+        if (focus_entity && focus_entity->is_unit() && !focus_entity->destroyed()) {
+            auto* focus_unit = static_cast<sim::Unit*>(focus_entity);
+            lua_pushstring(L, "focus");
+            lua_newtable(L); // focus sub-table
+            lua_pushstring(L, "blueprintId");
+            lua_pushstring(L, focus_unit->blueprint_id().c_str());
+            lua_rawset(L, -3);
+            lua_pushstring(L, "entityId");
+            lua_pushnumber(L, static_cast<lua_Number>(focus_unit->entity_id()));
+            lua_rawset(L, -3);
+            lua_rawset(L, -3); // result["focus"] = focus_sub_table
+        }
+    }
+
+    return 1;
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -11603,6 +11702,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Order bitmap helpers (M141a)
     state.register_function("GetOrderBitmapNames", l_GetOrderBitmapNames);
+
+    // Unit rollover info (M142a)
+    state.register_function("GetRolloverInfo", l_GetRolloverInfo);
 
     // Cache the LazyVar.Create function in registry for fast access.
     // We import /lua/lazyvar.lua and grab its Create function.
