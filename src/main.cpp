@@ -252,6 +252,7 @@ static void print_usage() {
               << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
               << "  --construction-test Construction panel (EntityCategoryGetUnitList)\n"
               << "  --phase2-test      Phase 2 integration (construction, orders, unitview, tooltips)\n"
+              << "  --phase3-test      Phase 3 integration (state machine, beat system, score flow)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --help             Show this help message\n";
@@ -451,6 +452,7 @@ int main(int argc, char* argv[]) {
     bool profile_test = parse_flag(argc, argv, "--profile-test");
     bool construction_test = parse_flag(argc, argv, "--construction-test");
     bool phase2_test = parse_flag(argc, argv, "--phase2-test");
+    bool phase3_test = parse_flag(argc, argv, "--phase3-test");
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -490,6 +492,7 @@ int main(int argc, char* argv[]) {
                     transport_silo_test ||
                     dualstate_test ||
                     construction_test || phase2_test ||
+                    phase3_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -726,6 +729,15 @@ int main(int argc, char* argv[]) {
         spdlog::info("Performance profiling enabled");
     }
 
+    // BeatFunctionRegistry for per-frame Lua callbacks (M145b) — outer scope for headless test access
+    osc::lua::BeatFunctionRegistry beat_registry;
+    if (!map_path.empty()) {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_beat_registry");
+        lua_pushlightuserdata(uL, &beat_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
@@ -804,14 +816,7 @@ int main(int argc, char* argv[]) {
                 lua_rawset(sL, LUA_REGISTRYINDEX);
             }
 
-            // BeatFunctionRegistry for per-frame Lua callbacks (M145b)
-            osc::lua::BeatFunctionRegistry beat_registry;
-            {
-                lua_State* uL = ui_lua_state.raw();
-                lua_pushstring(uL, "__osc_beat_registry");
-                lua_pushlightuserdata(uL, &beat_registry);
-                lua_rawset(uL, LUA_REGISTRYINDEX);
-            }
+            // BeatFunctionRegistry already declared at outer scope and registered (M145b)
 
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
@@ -1407,6 +1412,93 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("=== Phase 2 Integration Test: {}/{} passed ===", pass, pass + fail);
+    }
+
+    // M144-M146: Phase 3 integration test
+    if (phase3_test && !map_path.empty()) {
+        spdlog::info("=== Phase 3 Integration Test ===");
+        int pass = 0, fail = 0;
+
+        // Test 1: GetCurrentUIState returns "game"
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local state = GetCurrentUIState()
+                assert(state == 'game', 'Expected "game", got: ' .. tostring(state))
+                print('M144: GetCurrentUIState = ' .. state)
+            )");
+            if (r.ok()) { spdlog::info("[PASS] GetCurrentUIState"); pass++; }
+            else { spdlog::error("[FAIL] GetCurrentUIState"); fail++; }
+        }
+
+        // Test 2: AddBeatFunction registers and fires
+        {
+            auto r = ui_lua_state.do_string(R"(
+                __test_beat_called = false
+                local function myBeat() __test_beat_called = true end
+                AddBeatFunction(myBeat, 'test_beat')
+                print('M145: AddBeatFunction registered')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] AddBeatFunction registration"); pass++; }
+            else { spdlog::error("[FAIL] AddBeatFunction registration"); fail++; }
+        }
+
+        // Fire beat functions
+        beat_registry.fire_all(ui_lua_state.raw());
+
+        {
+            auto r = ui_lua_state.do_string(R"(
+                assert(__test_beat_called == true, 'BeatFunction was not called')
+                RemoveBeatFunction('test_beat')
+                print('M145: BeatFunction fired and removed OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] BeatFunction fire + remove"); pass++; }
+            else { spdlog::error("[FAIL] BeatFunction fire + remove"); fail++; }
+        }
+
+        // Test 3: Time queries
+        {
+            auto r = ui_lua_state.do_string(R"(
+                local t = GetGameTimeSeconds()
+                local tick = GameTick()
+                local gt = GetGameTime()
+                local rate = GetSimRate()
+                assert(type(t) == 'number', 'GetGameTimeSeconds failed')
+                assert(type(tick) == 'number', 'GameTick failed')
+                assert(type(gt) == 'string', 'GetGameTime should return string')
+                assert(rate == 10, 'GetSimRate should be 10')
+                print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Time queries"); pass++; }
+            else { spdlog::error("[FAIL] Time queries"); fail++; }
+        }
+
+        // Test 4: Speed control
+        {
+            auto r = ui_lua_state.do_string(R"(
+                SetGameSpeed(2.0)
+                local spd = GetGameSpeed()
+                assert(spd == 2.0, 'SetGameSpeed failed: got ' .. tostring(spd))
+                SetGameSpeed(1.0)
+                print('M145: Speed control OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] Speed control"); pass++; }
+            else { spdlog::error("[FAIL] Speed control"); fail++; }
+        }
+
+        // Test 5: EscapeHandler
+        {
+            auto r = ui_lua_state.do_string(R"(
+                __test_esc_called = false
+                SetEscapeHandler(function() __test_esc_called = true end)
+                EscapeHandler()
+                assert(__test_esc_called, 'EscapeHandler not called')
+                print('M146: EscapeHandler OK')
+            )");
+            if (r.ok()) { spdlog::info("[PASS] EscapeHandler"); pass++; }
+            else { spdlog::error("[FAIL] EscapeHandler"); fail++; }
+        }
+
+        spdlog::info("=== Phase 3 Integration Test: {}/{} passed ===", pass, pass + fail);
     }
 
     // Report final state
