@@ -790,13 +790,22 @@ int main(int argc, char* argv[]) {
                 lua_pushnumber(uL, 0);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
+
+            // GameStateManager pointer for UI bindings (M144b)
+            osc::GameStateManager game_state_mgr;
+            game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
+            {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_game_state_mgr");
+                lua_pushlightuserdata(uL, &game_state_mgr);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            }
+
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
 
             double sim_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();
-            bool sim_paused = false;
-            double sim_speed = 1.0;  // 1.0 = normal, 0.5 = half, 2.0 = double
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
             bool minus_was_pressed = false;
@@ -826,8 +835,8 @@ int main(int argc, char* argv[]) {
                 // Pause toggle (P key, edge-triggered)
                 bool p_pressed = renderer.is_key_pressed(GLFW_KEY_P);
                 if (p_pressed && !p_was_pressed) {
-                    sim_paused = !sim_paused;
-                    spdlog::info("Sim {}", sim_paused ? "PAUSED" : "RESUMED");
+                    game_state_mgr.set_paused(!game_state_mgr.paused(), ui_lua_state.raw());
+                    spdlog::info("Sim {}", game_state_mgr.paused() ? "PAUSED" : "RESUMED");
                 }
                 p_was_pressed = p_pressed;
 
@@ -835,27 +844,24 @@ int main(int argc, char* argv[]) {
                 bool plus_pressed = renderer.is_key_pressed(GLFW_KEY_EQUAL) ||
                                     renderer.is_key_pressed(GLFW_KEY_KP_ADD);
                 if (plus_pressed && !plus_was_pressed) {
-                    if (sim_speed < 10.0) {
-                        sim_speed = std::min(sim_speed * 2.0, 10.0);
-                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
-                    }
+                    game_state_mgr.set_speed(std::min(game_state_mgr.speed() * 2.0, 10.0));
+                    spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
                 }
                 plus_was_pressed = plus_pressed;
 
                 bool minus_pressed = renderer.is_key_pressed(GLFW_KEY_MINUS) ||
                                      renderer.is_key_pressed(GLFW_KEY_KP_SUBTRACT);
                 if (minus_pressed && !minus_was_pressed) {
-                    if (sim_speed > 0.125) {
-                        sim_speed = std::max(sim_speed * 0.5, 0.125);
-                        spdlog::info("Sim speed: {:.1f}x", sim_speed);
-                    }
+                    game_state_mgr.set_speed(std::max(game_state_mgr.speed() * 0.5, 0.125));
+                    spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
                 }
                 minus_was_pressed = minus_pressed;
 
                 // Auto-pause when game ends
                 osc::i32 game_result = sim_state.player_result();
-                if (game_result != 0 && !sim_paused) {
-                    sim_paused = true;
+                if (game_result != 0 && !game_state_mgr.game_over()) {
+                    game_state_mgr.set_game_over(true);
+                    game_state_mgr.set_paused(true, ui_lua_state.raw());
                     const char* result_str =
                         game_result == 1 ? "VICTORY" :
                         game_result == 2 ? "DEFEAT" : "DRAW";
@@ -863,8 +869,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
-                if (!sim_paused) {
-                    sim_accumulator += dt * sim_speed;
+                if (!game_state_mgr.paused()) {
+                    sim_accumulator += dt * game_state_mgr.speed();
                     while (sim_accumulator >=
                            osc::sim::SimState::SECONDS_PER_TICK) {
                         sim_state.tick();
@@ -1019,11 +1025,11 @@ int main(int argc, char* argv[]) {
                         game_result == 1 ? "VICTORY " :
                         game_result == 2 ? "DEFEAT " :
                         game_result == 3 ? "DRAW " :
-                        sim_paused ? "PAUSED " : "";
+                        game_state_mgr.paused() ? "PAUSED " : "";
                     std::snprintf(title, sizeof(title),
                         "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
                         status_str,
-                        sim_speed,
+                        game_state_mgr.speed(),
                         sim_state.tick_count(),
                         sim_state.game_time(),
                         sim_state.entity_registry().count(),
