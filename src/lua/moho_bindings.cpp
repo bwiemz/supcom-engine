@@ -42,6 +42,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <vector>
 #include <spdlog/spdlog.h>
 
@@ -12137,6 +12138,21 @@ static int l_SetFrontEndData(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// HasCommandLineArg (M147d)
+// ====================================================================
+
+/// HasCommandLineArg(arg) -> boolean
+static int l_HasCommandLineArg(lua_State* L) {
+    const char* arg = luaL_checkstring(L, 1);
+    lua_pushstring(L, "__osc_cmdline_args");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* args = static_cast<std::set<std::string>*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, args && args->count(arg) > 0 ? 1 : 0);
+    return 1;
+}
+
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
@@ -12313,6 +12329,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // FrontEndData cross-state store (M147c)
     state.register_function("GetFrontEndData", l_GetFrontEndData);
     state.register_function("SetFrontEndData", l_SetFrontEndData);
+
+    // HasCommandLineArg (M147d)
+    state.register_function("HasCommandLineArg", l_HasCommandLineArg);
 
     // Audio globals (M147b)
     state.register_function("PlaySound", l_PlaySound);

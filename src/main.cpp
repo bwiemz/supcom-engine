@@ -38,6 +38,7 @@ extern "C" {
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <spdlog/spdlog.h>
 
 // ── Engine global Lua C functions (file-static, outside main) ──
@@ -454,6 +455,13 @@ int main(int argc, char* argv[]) {
     bool construction_test = parse_flag(argc, argv, "--construction-test");
     bool phase2_test = parse_flag(argc, argv, "--phase2-test");
     bool phase3_test = parse_flag(argc, argv, "--phase3-test");
+    bool phase4_test = parse_flag(argc, argv, "--phase4-test");
+
+    // Collect all command-line args for HasCommandLineArg (M147d)
+    std::set<std::string> cmdline_args;
+    for (int i = 1; i < argc; ++i) {
+        cmdline_args.insert(argv[i]);
+    }
 
     // Determine if any test/headless flag was set
     bool any_test = damage_test || move_test || fire_test || economy_test ||
@@ -493,7 +501,7 @@ int main(int argc, char* argv[]) {
                     transport_silo_test ||
                     dualstate_test ||
                     construction_test || phase2_test ||
-                    phase3_test ||
+                    phase3_test || phase4_test ||
                     profile_test;
     bool headless = (tick_count > 0) || any_test;
 
@@ -745,6 +753,14 @@ int main(int argc, char* argv[]) {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_front_end_data");
         lua_pushlightuserdata(uL, &front_end_data);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Command-line args for HasCommandLineArg (M147d)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_cmdline_args");
+        lua_pushlightuserdata(uL, &cmdline_args);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
