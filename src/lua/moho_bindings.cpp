@@ -32,6 +32,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "map/terrain.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
@@ -12104,6 +12105,38 @@ static int l_EnableWorldSounds(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// FrontEndData cross-state store (M147c)
+// ====================================================================
+
+static osc::FrontEndData* get_front_end_data(lua_State* L) {
+    lua_pushstring(L, "__osc_front_end_data");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* d = static_cast<osc::FrontEndData*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return d;
+}
+
+/// GetFrontEndData(key) -> value
+static int l_GetFrontEndData(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* fed = get_front_end_data(L);
+    if (fed) {
+        fed->get(L, key);
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+/// SetFrontEndData(key, value)
+static int l_SetFrontEndData(lua_State* L) {
+    const char* key = luaL_checkstring(L, 1);
+    auto* fed = get_front_end_data(L);
+    if (fed) fed->set(L, key, 2);
+    return 0;
+}
+
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
@@ -12276,6 +12309,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Exit/return (M146d)
     state.register_function("ExitGame", l_ExitGame);
     state.register_function("ExitApplication", l_ExitApplication);
+
+    // FrontEndData cross-state store (M147c)
+    state.register_function("GetFrontEndData", l_GetFrontEndData);
+    state.register_function("SetFrontEndData", l_SetFrontEndData);
 
     // Audio globals (M147b)
     state.register_function("PlaySound", l_PlaySound);

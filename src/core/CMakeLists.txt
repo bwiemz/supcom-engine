@@ -3,6 +3,7 @@ add_library(osc_core STATIC
     preferences.cpp
     localization.cpp
     game_state.cpp
+    front_end_data.cpp
 )
 add_library(osc::core ALIAS osc_core)
 

@@ -1,3 +1,4 @@
+#include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
@@ -735,6 +736,15 @@ int main(int argc, char* argv[]) {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_beat_registry");
         lua_pushlightuserdata(uL, &beat_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // FrontEndData — cross-state key-value store (M147c)
+    osc::FrontEndData front_end_data;
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_front_end_data");
+        lua_pushlightuserdata(uL, &front_end_data);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
