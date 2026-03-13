@@ -11,6 +11,7 @@ add_library(osc_lua STATIC
     category_utils.cpp
     factory_queue.cpp
     order_helpers.cpp
+    beat_system.cpp
 )
 add_library(osc::lua ALIAS osc_lua)
 
