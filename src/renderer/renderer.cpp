@@ -258,14 +258,17 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
     create_shadow_resources();
 
-    // Pipelines
+    // Bloom resources (must be created before pipelines — scene_render_pass_ is
+    // needed for scene pipeline builds now that all scene draws target offscreen HDR)
+    create_bloom_resources();
+
+    // Pipelines (scene pipelines built against scene_render_pass_)
     create_pipelines();
 
     // Shadow depth-only pipelines (need shadow_render_pass_ + bone_ds_layout_)
     create_shadow_pipelines();
 
-    // Bloom post-processing resources
-    create_bloom_resources();
+    // Bloom post-processing pipelines (fullscreen triangle passes)
     create_bloom_pipelines();
 
     // UI renderer instance buffer
@@ -274,8 +277,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     // Overlay renderer (health bars, selection, command lines)
     overlay_renderer_.init(device_, allocator_);
 
-    // Particle renderer (emitter-driven billboard particles)
-    particle_renderer_.init(device_, allocator_, render_pass_,
+    // Particle renderer (emitter-driven billboard particles — scene render pass)
+    particle_renderer_.init(device_, allocator_, scene_render_pass_,
                             texture_ds_layout_, texture_sampler_);
 
     // Minimap renderer
@@ -707,7 +710,7 @@ void Renderer::create_pipelines() {
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
             .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
-            .build(device_, render_pass_, &terrain_layout_);
+            .build(device_, scene_render_pass_, &terrain_layout_);
     }
 
     // --- Unit pipeline (instanced cubes — fallback) ---
@@ -741,7 +744,7 @@ void Renderer::create_pipelines() {
             .set_push_constant(sizeof(f32) * 19,  // viewProj(64) + eye(12) = 76B
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(shadow_ds_layout_)   // set=0: shadow
-            .build(device_, render_pass_, &unit_layout_);
+            .build(device_, scene_render_pass_, &unit_layout_);
     }
 
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
@@ -787,7 +790,7 @@ void Renderer::create_pipelines() {
             .add_descriptor_set_layout(texture_ds_layout_)    // set=2: specteam
             .add_descriptor_set_layout(texture_ds_layout_)    // set=3: normal map
             .add_descriptor_set_layout(shadow_ds_layout_)     // set=4: shadow
-            .build(device_, render_pass_, &mesh_layout_);
+            .build(device_, scene_render_pass_, &mesh_layout_);
     }
 
     // --- Water pipeline (tessellated grid with wave animation) ---
@@ -811,7 +814,7 @@ void Renderer::create_pipelines() {
             .set_push_constant(WaterRenderer::PUSH_CONSTANT_SIZE,
                                VK_SHADER_STAGE_VERTEX_BIT |
                                    VK_SHADER_STAGE_FRAGMENT_BIT)
-            .build(device_, render_pass_, &water_layout_);
+            .build(device_, scene_render_pass_, &water_layout_);
     }
 
     // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
@@ -847,7 +850,7 @@ void Renderer::create_pipelines() {
             .set_push_constant(sizeof(f32) * 16,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
             .set_descriptor_set_layout(texture_ds_layout_)
-            .build(device_, render_pass_, &decal_layout_);
+            .build(device_, scene_render_pass_, &decal_layout_);
     }
 
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
@@ -1044,42 +1047,18 @@ void Renderer::create_bloom_resources() {
         VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
     };
 
-    // Scene color uses swapchain format for render pass compatibility with
-    // existing pipelines (terrain, unit, mesh, water, decal, particle).
-    // Bloom intermediates use HDR for precision.
-    {
-        VkImageCreateInfo img_ci{};
-        img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        img_ci.imageType = VK_IMAGE_TYPE_2D;
-        img_ci.format = swapchain_format_;
-        img_ci.extent = {w, h, 1};
-        img_ci.mipLevels = 1;
-        img_ci.arrayLayers = 1;
-        img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
-        img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &scene_color_image_.image, &scene_color_image_.allocation, nullptr));
-
-        VkImageViewCreateInfo view_ci{};
-        view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_ci.image = scene_color_image_.image;
-        view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_ci.format = swapchain_format_;
-        view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &scene_color_image_.view));
-    }
+    // Scene color uses HDR format — all scene pipelines are built against
+    // scene_render_pass_ so format compatibility is guaranteed. HDR allows
+    // overbright values for proper bloom extraction.
+    create_hdr_image(scene_color_image_, w, h);
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
     create_hdr_image(bloom_blur_v_image_, half_w, half_h);
 
-    // Scene render pass (color + depth, swapchain format for pipeline compatibility)
+    // Scene render pass (color + depth, HDR format for overbright bloom extraction)
     {
         VkAttachmentDescription color_att{};
-        color_att.format = swapchain_format_;
+        color_att.format = hdr_format;
         color_att.samples = VK_SAMPLE_COUNT_1_BIT;
         color_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1169,14 +1148,21 @@ void Renderer::create_bloom_resources() {
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &color_ref;
 
+        std::array<VkSubpassDependency, 2> bloom_deps{};
+        // Incoming: previous pass output visible before we start writing
+        bloom_deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        bloom_deps[0].dstSubpass = 0;
+        bloom_deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        bloom_deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        bloom_deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        bloom_deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         // Outgoing: finalLayout transition visible to subsequent fragment reads
-        VkSubpassDependency bloom_dep{};
-        bloom_dep.srcSubpass = 0;
-        bloom_dep.dstSubpass = VK_SUBPASS_EXTERNAL;
-        bloom_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        bloom_dep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        bloom_dep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        bloom_dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        bloom_deps[1].srcSubpass = 0;
+        bloom_deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        bloom_deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        bloom_deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        bloom_deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        bloom_deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         VkRenderPassCreateInfo rp_ci{};
         rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1184,8 +1170,8 @@ void Renderer::create_bloom_resources() {
         rp_ci.pAttachments = &att;
         rp_ci.subpassCount = 1;
         rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = 1;
-        rp_ci.pDependencies = &bloom_dep;
+        rp_ci.dependencyCount = static_cast<u32>(bloom_deps.size());
+        rp_ci.pDependencies = bloom_deps.data();
         VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &bloom_render_pass_));
     }
 
@@ -2112,20 +2098,17 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     PROFILE_ZONE("Render::main_pass");
 
     bool do_bloom = bloom_enabled_ && bloom_bright_pipeline_ && bloom_composite_pipeline_;
-    if (bloom_enabled_ && bloom_bright_pipeline_ && !bloom_composite_pipeline_) {
-        spdlog::warn("Bloom composite pipeline is null — falling back to direct rendering");
-    }
 
-    // Begin render pass — scene_render_pass_ (offscreen) when bloom is on,
-    // render_pass_ (swapchain) when bloom is off.
+    // Always render scene to offscreen HDR image (scene_render_pass_).
+    // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
     clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // sky haze (matches atmos fog)
     clear_values[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = do_bloom ? scene_render_pass_ : render_pass_;
-    rp_begin.framebuffer = do_bloom ? scene_framebuffer_ : framebuffers_[image_index];
+    rp_begin.renderPass = scene_render_pass_;
+    rp_begin.framebuffer = scene_framebuffer_;
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
     rp_begin.pClearValues = clear_values.data();
@@ -2437,21 +2420,22 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         auto view = math::look_at(eye_x, eye_y, eye_z,
                             camera_.target_x(), 0.0f, camera_.target_z(),
                             0.0f, 1.0f, 0.0f);
-        // Column-major: col 0 = right, col 1 = up
-        f32 cam_right[3] = {view[0], view[1], view[2]};
-        f32 cam_up[3] = {view[4], view[5], view[6]};
+        // Column-major layout: row 0 = right, row 1 = up
+        // Row i elements are at indices [i], [i+4], [i+8] in column-major
+        f32 cam_right[3] = {view[0], view[4], view[8]};
+        f32 cam_up[3] = {view[1], view[5], view[9]};
 
         particle_renderer_.render(cmd_buf_[fi],
                                   window_width_, window_height_,
                                   vp.data(), cam_right, cam_up, fi);
     }
 
-    // ==================== BLOOM PASSES ====================
-    // When bloom is enabled: end scene pass, run bright extract + blur, then
-    // begin swapchain pass with composite fullscreen triangle before UI layers.
-    if (do_bloom) {
-        vkCmdEndRenderPass(cmd_buf_[fi]);
+    // ==================== COMPOSITE + BLOOM ====================
+    // Scene always renders to offscreen HDR. End scene pass, optionally run
+    // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
+    vkCmdEndRenderPass(cmd_buf_[fi]);
 
+    if (do_bloom) {
         u32 half_w = std::max(window_width_ / 2, 1u);
         u32 half_h = std::max(window_height_ / 2, 1u);
 
@@ -2527,27 +2511,29 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd_buf_[fi]);
         }
+    }
 
-        // Begin swapchain render pass for composite + UI
-        std::array<VkClearValue, 2> swap_clear{};
-        swap_clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-        swap_clear[1].depthStencil = {1.0f, 0};
+    // Begin swapchain render pass for composite + UI
+    std::array<VkClearValue, 2> swap_clear{};
+    swap_clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    swap_clear[1].depthStencil = {1.0f, 0};
 
-        VkRenderPassBeginInfo swap_rp{};
-        swap_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        swap_rp.renderPass = render_pass_;
-        swap_rp.framebuffer = framebuffers_[image_index];
-        swap_rp.renderArea.extent = {window_width_, window_height_};
-        swap_rp.clearValueCount = static_cast<u32>(swap_clear.size());
-        swap_rp.pClearValues = swap_clear.data();
-        vkCmdBeginRenderPass(cmd_buf_[fi], &swap_rp, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderPassBeginInfo swap_rp{};
+    swap_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    swap_rp.renderPass = render_pass_;
+    swap_rp.framebuffer = framebuffers_[image_index];
+    swap_rp.renderArea.extent = {window_width_, window_height_};
+    swap_rp.clearValueCount = static_cast<u32>(swap_clear.size());
+    swap_rp.pClearValues = swap_clear.data();
+    vkCmdBeginRenderPass(cmd_buf_[fi], &swap_rp, VK_SUBPASS_CONTENTS_INLINE);
 
-        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
-        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
+    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
+    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
-        // Composite fullscreen triangle — blend scene + bloom onto swapchain
+    // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
+    if (bloom_composite_pipeline_) {
+        f32 strength = do_bloom ? bloom_strength_ : 0.0f;
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_composite_pipeline_);
-        f32 strength = bloom_strength_;
         vkCmdPushConstants(cmd_buf_[fi], bloom_composite_layout_,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(strength), &strength);
         vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
