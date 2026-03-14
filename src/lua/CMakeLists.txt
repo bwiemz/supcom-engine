@@ -12,6 +12,7 @@ add_library(osc_lua STATIC
     factory_queue.cpp
     order_helpers.cpp
     beat_system.cpp
+    smoke_test.cpp
 )
 add_library(osc::lua ALIAS osc_lua)
 

@@ -14,6 +14,7 @@ add_executable(osc_tests
     test_localization.cpp
     test_terrain_quadtree.cpp
     test_phase1.cpp
+    test_smoke_test.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
