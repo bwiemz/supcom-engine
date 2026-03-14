@@ -34,6 +34,10 @@ public:
 
     void print_report() const;
 
+    /// Install __index metamethod on the globals table that logs missing accesses.
+    /// The harness pointer is stored in the Lua registry as "__osc_smoke_harness".
+    void install_global_interceptor(lua_State* L);
+
 private:
     struct EntryKey {
         SmokeCategory category;

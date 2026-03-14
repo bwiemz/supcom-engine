@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "lua/smoke_test.hpp"
+#include "lua/lua_state.hpp"
 
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
@@ -33,4 +34,37 @@ TEST_CASE("SmokeTestHarness total_count sums all occurrences", "[smoke]") {
     harness.record(osc::lua::SmokeCategory::MissingGlobal, "A", "a.lua:2");
     harness.record(osc::lua::SmokeCategory::MissingMethod, "B", "b.lua:1");
     REQUIRE(harness.total_count() == 3);
+}
+
+TEST_CASE("SmokeTestHarness intercepts missing globals", "[smoke]") {
+    osc::lua::LuaState state;
+    osc::lua::SmokeTestHarness harness;
+    harness.install_global_interceptor(state.raw());
+
+    // Access a global that doesn't exist - should be logged, return nil
+    auto result = state.do_string("local x = SomeMissingGlobal\nreturn type(x)");
+    REQUIRE(result.ok());
+
+    // Check that the missing access was recorded
+    auto report = harness.generate_report();
+    bool found = false;
+    for (auto& e : report) {
+        if (e.name == "SomeMissingGlobal" &&
+            e.category == osc::lua::SmokeCategory::MissingGlobal) {
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("Global interceptor does not log existing globals", "[smoke]") {
+    osc::lua::LuaState state;
+    osc::lua::SmokeTestHarness harness;
+
+    // Set a global first, then install interceptor
+    state.do_string("MyGlobal = 42");
+    harness.install_global_interceptor(state.raw());
+
+    state.do_string("local x = MyGlobal");
+    REQUIRE(harness.total_count() == 0);
 }
