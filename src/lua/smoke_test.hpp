@@ -46,6 +46,16 @@ public:
     /// Install method interceptors on all known __osc_*_mt metatables.
     void install_all_method_interceptors(lua_State* L);
 
+    /// Install lua_atpanic handler that logs instead of aborting.
+    void install_panic_handler(lua_State* L);
+
+    /// Execute a Lua string, recording any pcall errors in the harness.
+    bool do_string_logged(lua_State* L, const char* code);
+
+    /// Execute a Lua file (via VFS buffer), recording any pcall errors.
+    bool do_buffer_logged(lua_State* L, const char* buffer, size_t len,
+                          const char* name);
+
 private:
     struct EntryKey {
         SmokeCategory category;

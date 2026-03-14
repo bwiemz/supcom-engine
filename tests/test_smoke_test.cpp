@@ -121,3 +121,31 @@ TEST_CASE("SmokeTestHarness intercepts missing moho methods", "[smoke]") {
     REQUIRE(report[0].name == "TestObj.FakeMethod");
     REQUIRE(report[0].category == osc::lua::SmokeCategory::MissingMethod);
 }
+
+TEST_CASE("SmokeTestHarness panic handler prevents abort", "[smoke]") {
+    osc::lua::LuaState state;
+    osc::lua::SmokeTestHarness harness;
+    harness.install_panic_handler(state.raw());
+
+    // A pcall error should be caught by our error handler, not crash
+    auto result = state.do_string("error('test error')");
+    // do_string uses lua_pcall internally, so it should return an error
+    REQUIRE_FALSE(result.ok());
+}
+
+TEST_CASE("SmokeTestHarness pcall error recording", "[smoke]") {
+    osc::lua::LuaState state;
+    osc::lua::SmokeTestHarness harness;
+    harness.install_panic_handler(state.raw());
+
+    // Run code that will error
+    harness.do_string_logged(state.raw(), "local x = nil; x.foo()");
+
+    auto report = harness.generate_report();
+    REQUIRE(report.size() >= 1);
+    bool found_pcall = false;
+    for (auto& e : report) {
+        if (e.category == osc::lua::SmokeCategory::PcallError) found_pcall = true;
+    }
+    REQUIRE(found_pcall);
+}

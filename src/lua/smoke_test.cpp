@@ -1,6 +1,7 @@
 #include "lua/smoke_test.hpp"
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cstring>
 #include <string>
 
 extern "C" {
@@ -48,6 +49,16 @@ void SmokeTestHarness::print_report() const {
 }
 
 } // namespace osc::lua
+
+// Panic handler — fires only when there is NO active lua_pcall protecting the call.
+// After this handler returns, Lua calls exit(EXIT_FAILURE).
+// Do NOT access the Lua registry here — state may be corrupted.
+static int smoke_panic(lua_State* L) {
+    const char* msg = lua_tostring(L, -1);
+    spdlog::error("SMOKE PANIC (unrecoverable): {}", msg ? msg : "(no message)");
+    // All recoverable errors are caught by do_string_logged/do_buffer_logged via pcall.
+    return 0;
+}
 
 // C callback for method __index interceptor — lives outside the namespace
 // because it is a plain C function registered with lua_pushcclosure.
@@ -222,6 +233,53 @@ void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
         }
     }
     lua_pop(L, 1); // pop moho
+}
+
+void SmokeTestHarness::install_panic_handler(lua_State* L) {
+    // Store harness in registry (may already be set by install_global_interceptor)
+    lua_pushstring(L, "__osc_smoke_harness");
+    lua_pushlightuserdata(L, this);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    lua_atpanic(L, smoke_panic);
+}
+
+bool SmokeTestHarness::do_string_logged(lua_State* L, const char* code) {
+    // Lua 5.0 has no luaL_loadstring — use luaL_loadbuffer with strlen.
+    int status = luaL_loadbuffer(L, code, strlen(code), "=(string)");
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        record(SmokeCategory::PcallError, err ? err : "(load error)", "do_string");
+        lua_pop(L, 1);
+        return false;
+    }
+    status = lua_pcall(L, 0, 0, 0);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        record(SmokeCategory::PcallError, err ? err : "(runtime error)", "do_string");
+        lua_pop(L, 1);
+        return false;
+    }
+    return true;
+}
+
+bool SmokeTestHarness::do_buffer_logged(lua_State* L, const char* buffer,
+                                         size_t len, const char* name) {
+    int status = luaL_loadbuffer(L, buffer, len, name);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        record(SmokeCategory::PcallError, err ? err : "(load error)", name);
+        lua_pop(L, 1);
+        return false;
+    }
+    status = lua_pcall(L, 0, 0, 0);
+    if (status != 0) {
+        const char* err = lua_tostring(L, -1);
+        record(SmokeCategory::PcallError, err ? err : "(runtime error)", name);
+        lua_pop(L, 1);
+        return false;
+    }
+    return true;
 }
 
 } // namespace osc::lua
