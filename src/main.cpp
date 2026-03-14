@@ -41,6 +41,7 @@ extern "C" {
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <spdlog/spdlog.h>
 
@@ -526,20 +527,20 @@ int main(int argc, char* argv[]) {
     }
 
     // Phase 1: Init + VFS (sim Lua state)
-    osc::lua::LuaState sim_lua_state;
+    auto sim_lua_state = std::make_unique<osc::lua::LuaState>();
     osc::vfs::VirtualFileSystem vfs;
     osc::lua::InitLoader loader;
 
-    auto init_result = loader.execute_init(sim_lua_state, config, vfs);
+    auto init_result = loader.execute_init(*sim_lua_state, config, vfs);
     if (!init_result) {
         spdlog::error("Init failed: {}", init_result.error().message);
         return 1;
     }
 
     // Phase 2: Blueprint loading (sim Lua state owns the store)
-    osc::blueprints::BlueprintStore store(sim_lua_state.raw());
+    osc::blueprints::BlueprintStore store(sim_lua_state->raw());
 
-    auto bp_result = loader.load_blueprints(sim_lua_state, vfs, store);
+    auto bp_result = loader.load_blueprints(*sim_lua_state, vfs, store);
     if (!bp_result) {
         spdlog::error("Blueprint loading failed: {}",
                        bp_result.error().message);
@@ -559,33 +560,33 @@ int main(int argc, char* argv[]) {
     spdlog::info("OpenSupCom initialization complete.");
 
     // Phase 3: Map + Sim boot
-    osc::sim::SimState sim_state(sim_lua_state.raw(), &store);
+    auto sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
     // Audio system
     auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
         config.fa_path / "sounds");
     {
-        lua_State* L = sim_lua_state.raw();
+        lua_State* L = sim_lua_state->raw();
         lua_pushstring(L, "osc_sound_manager");
         lua_pushlightuserdata(L, sound_mgr.get());
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
-    sim_state.set_sound_manager(std::move(sound_mgr));
+    sim_state->set_sound_manager(std::move(sound_mgr));
 
     // Bone cache (lazy-loaded per-blueprint SCM bone data)
     auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
-    sim_state.set_bone_cache(std::move(bone_cache));
+    sim_state->set_bone_cache(std::move(bone_cache));
 
     // Animation cache (lazy-loaded SCA animation data)
     auto anim_cache = std::make_unique<osc::sim::AnimCache>(&vfs);
-    sim_state.set_anim_cache(std::move(anim_cache));
+    sim_state->set_anim_cache(std::move(anim_cache));
 
     // Load scenario and map if --map was provided
     osc::lua::ScenarioMetadata scenario_meta;
     if (!map_path.empty()) {
         osc::lua::ScenarioLoader scenario_loader;
         auto meta_result = scenario_loader.load_scenario(
-            sim_lua_state, vfs, map_path, sim_state);
+            *sim_lua_state, vfs, map_path, *sim_state);
         if (!meta_result) {
             spdlog::error("Scenario load failed: {}",
                           meta_result.error().message);
@@ -595,17 +596,17 @@ int main(int argc, char* argv[]) {
 
         // Add armies from scenario
         for (const auto& army : scenario_meta.armies) {
-            sim_state.add_army(army, army);
+            sim_state->add_army(army, army);
         }
     }
 
     // Fallback: add a default army if none from scenario
-    if (sim_state.army_count() == 0) {
-        sim_state.add_army("ARMY_1", "Player");
+    if (sim_state->army_count() == 0) {
+        sim_state->add_army("ARMY_1", "Player");
     }
 
     osc::lua::SimLoader sim_loader;
-    auto sim_result = sim_loader.boot_sim(sim_lua_state, vfs, sim_state);
+    auto sim_result = sim_loader.boot_sim(*sim_lua_state, vfs, *sim_state);
     if (!sim_result) {
         spdlog::error("Sim boot failed: {}", sim_result.error().message);
         return 1;
@@ -614,7 +615,7 @@ int main(int argc, char* argv[]) {
     // Register GiveResources SimCallback handler (M151b)
     // Use rawget/rawset to bypass config.lua global lock
     {
-        lua_State* sL = sim_lua_state.raw();
+        lua_State* sL = sim_lua_state->raw();
         // Get or create SimCallbacks table
         lua_pushstring(sL, "SimCallbacks");
         lua_rawget(sL, LUA_GLOBALSINDEX);
@@ -626,7 +627,7 @@ int main(int argc, char* argv[]) {
             lua_rawset(sL, LUA_GLOBALSINDEX);
         }
         // Register GiveResources function
-        auto give_res = sim_lua_state.do_string(R"(
+        auto give_res = sim_lua_state->do_string(R"(
             local sc = rawget(_G, 'SimCallbacks')
             sc.GiveResources = function(args)
                 if not args or not args.From or not args.To then return end
@@ -659,7 +660,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Register moho class tables on UI state (unit_methods, etc.)
-    osc::lua::register_moho_bindings(ui_lua_state, sim_state);
+    osc::lua::register_moho_bindings(ui_lua_state, *sim_state);
 
     // Localization cache — load strings from VFS, then store pointer in UI registry
     osc::core::Localization loc_cache;
@@ -743,8 +744,8 @@ int main(int argc, char* argv[]) {
     spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
-    if (sim_state.terrain()) {
-        auto* t = sim_state.terrain();
+    if (sim_state->terrain()) {
+        auto* t = sim_state->terrain();
         osc::f32 cx = static_cast<osc::f32>(t->map_width()) / 2;
         osc::f32 cz = static_cast<osc::f32>(t->map_height()) / 2;
         spdlog::info("Terrain test:");
@@ -761,7 +762,7 @@ int main(int argc, char* argv[]) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
         auto session_result = session_mgr.start_session(
-            sim_lua_state, vfs, sim_state, scenario_meta);
+            *sim_lua_state, vfs, *sim_state, scenario_meta);
         if (!session_result) {
             spdlog::error("Session start failed: {}",
                           session_result.error().message);
@@ -821,7 +822,7 @@ int main(int argc, char* argv[]) {
             lua_rawset(uL, LUA_REGISTRYINDEX);
         }
         {
-            lua_State* sL = sim_lua_state.raw();
+            lua_State* sL = sim_lua_state->raw();
             lua_pushstring(sL, "__osc_game_state_mgr");
             lua_pushlightuserdata(sL, &game_state_mgr);
             lua_rawset(sL, LUA_REGISTRYINDEX);
@@ -832,7 +833,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty() && !headless) {
         osc::renderer::Renderer renderer;
         if (renderer.init(1600, 900, "OpenSupCom")) {
-            renderer.build_scene(sim_state, &vfs, ui_lua_state.raw());
+            renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
 
             // Store renderer pointer in UI Lua registry for WorldView/GetCamera
             {
@@ -967,7 +968,7 @@ int main(int argc, char* argv[]) {
                 esc_was_pressed = esc_pressed;
 
                 // Auto-pause when game ends (M146a)
-                osc::i32 game_result = sim_state.player_result();
+                osc::i32 game_result = sim_state->player_result();
                 if (game_result != 0 && !game_state_mgr.game_over()) {
                     game_state_mgr.set_game_over(true);
                     game_state_mgr.set_paused(true, ui_lua_state.raw());
@@ -1000,7 +1001,7 @@ int main(int argc, char* argv[]) {
                     sim_accumulator += dt * game_state_mgr.speed();
                     while (sim_accumulator >=
                            osc::sim::SimState::SECONDS_PER_TICK) {
-                        sim_state.tick();
+                        sim_state->tick();
                         sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
                     }
                 }
@@ -1008,7 +1009,7 @@ int main(int argc, char* argv[]) {
                 // Process SimCallbacks from UI (M138a)
                 if (!sim_callback_queue.empty()) {
                     auto callbacks = sim_callback_queue.drain();
-                    lua_State* sL = sim_lua_state.raw();
+                    lua_State* sL = sim_lua_state->raw();
 
                     // Import SimCallbacks module once for the batch
                     lua_pushstring(sL, "import");
@@ -1064,7 +1065,7 @@ int main(int argc, char* argv[]) {
                                 int units_tbl = lua_gettop(sL);
                                 int idx = 1;
                                 for (osc::u32 eid : cb.unit_ids) {
-                                    auto* entity = sim_state.entity_registry().find(eid);
+                                    auto* entity = sim_state->entity_registry().find(eid);
                                     if (entity && entity->is_unit() && !entity->destroyed()) {
                                         if (entity->lua_table_ref() >= 0) {
                                             lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
@@ -1089,7 +1090,7 @@ int main(int argc, char* argv[]) {
 
                 // OnFirstUpdate — fire once after first sim tick
                 static bool first_update_fired = false;
-                if (!first_update_fired && sim_state.tick_count() > 0) {
+                if (!first_update_fired && sim_state->tick_count() > 0) {
                     osc::core::call_on_first_update(ui_lua_state.raw());
                     first_update_fired = true;
                 }
@@ -1107,7 +1108,7 @@ int main(int argc, char* argv[]) {
                 beat_registry.fire_all(ui_lua_state.raw());
 
                 // Player input: selection + commands
-                input_handler.update(renderer, sim_state, dt);
+                input_handler.update(renderer, *sim_state, dt);
 
                 // Fire OnSelectionChanged callbacks if selection changed
                 {
@@ -1143,7 +1144,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 const auto& sel = input_handler.selected();
-                renderer.render(sim_state, ui_lua_state.raw(), &ui_registry,
+                renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
                                 sel.empty() ? nullptr : &sel);
 
                 // Update window title periodically
@@ -1160,9 +1161,9 @@ int main(int argc, char* argv[]) {
                         "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
                         status_str,
                         game_state_mgr.speed(),
-                        sim_state.tick_count(),
-                        sim_state.game_time(),
-                        sim_state.entity_registry().count(),
+                        sim_state->tick_count(),
+                        sim_state->game_time(),
+                        sim_state->entity_registry().count(),
                         sel.size(),
                         display_fps);
                     renderer.set_window_title(title);
@@ -1229,7 +1230,7 @@ int main(int argc, char* argv[]) {
             spdlog::warn("Vulkan init failed — falling back to headless "
                          "(100 ticks)");
             for (osc::u32 i = 0; i < 100; i++)
-                sim_state.tick();
+                sim_state->tick();
         }
     }
 
@@ -1238,9 +1239,9 @@ int main(int argc, char* argv[]) {
         osc::lua::SmokeTestHarness harness;
 
         // Install interceptors on sim state
-        harness.install_panic_handler(sim_lua_state.raw());
-        harness.install_global_interceptor(sim_lua_state.raw());
-        harness.install_all_method_interceptors(sim_lua_state.raw());
+        harness.install_panic_handler(sim_lua_state->raw());
+        harness.install_global_interceptor(sim_lua_state->raw());
+        harness.install_all_method_interceptors(sim_lua_state->raw());
 
         // Install interceptors on UI state
         harness.install_panic_handler(ui_lua_state.raw());
@@ -1249,7 +1250,7 @@ int main(int argc, char* argv[]) {
 
         spdlog::info("=== Smoke Test: Running 100 sim ticks ===");
         for (int i = 0; i < 100; i++) {
-            sim_state.tick();
+            sim_state->tick();
         }
 
         spdlog::info("=== Smoke Test: Running 100 UI frame dispatches ===");
@@ -1268,14 +1269,14 @@ int main(int argc, char* argv[]) {
                      tick_count * osc::sim::SimState::SECONDS_PER_TICK);
         for (osc::u32 i = 0; i < tick_count; i++) {
             osc::Profiler::instance().begin_frame();
-            sim_state.tick();
+            sim_state->tick();
             osc::Profiler::instance().end_frame();
         }
     }
 
 
     // ── Integration tests ──
-    osc::test::TestContext test_ctx{sim_state, sim_lua_state, sim_lua_state.raw(), vfs, store};
+    osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
     if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
@@ -1373,7 +1374,7 @@ int main(int argc, char* argv[]) {
         int pass = 0, fail = 0;
 
         // 1. Both states initialized
-        if (sim_lua_state.raw() && ui_lua_state.raw()) {
+        if (sim_lua_state->raw() && ui_lua_state.raw()) {
             spdlog::info("[PASS] Both Lua states initialized");
             pass++;
         } else {
@@ -1385,7 +1386,7 @@ int main(int argc, char* argv[]) {
         //    Use lua_rawget on globals index to avoid __index metamethod
         //    (config.lua locks globals and errors on undefined access)
         {
-            lua_State* sL = sim_lua_state.raw();
+            lua_State* sL = sim_lua_state->raw();
             lua_pushstring(sL, "CreateUnit");
             lua_rawget(sL, LUA_GLOBALSINDEX);
             bool sim_has_create_unit = !lua_isnil(sL, -1);
@@ -1441,7 +1442,7 @@ int main(int argc, char* argv[]) {
 
         // 4. Both share the same VFS
         {
-            auto* sim_vfs = osc::lua::LuaState::get_vfs(sim_lua_state.raw());
+            auto* sim_vfs = osc::lua::LuaState::get_vfs(sim_lua_state->raw());
             auto* ui_vfs = osc::lua::LuaState::get_vfs(ui_lua_state.raw());
             if (sim_vfs && ui_vfs && sim_vfs == ui_vfs) {
                 spdlog::info("[PASS] Both states share the same VFS");
@@ -1874,7 +1875,7 @@ int main(int argc, char* argv[]) {
 
         // Test 8: GiveResources SimCallback exists
         {
-            auto r = sim_lua_state.do_string(R"(
+            auto r = sim_lua_state->do_string(R"(
                 local sc = rawget(_G, 'SimCallbacks')
                 assert(type(sc) == 'table', 'SimCallbacks not found')
                 assert(type(sc.GiveResources) == 'function', 'GiveResources missing')
@@ -1891,11 +1892,11 @@ int main(int argc, char* argv[]) {
     // Report final state
     spdlog::info("Sim: {} armies, {} entities, {} active threads, "
                  "{} ticks ({:.1f}s game time)",
-                 sim_state.army_count(),
-                 sim_state.entity_registry().count(),
-                 sim_state.thread_manager().active_count(),
-                 sim_state.tick_count(),
-                 sim_state.game_time());
+                 sim_state->army_count(),
+                 sim_state->entity_registry().count(),
+                 sim_state->thread_manager().active_count(),
+                 sim_state->tick_count(),
+                 sim_state->game_time());
 
     // Print profiling summary if enabled
     if (profile_enabled) {
