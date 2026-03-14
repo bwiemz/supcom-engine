@@ -11890,6 +11890,61 @@ static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
     return 1;
 }
 
+/// Helper: extract Entity* from a ui_L unit table (has _c_object lightuserdata).
+/// Returns nullptr if table is missing or entity is invalid.
+static sim::Entity* extract_ui_entity(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* e = lua_isuserdata(L, -1)
+                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                  : nullptr;
+    lua_pop(L, 1);
+    return e;
+}
+
+/// ui_L category filter helper. If keep_matches is true, keeps units matching
+/// the category (FilterDown). If false, keeps non-matching (FilterOut).
+static int ui_category_filter(lua_State* L, bool keep_matches) {
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) return 1;
+
+    for (int i = 1; ; i++) {
+        lua_rawgeti(L, 2, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+
+        int unit_tbl = lua_gettop(L);
+        auto* entity = extract_ui_entity(L, unit_tbl);
+        bool matches = false;
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            auto* unit = static_cast<sim::Unit*>(entity);
+            matches = osc::lua::unit_matches_category(L, 1, unit->categories());
+        }
+
+        if (matches == keep_matches) {
+            lua_pushnumber(L, out_idx++);
+            lua_pushvalue(L, unit_tbl);
+            lua_rawset(L, result);
+        }
+        lua_pop(L, 1); // pop unit table
+    }
+    return 1;
+}
+
+/// EntityCategoryFilterDown(category, unitList) — keep matching units (ui_L)
+static int l_ui_EntityCategoryFilterDown(lua_State* L) {
+    return ui_category_filter(L, true);
+}
+
+/// EntityCategoryFilterOut(category, unitList) — keep non-matching units (ui_L)
+static int l_ui_EntityCategoryFilterOut(lua_State* L) {
+    return ui_category_filter(L, false);
+}
+
 /// GetBlueprintIconPath(bpId) — resolve a blueprint's icon DDS path (M140b)
 static int l_GetBlueprintIconPath(lua_State* L) {
     const char* bp_id = luaL_checkstring(L, 1);
@@ -12967,6 +13022,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Blueprint query globals (M140)
     state.register_function("EntityCategoryGetUnitList", l_ui_EntityCategoryGetUnitList);
     state.register_function("GetBlueprintIconPath",      l_GetBlueprintIconPath);
+
+    // Category filter globals for ui_L (Phase 1 — construction panel needs these)
+    state.register_function("EntityCategoryFilterOut",  l_ui_EntityCategoryFilterOut);
+    state.register_function("EntityCategoryFilterDown", l_ui_EntityCategoryFilterDown);
 
     // Factory queue display globals (M140c)
     state.register_function("SetCurrentFactoryForQueueDisplay",   l_SetCurrentFactoryForQueueDisplay);
