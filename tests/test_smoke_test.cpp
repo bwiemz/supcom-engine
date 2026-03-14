@@ -448,3 +448,72 @@ TEST_CASE("Projectile homing tracks toward target", "[m160]") {
     CHECK(spd > 9.5f);
     CHECK(spd < 10.5f);
 }
+
+TEST_CASE("Unit veterancy fields and record_damage", "[m162]") {
+    osc::sim::Unit u;
+    CHECK(u.vet_level() == 0);
+    CHECK(u.vet_xp() == 0.0f);
+    CHECK(u.damage_multiplier() == 1.0f);
+    CHECK(u.xp_value() == 0.0f);
+    CHECK(u.damage_contributions().empty());
+
+    // Record damage from two attackers
+    u.record_damage(100, 50.0f);
+    u.record_damage(200, 30.0f);
+    u.record_damage(100, 20.0f); // same attacker — should accumulate
+    REQUIRE(u.damage_contributions().size() == 2);
+    CHECK(u.damage_contributions()[0].first == 100);
+    CHECK(u.damage_contributions()[0].second == 70.0f); // 50 + 20
+    CHECK(u.damage_contributions()[1].first == 200);
+    CHECK(u.damage_contributions()[1].second == 30.0f);
+
+    u.clear_damage_contributions();
+    CHECK(u.damage_contributions().empty());
+}
+
+TEST_CASE("Unit vet thresholds and xp_value storage", "[m162]") {
+    osc::sim::Unit u;
+    std::array<osc::f32, 5> thresholds = {25.0f, 100.0f, 250.0f, 500.0f, 1000.0f};
+    u.set_vet_thresholds(thresholds);
+    CHECK(u.vet_thresholds()[0] == 25.0f);
+    CHECK(u.vet_thresholds()[4] == 1000.0f);
+
+    u.set_xp_value(150.0f);
+    CHECK(u.xp_value() == 150.0f);
+}
+
+TEST_CASE("Unit add_xp levels up without Lua", "[m162]") {
+    osc::sim::Unit u;
+    osc::sim::EntityRegistry registry;
+    std::array<osc::f32, 5> thresholds = {10.0f, 30.0f, 60.0f, 100.0f, 200.0f};
+    u.set_vet_thresholds(thresholds);
+
+    // Below threshold — no level up
+    u.add_xp(5.0f, nullptr, registry);
+    CHECK(u.vet_level() == 0);
+    CHECK(u.vet_xp() == 5.0f);
+
+    // Cross first threshold
+    u.add_xp(6.0f, nullptr, registry);
+    CHECK(u.vet_level() == 1);
+    CHECK(u.vet_xp() == 11.0f);
+
+    // Cross two thresholds at once (11 + 50 = 61 >= 60)
+    u.add_xp(50.0f, nullptr, registry);
+    CHECK(u.vet_level() == 3);
+
+    // Max out at level 5
+    u.add_xp(200.0f, nullptr, registry);
+    CHECK(u.vet_level() == 5);
+
+    // No further leveling past 5
+    u.add_xp(1000.0f, nullptr, registry);
+    CHECK(u.vet_level() == 5);
+}
+
+TEST_CASE("Unit damage_multiplier applied by weapon", "[m162]") {
+    osc::sim::Unit u;
+    CHECK(u.damage_multiplier() == 1.0f);
+    u.set_damage_multiplier(1.5f);
+    CHECK(u.damage_multiplier() == 1.5f);
+}

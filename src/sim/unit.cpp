@@ -2653,4 +2653,119 @@ void Unit::init_animated_bones() {
     }
 }
 
+void Unit::record_damage(u32 attacker_id, f32 amount) {
+    for (auto& [id, dmg] : damage_contributions_) {
+        if (id == attacker_id) { dmg += amount; return; }
+    }
+    damage_contributions_.emplace_back(attacker_id, amount);
+}
+
+void Unit::add_xp(f32 amount, lua_State* L, EntityRegistry& registry) {
+    (void)registry;
+    if (amount <= 0 || vet_level_ >= 5) return;
+    vet_xp_ += amount;
+
+    // Check for level-up (can gain multiple levels at once)
+    while (vet_level_ < 5 &&
+           vet_thresholds_[vet_level_] > 0 &&
+           vet_xp_ >= vet_thresholds_[vet_level_]) {
+        vet_level_++;
+
+        // Apply per-level buffs from blueprint
+        if (L) {
+            apply_vet_buffs(L);
+            fire_on_veteran(L);
+        }
+
+        spdlog::debug("Unit #{} leveled up to vet level {}", entity_id(), vet_level_);
+    }
+}
+
+void Unit::apply_vet_buffs(lua_State* L) {
+    // Read buff values from blueprint: Buffs.Regen/MaxHealth/Damage.Level{N}
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return; }
+
+    lua_pushstring(L, blueprint_id().c_str());
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return; }
+
+    lua_pushstring(L, "Buffs");
+    lua_gettable(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 3); return; }
+
+    char level_key[8];
+    snprintf(level_key, sizeof(level_key), "Level%d", vet_level_);
+
+    // Regen buff: flat increase
+    lua_pushstring(L, "Regen");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, level_key);
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1)) {
+            set_regen_rate(regen_rate() + static_cast<f32>(lua_tonumber(L, -1)));
+        }
+        lua_pop(L, 1); // level value
+    }
+    lua_pop(L, 1); // Regen
+
+    // MaxHealth buff: multiplier (e.g., 1.1 = +10%)
+    lua_pushstring(L, "MaxHealth");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, level_key);
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1)) {
+            f32 factor = static_cast<f32>(lua_tonumber(L, -1));
+            if (factor > 0) {
+                f32 old_max = max_health();
+                f32 new_max = old_max * factor;
+                set_max_health(new_max);
+                // Heal the difference so unit gains the new HP
+                set_health(health() + (new_max - old_max));
+            }
+        }
+        lua_pop(L, 1); // level value
+    }
+    lua_pop(L, 1); // MaxHealth
+
+    // Damage buff: multiplier (e.g., 1.1 = +10%)
+    lua_pushstring(L, "Damage");
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, level_key);
+        lua_gettable(L, -2);
+        if (lua_isnumber(L, -1)) {
+            f32 factor = static_cast<f32>(lua_tonumber(L, -1));
+            if (factor > 0) {
+                damage_multiplier_ *= factor;
+            }
+        }
+        lua_pop(L, 1); // level value
+    }
+    lua_pop(L, 1); // Damage
+
+    lua_pop(L, 3); // Buffs + bp + __blueprints
+}
+
+void Unit::fire_on_veteran(lua_State* L) {
+    if (lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnVeteran");
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl); // self
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("OnVeteran error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1); // not a function
+    }
+    lua_pop(L, 1); // unit table
+}
+
 } // namespace osc::sim

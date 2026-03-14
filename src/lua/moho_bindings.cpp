@@ -816,6 +816,32 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // Veterancy: distribute XP to damage contributors on first death
+        if (e->is_unit()) {
+            auto* dying_unit = static_cast<sim::Unit*>(e);
+            if (!dying_unit->is_dying() && !dying_unit->is_crashing()) {
+                f32 xp_value = dying_unit->xp_value();
+                if (xp_value > 0 && !dying_unit->damage_contributions().empty()) {
+                    f32 total_damage = 0;
+                    for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
+                        total_damage += dmg;
+                    }
+                    if (total_damage > 0) {
+                        auto* sim_ptr = get_sim(L);
+                        for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
+                            auto* attacker = sim_ptr ? sim_ptr->entity_registry().find(aid) : nullptr;
+                            if (attacker && !attacker->destroyed() && attacker->is_unit()) {
+                                f32 xp_share = xp_value * (dmg / total_damage);
+                                static_cast<sim::Unit*>(attacker)->add_xp(
+                                    xp_share, L, sim_ptr->entity_registry());
+                            }
+                        }
+                    }
+                    dying_unit->clear_damage_contributions();
+                }
+            }
+        }
+
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
 
@@ -3218,6 +3244,47 @@ static int unit_AddOnGivenCallback(lua_State* L) {
     return 0;
 }
 
+// --- Veterancy ---
+
+// unit:GetVeterancyLevel()
+static int unit_GetVeterancyLevel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    lua_pushnumber(L, u->vet_level());
+    return 1;
+}
+
+// unit:SetVeterancyLevel(level)
+static int unit_SetVeterancyLevel(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    int level = static_cast<int>(lua_tonumber(L, 2));
+    if (level < 0) level = 0;
+    if (level > 5) level = 5;
+    u->set_vet_level(static_cast<u8>(level));
+    return 0;
+}
+
+// unit:AddXP(amount)
+static int unit_AddXP(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    f32 amount = static_cast<f32>(lua_tonumber(L, 2));
+    auto* sim = get_sim(L);
+    if (sim) {
+        u->add_xp(amount, L, sim->entity_registry());
+    }
+    return 0;
+}
+
+// unit:GetXPValue()
+static int unit_GetXPValue(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    lua_pushnumber(L, u->xp_value());
+    return 1;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -3382,6 +3449,10 @@ static const MethodEntry unit_methods[] = {
     {"PlayFxRollOffEnd",             stub_noop},
     {"SetupBuildBones",              stub_noop},
     {"GetBlip",                      unit_GetBlip},
+    {"GetVeterancyLevel",           unit_GetVeterancyLevel},
+    {"SetVeterancyLevel",           unit_SetVeterancyLevel},
+    {"AddXP",                       unit_AddXP},
+    {"GetXPValue",                  unit_GetXPValue},
     {nullptr, nullptr},
 };
 

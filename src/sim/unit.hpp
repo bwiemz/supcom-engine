@@ -259,6 +259,17 @@ public:
     // Veterancy level (0-5, set from Lua VeterancyComponent)
     u8 vet_level() const { return vet_level_; }
     void set_vet_level(u8 level) { vet_level_ = level; }
+    f32 vet_xp() const { return vet_xp_; }
+    f32 xp_value() const { return xp_value_; }
+    void set_xp_value(f32 v) { xp_value_ = v; }
+    f32 damage_multiplier() const { return damage_multiplier_; }
+    void set_damage_multiplier(f32 m) { damage_multiplier_ = m; }
+    const std::array<f32, 5>& vet_thresholds() const { return vet_thresholds_; }
+    void set_vet_thresholds(const std::array<f32, 5>& t) { vet_thresholds_ = t; }
+    const std::vector<std::pair<u32, f32>>& damage_contributions() const { return damage_contributions_; }
+    void record_damage(u32 attacker_id, f32 amount);
+    void clear_damage_contributions() { damage_contributions_.clear(); }
+    void add_xp(f32 amount, lua_State* L, EntityRegistry& registry);
 
     // Stats/telemetry system
     void set_stat(const std::string& key, f64 value);
@@ -474,6 +485,8 @@ public:
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
     bool nav_update(f64 dt, const map::Terrain* terrain);
+    void apply_vet_buffs(lua_State* L);
+    void fire_on_veteran(lua_State* L);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
@@ -543,6 +556,11 @@ private:
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
     // Veterancy
     u8 vet_level_ = 0;
+    f32 vet_xp_ = 0;
+    std::array<f32, 5> vet_thresholds_ = {0, 0, 0, 0, 0}; // from Veteran.Level1-5
+    f32 damage_multiplier_ = 1.0f; // vet damage bonus multiplier
+    f32 xp_value_ = 0;             // Economy.BuildCostMass (cached for XP distribution)
+    std::vector<std::pair<u32, f32>> damage_contributions_; // (attacker_id, cumulative_damage)
     // Stats/telemetry
     std::unordered_map<std::string, f64> stats_;
     // Silo ammo counters

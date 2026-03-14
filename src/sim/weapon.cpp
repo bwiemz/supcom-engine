@@ -163,7 +163,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     proj->target_entity_id = need_compute_bomb_drop ? 0 : target_entity_id;
     proj->target_position = target->position();
     proj->launcher_id = owner.entity_id();
-    proj->damage_amount = damage;
+    proj->damage_amount = damage * owner.damage_multiplier();
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;
     // Bombs drop from altitude so need more time; normal projectiles use flight time
