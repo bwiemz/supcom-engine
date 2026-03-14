@@ -42,6 +42,9 @@ public:
         ai_army_indices_ = indices;
     }
 
+    /// Limit the number of non-civilian armies created (0 = no limit).
+    void set_max_armies(int n) { max_armies_ = n; }
+
     bool is_ai_army(int index) const {
         return std::find(ai_army_indices_.begin(), ai_army_indices_.end(),
                          index) != ai_army_indices_.end();
@@ -58,6 +61,7 @@ private:
 
     bool session_active_ = false;
     std::vector<int> ai_army_indices_;
+    int max_armies_ = 0; // 0 = no limit
 };
 
 } // namespace osc::lua

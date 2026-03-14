@@ -3384,7 +3384,7 @@ static int l_InitializeArmyAI(lua_State* L) {
         lua_gettable(L, brain_idx);
         if (!lua_isstring(L, -1)) {
             lua_pop(L, 1);
-            lua_pushstring(L, "none");
+            lua_pushstring(L, "");
         }
         if (lua_pcall(L, 2, 0, 0) != 0) {
             const char* err = lua_tostring(L, -1);
@@ -3412,6 +3412,55 @@ static int l_SetArmyFactionIndex(lua_State* L) {
         auto* brain = sim->get_army(army);
         if (brain) brain->set_faction(faction);
     }
+    return 0;
+}
+
+// SetArmyAIPersonality(armyName, personality) — stores AIPersonality on the
+// ArmySetup entry so the Lua code can read it during OnCreateArmyBrain.
+static int l_SetArmyAIPersonality(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const char* personality = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
+
+    // Set ScenarioInfo.ArmySetup[name].AIPersonality = personality
+    lua_pushstring(L, "ScenarioInfo");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
+    lua_pushstring(L, "ArmySetup");
+    lua_gettable(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); return 0; }
+    lua_pushstring(L, name);
+    lua_gettable(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 3); return 0; }
+
+    lua_pushstring(L, "AIPersonality");
+    lua_pushstring(L, personality);
+    lua_rawset(L, -3);
+
+    lua_pop(L, 3); // info, ArmySetup, ScenarioInfo
+    return 0;
+}
+
+// SetArmyPlans(armyName, planFilePath) — stores PlanName on the brain's Lua
+// table so that InitializeArmyAI can pass it to OnCreateAI.
+static int l_SetArmyPlans(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const char* plans = lua_isstring(L, 2) ? lua_tostring(L, 2) : nullptr;
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+
+    auto* brain = sim->get_army_by_name(name);
+    if (!brain || brain->lua_table_ref() < 0) return 0;
+
+    // Set brain.PlanName = plans
+    lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
+    lua_pushstring(L, "PlanName");
+    if (plans) {
+        lua_pushstring(L, plans);
+    } else {
+        lua_pushstring(L, "");
+    }
+    lua_rawset(L, -3);
+    lua_pop(L, 1); // pop brain table
     return 0;
 }
 
@@ -4593,10 +4642,10 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("InternalCreateArmy", l_InternalCreateArmy);
     state.register_function("InitializeArmyAI", l_InitializeArmyAI);
     state.register_function("SetArmyStart", l_SetArmyStart);
-    state.register_function("SetArmyPlans", stub_noop);
+    state.register_function("SetArmyPlans", l_SetArmyPlans);
     state.register_function("SetArmyFactionIndex", l_SetArmyFactionIndex);
     state.register_function("SetArmyColorIndex", stub_noop);
-    state.register_function("SetArmyAIPersonality", stub_noop);
+    state.register_function("SetArmyAIPersonality", l_SetArmyAIPersonality);
     state.register_function("SetIgnoreArmyUnitCap", stub_noop);
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
     state.register_function("CreatePropInSimCallback", stub_noop);

@@ -28,6 +28,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "sim/unit.hpp"
 #include "lua/smoke_test.hpp"
 
 extern "C" {
@@ -462,6 +463,7 @@ int main(int argc, char* argv[]) {
     bool phase4_test = parse_flag(argc, argv, "--phase4-test");
     bool phase5_test = parse_flag(argc, argv, "--phase5-test");
     bool smoke_test = parse_flag(argc, argv, "--smoke-test");
+    bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
     std::set<std::string> cmdline_args;
@@ -508,7 +510,7 @@ int main(int argc, char* argv[]) {
                     dualstate_test ||
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
-                    profile_test || smoke_test;
+                    profile_test || smoke_test || ai_skirmish;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -594,9 +596,10 @@ int main(int argc, char* argv[]) {
         }
         scenario_meta = meta_result.value();
 
-        // Add armies from scenario
-        for (const auto& army : scenario_meta.armies) {
-            sim_state->add_army(army, army);
+        // Add armies from scenario (ai_skirmish limits to 2)
+        size_t army_limit = ai_skirmish ? 2 : scenario_meta.armies.size();
+        for (size_t i = 0; i < std::min(army_limit, scenario_meta.armies.size()); i++) {
+            sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
         }
     }
 
@@ -653,8 +656,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Load blueprints into UI state (needed for GetBlueprint lookups)
-    auto ui_bp_result = loader.load_blueprints(ui_lua_state, vfs, store);
+    // Load blueprints into UI state (separate store — UI refs must not
+    // overwrite sim_L registry refs in the main store)
+    osc::blueprints::BlueprintStore ui_store(ui_lua_state.raw());
+    auto ui_bp_result = loader.load_blueprints(ui_lua_state, vfs, ui_store);
     if (!ui_bp_result) {
         spdlog::warn("UI blueprint load: {}", ui_bp_result.error().message);
     }
@@ -758,7 +763,10 @@ int main(int argc, char* argv[]) {
     // Phase 4: Session lifecycle
     if (!map_path.empty()) {
         osc::lua::SessionManager session_mgr;
-        if (ai_test || platoon_test || threat_test || combat_test) {
+        if (ai_skirmish) {
+            session_mgr.set_ai_armies({0, 1}); // Both armies are AI
+            session_mgr.set_max_armies(2);      // Only create 2 armies
+        } else if (ai_test || platoon_test || threat_test || combat_test) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
         auto session_result = session_mgr.start_session(
@@ -1482,8 +1490,94 @@ int main(int argc, char* argv[]) {
         spdlog::info("=== Smoke Test Complete ===");
     }
 
+    // === AI-vs-AI Skirmish (M163) ===
+    if (ai_skirmish && !map_path.empty()) {
+        osc::u32 max_ticks = tick_count > 0 ? tick_count : 6000; // default 10 min
+        spdlog::info("=== AI-vs-AI Skirmish: up to {} ticks ({:.0f}s) ===",
+                     max_ticks,
+                     max_ticks * osc::sim::SimState::SECONDS_PER_TICK);
+
+        osc::u32 ticks_run = 0;
+        osc::i32 result = 0;
+        osc::u32 log_interval = 100; // log stats every 10 game seconds
+
+        for (osc::u32 i = 0; i < max_ticks; i++) {
+            sim_state->tick();
+            ticks_run++;
+
+            // Periodic stats logging
+            if (ticks_run % log_interval == 0) {
+                osc::u32 total_units = 0;
+                osc::u32 total_vet = 0;
+                for (size_t a = 0; a < sim_state->army_count(); a++) {
+                    auto* brain = sim_state->army_at(a);
+                    if (!brain || brain->is_civilian()) continue;
+                    total_units += static_cast<osc::u32>(
+                        brain->get_unit_cost_total(sim_state->entity_registry()));
+                }
+                sim_state->entity_registry().for_each([&](const osc::sim::Entity& e) {
+                    if (!e.destroyed() && e.is_unit()) {
+                        auto& u = static_cast<const osc::sim::Unit&>(e);
+                        if (u.vet_level() > 0) total_vet++;
+                    }
+                });
+                spdlog::info("  Tick {}: {:.1f}s | {} units alive | {} vetted",
+                             ticks_run,
+                             ticks_run * osc::sim::SimState::SECONDS_PER_TICK,
+                             total_units, total_vet);
+            }
+
+            // Check for game over
+            result = sim_state->player_result();
+            if (result != 0) {
+                const char* result_str =
+                    result == 1 ? "ARMY_1 WINS" :
+                    result == 2 ? "ARMY_2 WINS" : "DRAW";
+                spdlog::info("=== Game Over at tick {} ({:.1f}s): {} ===",
+                             ticks_run,
+                             ticks_run * osc::sim::SimState::SECONDS_PER_TICK,
+                             result_str);
+                break;
+            }
+        }
+
+        if (result == 0) {
+            spdlog::info("=== AI Skirmish: tick limit reached, no winner ===");
+        }
+
+        // Final summary
+        spdlog::info("=== AI Skirmish Summary ===");
+        spdlog::info("  Map: {}", map_path);
+        spdlog::info("  Ticks: {} ({:.1f}s game time)",
+                     ticks_run,
+                     ticks_run * osc::sim::SimState::SECONDS_PER_TICK);
+        spdlog::info("  Result: {}",
+                     result == 1 ? "ARMY_1 wins" :
+                     result == 2 ? "ARMY_2 wins" :
+                     result == 0 ? "No winner (timeout)" : "Draw");
+        for (size_t a = 0; a < sim_state->army_count(); a++) {
+            auto* brain = sim_state->army_at(a);
+            if (!brain || brain->is_civilian()) continue;
+            osc::u32 surviving = 0;
+            osc::u32 vetted = 0;
+            osc::i32 army_idx = static_cast<osc::i32>(a);
+            sim_state->entity_registry().for_each(
+                [&](const osc::sim::Entity& e) {
+                    if (!e.destroyed() && e.is_unit() && e.army() == army_idx) {
+                        surviving++;
+                        auto& u = static_cast<const osc::sim::Unit&>(e);
+                        if (u.vet_level() > 0) vetted++;
+                    }
+                });
+            spdlog::info("  Army {} ({}): {} units surviving, {} vetted",
+                         a + 1, brain->is_defeated() ? "DEFEATED" : "alive",
+                         surviving, vetted);
+        }
+        spdlog::info("=== End AI Skirmish ===");
+    }
+
     // Headless tick loop
-    if (!map_path.empty() && tick_count > 0) {
+    if (!ai_skirmish && !map_path.empty() && tick_count > 0) {
         spdlog::info("Running {} sim ticks ({:.1f}s game time)...",
                      tick_count,
                      tick_count * osc::sim::SimState::SECONDS_PER_TICK);

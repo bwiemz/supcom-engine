@@ -4740,6 +4740,207 @@ static int brain_SetArmyColor(lua_State* L) {
     return 0;
 }
 
+// brain:ForkThread(fn, ...) — fork a sim coroutine thread
+// Stack: [1]=self(brain), [2]=fn, [3..n]=extra args
+// Reorder to: [1]=fn, [2]=self, [3..n]=extra args  then call fork_thread
+static int brain_ForkThread(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    if (lua_gettop(L) < 2 || !lua_isfunction(L, 2)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushvalue(L, 2); // copy fn to top
+    lua_remove(L, 2);    // remove fn from pos 2
+    lua_insert(L, 1);    // move fn from top to pos 1
+    // Stack is now: [1]=fn, [2]=self(brain), [3..n]=extra args
+    return sim->thread_manager().fork_thread(L);
+}
+
+// brain:GetPersonality() — returns a personality table with methods used by AI.
+// In the original engine this reads .aip personality files; we return a default
+// personality with balanced emphasis values and identity delay adjustment.
+static int brain_GetPersonality(lua_State* L) {
+    // Check if we already cached the personality table in the registry
+    lua_pushstring(L, "__osc_default_personality");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        return 1; // return cached table
+    }
+    lua_pop(L, 1);
+
+    // Create a personality table with closures for the required methods
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+
+    // AdjustDelay(self, base, divisor) → base (no adjustment for default)
+    lua_pushstring(L, "AdjustDelay");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        // personality:AdjustDelay(base, divisor) → return base
+        f64 base_val = lua_tonumber(Ls, 2);
+        lua_pushnumber(Ls, base_val);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetAirUnitsEmphasis() → 0.5 (balanced)
+    lua_pushstring(L, "GetAirUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetTankUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetTankUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetBotUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetBotUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // GetSeaUnitsEmphasis() → 0.5
+    lua_pushstring(L, "GetSeaUnitsEmphasis");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_pushnumber(Ls, 0.5);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
+    // Make methods callable via : syntax (self-referencing __index)
+    lua_pushvalue(L, tbl);
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, tbl);
+    lua_rawset(L, -3);
+    lua_setmetatable(L, tbl);
+
+    // Cache in registry for reuse
+    lua_pushstring(L, "__osc_default_personality");
+    lua_pushvalue(L, tbl);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    return 1; // return the personality table
+}
+
+// brain:AssignThreatAtPosition(pos, amount, decay) — writes threat to the
+// threat map. Stub: our threat map is read-only (computed from units) so we
+// just accept and discard the manual override.
+static int brain_AssignThreatAtPosition(lua_State*) {
+    return 0;
+}
+
+// brain:ExecutePlan(planPath) — import the plan file, call its ExecutePlan(brain)
+static int brain_ExecutePlan(lua_State* L) {
+    // Stack: [1]=self(brain), [2]=planPath
+    const char* plan = lua_isstring(L, 2) ? lua_tostring(L, 2) : nullptr;
+    if (!plan || plan[0] == '\0') return 0;
+
+    lua_getglobal(L, "import");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return 0; }
+    lua_pushstring(L, plan);
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("ExecutePlan: import('{}') failed: {}", plan,
+                     lua_tostring(L, -1) ? lua_tostring(L, -1) : "?");
+        lua_pop(L, 1);
+        return 0;
+    }
+    // Stack: [1]=brain, [2]=planPath, [-1]=module
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0; }
+    lua_pushstring(L, "ExecutePlan");
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); return 0; }
+    lua_pushvalue(L, 1); // push brain as arg
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        spdlog::warn("ExecutePlan: call failed: {}",
+                     lua_tostring(L, -1) ? lua_tostring(L, -1) : "?");
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); // pop module
+    return 0;
+}
+
+// brain:EvaluatePlan(planPath) → score (number)
+static int brain_EvaluatePlan(lua_State* L) {
+    const char* plan = lua_isstring(L, 2) ? lua_tostring(L, 2) : nullptr;
+    if (!plan || plan[0] == '\0') { lua_pushnumber(L, 0); return 1; }
+
+    lua_getglobal(L, "import");
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); lua_pushnumber(L, 0); return 1; }
+    lua_pushstring(L, plan);
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        lua_pop(L, 1);
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushnumber(L, 0); return 1; }
+    lua_pushstring(L, "EvaluatePlan");
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 2); lua_pushnumber(L, 0); return 1; }
+    lua_pushvalue(L, 1); // push brain as arg
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        lua_pop(L, 1);
+        lua_pushnumber(L, 0);
+    }
+    // result is on stack (score number)
+    lua_remove(L, -2); // remove module
+    return 1;
+}
+
+// brain:GetStartVector3f() → {x, y, z} table
+static int brain_GetStartVector3f(lua_State* L) {
+    auto* brain = check_brain(L);
+    osc::sim::Vector3 default_pos{0, 0, 0};
+    const auto& pos = brain ? brain->start_position() : default_pos;
+    lua_newtable(L);
+    int tbl = lua_gettop(L);
+    lua_pushnumber(L, 1);
+    lua_pushnumber(L, static_cast<f64>(pos.x));
+    lua_rawset(L, tbl);
+    lua_pushnumber(L, 2);
+    lua_pushnumber(L, static_cast<f64>(pos.y));
+    lua_rawset(L, tbl);
+    lua_pushnumber(L, 3);
+    lua_pushnumber(L, static_cast<f64>(pos.z));
+    lua_rawset(L, tbl);
+    return 1;
+}
+
+// brain:GetMapWaterRatio() → fraction of map that is water (0.0–1.0)
+static int brain_GetMapWaterRatio(lua_State* L) {
+    // Stub: return 0.0 (land map)
+    lua_pushnumber(L, 0.0);
+    return 1;
+}
+
+// brain:SetConstantEvaluate(bool)
+static int brain_SetConstantEvaluate(lua_State* L) {
+    // Store on the brain's Lua table for Lua code to read
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "ConstantEval");
+        lua_pushboolean(L, lua_toboolean(L, 2));
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
+// brain:SetRepeatExecution(bool)
+static int brain_SetRepeatExecution(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "RepeatExecution");
+        lua_pushboolean(L, lua_toboolean(L, 2));
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
 // ====================================================================
 // Brain threat methods
 // ====================================================================
@@ -6241,6 +6442,15 @@ static const MethodEntry aibrain_methods[] = {
     {"OnDefeat",                    brain_OnDefeat},
     {"OnDraw",                      brain_OnDraw},
     {"SetArmyColor",                brain_SetArmyColor},
+    {"ForkThread",                  brain_ForkThread},
+    {"GetPersonality",              brain_GetPersonality},
+    {"AssignThreatAtPosition",      brain_AssignThreatAtPosition},
+    {"ExecutePlan",                 brain_ExecutePlan},
+    {"EvaluatePlan",                brain_EvaluatePlan},
+    {"GetStartVector3f",            brain_GetStartVector3f},
+    {"GetMapWaterRatio",            brain_GetMapWaterRatio},
+    {"SetConstantEvaluate",         brain_SetConstantEvaluate},
+    {"SetRepeatExecution",          brain_SetRepeatExecution},
     // Stubs (AI/platoon features not yet implemented)
     {"AssignUnitsToPlatoon",        brain_AssignUnitsToPlatoon},
     {"PlatoonExists",               brain_PlatoonExists},
@@ -6747,6 +6957,7 @@ static const MethodEntry platoon_methods[] = {
     {"SetPrioritizedTargetList",    platoon_SetPrioritizedTargetList},
     {"IsCommandsActive",            platoon_IsCommandsActive},
     {"CalculatePlatoonThreat",      platoon_CalculatePlatoonThreat},
+    {"TurnOffPoolAI",               [](lua_State*) -> int { return 0; }},
     {nullptr, nullptr},
 };
 

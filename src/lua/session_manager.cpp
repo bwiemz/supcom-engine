@@ -1,6 +1,7 @@
 #include "lua/session_manager.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/platoon.hpp"
 #include "sim/sim_state.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -31,13 +32,31 @@ Result<void> SessionManager::start_session(LuaState& state,
                       setup_result.error().message);
     }
 
+    // If any armies are AI, set ScenarioInfo.GameHasAIs = true so
+    // BeginSession loads AI templates (SetupSession resets it to false)
+    if (!ai_army_indices_.empty()) {
+        lua_getglobal(L, "ScenarioInfo");
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "GameHasAIs");
+            lua_pushboolean(L, 1);
+            lua_rawset(L, -3);
+        }
+        lua_pop(L, 1);
+    }
+
     // Step 3: Extract start positions from Scenario.MasterChain markers
     extract_start_positions(L, sim);
 
     // Step 4: Create army brains
-    spdlog::info("  Creating army brains ({} armies)...", meta.armies.size());
+    // Determine how many armies to create (max_armies_ limits non-civilian count)
+    size_t army_limit = meta.armies.size();
+    if (max_armies_ > 0) {
+        army_limit = std::min(meta.armies.size(), static_cast<size_t>(max_armies_));
+    }
+    spdlog::info("  Creating army brains ({} of {} armies)...",
+                 army_limit, meta.armies.size());
     i32 brains_created = 0;
-    for (size_t i = 0; i < meta.armies.size(); i++) {
+    for (size_t i = 0; i < army_limit; i++) {
         auto result = create_army_brain(L, sim, static_cast<i32>(i),
                                          meta.armies[i], meta.armies[i]);
         if (!result) {
@@ -58,6 +77,52 @@ Result<void> SessionManager::start_session(LuaState& state,
     if (!begin_result) {
         spdlog::warn("  BeginSession() failed: {} (continuing anyway)",
                       begin_result.error().message);
+    }
+
+    // Step 6: Ensure each non-civilian army has at least one unit (ACU).
+    //         FA's OnPopulate may fail in our engine, so we create ACUs
+    //         directly via the sim C++ API if they weren't spawned.
+    for (size_t i = 0; i < army_limit; i++) {
+        auto* brain = sim.get_army(static_cast<i32>(i));
+        if (!brain || brain->is_civilian()) continue;
+        if (brain->get_unit_cost_total(sim.entity_registry()) > 0) continue;
+
+        // Determine ACU blueprint from faction
+        const char* acu_bp = "uel0001"; // UEF default
+        int faction = brain->faction();
+        if (faction == 2) acu_bp = "ual0001"; // Aeon
+        else if (faction == 3) acu_bp = "url0001"; // Cybran
+        else if (faction == 4) acu_bp = "xsl0001"; // Seraphim
+
+        const auto& pos = brain->start_position();
+        spdlog::info("  Army {} has no units — spawning ACU {} at ({:.0f}, {:.0f})",
+                     meta.armies[i], acu_bp, pos.x, pos.z);
+
+        // Call CreateUnit(bp, army_1based, x, y, z) via Lua stack
+        lua_getglobal(L, "CreateUnit");
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, acu_bp);
+            lua_pushnumber(L, static_cast<int>(i) + 1); // 1-based
+            lua_pushnumber(L, pos.x);
+            lua_pushnumber(L, pos.y);
+            lua_pushnumber(L, pos.z);
+            int status = lua_pcall(L, 5, 1, 0);
+            if (status != 0) {
+                spdlog::warn("  CreateUnit ACU failed: {}",
+                             lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown");
+                lua_pop(L, 1);
+            } else {
+                // Give initial resources (650 mass storage, 4000 energy storage)
+                auto& econ = brain->economy();
+                econ.mass.stored = std::min(econ.mass.stored + 650.0,
+                                            econ.mass.max_storage);
+                econ.energy.stored = std::min(econ.energy.stored + 4000.0,
+                                              econ.energy.max_storage);
+                lua_pop(L, 1); // pop unit table
+            }
+        } else {
+            lua_pop(L, 1);
+        }
     }
 
     session_active_ = true;
@@ -128,7 +193,11 @@ void SessionManager::setup_army_info(lua_State* L,
     lua_newtable(L);
     int setup_idx = lua_gettop(L);
 
-    for (size_t i = 0; i < meta.armies.size(); i++) {
+    size_t setup_limit = meta.armies.size();
+    if (max_armies_ > 0) {
+        setup_limit = std::min(meta.armies.size(), static_cast<size_t>(max_armies_));
+    }
+    for (size_t i = 0; i < setup_limit; i++) {
         const auto& army_name = meta.armies[i];
         lua_pushstring(L, army_name.c_str());
         lua_newtable(L);
@@ -171,9 +240,9 @@ void SessionManager::setup_army_info(lua_State* L,
         lua_pushnumber(L, static_cast<int>(i) + 1);
         lua_rawset(L, -3);
 
-        // AIPersonality — empty string for human, empty for all in headless
+        // AIPersonality — "adaptive" for AI armies, empty for human/civilian
         lua_pushstring(L, "AIPersonality");
-        lua_pushstring(L, "");
+        lua_pushstring(L, is_ai ? "adaptive" : "");
         lua_rawset(L, -3);
 
         // StartSpot (needed by some Lua code)
@@ -332,6 +401,58 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
     lua_pushvalue(L, brain_tbl);
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
     brain->set_lua_table_ref(ref);
+
+    // Create the ArmyPool platoon — the engine auto-creates this for every brain.
+    // FA code assumes it always exists (e.g. GetPlatoonUniquelyNamed('ArmyPool')).
+    {
+        auto* pool = brain->create_platoon("ArmyPool");
+        lua_newtable(L);
+        int ptbl = lua_gettop(L);
+
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, pool);
+        lua_rawset(L, ptbl);
+
+        lua_pushstring(L, "PlanName");
+        lua_pushstring(L, "");
+        lua_rawset(L, ptbl);
+
+        // Set metatable: try __platoon_class (FA's Platoon class), else raw moho
+        lua_pushstring(L, "__platoon_class");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_pushstring(L, "__osc_platoon_mt");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (!lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                // Build from moho.platoon_methods
+                lua_newtable(L);
+                lua_pushstring(L, "__index");
+                lua_getglobal(L, "moho");
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "platoon_methods");
+                    lua_rawget(L, -2);
+                    lua_remove(L, -2); // remove moho
+                } else {
+                    lua_pop(L, 1);
+                    lua_newtable(L); // empty fallback
+                }
+                lua_rawset(L, -3);
+                // Cache it
+                lua_pushstring(L, "__osc_platoon_mt");
+                lua_pushvalue(L, -2);
+                lua_rawset(L, LUA_REGISTRYINDEX);
+            }
+        }
+        lua_setmetatable(L, ptbl);
+
+        lua_pushvalue(L, ptbl);
+        int pool_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        pool->set_lua_table_ref(pool_ref);
+
+        lua_pop(L, 1); // pop platoon table
+    }
 
     // Call OnCreateArmyBrain(index, brain, name, nickname)
     lua_getglobal(L, "OnCreateArmyBrain");

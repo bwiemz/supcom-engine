@@ -231,6 +231,10 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     lua_pop(L, 1);
 
     for (const auto& ev : pending_events_) {
+        // Clear stale hover pointer if the control was destroyed (e.g. by Lua)
+        if (hover_control_ && hover_control_->destroyed())
+            hover_control_ = nullptr;
+
         // Check for active dragger — intercepts mouse events
         lua_pushstring(L, "__osc_active_dragger");
         lua_rawget(L, LUA_REGISTRYINDEX);
@@ -319,7 +323,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
 
         // Mouse enter/exit tracking
         if (ev.type == UIEventType::MOUSE_MOTION && target != hover_control_) {
-            if (hover_control_ && hover_control_->lua_table_ref() >= 0) {
+            if (hover_control_ && !hover_control_->destroyed() &&
+                hover_control_->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, hover_control_->lua_table_ref());
                 lua_pushstring(L, "OnMouseExit");
                 lua_rawget(L, -2);
@@ -331,6 +336,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 }
                 lua_pop(L, 1);
             }
+            // Re-validate target after OnMouseExit callback (may have destroyed it)
+            if (target && target->destroyed()) target = nullptr;
             if (target && target->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
                 lua_pushstring(L, "OnMouseEnter");

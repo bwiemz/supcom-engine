@@ -272,6 +272,7 @@ void ThreadManager::cleanup_dead_threads() {
         if (it->dead) {
             if (it->lua_ref >= 0) {
                 luaL_unref(L_, LUA_REGISTRYINDEX, it->lua_ref);
+                it->lua_ref = -2; // LUA_NOREF — prevent double-unref
             }
             it = threads_.erase(it);
         } else {

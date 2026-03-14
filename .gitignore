@@ -1,4 +1,5 @@
 /.serena
 /build/
 /build-release/
+/.claude/worktrees/
 *.log

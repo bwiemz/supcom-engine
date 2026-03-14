@@ -75,6 +75,9 @@ public:
     u32 emitter_count() const { return static_cast<u32>(emitters_.size()); }
     u32 particle_count() const;
 
+    /// Remove all emitters and particles (for scene teardown).
+    void clear() { emitters_.clear(); instances_.clear(); }
+
     static constexpr u32 MAX_PARTICLES = 16384;
 
 private:
