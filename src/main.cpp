@@ -28,6 +28,7 @@
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "lua/smoke_test.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -459,6 +460,7 @@ int main(int argc, char* argv[]) {
     bool phase3_test = parse_flag(argc, argv, "--phase3-test");
     bool phase4_test = parse_flag(argc, argv, "--phase4-test");
     bool phase5_test = parse_flag(argc, argv, "--phase5-test");
+    bool smoke_test = parse_flag(argc, argv, "--smoke-test");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
     std::set<std::string> cmdline_args;
@@ -505,7 +507,7 @@ int main(int argc, char* argv[]) {
                     dualstate_test ||
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
-                    profile_test;
+                    profile_test || smoke_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -1229,6 +1231,34 @@ int main(int argc, char* argv[]) {
             for (osc::u32 i = 0; i < 100; i++)
                 sim_state.tick();
         }
+    }
+
+    // === Smoke Test ===
+    if (smoke_test && !map_path.empty()) {
+        osc::lua::SmokeTestHarness harness;
+
+        // Install interceptors on sim state
+        harness.install_panic_handler(sim_lua_state.raw());
+        harness.install_global_interceptor(sim_lua_state.raw());
+        harness.install_all_method_interceptors(sim_lua_state.raw());
+
+        // Install interceptors on UI state
+        harness.install_panic_handler(ui_lua_state.raw());
+        harness.install_global_interceptor(ui_lua_state.raw());
+        harness.install_all_method_interceptors(ui_lua_state.raw());
+
+        spdlog::info("=== Smoke Test: Running 100 sim ticks ===");
+        for (int i = 0; i < 100; i++) {
+            sim_state.tick();
+        }
+
+        spdlog::info("=== Smoke Test: Running 100 UI frame dispatches ===");
+        for (int i = 0; i < 100; i++) {
+            ui_thread_manager.resume_all(static_cast<osc::u32>(i));
+        }
+
+        harness.print_report();
+        spdlog::info("=== Smoke Test Complete ===");
     }
 
     // Headless tick loop
