@@ -24,9 +24,11 @@
 
 4. **Orders panel** — select units, verify order buttons appear (Move, Attack, Patrol, Guard, Stop). Click an order, verify cursor mode changes, click on map, verify the command dispatches via SimCallback.
 
-5. **Economy feedback** — verify mass/energy bars update during construction. Verify stalling feedback is visible when over-building.
+5. **Shift-queue commands** — Shift+right-click to queue multiple move waypoints. Verify SimCallback distinguishes `clear_commands=true` (standard click) from `clear_commands=false` (Shift-click). Verify the UI's ghosted command path lines update correctly as units complete orders and pop them from the queue. This is a critical UI/sim sync point — FA's UI maintains a local prediction of `GetCommandQueue()` for drawing paths before the sim executes them.
 
-6. **Game-over flow** — kill the AI's ACU (or let it kill yours), verify EndGame triggers, score screen appears, return-to-lobby works.
+6. **Economy feedback** — verify mass/energy bars update during construction. Verify stalling feedback is visible when over-building.
+
+7. **Game-over flow** — kill the AI's ACU (or let it kill yours), verify EndGame triggers, score screen appears, return-to-lobby works.
 
 ### Expected Fix Areas
 
@@ -100,6 +102,10 @@ FA's AI runs through a chain of Lua managers: ExecutePlan (aiarchetype-managerlo
 - BuilderManager.lua / EngineerManager.lua / FactoryBuilderManager.lua class logic — all pure Lua
 - Builder priority sorting, condition evaluation, task assignment — all Lua
 
+### Architectural Note: Threat Matrix
+
+The AI heavily uses `brain:GetThreatAtPosition()`, `GetHighestThreatPosition()`, and `GetThreatsAroundPosition()` to decide where to attack and where to build defenses. These are already implemented as query-based functions (scanning all units per call), not backed by a persistent influence map. This works functionally but may become a performance bottleneck when the AI forms platoons and evaluates dozens of positions per beat. If profiling reveals threat queries as a hotspot, consider adding a periodically-updated spatial threat grid (e.g., every 10 ticks) that projects each unit's DPS/health onto cells. For Phase 2, the existing query-based implementations should be sufficient to unblock AI building.
+
 ### Validation
 
 Run `--ai-skirmish` with 2 AI armies. Success criteria:
@@ -162,6 +168,7 @@ The `aipersonality_methods` metatable is currently `empty_methods`. FA's `aipers
   - `BuffDefinitions.lua` must be importable
   - `Buff.ApplyBuff()` must traverse to the terminal moho calls without hitting missing methods
   - The moho methods at the end of the chain (`SetBuildRate`, `SetProductionPerSecondMass`, etc.) already exist — verify they're wired correctly
+- **Buff base value preservation:** When `SetBuildRate(20)` overwrites a base rate of 10 via a cheat buff, the engine must preserve the original base value so it can be restored if the buff is removed. Verify that the C++ Unit class stores `base_build_rate_`, `base_mass_prod_`, etc. alongside current values, or that FA's Lua buff system handles restoration through its own stacking logic.
 
 #### 5. Lobby options for difficulty
 
@@ -208,8 +215,9 @@ Launch skirmish with Rush AI vs Turtle AI. Rush AI should build factories and at
    - `DrawCircle/DrawLine/DrawLinePop` — debug rendering, skip
 
 3. **Performance** — verify ≥30 FPS with 100+ AI units on screen:
-   - Pathfinding under load (concurrent A* requests)
-   - Threat queries with many units (spatial hash mitigates)
+   - **Pathfinding avalanches:** When AI forms a 40-unit platoon and orders an attack-move, 40 A* requests hit Navigator in a single tick. On large maps (81km Seton's Clutch) this will freeze the engine. Mitigation: implement a pathfinding request queue/time-slicer — if a tick exceeds N path requests, defer the rest to the next tick (units wait in idle state for a few frames). Bonus optimization: compute A* only for the platoon leader, have other units use lightweight steering/flocking to follow.
+   - **Lua 5.0 GC stutters:** Lua 5.0 uses a stop-the-world garbage collector. The AI's BuilderManager and PlatoonFormManager generate massive ephemeral table garbage every beat (evaluating hundreds of build conditions). Without intervention, this causes 50-200ms stutter spikes as the GC pauses the VM. Mitigation: manually call `lua_gc()` with a fixed time budget per frame in ThreadManager or SimState to amortize GC cost across ticks.
+   - Threat queries with many units (spatial hash mitigates, but see Phase 2 architectural note)
    - Lua thread instruction budget tuning (currently 1M per resume)
 
 4. **Game-over reliability** — all win/lose paths:
