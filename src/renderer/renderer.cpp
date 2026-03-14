@@ -1323,10 +1323,14 @@ void Renderer::create_bloom_pipelines() {
         return;
     }
 
+    // Fullscreen triangle is CW in Vulkan's Y-down coords — disable culling
+    // for all post-process passes (standard practice for screen-space effects)
+
     // Bright pass pipeline (extract bright pixels from scene)
     bloom_bright_pipeline_ = PipelineBuilder()
         .set_shaders(bright_v, bright_f)
         .set_depth_test(false, false)
+        .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .set_push_constant(8, VK_SHADER_STAGE_FRAGMENT_BIT)
         .set_descriptor_set_layout(texture_ds_layout_)
         .build(device_, bloom_render_pass_, &bloom_bright_layout_);
@@ -1335,6 +1339,7 @@ void Renderer::create_bloom_pipelines() {
     bloom_blur_pipeline_ = PipelineBuilder()
         .set_shaders(bright_v, blur_f)
         .set_depth_test(false, false)
+        .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .set_push_constant(8, VK_SHADER_STAGE_FRAGMENT_BIT)
         .set_descriptor_set_layout(texture_ds_layout_)
         .build(device_, bloom_render_pass_, &bloom_blur_layout_);
@@ -1343,6 +1348,7 @@ void Renderer::create_bloom_pipelines() {
     bloom_composite_pipeline_ = PipelineBuilder()
         .set_shaders(bright_v, comp_f)
         .set_depth_test(false, false)
+        .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
         .set_push_constant(4, VK_SHADER_STAGE_FRAGMENT_BIT)
         .set_descriptor_set_layout(texture_ds_layout_)    // set 0: scene
         .add_descriptor_set_layout(texture_ds_layout_)     // set 1: bloom
@@ -1354,7 +1360,9 @@ void Renderer::create_bloom_pipelines() {
     vkDestroyShaderModule(device_, blur_f, nullptr);
     vkDestroyShaderModule(device_, comp_f, nullptr);
 
-    spdlog::info("Bloom pipelines created");
+    spdlog::info("Bloom pipelines created — bright={} blur={} composite={}",
+                 (void*)bloom_bright_pipeline_, (void*)bloom_blur_pipeline_,
+                 (void*)bloom_composite_pipeline_);
 }
 
 void Renderer::clear_scene() {
@@ -2103,7 +2111,10 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // ==================== MAIN PASS ====================
     PROFILE_ZONE("Render::main_pass");
 
-    bool do_bloom = bloom_enabled_ && bloom_bright_pipeline_;
+    bool do_bloom = bloom_enabled_ && bloom_bright_pipeline_ && bloom_composite_pipeline_;
+    if (bloom_enabled_ && bloom_bright_pipeline_ && !bloom_composite_pipeline_) {
+        spdlog::warn("Bloom composite pipeline is null — falling back to direct rendering");
+    }
 
     // Begin render pass — scene_render_pass_ (offscreen) when bloom is on,
     // render_pass_ (swapchain) when bloom is off.
