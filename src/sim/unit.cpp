@@ -672,7 +672,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != target->position().x ||
                     navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
             } else {
@@ -871,7 +872,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().x != transport->position().x ||
                     navigator_.goal().z != transport->position().z) {
                     navigator_.set_goal(transport->position(), ctx.pathfinder,
-                                        position(), layer_);
+                                        position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -904,7 +906,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().x != cmd.target_pos.x ||
                     navigator_.goal().z != cmd.target_pos.z) {
                     navigator_.set_goal(cmd.target_pos, ctx.pathfinder,
-                                        position(), layer_);
+                                        position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -972,7 +975,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (dist2 > range * range) {
                 if (!navigator_.is_moving()) {
                     navigator_.set_goal(target->position(), ctx.pathfinder,
-                                        position(), layer_);
+                                        position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -1012,7 +1016,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (sdist2 > sacrifice_range * sacrifice_range) {
                 if (!navigator_.is_moving()) {
                     navigator_.set_goal(target->position(), ctx.pathfinder,
-                                        position(), layer_);
+                                        position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 // Fire OnStartSacrifice on first tick
@@ -1059,7 +1064,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.goal().x != cmd.target_pos.x ||
                 navigator_.goal().z != cmd.target_pos.z) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder,
-                                    position(), layer_);
+                                    position(), layer_,
+                                    naval_draft_, is_amphibious() || is_hover());
             }
             navigator_.update(*this, effective_speed(), dt, ctx.terrain);
             if (!navigator_.is_moving()) {

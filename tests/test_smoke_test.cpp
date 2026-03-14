@@ -376,6 +376,26 @@ TEST_CASE("Naval unit motion type helpers", "[m160]") {
     CHECK(sub_unit.is_naval());
 }
 
+TEST_CASE("Naval sub unit Y positioning target", "[m160]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Sub");
+    unit.set_motion_type("RULEUMT_SurfacingSub");
+    unit.set_elevation_target(-3.0f);
+    unit.set_naval_draft(3.0f);
+    unit.set_position({100, 25, 100});
+
+    // Target Y for Sub layer: water_elevation + elevation_target
+    // With water_elevation=25 and elevation_target=-3.0, target_y = 22.0
+    osc::f32 water_elev = 25.0f;
+    osc::f32 target_y = water_elev + unit.elevation_target();
+    CHECK(target_y == 22.0f);
+
+    // Verify draft and amphibious flags for pathfinding
+    CHECK(unit.naval_draft() == 3.0f);
+    CHECK_FALSE(unit.is_amphibious());
+    CHECK_FALSE(unit.is_hover());
+}
+
 TEST_CASE("Amphibious unit layer transition logic", "[m161]") {
     osc::sim::Unit unit;
     unit.set_motion_type("RULEUMT_Amphibious");
