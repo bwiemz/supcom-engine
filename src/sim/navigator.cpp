@@ -11,7 +11,8 @@ namespace osc::sim {
 
 void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
                           const Vector3& current_pos,
-                          const std::string& layer) {
+                          const std::string& layer,
+                          f32 draft, bool amphibious) {
     goal_ = pos;
     waypoints_.clear();
     waypoint_index_ = 0;
@@ -24,7 +25,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
     }
 
     auto result = pathfinder->find_path(
-        current_pos.x, current_pos.z, pos.x, pos.z, layer);
+        current_pos.x, current_pos.z, pos.x, pos.z, layer, draft, amphibious);
 
     if (result.found && !result.waypoints.empty()) {
         waypoints_ = std::move(result.waypoints);

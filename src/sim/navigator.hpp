@@ -21,7 +21,8 @@ public:
 
     /// Set goal with A* pathfinding (preferred).
     void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
-                  const Vector3& current_pos, const std::string& layer);
+                  const Vector3& current_pos, const std::string& layer,
+                  f32 draft = 0, bool amphibious = false);
 
     /// Set goal with straight-line movement (legacy/fallback).
     void set_goal(const Vector3& pos);

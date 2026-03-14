@@ -16,7 +16,8 @@ Pathfinder::Pathfinder(const PathfindingGrid& grid) : grid_(grid) {}
 
 PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                                   f32 goal_x, f32 goal_z,
-                                  const std::string& layer) const {
+                                  const std::string& layer,
+                                  f32 draft, bool amphibious) const {
     PathResult result;
 
     u32 sx, sz, gx, gz;
@@ -31,7 +32,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     }
 
     // If goal cell is impassable, find nearest passable cell
-    if (!grid_.is_passable_for(gx, gz, layer)) {
+    if (!grid_.is_passable_for(gx, gz, layer, draft, amphibious)) {
         // Spiral search outward from goal for nearest passable cell
         bool found_alt = false;
         for (u32 radius = 1; radius <= 20 && !found_alt; ++radius) {
@@ -47,7 +48,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                     if (nx < 0 || nz < 0) continue;
                     u32 ux = static_cast<u32>(nx);
                     u32 uz = static_cast<u32>(nz);
-                    if (grid_.is_passable_for(ux, uz, layer)) {
+                    if (grid_.is_passable_for(ux, uz, layer, draft, amphibious)) {
                         gx = ux;
                         gz = uz;
                         // Update goal world position to cell center
@@ -65,7 +66,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     }
 
     // Run A*
-    auto grid_path = astar(sx, sz, gx, gz, layer);
+    auto grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious);
     if (grid_path.empty()) {
         spdlog::debug("Pathfinder: A* found no path from ({},{}) to ({},{})",
                        sx, sz, gx, gz);
@@ -73,7 +74,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     }
 
     // Smooth path
-    auto smoothed = smooth_path(grid_path, layer);
+    auto smoothed = smooth_path(grid_path, layer, draft, amphibious);
 
     // Convert to world coordinates
     result.found = true;
@@ -94,7 +95,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
 
 std::vector<std::pair<u32, u32>> Pathfinder::astar(
     u32 sx, u32 sz, u32 gx, u32 gz,
-    const std::string& layer) const {
+    const std::string& layer, f32 draft, bool amphibious) const {
 
     const u32 w = grid_.grid_width();
     const u32 h = grid_.grid_height();
@@ -162,15 +163,15 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
             u32 n_idx = idx(unx, unz);
 
             if (closed[n_idx]) continue;
-            if (!grid_.is_passable_for(unx, unz, layer)) continue;
+            if (!grid_.is_passable_for(unx, unz, layer, draft, amphibious)) continue;
 
             // Diagonal: also check that both cardinal neighbors are passable
             // (prevent cutting corners through walls)
             if (dir[0] != 0 && dir[1] != 0) {
                 u32 card_x = static_cast<u32>(static_cast<i32>(cx) + dir[0]);
                 u32 card_z = static_cast<u32>(static_cast<i32>(cz) + dir[1]);
-                if (!grid_.is_passable_for(card_x, cz, layer) ||
-                    !grid_.is_passable_for(cx, card_z, layer))
+                if (!grid_.is_passable_for(card_x, cz, layer, draft, amphibious) ||
+                    !grid_.is_passable_for(cx, card_z, layer, draft, amphibious))
                     continue;
             }
 
@@ -202,7 +203,7 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
 
 std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(
     const std::vector<std::pair<u32, u32>>& path,
-    const std::string& layer) const {
+    const std::string& layer, f32 draft, bool amphibious) const {
     if (path.size() <= 2) return path;
 
     std::vector<std::pair<u32, u32>> smoothed;
@@ -214,7 +215,8 @@ std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(
         size_t farthest = current + 1;
         for (size_t i = current + 2; i < path.size(); ++i) {
             if (has_line_of_sight(path[current].first, path[current].second,
-                                  path[i].first, path[i].second, layer)) {
+                                  path[i].first, path[i].second, layer,
+                                  draft, amphibious)) {
                 farthest = i;
             }
         }
@@ -226,7 +228,8 @@ std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(
 }
 
 bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
-                                    const std::string& layer) const {
+                                    const std::string& layer,
+                                    f32 draft, bool amphibious) const {
     // Bresenham's line algorithm
     i32 dx = static_cast<i32>(x1) - static_cast<i32>(x0);
     i32 dz = static_cast<i32>(z1) - static_cast<i32>(z0);
@@ -241,7 +244,7 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
     if (dx >= dz) {
         i32 err = dx / 2;
         for (i32 i = 0; i <= dx; ++i) {
-            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer))
+            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer, draft, amphibious))
                 return false;
             err -= dz;
             if (err < 0) {
@@ -253,7 +256,7 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
     } else {
         i32 err = dz / 2;
         for (i32 i = 0; i <= dz; ++i) {
-            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer))
+            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer, draft, amphibious))
                 return false;
             err -= dx;
             if (err < 0) {
