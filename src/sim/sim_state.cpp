@@ -197,6 +197,45 @@ void SimState::tick() {
 
     update_economies();
     update_entities();
+
+    // Process air crash impacts
+    {
+        std::vector<u32> crash_impacts;
+        entity_registry_.for_each([&](Entity& e) {
+            if (e.destroyed() || !e.is_unit()) return;
+            auto* unit = static_cast<Unit*>(&e);
+            if (unit->crash_impacted()) {
+                crash_impacts.push_back(e.entity_id());
+            }
+        });
+
+        for (u32 crash_id : crash_impacts) {
+            auto* ce = entity_registry_.find(crash_id);
+            if (!ce || ce->destroyed()) continue;
+            auto* crash_unit = static_cast<Unit*>(ce);
+
+            f32 crash_radius = crash_unit->footprint_size_x() * 1.5f;
+            if (crash_radius < 2.0f) crash_radius = 2.0f;
+            f32 dmg = crash_unit->crash_damage();
+            auto nearby = entity_registry_.collect_in_radius(
+                ce->position().x, ce->position().z, crash_radius);
+            for (u32 nid : nearby) {
+                if (nid == crash_id) continue;
+                auto* ne = entity_registry_.find(nid);
+                if (!ne || ne->destroyed()) continue;
+                f32 new_hp = ne->health() - dmg;
+                ne->set_health(new_hp);
+                if (new_hp <= 0 && ne->is_unit()) {
+                    static_cast<Unit*>(ne)->begin_dying(0.1f);
+                }
+            }
+
+            add_death_event(ce->position().x, ce->position().y,
+                            ce->position().z, crash_radius, ce->army());
+            ce->mark_destroyed();
+        }
+    }
+
     update_visibility();
 
     // Defeat detection: mark armies with no living units as defeated

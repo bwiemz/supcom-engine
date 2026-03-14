@@ -862,6 +862,15 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // Air units always crash on death, even without AnimationDeath
+        if (e->is_unit()) {
+            auto* air_unit = static_cast<sim::Unit*>(e);
+            if (air_unit->is_air_unit() && !air_unit->is_dying() && !air_unit->is_crashing()) {
+                air_unit->begin_air_crash(air_unit->crash_damage());
+                return 0;
+            }
+        }
+
         // If dying unit was capturing, clear being_captured on its target
         if (e->is_unit()) {
             auto* dying_unit = static_cast<sim::Unit*>(e);

@@ -165,6 +165,11 @@ void Unit::clear_on_given_callbacks(lua_State* L) {
 }
 
 void Unit::begin_dying(f32 duration) {
+    if (dying_) return;
+    if (is_air_unit()) {
+        begin_air_crash(crash_damage_);
+        return;
+    }
     dying_ = true;
     death_timer_ = duration;
     death_duration_ = duration;
@@ -172,8 +177,60 @@ void Unit::begin_dying(f32 duration) {
     set_do_not_target(true);
 }
 
+void Unit::begin_air_crash(f32 crash_dmg) {
+    if (dying_) return;
+    dying_ = true;
+    crashing_ = true;
+    crash_damage_ = crash_dmg;
+    crash_velocity_y_ = 0;
+    death_duration_ = 5.0f;
+    death_timer_ = 5.0f;
+    crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
+    clear_commands();
+    set_do_not_target(true);
+    economy_.consumption_mass = 0;
+    economy_.consumption_energy = 0;
+    economy_.consumption_active = false;
+    economy_.production_mass = 0;
+    economy_.production_energy = 0;
+    economy_.production_active = false;
+}
+
 void Unit::tick_dying(f32 dt) {
     if (!dying_) return;
+
+    if (crashing_) {
+        // Gravity acceleration
+        crash_velocity_y_ += -9.8f * dt;
+
+        // Spin and tumble
+        heading_ += crash_spin_rate_ * dt;
+        bank_angle_ += crash_spin_rate_ * 0.7f * dt;
+        pitch_ = std::clamp(pitch_ - 0.3f * dt, -1.0f, 0.3f);
+        set_orientation(euler_to_quat(heading_, pitch_, bank_angle_));
+
+        // Move forward (decaying) and down
+        auto p = position();
+        f32 fwd = current_airspeed_ * 0.5f;
+        p.x += std::sin(heading_) * fwd * dt;
+        p.z += std::cos(heading_) * fwd * dt;
+        p.y += crash_velocity_y_ * dt;
+
+        // Terrain impact check
+        if (p.y <= 0) {
+            p.y = 0;
+            set_position(p);
+            crash_impacted_ = true;
+            crashing_ = false;
+            return;
+        }
+
+        set_position(p);
+        current_airspeed_ *= (1.0f - 0.5f * dt); // decelerate forward speed
+        return;
+    }
+
+    // Normal death
     death_timer_ -= dt;
     if (death_timer_ <= 0.0f) {
         death_timer_ = 0.0f;

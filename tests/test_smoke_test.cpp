@@ -276,3 +276,65 @@ TEST_CASE("Air unit fields initialize correctly", "[m157]") {
     CHECK(unit.current_airspeed() == 0.0f);
     CHECK(unit.current_altitude() == 0.0f);
 }
+
+TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Air");
+    unit.set_heading(0);
+    unit.set_current_airspeed(10.0f);
+    unit.set_current_altitude(50.0f);
+    unit.set_position({100, 50, 100});
+
+    unit.begin_air_crash(100.0f);
+    CHECK(unit.is_crashing());
+    CHECK(unit.is_dying());
+
+    // Simulate crash
+    osc::f32 prev_y = unit.position().y;
+    for (int i = 0; i < 100; i++) {
+        unit.tick_dying(0.1f);
+        if (!unit.is_crashing()) break;
+    }
+
+    // Should have fallen and impacted
+    CHECK(unit.position().y <= 0.1f);
+    CHECK(unit.crash_impacted());
+    CHECK_FALSE(unit.is_crashing());
+}
+
+TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Air");
+    unit.set_max_airspeed(15.0f);
+    unit.set_turn_rate_rad(2.0f);
+    unit.set_accel_rate(10.0f);
+    unit.set_elevation_target(20.0f);
+    unit.set_climb_rate(10.0f);
+    unit.set_crash_damage(100.0f);
+    unit.set_position({50, 20, 50});
+    unit.set_current_altitude(20.0f);
+
+    // Fly toward target
+    unit.navigator().set_goal({200, 0, 200});
+    for (int i = 0; i < 30; i++) {
+        unit.navigator().update_air(unit, 0.1, nullptr);
+    }
+    CHECK(unit.position().x > 50);
+    CHECK(unit.current_airspeed() > 0);
+
+    // Kill it via begin_dying — should auto-redirect to crash
+    unit.begin_dying(2.0f);
+    CHECK(unit.is_crashing());
+
+    // Run crash ticks
+    bool hit_ground = false;
+    for (int i = 0; i < 200; i++) {
+        unit.tick_dying(0.1f);
+        if (unit.crash_impacted()) {
+            hit_ground = true;
+            break;
+        }
+    }
+    CHECK(hit_ground);
+    CHECK(unit.position().y <= 0.1f);
+}
