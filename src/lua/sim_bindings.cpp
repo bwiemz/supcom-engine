@@ -514,6 +514,96 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
             lua_pop(L, 2);
         }
+
+        // Read Physics.Elevation for air units (target flight altitude)
+        if (unit->is_air_unit()) {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Physics");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Elevation");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    unit->set_elevation_target(static_cast<f32>(lua_tonumber(L, -1)));
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // Physics table (or nil) + bp table
+        }
+
+        // Read Air subtable for air units
+        if (unit->is_air_unit()) {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Air");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                // Air.MaxAirspeed
+                lua_pushstring(L, "MaxAirspeed");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_max_airspeed(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+
+                // Air.TurnSpeed (degrees -> radians)
+                lua_pushstring(L, "TurnSpeed");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    f32 deg = static_cast<f32>(lua_tonumber(L, -1));
+                    unit->set_turn_rate_rad(deg * 3.14159265f / 180.0f);
+                }
+                lua_pop(L, 1);
+
+                // Air.AccelerateRate
+                lua_pushstring(L, "AccelerateRate");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_accel_rate(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // Air table (or nil) + bp table
+
+            // Fallbacks: if Air subtable was missing or incomplete
+            if (unit->max_airspeed() <= 0 && unit->max_speed() > 0)
+                unit->set_max_airspeed(unit->max_speed());
+            if (unit->accel_rate() <= 0 && unit->max_airspeed() > 0)
+                unit->set_accel_rate(unit->max_airspeed() * 0.5f);
+            if (unit->turn_rate_rad() <= 0)
+                unit->set_turn_rate_rad(1.5f); // ~86 deg/s default
+        }
+
+        // Read General.CrashDamage for air units
+        if (unit->is_air_unit()) {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "General");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "CrashDamage");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_crash_damage(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // General table (or nil) + bp table
+        }
+
+        // Read Physics.FuelUseTime for air units
+        if (unit->is_air_unit()) {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Physics");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "FuelUseTime");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    f32 t = static_cast<f32>(lua_tonumber(L, -1));
+                    unit->set_fuel_use_time(t);
+                    if (t > 0) unit->set_fuel_ratio(1.0f); // start with full fuel
+                    // FuelUseTime=0 means infinite fuel -- fuel_ratio_ stays at -1 (sentinel)
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2); // Physics table (or nil) + bp table
+        }
     }
 
     // Wire bone data from BoneCache + init animated bone matrices
@@ -598,6 +688,22 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     lua_pushvalue(L, -1);
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
     unit_ptr->set_lua_table_ref(ref);
+
+    // Air units: start at flight altitude
+    if (unit_ptr->is_air_unit()) {
+        unit_ptr->set_current_altitude(unit_ptr->elevation_target());
+        // Set Y position above terrain
+        f32 terrain_h = 0;
+        if (sim && sim->terrain())
+            terrain_h = sim->terrain()->get_terrain_height(unit_ptr->position().x,
+                                                           unit_ptr->position().z);
+        auto p = unit_ptr->position();
+        p.y = terrain_h + unit_ptr->elevation_target();
+        unit_ptr->set_position(p);
+        // Initialize heading and orientation
+        unit_ptr->set_heading(0);
+        unit_ptr->set_orientation(sim::euler_to_quat(0, 0, 0));
+    }
 
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
                   bp_id, id, x, y, z);
