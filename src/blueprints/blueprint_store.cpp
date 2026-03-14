@@ -200,4 +200,15 @@ void BlueprintStore::expose_to_lua(lua_State* L) const {
     spdlog::info("Exposed {} blueprints as __blueprints global", blueprints_.size());
 }
 
+void BlueprintStore::rebind(lua_State* new_L) {
+    L_ = new_L;
+    // Clear all lua refs — the old Lua state is destroyed, so we must NOT
+    // call luaL_unref. Just reset to -1 (LUA_NOREF equivalent).
+    for (auto& [id, entry] : blueprints_) {
+        entry.lua_ref = -1;
+    }
+    spdlog::info("BlueprintStore rebound to new Lua state ({} blueprints, refs cleared)",
+                 blueprints_.size());
+}
+
 } // namespace osc::blueprints
