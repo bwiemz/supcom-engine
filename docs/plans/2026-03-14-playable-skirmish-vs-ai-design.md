@@ -47,49 +47,34 @@ Human can build a base, produce units, and fight on a land map. All crashes and 
 
 ### Problem Statement
 
-FA's AI runs through a chain of Lua managers: ExecutePlan (aiarchetype-managerloader.lua) → BuilderManager → EngineerManager / FactoryBuilderManager / PlatoonFormManager. These managers call moho methods on the brain and platoon objects. About 12 of those are currently stubs or missing, causing the AI threads to silently fail and never issue build orders.
+FA's AI runs through a chain of Lua managers: ExecutePlan (aiarchetype-managerloader.lua) → BuilderManager → EngineerManager / FactoryBuilderManager / PlatoonFormManager. These managers call moho methods on the brain and platoon objects. About 6-8 of those are currently stubs or missing, causing the AI threads to silently fail and never issue build orders. Many other methods called by the AI are either already implemented or are pure Lua (resolved through the class metatable chain, not moho methods).
 
 ### Methods to Implement
 
-#### ExecutePlan entry point (aiarchetype-managerloader.lua)
+#### Moho methods to implement (C++ engine work required)
 
-| Method | Object | Current State | Implementation |
-|--------|--------|---------------|----------------|
-| `SetResourceSharing(bool)` | brain | stub | Store flag on ArmyBrain. No-op for single-player. |
-| `PBMSetEnabled(bool)` | brain | stub | Store flag. Toggles Platoon Build Manager. |
-| `ForceManagerSort()` | brain | stub | No-op or fire Lua callback. Builders are pure Lua tables. |
-
-#### PlatoonFormManager (forms attack/defense platoons from ArmyPool)
+##### PlatoonFormManager (forms attack/defense platoons from ArmyPool)
 
 | Method | Object | Current State | Implementation |
 |--------|--------|---------------|----------------|
 | `CanFormPlatoon(template, count, location, radius)` | platoon | **missing** | Iterate pool units, check categories vs template requirements, compare counts within radius of location. |
 | `FormPlatoon(template, count, location, radius)` | platoon | **missing** | Extract matching units from ArmyPool into new platoon. Create platoon, assign units, return handle. |
-| `ForkAIThread(fn)` | platoon | **missing** | Fork thread for AI plan execution. Similar to ForkThread. |
-| `StopAI()` | platoon | **missing** | Clear current AI plan thread. |
-| `SetPlatoonData(table)` | platoon | **missing** | Store Lua table on platoon via registry ref. |
 
-#### FactoryBuilderManager (queues factory production)
+##### FactoryBuilderManager (queues factory production)
 
 | Method | Object | Current State | Implementation |
 |--------|--------|---------------|----------------|
 | `BuildPlatoon(template, factories, count)` | brain | **missing** | Order factories to build units from platoon template. Iterate template entries, call Unit::build_unit() per factory. |
 | `CanBuildPlatoon(template, factories)` | brain | **missing** | Check factories have tech level and resources for template. Category + blueprint validation. |
 
-#### EngineerManager (assigns engineers to build tasks)
+##### PBM build location management
 
 | Method | Object | Current State | Implementation |
 |--------|--------|---------------|----------------|
-| `DecideWhatToBuild(builder, buildType, categories)` | brain | **missing** | Given builder unit + desired category, pick best blueprint_id. Filter by faction, tech level, category intersection. |
+| `PBMAddBuildLocation(location, radius, name, useCenter)` | brain | stub_noop | Store named build location (vector + radius + name) on ArmyBrain. Only used by campaign-ai.lua — may remain no-op for skirmish, but implement for completeness. |
+| `PBMRemoveBuildLocation(name)` | brain | stub_noop | Remove named build location by name. Same scope as above. |
 
-#### PBM build location management
-
-| Method | Object | Current State | Implementation |
-|--------|--------|---------------|----------------|
-| `PBMAddBuildLocation(location, radius, name, useCenter)` | brain | stub_noop | Store named build location (vector + radius + name) on ArmyBrain. |
-| `PBMRemoveBuildLocation(name)` | brain | stub_noop | Remove named build location by name. |
-
-#### Supporting methods (verify, implement if missing)
+##### Supporting methods (verify, implement if missing)
 
 | Method | Object | Notes |
 |--------|--------|-------|
@@ -97,11 +82,23 @@ FA's AI runs through a chain of Lua managers: ExecutePlan (aiarchetype-managerlo
 | `CombinePlatoons(platoon1, platoon2)` | brain | Merge units from platoon2 into platoon1, disband platoon2. |
 | `GetUnitBlueprint(blueprintId)` | brain | Push blueprint Lua table by ID via BlueprintStore. |
 
-#### Not needed (pure Lua)
+#### Already implemented (verify only, no C++ work)
 
+| Method | Object | Status |
+|--------|--------|--------|
+| `SetResourceSharing(bool)` | brain | Already implemented at moho_bindings.cpp:6385 — calls `brain->set_resource_sharing()`. Verify it works. |
+| `DecideWhatToBuild(builder, buildType, categories)` | brain | Already implemented at moho_bindings.cpp:5443 — iterates template, matches by building type, returns blueprint ID. Verify it works. |
+
+#### Not needed — pure Lua (resolved through class metatable chain, NOT moho methods)
+
+- `PBMSetEnabled(bool)` — defined in campaign-ai.lua / base-ai.lua as Lua method
+- `ForceManagerSort()` — defined in aibrain.lua:1209 (deprecated empty function), overridden in adaptive-ai.lua
+- `ForkAIThread(fn)` — defined in platoon.lua:130 as wrapper around moho `ForkThread`
+- `StopAI()` — defined in platoon.lua:141 as `self.AIThread:Destroy()`
+- `SetPlatoonData(table)` — defined in platoon.lua:75 as `self.PlatoonData = table.deepcopy(dataTable)`
+- `HasBuilderList` — Lua field check (`self.BuilderList`), not a moho method
 - BuilderManager.lua / EngineerManager.lua / FactoryBuilderManager.lua class logic — all pure Lua
 - Builder priority sorting, condition evaluation, task assignment — all Lua
-- `HasBuilderList` — Lua field check (`self.BuilderList`), not a moho method
 
 ### Validation
 
@@ -122,11 +119,12 @@ FA has 6 base AI types and 6 cheating variants, defined in `aitypes.lua`:
 
 | Key | Brain File | Behavior |
 |-----|-----------|----------|
-| easy/medium | medium-ai.lua | Simplified builders, basic strategy |
+| easy/medium | medium-ai.lua | Simplified builders, basic strategy (note: `easy` key maps to medium-ai.lua per index.lua, not to the separate easy-ai.lua) |
 | adaptive | adaptive-ai.lua | Dynamic, adapts to opponent |
 | rush | rush-ai.lua | Aggressive early game |
 | turtle | turtle-ai.lua | Heavy defense, fortification |
 | tech | tech-ai.lua | Rushes to higher tech tiers |
+| random | adaptive-ai.lua | Randomly picks strategy variant |
 | *cheat variants | Same brain + CheatIncome/CheatBuildRate buffs | Resource/build rate multipliers |
 
 Each AI type is a separate brain Lua file, not just parameter tuning. The personality system modulates within each type via 25 behavioral parameters (air emphasis, tank emphasis, attack frequency, defense emphasis, etc.).
@@ -159,7 +157,11 @@ The `aipersonality_methods` metatable is currently `empty_methods`. FA's `aipers
 - Cheat detection: if personality contains "cheat", `AIUtils.SetupCheat(brain, true)` applies buffs
 - `CheatIncome` buff: multiplies mass/energy production by `ScenarioInfo.Options.CheatMult`
 - `CheatBuildRate` buff: multiplies build rate by `ScenarioInfo.Options.BuildMult`
-- Engine needs: FA's buff system to work (pure Lua via `sim/Buff.lua`), and `ScenarioInfo.Options` to contain cheat multiplier values from lobby options
+- **Buff system pipeline validation (CRITICAL):** The cheat system depends on FA's buff pipeline: `SetupCheat()` → `Buff.ApplyBuff()` → `BuffAffectUnit()` → `BuffEffects` → moho calls (`SetBuildRate`, `SetProductionPerSecondMass/Energy`, `SetConsumptionPerSecondMass/Energy`). This pipeline must be validated end-to-end:
+  - `CheatBuffs.lua` must be loaded and the `Buffs` global table populated
+  - `BuffDefinitions.lua` must be importable
+  - `Buff.ApplyBuff()` must traverse to the terminal moho calls without hitting missing methods
+  - The moho methods at the end of the chain (`SetBuildRate`, `SetProductionPerSecondMass`, etc.) already exist — verify they're wired correctly
 
 #### 5. Lobby options for difficulty
 
@@ -205,7 +207,7 @@ Launch skirmish with Rush AI vs Turtle AI. Rush AI should build factories and at
    - `FlattenMapRect` — terrain deformation, skip for now
    - `DrawCircle/DrawLine/DrawLinePop` — debug rendering, skip
 
-3. **Performance** — verify playable frame rate with 100+ AI units:
+3. **Performance** — verify ≥30 FPS with 100+ AI units on screen:
    - Pathfinding under load (concurrent A* requests)
    - Threat queries with many units (spatial hash mitigates)
    - Lua thread instruction budget tuning (currently 1M per resume)
@@ -214,7 +216,7 @@ Launch skirmish with Rush AI vs Turtle AI. Rush AI should build factories and at
    - Human kills AI ACU → victory
    - AI kills human ACU → defeat
    - Human quits to lobby mid-game
-   - Both ACUs die same tick → draw
+   - Both ACUs die same tick → draw (note: existing EndGame logic may not handle simultaneous deaths — treat as potential implementation item, not just test case)
 
 5. **Score screen** — verify stats populate from ArmyStat tracking (units built, killed, mass collected).
 
@@ -229,7 +231,7 @@ A human can reliably play 5 consecutive skirmish games against different AI type
 | Phase | Key Deliverable | Est. New Methods | Dependencies |
 |-------|----------------|-----------------|--------------|
 | 1 | Human player can build and fight | ~15-25 fixes (TBD) | None |
-| 2 | AI autonomously builds and attacks | ~12-15 moho methods | Phase 1 |
+| 2 | AI autonomously builds and attacks | ~6-8 moho methods + verification | Phase 1 |
 | 3 | Difficulty levels and AI variants work | ~6-8 implementations + wiring | Phase 2 |
 | 4 | Full games run reliably | Testing + edge case fixes | Phase 3 |
 
