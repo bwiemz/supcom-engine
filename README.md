@@ -19,9 +19,11 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spawn all 8 ACUs, run the complete FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy), and execute autonomous AI behavior: base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement with pathfinding, weapons fire, enhancements, shields, transports, fog of war with terrain LOS, economy stalling, radar jamming, real bone-based manipulators, and weapon layer cap targeting. Over 111 former moho stubs have been converted to real implementations across five mass conversion milestones. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes with GPU blend-weight skeletal animation (4 bones per vertex), team color rendering via SpecTeam alpha masks, normal mapping with tangent-space DXT5nm textures, Blinn-Phong specular lighting, PCF soft shadow mapping with 4096² depth map, terrain heightmap with 9-stratum texture blending and per-stratum normal maps, 5,000+ map props (trees, rocks, debris), 2,000+ terrain decals (roads, craters, dirt patches), projectile meshes with velocity-aligned orientation, animated water with tessellated wave displacement and depth-based coloring, fog of war terrain darkening, atmospheric distance fog, terrain specular with hemisphere ambient, projected selection circles, death explosion VFX, and build preview ghost placement. The full MAUI UI framework (M71-M89) has been reimplemented with 13 control types, reactive LazyVar layout, game UI bootstrap infrastructure, and a complete Vulkan 2D rendering pipeline — including font rendering via stb_truetype GPU atlas, scissor clipping, 9-patch borders, edit/itemlist/scrollbar visuals, bitmap animation and tiling, GLFW input dispatch with hit-testing, OnFrame update loop, cursor rendering, and drag visual feedback. An interactive game HUD (M90-M112) provides a fully playable RTS experience with VFX/emitter/beam systems, player input command pipeline (click/drag select, right-click move/attack), minimap with click-to-jump, strategic zoom icons, economy bars, selection info panel, command queue visualization, control groups, camera bookmarks, health/selection/command overlays, beam and shield rendering, veterancy/adjacency/intel range indicators, wreckage desaturation, VFX particle billboards, and transport cargo/silo ammo dots.
+The engine can run a **fully playable single-player skirmish match** — from the front-end lobby through game setup, real-time gameplay, to score screen and return-to-lobby. Two AI armies load with FA's adaptive AI brain, execute build plans via the builder manager system, and run continuously for thousands of ticks with stable entity counts. The complete game loop is functional: lobby map/faction selection → army creation → AI initialization (OnCreateAI, ExecutePlan, 37+ active AI threads) → real-time simulation with economy, construction, combat, air/naval/land movement → game-over detection → score screen → return to lobby for another match.
 
-**What works today (Milestones 1-121):**
+Over 163 milestones have been completed across the simulation, renderer, UI, and game infrastructure. The engine bootstraps the full FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy) and executes autonomous AI behavior with base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement. Over 111 former moho stubs have been converted to real implementations. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes, GPU blend-weight skeletal animation, team colors, normal mapping, Blinn-Phong specular, PCF soft shadows (4096²), 9-stratum terrain blending with per-stratum normal maps, 5,000+ map props, 2,000+ terrain decals, animated water, fog of war, atmospheric fog, LOD mesh switching, bloom post-processing, particle system with emitter blueprints, frustum culling, and death animations. The full MAUI UI framework provides 13 control types with reactive LazyVar layout, a complete Vulkan 2D rendering pipeline, and GLFW input dispatch. A complete game HUD delivers a playable RTS experience with minimap, strategic zoom, economy bars, selection info, command visualization, control groups, camera bookmarks, and full overlay rendering.
+
+**What works today (Milestones 1-163):**
 
 - Lua 5.0 VM (LuaPlus fork) with full VFS and blueprint loading (8,260 blueprints)
 - Session lifecycle: map loading, army creation, brain initialization
@@ -141,12 +143,44 @@ The engine can bootstrap a full FA session on Seton's Clutch (8-player map), spa
   - Terrain specular + hemisphere ambient: Blinn-Phong specular (power 24, intensity 0.15), hemisphere ambient lighting (sky blue above, warm brown below) replacing flat 0.3 ambient, eye position in terrain push constants (120B)
   - Shadow map quality: 4096x4096 depth map (up from 2048), smooth edge fade at shadow frustum boundaries via smoothstep
   - Atmospheric distance fog: exponential fog (density 0.0018) fading terrain/units/meshes/water to blue-grey haze at distance, FoW-aware haze darkening, water alpha increases in fog, unit cube push constants expanded (76B) with eye position
-- 22 unit tests, 68 integration test flags
+- **Advanced Rendering (M122-M134):**
+  - Particle system: EmitterBlueprintData parsed from .bp Lua tables (15+ time-parameterized curves), ParticleSystem CPU sim (Euler integration, curve-driven emission), ParticleRenderer with 2 Vulkan pipelines (alpha + additive blend), instanced billboards, depth test on / depth write off
+  - Decal normal maps: CPU-baked RG overlay (RGBA8, 1 texel/game unit), BC3 decoder, terrain shader perturbs blended stratum normals
+  - Frustum culling: Gribb-Hartmann plane extraction from VP matrix, `is_sphere_visible()` per entity in UnitRenderer/OverlayRenderer/ParticleSystem
+  - LOD mesh switching: LODEntry/LODSet structs, load LODs[1]-[4] from blueprints, distance-based mesh selection per entity
+  - Death animations: `dying_` state with configurable duration, begin_dying() clears commands and sets do_not_target, tick_dying() countdown to wreckage
+  - Bloom post-processing: HDR render split, bright extract threshold, 9-tap separable Gaussian blur at half-res, additive composite, B key toggle
+- **Single-Player Skirmish Infrastructure (M135-M152):**
+  - WorldView: UIWorldView with camera control, Project() screen↔world coordinate mapping, IssueSim commands from UI
+  - Command pipeline: SimCallback bridge between UI Lua VM and sim Lua VM, build placement with footprint snapping and validity checking
+  - HUD panels: construction panel, orders panel, unit info panel with real-time stat display, tooltips
+  - Game state machine: GameStateManager (INIT→FRONT_END→LOADING→GAME→SCORE) with Lua callback firing on transitions
+  - Beat system: per-army economic/military beat callbacks at configurable intervals
+  - Score and game-over: EndGame detection, score accumulation, game-over screen with stats
+  - Front-end UI: main menu, skirmish lobby with map/faction/AI selection, FrontEndData cross-state key-value store
+  - Preferences: GetPreference/SetPreference with nested key lookup, profile system
+  - Hotkeys: KeyMapRegistry with stacked key binding tables, GLFW→key name mapping, configurable bindings
+  - Chat system: SendSystemMessage, chat callback dispatch
+  - End-to-end integration: lobby→loading→gameplay→score→return-to-lobby full cycle
+- **Playable Skirmish (M153-M163):**
+  - Smoke test harness: method/global interceptors for missing-method detection, panic handler, logged pcall for error recording
+  - Sim generation safety: static generation counter, `check_entity()`/`check_brain()` verify `_c_sim_gen` before dereferencing handles — prevents stale pointers across reloads
+  - Sim reload: 19-step reload sequence (clear scene, destroy old state, fresh Lua VM, rebind blueprints, new SimState, load scenario, boot sim, rebuild scene)
+  - Return-to-lobby: `ReturnToLobby` Lua global, sim teardown, transition to FRONT_END, null sim_state guards throughout render loop
+  - Air movement: heading-based flight (atan2 Y-up convention), pitch/bank/airspeed interpolation, altitude over terrain (not water), blueprint fields (MaxAirspeed, TurnSpeed, Elevation)
+  - Air combat: weapon layer targeting (AntiAir/DirectFire/AntiNavy bitmasks), bombing runs with ballistic projectile drop, fuel consumption with crash on empty
+  - Air crash physics: gravity + spin + forward momentum, splash damage on impact, debris particles
+  - Air separation: boids-style repulsion for same-army air units within 8u radius
+  - Naval movement: water depth storage, draft-aware passability in PathfindingGrid, naval Y positioning with sub dive depth, amphibious auto layer transitions (Land↔Water)
+  - Torpedoes: homing/tracking with stay_underwater clamping
+  - Veterancy: XP tracking, 5-level progression, damage-based XP awards, stat bonuses per level (HP regen, max health)
+  - AI-vs-AI validation: two AI armies load with FA's adaptive AI brain, OnCreateAI succeeds, ExecutePlan runs, 37+ active threads, 6000+ tick stable game loop
+- 82 unit tests (1,474 assertions), 68+ integration test flags
 
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Full particle system rendering (currently billboard approximation)
+- Full AI builder manager (AI loads and threads run, but can't autonomously build units yet — needs HasBuilderList, CanFormPlatoon, etc.)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites
@@ -332,6 +366,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--vfx-render-test` | VFX particle rendering (emitter billboards, beam lines) |
 | `--transport-silo-test` | Transport cargo dots + nuke/tactical silo ammo indicators |
 | `--profile-test` | Profiler system (zones, nesting, rolling stats) |
+| `--smoke-test` | Smoke test harness (method/global interceptors, 100-tick/100-frame run) |
+| `--ai-skirmish` | AI-vs-AI skirmish (2 AI armies, full game loop, 6000 ticks) |
 
 ## Project Structure
 
