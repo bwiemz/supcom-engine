@@ -242,7 +242,23 @@ void Unit::tick_dying(f32 dt) {
 bool Unit::nav_update(f64 dt, const map::Terrain* terrain) {
     if (is_air_unit())
         return navigator_.update_air(*this, dt, terrain);
-    return navigator_.update(*this, effective_speed(), dt, terrain);
+    bool result = navigator_.update(*this, effective_speed(), dt, terrain);
+
+    // Sub units: smooth transition to dive depth below water surface
+    if (terrain && layer_ == "Sub") {
+        auto p = position();
+        f32 target_y = terrain->water_elevation() + elevation_target_; // elevation_target_ is negative
+        f32 rate = 5.0f * static_cast<f32>(dt);
+        if (std::abs(p.y - target_y) <= rate)
+            p.y = target_y;
+        else if (p.y > target_y)
+            p.y -= rate;
+        else
+            p.y += rate;
+        set_position(p);
+    }
+
+    return result;
 }
 
 void Unit::update(f64 dt, SimContext& ctx) {
@@ -297,7 +313,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (!navigator_.is_moving() ||
                 navigator_.goal().x != cmd.target_pos.x ||
                 navigator_.goal().z != cmd.target_pos.z) {
-                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
+                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
+                                    naval_draft_, is_amphibious() || is_hover());
             }
             if (!nav_update(dt, ctx.terrain)) {
                 command_queue_.pop_front();
@@ -336,7 +353,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != target->position().x ||
                     navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 nav_update(dt, ctx.terrain);
             } else {
@@ -357,7 +375,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     if (!navigator_.is_moving() ||
                         navigator_.goal().x != cmd.target_pos.x ||
                         navigator_.goal().z != cmd.target_pos.z) {
-                        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
+                        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
+                                            naval_draft_, is_amphibious() || is_hover());
                     }
                     navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                     goto done_commands;
@@ -397,7 +416,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (!navigator_.is_moving() ||
                 navigator_.goal().x != cmd.target_pos.x ||
                 navigator_.goal().z != cmd.target_pos.z) {
-                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
+                navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
+                                    naval_draft_, is_amphibious() || is_hover());
             }
             if (!nav_update(dt, ctx.terrain)) {
                 // Reached patrol point — cycle to back of queue
@@ -431,7 +451,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != target->position().x ||
                     navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
+                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -544,7 +565,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != rtarget->position().x ||
                     navigator_.goal().z != rtarget->position().z) {
-                    navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_);
+                    navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -597,7 +619,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 if (!navigator_.is_moving() ||
                     navigator_.goal().x != ctarget->position().x ||
                     navigator_.goal().z != ctarget->position().z) {
-                    navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_);
+                    navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_,
+                                        naval_draft_, is_amphibious() || is_hover());
                 }
                 navigator_.update(*this, effective_speed(), dt, ctx.terrain);
                 goto done_commands;
@@ -1054,6 +1077,17 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 done_commands:
+
+    // Amphibious layer transition: auto-switch Land↔Water based on terrain
+    if (is_amphibious() && !dying_ && ctx.terrain) {
+        f32 terrain_h = ctx.terrain->get_terrain_height(position().x, position().z);
+        f32 water_elev = ctx.terrain->water_elevation();
+        if (terrain_h < water_elev && layer_ == "Land") {
+            set_layer_with_callback("Water", L);
+        } else if (terrain_h >= water_elev && layer_ == "Water") {
+            set_layer_with_callback("Land", L);
+        }
+    }
 
     // Air unit separation: lightweight boids repulsion to prevent stacking
     if (is_air_unit() && !dying_ && navigator_.is_moving()) {

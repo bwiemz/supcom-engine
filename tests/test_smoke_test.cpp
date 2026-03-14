@@ -375,3 +375,25 @@ TEST_CASE("Naval unit motion type helpers", "[m160]") {
     sub_unit.set_motion_type("RULEUMT_SurfacingSub");
     CHECK(sub_unit.is_naval());
 }
+
+TEST_CASE("Amphibious unit layer transition logic", "[m161]") {
+    osc::sim::Unit unit;
+    unit.set_motion_type("RULEUMT_Amphibious");
+    unit.set_layer("Land");
+
+    CHECK(unit.is_amphibious());
+    CHECK(unit.layer() == "Land");
+
+    // When terrain_h < water_elev, amphibious should transition to Water
+    // When terrain_h >= water_elev, amphibious should transition to Land
+    // Test the is_amphibious() helper and initial layer
+    osc::sim::Unit amphib_float;
+    amphib_float.set_motion_type("RULEUMT_AmphibiousFloating");
+    CHECK(amphib_float.is_amphibious());
+
+    // Hover units should NOT be amphibious
+    osc::sim::Unit hover;
+    hover.set_motion_type("RULEUMT_Hover");
+    CHECK_FALSE(hover.is_amphibious());
+    CHECK(hover.is_hover());
+}
