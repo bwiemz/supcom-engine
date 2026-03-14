@@ -4089,7 +4089,11 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetFocusArmy", l_GetFocusArmy);
     state.register_function("SetFocusArmy", l_SetFocusArmy);
     state.register_function("GetArmyBrain", l_GetArmyBrain);
-    state.register_function("IsGameOver", stub_false);
+    state.register_function("IsGameOver", [](lua_State* L) -> int {
+        auto* sim = get_sim(L);
+        lua_pushboolean(L, sim && sim->player_result() != 0);
+        return 1;
+    });
 
     // Entity queries
     state.register_function("GetEntityById", l_GetEntityById);
@@ -4217,7 +4221,13 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IsEnemy", l_IsEnemy);
     state.register_function("IsNeutral", l_IsNeutral);
     state.register_function("SetCommandSource", stub_noop);
-    state.register_function("ArmyInitializePrebuiltUnits", stub_noop);
+    state.register_function("ArmyInitializePrebuiltUnits", [](lua_State* L) -> int {
+        // In skirmish, there are no prebuilt units — the ACU is spawned by
+        // SetupSession -> army brain Lua code. Campaign save parsing is out of scope.
+        spdlog::debug("ArmyInitializePrebuiltUnits called for army: {}",
+                      lua_tostring(L, 1) ? lua_tostring(L, 1) : "(nil)");
+        return 0;
+    });
     state.register_function("SetArmyUnitCap", l_SetArmyUnitCap);
     state.register_function("GetArmyUnitCap", l_GetArmyUnitCap);
     state.register_function("GetArmyUnitCostTotal", l_GetArmyUnitCostTotal);
@@ -4225,8 +4235,28 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyEconomy", l_SetArmyEconomy);
     state.register_function("SetArmyColor", l_SetArmyColor);
     state.register_function("ChangeUnitArmy", l_ChangeUnitArmy);
-    state.register_function("AddBuildRestriction", stub_noop);
-    state.register_function("RemoveBuildRestriction", stub_noop);
+    state.register_function("AddBuildRestriction", [](lua_State* L) -> int {
+        auto* sim = get_sim(L);
+        if (!sim) return 0;
+        i32 army = resolve_army(L, 1, sim);
+        if (army < 0) return 0;
+        const char* cat = lua_tostring(L, 2);
+        if (!cat) return 0;
+        auto* brain = sim->get_army(army);
+        if (brain) brain->add_build_restriction(cat);
+        return 0;
+    });
+    state.register_function("RemoveBuildRestriction", [](lua_State* L) -> int {
+        auto* sim = get_sim(L);
+        if (!sim) return 0;
+        i32 army = resolve_army(L, 1, sim);
+        if (army < 0) return 0;
+        const char* cat = lua_tostring(L, 2);
+        if (!cat) return 0;
+        auto* brain = sim->get_army(army);
+        if (brain) brain->remove_build_restriction(cat);
+        return 0;
+    });
     state.register_function("SetArmyShowScore", stub_noop);
 
     // Damage

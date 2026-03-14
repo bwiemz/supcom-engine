@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
+#include "sim/army_brain.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -148,4 +149,13 @@ TEST_CASE("SmokeTestHarness pcall error recording", "[smoke]") {
         if (e.category == osc::lua::SmokeCategory::PcallError) found_pcall = true;
     }
     REQUIRE(found_pcall);
+}
+
+TEST_CASE("ArmyBrain build restriction add/remove/check", "[m154]") {
+    osc::sim::ArmyBrain brain;
+    REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
+    brain.add_build_restriction("TECH1 LAND FACTORY");
+    REQUIRE(brain.is_build_restricted("TECH1 LAND FACTORY"));
+    brain.remove_build_restriction("TECH1 LAND FACTORY");
+    REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
 }

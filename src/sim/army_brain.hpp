@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -134,6 +135,17 @@ public:
     const std::string& skin_name() const { return skin_name_; }
     void set_skin_name(const std::string& s) { skin_name_ = s; }
 
+    // --- Build restrictions (per-army) ---
+    void add_build_restriction(const std::string& category) {
+        build_restrictions_.insert(category);
+    }
+    void remove_build_restriction(const std::string& category) {
+        build_restrictions_.erase(category);
+    }
+    bool is_build_restricted(const std::string& category) const {
+        return build_restrictions_.count(category) > 0;
+    }
+
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {
         color_r_ = r; color_g_ = g; color_b_ = b;
@@ -167,6 +179,7 @@ private:
     std::string current_plan_;
     bool resource_sharing_ = false;
     std::string skin_name_;
+    std::unordered_set<std::string> build_restrictions_;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;
