@@ -295,6 +295,11 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
     lua_pushlightuserdata(L, brain);
     lua_rawset(L, brain_tbl);
 
+    // Store sim generation for stale-handle detection across reloads
+    lua_pushstring(L, "_c_sim_gen");
+    lua_pushnumber(L, static_cast<f64>(sim::SimState::sim_generation()));
+    lua_rawset(L, brain_tbl);
+
     // Set metatable to moho.aibrain_methods (after Flatten by globalInit)
     lua_getglobal(L, "moho");
     if (lua_istable(L, -1)) {

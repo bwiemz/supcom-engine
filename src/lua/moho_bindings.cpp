@@ -68,6 +68,21 @@ static sim::SimState* get_sim(lua_State* L) {
 
 static sim::Entity* check_entity(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
+
+    // Check sim generation — stale handles from a previous SimState return nullptr
+    lua_pushstring(L, "_c_sim_gen");
+    lua_rawget(L, idx);
+    if (lua_isnumber(L, -1)) {
+        u32 stored_gen = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (stored_gen != sim::SimState::sim_generation()) {
+            return nullptr;  // Stale handle from old SimState
+        }
+    } else {
+        lua_pop(L, 1);
+        // No generation stored — legacy table, allow through
+    }
+
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
@@ -84,6 +99,21 @@ static sim::Unit* check_unit(lua_State* L, int idx = 1) {
 
 static sim::ArmyBrain* check_brain(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
+
+    // Check sim generation — stale handles from a previous SimState return nullptr
+    lua_pushstring(L, "_c_sim_gen");
+    lua_rawget(L, idx);
+    if (lua_isnumber(L, -1)) {
+        u32 stored_gen = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (stored_gen != sim::SimState::sim_generation()) {
+            return nullptr;  // Stale handle from old SimState
+        }
+    } else {
+        lua_pop(L, 1);
+        // No generation stored — legacy table, allow through
+    }
+
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     auto* brain = static_cast<sim::ArmyBrain*>(lua_touserdata(L, -1));
@@ -864,6 +894,15 @@ static int entity_Destroy(lua_State* L) {
                 if (w->blueprint_ref >= 0) {
                     luaL_unref(L, LUA_REGISTRYINDEX, w->blueprint_ref);
                     w->blueprint_ref = LUA_NOREF;
+                }
+                // Release targeting/weapon priorities refs
+                if (w->targeting_priorities_ref >= 0) {
+                    luaL_unref(L, LUA_REGISTRYINDEX, w->targeting_priorities_ref);
+                    w->targeting_priorities_ref = LUA_NOREF;
+                }
+                if (w->weapon_priorities_ref >= 0) {
+                    luaL_unref(L, LUA_REGISTRYINDEX, w->weapon_priorities_ref);
+                    w->weapon_priorities_ref = LUA_NOREF;
                 }
             }
             // Release on-given callback refs
@@ -7476,10 +7515,23 @@ static int control_Destroy(lua_State* L) {
         lua_pop(L, 1);
     }
 
+    // Null out _c_object to prevent use-after-destroy
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, nullptr);
+    lua_rawset(L, 1);
+
     // Detach from parent
     ctrl->set_parent(nullptr);
     // Detach all children
     ctrl->clear_children();
+
+    // Release Lua registry ref before marking destroyed
+    int ref = ctrl->lua_table_ref();
+    if (ref >= 0) {
+        ctrl->set_lua_table_ref(LUA_NOREF);
+        luaL_unref(L, LUA_REGISTRYINDEX, ref);
+    }
+
     // Mark destroyed
     reg->destroy(ctrl->control_id());
     return 0;

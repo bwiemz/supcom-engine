@@ -560,6 +560,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     lua_pushlightuserdata(L, unit_ptr);
     lua_rawset(L, -3);
 
+    // Store sim generation for stale-handle detection across reloads
+    lua_pushstring(L, "_c_sim_gen");
+    lua_pushnumber(L, static_cast<f64>(sim::SimState::sim_generation()));
+    lua_rawset(L, -3);
+
     // Standard fields
     lua_pushstring(L, "EntityId");
     lua_pushnumber(L, id);
