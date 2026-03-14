@@ -38,6 +38,14 @@ public:
     /// The harness pointer is stored in the Lua registry as "__osc_smoke_harness".
     void install_global_interceptor(lua_State* L);
 
+    /// Install __index fallback on a cached metatable to log missing method calls.
+    /// registry_key: e.g., "__osc_proj_mt". type_name: e.g., "Projectile".
+    void install_method_interceptor(lua_State* L, const char* registry_key,
+                                     const char* type_name);
+
+    /// Install method interceptors on all known __osc_*_mt metatables.
+    void install_all_method_interceptors(lua_State* L);
+
 private:
     struct EntryKey {
         SmokeCategory category;

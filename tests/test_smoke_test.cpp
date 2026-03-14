@@ -2,6 +2,10 @@
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
 
+extern "C" {
+#include <lua.h>
+}
+
 TEST_CASE("SmokeTestHarness records and deduplicates entries", "[smoke]") {
     osc::lua::SmokeTestHarness harness;
 
@@ -67,4 +71,53 @@ TEST_CASE("Global interceptor does not log existing globals", "[smoke]") {
 
     state.do_string("local x = MyGlobal");
     REQUIRE(harness.total_count() == 0);
+}
+
+TEST_CASE("SmokeTestHarness intercepts missing moho methods", "[smoke]") {
+    osc::lua::LuaState state;
+    osc::lua::SmokeTestHarness harness;
+
+    lua_State* L = state.raw();
+
+    // Create a fake moho metatable (simulating the cached __osc_*_mt pattern)
+    lua_newtable(L);
+    int mt = lua_gettop(L);
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, mt);
+    lua_rawset(L, mt); // mt.__index = mt
+
+    // Add one real method
+    lua_pushstring(L, "RealMethod");
+    lua_pushcfunction(L, [](lua_State* L) -> int {
+        lua_pushnumber(L, 42);
+        return 1;
+    });
+    lua_rawset(L, mt);
+
+    // Cache it
+    lua_pushstring(L, "__osc_test_mt");
+    lua_pushvalue(L, mt);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pop(L, 1); // pop mt
+
+    // Install method interceptor on this metatable
+    harness.install_method_interceptor(L, "__osc_test_mt", "TestObj");
+
+    // Create an object with this metatable
+    lua_newtable(L);
+    lua_pushstring(L, "__osc_test_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_setmetatable(L, -2);
+    lua_setglobal(L, "test_obj");
+
+    // Call a real method — should work, no log
+    state.do_string("local r = test_obj:RealMethod()");
+    REQUIRE(harness.total_count() == 0);
+
+    // Call a missing method — should log, return no-op function
+    state.do_string("test_obj:FakeMethod()");
+    auto report = harness.generate_report();
+    REQUIRE(report.size() == 1);
+    REQUIRE(report[0].name == "TestObj.FakeMethod");
+    REQUIRE(report[0].category == osc::lua::SmokeCategory::MissingMethod);
 }
