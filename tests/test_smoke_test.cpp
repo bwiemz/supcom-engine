@@ -3,6 +3,8 @@
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/manipulator.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -180,4 +182,21 @@ TEST_CASE("SimState playable rect stores and returns bounds", "[m154]") {
     REQUIRE(sim.playable_z0() == 20.0f);
     REQUIRE(sim.playable_x1() == 500.0f);
     REQUIRE(sim.playable_z1() == 480.0f);
+}
+
+TEST_CASE("Air unit fields initialize correctly", "[m157]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Air");
+    unit.set_max_airspeed(15.0f);
+    unit.set_turn_rate_rad(1.5f);
+    unit.set_elevation_target(20.0f);
+    unit.set_accel_rate(7.5f);
+
+    CHECK(unit.is_air_unit());
+    CHECK(unit.max_airspeed() == 15.0f);
+    CHECK(unit.turn_rate_rad() == 1.5f);
+    CHECK(unit.elevation_target() == 20.0f);
+    CHECK(unit.heading() == 0.0f);
+    CHECK(unit.current_airspeed() == 0.0f);
+    CHECK(unit.current_altitude() == 0.0f);
 }

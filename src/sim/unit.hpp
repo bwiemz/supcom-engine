@@ -19,6 +19,7 @@ struct lua_State;
 
 namespace osc::map {
 class PathfindingGrid;
+class Terrain;
 }
 
 namespace osc::sim {
@@ -318,6 +319,40 @@ public:
     f32 fuel_use_time() const { return fuel_use_time_; }
     void set_fuel_use_time(f32 t) { fuel_use_time_ = t; }
 
+    // Air movement (populated from blueprint Air subtable)
+    f32 heading() const { return heading_; }
+    void set_heading(f32 h) { heading_ = h; }
+    f32 pitch_angle() const { return pitch_; }
+    void set_pitch_angle(f32 p) { pitch_ = p; }
+    f32 bank_angle() const { return bank_angle_; }
+    void set_bank_angle(f32 b) { bank_angle_ = b; }
+    f32 current_airspeed() const { return current_airspeed_; }
+    void set_current_airspeed(f32 s) { current_airspeed_ = s; }
+    f32 current_altitude() const { return current_altitude_; }
+    void set_current_altitude(f32 a) { current_altitude_ = a; }
+    f32 max_airspeed() const { return max_airspeed_; }
+    void set_max_airspeed(f32 s) { max_airspeed_ = s; }
+    f32 turn_rate_rad() const { return turn_rate_rad_; }
+    void set_turn_rate_rad(f32 r) { turn_rate_rad_ = r; }
+    f32 accel_rate() const { return accel_rate_; }
+    void set_accel_rate(f32 r) { accel_rate_ = r; }
+    f32 climb_rate() const { return climb_rate_; }
+    void set_climb_rate(f32 r) { climb_rate_ = r; }
+    f32 elevation_target() const { return elevation_target_; }
+    void set_elevation_target(f32 e) { elevation_target_ = e; }
+    bool is_air_unit() const { return layer_ == "Air"; }
+
+    // Air crash state (M159)
+    bool is_crashing() const { return crashing_; }
+    bool crash_impacted() const { return crash_impacted_; }
+    f32 crash_velocity_y() const { return crash_velocity_y_; }
+    f32 crash_spin_rate() const { return crash_spin_rate_; }
+    f32 crash_damage() const { return crash_damage_; }
+    void set_crash_damage(f32 d) { crash_damage_ = d; }
+
+    /// Start air crash sequence (overrides normal death for air units).
+    void begin_air_crash(f32 crash_dmg);
+
     // Misc flags
     u32 creator_id() const { return creator_id_; }
     void set_creator_id(u32 id) { creator_id_ = id; }
@@ -425,6 +460,7 @@ public:
 
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
+    bool nav_update(f64 dt, const map::Terrain* terrain);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
@@ -511,6 +547,23 @@ private:
     // Fuel system
     f32 fuel_ratio_ = -1.0f;     // -1 = no fuel system (sentinel)
     f32 fuel_use_time_ = 0.0f;   // seconds of flight time
+    // Air movement state
+    f32 heading_ = 0;            // yaw in radians
+    f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
+    f32 bank_angle_ = 0;         // roll in radians (visual banking on turns)
+    f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
+    f32 current_altitude_ = 0;   // actual Y offset above terrain
+    f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
+    f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (deg→rad)
+    f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
+    f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
+    f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
+    // Air crash state
+    bool crashing_ = false;
+    bool crash_impacted_ = false; // set once on terrain impact, consumed by SimState
+    f32 crash_velocity_y_ = 0;
+    f32 crash_spin_rate_ = 0;
+    f32 crash_damage_ = 100.0f;  // from blueprint General.CrashDamage
     // Misc flags
     u32 creator_id_ = 0;
     bool auto_overcharge_ = false;
