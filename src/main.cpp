@@ -1203,19 +1203,169 @@ int main(int argc, char* argv[]) {
 
                         if (!launch_scenario.empty()) {
                             spdlog::info("Launch requested: {}", launch_scenario);
-                            // TODO(M150+): Actually load the selected map and
-                            // create a new SimState here. Currently this only
-                            // updates the state machine and scenario path —
-                            // the sim uses whatever was loaded at startup.
-                            game_state_mgr.transition_to(
-                                osc::GameState::LOADING, uiL);
-                            // Store scenario path for SessionGetScenarioInfo
+
+                            // === RELOAD SEQUENCE ===
+
+                            // 1. GPU fence — ensure no in-flight work
+                            renderer.clear_scene();
+
+                            // 2. Destroy old SimState and sim Lua state
+                            sim_state.reset();
+                            sim_lua_state.reset();
+
+                            // 3. Create fresh sim Lua state
+                            sim_lua_state = std::make_unique<osc::lua::LuaState>();
+                            sim_lua_state->set_vfs(&vfs);
+                            sim_lua_state->set_blueprint_store(&store);
+
+                            // 4. Run init sequence on new sim state (polyfills, config, class, import)
+                            auto reinit_result = loader.execute_init(*sim_lua_state, config, vfs);
+                            if (!reinit_result) {
+                                spdlog::error("Reload init failed: {}", reinit_result.error().message);
+                            }
+
+                            // 5. Rebind BlueprintStore to new Lua state and reload blueprints
+                            store.rebind(sim_lua_state->raw());
+                            auto rebp_result = loader.load_blueprints(*sim_lua_state, vfs, store);
+                            if (!rebp_result) {
+                                spdlog::error("Reload blueprint load failed: {}", rebp_result.error().message);
+                            }
+
+                            // 6. Create fresh SimState
+                            sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+
+                            // 7. Audio, bone cache, anim cache
+                            {
+                                auto new_sound = std::make_unique<osc::audio::SoundManager>(
+                                    config.fa_path / "sounds");
+                                lua_State* sL = sim_lua_state->raw();
+                                lua_pushstring(sL, "osc_sound_manager");
+                                lua_pushlightuserdata(sL, new_sound.get());
+                                lua_rawset(sL, LUA_REGISTRYINDEX);
+                                sim_state->set_sound_manager(std::move(new_sound));
+                            }
+                            sim_state->set_bone_cache(
+                                std::make_unique<osc::sim::BoneCache>(&vfs, &store));
+                            sim_state->set_anim_cache(
+                                std::make_unique<osc::sim::AnimCache>(&vfs));
+
+                            // 8. Load scenario from selected map
+                            osc::lua::ScenarioLoader new_scenario_loader;
+                            auto new_meta_result = new_scenario_loader.load_scenario(
+                                *sim_lua_state, vfs, launch_scenario, *sim_state);
+                            if (!new_meta_result) {
+                                spdlog::error("Reload scenario failed: {}",
+                                              new_meta_result.error().message);
+                            } else {
+                                scenario_meta = new_meta_result.value();
+                                for (const auto& army : scenario_meta.armies) {
+                                    sim_state->add_army(army, army);
+                                }
+                            }
+                            if (sim_state->army_count() == 0) {
+                                sim_state->add_army("ARMY_1", "Player");
+                            }
+
+                            // 9. Register GiveResources SimCallback on new state
+                            {
+                                lua_State* sL = sim_lua_state->raw();
+                                lua_pushstring(sL, "SimCallbacks");
+                                lua_rawget(sL, LUA_GLOBALSINDEX);
+                                if (!lua_istable(sL, -1)) {
+                                    lua_pop(sL, 1);
+                                    lua_newtable(sL);
+                                    lua_pushstring(sL, "SimCallbacks");
+                                    lua_pushvalue(sL, -2);
+                                    lua_rawset(sL, LUA_GLOBALSINDEX);
+                                }
+                                sim_lua_state->do_string(R"(
+                                    local sc = rawget(_G, 'SimCallbacks')
+                                    sc.GiveResources = function(args)
+                                        if not args or not args.From or not args.To then return end
+                                        LOG('GiveResources: army ' .. tostring(args.From) .. ' -> army ' .. tostring(args.To) ..
+                                            ' mass=' .. tostring(args.Mass or 0) .. ' energy=' .. tostring(args.Energy or 0))
+                                    end
+                                )");
+                                lua_settop(sL, 0);
+                            }
+
+                            // 10. Store game state manager in new sim registry
+                            {
+                                lua_State* sL = sim_lua_state->raw();
+                                lua_pushstring(sL, "__osc_game_state_mgr");
+                                lua_pushlightuserdata(sL, &game_state_mgr);
+                                lua_rawset(sL, LUA_REGISTRYINDEX);
+                            }
+
+                            // 11. Boot sim (registers moho/sim bindings, runs simInit.lua)
+                            osc::lua::SimLoader new_sim_loader;
+                            auto new_sim_result = new_sim_loader.boot_sim(
+                                *sim_lua_state, vfs, *sim_state);
+                            if (!new_sim_result) {
+                                spdlog::error("Reload sim boot failed: {}",
+                                              new_sim_result.error().message);
+                            }
+
+                            // 12. Start session
+                            {
+                                osc::lua::SessionManager new_session_mgr;
+                                new_session_mgr.set_ai_armies({1}); // ARMY_2 is AI
+                                auto sess_result = new_session_mgr.start_session(
+                                    *sim_lua_state, vfs, *sim_state, scenario_meta);
+                                if (!sess_result) {
+                                    spdlog::warn("Reload session start failed: {}",
+                                                 sess_result.error().message);
+                                }
+                            }
+
+                            // 13. Update UI state's sim_state registry pointer to new SimState
+                            {
+                                lua_pushstring(uiL, "osc_sim_state");
+                                lua_pushlightuserdata(uiL, sim_state.get());
+                                lua_rawset(uiL, LUA_REGISTRYINDEX);
+                            }
+
+                            // 14. Rebuild renderer scene
+                            renderer.build_scene(*sim_state, &vfs, uiL);
+
+                            // 15. Reset camera to map center (spherical coords: target + distance)
+                            if (sim_state->terrain()) {
+                                osc::f32 cx = sim_state->terrain()->map_width() * 0.5f;
+                                osc::f32 cz = sim_state->terrain()->map_height() * 0.5f;
+                                renderer.camera().set_target(cx, cz);
+                                renderer.camera().set_distance(300.0f);
+                            }
+
+                            // 16. Update UI state registry pointers
                             lua_pushstring(uiL, "__osc_scenario_path");
                             lua_pushstring(uiL, launch_scenario.c_str());
                             lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                            lua_pushstring(uiL, "__osc_hover_entity_id");
+                            lua_pushnumber(uiL, 0);
+                            lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                            lua_pushstring(uiL, "__osc_focus_army");
+                            lua_pushnumber(uiL, 0);
+                            lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                            // 17. Clear selection
+                            input_handler.set_selected({});
+                            prev_selection.clear();
+
+                            // 18. Reset game state
+                            game_state_mgr.set_game_over(false);
+                            game_state_mgr.set_paused(false, uiL);
+                            sim_accumulator = 0.0;
+
+                            // 19. Transition to GAME
+                            game_state_mgr.transition_to(
+                                osc::GameState::LOADING, uiL);
                             game_state_mgr.transition_to(
                                 osc::GameState::GAME, uiL);
                             osc::core::call_start_game_ui(uiL);
+
+                            spdlog::info("=== Map reload complete ===");
                         }
                     } else {
                         lua_pop(uiL, 1);
