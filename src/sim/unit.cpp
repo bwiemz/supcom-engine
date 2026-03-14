@@ -1028,6 +1028,18 @@ done_commands:
         }
     }
 
+    // Fuel consumption for air units
+    if (is_air_unit() && fuel_ratio_ >= 0 && fuel_use_time_ > 0) {
+        fuel_ratio_ -= static_cast<f32>(dt) / fuel_use_time_;
+        if (fuel_ratio_ <= 0) {
+            fuel_ratio_ = 0;
+            // Auto-crash: begin dying (no fuel = crash)
+            if (!dying_) {
+                begin_dying(3.0f); // longer death for fuel crash
+            }
+        }
+    }
+
 weapons_only:
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)

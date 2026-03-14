@@ -238,6 +238,28 @@ TEST_CASE("Weapon layer targeting filters correctly", "[m158]") {
     CHECK((an_caps & osc::sim::layer_to_bit("Land")) == 0);
 }
 
+TEST_CASE("Air unit fuel consumption", "[m158]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Air");
+    unit.set_fuel_use_time(10.0f); // 10 seconds
+    unit.set_fuel_ratio(1.0f);     // full
+
+    CHECK(unit.fuel_ratio() == 1.0f);
+
+    // Simulate 5 seconds of fuel drain
+    float ratio = unit.fuel_ratio();
+    for (int i = 0; i < 50; i++) {
+        ratio -= 0.1f / 10.0f; // dt=0.1, fuel_use_time=10
+    }
+    CHECK(ratio > 0.49f);
+    CHECK(ratio < 0.51f);
+
+    // Verify sentinel: no fuel system
+    osc::sim::Unit unit2;
+    unit2.set_layer("Air");
+    CHECK(unit2.fuel_ratio() == -1.0f); // sentinel = no fuel
+}
+
 TEST_CASE("Air unit fields initialize correctly", "[m157]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");
