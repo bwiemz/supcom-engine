@@ -889,6 +889,19 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
+            // ReturnToLobby global function (M156b)
+            {
+                lua_State* uiL = ui_lua_state.raw();
+                lua_pushstring(uiL, "ReturnToLobby");
+                lua_pushcfunction(uiL, [](lua_State* L) -> int {
+                    lua_pushstring(L, "__osc_return_to_lobby");
+                    lua_pushboolean(L, 1);
+                    lua_rawset(L, LUA_REGISTRYINDEX);
+                    return 0;
+                });
+                lua_rawset(uiL, LUA_GLOBALSINDEX);
+            }
+
             // keymap_registry already stored in registry at outer scope
 
             // GameStateManager and BeatFunctionRegistry already declared at outer scope (M144b, M145b)
@@ -968,6 +981,7 @@ int main(int argc, char* argv[]) {
                 esc_was_pressed = esc_pressed;
 
                 // Auto-pause when game ends (M146a)
+                if (sim_state) {
                 osc::i32 game_result = sim_state->player_result();
                 if (game_result != 0 && !game_state_mgr.game_over()) {
                     game_state_mgr.set_game_over(true);
@@ -994,10 +1008,14 @@ int main(int argc, char* argv[]) {
                     } else {
                         lua_pop(uiL, 1);
                     }
+
+                    // Transition to SCORE state (M156a)
+                    game_state_mgr.transition_to(osc::GameState::SCORE, uiL);
                 }
+                } // if (sim_state)
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
-                if (!game_state_mgr.paused()) {
+                if (!game_state_mgr.paused() && sim_state) {
                     sim_accumulator += dt * game_state_mgr.speed();
                     while (sim_accumulator >=
                            osc::sim::SimState::SECONDS_PER_TICK) {
@@ -1007,7 +1025,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Process SimCallbacks from UI (M138a)
-                if (!sim_callback_queue.empty()) {
+                if (!sim_callback_queue.empty() && sim_state && sim_lua_state) {
                     auto callbacks = sim_callback_queue.drain();
                     lua_State* sL = sim_lua_state->raw();
 
@@ -1090,7 +1108,7 @@ int main(int argc, char* argv[]) {
 
                 // OnFirstUpdate — fire once after first sim tick
                 static bool first_update_fired = false;
-                if (!first_update_fired && sim_state->tick_count() > 0) {
+                if (!first_update_fired && sim_state && sim_state->tick_count() > 0) {
                     osc::core::call_on_first_update(ui_lua_state.raw());
                     first_update_fired = true;
                 }
@@ -1108,7 +1126,9 @@ int main(int argc, char* argv[]) {
                 beat_registry.fire_all(ui_lua_state.raw());
 
                 // Player input: selection + commands
+                if (sim_state) {
                 input_handler.update(renderer, *sim_state, dt);
+                }
 
                 // Fire OnSelectionChanged callbacks if selection changed
                 {
@@ -1144,28 +1164,33 @@ int main(int argc, char* argv[]) {
                 }
 
                 const auto& sel = input_handler.selected();
+                if (sim_state) {
                 renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
                                 sel.empty() ? nullptr : &sel);
+                }
 
                 // Update window title periodically
                 title_update_timer += dt;
                 if (title_update_timer >= 0.25) {
                     title_update_timer = 0.0;
                     char title[256];
-                    const char* status_str =
-                        game_result == 1 ? "VICTORY " :
-                        game_result == 2 ? "DEFEAT " :
-                        game_result == 3 ? "DRAW " :
-                        game_state_mgr.paused() ? "PAUSED " : "";
-                    std::snprintf(title, sizeof(title),
-                        "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
-                        status_str,
-                        game_state_mgr.speed(),
-                        sim_state->tick_count(),
-                        sim_state->game_time(),
-                        sim_state->entity_registry().count(),
-                        sel.size(),
-                        display_fps);
+                    if (sim_state) {
+                        const char* status_str =
+                            game_state_mgr.game_over() ? "GAME OVER " :
+                            game_state_mgr.paused() ? "PAUSED " : "";
+                        std::snprintf(title, sizeof(title),
+                            "OpenSupCom | %s%.1fx | T:%u (%.1fs) | %zu entities | %zu sel | %.0f FPS",
+                            status_str,
+                            game_state_mgr.speed(),
+                            sim_state->tick_count(),
+                            sim_state->game_time(),
+                            sim_state->entity_registry().count(),
+                            sel.size(),
+                            display_fps);
+                    } else {
+                        std::snprintf(title, sizeof(title),
+                            "OpenSupCom | Lobby | %.0f FPS", display_fps);
+                    }
                     renderer.set_window_title(title);
                 }
 
@@ -1367,6 +1392,51 @@ int main(int argc, char* argv[]) {
 
                             spdlog::info("=== Map reload complete ===");
                         }
+                    } else {
+                        lua_pop(uiL, 1);
+                    }
+                }
+
+                // Check for return-to-lobby request (M156b — score screen "Continue")
+                {
+                    lua_State* uiL = ui_lua_state.raw();
+                    lua_pushstring(uiL, "__osc_return_to_lobby");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_toboolean(uiL, -1)) {
+                        lua_pop(uiL, 1);
+
+                        // Clear the flag
+                        lua_pushstring(uiL, "__osc_return_to_lobby");
+                        lua_pushnil(uiL);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                        spdlog::info("Returning to lobby...");
+
+                        // Tear down game state
+                        renderer.clear_scene();
+                        sim_state.reset();
+                        sim_lua_state.reset();
+
+                        // Reset game state
+                        game_state_mgr.set_game_over(false);
+                        game_state_mgr.set_paused(false, uiL);
+                        sim_accumulator = 0.0;
+                        input_handler.set_selected({});
+                        prev_selection.clear();
+
+                        // Clear hover
+                        lua_pushstring(uiL, "__osc_hover_entity_id");
+                        lua_pushnumber(uiL, 0);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+
+                        // Transition to FRONT_END
+                        game_state_mgr.transition_to(
+                            osc::GameState::FRONT_END, uiL);
+
+                        // Re-show lobby UI
+                        osc::core::call_lua_global(uiL, "CreateUI");
+
+                        spdlog::info("=== Returned to lobby ===");
                     } else {
                         lua_pop(uiL, 1);
                     }
