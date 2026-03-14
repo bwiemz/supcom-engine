@@ -108,7 +108,11 @@
 - Re-register moho bindings and sim bindings on the new sim Lua state
 - Re-register the SimCallback bridge between UI and new sim state
 
-**Key constraint:** UI state references to the old sim (entity IDs, army brain pointers) become invalid on reload. Clear all UI-side entity caches. The UI state's `osc_sim_state` registry pointer (defined as `REG_SIM_STATE` in lua_state.hpp) must be updated to the new SimState.
+**Key constraint — Entity Handle safety:** UI Lua state survives across reloads, but its userdata wrappers (selected units, factory queues, target refs) contain references to C++ entities in the old SimState. Raw `Entity*` pointers would become dangling on reload, causing hard crashes if any persistent UI script (e.g., idle engineer tracker) ticks after reload.
+
+**Solution:** Entity references in Lua userdata must use **Entity Handles** — a 32-bit or 64-bit integer combining an array index and a generation counter. When a UI binding method is called (e.g., `GetHealth()`), the C++ binding first checks if the handle's generation matches the EntityRegistry's current generation for that slot. On map reload, the new EntityRegistry starts fresh with incremented generation counters. Any leftover UI handles will fail the generation check, and the binding returns nil or a Lua error instead of reading freed memory.
+
+This also means: update the UI state's `osc_sim_state` registry pointer (defined as `REG_SIM_STATE` in lua_state.hpp) to the new SimState.
 
 **BlueprintStore lifecycle:** Blueprints are game-global, not map-specific — the BlueprintStore must persist across map reloads. Since its Lua registry refs point into the old sim Lua state (which is destroyed), blueprint loading must be re-run on the new sim Lua state to re-populate the registry refs. The BlueprintStore itself (C++ object) stays alive; only its Lua-side refs are refreshed.
 
@@ -161,6 +165,12 @@
 - Acceleration: ramp `current_airspeed_` from 0 to `max_airspeed_` using `accel_rate_` (read from blueprint `Air.AccelerateRate`)
 - Banking: `bank_angle_ = clamp(yaw_delta * 2.0, -0.5, 0.5)` radians — used by renderer for mesh rotation
 - Respect playable area bounds (set by M154's SetPlayableRect)
+
+**Air unit separation (boids-style):**
+- Without repulsion, 50 interceptors ordered to the same point will merge into a single infinitely-dense point. FA avoids this with flocking.
+- Implement lightweight separation only (no alignment/cohesion needed): each tick, if an air unit is within separation radius (~5-10 game units) of another air unit on the same layer, add a small repulsive vector to `heading_`
+- Use the existing spatial hash grid (M66, 32u cells) for neighbor queries — O(K) per unit where K is nearby count
+- This ensures bomber wings spread out visually and are susceptible to AoE anti-air splash damage
 
 **Renderer changes:**
 - Unit renderer: use entity's actual Y position for air units (already the case if pos.y is set correctly)
@@ -221,12 +231,16 @@
 
 **Purpose:** Ships move on water, submarines dive, torpedoes work.
 
-**Pathfinding changes:**
-- The pathfinding grid currently marks cells as passable/impassable for land. Add a parallel water passability check:
-  - A cell is water-passable if `terrain_height(x, z) < water_elevation` (terrain is below water surface)
-  - A cell is land-passable if `terrain_height(x, z) >= water_elevation` (existing behavior)
-- Navigator: when layer == "Water" or "Sub", use water-passable grid instead of land-passable grid
+**Pathfinding changes — draft-aware water passability:**
+- Binary "is water?" is insufficient: a T3 battleship with deep draft cannot enter shallow shorelines that a T1 frigate can. FA blueprints encode this via `Physics.Elevation` (negative for ships = draft depth).
+- The passability check must be: `(water_elevation - terrain_height) >= required_draft` where `required_draft = abs(unit.elevation_)` (read from blueprint)
+- Generate **two water pathing grids** at map load, keyed on depth thresholds:
+  - **Shallow water grid:** cells where `(water_elevation - terrain_height) >= 1.0` — passable for frigates, subs, hover
+  - **Deep water grid:** cells where `(water_elevation - terrain_height) >= 4.0` — passable for battleships, carriers, aircraft carriers
+  - Threshold values derived from blueprint `Physics.Elevation` ranges across FA's unit roster
+- Navigator: select which water grid to use based on the unit's draft depth (from `abs(elevation_)`)
 - Store `water_elevation` on SimState (parsed from .scmap, already available for water rendering)
+- Land passability unchanged: `terrain_height >= water_elevation` (existing behavior)
 
 **Surface naval movement:**
 - Y position = `water_elevation` (constant, not terrain height) — ships float on the water surface
@@ -298,8 +312,8 @@
 
 **Damage contribution tracking (new infrastructure):**
 - Currently only `last_attacker_id_` (single u32) exists — no per-attacker damage ledger
-- Add `std::unordered_map<u32, f32> damage_contributions_` to Unit — maps attacker entity ID → cumulative damage dealt
-- Record contributions in the `Damage()` global function (sim_bindings.cpp ~line 1257): `victim->damage_contributions_[instigator_id] += amount`
+- Add a small fixed-capacity vector to Unit: `SmallVector<std::pair<u32, f32>, 4> damage_contributions_` — stores (attacker entity ID, cumulative damage dealt) pairs inline. The vast majority of FA units take damage from 1-4 distinct enemies before dying, so capacity 4 avoids heap allocation during the combat hot loop. Use `boost::container::small_vector` or a custom equivalent (fixed inline buffer of 4, spills to heap only for edge cases like experimentals under sustained multi-army fire)
+- Record contributions in the `Damage()` global function (sim_bindings.cpp ~line 1257): linear scan of `damage_contributions_` to find existing attacker entry (O(4) = constant), update in place or push_back new entry
 - On unit death: compute XP value = `Economy.BuildCostMass` from victim's blueprint
 - Distribute XP to all contributing units proportional to their damage dealt (FA behavior)
 - Each recipient calls `add_xp(amount)` → checks thresholds → levels up if crossed
