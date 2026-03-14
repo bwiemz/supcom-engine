@@ -51,6 +51,9 @@ public:
     void build_scene(const sim::SimState& sim, vfs::VirtualFileSystem* vfs,
                      lua_State* L);
 
+    /// Tear down scene-specific GPU resources for map reload.
+    void clear_scene();
+
     /// Render one frame (updates unit instances, draws everything).
     void render(sim::SimState& sim, lua_State* L,
                 ui::UIControlRegistry* ui_registry = nullptr,
@@ -166,7 +169,7 @@ private:
     // Bone SSBO infrastructure (set=1 for mesh pipeline, per-frame)
     VkDescriptorSetLayout bone_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool bone_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet bone_ds_ = VK_NULL_HANDLE;
+    VkDescriptorSet bone_ds_[FRAMES_IN_FLIGHT] = {};
 
     // Terrain texture infrastructure (set=0 for terrain pipeline: 11 samplers)
     VkDescriptorSetLayout terrain_tex_ds_layout_ = VK_NULL_HANDLE;
@@ -204,8 +207,8 @@ private:
     // Decal rendering
     AllocatedBuffer decal_quad_verts_{};
     AllocatedBuffer decal_quad_indices_{};
-    AllocatedBuffer decal_instance_buf_{};
-    void* decal_instance_mapped_ = nullptr;
+    AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
+    void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
 
     struct StoredDecal {
         std::string texture_path;
@@ -243,10 +246,10 @@ private:
 
     VkDescriptorSetLayout shadow_ds_layout_ = VK_NULL_HANDLE;
     VkDescriptorPool shadow_ds_pool_ = VK_NULL_HANDLE;
-    VkDescriptorSet shadow_ds_ = VK_NULL_HANDLE;
+    VkDescriptorSet shadow_ds_[FRAMES_IN_FLIGHT] = {};
 
-    AllocatedBuffer light_ubo_{};
-    void* light_ubo_mapped_ = nullptr;
+    AllocatedBuffer light_ubo_[FRAMES_IN_FLIGHT] = {};
+    void* light_ubo_mapped_[FRAMES_IN_FLIGHT] = {};
 
     // Particle system
     ParticleSystem particle_system_;
@@ -299,6 +302,7 @@ private:
     // Cleanup
     DeletionQueue deletion_queue_;
     bool initialized_ = false;
+    bool caches_initialized_ = false;
 };
 
 } // namespace osc::renderer

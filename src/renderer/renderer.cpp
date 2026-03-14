@@ -22,6 +22,14 @@
 #include <cstring>
 #include <unordered_map>
 
+/// Log a Vulkan/VMA error with file and line context.
+#define VK_CHECK(call) do { \
+    VkResult vk_check_res_ = (call); \
+    if (vk_check_res_ != VK_SUCCESS) \
+        spdlog::error("Vulkan error {} at {}:{}: {}", \
+                      static_cast<int>(vk_check_res_), __FILE__, __LINE__, #call); \
+} while(0)
+
 namespace osc::renderer {
 
 // GLFW scroll callback — forward to Renderer via user pointer
@@ -158,7 +166,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     pool_ci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_ci.queueFamilyIndex = graphics_queue_family_;
     pool_ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    vkCreateCommandPool(device_, &pool_ci, nullptr, &cmd_pool_);
+    VK_CHECK(vkCreateCommandPool(device_, &pool_ci, nullptr, &cmd_pool_));
 
     VkCommandBufferAllocateInfo cmd_ai{};
     cmd_ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -176,9 +184,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-        vkCreateFence(device_, &fence_ci, nullptr, &render_fence_[i]);
-        vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_[i]);
-        vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_[i]);
+        VK_CHECK(vkCreateFence(device_, &fence_ci, nullptr, &render_fence_[i]));
+        VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_[i]));
+        VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_[i]));
     }
 
     // Texture descriptor set layout (set=0, binding=0: combined image sampler)
@@ -193,7 +201,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         ds_ci.bindingCount = 1;
         ds_ci.pBindings = &sampler_binding;
-        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &texture_ds_layout_);
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &texture_ds_layout_));
     }
 
     // Bone SSBO descriptor set layout (set=1, binding=0: storage buffer)
@@ -208,7 +216,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         ds_ci.bindingCount = 1;
         ds_ci.pBindings = &ssbo_binding;
-        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_);
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_));
     }
 
     // Terrain texture descriptor set layout (set=0: 22 combined image samplers)
@@ -227,8 +235,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         ds_ci.bindingCount = static_cast<u32>(terrain_bindings.size());
         ds_ci.pBindings = terrain_bindings.data();
-        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr,
-                                    &terrain_tex_ds_layout_);
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr,
+                                    &terrain_tex_ds_layout_));
     }
 
     // Texture sampler (trilinear, anisotropic, repeat wrap)
@@ -244,7 +252,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
         sampler_ci.anisotropyEnable = VK_TRUE;
         sampler_ci.maxAnisotropy = 8.0f;
         sampler_ci.maxLod = 16.0f;
-        vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_);
+        VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_));
     }
 
     // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
@@ -334,8 +342,8 @@ void Renderer::create_depth_image() {
     alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
     alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-    vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                   &depth_image_.image, &depth_image_.allocation, nullptr);
+    VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                   &depth_image_.image, &depth_image_.allocation, nullptr));
 
     VkImageViewCreateInfo view_ci{};
     view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -345,7 +353,7 @@ void Renderer::create_depth_image() {
     view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
     view_ci.subresourceRange.levelCount = 1;
     view_ci.subresourceRange.layerCount = 1;
-    vkCreateImageView(device_, &view_ci, nullptr, &depth_image_.view);
+    VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &depth_image_.view));
 }
 
 void Renderer::create_render_pass() {
@@ -385,15 +393,23 @@ void Renderer::create_render_pass() {
 
     std::array<VkAttachmentDescription, 2> attachments = {color_att, depth_att};
 
-    VkSubpassDependency dep{};
-    dep.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dep.dstSubpass = 0;
-    dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    std::array<VkSubpassDependency, 2> deps{};
+    // Incoming: external writes complete before we start
+    deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass = 0;
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    // Outgoing: color writes visible to subsequent fragment reads (bloom compatibility)
+    deps[1].srcSubpass = 0;
+    deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
     VkRenderPassCreateInfo rp_ci{};
     rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -401,10 +417,10 @@ void Renderer::create_render_pass() {
     rp_ci.pAttachments = attachments.data();
     rp_ci.subpassCount = 1;
     rp_ci.pSubpasses = &subpass;
-    rp_ci.dependencyCount = 1;
-    rp_ci.pDependencies = &dep;
+    rp_ci.dependencyCount = static_cast<u32>(deps.size());
+    rp_ci.pDependencies = deps.data();
 
-    vkCreateRenderPass(device_, &rp_ci, nullptr, &render_pass_);
+    VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &render_pass_));
 }
 
 void Renderer::create_framebuffers() {
@@ -422,7 +438,7 @@ void Renderer::create_framebuffers() {
         fb_ci.height = window_height_;
         fb_ci.layers = 1;
 
-        vkCreateFramebuffer(device_, &fb_ci, nullptr, &framebuffers_[i]);
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &framebuffers_[i]));
     }
 }
 
@@ -445,8 +461,8 @@ void Renderer::create_shadow_resources() {
         alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
         alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 
-        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &shadow_image_.image, &shadow_image_.allocation, nullptr);
+        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &shadow_image_.image, &shadow_image_.allocation, nullptr));
 
         VkImageViewCreateInfo view_ci{};
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -456,7 +472,7 @@ void Renderer::create_shadow_resources() {
         view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         view_ci.subresourceRange.levelCount = 1;
         view_ci.subresourceRange.layerCount = 1;
-        vkCreateImageView(device_, &view_ci, nullptr, &shadow_image_.view);
+        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &shadow_image_.view));
     }
 
     // --- Shadow render pass (depth-only) ---
@@ -498,7 +514,7 @@ void Renderer::create_shadow_resources() {
         rp_ci.dependencyCount = 1;
         rp_ci.pDependencies = &dep;
 
-        vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_);
+        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_));
     }
 
     // --- Shadow framebuffer ---
@@ -511,7 +527,7 @@ void Renderer::create_shadow_resources() {
         fb_ci.width = SHADOW_MAP_SIZE;
         fb_ci.height = SHADOW_MAP_SIZE;
         fb_ci.layers = 1;
-        vkCreateFramebuffer(device_, &fb_ci, nullptr, &shadow_framebuffer_);
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &shadow_framebuffer_));
     }
 
     // --- Shadow comparison sampler (for sampler2DShadow) ---
@@ -528,11 +544,11 @@ void Renderer::create_shadow_resources() {
         ci.compareEnable = VK_TRUE;
         ci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         ci.maxLod = 1.0f;
-        vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_);
+        VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_));
     }
 
-    // --- Light UBO (64B, persistently mapped) ---
-    {
+    // --- Light UBO (64B, persistently mapped, per-frame for FIF safety) ---
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo ubo_ci{};
         ubo_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         ubo_ci.size = sizeof(f32) * 16;
@@ -543,9 +559,9 @@ void Renderer::create_shadow_resources() {
         alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
         VmaAllocationInfo info{};
-        vmaCreateBuffer(allocator_, &ubo_ci, &alloc_ci,
-                        &light_ubo_.buffer, &light_ubo_.allocation, &info);
-        light_ubo_mapped_ = info.pMappedData;
+        VK_CHECK(vmaCreateBuffer(allocator_, &ubo_ci, &alloc_ci,
+                        &light_ubo_[i].buffer, &light_ubo_[i].allocation, &info));
+        light_ubo_mapped_[i] = info.pMappedData;
     }
 
     // --- Shadow descriptor set layout (binding 0: shadow sampler, binding 1: light UBO) ---
@@ -565,56 +581,58 @@ void Renderer::create_shadow_resources() {
         ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         ds_ci.bindingCount = static_cast<u32>(bindings.size());
         ds_ci.pBindings = bindings.data();
-        vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &shadow_ds_layout_);
+        VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &shadow_ds_layout_));
     }
 
-    // --- Shadow descriptor pool + set ---
+    // --- Shadow descriptor pool + per-frame sets ---
     {
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
-        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
-        pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1};
+        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, FRAMES_IN_FLIGHT};
+        pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, FRAMES_IN_FLIGHT};
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = 1;
+        pool_ci.maxSets = FRAMES_IN_FLIGHT;
         pool_ci.poolSizeCount = static_cast<u32>(pool_sizes.size());
         pool_ci.pPoolSizes = pool_sizes.data();
-        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &shadow_ds_pool_);
+        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &shadow_ds_pool_));
 
-        VkDescriptorSetAllocateInfo alloc_info{};
-        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc_info.descriptorPool = shadow_ds_pool_;
-        alloc_info.descriptorSetCount = 1;
-        alloc_info.pSetLayouts = &shadow_ds_layout_;
-        vkAllocateDescriptorSets(device_, &alloc_info, &shadow_ds_);
+        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+            VkDescriptorSetAllocateInfo alloc_info{};
+            alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            alloc_info.descriptorPool = shadow_ds_pool_;
+            alloc_info.descriptorSetCount = 1;
+            alloc_info.pSetLayouts = &shadow_ds_layout_;
+            VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &shadow_ds_[i]));
 
-        VkDescriptorImageInfo img_info{};
-        img_info.sampler = shadow_sampler_;
-        img_info.imageView = shadow_image_.view;
-        img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo img_info{};
+            img_info.sampler = shadow_sampler_;
+            img_info.imageView = shadow_image_.view;
+            img_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        VkDescriptorBufferInfo buf_info{};
-        buf_info.buffer = light_ubo_.buffer;
-        buf_info.offset = 0;
-        buf_info.range = sizeof(f32) * 16;
+            VkDescriptorBufferInfo buf_info{};
+            buf_info.buffer = light_ubo_[i].buffer;
+            buf_info.offset = 0;
+            buf_info.range = sizeof(f32) * 16;
 
-        std::array<VkWriteDescriptorSet, 2> writes{};
-        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[0].dstSet = shadow_ds_;
-        writes[0].dstBinding = 0;
-        writes[0].descriptorCount = 1;
-        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[0].pImageInfo = &img_info;
+            std::array<VkWriteDescriptorSet, 2> writes{};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = shadow_ds_[i];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo = &img_info;
 
-        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[1].dstSet = shadow_ds_;
-        writes[1].dstBinding = 1;
-        writes[1].descriptorCount = 1;
-        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writes[1].pBufferInfo = &buf_info;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = shadow_ds_[i];
+            writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[1].pBufferInfo = &buf_info;
 
-        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()),
-                               writes.data(), 0, nullptr);
+            vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()),
+                                   writes.data(), 0, nullptr);
+        }
     }
 
     spdlog::info("Shadow resources created ({}x{} depth map)", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
@@ -1014,8 +1032,8 @@ void Renderer::create_bloom_resources() {
 
         VmaAllocationCreateInfo alloc_ci{};
         alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &img.image, &img.allocation, nullptr);
+        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &img.image, &img.allocation, nullptr));
 
         VkImageViewCreateInfo view_ci{};
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1023,7 +1041,7 @@ void Renderer::create_bloom_resources() {
         view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_ci.format = hdr_format;
         view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCreateImageView(device_, &view_ci, nullptr, &img.view);
+        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &img.view));
     };
 
     // Scene color uses swapchain format for render pass compatibility with
@@ -1043,8 +1061,8 @@ void Renderer::create_bloom_resources() {
 
         VmaAllocationCreateInfo alloc_ci{};
         alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-        vmaCreateImage(allocator_, &img_ci, &alloc_ci,
-                       &scene_color_image_.image, &scene_color_image_.allocation, nullptr);
+        VK_CHECK(vmaCreateImage(allocator_, &img_ci, &alloc_ci,
+                       &scene_color_image_.image, &scene_color_image_.allocation, nullptr));
 
         VkImageViewCreateInfo view_ci{};
         view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1052,7 +1070,7 @@ void Renderer::create_bloom_resources() {
         view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_ci.format = swapchain_format_;
         view_ci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        vkCreateImageView(device_, &view_ci, nullptr, &scene_color_image_.view);
+        VK_CHECK(vkCreateImageView(device_, &view_ci, nullptr, &scene_color_image_.view));
     }
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
@@ -1118,7 +1136,7 @@ void Renderer::create_bloom_resources() {
         rp_ci.dependencyCount = static_cast<u32>(deps.size());
         rp_ci.pDependencies = deps.data();
 
-        vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_);
+        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_));
     }
 
     // Scene framebuffer (full resolution, scene_render_pass_)
@@ -1132,7 +1150,7 @@ void Renderer::create_bloom_resources() {
         fb_ci.width = w;
         fb_ci.height = h;
         fb_ci.layers = 1;
-        vkCreateFramebuffer(device_, &fb_ci, nullptr, &scene_framebuffer_);
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &scene_framebuffer_));
     }
 
     // Bloom render pass (single color, no depth)
@@ -1168,7 +1186,7 @@ void Renderer::create_bloom_resources() {
         rp_ci.pSubpasses = &subpass;
         rp_ci.dependencyCount = 1;
         rp_ci.pDependencies = &bloom_dep;
-        vkCreateRenderPass(device_, &rp_ci, nullptr, &bloom_render_pass_);
+        VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &bloom_render_pass_));
     }
 
     // Bloom framebuffers (half resolution)
@@ -1181,7 +1199,7 @@ void Renderer::create_bloom_resources() {
         fb_ci.width = fw;
         fb_ci.height = fh;
         fb_ci.layers = 1;
-        vkCreateFramebuffer(device_, &fb_ci, nullptr, &fb);
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &fb));
     };
 
     create_fb(bloom_bright_fb_, bloom_bright_image_.view, half_w, half_h, bloom_render_pass_);
@@ -1196,7 +1214,7 @@ void Renderer::create_bloom_resources() {
         pool_ci.maxSets = 4;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &pool_size;
-        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bloom_ds_pool_);
+        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bloom_ds_pool_));
 
         VkDescriptorSetLayout layouts[4] = {texture_ds_layout_, texture_ds_layout_,
                                              texture_ds_layout_, texture_ds_layout_};
@@ -1206,7 +1224,7 @@ void Renderer::create_bloom_resources() {
         alloc.descriptorSetCount = 4;
         alloc.pSetLayouts = layouts;
         VkDescriptorSet sets[4];
-        vkAllocateDescriptorSets(device_, &alloc, sets);
+        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc, sets));
         scene_ds_ = sets[0];
         bloom_bright_ds_ = sets[1];
         bloom_blur_h_ds_ = sets[2];
@@ -1339,6 +1357,36 @@ void Renderer::create_bloom_pipelines() {
     spdlog::info("Bloom pipelines created");
 }
 
+void Renderer::clear_scene() {
+    vkDeviceWaitIdle(device_);
+
+    terrain_mesh_.destroy(device_, allocator_);
+    unit_renderer_.destroy(device_, allocator_);
+    water_renderer_.destroy(device_, allocator_);
+    fog_renderer_.destroy(device_, allocator_);
+
+    if (bone_ds_pool_) {
+        vkDestroyDescriptorPool(device_, bone_ds_pool_, nullptr);
+        bone_ds_pool_ = VK_NULL_HANDLE;
+        for (auto& ds : bone_ds_) ds = VK_NULL_HANDLE;
+    }
+    if (terrain_tex_ds_pool_) {
+        vkDestroyDescriptorPool(device_, terrain_tex_ds_pool_, nullptr);
+        terrain_tex_ds_pool_ = VK_NULL_HANDLE;
+        terrain_tex_ds_ = VK_NULL_HANDLE;
+    }
+
+    stored_decals_.clear();
+    decal_groups_.clear();
+    particle_system_.clear();
+    emitter_bp_cache_.clear();
+
+    terrain_map_width_ = 0;
+    terrain_map_height_ = 0;
+    std::fill(std::begin(terrain_strata_scales_),
+              std::end(terrain_strata_scales_), 0.0f);
+}
+
 void Renderer::build_scene(const sim::SimState& sim,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
     auto* terrain = sim.terrain();
@@ -1354,48 +1402,53 @@ void Renderer::build_scene(const sim::SimState& sim,
 
     // Initialize mesh cache, texture cache, and preload meshes
     if (vfs && sim.blueprint_store()) {
-        mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                         vfs, sim.blueprint_store());
-        texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                            texture_ds_layout_, texture_sampler_, vfs);
-        font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                         texture_ds_layout_, texture_sampler_, vfs);
+        if (!caches_initialized_) {
+            mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                             vfs, sim.blueprint_store());
+            texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                                texture_ds_layout_, texture_sampler_, vfs);
+            font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                             texture_ds_layout_, texture_sampler_, vfs);
+            caches_initialized_ = true;
+        }
         unit_renderer_.preload_meshes(sim, mesh_cache_, L);
     }
 
-    // Create bone SSBO descriptor pool and set
-    if (unit_renderer_.bone_ssbo_buffer() && bone_ds_layout_) {
+    // Create bone SSBO descriptor pool and per-frame sets
+    if (unit_renderer_.bone_ssbo_buffer(0) && bone_ds_layout_) {
         VkDescriptorPoolSize pool_size{};
         pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        pool_size.descriptorCount = 1;
+        pool_size.descriptorCount = FRAMES_IN_FLIGHT;
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_ci.maxSets = 1;
+        pool_ci.maxSets = FRAMES_IN_FLIGHT;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &pool_size;
-        vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bone_ds_pool_);
+        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr, &bone_ds_pool_));
 
-        VkDescriptorSetAllocateInfo alloc_info{};
-        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        alloc_info.descriptorPool = bone_ds_pool_;
-        alloc_info.descriptorSetCount = 1;
-        alloc_info.pSetLayouts = &bone_ds_layout_;
-        vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_);
+        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+            VkDescriptorSetAllocateInfo alloc_info{};
+            alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            alloc_info.descriptorPool = bone_ds_pool_;
+            alloc_info.descriptorSetCount = 1;
+            alloc_info.pSetLayouts = &bone_ds_layout_;
+            VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &bone_ds_[i]));
 
-        VkDescriptorBufferInfo buf_info{};
-        buf_info.buffer = unit_renderer_.bone_ssbo_buffer();
-        buf_info.offset = 0;
-        buf_info.range = VK_WHOLE_SIZE;
+            VkDescriptorBufferInfo buf_info{};
+            buf_info.buffer = unit_renderer_.bone_ssbo_buffer(i);
+            buf_info.offset = 0;
+            buf_info.range = VK_WHOLE_SIZE;
 
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = bone_ds_;
-        write.dstBinding = 0;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.descriptorCount = 1;
-        write.pBufferInfo = &buf_info;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = bone_ds_[i];
+            write.dstBinding = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write.descriptorCount = 1;
+            write.pBufferInfo = &buf_info;
+            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        }
     }
 
     // Load terrain stratum textures and create terrain descriptor set
@@ -1468,15 +1521,15 @@ void Renderer::build_scene(const sim::SimState& sim,
         pool_ci.maxSets = 1;
         pool_ci.poolSizeCount = 1;
         pool_ci.pPoolSizes = &pool_size;
-        vkCreateDescriptorPool(device_, &pool_ci, nullptr,
-                                &terrain_tex_ds_pool_);
+        VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr,
+                                &terrain_tex_ds_pool_));
 
         VkDescriptorSetAllocateInfo alloc_info{};
         alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         alloc_info.descriptorPool = terrain_tex_ds_pool_;
         alloc_info.descriptorSetCount = 1;
         alloc_info.pSetLayouts = &terrain_tex_ds_layout_;
-        vkAllocateDescriptorSets(device_, &alloc_info, &terrain_tex_ds_);
+        VK_CHECK(vkAllocateDescriptorSets(device_, &alloc_info, &terrain_tex_ds_));
 
         // Write all 20 image descriptors
         std::array<VkDescriptorImageInfo, 20> img_infos{};
@@ -1648,26 +1701,33 @@ void Renderer::build_scene(const sim::SimState& sim,
             quad_indices, sizeof(quad_indices),
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 
-        // Host-visible, persistently-mapped instance buffer for model matrices
+        // Host-visible, persistently-mapped instance buffers (per-frame for FIF safety)
         VkDeviceSize inst_size = MAX_DECALS * sizeof(f32) * 16;
-        VkBufferCreateInfo buf_ci{};
-        buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        buf_ci.size = inst_size;
-        buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bool decal_alloc_ok = true;
+        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+            VkBufferCreateInfo buf_ci{};
+            buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            buf_ci.size = inst_size;
+            buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 
-        VmaAllocationCreateInfo alloc_ci{};
-        alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-        alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationCreateInfo alloc_ci{};
+            alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+            alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
-        VmaAllocationInfo alloc_info{};
-        VkResult vma_res = vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci,
-                        &decal_instance_buf_.buffer,
-                        &decal_instance_buf_.allocation, &alloc_info);
-        if (vma_res != VK_SUCCESS || !alloc_info.pMappedData) {
-            spdlog::error("Decal: failed to allocate instance buffer");
-            // decal_instance_mapped_ stays null, render() guard will skip decals
+            VmaAllocationInfo alloc_info{};
+            VkResult vma_res = vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci,
+                            &decal_instance_buf_[i].buffer,
+                            &decal_instance_buf_[i].allocation, &alloc_info);
+            if (vma_res != VK_SUCCESS || !alloc_info.pMappedData) {
+                spdlog::error("Decal: failed to allocate instance buffer {}", i);
+                decal_alloc_ok = false;
+                break;
+            }
+            decal_instance_mapped_[i] = alloc_info.pMappedData;
+        }
+        if (!decal_alloc_ok) {
+            spdlog::error("Decal: instance buffer allocation failed");
         } else {
-        decal_instance_mapped_ = alloc_info.pMappedData;
 
         // Build model matrix helper (same as unit_renderer.cpp)
         auto build_mat = [](f32* out, f32 px, f32 py, f32 pz,
@@ -1932,11 +1992,11 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // ==================== SHADOW PASS ====================
-    if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_) {
+    if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_[fi]) {
         PROFILE_ZONE("Render::shadow_pass");
         // Update light UBO
         auto light_vp = compute_light_vp();
-        std::memcpy(light_ubo_mapped_, light_vp.data(), sizeof(f32) * 16);
+        std::memcpy(light_ubo_mapped_[fi], light_vp.data(), sizeof(f32) * 16);
 
         VkClearValue shadow_clear{};
         shadow_clear.depthStencil = {1.0f, 0};
@@ -1979,13 +2039,13 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
         // Shadow meshes (skip when strategic zoom replaces 3D units with icons)
         if (!strategic_icon_renderer_.is_strategic_zoom() &&
-            !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_) {
+            !unit_renderer_.mesh_groups().empty() && shadow_mesh_pipeline_ && bone_ds_[fi]) {
             vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               shadow_mesh_pipeline_);
 
             // Bind bone SSBO at set=0
             vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    shadow_mesh_layout_, 0, 1, &bone_ds_,
+                                    shadow_mesh_layout_, 0, 1, &bone_ds_[fi],
                                     0, nullptr);
 
             struct ShadowMeshPC {
@@ -2108,9 +2168,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                     0, nullptr);
         }
         // Bind shadow descriptor set (set=1)
-        if (shadow_ds_) {
+        if (shadow_ds_[fi]) {
             vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    terrain_layout_, 1, 1, &shadow_ds_,
+                                    terrain_layout_, 1, 1, &shadow_ds_[fi],
                                     0, nullptr);
         }
 
@@ -2125,14 +2185,14 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // 2. Draw decals (textured quads on terrain)
     // stored_decals_ is pre-sorted by texture_path (in build_scene) for
     // allocation-free per-frame grouping via linear scan.
-    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_) {
+    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_[fi]) {
         f32 cam_x, cam_y, cam_z;
         camera_.eye_position(cam_x, cam_y, cam_z);
 
         // Linear scan over pre-sorted decals: distance-cull + group by texture
         decal_groups_.clear();
         u32 total_instances = 0;
-        auto* dst = static_cast<f32*>(decal_instance_mapped_);
+        auto* dst = static_cast<f32*>(decal_instance_mapped_[fi]);
         const std::string* cur_path = nullptr;
         VkDescriptorSet cur_ds = VK_NULL_HANDLE;
 
@@ -2170,7 +2230,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                0, sizeof(f32) * 16, vp.data());
 
             VkBuffer quad_buf = decal_quad_verts_.buffer;
-            VkBuffer inst_buf = decal_instance_buf_.buffer;
+            VkBuffer inst_buf = decal_instance_buf_[fi].buffer;
 
             for (auto& group : decal_groups_) {
                 vkCmdBindDescriptorSets(cmd_buf_[fi],
@@ -2217,9 +2277,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         }
 
         // Bind bone SSBO at set=1 (once for all groups)
-        if (bone_ds_) {
+        if (bone_ds_[fi]) {
             vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 1, 1, &bone_ds_,
+                                    mesh_layout_, 1, 1, &bone_ds_[fi],
                                     0, nullptr);
         }
 
@@ -2242,9 +2302,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         }
 
         // Bind shadow descriptor set at set=4
-        if (shadow_ds_) {
+        if (shadow_ds_[fi]) {
             vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 4, 1, &shadow_ds_,
+                                    mesh_layout_, 4, 1, &shadow_ds_[fi],
                                     0, nullptr);
         }
 
@@ -2306,9 +2366,9 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                           unit_pipeline_);
 
         // Bind shadow descriptor set at set=0
-        if (shadow_ds_) {
+        if (shadow_ds_[fi]) {
             vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    unit_layout_, 0, 1, &shadow_ds_,
+                                    unit_layout_, 0, 1, &shadow_ds_[fi],
                                     0, nullptr);
         }
 
@@ -2558,7 +2618,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_semaphore_[fi];
-    vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
+    VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
 
     // Present
     VkPresentInfoKHR present{};
@@ -2707,9 +2767,11 @@ void Renderer::shutdown() {
     if (decal_quad_indices_.buffer)
         vmaDestroyBuffer(allocator_, decal_quad_indices_.buffer,
                          decal_quad_indices_.allocation);
-    if (decal_instance_buf_.buffer)
-        vmaDestroyBuffer(allocator_, decal_instance_buf_.buffer,
-                         decal_instance_buf_.allocation);
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        if (decal_instance_buf_[i].buffer)
+            vmaDestroyBuffer(allocator_, decal_instance_buf_[i].buffer,
+                             decal_instance_buf_[i].allocation);
+    }
 
     // Shadow infrastructure
     if (shadow_ds_pool_)
@@ -2728,8 +2790,10 @@ void Renderer::shutdown() {
     if (shadow_image_.view) vkDestroyImageView(device_, shadow_image_.view, nullptr);
     if (shadow_image_.image)
         vmaDestroyImage(allocator_, shadow_image_.image, shadow_image_.allocation);
-    if (light_ubo_.buffer)
-        vmaDestroyBuffer(allocator_, light_ubo_.buffer, light_ubo_.allocation);
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        if (light_ubo_[i].buffer)
+            vmaDestroyBuffer(allocator_, light_ubo_[i].buffer, light_ubo_[i].allocation);
+    }
 
     // Bloom resources
     destroy_bloom_resources();
