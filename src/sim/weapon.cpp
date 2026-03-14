@@ -219,6 +219,30 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
                         proj->max_speed = static_cast<f32>(lua_tonumber(L, -1));
                     }
                     lua_pop(L, 1); // MaxSpeed
+
+                    // Read TrackTarget
+                    lua_pushstring(L, "TrackTarget");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
+                        proj->tracking = lua_toboolean(L, -1) != 0;
+                    }
+                    lua_pop(L, 1);
+
+                    // Read TurnRate (degrees/sec for homing)
+                    lua_pushstring(L, "TurnRate");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) {
+                        proj->turn_rate = static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1);
+
+                    // Read StayUnderwater
+                    lua_pushstring(L, "StayUnderwater");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
+                        proj->stay_underwater = lua_toboolean(L, -1) != 0;
+                    }
+                    lua_pop(L, 1);
                 }
                 lua_pop(L, 1); // Physics
             }

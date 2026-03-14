@@ -6,6 +6,8 @@
 
 struct lua_State;
 
+namespace osc::map { class Terrain; }
+
 namespace osc::sim {
 
 class EntityRegistry;
@@ -42,7 +44,8 @@ public:
     bool stay_underwater = false;    // StayUnderwater
 
     /// Per-tick: move, check collision, impact.
-    void update(f64 dt, EntityRegistry& registry, lua_State* L);
+    void update(f64 dt, EntityRegistry& registry, lua_State* L,
+                const map::Terrain* terrain = nullptr);
 
 private:
     void on_impact(lua_State* L, Entity* target, EntityRegistry& registry);

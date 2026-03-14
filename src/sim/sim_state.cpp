@@ -314,7 +314,7 @@ void SimState::update_entities() {
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
-                                                 entity_registry_, L_);
+                                                 entity_registry_, L_, terrain_.get());
         }
     }
 }

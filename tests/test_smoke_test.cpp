@@ -6,6 +6,8 @@
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/weapon.hpp"
+#include "sim/projectile.hpp"
+#include "sim/entity_registry.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -416,4 +418,33 @@ TEST_CASE("Amphibious unit layer transition logic", "[m161]") {
     hover.set_motion_type("RULEUMT_Hover");
     CHECK_FALSE(hover.is_amphibious());
     CHECK(hover.is_hover());
+}
+
+TEST_CASE("Projectile homing tracks toward target", "[m160]") {
+    osc::sim::EntityRegistry registry;
+
+    // Create a target at (0, 0, 50)
+    auto target = std::make_unique<osc::sim::Unit>();
+    target->set_position({0, 0, 50});
+    osc::u32 tid = registry.register_entity(std::move(target));
+
+    // Create a tracking projectile moving in +X, target is in +Z
+    osc::sim::Projectile proj;
+    proj.set_position({0, 0, 0});
+    proj.velocity = {10, 0, 0}; // moving +X
+    proj.tracking = true;
+    proj.turn_rate = 360.0f; // fast turn for test
+    proj.max_speed = 10.0f;
+    proj.lifetime = 5.0f;
+    proj.target_entity_id = tid;
+
+    // After one update tick, velocity should have Z component (turned toward target)
+    proj.update(0.1, registry, nullptr, nullptr);
+    CHECK(proj.velocity.z > 0.0f);
+    // Speed should be preserved (approximately 10)
+    float spd = std::sqrt(proj.velocity.x * proj.velocity.x +
+                        proj.velocity.y * proj.velocity.y +
+                        proj.velocity.z * proj.velocity.z);
+    CHECK(spd > 9.5f);
+    CHECK(spd < 10.5f);
 }

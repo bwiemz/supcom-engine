@@ -1,6 +1,8 @@
 #include "sim/projectile.hpp"
 #include "sim/entity_registry.hpp"
+#include "map/terrain.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <spdlog/spdlog.h>
 
@@ -25,7 +27,8 @@ static void push_vec3(lua_State* L, const Vector3& v) {
     lua_settable(L, -3);
 }
 
-void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L) {
+void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
+                         const map::Terrain* terrain) {
     if (destroyed()) return;
 
     // Tick lifetime
@@ -61,12 +64,71 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L) {
         }
     }
 
+    // Homing/tracking: steer velocity toward target
+    if (tracking && target_entity_id > 0) {
+        auto* target = registry.find(target_entity_id);
+        if (target && !target->destroyed()) {
+            auto pos = position();
+            f32 tx = target->position().x - pos.x;
+            f32 ty = target->position().y - pos.y;
+            f32 tz = target->position().z - pos.z;
+            f32 to_len = std::sqrt(tx * tx + ty * ty + tz * tz);
+            if (to_len > 0.01f) {
+                f32 spd = std::sqrt(velocity.x * velocity.x +
+                                    velocity.y * velocity.y +
+                                    velocity.z * velocity.z);
+                if (spd < 0.01f) spd = max_speed > 0 ? max_speed : 1.0f;
+
+                // Desired velocity: direction to target * current speed
+                f32 inv_len = 1.0f / to_len;
+                f32 dx = tx * inv_len * spd;
+                f32 dy = ty * inv_len * spd;
+                f32 dz = tz * inv_len * spd;
+
+                // Turn rate: degrees/sec -> radians/sec
+                f32 turn_rad = turn_rate * 3.14159265f / 180.0f;
+                f32 max_turn = turn_rad * static_cast<f32>(dt);
+
+                // Angle between current velocity and desired
+                f32 dot = (velocity.x * dx + velocity.y * dy + velocity.z * dz) / (spd * spd);
+                dot = std::clamp(dot, -1.0f, 1.0f);
+                f32 angle = std::acos(dot);
+
+                if (angle > 0.001f) {
+                    f32 t = std::min(1.0f, max_turn / angle);
+                    velocity.x += (dx - velocity.x) * t;
+                    velocity.y += (dy - velocity.y) * t;
+                    velocity.z += (dz - velocity.z) * t;
+
+                    // Normalize to maintain speed
+                    f32 new_spd = std::sqrt(velocity.x * velocity.x +
+                                            velocity.y * velocity.y +
+                                            velocity.z * velocity.z);
+                    if (new_spd > 0.01f) {
+                        f32 scale = spd / new_spd;
+                        velocity.x *= scale;
+                        velocity.y *= scale;
+                        velocity.z *= scale;
+                    }
+                }
+            }
+        }
+    }
+
     // Move
     auto pos = position();
     pos.x += velocity.x * static_cast<f32>(dt);
     pos.y += velocity.y * static_cast<f32>(dt);
     pos.z += velocity.z * static_cast<f32>(dt);
     set_position(pos);
+
+    // Torpedo/underwater projectile: clamp Y to water surface
+    if (stay_underwater && terrain) {
+        if (pos.y > terrain->water_elevation()) {
+            pos.y = terrain->water_elevation();
+            set_position(pos);
+        }
+    }
 
     // Velocity-align orientation for rendering
     if (velocity_align) {
@@ -118,11 +180,13 @@ void Projectile::on_impact(lua_State* L, Entity* target,
 
     auto pos = position();
 
-    // Find launcher entity for instigator arg
-    Entity* launcher = nullptr;
+    // Resolve launcher's Lua ref once (avoids stale pointer if launcher is
+    // destroyed during DamageArea/Damage pcall in a future code path)
+    int launcher_ref = -2; // LUA_NOREF
     if (launcher_id > 0) {
-        launcher = registry.find(launcher_id);
-        if (launcher && launcher->destroyed()) launcher = nullptr;
+        Entity* launcher = registry.find(launcher_id);
+        if (launcher && !launcher->destroyed() && launcher->lua_table_ref() >= 0)
+            launcher_ref = launcher->lua_table_ref();
     }
 
     if (damage_radius > 0) {
@@ -132,8 +196,8 @@ void Projectile::on_impact(lua_State* L, Entity* target,
         lua_rawget(L, LUA_GLOBALSINDEX);
         if (lua_isfunction(L, -1)) {
             // instigator
-            if (launcher && launcher->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, launcher->lua_table_ref());
+            if (launcher_ref >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, launcher_ref);
             } else {
                 lua_pushnil(L);
             }
@@ -162,8 +226,8 @@ void Projectile::on_impact(lua_State* L, Entity* target,
         lua_rawget(L, LUA_GLOBALSINDEX);
         if (lua_isfunction(L, -1)) {
             // instigator
-            if (launcher && launcher->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, launcher->lua_table_ref());
+            if (launcher_ref >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, launcher_ref);
             } else {
                 lua_pushnil(L);
             }
