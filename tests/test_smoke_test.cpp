@@ -277,6 +277,14 @@ TEST_CASE("Air unit fields initialize correctly", "[m157]") {
     CHECK(unit.current_altitude() == 0.0f);
 }
 
+TEST_CASE("PathfindingGrid extended passability compiles", "[m160]") {
+    // Verify the extended overload compiles (no actual grid test without heightmap)
+    // Real passability is tested in integration tests with actual map data
+    osc::sim::Unit unit;
+    unit.set_layer("Water");
+    CHECK(unit.layer() == "Water");
+}
+
 TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");

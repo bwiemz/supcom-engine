@@ -58,6 +58,27 @@ PathfindingGrid::PathfindingGrid(const Heightmap& heightmap,
     }
 
     base_cells_ = cells_;
+
+    // Compute per-cell water depth for draft-aware naval passability
+    water_elevation_ = water_elevation;
+    water_depth_.resize(grid_width_ * grid_height_, 0.0f);
+    if (has_water) {
+        for (u32 gz = 0; gz < grid_height_; ++gz) {
+            for (u32 gx = 0; gx < grid_width_; ++gx) {
+                u32 hx0 = gx * cell_size_;
+                u32 hz0 = gz * cell_size_;
+                u32 hx1 = std::min(hx0 + cell_size_, heightmap.map_width());
+                u32 hz1 = std::min(hz0 + cell_size_, heightmap.map_height());
+                f32 avg_h = (heightmap.get_height_at_grid(hx0, hz0) +
+                             heightmap.get_height_at_grid(hx1, hz0) +
+                             heightmap.get_height_at_grid(hx0, hz1) +
+                             heightmap.get_height_at_grid(hx1, hz1)) * 0.25f;
+                if (avg_h < water_elevation) {
+                    water_depth_[gz * grid_width_ + gx] = water_elevation - avg_h;
+                }
+            }
+        }
+    }
 }
 
 CellPassability PathfindingGrid::get(u32 gx, u32 gz) const {
@@ -79,6 +100,29 @@ bool PathfindingGrid::is_passable_for(u32 gx, u32 gz,
 
     // Land (default): only passable terrain
     return cell == CellPassability::Passable;
+}
+
+bool PathfindingGrid::is_passable_for(u32 gx, u32 gz, const std::string& layer,
+                                       f32 draft, bool amphibious) const {
+    if (gx >= grid_width_ || gz >= grid_height_) return false;
+    auto cell = cells_[gz * grid_width_ + gx];
+    if (layer == "Air") return true;
+    if (amphibious) {
+        return cell == CellPassability::Passable || cell == CellPassability::Water;
+    }
+    if (layer == "Water" || layer == "Seabed" || layer == "Sub") {
+        if (cell != CellPassability::Water) return false;
+        if (draft > 0) {
+            return water_depth_[gz * grid_width_ + gx] >= draft;
+        }
+        return true;
+    }
+    return cell == CellPassability::Passable;
+}
+
+f32 PathfindingGrid::water_depth(u32 gx, u32 gz) const {
+    if (gx >= grid_width_ || gz >= grid_height_) return 0;
+    return water_depth_[gz * grid_width_ + gx];
 }
 
 void PathfindingGrid::world_to_grid(f32 wx, f32 wz, u32& gx, u32& gz) const {

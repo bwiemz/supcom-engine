@@ -33,6 +33,13 @@ public:
     /// Check if a cell is passable for a given movement layer.
     bool is_passable_for(u32 gx, u32 gz, const std::string& layer) const;
 
+    /// Draft-aware passability check for naval units.
+    bool is_passable_for(u32 gx, u32 gz, const std::string& layer,
+                         f32 draft, bool amphibious) const;
+
+    /// Get the water depth at a grid cell (0 if land).
+    f32 water_depth(u32 gx, u32 gz) const;
+
     /// Convert world position to grid coordinates (clamped).
     void world_to_grid(f32 wx, f32 wz, u32& gx, u32& gz) const;
 
@@ -54,6 +61,8 @@ private:
     u32 map_height_;
     std::vector<CellPassability> cells_;
     std::vector<CellPassability> base_cells_; // terrain-only (for restore)
+    std::vector<f32> water_depth_;
+    f32 water_elevation_ = 0;
 };
 
 } // namespace osc::map
