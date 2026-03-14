@@ -109,6 +109,15 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
         return false;
     }
 
+    // Bomb drop check: only fire when directly overhead
+    if (need_compute_bomb_drop) {
+        f32 dx = target->position().x - owner.position().x;
+        f32 dz = target->position().z - owner.position().z;
+        f32 horiz_dist = std::sqrt(dx * dx + dz * dz);
+        if (horiz_dist > bomb_drop_threshold)
+            return false; // Not overhead yet — don't fire
+    }
+
     // Resolve muzzle bone position for projectile spawn
     Vector3 spawn_pos = owner.position();
     if (!muzzle_bone_name.empty() && owner.bone_data()) {
@@ -151,13 +160,16 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     proj->set_position(spawn_pos);
     proj->set_army(owner.army());
     proj->velocity = vel;
-    proj->target_entity_id = target_entity_id;
+    proj->target_entity_id = need_compute_bomb_drop ? 0 : target_entity_id;
     proj->target_position = target->position();
     proj->launcher_id = owner.entity_id();
     proj->damage_amount = damage;
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;
-    proj->lifetime = (dist / muzzle_velocity) + 2.0f; // flight time + buffer
+    // Bombs drop from altitude so need more time; normal projectiles use flight time
+    proj->lifetime = need_compute_bomb_drop
+        ? 10.0f  // generous for high-altitude drops
+        : (dist / muzzle_velocity) + 2.0f;
 
     // Set projectile blueprint for rendering
     if (!projectile_bp_id.empty()) {
@@ -182,6 +194,31 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
                         proj->velocity_align = lua_toboolean(L, -1) != 0;
                     }
                     lua_pop(L, 1); // VelocityAlign
+
+                    // Read ballistic acceleration (gravity) from projectile bp
+                    lua_pushstring(L, "UseGravity");
+                    lua_gettable(L, -2);
+                    bool use_gravity = lua_isboolean(L, -1) && lua_toboolean(L, -1);
+                    lua_pop(L, 1); // UseGravity
+
+                    if (use_gravity) {
+                        // Default FA gravity is -4.9
+                        proj->ballistic_accel = -4.9f;
+                    }
+
+                    lua_pushstring(L, "Acceleration");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) {
+                        proj->acceleration = static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1); // Acceleration
+
+                    lua_pushstring(L, "MaxSpeed");
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) {
+                        proj->max_speed = static_cast<f32>(lua_tonumber(L, -1));
+                    }
+                    lua_pop(L, 1); // MaxSpeed
                 }
                 lua_pop(L, 1); // Physics
             }

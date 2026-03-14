@@ -33,6 +33,8 @@ public:
     std::string projectile_bp_id;   // ChangeProjectileBlueprint
     bool target_ground = false;       // SetTargetGround
     bool fire_control = false;        // SetFireControl / IsFireControl
+    bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
+    f32 bomb_drop_threshold = 25.0f;     // BombDropThreshold (default 25)
     int targeting_priorities_ref = -2; // LUA_NOREF: SetTargetingPriorities Lua table ref
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table

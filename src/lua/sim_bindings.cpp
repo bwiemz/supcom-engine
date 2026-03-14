@@ -264,6 +264,20 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1);
 
+                    // NeedToComputeBombDrop (boolean — bomb weapons)
+                    lua_pushstring(L, "NeedToComputeBombDrop");
+                    lua_gettable(L, we);
+                    if (lua_isboolean(L, -1) && lua_toboolean(L, -1))
+                        weapon->need_compute_bomb_drop = true;
+                    lua_pop(L, 1);
+
+                    // BombDropThreshold (distance threshold for overhead check)
+                    lua_pushstring(L, "BombDropThreshold");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->bomb_drop_threshold = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+
                     lua_pushvalue(L, we);
                     weapon->blueprint_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
