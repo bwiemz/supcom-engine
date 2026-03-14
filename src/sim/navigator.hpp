@@ -12,6 +12,7 @@ class Terrain;
 }
 
 namespace osc::sim {
+class SimState;
 
 class Navigator {
 public:
@@ -38,7 +39,10 @@ public:
     bool speed_through_goal() const { return speed_through_goal_; }
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }
 
+    void set_sim_state(const SimState* sim) { sim_ = sim; }
+
 private:
+    const SimState* sim_ = nullptr;
     Vector3 goal_;
     Status status_ = Status::Idle;
     bool speed_through_goal_ = false;

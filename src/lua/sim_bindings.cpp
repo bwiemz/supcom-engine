@@ -525,6 +525,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
     u32 id = sim->entity_registry().register_entity(std::move(unit));
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+    unit_ptr->navigator().set_sim_state(sim);
 
     // Set weapon owner back-pointers now that entity ID is assigned
     for (i32 wi = 0; wi < unit_ptr->weapon_count(); ++wi) {

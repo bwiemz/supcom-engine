@@ -1,4 +1,5 @@
 #include "sim/navigator.hpp"
+#include "sim/sim_state.hpp"
 #include "map/pathfinder.hpp"
 #include "map/terrain.hpp"
 
@@ -77,6 +78,7 @@ bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
                 pos.x = wp.x;
                 pos.z = wp.z;
                 if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+                if (sim_) pos = sim_->clamp_to_playable(pos);
                 entity.set_position(pos);
                 status_ = Status::Idle;
                 waypoints_.clear();
@@ -97,6 +99,7 @@ bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
             step -= dist;
             if (is_final) {
                 if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+                if (sim_) pos = sim_->clamp_to_playable(pos);
                 entity.set_position(pos);
                 status_ = Status::Idle;
                 waypoints_.clear();
@@ -118,6 +121,7 @@ bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
     // treat as arrived to avoid one-tick stale is_moving
     if (waypoint_index_ >= waypoints_.size()) {
         if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+        if (sim_) pos = sim_->clamp_to_playable(pos);
         entity.set_position(pos);
         status_ = Status::Idle;
         waypoints_.clear();
@@ -129,6 +133,7 @@ bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
     if (terrain) {
         pos.y = terrain->get_surface_height(pos.x, pos.z);
     }
+    if (sim_) pos = sim_->clamp_to_playable(pos);
     entity.set_position(pos);
     return true;
 }
