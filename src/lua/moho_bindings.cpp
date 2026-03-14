@@ -11619,6 +11619,20 @@ static int l_GetUnitCommandData(lua_State* L) {
     return 3;
 }
 
+/// GetUnitCommandDataOfUnit(unit) — single-unit variant for command mode
+static int l_GetUnitCommandDataOfUnit(lua_State* L) {
+    // Wrap the single unit into a 1-element array table and delegate
+    // to the existing GetUnitCommandData implementation
+    lua_newtable(L);
+    lua_pushnumber(L, 1);
+    lua_pushvalue(L, 1); // copy the unit table
+    lua_rawset(L, -3);   // {[1] = unit}
+
+    // Replace arg 1 with the wrapped table
+    lua_replace(L, 1);
+    return l_GetUnitCommandData(L);
+}
+
 /// GetUnitCommandFromCommandCap("RULEUCC_Move") → "Move"
 /// Strips the "RULEUCC_" prefix to produce a command type string.
 static int l_GetUnitCommandFromCommandCap(lua_State* L) {
@@ -12517,7 +12531,16 @@ static int l_GetArmyScore(lua_State* L) {
     lua_pushstring(L, "general");
     lua_newtable(L);
     set_num("score", 0); // no score() method yet
-    set_num("currentunits", 0); // simplified
+    {
+        int unit_count = 0;
+        if (sim) {
+            auto units = brain->get_units(sim->entity_registry());
+            for (auto* e : units) {
+                if (e && e->is_unit() && !e->destroyed()) unit_count++;
+            }
+        }
+        set_num("currentunits", unit_count);
+    }
     set_num("currentcap", brain->unit_cap());
     lua_rawset(L, -3);
 
@@ -13002,6 +13025,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Command data + issuance globals (M138b)
     state.register_function("GetUnitCommandData",          l_GetUnitCommandData);
+    state.register_function("GetUnitCommandDataOfUnit",    l_GetUnitCommandDataOfUnit);
     state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
     state.register_function("IssueUnitCommand",            l_IssueUnitCommand);
     state.register_function("IssueUnitCommandToUnit",      l_IssueUnitCommandToUnit);
