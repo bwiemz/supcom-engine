@@ -163,16 +163,22 @@ void SmokeTestHarness::install_method_interceptor(
     }
     int mt = lua_gettop(L);
 
-    // Replace __index with our interceptor closure.
-    // The closure captures: (1) original metatable, (2) type_name, (3) harness ptr
+    // Get the old __index value (may be mt itself for self-referencing pattern,
+    // or a separate methods table like __osc_thread_mt uses)
     lua_pushstring(L, "__index");
-    lua_pushvalue(L, mt);                          // upvalue 1: original mt
+    lua_rawget(L, mt);
+    int old_index = lua_gettop(L);
+
+    // Replace __index with our interceptor closure.
+    // The closure captures: (1) old __index table, (2) type_name, (3) harness ptr
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, old_index);                   // upvalue 1: old __index
     lua_pushstring(L, type_name);                  // upvalue 2: type name
     lua_pushlightuserdata(L, this);                // upvalue 3: harness
     lua_pushcclosure(L, smoke_method_index, 3);
     lua_rawset(L, mt);  // mt.__index = closure
 
-    lua_pop(L, 1); // pop mt
+    lua_pop(L, 2); // pop old_index + mt
 }
 
 void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
