@@ -2,6 +2,7 @@
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/sim_state.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -158,4 +159,19 @@ TEST_CASE("ArmyBrain build restriction add/remove/check", "[m154]") {
     REQUIRE(brain.is_build_restricted("TECH1 LAND FACTORY"));
     brain.remove_build_restriction("TECH1 LAND FACTORY");
     REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
+}
+
+TEST_CASE("SimState playable rect stores and returns bounds", "[m154]") {
+    osc::lua::LuaState state;
+    osc::sim::SimState sim(state.raw(), nullptr);
+
+    // Default: not set (full map)
+    REQUIRE_FALSE(sim.has_playable_rect());
+
+    sim.set_playable_rect(10.0f, 20.0f, 500.0f, 480.0f);
+    REQUIRE(sim.has_playable_rect());
+    REQUIRE(sim.playable_x0() == 10.0f);
+    REQUIRE(sim.playable_z0() == 20.0f);
+    REQUIRE(sim.playable_x1() == 500.0f);
+    REQUIRE(sim.playable_z1() == 480.0f);
 }

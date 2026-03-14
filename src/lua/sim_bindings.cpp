@@ -4112,19 +4112,32 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetPlayableRect", [](lua_State* L) -> int {
         auto* sim = get_sim(L);
         lua_newtable(L);
-        if (sim && sim->terrain()) {
-            lua_pushnumber(L, 1); lua_pushnumber(L, 0); lua_settable(L, -3);
-            lua_pushnumber(L, 2); lua_pushnumber(L, 0); lua_settable(L, -3);
-            lua_pushnumber(L, 3);
-            lua_pushnumber(L, sim->terrain()->map_width());
-            lua_settable(L, -3);
-            lua_pushnumber(L, 4);
-            lua_pushnumber(L, sim->terrain()->map_height());
-            lua_settable(L, -3);
+        if (sim) {
+            f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+            if (sim->has_playable_rect()) {
+                x0 = sim->playable_x0(); z0 = sim->playable_z0();
+                x1 = sim->playable_x1(); z1 = sim->playable_z1();
+            } else if (sim->terrain()) {
+                x1 = static_cast<f32>(sim->terrain()->map_width());
+                z1 = static_cast<f32>(sim->terrain()->map_height());
+            }
+            lua_pushnumber(L, 1); lua_pushnumber(L, x0); lua_settable(L, -3);
+            lua_pushnumber(L, 2); lua_pushnumber(L, z0); lua_settable(L, -3);
+            lua_pushnumber(L, 3); lua_pushnumber(L, x1); lua_settable(L, -3);
+            lua_pushnumber(L, 4); lua_pushnumber(L, z1); lua_settable(L, -3);
         }
         return 1;
     });
-    state.register_function("SetPlayableRect", stub_noop);
+    state.register_function("SetPlayableRect", [](lua_State* L) -> int {
+        auto* sim = get_sim(L);
+        if (!sim) return 0;
+        f32 x0 = static_cast<f32>(lua_tonumber(L, 1));
+        f32 z0 = static_cast<f32>(lua_tonumber(L, 2));
+        f32 x1 = static_cast<f32>(lua_tonumber(L, 3));
+        f32 z1 = static_cast<f32>(lua_tonumber(L, 4));
+        sim->set_playable_rect(x0, z0, x1, z1);
+        return 0;
+    });
     state.register_function("FlattenMapRect", stub_noop);
 
     // Categories
@@ -4373,7 +4386,6 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("SetArmyColorIndex", stub_noop);
     state.register_function("SetArmyAIPersonality", stub_noop);
     state.register_function("SetIgnoreArmyUnitCap", stub_noop);
-    state.register_function("SetPlayableRect", stub_noop);
     state.register_function("CreateResourceDeposit", l_CreateResourceDeposit);
     state.register_function("CreatePropInSimCallback", stub_noop);
     state.register_function("ArmyIsCivilian", l_ArmyIsCivilian);

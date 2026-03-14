@@ -190,6 +190,28 @@ public:
     const std::vector<DeathEvent>& death_events() const { return death_events_; }
     void clear_death_events() { death_events_.clear(); }
 
+    // Playable area bounds (set by SetPlayableRect Lua call)
+    void set_playable_rect(f32 x0, f32 z0, f32 x1, f32 z1) {
+        playable_x0_ = x0; playable_z0_ = z0;
+        playable_x1_ = x1; playable_z1_ = z1;
+        has_playable_rect_ = true;
+    }
+    bool has_playable_rect() const { return has_playable_rect_; }
+    f32 playable_x0() const { return playable_x0_; }
+    f32 playable_z0() const { return playable_z0_; }
+    f32 playable_x1() const { return playable_x1_; }
+    f32 playable_z1() const { return playable_z1_; }
+
+    Vector3 clamp_to_playable(const Vector3& pos) const {
+        if (!has_playable_rect_) return pos;
+        Vector3 clamped = pos;
+        if (clamped.x < playable_x0_) clamped.x = playable_x0_;
+        if (clamped.x > playable_x1_) clamped.x = playable_x1_;
+        if (clamped.z < playable_z0_) clamped.z = playable_z0_;
+        if (clamped.z > playable_z1_) clamped.z = playable_z1_;
+        return clamped;
+    }
+
 private:
     void update_economies();
     void update_entities();
@@ -223,6 +245,9 @@ private:
     std::string build_ghost_bp_;
     f32 build_ghost_foot_x_ = 1.0f;
     f32 build_ghost_foot_z_ = 1.0f;
+    f32 playable_x0_ = 0, playable_z0_ = 0;
+    f32 playable_x1_ = 0, playable_z1_ = 0;
+    bool has_playable_rect_ = false;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
     struct EntityVisSnapshot {
