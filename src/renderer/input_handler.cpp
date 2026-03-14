@@ -105,6 +105,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             if (sim.terrain())
                 wy = sim.terrain()->get_surface_height(mm_wx, mm_wz);
 
+            bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                         renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
             for (u32 uid : selected_) {
                 auto* e = sim.entity_registry().find(uid);
                 if (!e || !e->is_unit() || e->destroyed()) continue;
@@ -114,7 +116,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
                 cmd.type = sim::CommandType::Move;
                 cmd.target_pos = {mm_wx, wy, mm_wz};
                 cmd.command_id = sim.next_command_id();
-                unit->push_command(cmd, true);
+                unit->push_command(cmd, !shift); // shift-click queues without clearing
             }
             spdlog::debug("Minimap move: {} units to ({:.0f},{:.0f})",
                           selected_.size(), mm_wx, mm_wz);
@@ -221,6 +223,10 @@ void InputHandler::handle_right_click(Renderer& renderer,
     if (sim.terrain())
         wy = sim.terrain()->get_surface_height(wx, wz);
 
+    // Check if Shift is held (queue commands without clearing)
+    bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+
     // Issue commands to all selected units
     for (u32 uid : selected_) {
         auto* e = sim.entity_registry().find(uid);
@@ -237,7 +243,7 @@ void InputHandler::handle_right_click(Renderer& renderer,
             cmd.target_pos = {wx, wy, wz};
         }
         cmd.command_id = sim.next_command_id();
-        unit->push_command(cmd, true); // clear existing commands
+        unit->push_command(cmd, !shift); // shift-click queues without clearing
     }
 
     spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
