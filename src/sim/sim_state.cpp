@@ -238,6 +238,35 @@ void SimState::tick() {
 
     update_visibility();
 
+    // --- ACU death → army defeat check ---
+    if (!game_ended_ && tick_count_ > 50) {
+        for (size_t ai = 0; ai < army_count(); ai++) {
+            auto* brain = army_at(ai);
+            if (!brain || brain->is_defeated() || brain->is_civilian()) continue;
+
+            // Check if this army still has a living COMMAND unit (ACU)
+            bool has_acu = false;
+            auto units = brain->get_units(entity_registry_);
+            for (auto* e : units) {
+                if (!e->is_unit() || e->destroyed()) continue;
+                auto* unit = static_cast<Unit*>(e);
+                // Must check is_dying() — dying units are not yet destroyed but
+                // are in their death animation (2s). Without this check, defeat
+                // detection would be delayed until the death animation completes.
+                if (unit->categories().count("COMMAND") > 0 && !unit->is_dying()) {
+                    has_acu = true;
+                    break;
+                }
+            }
+
+            if (!has_acu && !units.empty()) {
+                // ACU is dead/dying but army still has other units — trigger defeat
+                spdlog::info("Army {} ACU destroyed — triggering defeat", ai);
+                brain->set_state(BrainState::Defeat);
+            }
+        }
+    }
+
     // Defeat detection: mark armies with no living units as defeated
     // (simplified demoralization — FA's CheckVictory Lua thread handles real logic)
     if (!game_ended_ && tick_count_ > 50) { // grace period: skip first 5 seconds
