@@ -5,6 +5,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/weapon.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -209,6 +210,32 @@ TEST_CASE("Navigator::update_air moves unit along heading", "[m157]") {
     CHECK(unit.current_altitude() > 0);
     // Should have nonzero airspeed
     CHECK(unit.current_airspeed() > 0);
+}
+
+TEST_CASE("Weapon layer targeting filters correctly", "[m158]") {
+    CHECK(osc::sim::layer_to_bit("Air") == 0x10);
+    CHECK(osc::sim::layer_to_bit("Land") == 0x01);
+    CHECK(osc::sim::layer_to_bit("Water") == 0x02);
+    CHECK(osc::sim::layer_to_bit("Seabed") == 0x04);
+    CHECK(osc::sim::layer_to_bit("Sub") == 0x08);
+
+    // AntiAir weapon should only target Air layer
+    uint8_t aa_caps = osc::sim::layer_to_bit("Air");
+    CHECK((aa_caps & osc::sim::layer_to_bit("Air")) != 0);
+    CHECK((aa_caps & osc::sim::layer_to_bit("Land")) == 0);
+
+    // DirectFire should target Land and Water but not Air
+    uint8_t df_caps = osc::sim::layer_to_bit("Land") | osc::sim::layer_to_bit("Water") | osc::sim::layer_to_bit("Seabed");
+    CHECK((df_caps & osc::sim::layer_to_bit("Air")) == 0);
+    CHECK((df_caps & osc::sim::layer_to_bit("Land")) != 0);
+    CHECK((df_caps & osc::sim::layer_to_bit("Water")) != 0);
+
+    // AntiNavy should target Water, Sub, Seabed but not Air or Land
+    uint8_t an_caps = osc::sim::layer_to_bit("Water") | osc::sim::layer_to_bit("Sub") | osc::sim::layer_to_bit("Seabed");
+    CHECK((an_caps & osc::sim::layer_to_bit("Water")) != 0);
+    CHECK((an_caps & osc::sim::layer_to_bit("Sub")) != 0);
+    CHECK((an_caps & osc::sim::layer_to_bit("Air")) == 0);
+    CHECK((an_caps & osc::sim::layer_to_bit("Land")) == 0);
 }
 
 TEST_CASE("Air unit fields initialize correctly", "[m157]") {

@@ -247,6 +247,23 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1);
 
+                    // RangeCategory → fire_target_layer_caps bitmask
+                    lua_pushstring(L, "RangeCategory");
+                    lua_gettable(L, we);
+                    if (lua_isstring(L, -1)) {
+                        std::string rc = lua_tostring(L, -1);
+                        if (rc == "UWRC_AntiAir")
+                            weapon->fire_target_layer_caps = sim::layer_to_bit("Air");
+                        else if (rc == "UWRC_DirectFire")
+                            weapon->fire_target_layer_caps = sim::layer_to_bit("Land") | sim::layer_to_bit("Water") | sim::layer_to_bit("Seabed");
+                        else if (rc == "UWRC_AntiNavy")
+                            weapon->fire_target_layer_caps = sim::layer_to_bit("Water") | sim::layer_to_bit("Sub") | sim::layer_to_bit("Seabed");
+                        else if (rc == "UWRC_Countermeasure")
+                            weapon->fire_target_layer_caps = 0xFF; // all layers
+                        // Default (unrecognized): 0xFF = all layers
+                    }
+                    lua_pop(L, 1);
+
                     lua_pushvalue(L, we);
                     weapon->blueprint_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
