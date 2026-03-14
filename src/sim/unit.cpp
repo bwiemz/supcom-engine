@@ -997,6 +997,37 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 done_commands:
+
+    // Air unit separation: lightweight boids repulsion to prevent stacking
+    if (is_air_unit() && !dying_ && navigator_.is_moving()) {
+        constexpr f32 SEPARATION_RADIUS = 8.0f;
+        constexpr f32 SEPARATION_FORCE = 3.0f;
+        auto nearby = registry.collect_in_radius(position().x, position().z, SEPARATION_RADIUS);
+        f32 repulse_x = 0, repulse_z = 0;
+        for (u32 nid : nearby) {
+            if (nid == entity_id()) continue;
+            auto* ne = registry.find(nid);
+            if (!ne || ne->destroyed() || !ne->is_unit()) continue;
+            auto* nu = static_cast<Unit*>(ne);
+            if (!nu->is_air_unit() || nu->army() != army()) continue;
+            f32 ndx = position().x - ne->position().x;
+            f32 ndz = position().z - ne->position().z;
+            f32 nd2 = ndx * ndx + ndz * ndz;
+            if (nd2 > 0.01f && nd2 < SEPARATION_RADIUS * SEPARATION_RADIUS) {
+                f32 inv = 1.0f / std::sqrt(nd2);
+                repulse_x += ndx * inv;
+                repulse_z += ndz * inv;
+            }
+        }
+        if (repulse_x != 0 || repulse_z != 0) {
+            auto p = position();
+            f32 fdt = static_cast<f32>(dt);
+            p.x += repulse_x * SEPARATION_FORCE * fdt;
+            p.z += repulse_z * SEPARATION_FORCE * fdt;
+            set_position(p);
+        }
+    }
+
 weapons_only:
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
