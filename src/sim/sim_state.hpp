@@ -159,6 +159,11 @@ public:
 
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
+    /// Global sim generation — incremented each time a SimState is constructed.
+    /// Used by entity handle safety to detect stale references across reloads.
+    static u32 sim_generation() { return s_sim_generation_; }
+    static void increment_sim_generation() { ++s_sim_generation_; }
+
     /// Monotonically increasing command ID for IsCommandsActive tracking.
     u32 next_command_id() { return ++next_command_id_; }
 
@@ -248,6 +253,8 @@ private:
     f32 playable_x0_ = 0, playable_z0_ = 0;
     f32 playable_x1_ = 0, playable_z1_ = 0;
     bool has_playable_rect_ = false;
+
+    static u32 s_sim_generation_;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
     struct EntityVisSnapshot {

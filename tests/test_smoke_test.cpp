@@ -161,6 +161,12 @@ TEST_CASE("ArmyBrain build restriction add/remove/check", "[m154]") {
     REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
 }
 
+TEST_CASE("SimState generation increments on construction", "[m155]") {
+    osc::u32 gen_before = osc::sim::SimState::sim_generation();
+    osc::sim::SimState::increment_sim_generation();
+    REQUIRE(osc::sim::SimState::sim_generation() == gen_before + 1);
+}
+
 TEST_CASE("SimState playable rect stores and returns bounds", "[m154]") {
     osc::lua::LuaState state;
     osc::sim::SimState sim(state.raw(), nullptr);

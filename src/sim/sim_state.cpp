@@ -20,8 +20,12 @@ extern "C" {
 
 namespace osc::sim {
 
+u32 SimState::s_sim_generation_ = 0;
+
 SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
-    : L_(L), thread_manager_(L), blueprint_store_(store) {}
+    : L_(L), thread_manager_(L), blueprint_store_(store) {
+    ++s_sim_generation_;
+}
 
 SimState::~SimState() {
     // Clear sound manager lightuserdata from Lua registry before the
