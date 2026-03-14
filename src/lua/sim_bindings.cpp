@@ -533,13 +533,33 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_gettable(L, -2);
                 if (lua_isstring(L, -1)) {
                     std::string mt = lua_tostring(L, -1);
+                    unit->set_motion_type(mt);
                     if (mt == "RULEUMT_Air") unit->set_layer("Air");
-                    else if (mt == "RULEUMT_Water" || mt == "RULEUMT_SurfacingSub"
-                             || mt == "RULEUMT_Hover")
+                    else if (mt == "RULEUMT_Water" || mt == "RULEUMT_SurfacingSub")
                         unit->set_layer("Water");
+                    else if (mt == "RULEUMT_Hover")
+                        unit->set_layer("Land"); // Hover units are always Land layer
                     else if (mt == "RULEUMT_Amphibious" || mt == "RULEUMT_AmphibiousFloating")
-                        unit->set_layer("Land"); // amphibious defaults to Land
+                        unit->set_layer("Land");
                     // else keep default "Land"
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 2);
+        }
+
+        // Read Physics.Elevation for naval units (negative = draft below water surface)
+        if (unit->is_naval()) {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "Physics");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Elevation");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1)) {
+                    f32 elev = static_cast<f32>(lua_tonumber(L, -1));
+                    unit->set_elevation_target(elev);
+                    unit->set_naval_draft(std::abs(elev));
                 }
                 lua_pop(L, 1);
             }

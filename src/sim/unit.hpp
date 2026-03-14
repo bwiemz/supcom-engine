@@ -342,6 +342,19 @@ public:
     void set_elevation_target(f32 e) { elevation_target_ = e; }
     bool is_air_unit() const { return layer_ == "Air"; }
 
+    // Motion type (from blueprint Physics.MotionType)
+    const std::string& motion_type() const { return motion_type_; }
+    void set_motion_type(const std::string& mt) { motion_type_ = mt; }
+    f32 naval_draft() const { return naval_draft_; }
+    void set_naval_draft(f32 d) { naval_draft_ = d; }
+    bool is_amphibious() const {
+        return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_AmphibiousFloating";
+    }
+    bool is_hover() const { return motion_type_ == "RULEUMT_Hover"; }
+    bool is_naval() const {
+        return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
+    }
+
     // Air crash state (M159)
     bool is_crashing() const { return crashing_; }
     bool crash_impacted() const { return crash_impacted_; }
@@ -466,6 +479,8 @@ private:
     std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
     std::string layer_ = "Land";
+    std::string motion_type_;       // raw MotionType from blueprint
+    f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
     bool is_being_built_ = false;
     f32 max_speed_ = 0;
     Navigator navigator_;

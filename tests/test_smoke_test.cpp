@@ -346,3 +346,32 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     CHECK(hit_ground);
     CHECK(unit.position().y <= 0.1f);
 }
+
+TEST_CASE("Naval unit motion type helpers", "[m160]") {
+    osc::sim::Unit water_unit;
+    water_unit.set_motion_type("RULEUMT_Water");
+    water_unit.set_naval_draft(3.0f);
+    water_unit.set_elevation_target(-3.0f);
+    CHECK(water_unit.is_naval());
+    CHECK_FALSE(water_unit.is_amphibious());
+    CHECK_FALSE(water_unit.is_hover());
+    CHECK_FALSE(water_unit.is_air_unit());
+    CHECK(water_unit.naval_draft() == 3.0f);
+    CHECK(water_unit.elevation_target() == -3.0f);
+
+    osc::sim::Unit hover_unit;
+    hover_unit.set_motion_type("RULEUMT_Hover");
+    CHECK(hover_unit.is_hover());
+    CHECK_FALSE(hover_unit.is_naval());
+    CHECK_FALSE(hover_unit.is_amphibious());
+
+    osc::sim::Unit amphib_unit;
+    amphib_unit.set_motion_type("RULEUMT_Amphibious");
+    CHECK(amphib_unit.is_amphibious());
+    CHECK_FALSE(amphib_unit.is_naval());
+    CHECK_FALSE(amphib_unit.is_hover());
+
+    osc::sim::Unit sub_unit;
+    sub_unit.set_motion_type("RULEUMT_SurfacingSub");
+    CHECK(sub_unit.is_naval());
+}
