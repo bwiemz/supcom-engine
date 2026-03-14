@@ -5,6 +5,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/pathfinding_grid.hpp"
+#include "map/terrain.hpp"
 
 #include <algorithm>
 #include <array>
@@ -181,6 +182,12 @@ void Unit::tick_dying(f32 dt) {
     }
 }
 
+bool Unit::nav_update(f64 dt, const map::Terrain* terrain) {
+    if (is_air_unit())
+        return navigator_.update_air(*this, dt, terrain);
+    return navigator_.update(*this, effective_speed(), dt, terrain);
+}
+
 void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) return;
 
@@ -235,7 +242,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.goal().z != cmd.target_pos.z) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, effective_speed(), dt, ctx.terrain)) {
+            if (!nav_update(dt, ctx.terrain)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -274,7 +281,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     navigator_.goal().z != target->position().z) {
                     navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_);
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+                nav_update(dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
             }
@@ -335,7 +342,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.goal().z != cmd.target_pos.z) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_);
             }
-            if (!navigator_.update(*this, effective_speed(), dt, ctx.terrain)) {
+            if (!nav_update(dt, ctx.terrain)) {
                 // Reached patrol point — cycle to back of queue
                 auto finished = cmd;
                 command_queue_.pop_front();

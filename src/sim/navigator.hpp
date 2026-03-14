@@ -13,6 +13,7 @@ class Terrain;
 
 namespace osc::sim {
 class SimState;
+class Unit;
 
 class Navigator {
 public:
@@ -35,6 +36,11 @@ public:
     /// If terrain is provided, sets entity Y to surface height.
     bool update(Entity& entity, f32 max_speed, f64 dt,
                 const map::Terrain* terrain = nullptr);
+
+    /// Air-specific movement: heading-based steering, acceleration, altitude management.
+    /// Reads/writes air state on the Unit. Returns true if still moving.
+    bool update_air(Unit& unit, f64 dt,
+                    const map::Terrain* terrain = nullptr);
 
     bool speed_through_goal() const { return speed_through_goal_; }
     void set_speed_through_goal(bool b) { speed_through_goal_ = b; }

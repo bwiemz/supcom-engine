@@ -184,6 +184,33 @@ TEST_CASE("SimState playable rect stores and returns bounds", "[m154]") {
     REQUIRE(sim.playable_z1() == 480.0f);
 }
 
+TEST_CASE("Navigator::update_air moves unit along heading", "[m157]") {
+    osc::sim::Unit unit;
+    unit.set_layer("Air");
+    unit.set_max_airspeed(10.0f);
+    unit.set_turn_rate_rad(3.14f); // fast turn for test
+    unit.set_accel_rate(100.0f);   // instant accel for test
+    unit.set_elevation_target(20.0f);
+    unit.set_climb_rate(100.0f);   // fast climb for test
+    unit.set_position({0, 0, 0});
+
+    auto& nav = unit.navigator();
+    nav.set_goal({100, 0, 100}); // straight-line goal
+
+    // Run several ticks
+    for (int i = 0; i < 20; i++) {
+        nav.update_air(unit, 0.1, nullptr);
+    }
+
+    // Should have moved toward goal
+    CHECK(unit.position().x > 0);
+    CHECK(unit.position().z > 0);
+    // Should have gained altitude
+    CHECK(unit.current_altitude() > 0);
+    // Should have nonzero airspeed
+    CHECK(unit.current_airspeed() > 0);
+}
+
 TEST_CASE("Air unit fields initialize correctly", "[m157]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");
