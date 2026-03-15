@@ -682,6 +682,7 @@ int main(int argc, char* argv[]) {
     bool stress_test = parse_flag(argc, argv, "--stress-test");
     bool full_smoke_test = parse_flag(argc, argv, "--full-smoke-test");
     bool instrument = parse_flag(argc, argv, "--instrument");
+    bool builder_debug = parse_flag(argc, argv, "--builder-debug");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
@@ -746,6 +747,11 @@ int main(int argc, char* argv[]) {
     if (!osc::fs::exists(config.init_file)) {
         spdlog::error("Init file not found: {}", config.init_file.string());
         return 1;
+    }
+
+    if (builder_debug) {
+        spdlog::set_level(spdlog::level::debug);
+        spdlog::info("Builder debug mode enabled — verbose logging active");
     }
 
     // Phase 1: Init + VFS (sim Lua state)
@@ -1666,14 +1672,66 @@ int main(int argc, char* argv[]) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
             }
             if ((t + 1) % 250 == 0) {
-                osc::i32 entity_count = 0;
+                osc::i32 prop_count = 0;
+                std::string army_summary;
+
                 if (sim_state) {
                     sim_state->entity_registry().for_each(
                         [&](const osc::sim::Entity& e) {
-                            if (!e.destroyed()) entity_count++;
+                            if (!e.destroyed() && !e.is_unit()) prop_count++;
                         });
+
+                    for (size_t a = 0; a < sim_state->army_count(); a++) {
+                        auto* brain = sim_state->army_at(a);
+                        if (!brain || brain->is_civilian()) continue;
+
+                        osc::i32 units = 0, structures = 0;
+                        sim_state->entity_registry().for_each(
+                            [&](const osc::sim::Entity& e) {
+                                if (e.army() == static_cast<osc::i32>(a) &&
+                                    !e.destroyed() && e.is_unit()) {
+                                    auto* u = static_cast<const osc::sim::Unit*>(&e);
+                                    if (u->has_category("STRUCTURE"))
+                                        structures++;
+                                    else
+                                        units++;
+                                }
+                            });
+
+                        if (!army_summary.empty()) army_summary += ", ";
+                        army_summary += "a" + std::to_string(a) + ": " +
+                                       std::to_string(units) + "u/" +
+                                       std::to_string(structures) + "s";
+                    }
                 }
-                spdlog::info("  tick {}/1000 — {} entities", t + 1, entity_count);
+
+                spdlog::info("  tick {}/1000 — props:{} {}", t + 1, prop_count, army_summary);
+            }
+        }
+
+        // End-of-GAME army summary
+        if (sim_state) {
+            for (size_t a = 0; a < sim_state->army_count(); a++) {
+                auto* brain = sim_state->army_at(a);
+                if (!brain || brain->is_civilian()) continue;
+
+                osc::i32 units = 0, structures = 0;
+                sim_state->entity_registry().for_each(
+                    [&](const osc::sim::Entity& e) {
+                        if (e.army() == static_cast<osc::i32>(a) &&
+                            !e.destroyed() && e.is_unit()) {
+                            auto* u = static_cast<const osc::sim::Unit*>(&e);
+                            if (u->has_category("STRUCTURE"))
+                                structures++;
+                            else
+                                units++;
+                        }
+                    });
+
+                spdlog::info("  Army {} ({}): {} units, {} structures, kills={:.0f} built={:.0f}",
+                             a, brain->name(), units, structures,
+                             brain->get_stat("Units_Killed"),
+                             brain->get_stat("Units_Built"));
             }
         }
 
