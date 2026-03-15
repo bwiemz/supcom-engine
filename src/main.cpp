@@ -475,6 +475,7 @@ int main(int argc, char* argv[]) {
     bool smoke_test = parse_flag(argc, argv, "--smoke-test");
     bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
     bool draw_test = parse_flag(argc, argv, "--draw-test");
+    bool stress_test = parse_flag(argc, argv, "--stress-test");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
@@ -522,7 +523,8 @@ int main(int argc, char* argv[]) {
                     dualstate_test ||
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
-                    profile_test || smoke_test || ai_skirmish || draw_test;
+                    profile_test || smoke_test || ai_skirmish || draw_test ||
+                    stress_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -1612,6 +1614,58 @@ int main(int argc, char* argv[]) {
             spdlog::error("  FAIL — expected Draw (3), got {}", result);
             return 1;
         }
+        return 0;
+    }
+
+    // === Stress Test: 10000-tick AI-vs-AI stability validation ===
+    if (stress_test && sim_state) {
+        spdlog::info("=== STRESS TEST: 10000-tick AI-vs-AI ===");
+
+        osc::i32 peak_entities = 0;
+        osc::i32 tick_target = 10000;
+
+        for (osc::i32 t = 0; t < tick_target; t++) {
+            sim_state->tick();
+
+            osc::i32 entity_count = 0;
+            sim_state->entity_registry().for_each([&](const osc::sim::Entity& e) {
+                if (!e.destroyed()) entity_count++;
+            });
+            if (entity_count > peak_entities) peak_entities = entity_count;
+
+            // Log progress every 1000 ticks
+            if ((t + 1) % 1000 == 0) {
+                spdlog::info("  tick {}/{} — {} entities (peak {})",
+                             t + 1, tick_target, entity_count, peak_entities);
+            }
+
+            // Check game-over — continue tracking but note it
+            osc::i32 result = sim_state->player_result();
+            if (result != 0 && !sim_state->game_ended()) {
+                const char* result_str = result == 1 ? "VICTORY" :
+                                          result == 2 ? "DEFEAT" : "DRAW";
+                spdlog::info("  Game over at tick {}: {}", t + 1, result_str);
+                sim_state->set_game_ended(true);
+            }
+        }
+
+        // Report results
+        spdlog::info("=== STRESS TEST COMPLETE ===");
+        spdlog::info("  Peak entities: {}", peak_entities);
+
+        // Report army stats
+        for (size_t i = 0; i < sim_state->army_count(); i++) {
+            auto* brain = sim_state->army_at(i);
+            if (!brain || brain->is_civilian()) continue;
+            spdlog::info("  Army {} ({}): kills={:.0f} losses={:.0f} built={:.0f} mass={:.0f}",
+                         i, brain->name(),
+                         brain->get_stat("Units_Killed"),
+                         brain->get_stat("Units_Lost"),
+                         brain->get_stat("Units_Built"),
+                         brain->get_stat("Economy_TotalProduced_Mass"));
+        }
+
+        spdlog::info("  PASS — no crashes in {} ticks", tick_target);
         return 0;
     }
 
