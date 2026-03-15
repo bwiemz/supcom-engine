@@ -20,7 +20,7 @@ struct ThreadEntry {
 
 class ThreadManager {
 public:
-    static constexpr i32 DEFAULT_INSTRUCTION_BUDGET = 1'000'000;
+    static constexpr i32 DEFAULT_INSTRUCTION_BUDGET = 10'000'000;
 
     explicit ThreadManager(lua_State* L);
 
