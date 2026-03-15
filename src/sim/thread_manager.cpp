@@ -218,13 +218,9 @@ void ThreadManager::resume_all(u32 current_tick) {
         } else {
             // Thread errored
             const char* err = lua_tostring(t.coroutine, -1);
-            if (err && std::strstr(err, "instruction count exceeded")) {
-                spdlog::debug("Thread killed: {}", err);
-            } else {
-                spdlog::warn("Thread error: {} [forked at {}]",
-                             err ? err : "(unknown)",
-                             t.source.empty() ? "?" : t.source);
-            }
+            spdlog::warn("Thread error: {} [forked at {}]",
+                         err ? err : "(unknown)",
+                         t.source.empty() ? "?" : t.source);
             t.dead = true;
         }
     }

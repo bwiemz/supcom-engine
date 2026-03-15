@@ -145,6 +145,57 @@ Result<void> SimLoader::boot_sim(LuaState& state,
                       import_result.error().message);
     }
 
+    // Step 5: Pre-import platoon.lua to make the Platoon class available.
+    // Engine-created platoons (ArmyPool, MakePlatoon, FormPlatoon) need
+    // the full FA Platoon class as metatable so Lua methods like
+    // PlatoonDisband, SetPlatoonData, SetPriority are accessible.
+    // Store in registry as __platoon_class (matching lookup in moho_bindings).
+    auto platoon_result = state.do_string(
+        "local ok, mod = pcall(import, '/lua/platoon.lua')\n"
+        "if ok and type(mod) == 'table' and mod.Platoon then\n"
+        "    rawset(_G, '__platoon_class_temp', mod.Platoon)\n"
+        "else\n"
+        "    WARN('platoon.lua import error: ' .. tostring(mod))\n"
+        "end");
+    if (platoon_result) {
+        lua_pushstring(state.raw(), "__platoon_class_temp");
+        lua_rawget(state.raw(), LUA_GLOBALSINDEX);
+        if (lua_istable(state.raw(), -1)) {
+            // Store in registry where platoon creation code looks for it
+            lua_pushstring(state.raw(), "__platoon_class");
+            lua_pushvalue(state.raw(), -2); // copy the Platoon class table
+            lua_rawset(state.raw(), LUA_REGISTRYINDEX);
+            spdlog::info("platoon.lua import: Platoon class available");
+        } else {
+            spdlog::warn("platoon.lua import: Platoon class NOT found");
+        }
+        lua_pop(state.raw(), 1); // pop temp value
+        // Clean up temporary global
+        state.do_string("rawset(_G, '__platoon_class_temp', nil)");
+    } else {
+        spdlog::warn("platoon.lua import failed: {}",
+                      platoon_result.error().message);
+    }
+
+    // Step 6: Override NavUtils.CanPathTo to bypass NavGenerator dependency.
+    // FAF's NavGenerator builds a complex nav mesh (compression trees, labels)
+    // that we haven't implemented. NavUtils.CanPathTo checks IsGenerated() first
+    // and returns nil if the nav mesh isn't ready, causing AI build logic to
+    // silently skip all mass marker pathing checks.
+    // Override: always return true — actual pathfinding happens when move/build
+    // commands are issued via our Navigator A* implementation.
+    state.do_string(
+        "do\n"
+        "    local ok, mod = pcall(import, '/lua/sim/navutils.lua')\n"
+        "    if ok and type(mod) == 'table' then\n"
+        "        mod.CanPathTo = function(layer, origin, destination)\n"
+        "            return true\n"
+        "        end\n"
+        "        LOG('NavUtils.CanPathTo overridden (NavGenerator not available)')\n"
+        "    end\n"
+        "end\n");
+    spdlog::info("  NavUtils.CanPathTo overridden (NavGenerator bypass)");
+
     spdlog::info("Sim environment ready.");
     return {};
 }

@@ -5356,39 +5356,49 @@ static int brain_GetPlatoonsList(lua_State* L) {
 
 // FindPlaceToBuild(type, structureName, buildingTypes, relative, builder,
 //                  optIgnoreAlliance, optOverridePosX, optOverridePosZ, optIgnoreThreatOver)
-// Returns {x, z, dist} or false. Uses a grid offset from the reference
-// position to avoid stacking structures (no real obstruction checking yet).
+// C++ args: self=1, type=2, name=3, tmpl=4, relative=5, builder=6,
+//           ignoreAlliance=7, overrideX=8, overrideZ=9
+// Returns {x, 0, z} (FA 3D vector) or false.  When relative=true the
+// position is relative to the reference point so GetBuildLocation can add
+// engPos.  No real obstruction checking yet — uses a grid offset.
 static int brain_FindPlaceToBuild(lua_State* L) {
     auto* brain = check_brain(L);
     if (!brain) { lua_pushboolean(L, 0); return 1; }
 
-    f32 x, z;
-    // Args 7,8 are optional override position
-    if (lua_isnumber(L, 7) && lua_isnumber(L, 8)) {
-        x = static_cast<f32>(lua_tonumber(L, 7));
-        z = static_cast<f32>(lua_tonumber(L, 8));
+    bool relative = lua_toboolean(L, 5) != 0;
+
+    // Reference position: override args 8,9 or fall back to brain start
+    f32 ref_x, ref_z;
+    if (lua_isnumber(L, 8) && lua_isnumber(L, 9)) {
+        ref_x = static_cast<f32>(lua_tonumber(L, 8));
+        ref_z = static_cast<f32>(lua_tonumber(L, 9));
     } else {
-        x = brain->start_position().x;
-        z = brain->start_position().z;
+        ref_x = brain->start_position().x;
+        ref_z = brain->start_position().z;
     }
 
     // Grid offset: spread structures in a 5-wide grid, 8 ogrids apart
     i32 idx = brain->next_build_place_index();
     i32 col = idx % 5;
     i32 row = idx / 5;
-    x += static_cast<f32>(col - 2) * 8.0f;
-    z += static_cast<f32>(row + 1) * 8.0f;
+    f32 abs_x = ref_x + static_cast<f32>(col - 2) * 8.0f;
+    f32 abs_z = ref_z + static_cast<f32>(row + 1) * 8.0f;
 
-    // Return {x, z, 0} (distance=0 since we placed it exactly)
+    f32 out_x = relative ? (abs_x - ref_x) : abs_x;
+    f32 out_z = relative ? (abs_z - ref_z) : abs_z;
+
+    // Return {x, 0, z} — FA 3D vector format (index 1=x, 2=elevation, 3=z)
+    // GetBuildLocation reads [1] and [3]; BuildStructure receives the
+    // processed {absX, absZ, 0} from GetBuildLocation and reads [1],[2].
     lua_newtable(L);
     lua_pushnumber(L, 1);
-    lua_pushnumber(L, x);
+    lua_pushnumber(L, out_x);
     lua_rawset(L, -3);
     lua_pushnumber(L, 2);
-    lua_pushnumber(L, z);
+    lua_pushnumber(L, 0); // elevation
     lua_rawset(L, -3);
     lua_pushnumber(L, 3);
-    lua_pushnumber(L, 0); // dist
+    lua_pushnumber(L, out_z);
     lua_rawset(L, -3);
     return 1;
 }
@@ -5397,14 +5407,20 @@ static int brain_FindPlaceToBuild(lua_State* L) {
 // unit = arg 2 (Lua table with _c_object), whatToBuild = arg 3 (bp string),
 // location = arg 4 ({x, z, dist} from FindPlaceToBuild)
 static int brain_BuildStructure(lua_State* L) {
-    if (!lua_istable(L, 2)) return 0;
+    if (!lua_istable(L, 2)) {
+        spdlog::debug("brain_BuildStructure: arg2 not table");
+        return 0;
+    }
     lua_pushstring(L, "_c_object");
     lua_rawget(L, 2);
     auto* e = lua_isuserdata(L, -1)
                   ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
                   : nullptr;
     lua_pop(L, 1);
-    if (!e || !e->is_unit() || e->destroyed()) return 0;
+    if (!e || !e->is_unit() || e->destroyed()) {
+        spdlog::debug("brain_BuildStructure: no valid unit");
+        return 0;
+    }
     auto* unit = static_cast<sim::Unit*>(e);
 
     const char* bp_id = luaL_checkstring(L, 3);
@@ -5689,6 +5705,33 @@ static int brain_DecideWhatToBuild(lua_State* L) {
             lua_pop(L, 1); // pop typeName
         }
         lua_pop(L, 1); // pop entry
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+// brain:FindUpgradeBP(unitBpId, upgradeTemplate)
+// upgradeTemplate = array of {fromBP, toBP} pairs.  Returns toBP when
+// fromBP matches unitBpId, or nil if no match.
+static int brain_FindUpgradeBP(lua_State* L) {
+    const char* unit_bp = luaL_checkstring(L, 2);
+    if (!lua_istable(L, 3)) { lua_pushnil(L); return 1; }
+
+    int len = luaL_getn(L, 3);
+    for (int i = 1; i <= len; i++) {
+        lua_rawgeti(L, 3, i); // pair table
+        if (lua_istable(L, -1)) {
+            lua_rawgeti(L, -1, 1); // fromBP
+            const char* from = lua_tostring(L, -1);
+            if (from && std::strcmp(from, unit_bp) == 0) {
+                lua_pop(L, 1); // pop fromBP
+                lua_rawgeti(L, -1, 2); // toBP
+                lua_remove(L, -2); // remove pair table
+                return 1;
+            }
+            lua_pop(L, 1); // pop fromBP
+        }
+        lua_pop(L, 1); // pop pair table
     }
     lua_pushnil(L);
     return 1;
@@ -7039,6 +7082,7 @@ static const MethodEntry aibrain_methods[] = {
     {"BuildUnit",                   brain_BuildUnit},
     {"BuildStructure",              brain_BuildStructure},
     {"DecideWhatToBuild",           brain_DecideWhatToBuild},
+    {"FindUpgradeBP",               brain_FindUpgradeBP},
     {"MakePlatoon",                 brain_MakePlatoon},
     {"GetPlatoonUniquelyNamed",     brain_GetPlatoonUniquelyNamed},
     {"GetHighestThreatPosition",    brain_GetHighestThreatPosition},

@@ -1403,6 +1403,27 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             static_cast<Unit*>(target)->fire_adjacency_callbacks(registry, L);
         }
 
+        // Auto-add completed unit to its army's ArmyPool platoon.
+        // Original GPG engine auto-assigns every completed unit to ArmyPool;
+        // AI managers (PlatoonFormManager, FactoryBuilderManager) rely on this.
+        target = registry.find(build_target_id_);
+        if (target && !target->destroyed() && target->is_unit()) {
+            auto* completed = static_cast<Unit*>(target);
+            lua_pushstring(L, "osc_sim_state");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (sim) {
+                auto* brain = sim->get_army(completed->army());
+                if (brain) {
+                    auto* pool = brain->find_platoon_by_name("ArmyPool");
+                    if (pool && !pool->has_unit(build_target_id_)) {
+                        pool->add_unit(build_target_id_);
+                    }
+                }
+            }
+        }
+
         // Call builder:OnStopBuild(target)
         target = registry.find(build_target_id_);
         if (lua_table_ref() >= 0 && target && !target->destroyed() &&

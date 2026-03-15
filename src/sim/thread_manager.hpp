@@ -20,7 +20,11 @@ struct ThreadEntry {
 
 class ThreadManager {
 public:
-    static constexpr i32 DEFAULT_INSTRUCTION_BUDGET = 10'000'000;
+    // 0 = disabled. The original GPG engine had no per-resume instruction
+    // budget.  FA's AI builder setup (ExecutePlan → SetupMainBase → AddBuilder
+    // → deepcopy) executes tens of millions of instructions during
+    // initialization.  A non-zero budget kills those threads before they finish.
+    static constexpr i32 DEFAULT_INSTRUCTION_BUDGET = 0;
 
     explicit ThreadManager(lua_State* L);
 

@@ -898,6 +898,22 @@ static int l_CreateUnit(lua_State* L) {
         }
     }
 
+    // Auto-add fully-built units to their army's ArmyPool platoon.
+    // In the original GPG engine, every completed unit is in ArmyPool by default;
+    // AI managers (PlatoonFormManager, FactoryBuilderManager) pull from it.
+    {
+        auto* u = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+        if (u && !u->destroyed() && !u->is_being_built()) {
+            auto* brain = sim->get_army(army);
+            if (brain) {
+                auto* pool = brain->find_platoon_by_name("ArmyPool");
+                if (pool && !pool->has_unit(id)) {
+                    pool->add_unit(id);
+                }
+            }
+        }
+    }
+
     return 1; // return Lua table
 }
 
@@ -3577,6 +3593,58 @@ static int l_IssueClearCommands(lua_State* L) {
     return 0;
 }
 
+// ====================================================================
+// IssueToUnit* — single-unit variants of Issue* commands.
+// These are engine globals called extensively by FA's AI code.
+// Each takes a single unit entity table (not a table of units).
+// ====================================================================
+
+// Helper: extract a Unit* from a single entity table at stack index.
+static sim::Unit* extract_unit(lua_State* L, int idx) {
+    auto* e = extract_entity(L, idx);
+    if (e && e->is_unit() && !e->destroyed())
+        return static_cast<sim::Unit*>(e);
+    return nullptr;
+}
+
+// IssueToUnitClearCommands(unit)
+static int l_IssueToUnitClearCommands(lua_State* L) {
+    auto* u = extract_unit(L, 1);
+    if (u) u->clear_commands();
+    return 0;
+}
+
+// IssueToUnitStop(unit)
+static int l_IssueToUnitStop(lua_State* L) {
+    auto* u = extract_unit(L, 1);
+    if (u) u->clear_commands();
+    return 0;
+}
+
+// IssueToUnitMove(unit, position)
+static int l_IssueToUnitMove(lua_State* L) {
+    auto* u = extract_unit(L, 1);
+    if (!u) return 0;
+    auto target_pos = extract_position(L, 2);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Move;
+    cmd.target_pos = target_pos;
+    u->push_command(cmd, false);
+    return 0;
+}
+
+// IssueToUnitMoveOffFactory(unit, position)
+static int l_IssueToUnitMoveOffFactory(lua_State* L) {
+    auto* u = extract_unit(L, 1);
+    if (!u) return 0;
+    auto target_pos = extract_position(L, 2);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Move;
+    cmd.target_pos = target_pos;
+    u->push_command(cmd, true);
+    return 0;
+}
+
 // IssueAttack(units_table, target_entity)
 static int l_IssueAttack(lua_State* L) {
     auto* sim = get_sim(L);
@@ -4569,6 +4637,12 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueScript", stub_noop);  // EnhanceTask uses IssueEnhancement
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);
+
+    // Single-unit variants (used by AI code)
+    state.register_function("IssueToUnitClearCommands", l_IssueToUnitClearCommands);
+    state.register_function("IssueToUnitStop", l_IssueToUnitStop);
+    state.register_function("IssueToUnitMove", l_IssueToUnitMove);
+    state.register_function("IssueToUnitMoveOffFactory", l_IssueToUnitMoveOffFactory);
 
     // Spatial queries
     state.register_function("GetUnitsInRect", l_GetUnitsInRect);

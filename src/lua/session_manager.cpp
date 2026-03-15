@@ -451,6 +451,21 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
         int pool_ref = luaL_ref(L, LUA_REGISTRYINDEX);
         pool->set_lua_table_ref(pool_ref);
 
+        // Call OnCreate(self, plan) to initialize Trash, PlatoonData, etc.
+        lua_pushstring(L, "OnCreate");
+        lua_gettable(L, ptbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, ptbl);  // self
+            lua_pushstring(L, "");   // plan (empty for ArmyPool)
+            if (lua_pcall(L, 2, 0, 0) != 0) {
+                spdlog::warn("ArmyPool OnCreate error: {}",
+                              lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+
         lua_pop(L, 1); // pop platoon table
     }
 
