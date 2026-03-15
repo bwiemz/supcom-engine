@@ -26,6 +26,7 @@ add_subdirectory(src/vfs)
 add_subdirectory(src/map)
 add_subdirectory(src/sim)
 add_subdirectory(src/audio)
+add_subdirectory(src/video)
 add_subdirectory(src/ui)
 add_subdirectory(src/renderer)
 add_subdirectory(src/lua)
@@ -39,6 +40,7 @@ target_link_libraries(opensupcom PRIVATE
     osc::sim
     osc::map
     osc::audio
+    osc::video
     osc::ui
     osc::renderer
     osc::lua

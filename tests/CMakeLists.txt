@@ -17,6 +17,7 @@ add_executable(osc_tests
     test_smoke_test.cpp
     test_smoke_harness.cpp
     test_army_stats.cpp
+    test_video_decoder.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE
@@ -28,6 +29,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::blueprints
     osc::sim
     osc::renderer
+    osc::video
 )
 
 include(Catch)
