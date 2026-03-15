@@ -555,6 +555,22 @@ static bool execute_reload_sequence(
     return true;
 }
 
+/// Pump N UI frames: resume coroutines, fire OnBeat, fire beat functions.
+static void pump_ui_frames(
+    osc::lua::LuaState& ui_lua_state,
+    osc::sim::ThreadManager& ui_thread_manager,
+    osc::lua::BeatFunctionRegistry& beat_registry,
+    int count,
+    osc::u32& ui_frame_counter) {
+    lua_State* uL = ui_lua_state.raw();
+    for (int i = 0; i < count; i++) {
+        ui_frame_counter++;
+        ui_thread_manager.resume_all(ui_frame_counter);
+        osc::core::call_on_beat(uL, 1.0 / 30.0);
+        beat_registry.fire_all(uL);
+    }
+}
+
 int main(int argc, char* argv[]) {
     osc::log::init();
 
