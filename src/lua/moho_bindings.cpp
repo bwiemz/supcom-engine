@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstring>
 #include <set>
+#include <sstream>
 #include <vector>
 #include <spdlog/spdlog.h>
 
@@ -5436,6 +5437,221 @@ static int brain_BuildUnit(lua_State* L) {
     return 0;
 }
 
+// brain:CanBuildPlatoon(template, factories)
+// template = {name, plan, {bp_id, min, max, squad, formation}, ...}
+// factories = {factory1, factory2, ...}
+// Returns: factories table (truthy) on success, false on failure.
+static int brain_CanBuildPlatoon(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain || !lua_istable(L, 2) || !lua_istable(L, 3)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    int tmpl = 2;
+    int facs = 3;
+
+    // Iterate template sub-tables starting at index 3
+    for (int i = 3; ; i++) {
+        lua_rawgeti(L, tmpl, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        int sub = lua_gettop(L);
+
+        // sub[1] = blueprint ID string
+        lua_rawgeti(L, sub, 1);
+        if (!lua_isstring(L, -1)) { lua_pop(L, 2); continue; }
+        std::string bp_id = lua_tostring(L, -1);
+        lua_pop(L, 1);
+
+        // Look up blueprint's CategoriesHash
+        std::unordered_set<std::string> bp_cats;
+        lua_pushstring(L, "__blueprints");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, bp_id.c_str());
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "CategoriesHash");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushnil(L);
+                    while (lua_next(L, -2) != 0) {
+                        if (lua_type(L, -2) == LUA_TSTRING)
+                            bp_cats.insert(lua_tostring(L, -2));
+                        lua_pop(L, 1); // pop value, keep key
+                    }
+                }
+                lua_pop(L, 1); // CategoriesHash or nil
+            }
+            lua_pop(L, 1); // bp table or nil
+        }
+        lua_pop(L, 1); // __blueprints
+
+        if (bp_cats.empty()) {
+            lua_pop(L, 1); // sub
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+
+        // Check if any factory can build this blueprint
+        bool found = false;
+        for (int f = 1; !found; f++) {
+            lua_rawgeti(L, facs, f);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+
+            // Get factory Unit*
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            auto* e = lua_isuserdata(L, -1)
+                          ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                          : nullptr;
+            lua_pop(L, 1); // _c_object
+
+            if (!e || !e->is_unit() || e->destroyed()) {
+                lua_pop(L, 1); // factory table
+                continue;
+            }
+
+            // Look up factory blueprint's Economy.BuildableCategory
+            lua_pushstring(L, "__blueprints");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, e->blueprint_id().c_str());
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "Economy");
+                    lua_rawget(L, -2);
+                    if (lua_istable(L, -1)) {
+                        lua_pushstring(L, "BuildableCategory");
+                        lua_rawget(L, -2);
+                        if (lua_istable(L, -1)) {
+                            // Table of category strings
+                            int bc = lua_gettop(L);
+                            for (int b = 1; !found; b++) {
+                                lua_rawgeti(L, bc, b);
+                                if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+                                if (lua_isstring(L, -1)) {
+                                    std::string pattern = lua_tostring(L, -1);
+                                    bool match = true;
+                                    std::istringstream ss(pattern);
+                                    std::string token;
+                                    while (ss >> token) {
+                                        if (bp_cats.count(token) == 0) {
+                                            match = false;
+                                            break;
+                                        }
+                                    }
+                                    if (match) found = true;
+                                }
+                                lua_pop(L, 1); // entry
+                            }
+                        } else if (lua_isstring(L, -1)) {
+                            // Single string fallback
+                            std::string pattern = lua_tostring(L, -1);
+                            bool match = true;
+                            std::istringstream ss(pattern);
+                            std::string token;
+                            while (ss >> token) {
+                                if (bp_cats.count(token) == 0) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                            if (match) found = true;
+                        }
+                        lua_pop(L, 1); // BuildableCategory
+                    }
+                    lua_pop(L, 1); // Economy
+                }
+                lua_pop(L, 1); // factory bp
+            }
+            lua_pop(L, 1); // __blueprints
+            lua_pop(L, 1); // factory table
+        }
+
+        lua_pop(L, 1); // sub
+
+        if (!found) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+    }
+
+    // All template entries satisfied — return the factories table
+    lua_pushvalue(L, facs);
+    return 1;
+}
+
+// brain:BuildPlatoon(template, factories, count)
+// template = {name, plan, {bp_id, min, max, squad, formation}, ...}
+// factories = {factory1, ...}
+// count = multiplier for how many of each unit to build
+// Returns: nil (fire-and-forget)
+static int brain_BuildPlatoon(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain || !lua_istable(L, 2) || !lua_istable(L, 3)) return 0;
+
+    int tmpl = 2;
+    int facs = 3;
+    int count = lua_isnumber(L, 4) ? static_cast<int>(lua_tonumber(L, 4)) : 1;
+    if (count < 1) count = 1;
+
+    // Collect factory Unit* pointers
+    std::vector<sim::Unit*> factories;
+    for (int f = 1; ; f++) {
+        lua_rawgeti(L, facs, f);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        auto* e = lua_isuserdata(L, -1)
+                      ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                      : nullptr;
+        lua_pop(L, 1); // _c_object
+        lua_pop(L, 1); // factory table
+        if (e && e->is_unit() && !e->destroyed())
+            factories.push_back(static_cast<sim::Unit*>(e));
+    }
+
+    if (factories.empty()) return 0;
+
+    // Iterate template sub-tables starting at index 3
+    for (int i = 3; ; i++) {
+        lua_rawgeti(L, tmpl, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        int sub = lua_gettop(L);
+
+        // sub[1] = blueprint ID
+        lua_rawgeti(L, sub, 1);
+        if (!lua_isstring(L, -1)) { lua_pop(L, 2); continue; }
+        std::string bp_id = lua_tostring(L, -1);
+        lua_pop(L, 1);
+
+        // sub[2] = min count
+        lua_rawgeti(L, sub, 2);
+        int num = lua_isnumber(L, -1)
+                      ? static_cast<int>(lua_tonumber(L, -1)) * count
+                      : count;
+        lua_pop(L, 1);
+
+        lua_pop(L, 1); // sub
+
+        // Distribute build commands across factories (round-robin)
+        auto* factory = factories[(i - 3) % factories.size()];
+        for (int n = 0; n < num; n++) {
+            sim::UnitCommand cmd;
+            cmd.type = sim::CommandType::BuildFactory;
+            cmd.blueprint_id = bp_id;
+            factory->push_command(cmd, false);
+        }
+    }
+
+    return 0;
+}
+
 // brain:DecideWhatToBuild(builder, buildingType, template)
 // builder = arg 2, buildingType = arg 3 (string),
 // template = arg 4 (array of {typeName, bpId} pairs)
@@ -6539,6 +6755,8 @@ static const MethodEntry aibrain_methods[] = {
     {"GetNumUnitsAroundPoint",      brain_GetNumUnitsAroundPoint},
     {"GetPlatoonsList",             brain_GetPlatoonsList},
     {"CheckBlockingTerrain",    brain_CheckBlockingTerrain},
+    {"CanBuildPlatoon",         brain_CanBuildPlatoon},
+    {"BuildPlatoon",            brain_BuildPlatoon},
     {nullptr, nullptr},
 };
 // clang-format on
