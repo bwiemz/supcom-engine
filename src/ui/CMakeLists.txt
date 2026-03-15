@@ -14,5 +14,5 @@ target_include_directories(osc_ui
 )
 target_link_libraries(osc_ui
     PUBLIC osc::core
-    PRIVATE glfw lua50 spdlog::spdlog osc::vfs osc::map
+    PRIVATE glfw lua50 spdlog::spdlog osc::vfs osc::map osc::video
 )

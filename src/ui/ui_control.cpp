@@ -1,8 +1,12 @@
 #include "ui/ui_control.hpp"
+#include "video/video_decoder.hpp"
 
 #include <algorithm>
 
 namespace osc::ui {
+
+// Destructor defined here so unique_ptr<VideoDecoder> sees complete type
+UIControl::~UIControl() = default;
 
 // --- UIControl ---
 

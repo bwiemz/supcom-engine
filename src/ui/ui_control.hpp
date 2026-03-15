@@ -2,6 +2,8 @@
 
 #include "core/types.hpp"
 
+#include "video/video_decoder.hpp"
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,7 +16,7 @@ namespace osc::ui {
 class UIControl {
 public:
     UIControl() = default;
-    virtual ~UIControl() = default;
+    virtual ~UIControl();  // defined in ui_control.cpp (unique_ptr needs complete type)
 
     // --- Identity ---
     u32 control_id() const { return control_id_; }
@@ -282,6 +284,12 @@ public:
     bool movie_looping() const { return movie_looping_; }
     void set_movie_looping(bool l) { movie_looping_ = l; }
 
+    // Video decoder backend (owned via unique_ptr)
+    video::VideoDecoder* video_decoder() { return video_decoder_.get(); }
+    void set_video_decoder(std::unique_ptr<video::VideoDecoder> dec) { video_decoder_ = std::move(dec); }
+    bool video_needs_upload() const { return video_needs_upload_; }
+    void set_video_needs_upload(bool v) { video_needs_upload_ = v; }
+
     // --- WorldMesh state ---
     bool world_mesh_hidden() const { return world_mesh_hidden_; }
     void set_world_mesh_hidden(bool h) { world_mesh_hidden_ = h; }
@@ -397,6 +405,8 @@ private:
     bool movie_loaded_ = false;
     bool movie_playing_ = false;
     bool movie_looping_ = false;
+    std::unique_ptr<video::VideoDecoder> video_decoder_;
+    bool video_needs_upload_ = false;
 
     // WorldMesh state
     bool world_mesh_hidden_ = false;

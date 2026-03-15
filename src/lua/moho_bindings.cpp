@@ -1,5 +1,6 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/category_utils.hpp"
+#include "video/video_decoder.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
@@ -10578,10 +10579,37 @@ static int l_c_CreateCursor(lua_State* L) {
 static int movie_InternalSet(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_movie_filename(lua_tostring(L, 2));
-    // Always report success (file "loaded")
-    lua_pushboolean(L, 1);
+    const char* path = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    if (!path) { lua_pushboolean(L, 0); return 1; }
+    ctrl->set_movie_filename(path);
+
+    // Get VFS via LuaState helper
+    auto* vfs = lua::LuaState::get_vfs(L);
+    if (vfs) {
+        // Try .mpg version first (pre-converted), then original path
+        std::string mpg_path(path);
+        auto dot = mpg_path.rfind('.');
+        if (dot != std::string::npos)
+            mpg_path = mpg_path.substr(0, dot) + ".mpg";
+
+        auto data = vfs->read_file(mpg_path);
+        if (!data) data = vfs->read_file(path);
+
+        if (data) {
+            auto dec = std::make_unique<osc::video::VideoDecoder>();
+            if (dec->open_file(reinterpret_cast<const osc::u8*>(data->data()), data->size())) {
+                spdlog::info("MovieControl: opened '{}' ({}x{})",
+                             path, dec->width(), dec->height());
+                ctrl->set_video_decoder(std::move(dec));
+                ctrl->set_movie_loaded(true);
+            } else {
+                spdlog::warn("MovieControl: failed to decode '{}'", path);
+            }
+        } else {
+            spdlog::warn("MovieControl: file not found '{}'", path);
+        }
+    }
+    lua_pushboolean(L, ctrl->movie_loaded() ? 1 : 0);
     return 1;
 }
 
@@ -10593,7 +10621,13 @@ static int movie_IsLoaded(lua_State* L) {
 
 static int movie_Play(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_movie_playing(true);
+    if (ctrl) {
+        ctrl->set_movie_playing(true);
+        if (ctrl->video_decoder() && ctrl->video_decoder()->is_open()) {
+            ctrl->video_decoder()->decode_next_frame();
+            ctrl->set_video_needs_upload(true);
+        }
+    }
     return 0;
 }
 
@@ -10605,13 +10639,21 @@ static int movie_Stop(lua_State* L) {
 
 static int movie_Loop(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl && lua_isboolean(L, 2))
-        ctrl->set_movie_looping(lua_toboolean(L, 2) != 0);
+    if (ctrl) {
+        bool loop = lua_toboolean(L, 2) != 0;
+        ctrl->set_movie_looping(loop);
+        if (ctrl->video_decoder())
+            ctrl->video_decoder()->set_loop(loop);
+    }
     return 0;
 }
 
 static int movie_GetFrameRate(lua_State* L) {
-    lua_pushnumber(L, 30.0); // stub: report 30 fps
+    auto* ctrl = check_control(L);
+    if (ctrl && ctrl->video_decoder() && ctrl->video_decoder()->is_open())
+        lua_pushnumber(L, ctrl->video_decoder()->framerate());
+    else
+        lua_pushnumber(L, 30.0);
     return 1;
 }
 
@@ -11452,6 +11494,23 @@ static int l_SetCursor(lua_State* L) {
     lua_pushvalue(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
     return 0;
+}
+
+static int l_GetCursor(lua_State* L) {
+    lua_pushstring(L, "__osc_active_cursor");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnil(L, -1)) {
+        // Return a dummy table with Hide/Show if no cursor set
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "Hide");
+        lua_pushcfunction(L, [](lua_State*) -> int { return 0; });
+        lua_rawset(L, -3);
+        lua_pushstring(L, "Show");
+        lua_pushcfunction(L, [](lua_State*) -> int { return 0; });
+        lua_rawset(L, -3);
+    }
+    return 1;
 }
 
 // --- Camera methods (M136a) ---
@@ -13690,6 +13749,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetFrame", l_GetFrame);
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
+    state.register_function("GetCursor", l_GetCursor);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("GetCamera", l_GetCamera);
 
