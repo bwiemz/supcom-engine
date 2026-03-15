@@ -19,7 +19,7 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 ### Current Status
 
-The engine can run a **fully playable single-player skirmish match** — from the front-end lobby through game setup, real-time gameplay, to score screen and return-to-lobby. Two AI armies load with FA's adaptive AI brain, execute build plans via the builder manager system, and run continuously for thousands of ticks with stable entity counts. The complete game loop is functional: lobby map/faction selection → army creation → AI initialization (OnCreateAI, ExecutePlan, 37+ active AI threads) → real-time simulation with economy, construction, combat, air/naval/land movement → game-over detection → score screen → return to lobby for another match.
+The engine can run a **fully playable single-player skirmish match** — from the front-end lobby through game setup, real-time gameplay, to score screen and return-to-lobby. AI armies load with FA's brain system, autonomously build bases (power generators, factories, engineers), produce armies, and attack. The complete game loop is functional: lobby map/faction/AI personality selection → army creation → AI initialization (OnCreateAI, ExecutePlan, 37+ active AI threads) → autonomous base building and army production → real-time combat with economy, construction, air/naval/land movement → game-over detection → score screen → return to lobby for another match. AI personality types (adaptive, rush, turtle, tech, random) and difficulty settings (cheat multipliers for build rate and income) are configurable via CLI.
 
 Over 163 milestones have been completed across the simulation, renderer, UI, and game infrastructure. The engine bootstraps the full FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy) and executes autonomous AI behavior with base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement. Over 111 former moho stubs have been converted to real implementations. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes, GPU blend-weight skeletal animation, team colors, normal mapping, Blinn-Phong specular, PCF soft shadows (4096²), 9-stratum terrain blending with per-stratum normal maps, 5,000+ map props, 2,000+ terrain decals, animated water, fog of war, atmospheric fog, LOD mesh switching, bloom post-processing, particle system with emitter blueprints, frustum culling, and death animations. The full MAUI UI framework provides 13 control types with reactive LazyVar layout, a complete Vulkan 2D rendering pipeline, and GLFW input dispatch. A complete game HUD delivers a playable RTS experience with minimap, strategic zoom, economy bars, selection info, command visualization, control groups, camera bookmarks, and full overlay rendering.
 
@@ -32,7 +32,7 @@ Over 163 milestones have been completed across the simulation, renderer, UI, and
 - Construction: building placement, build progress, factory production, engineer assist
 - Orders: Move, Stop, Attack, Guard, Patrol, Reclaim, Repair, Capture, Build, Enhance, Dive with command queues
 - Combat: weapons, auto-targeting, projectile flight, damage pipeline, unit death
-- AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops
+- AI: brain threads, categories, spatial queries, threat evaluation, platoon management, HuntAI attack loops, autonomous base building (FindPlaceToBuild, BuildStructure, factory production), personality selection (adaptive/rush/turtle/tech/random), cheat difficulty (build rate and income multipliers via buff system)
 - Pathfinding: A* with octile heuristic, path smoothing, dynamic building obstacles, terrain height following, real CanPathTo/CanPathToCell queries, GetThreatBetweenPositions for path danger evaluation
 - Structure upgrades: T1->T2 structure upgrade via build system
 - Capture: engineer captures enemy units, army transfer
@@ -180,7 +180,6 @@ Over 163 milestones have been completed across the simulation, renderer, UI, and
 **What's not yet implemented:**
 
 - Networking and multiplayer sync
-- Full AI builder manager (AI loads and threads run, but can't autonomously build units yet — needs HasBuilderList, CanFormPlatoon, etc.)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites
@@ -242,7 +241,14 @@ When launched without `--ticks` or test flags, the engine opens a Vulkan window 
 # Open a window showing Seton's Clutch with terrain, units, and water
 MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
   --map "/maps/SCMP_009/SCMP_009_scenario.lua"
+
+# Play a skirmish against a rush AI with cheat difficulty
+MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
+  --map "/maps/SCMP_009/SCMP_009_scenario.lua" \
+  --ai-personality rushcheat
 ```
+
+AI personality options: `adaptive`, `rush`, `turtle`, `tech`, `random` (and cheat variants: `adaptivecheat`, `rushcheat`, `turtlecheat`, `techcheat`, `randomcheat`). Cheat personalities get 2x build rate and 2x income multipliers.
 
 Camera controls:
 - **WASD** — Pan camera (speed scales with zoom distance)
@@ -391,4 +397,4 @@ tests/         # Catch2 unit tests
 
 ## License
 
-Not yet determined. If you're interested in contributing or have licensing questions, please open an issue.
+This project is licensed under the [MIT License](LICENSE).
