@@ -21,7 +21,7 @@ The original Moho engine is closed-source, 32-bit, single-threaded, and increasi
 
 The engine can run a **fully playable single-player skirmish match** — from the front-end lobby through game setup, real-time gameplay, to score screen and return-to-lobby. AI armies load with FA's brain system, autonomously build bases (power generators, factories, engineers), produce armies, and attack. The complete game loop is functional: lobby map/faction/AI personality selection → army creation → AI initialization (OnCreateAI, ExecutePlan, 37+ active AI threads) → autonomous base building and army production → real-time combat with economy, construction, air/naval/land movement → game-over detection → score screen → return to lobby for another match. AI personality types (adaptive, rush, turtle, tech, random) and difficulty settings (cheat multipliers for build rate and income) are configurable via CLI.
 
-Over 163 milestones have been completed across the simulation, renderer, UI, and game infrastructure. The engine bootstraps the full FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy) and executes autonomous AI behavior with base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement. Over 111 former moho stubs have been converted to real implementations. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes, GPU blend-weight skeletal animation, team colors, normal mapping, Blinn-Phong specular, PCF soft shadows (4096²), 9-stratum terrain blending with per-stratum normal maps, 5,000+ map props, 2,000+ terrain decals, animated water, fog of war, atmospheric fog, LOD mesh switching, bloom post-processing, particle system with emitter blueprints, frustum culling, and death animations. The full MAUI UI framework provides 13 control types with reactive LazyVar layout, a complete Vulkan 2D rendering pipeline, and GLFW input dispatch. A complete game HUD delivers a playable RTS experience with minimap, strategic zoom, economy bars, selection info, command visualization, control groups, camera bookmarks, and full overlay rendering.
+Over 166 milestones have been completed across the simulation, renderer, UI, and game infrastructure. The engine bootstraps the full FA Lua import chain (Unit.lua, AIBrain, platoons, categories, economy) and executes autonomous AI behavior with base building, factory production, engineer assist, threat evaluation, platoon formation, and combat engagement. Over 111 former moho stubs have been converted to real implementations. A Vulkan renderer provides real-time visualization with textured 3D SCM unit meshes, GPU blend-weight skeletal animation, team colors, normal mapping, Blinn-Phong specular, PCF soft shadows (4096²), 9-stratum terrain blending with per-stratum normal maps, 5,000+ map props, 2,000+ terrain decals, animated water, fog of war, atmospheric fog, LOD mesh switching, bloom post-processing, particle system with emitter blueprints, frustum culling, and death animations. The full MAUI UI framework provides 13 control types with reactive LazyVar layout, a complete Vulkan 2D rendering pipeline, and GLFW input dispatch. A complete game HUD delivers a playable RTS experience with minimap, strategic zoom, economy bars, selection info, command visualization, control groups, camera bookmarks, and full overlay rendering.
 
 **What works today (Milestones 1-163):**
 
@@ -177,7 +177,7 @@ Over 163 milestones have been completed across the simulation, renderer, UI, and
   - AI-vs-AI validation: two AI armies load with FA's adaptive AI brain, OnCreateAI succeeds, ExecutePlan runs, 37+ active threads, 6000+ tick stable game loop
   - Score tracking: real GetArmyStat/SetArmyStat storage, kill/loss/resource accumulation, score screen with meaningful stats
   - Performance: periodic Lua GC (every 50 ticks), pathfinding request throttle (8/tick cap), simultaneous-death Draw handling
-- 92 unit tests (1,527 assertions), 70+ integration test flags
+- 96 unit tests (1,543 assertions), 70+ integration test flags
 
 **What's not yet implemented:**
 
@@ -378,6 +378,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--ai-skirmish` | AI-vs-AI skirmish (2 AI armies, full game loop, 6000 ticks) |
 | `--stress-test` | Extended AI-vs-AI stress test (10,000 ticks, stability validation) |
 | `--draw-test` | Simultaneous ACU death → Draw game-over edge case |
+| `--full-smoke-test` | 5-phase lifecycle smoke test: front-end → lobby → 1000-tick game → score → return-to-lobby |
+| `--instrument` | Silent smoke harness during interactive play, report on exit to smoke_report.txt |
 
 ## Project Structure
 
