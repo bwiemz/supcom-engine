@@ -135,6 +135,14 @@ public:
     const std::string& skin_name() const { return skin_name_; }
     void set_skin_name(const std::string& s) { skin_name_ = s; }
 
+    // --- Army stats (score tracking) ---
+    void set_stat(const std::string& key, f64 value) { stats_[key] = value; }
+    f64 get_stat(const std::string& key, f64 default_val = 0.0) const {
+        auto it = stats_.find(key);
+        return it != stats_.end() ? it->second : default_val;
+    }
+    void add_stat(const std::string& key, f64 delta) { stats_[key] += delta; }
+
     // --- Build restrictions (per-army) ---
     void add_build_restriction(const std::string& category) {
         build_restrictions_.insert(category);
@@ -180,6 +188,7 @@ private:
     bool resource_sharing_ = false;
     std::string skin_name_;
     std::unordered_set<std::string> build_restrictions_;
+    std::unordered_map<std::string, f64> stats_;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;

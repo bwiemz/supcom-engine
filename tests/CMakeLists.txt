@@ -15,6 +15,7 @@ add_executable(osc_tests
     test_terrain_quadtree.cpp
     test_phase1.cpp
     test_smoke_test.cpp
+    test_army_stats.cpp
 )
 
 target_link_libraries(osc_tests PRIVATE

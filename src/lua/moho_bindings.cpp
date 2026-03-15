@@ -843,6 +843,42 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // --- Score tracking: record kill/loss stats ---
+        if (e->is_unit()) {
+            auto* sim_ptr2 = get_sim(L);
+            if (sim_ptr2) {
+                i32 victim_army = e->army();
+                auto* victim_brain = sim_ptr2->get_army(victim_army);
+                if (victim_brain) {
+                    victim_brain->add_stat("Units_Lost", 1.0);
+                }
+                // Credit kill to the army that dealt the most damage.
+                // damage_contributions() stores (attacker_entity_id, cumulative_damage) —
+                // NOT army indices. Must look up entity to find its army.
+                auto* dying_u = static_cast<sim::Unit*>(e);
+                auto& contribs = dying_u->damage_contributions();
+                if (!contribs.empty()) {
+                    i32 killer_army = -1;
+                    f32 max_dmg = 0;
+                    for (const auto& [attacker_id, dmg] : contribs) {
+                        if (dmg > max_dmg) {
+                            auto* attacker = sim_ptr2->entity_registry().find(attacker_id);
+                            if (attacker && !attacker->destroyed()) {
+                                max_dmg = dmg;
+                                killer_army = attacker->army();
+                            }
+                        }
+                    }
+                    if (killer_army >= 0 && killer_army != victim_army) {
+                        auto* killer_brain = sim_ptr2->get_army(killer_army);
+                        if (killer_brain) {
+                            killer_brain->add_stat("Units_Killed", 1.0);
+                        }
+                    }
+                }
+            }
+        }
+
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
 
@@ -4685,25 +4721,42 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
 }
 
 static int brain_GetArmyStat(lua_State* L) {
-    // GetArmyStat(self, statName, defaultValue) -> { Value = defaultValue }
+    // GetArmyStat(self, statName, defaultValue) -> { Value = n }
+    auto* brain = check_brain(L);
+    if (!brain) {
+        lua_newtable(L);
+        lua_pushstring(L, "Value"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+        return 1;
+    }
+    const char* stat_name = luaL_checkstring(L, 2);
     f64 def_val = 0;
     if (lua_isnumber(L, 3)) {
         def_val = lua_tonumber(L, 3);
     }
+    f64 val = brain->get_stat(stat_name, def_val);
     lua_newtable(L);
-    lua_pushstring(L, "Value");
-    lua_pushnumber(L, def_val);
-    lua_rawset(L, -3);
+    lua_pushstring(L, "Value"); lua_pushnumber(L, val); lua_rawset(L, -3);
     return 1;
 }
 
-static int brain_SetArmyStat(lua_State*) { return 0; }
+static int brain_SetArmyStat(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain) return 0;
+    const char* stat_name = luaL_checkstring(L, 2);
+    f64 value = luaL_checknumber(L, 3);
+    brain->set_stat(stat_name, value);
+    return 0;
+}
 
 // GetBlueprintStat(self, statName, category) -> number
 // Unlike GetArmyStat (returns {Value=n}), this returns a plain number.
 // score.lua does arithmetic on the result.
 static int brain_GetBlueprintStat(lua_State* L) {
-    lua_pushnumber(L, 0);
+    auto* brain = check_brain(L);
+    if (!brain) { lua_pushnumber(L, 0); return 1; }
+    const char* stat_name = luaL_checkstring(L, 2);
+    f64 val = brain->get_stat(stat_name, 0.0);
+    lua_pushnumber(L, val);
     return 1;
 }
 
@@ -13151,18 +13204,28 @@ static int l_GetArmyScore(lua_State* L) {
     // general subtable
     lua_pushstring(L, "general");
     lua_newtable(L);
-    set_num("score", 0); // no score() method yet
+
+    // Compute score from accumulated stats
+    f64 units_built = brain->get_stat("Units_Built", 0.0);
+    f64 units_killed = brain->get_stat("Units_Killed", 0.0);
+    f64 mass_total = brain->get_stat("Economy_TotalProduced_Mass", 0.0);
+    f64 score = units_killed * 3.0 + units_built * 2.0 + mass_total / 100.0;
+    set_num("score", score);
+
     {
         int unit_count = 0;
-        if (sim) {
-            auto units = brain->get_units(sim->entity_registry());
-            for (auto* e : units) {
-                if (e && e->is_unit() && !e->destroyed()) unit_count++;
-            }
+        auto units = brain->get_units(sim->entity_registry());
+        for (auto* e : units) {
+            if (e && e->is_unit() && !e->destroyed()) unit_count++;
         }
         set_num("currentunits", unit_count);
     }
     set_num("currentcap", brain->unit_cap());
+    set_num("kills", brain->get_stat("Units_Killed", 0.0));
+    set_num("losses", brain->get_stat("Units_Lost", 0.0));
+    set_num("built", brain->get_stat("Units_Built", 0.0));
+    set_num("massTotal", brain->get_stat("Economy_TotalProduced_Mass", 0.0));
+    set_num("energyTotal", brain->get_stat("Economy_TotalProduced_Energy", 0.0));
     lua_rawset(L, -3);
 
     // resources subtable
