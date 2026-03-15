@@ -157,6 +157,14 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
                                              0.0, economy_.energy.max_storage);
         energy_efficiency_ = (energy_needed > 0) ? energy_consumed / energy_needed : 1.0;
     }
+
+    // Accumulate total resources collected for score tracking
+    if (economy_.mass.income > 0) {
+        stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
+    }
+    if (economy_.energy.income > 0) {
+        stats_["Economy_TotalProduced_Energy"] += economy_.energy.income * dt;
+    }
 }
 
 Platoon* ArmyBrain::create_platoon(const std::string& name) {
