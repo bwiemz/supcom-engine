@@ -545,11 +545,12 @@ static bool execute_reload_sequence(
     game_state_mgr.set_paused(false, uiL);
     sim_accumulator = 0.0;
 
-    // 19. Transition to GAME
-    game_state_mgr.transition_to(
-        osc::GameState::LOADING, uiL);
-    game_state_mgr.transition_to(
-        osc::GameState::GAME, uiL);
+    // 19. Transition to GAME (skip if caller already handles transitions)
+    if (game_state_mgr.current() != osc::GameState::LOADING) {
+        // Headless/smoke-test path: do full transition
+        game_state_mgr.transition_to(osc::GameState::LOADING, uiL);
+    }
+    game_state_mgr.transition_to(osc::GameState::GAME, nullptr); // nullptr = skip SetupUI
     osc::core::call_start_game_ui(uiL);
 
     spdlog::info("=== Map reload complete ===");
@@ -1488,6 +1489,15 @@ int main(int argc, char* argv[]) {
                         if (!launch_scenario.empty()) {
                             spdlog::info("Launch requested: {}", launch_scenario);
 
+                            // Transition to LOADING and show loading screen
+                            game_state_mgr.transition_to(osc::GameState::LOADING, ui_lua_state.raw());
+                            wld_provider.start_loading_dialog(ui_lua_state.raw());
+
+                            // Pump one UI frame to display loading screen
+                            pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_count);
+                            renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
+
+                            // Execute reload in stages, pumping UI frames between each
                             execute_reload_sequence(
                                 sim_lua_state, sim_state,
                                 ui_lua_state, vfs, store,
@@ -1504,6 +1514,9 @@ int main(int argc, char* argv[]) {
                                 instrument_harness->install_global_interceptor(sim_lua_state->raw());
                                 instrument_harness->install_all_method_interceptors(sim_lua_state->raw());
                             }
+
+                            // Stop loading dialog and transition to GAME
+                            wld_provider.stop_loading_dialog(ui_lua_state.raw());
                         }
                     } else {
                         lua_pop(uiL, 1);

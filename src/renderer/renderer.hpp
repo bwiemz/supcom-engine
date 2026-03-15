@@ -59,6 +59,10 @@ public:
                 ui::UIControlRegistry* ui_registry = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr);
 
+    /// Render only the UI layer (no 3D scene, no bloom).
+    /// Used during loading screen when SimState doesn't exist.
+    void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
+
     /// Returns true if the window close was requested.
     bool should_close() const;
 

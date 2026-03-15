@@ -2636,6 +2636,104 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
+// --- UI-only rendering (loading screen) ---
+
+void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
+    u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
+    vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
+
+    u32 image_index = 0;
+    VkResult acq_result = vkAcquireNextImageKHR(
+        device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
+        VK_NULL_HANDLE, &image_index);
+    if (acq_result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreate_swapchain();
+        return;
+    }
+    vkResetFences(device_, 1, &render_fence_[fi]);
+
+    // Begin command buffer
+    vkResetCommandBuffer(cmd_buf_[fi], 0);
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+
+    // Advance playing movie controls and upload new frames
+    if (ui_registry) {
+        for (auto& ctrl_ptr : ui_registry->all()) {
+            if (!ctrl_ptr || ctrl_ptr->destroyed()) continue;
+            // Decode next frame for playing movies
+            if (ctrl_ptr->movie_playing() && ctrl_ptr->video_decoder()) {
+                auto* dec = ctrl_ptr->video_decoder();
+                if (dec->is_open() && dec->decode_next_frame()) {
+                    ctrl_ptr->set_video_needs_upload(true);
+                }
+            }
+        }
+    }
+
+    // Begin swapchain render pass (NOT scene_render_pass_)
+    // render_pass_ has 2 attachments: color + depth
+    std::array<VkClearValue, 2> clear{};
+    clear[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+    clear[1].depthStencil = {1.0f, 0};
+
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = render_pass_;
+    rp.framebuffer = framebuffers_[image_index];
+    rp.renderArea.extent = {window_width_, window_height_};
+    rp.clearValueCount = static_cast<u32>(clear.size());
+    rp.pClearValues = clear.data();
+    vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Update + render UI
+    if (ui_registry && L) {
+        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
+                           window_width_, window_height_);
+        if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              ui_pipeline_);
+            ui_renderer_.render(cmd_buf_[fi], ui_layout_,
+                               window_width_, window_height_);
+        }
+    }
+
+    vkCmdEndRenderPass(cmd_buf_[fi]);
+    vkEndCommandBuffer(cmd_buf_[fi]);
+
+    // Submit
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores = &present_semaphore_[fi];
+    submit.pWaitDstStageMask = &wait_stage;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &cmd_buf_[fi];
+    submit.signalSemaphoreCount = 1;
+    submit.pSignalSemaphores = &render_semaphore_[fi];
+    vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
+
+    // Present
+    VkPresentInfoKHR present{};
+    present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores = &render_semaphore_[fi];
+    present.swapchainCount = 1;
+    present.pSwapchains = &swapchain_;
+    present.pImageIndices = &image_index;
+    VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
+
+    if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
+        pres_result == VK_SUBOPTIMAL_KHR) {
+        recreate_swapchain();
+    }
+
+    frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
+}
+
 bool Renderer::should_close() const {
     return window_ && glfwWindowShouldClose(window_);
 }
