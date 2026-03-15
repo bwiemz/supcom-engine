@@ -21,6 +21,7 @@ struct SmokeReportEntry {
     SmokeCategory category;
     std::string name;
     std::string first_location;
+    std::string phase;
     u32 count;
 };
 
@@ -28,6 +29,8 @@ class SmokeTestHarness {
 public:
     void record(SmokeCategory category, const std::string& name,
                 const std::string& location);
+
+    void set_phase(const std::string& phase) { current_phase_ = phase; }
 
     std::vector<SmokeReportEntry> generate_report() const;
     u32 total_count() const;
@@ -60,14 +63,17 @@ private:
     struct EntryKey {
         SmokeCategory category;
         std::string name;
+        std::string phase;
         bool operator==(const EntryKey& o) const {
-            return category == o.category && name == o.name;
+            return category == o.category && name == o.name && phase == o.phase;
         }
     };
     struct EntryKeyHash {
         size_t operator()(const EntryKey& k) const {
-            return std::hash<std::string>()(k.name) ^
-                   (std::hash<int>()(static_cast<int>(k.category)) << 16);
+            auto h1 = std::hash<std::string>()(k.name);
+            auto h2 = std::hash<int>()(static_cast<int>(k.category));
+            auto h3 = std::hash<std::string>()(k.phase);
+            return h1 ^ (h2 << 16) ^ (h3 << 1);
         }
     };
     struct EntryData {
@@ -75,6 +81,7 @@ private:
         u32 count = 0;
     };
     std::unordered_map<EntryKey, EntryData, EntryKeyHash> entries_;
+    std::string current_phase_;
 };
 
 } // namespace osc::lua

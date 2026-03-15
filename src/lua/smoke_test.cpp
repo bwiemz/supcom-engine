@@ -13,7 +13,7 @@ namespace osc::lua {
 
 void SmokeTestHarness::record(SmokeCategory category, const std::string& name,
                                const std::string& location) {
-    EntryKey key{category, name};
+    EntryKey key{category, name, current_phase_};
     auto& data = entries_[key];
     if (data.count == 0) data.first_location = location;
     data.count++;
@@ -23,7 +23,8 @@ std::vector<SmokeReportEntry> SmokeTestHarness::generate_report() const {
     std::vector<SmokeReportEntry> result;
     result.reserve(entries_.size());
     for (auto& [key, data] : entries_) {
-        result.push_back({key.category, key.name, data.first_location, data.count});
+        result.push_back({key.category, key.name, data.first_location,
+                          key.phase, data.count});
     }
     // Sort by count descending (highest-impact first)
     std::sort(result.begin(), result.end(),
