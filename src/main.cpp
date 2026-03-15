@@ -474,6 +474,7 @@ int main(int argc, char* argv[]) {
     bool phase5_test = parse_flag(argc, argv, "--phase5-test");
     bool smoke_test = parse_flag(argc, argv, "--smoke-test");
     bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
+    bool draw_test = parse_flag(argc, argv, "--draw-test");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
@@ -521,7 +522,7 @@ int main(int argc, char* argv[]) {
                     dualstate_test ||
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
-                    profile_test || smoke_test || ai_skirmish;
+                    profile_test || smoke_test || ai_skirmish || draw_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -1592,6 +1593,26 @@ int main(int argc, char* argv[]) {
                          surviving, vetted);
         }
         spdlog::info("=== End AI Skirmish ===");
+    }
+
+    // === Draw Test: simultaneous ACU death ===
+    if (draw_test && sim_state) {
+        spdlog::info("=== DRAW TEST: simultaneous ACU death ===");
+        // Set both armies to defeated
+        for (size_t i = 0; i < sim_state->army_count(); i++) {
+            auto* brain = sim_state->army_at(i);
+            if (brain && !brain->is_civilian()) {
+                brain->set_state(osc::sim::BrainState::Defeat);
+            }
+        }
+        osc::i32 result = sim_state->player_result();
+        if (result == 3) {
+            spdlog::info("  PASS — simultaneous defeat returns Draw (3)");
+        } else {
+            spdlog::error("  FAIL — expected Draw (3), got {}", result);
+            return 1;
+        }
+        return 0;
     }
 
     // Headless tick loop

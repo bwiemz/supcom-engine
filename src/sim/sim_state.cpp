@@ -298,6 +298,15 @@ void SimState::tick() {
         effect_registry_.expire_timed(game_time_);
         effect_registry_.gc();
     }
+
+    // Periodic Lua garbage collection to prevent unbounded memory growth.
+    // Lua 5.0 uses stop-the-world mark-and-sweep GC. Setting threshold to 0
+    // forces an immediate full collection. Running every 50 ticks (5 seconds
+    // game time) amortizes GC cost while preventing heap growth.
+    if (tick_count_ % 50 == 0) {
+        PROFILE_ZONE("Sim::lua_gc");
+        lua_setgcthreshold(L_, 0);
+    }
 }
 
 void SimState::update_economies() {
@@ -580,9 +589,8 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
 i32 SimState::player_result() const {
     if (!game_ended_) {
-        // Check if player army (index 0) is defeated
         auto* player = army_at(0);
-        if (player && player->is_defeated()) return 2; // defeat
+        bool player_defeated = player && player->is_defeated();
 
         // Check if all non-civilian enemy armies are defeated
         bool all_enemies_dead = true;
@@ -596,7 +604,13 @@ i32 SimState::player_result() const {
                 break;
             }
         }
-        if (all_enemies_dead && army_count() > 1) return 1; // victory
+
+        // Both player and all enemies defeated same tick → draw
+        if (player_defeated && all_enemies_dead && army_count() > 1) return 3;
+        // Only player defeated → loss
+        if (player_defeated) return 2;
+        // Only enemies defeated → win
+        if (all_enemies_dead && army_count() > 1) return 1;
 
         return 0; // in progress
     }
