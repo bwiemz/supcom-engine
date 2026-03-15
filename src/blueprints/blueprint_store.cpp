@@ -26,7 +26,10 @@ const char* blueprint_type_name(BlueprintType type) {
 BlueprintStore::BlueprintStore(lua_State* L) : L_(L) {}
 
 BlueprintStore::~BlueprintStore() {
-    // Release all Lua references
+    // Release all Lua references.
+    // Skip if Lua state was already destroyed (e.g. after sim reload/teardown
+    // where rebind() was not called before the old state was freed).
+    if (!L_) return;
     for (auto& [id, entry] : blueprints_) {
         if (entry.lua_ref != -1) {
             luaL_unref(L_, LUA_REGISTRYINDEX, entry.lua_ref);

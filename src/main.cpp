@@ -1570,7 +1570,10 @@ int main(int argc, char* argv[]) {
 
     // === Full Smoke Test: 5-phase game lifecycle ===
     if (full_smoke_test && !map_path.empty()) {
-        osc::lua::SmokeTestHarness harness;
+        // Static so the harness outlives ui_lua_state — interceptor closures
+        // capture a lightuserdata pointer to the harness, and lua_close() during
+        // main() cleanup would segfault if the harness were already freed.
+        static osc::lua::SmokeTestHarness harness;
         harness.activate();
         osc::u32 ui_frame_counter = 0;
 
@@ -1585,6 +1588,7 @@ int main(int argc, char* argv[]) {
         // Destroy sim to match real FRONT_END state (sim_state is null during lobby)
         sim_state.reset();
         sim_lua_state.reset();
+        store.rebind(nullptr); // Detach from destroyed sim Lua state
         game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
         osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
         pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
@@ -1702,6 +1706,8 @@ int main(int argc, char* argv[]) {
         }
         sim_state.reset();
         sim_lua_state.reset();
+        // Detach store from destroyed sim Lua state to prevent dangling luaL_unref
+        store.rebind(nullptr);
         game_state_mgr.set_game_over(false);
         game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
         osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
