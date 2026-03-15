@@ -6491,6 +6491,288 @@ static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
     return 1;
 }
 
+// platoon:CanFormPlatoon(template, count, location, radius)
+// template = {name, plan, {category_expr, min, max, squad, formation}, ...}
+// count = multiplier for min/max counts
+// location = optional {x, y, z} position
+// radius = optional search radius
+// Returns: boolean
+static int platoon_CanFormPlatoon(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim || !lua_istable(L, 2)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    int tmpl = 2;
+    int multiplier = lua_isnumber(L, 3)
+                         ? static_cast<int>(lua_tonumber(L, 3))
+                         : 1;
+    if (multiplier < 1) multiplier = 1;
+
+    // Optional location + radius filter
+    bool has_location = lua_istable(L, 4) && lua_isnumber(L, 5);
+    f32 loc_x = 0, loc_z = 0, radius_sq = 0;
+    if (has_location) {
+        lua_rawgeti(L, 4, 1);
+        loc_x = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3);
+        loc_z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        f32 r = static_cast<f32>(lua_tonumber(L, 5));
+        radius_sq = r * r;
+    }
+
+    // Iterate template sub-tables starting at index 3
+    for (int i = 3; ; i++) {
+        lua_rawgeti(L, tmpl, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        int sub = lua_gettop(L);
+
+        // sub[1] = category expression (Lua table)
+        lua_rawgeti(L, sub, 1);
+        int cat_idx = lua_gettop(L);
+        if (!lua_istable(L, cat_idx)) {
+            lua_pop(L, 2); // cat + sub
+            continue;
+        }
+
+        // sub[2] = min count
+        lua_rawgeti(L, sub, 2);
+        int min_count = lua_isnumber(L, -1)
+                            ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
+                            : multiplier;
+        lua_pop(L, 1);
+
+        // Count matching units in pool
+        int matched = 0;
+        for (u32 id : platoon->unit_ids()) {
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            auto* unit = static_cast<sim::Unit*>(e);
+
+            if (!osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
+                continue;
+
+            if (has_location) {
+                auto pos = unit->position();
+                f32 dx = pos.x - loc_x;
+                f32 dz = pos.z - loc_z;
+                if (dx * dx + dz * dz > radius_sq) continue;
+            }
+
+            matched++;
+        }
+
+        lua_pop(L, 1); // cat_idx
+        lua_pop(L, 1); // sub
+
+        if (matched < min_count) {
+            lua_pushboolean(L, 0);
+            return 1;
+        }
+    }
+
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// platoon:FormPlatoon(template, count, location, radius)
+// Same args as CanFormPlatoon. Extracts matching units from pool
+// into a new platoon and returns it.
+// Returns: new platoon Lua table
+static int platoon_FormPlatoon(lua_State* L) {
+    auto* pool = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!pool || !sim || !lua_istable(L, 2)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    int tmpl = 2;
+    int multiplier = lua_isnumber(L, 3)
+                         ? static_cast<int>(lua_tonumber(L, 3))
+                         : 1;
+    if (multiplier < 1) multiplier = 1;
+
+    // Optional location + radius filter
+    bool has_location = lua_istable(L, 4) && lua_isnumber(L, 5);
+    f32 loc_x = 0, loc_z = 0, radius_sq = 0;
+    if (has_location) {
+        lua_rawgeti(L, 4, 1);
+        loc_x = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3);
+        loc_z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        f32 r = static_cast<f32>(lua_tonumber(L, 5));
+        radius_sq = r * r;
+    }
+
+    // Get brain to create new platoon
+    auto* brain = sim->get_army(pool->army_index());
+    if (!brain) { lua_pushnil(L); return 1; }
+
+    // Get plan name from template[2]
+    lua_rawgeti(L, tmpl, 2);
+    std::string plan = lua_isstring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+
+    auto* new_platoon = brain->create_platoon("");
+    new_platoon->set_plan_name(plan);
+
+    // Snapshot pool unit IDs (remove_unit modifies the vector)
+    auto pool_ids = pool->unit_ids();
+
+    // Track which IDs we've transferred (to remove from pool after)
+    std::vector<u32> transferred;
+
+    // Iterate template sub-tables starting at index 3
+    for (int i = 3; ; i++) {
+        lua_rawgeti(L, tmpl, i);
+        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
+        int sub = lua_gettop(L);
+
+        // sub[1] = category expression
+        lua_rawgeti(L, sub, 1);
+        int cat_idx = lua_gettop(L);
+        if (!lua_istable(L, cat_idx)) {
+            lua_pop(L, 2); // cat + sub
+            continue;
+        }
+
+        // sub[2] = min, sub[3] = max
+        lua_rawgeti(L, sub, 2);
+        int min_count = lua_isnumber(L, -1)
+                            ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
+                            : multiplier;
+        lua_pop(L, 1);
+
+        lua_rawgeti(L, sub, 3);
+        int max_count = lua_isnumber(L, -1)
+                            ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
+                            : multiplier;
+        lua_pop(L, 1);
+
+        // sub[4] = squad name
+        lua_rawgeti(L, sub, 4);
+        std::string squad = lua_isstring(L, -1) ? lua_tostring(L, -1) : "Unassigned";
+        lua_pop(L, 1);
+
+        // Find matching units and transfer
+        int taken = 0;
+        for (u32 id : pool_ids) {
+            if (taken >= max_count) break;
+
+            // Skip if already transferred in a previous sub-table
+            bool already = false;
+            for (u32 t : transferred) {
+                if (t == id) { already = true; break; }
+            }
+            if (already) continue;
+
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            auto* unit = static_cast<sim::Unit*>(e);
+
+            if (!osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
+                continue;
+
+            if (has_location) {
+                auto pos = unit->position();
+                f32 dx = pos.x - loc_x;
+                f32 dz = pos.z - loc_z;
+                if (dx * dx + dz * dz > radius_sq) continue;
+            }
+
+            new_platoon->add_unit(id);
+            new_platoon->set_unit_squad(id, squad);
+            transferred.push_back(id);
+            taken++;
+        }
+
+        lua_pop(L, 1); // cat_idx
+        lua_pop(L, 1); // sub
+    }
+
+    // Remove transferred units from pool
+    for (u32 id : transferred) {
+        pool->remove_unit(id);
+    }
+
+    // Build Lua table for new platoon (same pattern as brain_MakePlatoon)
+    lua_newtable(L);
+    int plat_tbl = lua_gettop(L);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, new_platoon);
+    lua_rawset(L, plat_tbl);
+
+    lua_pushstring(L, "PlanName");
+    lua_pushstring(L, plan.c_str());
+    lua_rawset(L, plat_tbl);
+
+    // Set metatable (cached __osc_platoon_mt or __platoon_class)
+    lua_pushstring(L, "__platoon_class");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "__osc_platoon_mt");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            // Create cached metatable
+            lua_newtable(L);
+            lua_pushstring(L, "__index");
+            lua_pushstring(L, "moho");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "platoon_methods");
+                lua_rawget(L, -2);
+                lua_remove(L, -2);
+            } else {
+                lua_pop(L, 1);
+                lua_pushnil(L);
+            }
+            lua_settable(L, -3);
+            lua_pushstring(L, "__osc_platoon_mt");
+            lua_pushvalue(L, -2);
+            lua_rawset(L, LUA_REGISTRYINDEX);
+        }
+    }
+    lua_setmetatable(L, plat_tbl);
+
+    // Store lua_table_ref on platoon
+    lua_pushvalue(L, plat_tbl);
+    new_platoon->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+
+    // Call OnCreate if available
+    lua_pushstring(L, "OnCreate");
+    lua_gettable(L, plat_tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, plat_tbl);
+        lua_pushstring(L, plan.c_str());
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            spdlog::warn("FormPlatoon OnCreate error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    spdlog::info("FormPlatoon: id={} army={} plan='{}' units={}",
+                 new_platoon->platoon_id(), brain->index(), plan,
+                 new_platoon->unit_ids().size());
+
+    // Return the platoon table (defensive push matching brain_MakePlatoon pattern)
+    lua_pushvalue(L, plat_tbl);
+    return 1;
+}
+
 // brain:CanBuildStructureAt(bp_id, position) -> bool
 // Check if footprint fits at position (no impassable/obstacle cells)
 static int brain_CanBuildStructureAt(lua_State* L) {
@@ -7239,6 +7521,8 @@ static const MethodEntry platoon_methods[] = {
     {"GetPlatoonThreat",                        platoon_CalculatePlatoonThreat},
     {"CalculatePlatoonThreatAroundPosition",    platoon_CalculatePlatoonThreatAroundPosition},
     {"TurnOffPoolAI",               [](lua_State*) -> int { return 0; }},
+    {"CanFormPlatoon",          platoon_CanFormPlatoon},
+    {"FormPlatoon",             platoon_FormPlatoon},
     {nullptr, nullptr},
 };
 
