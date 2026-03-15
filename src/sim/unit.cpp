@@ -1356,6 +1356,18 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             spdlog::info("finish_build: entity #{} completed building target #{}",
                          entity_id(), build_target_id_);
 
+            // Track Units_Built stat for the builder's army
+            lua_pushstring(L, "osc_sim_state");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            auto* sim_for_stat = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (sim_for_stat) {
+                auto* builder_brain = sim_for_stat->get_army(army());
+                if (builder_brain) {
+                    builder_brain->add_stat("Units_Built", 1.0);
+                }
+            }
+
             // Call target:OnStopBeingBuilt(builder, layer)
             if (target->lua_table_ref() >= 0) {
                 lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());

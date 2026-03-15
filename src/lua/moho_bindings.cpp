@@ -817,20 +817,30 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
-        // Veterancy: distribute XP to damage contributors on first death
+        // Veterancy + score tracking on first death (not during death animation)
         if (e->is_unit()) {
             auto* dying_unit = static_cast<sim::Unit*>(e);
             if (!dying_unit->is_dying() && !dying_unit->is_crashing()) {
+                auto* sim_ptr = get_sim(L);
+
+                // Record Units_Lost for victim army
+                if (sim_ptr) {
+                    auto* victim_brain = sim_ptr->get_army(e->army());
+                    if (victim_brain) {
+                        victim_brain->add_stat("Units_Lost", 1.0);
+                    }
+                }
+
+                // Distribute veterancy XP to attackers
                 f32 xp_value = dying_unit->xp_value();
                 if (xp_value > 0 && !dying_unit->damage_contributions().empty()) {
                     f32 total_damage = 0;
                     for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
                         total_damage += dmg;
                     }
-                    if (total_damage > 0) {
-                        auto* sim_ptr = get_sim(L);
+                    if (total_damage > 0 && sim_ptr) {
                         for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
-                            auto* attacker = sim_ptr ? sim_ptr->entity_registry().find(aid) : nullptr;
+                            auto* attacker = sim_ptr->entity_registry().find(aid);
                             if (attacker && !attacker->destroyed() && attacker->is_unit()) {
                                 f32 xp_share = xp_value * (dmg / total_damage);
                                 static_cast<sim::Unit*>(attacker)->add_xp(
@@ -838,31 +848,16 @@ static int entity_Destroy(lua_State* L) {
                             }
                         }
                     }
-                    dying_unit->clear_damage_contributions();
                 }
-            }
-        }
 
-        // --- Score tracking: record kill/loss stats ---
-        if (e->is_unit()) {
-            auto* sim_ptr2 = get_sim(L);
-            if (sim_ptr2) {
-                i32 victim_army = e->army();
-                auto* victim_brain = sim_ptr2->get_army(victim_army);
-                if (victim_brain) {
-                    victim_brain->add_stat("Units_Lost", 1.0);
-                }
-                // Credit kill to the army that dealt the most damage.
-                // damage_contributions() stores (attacker_entity_id, cumulative_damage) —
-                // NOT army indices. Must look up entity to find its army.
-                auto* dying_u = static_cast<sim::Unit*>(e);
-                auto& contribs = dying_u->damage_contributions();
-                if (!contribs.empty()) {
+                // Credit kill to army that dealt the most damage
+                if (sim_ptr && !dying_unit->damage_contributions().empty()) {
+                    i32 victim_army = e->army();
                     i32 killer_army = -1;
                     f32 max_dmg = 0;
-                    for (const auto& [attacker_id, dmg] : contribs) {
+                    for (const auto& [attacker_id, dmg] : dying_unit->damage_contributions()) {
                         if (dmg > max_dmg) {
-                            auto* attacker = sim_ptr2->entity_registry().find(attacker_id);
+                            auto* attacker = sim_ptr->entity_registry().find(attacker_id);
                             if (attacker && !attacker->destroyed()) {
                                 max_dmg = dmg;
                                 killer_army = attacker->army();
@@ -870,12 +865,14 @@ static int entity_Destroy(lua_State* L) {
                         }
                     }
                     if (killer_army >= 0 && killer_army != victim_army) {
-                        auto* killer_brain = sim_ptr2->get_army(killer_army);
+                        auto* killer_brain = sim_ptr->get_army(killer_army);
                         if (killer_brain) {
                             killer_brain->add_stat("Units_Killed", 1.0);
                         }
                     }
                 }
+
+                dying_unit->clear_damage_contributions();
             }
         }
 
@@ -13189,7 +13186,7 @@ static int l_SessionResume(lua_State* L) {
 /// GetArmyScore(armyIndex) → table with army stats for score screen
 static int l_GetArmyScore(lua_State* L) {
     auto* sim = get_sim(L);
-    int army_idx = static_cast<int>(luaL_checknumber(L, 1));
+    int army_idx = static_cast<int>(luaL_checknumber(L, 1)) - 1;
 
     lua_newtable(L);
     if (!sim) return 1;
