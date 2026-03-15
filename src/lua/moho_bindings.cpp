@@ -6223,6 +6223,58 @@ static int platoon_CalculatePlatoonThreat(lua_State* L) {
     return 1;
 }
 
+// platoon:CalculatePlatoonThreatAroundPosition(threatType, category, position, radius)
+// Same as CalculatePlatoonThreat but filters units to within radius of position.
+static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+
+    const char* threat_type = lua_isstring(L, 2) ? lua_tostring(L, 2) : "Overall";
+    int cat_idx = lua_istable(L, 3) ? 3 : 0;
+
+    // Extract position from arg 4 ({x, y, z} table)
+    f32 px = 0, pz = 0;
+    if (lua_istable(L, 4)) {
+        lua_rawgeti(L, 4, 1);
+        px = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        lua_rawgeti(L, 4, 3);
+        pz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+
+    f32 radius = lua_isnumber(L, 5) ? static_cast<f32>(lua_tonumber(L, 5)) : 0;
+    f32 radius_sq = radius * radius;
+
+    f32 total = 0;
+    for (u32 id : platoon->unit_ids()) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+
+        if (cat_idx > 0 &&
+            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
+            continue;
+
+        // Distance filter (2D, ignoring Y)
+        if (radius > 0) {
+            auto pos = unit->position();
+            f32 dx = pos.x - px;
+            f32 dz = pos.z - pz;
+            if (dx * dx + dz * dz > radius_sq) continue;
+        }
+
+        total += get_unit_threat_for_type(unit, threat_type);
+    }
+
+    lua_pushnumber(L, total);
+    return 1;
+}
+
 // brain:CanBuildStructureAt(bp_id, position) -> bool
 // Check if footprint fits at position (no impassable/obstacle cells)
 static int brain_CanBuildStructureAt(lua_State* L) {
@@ -6406,6 +6458,14 @@ static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
 static int brain_SetUpAttackVectorsToArmy(lua_State*) { return 0; }
 static int brain_SetGreaterOf(lua_State*) { return 0; }
 
+// brain:CheckBlockingTerrain(pos, maxRange, threatType)
+// No-op stub — returns false (no blocking terrain).
+// Called by aiattackutilities.lua for attack path validation.
+static int brain_CheckBlockingTerrain(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry aibrain_methods[] = {
     // Real implementations
@@ -6478,6 +6538,7 @@ static const MethodEntry aibrain_methods[] = {
     {"SetCurrentEnemy",             brain_SetCurrentEnemy},
     {"GetNumUnitsAroundPoint",      brain_GetNumUnitsAroundPoint},
     {"GetPlatoonsList",             brain_GetPlatoonsList},
+    {"CheckBlockingTerrain",    brain_CheckBlockingTerrain},
     {nullptr, nullptr},
 };
 // clang-format on
@@ -6957,6 +7018,8 @@ static const MethodEntry platoon_methods[] = {
     {"SetPrioritizedTargetList",    platoon_SetPrioritizedTargetList},
     {"IsCommandsActive",            platoon_IsCommandsActive},
     {"CalculatePlatoonThreat",      platoon_CalculatePlatoonThreat},
+    {"GetPlatoonThreat",                        platoon_CalculatePlatoonThreat},
+    {"CalculatePlatoonThreatAroundPosition",    platoon_CalculatePlatoonThreatAroundPosition},
     {"TurnOffPoolAI",               [](lua_State*) -> int { return 0; }},
     {nullptr, nullptr},
 };
