@@ -4546,10 +4546,23 @@ static int brain_IsDefeated(lua_State* L) {
 static int brain_GetCurrentUnits(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (brain && sim) {
-        lua_pushnumber(L, brain->get_unit_cost_total(sim->entity_registry()));
+    if (!brain || !sim) { lua_pushnumber(L, 0); return 1; }
+
+    // Optional category filter (arg 2 — Lua category expression table)
+    if (lua_istable(L, 2)) {
+        int cat_idx = 2;
+        i32 count = 0;
+        sim->entity_registry().for_each([&](const sim::Entity& e) {
+            if (e.army() == brain->index() && !e.destroyed() && e.is_unit()) {
+                auto* u = static_cast<const sim::Unit*>(&e);
+                if (osc::lua::unit_matches_category(L, cat_idx, u->categories()))
+                    count++;
+            }
+        });
+        lua_pushnumber(L, count);
     } else {
-        lua_pushnumber(L, 0);
+        // No category filter — return total unit count
+        lua_pushnumber(L, brain->get_unit_cost_total(sim->entity_registry()));
     }
     return 1;
 }
