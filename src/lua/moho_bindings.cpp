@@ -4816,6 +4816,18 @@ static int brain_GetPersonality(lua_State* L) {
     });
     lua_rawset(L, tbl);
 
+    // GetPlatoonSize() → {1.0, 1.0} (platoon size multiplier {min, max})
+    lua_pushstring(L, "GetPlatoonSize");
+    lua_pushcfunction(L, [](lua_State* Ls) -> int {
+        lua_newtable(Ls);
+        lua_pushnumber(Ls, 1.0);
+        lua_rawseti(Ls, -2, 1);
+        lua_pushnumber(Ls, 1.0);
+        lua_rawseti(Ls, -2, 2);
+        return 1;
+    });
+    lua_rawset(L, tbl);
+
     // Make methods callable via : syntax (self-referencing __index)
     lua_pushvalue(L, tbl);
     lua_pushstring(L, "__index");
