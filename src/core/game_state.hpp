@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "lua/smoke_test.hpp"
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -49,7 +50,13 @@ inline void call_lua_global(lua_State* L, const char* name) {
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_isfunction(L, -1)) {
         if (lua_pcall(L, 0, 0, 0) != 0) {
-            spdlog::warn("{} error: {}", name, lua_tostring(L, -1));
+            const char* raw = lua_tostring(L, -1);
+            std::string err = raw ? raw : "(unknown error)";
+            spdlog::warn("{} error: {}", name, err);
+            auto* harness = osc::lua::SmokeTestHarness::active_instance();
+            if (harness) {
+                harness->record(osc::lua::SmokeCategory::PcallError, err, name);
+            }
             lua_pop(L, 1);
         }
     } else {
@@ -67,7 +74,13 @@ inline void call_on_beat(lua_State* L, f64 dt) {
     if (lua_isfunction(L, -1)) {
         lua_pushnumber(L, dt);
         if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("OnBeat error: {}", lua_tostring(L, -1));
+            const char* raw = lua_tostring(L, -1);
+            std::string err = raw ? raw : "(unknown error)";
+            spdlog::warn("OnBeat error: {}", err);
+            auto* harness = osc::lua::SmokeTestHarness::active_instance();
+            if (harness) {
+                harness->record(osc::lua::SmokeCategory::PcallError, err, "OnBeat");
+            }
             lua_pop(L, 1);
         }
     } else {
