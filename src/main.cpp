@@ -679,6 +679,7 @@ int main(int argc, char* argv[]) {
     bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
     bool draw_test = parse_flag(argc, argv, "--draw-test");
     bool stress_test = parse_flag(argc, argv, "--stress-test");
+    bool full_smoke_test = parse_flag(argc, argv, "--full-smoke-test");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
@@ -727,7 +728,7 @@ int main(int argc, char* argv[]) {
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
                     profile_test || smoke_test || ai_skirmish || draw_test ||
-                    stress_test;
+                    stress_test || full_smoke_test;
     bool headless = (tick_count > 0) || any_test;
 
     if (config.fa_path.empty()) {
@@ -1531,6 +1532,154 @@ int main(int argc, char* argv[]) {
             for (osc::u32 i = 0; i < 100; i++)
                 sim_state->tick();
         }
+    }
+
+    // === Full Smoke Test: 5-phase game lifecycle ===
+    if (full_smoke_test && !map_path.empty()) {
+        osc::lua::SmokeTestHarness harness;
+        harness.activate();
+        osc::u32 ui_frame_counter = 0;
+
+        // Install interceptors on ui_L (persistent across all phases)
+        harness.install_panic_handler(ui_lua_state.raw());
+        harness.install_global_interceptor(ui_lua_state.raw());
+        harness.install_all_method_interceptors(ui_lua_state.raw());
+
+        // --- Phase 1: FRONT_END ---
+        spdlog::info("=== Phase 1: FRONT_END ===");
+        harness.set_phase("FRONT_END");
+        // Destroy sim to match real FRONT_END state (sim_state is null during lobby)
+        sim_state.reset();
+        sim_lua_state.reset();
+        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
+        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
+        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
+
+        // --- Phase 2: LOBBY ---
+        spdlog::info("=== Phase 2: LOBBY ===");
+        harness.set_phase("LOBBY");
+        {
+            lua_State* uL = ui_lua_state.raw();
+            // Build FrontEndData
+            lua_pushstring(uL, "__osc_front_end_data");
+            lua_newtable(uL);
+            int fed = lua_gettop(uL);
+            lua_pushstring(uL, "ScenarioFile");
+            lua_pushstring(uL, map_path.c_str());
+            lua_rawset(uL, fed);
+            lua_pushstring(uL, "PlayerCount");
+            lua_pushnumber(uL, 2);
+            lua_rawset(uL, fed);
+            lua_pushstring(uL, "AiPersonality");
+            lua_pushstring(uL, ai_personality.c_str());
+            lua_rawset(uL, fed);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+
+            // Set launch scenario path
+            lua_pushstring(uL, "__osc_launch_scenario");
+            lua_pushstring(uL, map_path.c_str());
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+
+            // Set launch requested flag
+            lua_pushstring(uL, "__osc_launch_requested");
+            lua_pushboolean(uL, 1);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
+
+        // --- Phase 3: GAME ---
+        spdlog::info("=== Phase 3: GAME (1000 ticks) ===");
+        harness.set_phase("GAME");
+
+        // Execute reload sequence to create sim state (headless — no renderer)
+        double sim_accumulator_fst = 0.0;
+        bool reload_ok = execute_reload_sequence(
+            sim_lua_state, sim_state,
+            ui_lua_state, vfs, store,
+            loader, config, scenario_meta,
+            game_state_mgr,
+            nullptr,   // renderer (headless)
+            nullptr,   // input_handler (headless)
+            nullptr,   // prev_selection (headless)
+            sim_accumulator_fst,
+            map_path);
+
+        if (!reload_ok) {
+            spdlog::error("Phase 3: Reload failed — skipping remaining phases");
+            harness.print_report(true);
+            harness.write_report_to_file("smoke_report.txt");
+            harness.deactivate();
+            return 1;
+        }
+
+        // After reload, re-install interceptors on fresh sim_L
+        if (sim_lua_state) {
+            harness.install_panic_handler(sim_lua_state->raw());
+            harness.install_global_interceptor(sim_lua_state->raw());
+            harness.install_all_method_interceptors(sim_lua_state->raw());
+        }
+
+        // Fire OnFirstUpdate once
+        osc::core::call_on_first_update(ui_lua_state.raw());
+
+        for (int t = 0; t < 1000; t++) {
+            if (sim_state) sim_state->tick();
+            if ((t + 1) % 10 == 0) {
+                pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
+            }
+            if ((t + 1) % 250 == 0) {
+                osc::i32 entity_count = 0;
+                if (sim_state) {
+                    sim_state->entity_registry().for_each(
+                        [&](const osc::sim::Entity& e) {
+                            if (!e.destroyed()) entity_count++;
+                        });
+                }
+                spdlog::info("  tick {}/1000 — {} entities", t + 1, entity_count);
+            }
+        }
+
+        // --- Phase 4: SCORE ---
+        spdlog::info("=== Phase 4: SCORE ===");
+        harness.set_phase("SCORE");
+        if (sim_state) {
+            for (size_t i = 0; i < sim_state->army_count(); i++) {
+                auto* brain = sim_state->army_at(i);
+                if (brain && !brain->is_civilian() && static_cast<osc::i32>(i) != 0) {
+                    brain->set_state(osc::sim::BrainState::Defeat);
+                }
+            }
+            osc::i32 result = sim_state->player_result();
+            spdlog::info("  player_result() = {} (expected 1=Victory)", result);
+            osc::core::call_lua_global(ui_lua_state.raw(), "NoteGameOver");
+            game_state_mgr.set_game_over(true);
+            game_state_mgr.transition_to(osc::GameState::SCORE, ui_lua_state.raw());
+        }
+        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
+
+        // --- Phase 5: RETURN ---
+        spdlog::info("=== Phase 5: RETURN ===");
+        harness.set_phase("RETURN");
+        {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_return_to_lobby");
+            lua_pushboolean(uL, 1);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
+        sim_state.reset();
+        sim_lua_state.reset();
+        game_state_mgr.set_game_over(false);
+        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
+        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
+        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
+
+        // --- Report ---
+        spdlog::info("=== Full Smoke Test Complete ===");
+        harness.print_report(true);
+        harness.write_report_to_file("smoke_report.txt");
+        spdlog::info("Report written to smoke_report.txt");
+        harness.deactivate();
+        return 0;
     }
 
     // === Smoke Test ===
