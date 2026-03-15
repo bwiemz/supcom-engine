@@ -1632,7 +1632,7 @@ int main(int argc, char* argv[]) {
         pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
 
         // --- Phase 3: GAME ---
-        spdlog::info("=== Phase 3: GAME (1000 ticks) ===");
+        spdlog::info("=== Phase 3: GAME (3000 ticks) ===");
         harness.set_phase("GAME");
 
         // Execute reload sequence to create sim state (headless — no renderer)
@@ -1666,7 +1666,7 @@ int main(int argc, char* argv[]) {
         // Fire OnFirstUpdate once
         osc::core::call_on_first_update(ui_lua_state.raw());
 
-        for (int t = 0; t < 1000; t++) {
+        for (int t = 0; t < 3000; t++) {
             if (sim_state) sim_state->tick();
             if ((t + 1) % 10 == 0) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
@@ -1705,7 +1705,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                spdlog::info("  tick {}/1000 — props:{} {}", t + 1, prop_count, army_summary);
+                spdlog::info("  tick {}/3000 — props:{} {}", t + 1, prop_count, army_summary);
             }
         }
 
