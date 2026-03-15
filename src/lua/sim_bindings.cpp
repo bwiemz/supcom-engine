@@ -4710,6 +4710,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // Time/profiling
     state.register_function("GetSystemTimeSecondsOnlyUseForProfileUseRealClock",
                             l_GetGameTimeSeconds);
+    state.register_function("GetSystemTimeSecondsOnlyForProfileUse",
+                            l_GetGameTimeSeconds);
     state.register_function("GetFrustumTick", stub_zero);
 
     // Army init functions
