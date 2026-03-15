@@ -27,6 +27,14 @@ struct SmokeReportEntry {
 
 class SmokeTestHarness {
 public:
+    ~SmokeTestHarness() { deactivate(); }
+
+    void activate() { s_active_ = this; }
+    void deactivate() { if (s_active_ == this) s_active_ = nullptr; }
+    static SmokeTestHarness* active_instance() { return s_active_; }
+
+    static constexpr u32 MAX_ISSUES_PER_PHASE = 500;
+
     void record(SmokeCategory category, const std::string& name,
                 const std::string& location);
 
@@ -35,7 +43,9 @@ public:
     std::vector<SmokeReportEntry> generate_report() const;
     u32 total_count() const;
 
-    void print_report() const;
+    void print_report(bool group_by_phase = false) const;
+    void write_report_to_file(const std::string& path,
+                              bool group_by_phase = true) const;
 
     /// Install __index metamethod on the globals table that logs missing accesses.
     /// The harness pointer is stored in the Lua registry as "__osc_smoke_harness".
@@ -82,6 +92,9 @@ private:
     };
     std::unordered_map<EntryKey, EntryData, EntryKeyHash> entries_;
     std::string current_phase_;
+    std::unordered_map<std::string, u32> phase_unique_counts_;
+
+    static SmokeTestHarness* s_active_;
 };
 
 } // namespace osc::lua

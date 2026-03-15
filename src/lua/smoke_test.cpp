@@ -2,7 +2,10 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <unordered_set>
 
 extern "C" {
 #include <lua.h>
@@ -11,12 +14,24 @@ extern "C" {
 
 namespace osc::lua {
 
+SmokeTestHarness* SmokeTestHarness::s_active_ = nullptr;
+
 void SmokeTestHarness::record(SmokeCategory category, const std::string& name,
                                const std::string& location) {
     EntryKey key{category, name, current_phase_};
-    auto& data = entries_[key];
-    if (data.count == 0) data.first_location = location;
-    data.count++;
+    auto it = entries_.find(key);
+    if (it != entries_.end()) {
+        it->second.count++;
+        return;
+    }
+    u32& phase_count = phase_unique_counts_[current_phase_];
+    if (phase_count >= MAX_ISSUES_PER_PHASE) {
+        return;
+    }
+    phase_count++;
+    auto& entry = entries_[key];
+    entry.first_location = location;
+    entry.count = 1;
 }
 
 std::vector<SmokeReportEntry> SmokeTestHarness::generate_report() const {
@@ -38,15 +53,67 @@ u32 SmokeTestHarness::total_count() const {
     return total;
 }
 
-void SmokeTestHarness::print_report() const {
-    auto report = generate_report();
-    spdlog::info("=== Smoke Test Report ({} unique issues, {} total occurrences) ===",
-                 report.size(), total_count());
-    const char* cat_names[] = {"MISSING_GLOBAL", "MISSING_METHOD", "PCALL_ERROR", "WRONG_RETURN"};
-    for (auto& e : report) {
-        spdlog::info("  [{:15s}] {:40s} x{:4d}  (first: {})",
-                     cat_names[static_cast<int>(e.category)], e.name, e.count, e.first_location);
+static const char* category_name(SmokeCategory cat) {
+    static const char* names[] = {
+        "MISSING_GLOBAL", "MISSING_METHOD", "PCALL_ERROR", "WRONG_RETURN"};
+    return names[static_cast<int>(cat)];
+}
+
+static void format_report(std::ostream& out,
+                           const std::vector<SmokeReportEntry>& report,
+                           u32 total, bool group_by_phase) {
+    out << "=== Smoke Test Report (" << report.size() << " unique issues, "
+        << total << " total occurrences) ===\n";
+
+    if (!group_by_phase) {
+        // Flat list sorted by count (generate_report already sorts descending)
+        for (auto& e : report) {
+            out << "  [" << category_name(e.category) << "] " << e.name
+                << " x" << e.count << "  (first: " << e.first_location << ")\n";
+        }
+        return;
     }
+
+    // Collect unique phases in order of first appearance
+    std::vector<std::string> phases;
+    std::unordered_set<std::string> seen;
+    for (auto& e : report) {
+        if (seen.insert(e.phase).second) {
+            phases.push_back(e.phase);
+        }
+    }
+
+    for (auto& phase : phases) {
+        out << "\n--- Phase: " << (phase.empty() ? "(none)" : phase) << " ---\n";
+        for (auto& e : report) {
+            if (e.phase != phase) continue;
+            out << "  [" << category_name(e.category) << "] " << e.name
+                << " x" << e.count << "  (first: " << e.first_location << ")\n";
+        }
+    }
+}
+
+void SmokeTestHarness::print_report(bool group_by_phase) const {
+    auto report = generate_report();
+    std::ostringstream oss;
+    format_report(oss, report, total_count(), group_by_phase);
+    // Print line by line through spdlog
+    std::string line;
+    std::istringstream iss(oss.str());
+    while (std::getline(iss, line)) {
+        spdlog::info("{}", line);
+    }
+}
+
+void SmokeTestHarness::write_report_to_file(const std::string& path,
+                                              bool group_by_phase) const {
+    auto report = generate_report();
+    std::ofstream out(path);
+    if (!out.good()) {
+        spdlog::error("Failed to open report file: {}", path);
+        return;
+    }
+    format_report(out, report, total_count(), group_by_phase);
 }
 
 } // namespace osc::lua
