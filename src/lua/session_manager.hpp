@@ -45,6 +45,14 @@ public:
     /// Limit the number of non-civilian armies created (0 = no limit).
     void set_max_armies(int n) { max_armies_ = n; }
 
+    /// Set AI personality key for AI armies (e.g., "adaptive", "rush", "turtle",
+    /// "tech", "adaptivecheat").  Default: "adaptive".
+    void set_ai_personality(const std::string& p) { ai_personality_ = p; }
+
+    /// Set cheat multipliers (only used when personality ends with "cheat").
+    void set_cheat_mult(double m) { cheat_mult_ = m; }
+    void set_build_mult(double m) { build_mult_ = m; }
+
     bool is_ai_army(int index) const {
         return std::find(ai_army_indices_.begin(), ai_army_indices_.end(),
                          index) != ai_army_indices_.end();
@@ -62,6 +70,9 @@ private:
     bool session_active_ = false;
     std::vector<int> ai_army_indices_;
     int max_armies_ = 0; // 0 = no limit
+    std::string ai_personality_ = "adaptive";
+    double cheat_mult_ = 2.0;
+    double build_mult_ = 2.0;
 };
 
 } // namespace osc::lua

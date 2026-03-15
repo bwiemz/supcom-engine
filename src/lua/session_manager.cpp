@@ -181,6 +181,11 @@ void SessionManager::setup_army_info(lua_State* L,
     set_opt_str("TeamShareOverflow", "none");
     set_opt_str("CommonArmy", "Off");
 
+    // Cheat multipliers (used by SetupCheat when personality ends with "cheat")
+    set_opt_num("CheatMult", cheat_mult_);
+    set_opt_num("BuildMult", build_mult_);
+    set_opt_str("OmniCheat", "off");
+
     // RestrictedCategories = {} (empty table)
     lua_pushstring(L, "RestrictedCategories");
     lua_newtable(L);
@@ -240,9 +245,9 @@ void SessionManager::setup_army_info(lua_State* L,
         lua_pushnumber(L, static_cast<int>(i) + 1);
         lua_rawset(L, -3);
 
-        // AIPersonality — "adaptive" for AI armies, empty for human/civilian
+        // AIPersonality — configurable for AI armies, empty for human/civilian
         lua_pushstring(L, "AIPersonality");
-        lua_pushstring(L, is_ai ? "adaptive" : "");
+        lua_pushstring(L, is_ai ? ai_personality_.c_str() : "");
         lua_rawset(L, -3);
 
         // StartSpot (needed by some Lua code)

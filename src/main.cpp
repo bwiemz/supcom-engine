@@ -358,6 +358,16 @@ static bool parse_flag(int argc, char* argv[], const char* flag) {
     return false;
 }
 
+static std::string parse_string_arg(int argc, char* argv[], const char* flag,
+                                     const char* default_val = "") {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], flag) == 0 && i + 1 < argc) {
+            return argv[++i];
+        }
+    }
+    return default_val;
+}
+
 int main(int argc, char* argv[]) {
     osc::log::init();
 
@@ -464,6 +474,7 @@ int main(int argc, char* argv[]) {
     bool phase5_test = parse_flag(argc, argv, "--phase5-test");
     bool smoke_test = parse_flag(argc, argv, "--smoke-test");
     bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
+    auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
     std::set<std::string> cmdline_args;
@@ -766,6 +777,13 @@ int main(int argc, char* argv[]) {
         if (ai_skirmish) {
             session_mgr.set_ai_armies({0, 1}); // Both armies are AI
             session_mgr.set_max_armies(2);      // Only create 2 armies
+            session_mgr.set_ai_personality(ai_personality);
+            // Detect cheat variant: personality ending in "cheat"
+            if (ai_personality.size() > 5 &&
+                ai_personality.compare(ai_personality.size() - 5, 5, "cheat") == 0) {
+                session_mgr.set_cheat_mult(2.0);
+                session_mgr.set_build_mult(2.0);
+            }
         } else if (ai_test || platoon_test || threat_test || combat_test) {
             session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
         }
