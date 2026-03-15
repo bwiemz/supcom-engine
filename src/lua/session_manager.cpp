@@ -397,10 +397,9 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
     lua_pushstring(L, nickname.c_str());
     lua_rawset(L, brain_tbl);
 
-    // OnBeginSession — no-op method (Lua code calls brain:OnBeginSession())
-    lua_pushstring(L, "OnBeginSession");
-    lua_pushcfunction(L, [](lua_State*) -> int { return 0; });
-    lua_rawset(L, brain_tbl);
+    // OnBeginSession is NOT set here — the adaptive-ai metatable provides the
+    // real implementation (initializes GridReclaim, NavUtils, etc.). A no-op
+    // stub here would mask the metatable method via direct-field precedence.
 
     // Store a reference in the Lua registry so we can retrieve it later
     lua_pushvalue(L, brain_tbl);
