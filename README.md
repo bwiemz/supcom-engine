@@ -175,7 +175,9 @@ Over 163 milestones have been completed across the simulation, renderer, UI, and
   - Torpedoes: homing/tracking with stay_underwater clamping
   - Veterancy: XP tracking, 5-level progression, damage-based XP awards, stat bonuses per level (HP regen, max health)
   - AI-vs-AI validation: two AI armies load with FA's adaptive AI brain, OnCreateAI succeeds, ExecutePlan runs, 37+ active threads, 6000+ tick stable game loop
-- 82 unit tests (1,474 assertions), 68+ integration test flags
+  - Score tracking: real GetArmyStat/SetArmyStat storage, kill/loss/resource accumulation, score screen with meaningful stats
+  - Performance: periodic Lua GC (every 50 ticks), pathfinding request throttle (8/tick cap), simultaneous-death Draw handling
+- 92 unit tests (1,527 assertions), 70+ integration test flags
 
 **What's not yet implemented:**
 
@@ -374,6 +376,8 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--profile-test` | Profiler system (zones, nesting, rolling stats) |
 | `--smoke-test` | Smoke test harness (method/global interceptors, 100-tick/100-frame run) |
 | `--ai-skirmish` | AI-vs-AI skirmish (2 AI armies, full game loop, 6000 ticks) |
+| `--stress-test` | Extended AI-vs-AI stress test (10,000 ticks, stability validation) |
+| `--draw-test` | Simultaneous ACU death → Draw game-over edge case |
 
 ## Project Structure
 
