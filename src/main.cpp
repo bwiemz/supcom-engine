@@ -262,6 +262,7 @@ static void print_usage() {
               << "  --phase3-test      Phase 3 integration (state machine, beat system, score flow)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
+              << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --help             Show this help message\n";
 }
 
@@ -680,6 +681,7 @@ int main(int argc, char* argv[]) {
     bool draw_test = parse_flag(argc, argv, "--draw-test");
     bool stress_test = parse_flag(argc, argv, "--stress-test");
     bool full_smoke_test = parse_flag(argc, argv, "--full-smoke-test");
+    bool instrument = parse_flag(argc, argv, "--instrument");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
 
     // Collect all command-line args for HasCommandLineArg (M147d)
@@ -1060,6 +1062,24 @@ int main(int argc, char* argv[]) {
             lua_pushlightuserdata(sL, &game_state_mgr);
             lua_rawset(sL, LUA_REGISTRYINDEX);
         }
+    }
+
+    // Instrumented mode: install SmokeTestHarness for interactive play (M166)
+    std::unique_ptr<osc::lua::SmokeTestHarness> instrument_harness;
+    if (instrument) {
+        instrument_harness = std::make_unique<osc::lua::SmokeTestHarness>();
+        instrument_harness->activate();
+        // Install on ui_L (persistent)
+        instrument_harness->install_panic_handler(ui_lua_state.raw());
+        instrument_harness->install_global_interceptor(ui_lua_state.raw());
+        instrument_harness->install_all_method_interceptors(ui_lua_state.raw());
+        // Install on sim_L if it exists
+        if (sim_lua_state) {
+            instrument_harness->install_panic_handler(sim_lua_state->raw());
+            instrument_harness->install_global_interceptor(sim_lua_state->raw());
+            instrument_harness->install_all_method_interceptors(sim_lua_state->raw());
+        }
+        spdlog::info("Instrumented mode active — smoke report on exit");
     }
 
     // Phase 5: Windowed mode (renderer) or headless tick loop
@@ -1471,6 +1491,13 @@ int main(int argc, char* argv[]) {
                                 &prev_selection,
                                 sim_accumulator,
                                 launch_scenario);
+
+                            // Re-install instrument harness on new sim VM (M166)
+                            if (instrument_harness && sim_lua_state) {
+                                instrument_harness->install_panic_handler(sim_lua_state->raw());
+                                instrument_harness->install_global_interceptor(sim_lua_state->raw());
+                                instrument_harness->install_all_method_interceptors(sim_lua_state->raw());
+                            }
                         }
                     } else {
                         lua_pop(uiL, 1);
@@ -1531,6 +1558,13 @@ int main(int argc, char* argv[]) {
                          "(100 ticks)");
             for (osc::u32 i = 0; i < 100; i++)
                 sim_state->tick();
+        }
+
+        // Dump instrument report on exit (M166)
+        if (instrument_harness) {
+            instrument_harness->print_report(false);
+            instrument_harness->write_report_to_file("smoke_report.txt", false);
+            spdlog::info("Instrument report written to smoke_report.txt");
         }
     }
 
@@ -1706,7 +1740,7 @@ int main(int argc, char* argv[]) {
             ui_thread_manager.resume_all(static_cast<osc::u32>(i));
         }
 
-        harness.print_report();
+        harness.print_report(false);
         spdlog::info("=== Smoke Test Complete ===");
     }
 
