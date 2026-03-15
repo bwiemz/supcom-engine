@@ -13,6 +13,7 @@ class PathfindingGrid;
 
 struct PathResult {
     bool found = false;
+    bool throttled = false;  // true if request was deferred (budget exhausted)
     std::vector<sim::Vector3> waypoints; // world-space positions
 };
 
@@ -26,6 +27,11 @@ public:
                          f32 goal_x, f32 goal_z,
                          const std::string& layer,
                          f32 draft = 0, bool amphibious = false) const;
+
+    bool can_pathfind() const { return requests_this_tick_ < MAX_REQUESTS_PER_TICK; }
+    void increment_request_count() const { ++requests_this_tick_; }
+    void reset_request_count() const { requests_this_tick_ = 0; }
+    static constexpr int MAX_REQUESTS_PER_TICK = 8;
 
 private:
     /// Raw A* on the grid. Returns grid cell path (start→goal).
@@ -46,6 +52,7 @@ private:
     const PathfindingGrid& grid_;
 
     static constexpr u32 MAX_NODES_EXPLORED = 50000;
+    mutable int requests_this_tick_ = 0;
 };
 
 } // namespace osc::map

@@ -190,6 +190,10 @@ void SimState::tick() {
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
 
+    if (pathfinder_) {
+        pathfinder_->reset_request_count();
+    }
+
     {
         PROFILE_ZONE("Sim::threads");
         thread_manager_.resume_all(tick_count_);

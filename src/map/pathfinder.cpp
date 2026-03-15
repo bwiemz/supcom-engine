@@ -18,6 +18,13 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                                   f32 goal_x, f32 goal_z,
                                   const std::string& layer,
                                   f32 draft, bool amphibious) const {
+    if (!can_pathfind()) {
+        PathResult r;
+        r.throttled = true;
+        return r;
+    }
+    increment_request_count();
+
     PathResult result;
 
     u32 sx, sz, gx, gz;

@@ -30,8 +30,14 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
     if (result.found && !result.waypoints.empty()) {
         waypoints_ = std::move(result.waypoints);
         spdlog::debug("Navigator: path found with {} waypoints", waypoints_.size());
+    } else if (result.throttled) {
+        // Budget exhausted — don't fall back to straight-line (would clip walls).
+        // Leave unit idle; command processing will retry next tick.
+        spdlog::debug("Navigator: pathfinding throttled, will retry next tick");
+        status_ = Status::Idle;
+        return;
     } else {
-        // Fallback: straight-line
+        // Genuinely no path — fall back to straight line
         waypoints_.push_back(pos);
         spdlog::debug("Navigator: no path found, falling back to straight line");
     }
