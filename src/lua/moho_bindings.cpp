@@ -9918,7 +9918,7 @@ static const MethodEntry ui_item_list_methods[] = {
     {"NeedsScrollBar",      itemlist_NeedsScrollBar},
     {"ShowSelection",       itemlist_ShowSelection},
     {"ShowMouseoverItem",   itemlist_ShowMouseoverItem},
-    {"SetAlpha",            itemlist_SetAlpha},
+    // SetAlpha removed — inherited from Control to avoid ClassUI ambiguity
     {nullptr, nullptr},
 };
 // clang-format on

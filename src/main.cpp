@@ -1095,6 +1095,70 @@ int main(int argc, char* argv[]) {
             set_stub("AudioSetLanguage");
             set_str("__language", "us");
             set_bool_fn("HasLocalizedVO", false);
+            // Engine globals needed by FA's UI bootstrap chain
+            // (GetOptions, GetVolume, SetVolume, etc.)
+            auto set_nil_fn = [&](const char* name) {
+                lua_pushstring(uL, name);
+                lua_pushcfunction(uL, [](lua_State* L) -> int {
+                    lua_pushnil(L);
+                    return 1;
+                });
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            };
+            auto set_num_fn = [&](const char* name, double val) {
+                lua_pushstring(uL, name);
+                double v = val;
+                lua_pushcfunction(uL, [](lua_State* L) -> int {
+                    lua_pushnumber(L, 1.0); // default volume
+                    return 1;
+                });
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            };
+            set_nil_fn("GetOptions");          // prefs.lua
+            set_num_fn("GetVolume", 1.0);      // usermusic.lua
+            set_stub("SetVolume");             // volume control
+            set_stub("ConExecute");            // console commands
+            set_stub("ConExecuteSave");        // console commands
+            set_stub("EnableWorldSounds");     // audio
+            set_stub("DisableWorldSounds");    // audio
+            set_stub("AddInputCapture");       // input system
+            set_stub("RemoveInputCapture");    // input system
+            set_bool_fn("AnyInputCapture", false);
+            set_bool_fn("DebugFacilitiesEnabled", false);
+            set_stub("ExitApplication");       // exit
+            set_stub("PrefetchSession");       // loading optimization
+            set_stub("SetFocusArmy");          // army focus
+            set_nil_fn("GetFocusArmy");        // army focus
+            set_stub("ClearFrame");            // UI cleanup
+            set_stub("GpgNetSend");            // multiplayer
+            set_bool_fn("HasCommandLineArg2", false); // command line
+            // Session functions
+            set_bool_fn("SessionIsActive", false);
+            set_bool_fn("SessionIsMultiplayer", false);
+            set_bool_fn("SessionIsObservingAllowed", false);
+            set_bool_fn("SessionIsGameOver", false);
+            set_bool_fn("SessionIsBeingRecorded", false);
+            set_bool_fn("SessionCanRestart", false);
+            set_stub("SessionEndGame");
+            set_nil_fn("SessionGetCommandSourceNames");
+            set_nil_fn("SessionGetLocalCommandSource");
+            // System info
+            set_nil_fn("GetMouseScreenPos");
+            set_stub("SetOverlayFilter");
+            set_stub("SetOverlayFilters");
+            set_nil_fn("GetActiveBuildTemplate");
+            set_nil_fn("GetHighlightCommand");
+            set_nil_fn("GetInputCapture");
+            set_stub("RemoveInputCapture");
+            set_stub("RestartSession");
+            set_nil_fn("GetAntiAliasingOptions");
+            set_nil_fn("GetResolution");
+            set_stub("SetResolution");
+            // __installedlanguages — table of available language codes
+            lua_pushstring(uL, "__installedlanguages");
+            lua_newtable(uL);
+            lua_pushstring(uL, "us"); lua_rawseti(uL, -2, 1);
+            lua_rawset(uL, LUA_GLOBALSINDEX);
         }
         {
             auto gi_data = vfs.read_file("/lua/globalInit.lua");
@@ -1108,22 +1172,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        // Debug: check moho flatten results
-        {
-            ui_lua_state.do_string(R"(
-                for name, cls in moho do
-                    local count = 0
-                    local has_setalpha = false
-                    for k,v in cls do
-                        count = count + 1
-                        if k == 'SetAlpha' then has_setalpha = true end
-                    end
-                    if has_setalpha then
-                        LOG('moho.' .. name .. ': ' .. count .. ' entries, HAS SetAlpha')
-                    end
-                end
-            )");
-        }
+        // (debug dump removed)
         // 2. Load uimain.lua to define global SetupUI()
         {
             auto uimain_data = vfs.read_file("/lua/ui/uimain.lua");
