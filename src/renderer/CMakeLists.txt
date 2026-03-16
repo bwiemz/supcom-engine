@@ -17,6 +17,7 @@ add_library(osc_renderer STATIC
     input_handler.cpp
     overlay_renderer.cpp
     minimap_renderer.cpp
+    terrain_preview.cpp
     strategic_icon_renderer.cpp
     hud_renderer.cpp
     selection_info_renderer.cpp

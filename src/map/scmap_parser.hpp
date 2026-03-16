@@ -54,6 +54,7 @@ struct ScmapData {
     std::vector<ScmapStratum> strata;   // up to 10 strata (0-9)
     std::vector<char> blend_dds_0;      // strata 1-4 blend weights (raw DDS)
     std::vector<char> blend_dds_1;      // strata 5-8 blend weights (raw DDS)
+    std::vector<char> preview_dds;      // lobby preview image (raw DDS, may be empty)
 };
 
 /// Parse a .scmap file and extract heightmap, water data, and props.

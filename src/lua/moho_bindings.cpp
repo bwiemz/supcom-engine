@@ -1,6 +1,8 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/category_utils.hpp"
 #include "video/video_decoder.hpp"
+#include "map/scmap_parser.hpp"
+#include "renderer/terrain_preview.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
@@ -2721,15 +2723,97 @@ static int unit_IsPaused(lua_State* L) {
     return 1;
 }
 
-// unit:CanBuild(bp_id) -> bool — minimal: builders return true
+// unit:CanBuild(bp_id) -> bool — checks Economy.BuildableCategory
 static int unit_CanBuild(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushboolean(L, 0); return 1; }
-    bool is_builder = u->has_category("ENGINEER") ||
-                      u->has_category("FACTORY") ||
-                      u->has_category("CONSTRUCTION") ||
-                      u->has_category("COMMAND");
-    lua_pushboolean(L, is_builder ? 1 : 0);
+    const char* target_bp = luaL_checkstring(L, 2);
+    if (!target_bp) { lua_pushboolean(L, 0); return 1; }
+
+    // Collect target blueprint's categories
+    std::set<std::string> target_cats;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, target_bp);
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Categories");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushnil(L);
+                while (lua_next(L, -2) != 0) {
+                    lua_pop(L, 1); // pop value
+                    if (lua_isstring(L, -1))
+                        target_cats.insert(lua_tostring(L, -1));
+                }
+            }
+            lua_pop(L, 1); // Categories
+        }
+        lua_pop(L, 1); // target bp table
+    }
+    lua_pop(L, 1); // __blueprints
+
+    // Look up this unit's Economy.BuildableCategory
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 0); return 1; }
+    lua_pushstring(L, u->blueprint_id().c_str());
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushboolean(L, 0); return 1; }
+    lua_pushstring(L, "Economy");
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) { lua_pop(L, 3); lua_pushboolean(L, 0); return 1; }
+    lua_pushstring(L, "BuildableCategory");
+    lua_rawget(L, -2);
+
+    bool can_build = false;
+    if (lua_istable(L, -1)) {
+        int bc = lua_gettop(L);
+        for (int i = 1; !can_build; i++) {
+            lua_rawgeti(L, bc, i);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            if (lua_isstring(L, -1)) {
+                std::string entry = lua_tostring(L, -1);
+                // Exact bp_id match (upgrade paths like "ueb1202")
+                if (entry == target_bp) {
+                    can_build = true;
+                } else {
+                    // Category expression: all tokens must be in target cats
+                    bool match = true;
+                    std::istringstream ss(entry);
+                    std::string token;
+                    while (ss >> token) {
+                        if (target_cats.count(token) == 0) {
+                            match = false;
+                            break;
+                        }
+                    }
+                    if (match && !entry.empty()) can_build = true;
+                }
+            }
+            lua_pop(L, 1);
+        }
+    } else if (lua_isstring(L, -1)) {
+        std::string entry = lua_tostring(L, -1);
+        if (entry == target_bp) {
+            can_build = true;
+        } else {
+            bool match = true;
+            std::istringstream ss(entry);
+            std::string token;
+            while (ss >> token) {
+                if (target_cats.count(token) == 0) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match && !entry.empty()) can_build = true;
+        }
+    }
+    lua_pop(L, 4); // BuildableCategory, Economy, bp table, __blueprints
+
+    lua_pushboolean(L, can_build ? 1 : 0);
     return 1;
 }
 
@@ -10712,6 +10796,136 @@ static int l_InternalCreateMovie(lua_State* L) {
 }
 
 // ====================================================================
+// M169: MapPreview control
+// ====================================================================
+
+static int mappreview_SetTexture(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) { lua_pushboolean(L, 0); return 1; }
+    const char* path = luaL_checkstring(L, 2);
+
+    auto* vfs = lua::LuaState::get_vfs(L);
+    if (!vfs) { lua_pushboolean(L, 0); return 1; }
+
+    // Try to load the DDS file from VFS (synchronous/blocking)
+    auto data = vfs->read_file(path);
+    if (!data || data->empty()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    // Set the texture path — TextureCache will resolve it on next render
+    ctrl->set_texture_path(path);
+    ctrl->set_has_solid_color(false);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int mappreview_SetTextureFromMap(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl) return 0;
+    const char* scmap_path = luaL_checkstring(L, 2);
+
+    auto* vfs = lua::LuaState::get_vfs(L);
+    if (!vfs) return 0;
+
+    auto file_data = vfs->read_file(scmap_path);
+    if (!file_data || file_data->empty()) {
+        spdlog::warn("MapPreview: SCMAP not found '{}'", scmap_path);
+        return 0;
+    }
+
+    // Parse SCMAP to extract preview DDS + heightmap
+    auto parse_result = osc::map::parse_scmap(
+        std::vector<u8>(file_data->begin(), file_data->end()));
+    if (!parse_result) {
+        spdlog::warn("MapPreview: SCMAP parse failed: {}", parse_result.error().message);
+        return 0;
+    }
+    auto& scmap = parse_result.value();
+
+    std::string tex_key = std::string("__osc_mappreview_") + scmap_path;
+
+    auto* r = get_renderer(L);
+
+    // Try embedded preview DDS first
+    if (!scmap.preview_dds.empty() && r) {
+        auto* gpu_tex = r->texture_cache().get_raw(tex_key, scmap.preview_dds);
+        if (gpu_tex) {
+            ctrl->set_texture_path(tex_key);
+            ctrl->set_has_solid_color(false);
+            spdlog::info("MapPreview: loaded SCMAP preview DDS for '{}'", scmap_path);
+            return 0;
+        }
+    }
+
+    // Fallback: generate from heightmap
+    if (!scmap.heightmap.empty() && r) {
+        auto pixels = ::osc::renderer::generate_terrain_preview(
+            scmap.heightmap.data(), scmap.map_width, scmap.map_height,
+            scmap.height_scale, scmap.water_elevation, scmap.has_water, 512);
+
+        auto* gpu_tex = r->texture_cache().upload_rgba(
+            tex_key, pixels.data(), 512, 512);
+        if (gpu_tex) {
+            ctrl->set_texture_path(tex_key);
+            ctrl->set_has_solid_color(false);
+            spdlog::info("MapPreview: generated heightmap preview for '{}'", scmap_path);
+        }
+    }
+
+    return 0;
+}
+
+static int mappreview_ClearTexture(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (ctrl) ctrl->set_texture_path("");
+    return 0;
+}
+
+static const MethodEntry ui_map_preview_methods[] = {
+    {"SetTexture",        mappreview_SetTexture},
+    {"SetTextureFromMap", mappreview_SetTextureFromMap},
+    {"ClearTexture",      mappreview_ClearTexture},
+    {nullptr, nullptr},
+};
+
+static int l_InternalCreateMapPreview(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    if (!reg) return luaL_error(L, "InternalCreateMapPreview: no UIControlRegistry");
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateMapPreview: arg 1 must be self table");
+
+    u32 id = reg->create();
+    auto* ctrl = reg->get(id);
+    if (!ctrl) return luaL_error(L, "InternalCreateMapPreview: failed to create control");
+
+    lua_pushvalue(L, 1);
+    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    ctrl->set_lua_table_ref(ref);
+
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, ctrl);
+    lua_rawset(L, 1);
+
+    if (lua_istable(L, 2)) {
+        auto* parent = check_control(L, 2);
+        if (parent) ctrl->set_parent(parent);
+    }
+
+    create_lazyvar(L, 1, "Left");
+    create_lazyvar(L, 1, "Top");
+    create_lazyvar(L, 1, "Right");
+    create_lazyvar(L, 1, "Bottom");
+    create_lazyvar(L, 1, "Width");
+    create_lazyvar(L, 1, "Height");
+    create_lazyvar(L, 1, "Depth");
+
+    spdlog::debug("InternalCreateMapPreview: control #{}", id);
+    return 0;
+}
+
+// ====================================================================
 // M75: Histogram (deprecated stub)
 // ====================================================================
 
@@ -11775,6 +11989,7 @@ static const MohoClassDef moho_classes[] = {
     {"lobby_methods",           ui_lobby_methods,  nullptr},
     {"mesh_methods",            empty_methods,  "control_methods"},
     {"movie_methods",           ui_movie_methods,  "control_methods"},
+    {"ui_map_preview_methods",  ui_map_preview_methods, "control_methods"},
     {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
     {"text_methods",            ui_text_methods,  "control_methods"},
     {"UIWorldView",             ui_worldview_methods,  "control_methods"},
@@ -13740,6 +13955,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PostDragger", l_PostDragger);
     state.register_function("_c_CreateCursor", l_c_CreateCursor);
     state.register_function("InternalCreateMovie", l_InternalCreateMovie);
+    state.register_function("InternalCreateMapPreview", l_InternalCreateMapPreview);
     state.register_function("InternalCreateHistogram", l_InternalCreateHistogram);
     state.register_function("InternalCreateWorldMesh", l_InternalCreateWorldMesh);
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);

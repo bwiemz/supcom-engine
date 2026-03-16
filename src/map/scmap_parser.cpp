@@ -392,7 +392,7 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     if (preview_length < 0 || !r.has_remaining(static_cast<size_t>(preview_length))) {
         return Error("SCMAP invalid preview image length");
     }
-    r.skip(static_cast<size_t>(preview_length));
+    auto preview_dds = r.read_bytes(static_cast<size_t>(preview_length));
 
     // --- Version + dimensions ---
     if (!r.has_remaining(16)) return Error("SCMAP truncated before dimensions");
@@ -472,6 +472,7 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     result.water_deep_elevation = water_deep_elevation;
     result.water_abyss_elevation = water_abyss_elevation;
     result.version_minor = version_minor;
+    result.preview_dds = std::move(preview_dds);
 
     // --- Skip intermediate sections to reach props ---
     // Graceful degradation: if skip fails, return result without props

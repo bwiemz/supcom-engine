@@ -63,6 +63,9 @@ public:
     /// Used during loading screen when SimState doesn't exist.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
 
+    /// Access texture cache (for MapPreview uploads).
+    TextureCache& texture_cache() { return texture_cache_; }
+
     /// Returns true if the window close was requested.
     bool should_close() const;
 
