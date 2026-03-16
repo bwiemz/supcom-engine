@@ -860,8 +860,12 @@ int main(int argc, char* argv[]) {
 
     spdlog::info("OpenSupCom initialization complete.");
 
-    // Phase 3: Map + Sim boot
-    auto sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+    // Phase 3: Map + Sim boot (only when --map provided)
+    std::unique_ptr<osc::sim::SimState> sim_state;
+    osc::lua::ScenarioMetadata scenario_meta;
+
+    if (!map_path.empty()) {
+    sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
     // Audio system
     auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
@@ -882,9 +886,8 @@ int main(int argc, char* argv[]) {
     auto anim_cache = std::make_unique<osc::sim::AnimCache>(&vfs);
     sim_state->set_anim_cache(std::move(anim_cache));
 
-    // Load scenario and map if --map was provided
-    osc::lua::ScenarioMetadata scenario_meta;
-    if (!map_path.empty()) {
+    // Load scenario and map
+    {
         osc::lua::ScenarioLoader scenario_loader;
         auto meta_result = scenario_loader.load_scenario(
             *sim_lua_state, vfs, map_path, *sim_state);
@@ -942,6 +945,7 @@ int main(int argc, char* argv[]) {
         }
         lua_settop(sL, 0); // clean stack
     }
+    } // end if (!map_path.empty()) — Phase 3
 
     // === UI Lua State ===
     osc::lua::LuaState ui_lua_state;
@@ -964,7 +968,15 @@ int main(int argc, char* argv[]) {
     }
 
     // Register moho class tables on UI state (unit_methods, etc.)
-    osc::lua::register_moho_bindings(ui_lua_state, *sim_state);
+    // When no map, create a temporary dummy SimState for registration.
+    // Sim-dependent moho methods check get_sim(L) and return gracefully when null.
+    {
+        std::unique_ptr<osc::sim::SimState> dummy_sim;
+        if (!sim_state) {
+            dummy_sim = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+        }
+        osc::lua::register_moho_bindings(ui_lua_state, sim_state ? *sim_state : *dummy_sim);
+    }
 
     // Localization cache — load strings from VFS, then store pointer in UI registry
     osc::core::Localization loc_cache;
