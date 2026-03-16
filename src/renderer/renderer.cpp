@@ -2689,6 +2689,21 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     rp.pClearValues = clear.data();
     vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
 
+    // Set viewport and scissor (required for dynamic state pipelines)
+    VkViewport viewport{};
+    viewport.width = static_cast<f32>(window_width_);
+    viewport.height = static_cast<f32>(window_height_);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd_buf_[fi], 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.extent = {window_width_, window_height_};
+    vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
+
+    // Flush pending texture uploads (DDS async loads)
+    texture_cache_.flush_uploads(4);
+
     // Update + render UI
     if (ui_registry && L) {
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
