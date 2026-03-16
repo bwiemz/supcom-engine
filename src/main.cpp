@@ -2103,7 +2103,8 @@ int main(int argc, char* argv[]) {
     }
 
 
-    // ── Integration tests ──
+    // ── Integration tests (require --map) ──
+    if (sim_state && sim_lua_state) {
     osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
@@ -2717,14 +2718,18 @@ int main(int argc, char* argv[]) {
         spdlog::info("=== Phase 5 Integration Test: {}/{} passed ===", pass, pass + fail);
     }
 
+    } // end if (sim_state && sim_lua_state) — integration tests
+
     // Report final state
-    spdlog::info("Sim: {} armies, {} entities, {} active threads, "
-                 "{} ticks ({:.1f}s game time)",
-                 sim_state->army_count(),
-                 sim_state->entity_registry().count(),
-                 sim_state->thread_manager().active_count(),
-                 sim_state->tick_count(),
-                 sim_state->game_time());
+    if (sim_state) {
+        spdlog::info("Sim: {} armies, {} entities, {} active threads, "
+                     "{} ticks ({:.1f}s game time)",
+                     sim_state->army_count(),
+                     sim_state->entity_registry().count(),
+                     sim_state->thread_manager().active_count(),
+                     sim_state->tick_count(),
+                     sim_state->game_time());
+    }
 
     // Print profiling summary if enabled
     if (profile_enabled) {
