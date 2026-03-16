@@ -1064,12 +1064,40 @@ int main(int argc, char* argv[]) {
     ui_lua_state.register_function("IsAlly", l_ui_IsAlly);
 
     // State transition: INIT → GAME or INIT → FRONT_END
-    osc::core::call_setup_ui(ui_lua_state.raw());
     if (!map_path.empty()) {
+        osc::core::call_setup_ui(ui_lua_state.raw());
         osc::core::call_start_game_ui(ui_lua_state.raw());
     } else {
         // No map: bootstrap front-end menu UI
-        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
+        // 1. Load uimain.lua to define global SetupUI()
+        {
+            auto uimain_data = vfs.read_file("/lua/ui/uimain.lua");
+            if (uimain_data) {
+                auto r = ui_lua_state.do_buffer(uimain_data->data(),
+                                                 uimain_data->size(),
+                                                 "@/lua/ui/uimain.lua");
+                if (r) {
+                    spdlog::info("Loaded /lua/ui/uimain.lua");
+                } else {
+                    spdlog::warn("uimain.lua error: {}", r.error().message);
+                }
+            } else {
+                spdlog::warn("uimain.lua not found in VFS");
+            }
+        }
+        // 2. Call SetupUI() (creates cursor, sets skin)
+        osc::core::call_setup_ui(ui_lua_state.raw());
+        // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
+        {
+            lua_State* uL = ui_lua_state.raw();
+            auto r = ui_lua_state.do_string(
+                "import('/lua/ui/menus/main.lua').CreateUI()");
+            if (r) {
+                spdlog::info("Front-end menu CreateUI() succeeded");
+            } else {
+                spdlog::warn("Front-end CreateUI error: {}", r.error().message);
+            }
+        }
         spdlog::info("Front-end UI initialized (no --map)");
     }
 
