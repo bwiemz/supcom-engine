@@ -976,6 +976,14 @@ int main(int argc, char* argv[]) {
             dummy_sim = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
         }
         osc::lua::register_moho_bindings(ui_lua_state, sim_state ? *sim_state : *dummy_sim);
+        // If we used a dummy, clear the sim pointer in UI registry so moho methods
+        // return gracefully instead of dereferencing a dangling pointer.
+        if (dummy_sim) {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "osc_sim_state");
+            lua_pushlightuserdata(uL, nullptr);
+            lua_rawset(uL, LUA_REGISTRYINDEX);
+        }
     }
 
     // Localization cache — load strings from VFS, then store pointer in UI registry
@@ -1676,8 +1684,10 @@ int main(int argc, char* argv[]) {
         } else {
             spdlog::warn("Vulkan init failed — falling back to headless "
                          "(100 ticks)");
-            for (osc::u32 i = 0; i < 100; i++)
-                sim_state->tick();
+            if (sim_state) {
+                for (osc::u32 i = 0; i < 100; i++)
+                    sim_state->tick();
+            }
         }
 
         // Dump instrument report on exit (M166)

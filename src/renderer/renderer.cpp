@@ -2731,6 +2731,12 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
         recreate_swapchain();
     }
 
+    // Wait for present to complete before reusing semaphores.
+    // With 3 swapchain images and 2 frames-in-flight, the present semaphore
+    // can still be in-flight when reused. This is only called for UI-only
+    // frames (menu/lobby) where max throughput isn't needed.
+    vkQueueWaitIdle(graphics_queue_);
+
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
