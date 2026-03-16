@@ -2705,10 +2705,18 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     scissor.extent = {window_width_, window_height_};
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
+    // Process UI input events and OnFrame callbacks
+    if (ui_registry && L) {
+        ui_dispatch_.update_controls(L, *ui_registry, 1.0 / 60.0);
+        ui_dispatch_.dispatch_events(L, *ui_registry);
+    }
+
     // Update + render UI
     if (ui_registry && L) {
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
-                           window_width_, window_height_);
+                           window_width_, window_height_,
+                           static_cast<f32>(ui_dispatch_.mouse_x()),
+                           static_cast<f32>(ui_dispatch_.mouse_y()));
         if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
             vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                               ui_pipeline_);

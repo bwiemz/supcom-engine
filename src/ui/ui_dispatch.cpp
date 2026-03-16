@@ -180,9 +180,15 @@ UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y) {
     int tbl = lua_gettop(L);
     f32 left = read_lazyvar_dispatch(L, tbl, "Left");
     f32 top = read_lazyvar_dispatch(L, tbl, "Top");
+    f32 right = read_lazyvar_dispatch(L, tbl, "Right");
+    f32 bottom = read_lazyvar_dispatch(L, tbl, "Bottom");
     f32 w = read_lazyvar_dispatch(L, tbl, "Width");
     f32 h = read_lazyvar_dispatch(L, tbl, "Height");
     lua_pop(L, 1);
+
+    // Derive Width/Height from edges if not set directly
+    if (w <= 0 && right > left) w = right - left;
+    if (h <= 0 && bottom > top) h = bottom - top;
 
     f32 fx = static_cast<f32>(x);
     f32 fy = static_cast<f32>(y);
