@@ -2653,6 +2653,10 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     }
     vkResetFences(device_, 1, &render_fence_[fi]);
 
+    // Flush pending texture uploads BEFORE starting the command buffer
+    // (flush_uploads uses its own one-shot command buffers with vkQueueWaitIdle)
+    texture_cache_.flush_uploads(4);
+
     // Begin command buffer
     vkResetCommandBuffer(cmd_buf_[fi], 0);
     VkCommandBufferBeginInfo begin_info{};
@@ -2700,9 +2704,6 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     VkRect2D scissor{};
     scissor.extent = {window_width_, window_height_};
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
-
-    // Flush pending texture uploads (DDS async loads)
-    texture_cache_.flush_uploads(4);
 
     // Update + render UI
     if (ui_registry && L) {
