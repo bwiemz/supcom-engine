@@ -663,7 +663,7 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     // Emit cursor quad at mouse position (topmost depth)
     emit_cursor_quad(L, tex_cache, viewport_w, viewport_h, viewport_clip);
 
-    // (debug dump removed)
+    // (debug removed)
 
     if (quads_.empty()) return;
 

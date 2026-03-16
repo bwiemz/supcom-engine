@@ -21,12 +21,21 @@ void Localization::load_from_vfs(lua_State* L, vfs::VirtualFileSystem* vfs) {
         return;
     }
     const auto& data = *opt;
+    const char* buf = data.data();
+    size_t len = data.size();
+
+    // Skip UTF-8 BOM if present (Lua 5.0 doesn't handle BOMs)
+    if (len >= 3 && static_cast<u8>(buf[0]) == 0xEF &&
+        static_cast<u8>(buf[1]) == 0xBB && static_cast<u8>(buf[2]) == 0xBF) {
+        buf += 3;
+        len -= 3;
+    }
 
     lua_State* tmp = lua_open();
     luaopen_base(tmp);
     luaopen_string(tmp);
 
-    if (luaL_loadbuffer(tmp, data.data(), data.size(), "strings_db") != 0 ||
+    if (luaL_loadbuffer(tmp, buf, len, "strings_db") != 0 ||
         lua_pcall(tmp, 0, 0, 0) != 0) {
         spdlog::warn("Localization: failed to execute strings_db.lua: {}",
                      lua_tostring(tmp, -1));
