@@ -1206,6 +1206,18 @@ int main(int argc, char* argv[]) {
         }
         // 2. Call SetupUI() (creates cursor, sets skin)
         osc::core::call_setup_ui(ui_lua_state.raw());
+        // 2b. Pre-create a default profile so FA skips the profile dialog
+        {
+            ui_lua_state.do_string(R"(
+                if not GetPreference('profile.current') then
+                    SetPreference('profile.current', 0)
+                    SetPreference('profile.profiles', {
+                        [0] = { Name = 'Player' }
+                    })
+                    LOG('Created default profile: Player')
+                end
+            )");
+        }
         // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
         {
             lua_State* uL = ui_lua_state.raw();
