@@ -1206,16 +1206,29 @@ int main(int argc, char* argv[]) {
         }
         // 2. Call SetupUI() (creates cursor, sets skin)
         osc::core::call_setup_ui(ui_lua_state.raw());
-        // 2b. Pre-create a default profile so FA skips the profile dialog
+        // 2b. Pre-create a default profile so FA skips the profile dialog.
+        // FA's prefs system uses nested tables which our C++ Preferences can't
+        // store. Instead, override GetPreference to intercept profile queries
+        // and return the default profile data from a Lua-side table.
         {
             ui_lua_state.do_string(R"(
-                if not GetPreference('profile.current') then
-                    SetPreference('profile.current', 0)
-                    SetPreference('profile.profiles', {
-                        [0] = { Name = 'Player' }
-                    })
-                    LOG('Created default profile: Player')
+                local _origGetPref = GetPreference
+                local _profileData = {
+                    current = 0,
+                    profiles = { [0] = { Name = 'Player' } }
+                }
+                function GetPreference(key, default)
+                    -- Intercept profile.* keys
+                    if key == 'profile.current' then return _profileData.current end
+                    if key == 'profile.profiles' then return _profileData.profiles end
+                    -- Check if key starts with 'profile.'
+                    if type(key) == 'string' and string.sub(key, 1, 8) == 'profile.' then
+                        local subkey = string.sub(key, 9)
+                        if _profileData[subkey] ~= nil then return _profileData[subkey] end
+                    end
+                    return _origGetPref(key, default)
                 end
+                LOG('Default profile created: Player')
             )");
         }
         // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
