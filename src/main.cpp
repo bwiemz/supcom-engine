@@ -1356,7 +1356,10 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
 
-            // Root frame size already set before CreateUI (1600x900)
+            // Initialize texture/font caches for UI rendering (normally done in build_scene)
+            if (!sim_state) {
+                renderer.init_ui_caches(&vfs);
+            }
 
             // Player input handler (ARMY_1 = index 0)
             osc::renderer::InputHandler input_handler;

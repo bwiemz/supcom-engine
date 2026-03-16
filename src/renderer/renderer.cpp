@@ -2757,6 +2757,16 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
+void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {
+    if (caches_initialized_ || !vfs) return;
+    texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                        texture_ds_layout_, texture_sampler_, vfs);
+    font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
+                     texture_ds_layout_, texture_sampler_, vfs);
+    caches_initialized_ = true;
+    spdlog::info("UI caches initialized (texture + font)");
+}
+
 bool Renderer::should_close() const {
     return window_ && glfwWindowShouldClose(window_);
 }

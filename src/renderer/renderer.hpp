@@ -63,6 +63,10 @@ public:
     /// Used during loading screen when SimState doesn't exist.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
 
+    /// Initialize texture/font caches without a full scene build.
+    /// Used for UI-only rendering when no map is loaded.
+    void init_ui_caches(vfs::VirtualFileSystem* vfs);
+
     /// Access texture cache (for MapPreview uploads).
     TextureCache& texture_cache() { return texture_cache_; }
 
