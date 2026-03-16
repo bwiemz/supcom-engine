@@ -99,25 +99,55 @@ static int l_GetEconomyTotals(lua_State* L) {
     int army = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
     lua_pop(L, 1);
 
-    lua_newtable(L);
+    lua_newtable(L); // result table
     if (!sim) return 1;
     auto* brain = sim->get_army(army);
     if (!brain) return 1;
 
-    auto set_field = [&](const char* name, osc::f64 val) {
-        lua_pushstring(L, name);
-        lua_pushnumber(L, val);
-        lua_rawset(L, -3);
-    };
-    set_field("income_mass", brain->get_economy_income("MASS"));
-    set_field("income_energy", brain->get_economy_income("ENERGY"));
-    set_field("expense_mass", brain->get_economy_usage("MASS"));
-    set_field("expense_energy", brain->get_economy_usage("ENERGY"));
-    set_field("stored_mass", brain->get_economy_stored("MASS"));
-    set_field("stored_energy", brain->get_economy_stored("ENERGY"));
-    set_field("max_mass", brain->economy().mass.max_storage);
-    set_field("max_energy", brain->economy().energy.max_storage);
+    const auto& econ = brain->economy();
 
+    // Helper: push a subtable with MASS and ENERGY keys
+    auto push_resource_subtable = [&](const char* name, osc::f64 mass_val, osc::f64 energy_val) {
+        lua_pushstring(L, name);
+        lua_newtable(L);
+        lua_pushstring(L, "MASS");
+        lua_pushnumber(L, mass_val);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "ENERGY");
+        lua_pushnumber(L, energy_val);
+        lua_rawset(L, -3);
+        lua_rawset(L, -3); // set subtable on result
+    };
+
+    push_resource_subtable("income", econ.mass.income, econ.energy.income);
+    push_resource_subtable("lastUseActual", econ.mass.actual_usage, econ.energy.actual_usage);
+    push_resource_subtable("lastUseRequested", econ.mass.requested, econ.energy.requested);
+    push_resource_subtable("maxStorage", econ.mass.max_storage, econ.energy.max_storage);
+    push_resource_subtable("stored", econ.mass.stored, econ.energy.stored);
+    push_resource_subtable("reclaimed", 0.0, 0.0); // TODO: track cumulative reclaim
+
+    return 1;
+}
+
+static int l_GetSimTicksPerSecond(lua_State* L) {
+    lua_pushnumber(L, 10.0);
+    return 1;
+}
+
+static int l_ui_IsAlly(lua_State* L) {
+    int army1 = static_cast<int>(lua_tonumber(L, 1)) - 1; // 1-based Lua → 0-based C++
+    int army2 = static_cast<int>(lua_tonumber(L, 2)) - 1;
+
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+
+    if (!sim) { lua_pushboolean(L, 0); return 1; }
+    auto* brain = sim->get_army(army1);
+    if (!brain) { lua_pushboolean(L, 0); return 1; }
+
+    lua_pushboolean(L, brain->is_ally(army2) ? 1 : 0);
     return 1;
 }
 
@@ -127,40 +157,81 @@ static int l_GetArmiesTable(lua_State* L) {
     auto* sim = static_cast<osc::sim::SimState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
 
-    lua_newtable(L);
-    if (!sim) return 1;
+    lua_newtable(L); // result table
 
-    for (size_t i = 0; i < sim->army_count(); ++i) {
-        auto* brain = sim->army_at(i);
-        if (!brain) continue;
+    // Build the armiesTable array
+    lua_pushstring(L, "armiesTable");
+    lua_newtable(L); // armiesTable array
 
-        lua_newtable(L);
-        lua_pushstring(L, "nickname");
-        lua_pushstring(L, brain->nickname().c_str());
-        lua_rawset(L, -3);
+    if (sim) {
+        for (size_t i = 0; i < sim->army_count(); ++i) {
+            auto* brain = sim->army_at(i);
+            if (!brain) continue;
 
-        lua_pushstring(L, "ArmyName");
-        lua_pushstring(L, brain->name().c_str());
-        lua_rawset(L, -3);
+            lua_newtable(L); // per-army entry
 
-        lua_pushstring(L, "armyIndex");
-        lua_pushnumber(L, static_cast<int>(i));
-        lua_rawset(L, -3);
+            lua_pushstring(L, "nickname");
+            lua_pushstring(L, brain->nickname().c_str());
+            lua_rawset(L, -3);
 
-        lua_pushstring(L, "human");
-        lua_pushboolean(L, brain->is_human() ? 1 : 0);
-        lua_rawset(L, -3);
+            lua_pushstring(L, "ArmyName");
+            lua_pushstring(L, brain->name().c_str());
+            lua_rawset(L, -3);
 
-        lua_pushstring(L, "civilian");
-        lua_pushboolean(L, brain->is_civilian() ? 1 : 0);
-        lua_rawset(L, -3);
+            lua_pushstring(L, "armyIndex");
+            lua_pushnumber(L, static_cast<int>(i));
+            lua_rawset(L, -3);
 
-        lua_pushstring(L, "outOfGame");
-        lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
-        lua_rawset(L, -3);
+            lua_pushstring(L, "human");
+            lua_pushboolean(L, brain->is_human() ? 1 : 0);
+            lua_rawset(L, -3);
 
-        lua_rawseti(L, -2, static_cast<int>(i + 1));
+            lua_pushstring(L, "civilian");
+            lua_pushboolean(L, brain->is_civilian() ? 1 : 0);
+            lua_rawset(L, -3);
+
+            lua_pushstring(L, "outOfGame");
+            lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
+            lua_rawset(L, -3);
+
+            lua_pushstring(L, "faction");
+            lua_pushnumber(L, brain->faction());
+            lua_rawset(L, -3);
+
+            // Color as ARGB hex string (e.g. "ffFF8000")
+            {
+                char color_buf[16];
+                std::snprintf(color_buf, sizeof(color_buf), "ff%02X%02X%02X",
+                    brain->color_r(), brain->color_g(), brain->color_b());
+                lua_pushstring(L, "color");
+                lua_pushstring(L, color_buf);
+                lua_rawset(L, -3);
+            }
+
+            lua_pushstring(L, "showScore");
+            lua_pushboolean(L, brain->is_civilian() ? 0 : 1);
+            lua_rawset(L, -3);
+
+            lua_rawseti(L, -2, static_cast<int>(i + 1));
+        }
     }
+
+    lua_rawset(L, -3); // result.armiesTable = array
+
+    // focusArmy field
+    lua_pushstring(L, "focusArmy");
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    int focus = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+    lua_pushnumber(L, focus + 1); // 1-based for Lua
+    lua_rawset(L, -3);
+
+    // numArmies field
+    lua_pushstring(L, "numArmies");
+    lua_pushnumber(L, sim ? static_cast<int>(sim->army_count()) : 0);
+    lua_rawset(L, -3);
+
     return 1;
 }
 
@@ -967,16 +1038,24 @@ int main(int argc, char* argv[]) {
     ui_lua_state.register_function("SessionIsReplay", l_SessionIsReplay);
     ui_lua_state.register_function("SessionGetScenarioInfo", l_SessionGetScenarioInfo);
     ui_lua_state.register_function("GetEconomyTotals", l_GetEconomyTotals);
+    ui_lua_state.register_function("GetSimTicksPerSecond", l_GetSimTicksPerSecond);
     ui_lua_state.register_function("GetArmiesTable", l_GetArmiesTable);
+    ui_lua_state.register_function("IsAlly", l_ui_IsAlly);
 
-    // State transition: INIT → GAME (call SetupUI / StartGameUI if defined)
+    // State transition: INIT → GAME or INIT → FRONT_END
     osc::core::call_setup_ui(ui_lua_state.raw());
-    osc::core::call_start_game_ui(ui_lua_state.raw());
+    if (!map_path.empty()) {
+        osc::core::call_start_game_ui(ui_lua_state.raw());
+    } else {
+        // No map: bootstrap front-end menu UI
+        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
+        spdlog::info("Front-end UI initialized (no --map)");
+    }
 
     spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
     // Terrain query test
-    if (sim_state->terrain()) {
+    if (sim_state && sim_state->terrain()) {
         auto* t = sim_state->terrain();
         osc::f32 cx = static_cast<osc::f32>(t->map_width()) / 2;
         osc::f32 cz = static_cast<osc::f32>(t->map_height()) / 2;
@@ -1020,7 +1099,7 @@ int main(int argc, char* argv[]) {
 
     // BeatFunctionRegistry for per-frame Lua callbacks (M145b) — outer scope for headless test access
     osc::lua::BeatFunctionRegistry beat_registry;
-    if (!map_path.empty()) {
+    {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_beat_registry");
         lua_pushlightuserdata(uL, &beat_registry);
@@ -1029,7 +1108,7 @@ int main(int argc, char* argv[]) {
 
     // Key map registry for hotkey dispatch (M150b) — outer scope for headless test access
     osc::ui::KeyMapRegistry keymap_registry;
-    if (!map_path.empty()) {
+    {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_keymap_registry");
         lua_pushlightuserdata(uL, &keymap_registry);
@@ -1055,20 +1134,23 @@ int main(int argc, char* argv[]) {
 
     // GameStateManager — outer scope for headless test access (M144b)
     osc::GameStateManager game_state_mgr;
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_game_state_mgr");
+        lua_pushlightuserdata(uL, &game_state_mgr);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
     if (!map_path.empty()) {
         game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_game_state_mgr");
-            lua_pushlightuserdata(uL, &game_state_mgr);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
-        {
+        if (sim_lua_state) {
             lua_State* sL = sim_lua_state->raw();
             lua_pushstring(sL, "__osc_game_state_mgr");
             lua_pushlightuserdata(sL, &game_state_mgr);
             lua_rawset(sL, LUA_REGISTRYINDEX);
         }
+    } else {
+        // No map: start in FRONT_END state (main menu)
+        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
     }
 
     // Instrumented mode: install SmokeTestHarness for interactive play (M166)
@@ -1090,10 +1172,13 @@ int main(int argc, char* argv[]) {
     }
 
     // Phase 5: Windowed mode (renderer) or headless tick loop
-    if (!map_path.empty() && !headless) {
+    if (!headless) {
         osc::renderer::Renderer renderer;
         if (renderer.init(1600, 900, "OpenSupCom")) {
-            renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
+            // Build 3D scene if we have a sim state (--map was provided)
+            if (sim_state) {
+                renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
+            }
 
             // Store renderer pointer in UI Lua registry for WorldView/GetCamera
             {
@@ -1425,8 +1510,11 @@ int main(int argc, char* argv[]) {
 
                 const auto& sel = input_handler.selected();
                 if (sim_state) {
-                renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
-                                sel.empty() ? nullptr : &sel);
+                    renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
+                                    sel.empty() ? nullptr : &sel);
+                } else {
+                    // No sim state (front-end/lobby) — render UI only
+                    renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
                 }
 
                 // Update window title periodically
