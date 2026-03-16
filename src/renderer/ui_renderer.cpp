@@ -457,9 +457,16 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     // Read layout LazyVars
     f32 left = read_lazyvar(L, tbl_idx, "Left");
     f32 top = read_lazyvar(L, tbl_idx, "Top");
+    f32 right = read_lazyvar(L, tbl_idx, "Right");
+    f32 bottom = read_lazyvar(L, tbl_idx, "Bottom");
     f32 width = read_lazyvar(L, tbl_idx, "Width");
     f32 height = read_lazyvar(L, tbl_idx, "Height");
     f32 depth = read_lazyvar(L, tbl_idx, "Depth");
+
+    // FA's LayoutHelpers sets Left/Right/Top/Bottom but not Width/Height.
+    // Derive Width/Height from edges when they're zero but edges are valid.
+    if (width <= 0 && right > left) width = right - left;
+    if (height <= 0 && bottom > top) height = bottom - top;
 
     // Compute this control's clip rect: intersect its bounds with parent's clip
     ClipRect self_clip = ClipRect::intersect(
@@ -655,6 +662,8 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
 
     // Emit cursor quad at mouse position (topmost depth)
     emit_cursor_quad(L, tex_cache, viewport_w, viewport_h, viewport_clip);
+
+    // (debug dump removed)
 
     if (quads_.empty()) return;
 

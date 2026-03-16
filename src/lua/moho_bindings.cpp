@@ -8976,6 +8976,46 @@ static int bitmap_SetNewTexture(lua_State* L) {
         ctrl->set_bitmap_height(h);
         ctrl->set_has_solid_color(false);
     }
+
+    // Push bitmap dimensions to Lua-side Width/Height LazyVars so the
+    // UI layout engine can size the control based on the texture.
+    // FA's engine does this internally; we must do it explicitly.
+    if (ctrl->bitmap_width() > 0 && ctrl->bitmap_height() > 0) {
+        // Get the control's Lua table (arg 1 = self)
+        if (lua_istable(L, 1)) {
+            lua_pushstring(L, "Width");
+            lua_rawget(L, 1);
+            if (lua_istable(L, -1)) {
+                // Call Width:Set(value)
+                lua_pushstring(L, "Set");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2); // self (Width LazyVar)
+                    lua_pushnumber(L, ctrl->bitmap_width());
+                    lua_pcall(L, 2, 0, 0);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // Width LazyVar
+
+            lua_pushstring(L, "Height");
+            lua_rawget(L, 1);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "Set");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    lua_pushnumber(L, ctrl->bitmap_height());
+                    lua_pcall(L, 2, 0, 0);
+                } else {
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1); // Height LazyVar
+        }
+    }
+
     return 0;
 }
 

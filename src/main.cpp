@@ -1019,6 +1019,21 @@ int main(int argc, char* argv[]) {
     osc::ui::UIControlRegistry ui_registry;
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
 
+    // Set root frame size to window dimensions (1600x900) so LazyVar layout
+    // resolves correctly. Must happen BEFORE CreateUI() so FillParent etc. work.
+    {
+        ui_lua_state.do_string(
+            "local f = GetFrame(0)\n"
+            "if f then\n"
+            "  f.Width:Set(1600)\n"
+            "  f.Height:Set(900)\n"
+            "  f.Left:Set(0)\n"
+            "  f.Top:Set(0)\n"
+            "  f.Right:Set(1600)\n"
+            "  f.Bottom:Set(900)\n"
+            "end\n");
+    }
+
     // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
     osc::lua::register_blueprint_bindings(ui_lua_state);
 
@@ -1340,6 +1355,8 @@ int main(int argc, char* argv[]) {
                 lua_pushlightuserdata(uL, &renderer);
                 lua_rawset(uL, LUA_REGISTRYINDEX);
             }
+
+            // Root frame size already set before CreateUI (1600x900)
 
             // Player input handler (ARMY_1 = index 0)
             osc::renderer::InputHandler input_handler;

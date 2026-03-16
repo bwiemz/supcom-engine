@@ -2639,6 +2639,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 // --- UI-only rendering (loading screen) ---
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
+    // (debug removed)
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 
