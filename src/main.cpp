@@ -120,7 +120,8 @@ static int l_GetEconomyTotals(lua_State* L) {
     };
 
     push_resource_subtable("income", econ.mass.income, econ.energy.income);
-    push_resource_subtable("lastUseActual", econ.mass.actual_usage, econ.energy.actual_usage);
+    push_resource_subtable("lastUseActual",
+        brain->get_economy_usage("MASS"), brain->get_economy_usage("ENERGY"));
     push_resource_subtable("lastUseRequested", econ.mass.requested, econ.energy.requested);
     push_resource_subtable("maxStorage", econ.mass.max_storage, econ.energy.max_storage);
     push_resource_subtable("stored", econ.mass.stored, econ.energy.stored);
