@@ -1069,7 +1069,62 @@ int main(int argc, char* argv[]) {
         osc::core::call_start_game_ui(ui_lua_state.raw());
     } else {
         // No map: bootstrap front-end menu UI
-        // 1. Load uimain.lua to define global SetupUI()
+        // 1. Run globalInit.lua to flatten moho classes (makes ClassUI work)
+        // Pre-register globals that globalInit.lua's import chain needs.
+        // These must exist before globalInit runs, otherwise Localization.lua
+        // errors out and the moho class flatten loop never executes.
+        {
+            lua_State* uL = ui_lua_state.raw();
+            auto set_stub = [&](const char* name) {
+                lua_pushstring(uL, name);
+                lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            };
+            auto set_str = [&](const char* name, const char* val) {
+                lua_pushstring(uL, name);
+                lua_pushstring(uL, val);
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            };
+            auto set_bool_fn = [&](const char* name, bool val) {
+                lua_pushstring(uL, name);
+                lua_pushcfunction(uL, val ?
+                    +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
+                    +[](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; });
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            };
+            set_stub("AudioSetLanguage");
+            set_str("__language", "us");
+            set_bool_fn("HasLocalizedVO", false);
+        }
+        {
+            auto gi_data = vfs.read_file("/lua/globalInit.lua");
+            if (gi_data) {
+                auto r = ui_lua_state.do_buffer(gi_data->data(), gi_data->size(),
+                                                 "@/lua/globalInit.lua");
+                if (r) {
+                    spdlog::info("Loaded /lua/globalInit.lua on ui_L");
+                } else {
+                    spdlog::warn("globalInit.lua error: {}", r.error().message);
+                }
+            }
+        }
+        // Debug: check moho flatten results
+        {
+            ui_lua_state.do_string(R"(
+                for name, cls in moho do
+                    local count = 0
+                    local has_setalpha = false
+                    for k,v in cls do
+                        count = count + 1
+                        if k == 'SetAlpha' then has_setalpha = true end
+                    end
+                    if has_setalpha then
+                        LOG('moho.' .. name .. ': ' .. count .. ' entries, HAS SetAlpha')
+                    end
+                end
+            )");
+        }
+        // 2. Load uimain.lua to define global SetupUI()
         {
             auto uimain_data = vfs.read_file("/lua/ui/uimain.lua");
             if (uimain_data) {

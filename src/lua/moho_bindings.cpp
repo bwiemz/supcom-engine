@@ -3190,6 +3190,35 @@ static int unit_SetCreator(lua_State* L) {
     return 0;
 }
 
+static int unit_GetCreator(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || u->creator_id() == 0) { lua_pushnil(L); return 1; }
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnil(L); return 1; }
+    auto* creator = sim->entity_registry().find(u->creator_id());
+    if (!creator || creator->destroyed() || creator->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, creator->lua_table_ref());
+    return 1;
+}
+
+static int unit_IsInCategory(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    if (!lua_istable(L, 2)) { lua_pushboolean(L, 0); return 1; }
+    bool matches = osc::lua::unit_matches_category(L, 2, u->categories());
+    lua_pushboolean(L, matches ? 1 : 0);
+    return 1;
+}
+
+static int unit_IsOverchargePaused(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, (u && u->overcharge_paused()) ? 1 : 0);
+    return 1;
+}
+
 static int unit_SetAutoOvercharge(lua_State* L) {
     auto* u = check_unit(L);
     if (u) u->set_auto_overcharge(lua_toboolean(L, 2) != 0);
@@ -3363,6 +3392,23 @@ static int unit_AddOnGivenCallback(lua_State* L) {
     return 0;
 }
 
+// self:AddOnUnitBuiltCallback(fn, category)
+// Registers a callback fired when this unit finishes building another unit.
+static int unit_AddOnUnitBuiltCallback(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    if (!lua_isfunction(L, 2)) return 0;
+    lua_pushvalue(L, 2);
+    int func_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    int cat_ref = -1;
+    if (lua_istable(L, 3)) {
+        lua_pushvalue(L, 3);
+        cat_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+    u->add_on_unit_built_callback(func_ref, cat_ref);
+    return 0;
+}
+
 // --- Veterancy ---
 
 // unit:GetVeterancyLevel()
@@ -3517,6 +3563,7 @@ static const MethodEntry unit_methods[] = {
     {"AddBuildRestriction",         unit_AddBuildRestriction},
     {"RemoveBuildRestriction",      unit_RemoveBuildRestriction},
     {"AddOnGivenCallback",          unit_AddOnGivenCallback},
+    {"AddOnUnitBuiltCallback",      unit_AddOnUnitBuiltCallback},
     {"PlayUnitSound",               unit_PlayUnitSound},
     {"PlayUnitAmbientSound",        unit_PlayUnitAmbientSound},
     {"StopUnitAmbientSound",        unit_StopUnitAmbientSound},
@@ -3552,6 +3599,9 @@ static const MethodEntry unit_methods[] = {
     {"GetFocusUnit",                unit_GetFocusUnit},
     {"RestoreBuildRestrictions",    unit_RestoreBuildRestrictions},
     {"SetCreator",                  unit_SetCreator},
+    {"GetCreator",                  unit_GetCreator},
+    {"IsInCategory",                unit_IsInCategory},
+    {"IsOverchargePaused",          unit_IsOverchargePaused},
     {"OccupyGround",               stub_return_true},
     {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
@@ -11975,24 +12025,27 @@ static const MohoClassDef moho_classes[] = {
     {"CollisionManipulator",    collision_manipulator_methods,   "manipulator_methods"},
 
     // UI classes — M71: control/group/frame are real, rest are stubs
+    // Base class inheritance is nullptr — FA's ClassUI(moho.xxx_methods, Control)
+    // handles inheritance on the Lua side. C++-side base refs would cause
+    // "ambiguous field" errors in ClassUI when both moho and Control have SetAlpha etc.
     {"control_methods",         ui_control_methods, nullptr},
-    {"group_methods",           ui_group_methods,  "control_methods"},
-    {"frame_methods",           ui_frame_methods,  "control_methods"},
-    {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
-    {"border_methods",          ui_border_methods,  "control_methods"},
+    {"group_methods",           ui_group_methods,  nullptr},
+    {"frame_methods",           ui_frame_methods,  nullptr},
+    {"bitmap_methods",          ui_bitmap_methods,  nullptr},
+    {"border_methods",          ui_border_methods,  nullptr},
     {"cursor_methods",          ui_cursor_methods,  nullptr},
     {"discovery_service_methods", ui_discovery_methods, nullptr},
     {"dragger_methods",         ui_dragger_methods,  nullptr},
-    {"edit_methods",            ui_edit_methods,  "control_methods"},
-    {"histogram_methods",       ui_histogram_methods,  "control_methods"},
-    {"item_list_methods",       ui_item_list_methods,  "control_methods"},
+    {"edit_methods",            ui_edit_methods,  nullptr},
+    {"histogram_methods",       ui_histogram_methods,  nullptr},
+    {"item_list_methods",       ui_item_list_methods,  nullptr},
     {"lobby_methods",           ui_lobby_methods,  nullptr},
-    {"mesh_methods",            empty_methods,  "control_methods"},
-    {"movie_methods",           ui_movie_methods,  "control_methods"},
-    {"ui_map_preview_methods",  ui_map_preview_methods, "control_methods"},
-    {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
-    {"text_methods",            ui_text_methods,  "control_methods"},
-    {"UIWorldView",             ui_worldview_methods,  "control_methods"},
+    {"mesh_methods",            empty_methods,  nullptr},
+    {"movie_methods",           ui_movie_methods,  nullptr},
+    {"ui_map_preview_methods",  ui_map_preview_methods, nullptr},
+    {"scrollbar_methods",       ui_scrollbar_methods,  nullptr},
+    {"text_methods",            ui_text_methods,  nullptr},
+    {"UIWorldView",             ui_worldview_methods,  nullptr},
     {"camera_methods",          camera_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
@@ -12748,6 +12801,87 @@ static int l_IssueBuildMobile(lua_State* L) {
     return 0;
 }
 
+// Forward declarations (defined later in file, needed by functions below)
+static sim::Entity* extract_ui_entity(lua_State* L, int idx);
+static void push_unit_for_ui(lua_State* L, sim::Entity* entity);
+
+// ====================================================================
+// Construction panel globals
+// ====================================================================
+
+/// IssueBlueprintCommand(commandString, blueprintId, count [, clear])
+/// Issues build/upgrade commands to the currently selected units via SimCallback.
+static int l_IssueBlueprintCommand(lua_State* L) {
+    auto* ih    = get_input_handler(L);
+    auto* queue = get_callback_queue(L);
+    if (!ih || !queue) return 0;
+
+    const char* cmd_raw = luaL_checkstring(L, 1);
+    const char* bp_id   = luaL_checkstring(L, 2);
+    int count = lua_isnumber(L, 3) ? static_cast<int>(lua_tonumber(L, 3)) : 1;
+    bool clear = lua_isboolean(L, 4) ? (lua_toboolean(L, 4) != 0) : false;
+
+    sim::SimCallbackEntry entry;
+    entry.func_name = "BlueprintCommand";
+    entry.args["command"]   = std::string(cmd_raw);
+    entry.args["blueprint"] = std::string(bp_id);
+    entry.args["count"]     = static_cast<f64>(count);
+    entry.args["clear"]     = clear;
+
+    for (u32 eid : ih->selected()) {
+        entry.unit_ids.push_back(eid);
+    }
+
+    queue->push(std::move(entry));
+    return 0;
+}
+
+/// GetAttachedUnitsList(units) — for each unit, collect its cargo/attached units.
+static int l_GetAttachedUnitsList(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    int out_idx = 1;
+
+    if (!sim || !lua_istable(L, 1)) return 1;
+
+    auto& reg = sim->entity_registry();
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        auto* entity = extract_ui_entity(L, lua_gettop(L));
+        lua_pop(L, 1);
+
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        auto* unit = static_cast<sim::Unit*>(entity);
+
+        for (u32 cargo_id : unit->cargo_ids()) {
+            auto* cargo = reg.find(cargo_id);
+            if (cargo && !cargo->destroyed() && cargo->is_unit()) {
+                push_unit_for_ui(L, cargo);
+                lua_rawseti(L, result, out_idx++);
+            }
+        }
+    }
+    return 1;
+}
+
+/// ClearCommands(units) — clear command queues for all units in the table.
+static int l_ClearCommands(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+
+    int n = luaL_getn(L, 1);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 1, i);
+        auto* entity = extract_ui_entity(L, lua_gettop(L));
+        lua_pop(L, 1);
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            static_cast<sim::Unit*>(entity)->clear_commands();
+        }
+    }
+    return 0;
+}
+
 // ====================================================================
 // Build mode / command mode globals (M139)
 // ====================================================================
@@ -12904,6 +13038,22 @@ static int ui_category_filter(lua_State* L, bool keep_matches) {
         }
         lua_pop(L, 1); // pop unit table
     }
+    return 1;
+}
+
+/// EntityCategoryContains(category, unit) — check if a single unit matches (ui_L)
+static int l_ui_EntityCategoryContains(lua_State* L) {
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    auto* entity = extract_ui_entity(L, 2);
+    bool matches = false;
+    if (entity && entity->is_unit() && !entity->destroyed()) {
+        auto* unit = static_cast<sim::Unit*>(entity);
+        matches = osc::lua::unit_matches_category(L, 1, unit->categories());
+    }
+    lua_pushboolean(L, matches ? 1 : 0);
     return 1;
 }
 
@@ -14001,6 +14151,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("IssueUnitCommandToUnit",      l_IssueUnitCommandToUnit);
     state.register_function("IssueCommand",                l_IssueCommand);
     state.register_function("IssueBuildMobile",            l_IssueBuildMobile);
+    state.register_function("IssueBlueprintCommand",       l_IssueBlueprintCommand);
+    state.register_function("GetAttachedUnitsList",        l_GetAttachedUnitsList);
+    state.register_function("ClearCommands",               l_ClearCommands);
 
     // Build mode / command mode globals (M139)
     state.register_function("ClearBuildTemplates",      l_ClearBuildTemplates);
@@ -14020,6 +14173,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Category filter globals for ui_L (Phase 1 — construction panel needs these)
     state.register_function("EntityCategoryFilterOut",  l_ui_EntityCategoryFilterOut);
     state.register_function("EntityCategoryFilterDown", l_ui_EntityCategoryFilterDown);
+    state.register_function("EntityCategoryContains",   l_ui_EntityCategoryContains);
 
     // Factory queue display globals (M140c)
     state.register_function("SetCurrentFactoryForQueueDisplay",   l_SetCurrentFactoryForQueueDisplay);
@@ -14098,6 +14252,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PauseSound", l_PauseSound);
     state.register_function("PauseVoice", l_PauseVoice);
     state.register_function("EnableWorldSounds", l_EnableWorldSounds);
+    state.register_function("AudioSetLanguage", [](lua_State*) -> int { return 0; });
 
     // Prefs table (M149a)
     {
