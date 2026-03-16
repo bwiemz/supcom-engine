@@ -9312,6 +9312,16 @@ static void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl) 
     set_lazyvar_value(L, self_idx, "FontDescent", ctrl->font_descent());
     set_lazyvar_value(L, self_idx, "FontExternalLeading", ctrl->font_external_leading());
     set_lazyvar_value(L, self_idx, "TextAdvance", ctrl->text_advance());
+
+    // Auto-size text control: Width = TextAdvance, Height = ascent + descent
+    // FA's engine does this internally so layout works for text-based controls.
+    if (ctrl->text_advance() > 0) {
+        set_lazyvar_value(L, self_idx, "Width", ctrl->text_advance());
+    }
+    f32 line_height = ctrl->font_ascent() + std::abs(ctrl->font_descent());
+    if (line_height > 0) {
+        set_lazyvar_value(L, self_idx, "Height", line_height);
+    }
 }
 
 /// text:SetNewFont(family, pointsize)
