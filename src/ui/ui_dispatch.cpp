@@ -424,18 +424,29 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             }
         }
     }
-
-    pending_events_.clear();
 }
 
 void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
                                   f64 dt) {
-    for (auto& ctrl_ptr : registry.all()) {
-        if (!ctrl_ptr || ctrl_ptr->destroyed()) continue;
-        if (!ctrl_ptr->needs_frame_update()) continue;
-        if (ctrl_ptr->lua_table_ref() < 0) continue;
+    // Snapshot control pointers before iterating.  OnFrame callbacks (e.g.
+    // menu animation completing → lobby import) can create hundreds of new
+    // controls, invalidating the registry's internal vector references.
+    // unique_ptr elements are stable (the UIControl* doesn't move), so raw
+    // pointers remain valid — but we must re-check destroyed() after each pcall.
+    auto& all = registry.all();
+    std::vector<UIControl*> snapshot;
+    snapshot.reserve(all.size());
+    for (auto& p : all) {
+        if (p && !p->destroyed() && p->needs_frame_update() &&
+            p->lua_table_ref() >= 0)
+            snapshot.push_back(p.get());
+    }
 
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl_ptr->lua_table_ref());
+    for (auto* ctrl : snapshot) {
+        if (!ctrl || ctrl->destroyed() || ctrl->lua_table_ref() < 0) continue;
+        if (!ctrl->needs_frame_update()) continue;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         lua_pushstring(L, "OnFrame");
         lua_rawget(L, -2);
         if (lua_isfunction(L, -1)) {
@@ -443,7 +454,7 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
             lua_pushnumber(L, dt);
             if (lua_pcall(L, 2, 0, 0) != 0) {
                 spdlog::warn("OnFrame error for control #{}: {}",
-                             ctrl_ptr->control_id(), lua_tostring(L, -1));
+                             ctrl->control_id(), lua_tostring(L, -1));
                 lua_pop(L, 1);
             }
         } else {
