@@ -101,6 +101,8 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     case UIEventType::BUTTON_RELEASE: type_str = "ButtonRelease"; break;
     case UIEventType::MOUSE_WHEEL:    type_str = "WheelRotation"; break;
     case UIEventType::CHAR:           type_str = "Char"; break;
+    case UIEventType::MOUSE_ENTER:    type_str = "MouseEnter"; break;
+    case UIEventType::MOUSE_EXIT:     type_str = "MouseExit"; break;
     }
     lua_pushstring(L, "Type");
     lua_pushstring(L, type_str);
@@ -155,26 +157,39 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
 static f32 read_lazyvar_dispatch(lua_State* L, int tbl_idx, const char* field) {
     lua_pushstring(L, field);
     lua_rawget(L, tbl_idx);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return 0.0f; }
-    if (lua_pcall(L, 0, 1, 0) != 0) { lua_pop(L, 1); return 0.0f; }
+    if (!lua_istable(L, -1)) {
+        if (lua_isnumber(L, -1)) {
+            f32 val = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            return val;
+        }
+        lua_pop(L, 1);
+        return 0.0f;
+    }
+    if (lua_pcall(L, 0, 1, 0) != 0) {
+        lua_pop(L, 1);
+        return 0.0f;
+    }
     f32 val = static_cast<f32>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     return val;
 }
 
-UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y) {
+UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
+                                const std::unordered_set<UIControl*>* skip) {
     if (!root || root->hidden() || root->destroyed()) return nullptr;
     if (root->lua_table_ref() < 0) return nullptr;
 
     // Walk children front-to-back (last child is topmost)
     auto& children = root->children();
     for (i32 i = static_cast<i32>(children.size()) - 1; i >= 0; --i) {
-        auto* hit = hit_test(L, children[i], x, y);
+        auto* hit = hit_test(L, children[i], x, y, skip);
         if (hit) return hit;
     }
 
     // Check this control's bounds
     if (root->hit_test_disabled()) return nullptr;
+    if (skip && skip->count(root)) return nullptr;
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, root->lua_table_ref());
     int tbl = lua_gettop(L);
@@ -190,6 +205,8 @@ UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y) {
     if (w <= 0 && right > left) w = right - left;
     if (h <= 0 && bottom > top) h = bottom - top;
 
+    // (diagnostic removed)
+
     f32 fx = static_cast<f32>(x);
     f32 fy = static_cast<f32>(y);
     if (fx >= left && fx < left + w && fy >= top && fy < top + h)
@@ -203,7 +220,7 @@ bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
     lua_pushstring(L, "HandleEvent");
-    lua_rawget(L, -2);
+    lua_gettable(L, -2);  // gettable for metatable lookup (HandleEvent is on class)
     if (!lua_isfunction(L, -1)) {
         lua_pop(L, 2);
         return false;
@@ -236,7 +253,13 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
     }
     lua_pop(L, 1);
 
-    for (const auto& ev : pending_events_) {
+    // Swap events into a local copy before processing.  Lua pcall during
+    // event handling (e.g. ButtonSkirmish → lobby import) can trigger GLFW
+    // callbacks that push_back into pending_events_, invalidating iterators.
+    std::vector<UIEvent> events;
+    events.swap(pending_events_);
+
+    for (const auto& ev : events) {
         // Clear stale hover pointer if the control was destroyed (e.g. by Lua)
         if (hover_control_ && hover_control_->destroyed())
             hover_control_ = nullptr;
@@ -327,43 +350,78 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         UIControl* target = root ? hit_test(L, root, ev.mouse_x, ev.mouse_y)
                                  : nullptr;
 
-        // Mouse enter/exit tracking
+        // Mouse enter/exit tracking — fire HandleEvent with MouseEnter/MouseExit
+        // FA's Button.HandleEvent expects {Type='MouseEnter'} and {Type='MouseExit'}
         if (ev.type == UIEventType::MOUSE_MOTION && target != hover_control_) {
-            if (hover_control_ && !hover_control_->destroyed() &&
-                hover_control_->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, hover_control_->lua_table_ref());
-                lua_pushstring(L, "OnMouseExit");
-                lua_rawget(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2);
-                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
-                } else {
-                    lua_pop(L, 1);
-                }
-                lua_pop(L, 1);
+            if (hover_control_ && !hover_control_->destroyed()) {
+                UIEvent exit_ev = ev;
+                exit_ev.type = UIEventType::MOUSE_EXIT;
+                fire_handle_event(L, hover_control_, exit_ev);
             }
-            // Re-validate target after OnMouseExit callback (may have destroyed it)
+            // Re-validate target after exit callback (may have destroyed it)
             if (target && target->destroyed()) target = nullptr;
-            if (target && target->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                lua_pushstring(L, "OnMouseEnter");
-                lua_rawget(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    lua_pushvalue(L, -2);
-                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
-                } else {
-                    lua_pop(L, 1);
-                }
-                lua_pop(L, 1);
+            if (target) {
+                UIEvent enter_ev = ev;
+                enter_ev.type = UIEventType::MOUSE_ENTER;
+                fire_handle_event(L, target, enter_ev);
             }
             hover_control_ = target;
         }
 
-        // Dispatch to hit target, then walk up ancestors
-        UIControl* c = target;
-        while (c) {
-            if (fire_handle_event(L, c, ev)) break;
-            c = c->parent();
+        // Call UIMain.OnMouseButtonPress for global click handlers
+        // (e.g. Combo close-on-outside-click via AddOnMouseClickedFunc)
+        if (ev.type == UIEventType::BUTTON_PRESS) {
+            lua_pushstring(L, "OnMouseButtonPress");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_isfunction(L, -1)) {
+                lua_newtable(L);
+                lua_pushstring(L, "Type");
+                lua_pushstring(L, "ButtonPress");
+                lua_rawset(L, -3);
+                lua_pushstring(L, "x");
+                lua_pushnumber(L, ev.mouse_x);
+                lua_rawset(L, -3);
+                lua_pushstring(L, "y");
+                lua_pushnumber(L, ev.mouse_y);
+                lua_rawset(L, -3);
+                if (lua_pcall(L, 1, 0, 0) != 0) {
+                    spdlog::warn("OnMouseButtonPress error: {}",
+                                 lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            } else {
+                lua_pop(L, 1);
+            }
+        }
+
+        // Dispatch to hit target, then walk up ancestors.
+        // If no one consumes a click, retry hit-test skipping the
+        // already-tried leaf — this lets sibling controls (e.g. Combo)
+        // receive events when an overlapping non-interactive control
+        // is on top in child order.
+        bool consumed = false;
+        std::unordered_set<UIControl*> skip_set;
+        constexpr int kMaxRetries = 16;
+
+        for (int attempt = 0; attempt < kMaxRetries && !consumed; ++attempt) {
+            if (!target) break;
+
+            UIControl* c = target;
+            while (c) {
+                if (fire_handle_event(L, c, ev)) { consumed = true; break; }
+                c = c->parent();
+            }
+
+            // For clicks: retry with the non-consuming leaf skipped
+            if (!consumed &&
+                (ev.type == UIEventType::BUTTON_PRESS ||
+                 ev.type == UIEventType::BUTTON_RELEASE)) {
+                skip_set.insert(target);
+                target = root ? hit_test(L, root, ev.mouse_x, ev.mouse_y,
+                                         &skip_set) : nullptr;
+            } else {
+                break;
+            }
         }
     }
 

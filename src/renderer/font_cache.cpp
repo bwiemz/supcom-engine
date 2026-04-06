@@ -183,9 +183,9 @@ std::string FontCache::resolve_font_path(const std::string& family) const {
     std::string lower = family;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
-    if (lower == "arial" || lower == "arial bold" || lower.empty())
+    if (lower == "arial" || lower.empty())
         return "/fonts/ARIAL.TTF";
-    if (lower == "arial bold" || lower == "arial bd")
+    if (lower == "arial bold" || lower == "arial bd" || lower == "arial gras")
         return "/fonts/ARIALBD.TTF";
     if (lower == "arial italic")
         return "/fonts/ARIALI.TTF";

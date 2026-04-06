@@ -425,6 +425,19 @@ void SimState::update_visibility() {
             map::VisFlag::Vision);
     });
 
+    // 2b. Paint temporary vision areas (scrying, Eye of Rhianne)
+    for (auto& tv : temp_visions_) {
+        if (tv.remaining_ticks > 0) {
+            visibility_grid_->paint_circle(tv.army, tv.x, tv.z, tv.radius,
+                                           map::VisFlag::Vision);
+            tv.remaining_ticks--;
+        }
+    }
+    temp_visions_.erase(
+        std::remove_if(temp_visions_.begin(), temp_visions_.end(),
+            [](const TempVision& v) { return v.remaining_ticks <= 0; }),
+        temp_visions_.end());
+
     // 3. Share allied vision
     u32 n = static_cast<u32>(
         std::min(army_count(),

@@ -185,7 +185,8 @@ public:
         return command_queue_;
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
-    void clear_commands();
+    void clear_commands(const char* source = "?");
+    void clear_queued_commands(); // remove all but current command
 
     // Footprint (from blueprint, for pathfinding obstacle marking)
     f32 footprint_size_x() const { return footprint_size_x_; }
@@ -384,6 +385,14 @@ public:
     void set_auto_overcharge(bool b) { auto_overcharge_ = b; }
     bool overcharge_paused() const { return overcharge_paused_; }
     void set_overcharge_paused(bool b) { overcharge_paused_ = b; }
+    bool is_cloaked() const { return cloaked_; }
+    void set_cloaked(bool v) { cloaked_ = v; }
+    bool has_radar_stealth() const { return radar_stealth_; }
+    void set_radar_stealth(bool v) { radar_stealth_ = v; }
+    bool has_sonar_stealth() const { return sonar_stealth_; }
+    void set_sonar_stealth(bool v) { sonar_stealth_ = v; }
+    bool auto_mode() const { return auto_mode_; }
+    void set_auto_mode(bool v) { auto_mode_ = v; }
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
@@ -481,6 +490,17 @@ public:
     void add_on_given_callback(int ref) { on_given_callbacks_.push_back(ref); }
     const std::vector<int>& on_given_callbacks() const { return on_given_callbacks_; }
     void clear_on_given_callbacks(lua_State* L);
+
+    // OnUnitBuilt callback system (for factory production notification)
+    struct UnitBuiltCallback {
+        int func_ref;
+        int cat_ref;
+    };
+    void add_on_unit_built_callback(int func_ref, int cat_ref) {
+        on_unit_built_callbacks_.push_back({func_ref, cat_ref});
+    }
+    void fire_on_unit_built_callbacks(lua_State* L, Entity* built_unit);
+    void clear_on_unit_built_callbacks(lua_State* L);
 
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
@@ -601,6 +621,10 @@ private:
     u32 creator_id_ = 0;
     bool auto_overcharge_ = false;
     bool overcharge_paused_ = false;
+    bool cloaked_ = false;
+    bool radar_stealth_ = false;
+    bool sonar_stealth_ = false;
+    bool auto_mode_ = false;
     u32 focus_entity_id_ = 0;
     // Damage/kill flags
     bool can_take_damage_ = true;
@@ -619,6 +643,8 @@ private:
     f32 death_duration_ = 0.0f;
     // OnGiven callbacks (Lua registry refs)
     std::vector<int> on_given_callbacks_;
+    // OnUnitBuilt callbacks (function + category filter)
+    std::vector<UnitBuiltCallback> on_unit_built_callbacks_;
     // Build queue (factory production queue)
     std::vector<BuildQueueEntry> build_queue_;
 };

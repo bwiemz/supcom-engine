@@ -104,6 +104,9 @@ public:
     void build_visibility_grid();
     void build_spatial_grid();
     map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
+    void add_temp_vision(u32 army, f32 x, f32 z, f32 radius, f32 lifetime_sec) {
+        temp_visions_.push_back({army, x, z, radius, static_cast<i32>(lifetime_sec * 10.0f)});
+    }
 
     // Audio
     void set_sound_manager(std::unique_ptr<audio::SoundManager> mgr);
@@ -242,6 +245,14 @@ private:
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
+
+    // Temporary vision areas (scrying, Eye of Rhianne)
+    struct TempVision {
+        u32 army;
+        f32 x, z, radius;
+        i32 remaining_ticks;
+    };
+    std::vector<TempVision> temp_visions_;
     u32 next_command_id_ = 0;
     bool game_ended_ = false;
     std::vector<CameraShakeEvent> camera_shake_events_;

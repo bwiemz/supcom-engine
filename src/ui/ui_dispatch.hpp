@@ -2,6 +2,8 @@
 
 #include "core/types.hpp"
 
+#include <unordered_set>
+
 struct GLFWwindow;
 struct lua_State;
 
@@ -19,6 +21,8 @@ enum class UIEventType : u8 {
     BUTTON_RELEASE = 4,
     MOUSE_WHEEL = 5,
     CHAR = 6,
+    MOUSE_ENTER = 7,   // synthetic: hover entered a control
+    MOUSE_EXIT = 8,    // synthetic: hover left a control
 };
 
 /// Buffered UI event from GLFW callbacks.
@@ -62,7 +66,9 @@ public:
     f64 mouse_y() const { return mouse_y_; }
 
     /// Find the topmost control at (x, y) via front-to-back tree walk.
-    UIControl* hit_test(lua_State* L, UIControl* root, f64 x, f64 y);
+    /// If \p skip is non-null, controls in that set are treated as invisible.
+    UIControl* hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
+                        const std::unordered_set<UIControl*>* skip = nullptr);
 
 private:
     /// Fire HandleEvent on a control. Returns true if event was consumed.

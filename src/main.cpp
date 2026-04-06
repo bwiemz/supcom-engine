@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -565,10 +571,90 @@ static bool execute_reload_sequence(
         return false;
     }
 
-    // 12. Start session
+    // 12. Start session — parse lobby sessionConfig for AI/spawn/team setup
     {
         osc::lua::SessionManager new_session_mgr;
-        new_session_mgr.set_ai_armies({1}); // ARMY_2 is AI
+
+        // Try to retrieve sessionConfig from FrontEndData (set by lobby)
+        std::vector<int> ai_indices;
+        std::string ai_personality = "adaptive";
+        int filled_slots = 0;
+
+        lua_pushstring(uiL, "__osc_front_end_data");
+        lua_rawget(uiL, LUA_REGISTRYINDEX);
+        auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+
+        if (fed) {
+            fed->get(uiL, "sessionConfig");
+            if (lua_istable(uiL, -1)) {
+                int cfg_idx = lua_gettop(uiL);
+
+                // Walk PlayerOptions table: {[1]={Human=true,...}, [2]={Human=false,AIPersonality='adaptive',...}}
+                lua_pushstring(uiL, "PlayerOptions");
+                lua_rawget(uiL, cfg_idx);
+                if (lua_istable(uiL, -1)) {
+                    int po_idx = lua_gettop(uiL);
+                    int n = luaL_getn(uiL, po_idx);
+                    for (int slot = 1; slot <= n; slot++) {
+                        lua_rawgeti(uiL, po_idx, slot);
+                        if (!lua_istable(uiL, -1)) { lua_pop(uiL, 1); continue; }
+                        int entry = lua_gettop(uiL);
+                        filled_slots++;
+
+                        // Check Human field
+                        lua_pushstring(uiL, "Human");
+                        lua_rawget(uiL, entry);
+                        bool is_human = lua_toboolean(uiL, -1) != 0;
+                        lua_pop(uiL, 1);
+
+                        if (!is_human) {
+                            // AI army — slot is 1-based, army index is 0-based
+                            ai_indices.push_back(slot - 1);
+
+                            // Read AIPersonality
+                            lua_pushstring(uiL, "AIPersonality");
+                            lua_rawget(uiL, entry);
+                            if (lua_type(uiL, -1) == LUA_TSTRING) {
+                                ai_personality = lua_tostring(uiL, -1);
+                            }
+                            lua_pop(uiL, 1);
+                        }
+
+                        // Read Faction (1=UEF,2=Aeon,3=Cybran,4=Sera,5=Random)
+                        lua_pushstring(uiL, "Faction");
+                        lua_rawget(uiL, entry);
+                        int faction = lua_isnumber(uiL, -1)
+                            ? static_cast<int>(lua_tonumber(uiL, -1)) : 1;
+                        lua_pop(uiL, 1);
+
+                        // Store faction on the army brain (0-based index)
+                        auto* brain = sim_state->get_army(slot - 1);
+                        if (brain) brain->set_faction(faction);
+
+                        lua_pop(uiL, 1); // pop entry table
+                    }
+                }
+                lua_pop(uiL, 1); // pop PlayerOptions
+            }
+            lua_pop(uiL, 1); // pop sessionConfig
+        }
+
+        // Apply parsed config (or fall back to defaults)
+        if (!ai_indices.empty()) {
+            new_session_mgr.set_ai_armies(ai_indices);
+            new_session_mgr.set_ai_personality(ai_personality);
+            spdlog::info("Session: {} AI armies (personality={}), {} total slots",
+                         ai_indices.size(), ai_personality, filled_slots);
+        } else if (sim_state->army_count() >= 2) {
+            // Fallback: no sessionConfig → assume ARMY_2 is AI (legacy behavior)
+            new_session_mgr.set_ai_armies({1});
+            spdlog::info("Session: fallback — ARMY_2 as AI (no sessionConfig)");
+        }
+        if (filled_slots > 0) {
+            new_session_mgr.set_max_armies(filled_slots);
+        }
+
         auto sess_result = new_session_mgr.start_session(
             *sim_lua_state, vfs, *sim_state, scenario_meta);
         if (!sess_result) {
@@ -645,8 +731,21 @@ static void pump_ui_frames(
     }
 }
 
+#ifdef _WIN32
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
+    spdlog::critical("CRASH: code={:#x} addr={:#x}",
+        ep->ExceptionRecord->ExceptionCode,
+        reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress));
+    spdlog::default_logger()->flush();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 int main(int argc, char* argv[]) {
     osc::log::init();
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(crash_handler);
+#endif
 
     auto config = parse_args(argc, argv);
     auto map_path = parse_map_arg(argc, argv);
@@ -1017,6 +1116,12 @@ int main(int argc, char* argv[]) {
 
     // UI control registry (M71)
     osc::ui::UIControlRegistry ui_registry;
+
+    // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
+    // IMPORTANT: must come BEFORE register_ui_bindings so that the real
+    // ForkThread/WaitSeconds/Sound overwrite the blueprint stubs.
+    osc::lua::register_blueprint_bindings(ui_lua_state);
+
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
 
     // Set root frame size to window dimensions (1600x900) so LazyVar layout
@@ -1033,9 +1138,6 @@ int main(int argc, char* argv[]) {
             "  f.Bottom:Set(900)\n"
             "end\n");
     }
-
-    // Register file I/O bindings on ui_L for lobby map enumeration (M148c)
-    osc::lua::register_blueprint_bindings(ui_lua_state);
 
     // UI-side thread manager (reuses ThreadManager with frame counts instead of sim ticks)
     osc::sim::ThreadManager ui_thread_manager(ui_lua_state.raw());
@@ -1213,20 +1315,55 @@ int main(int argc, char* argv[]) {
         {
             ui_lua_state.do_string(R"(
                 local _origGetPref = GetPreference
+                local _origSetPref = SetPreference
                 local _profileData = {
                     current = 0,
-                    profiles = { [0] = { Name = 'Player' } }
+                    profiles = {
+                        [0] = {
+                            Name = 'Player',
+                            MenuTutorialPrompt = true,
+                        }
+                    }
                 }
+
+                -- Walk a dotted key path through a nested table.
+                -- Numeric segments are coerced (e.g. "profiles.0" → profiles[0]).
+                local function walk_path(tbl, path)
+                    for seg in string.gfind(path, '[^.]+') do
+                        if type(tbl) ~= 'table' then return nil end
+                        local num = tonumber(seg)
+                        if num and tbl[num] ~= nil then
+                            tbl = tbl[num]
+                        elseif tbl[seg] ~= nil then
+                            tbl = tbl[seg]
+                        else
+                            return nil
+                        end
+                    end
+                    return tbl
+                end
+
                 function GetPreference(key, default)
-                    -- Intercept profile.* keys
-                    if key == 'profile.current' then return _profileData.current end
-                    if key == 'profile.profiles' then return _profileData.profiles end
-                    -- Check if key starts with 'profile.'
-                    if type(key) == 'string' and string.sub(key, 1, 8) == 'profile.' then
-                        local subkey = string.sub(key, 9)
-                        if _profileData[subkey] ~= nil then return _profileData[subkey] end
+                    if type(key) == 'string' then
+                        -- Exact 'profile' returns entire profile table
+                        if key == 'profile' then return _profileData end
+                        -- Any profile.* key: walk dotted path
+                        if string.sub(key, 1, 8) == 'profile.' then
+                            local result = walk_path(_profileData, string.sub(key, 9))
+                            if result ~= nil then return result end
+                            return default
+                        end
                     end
                     return _origGetPref(key, default)
+                end
+
+                function SetPreference(key, value)
+                    -- Intercept profile writes to keep _profileData in sync
+                    if key == 'profile' and type(value) == 'table' then
+                        _profileData = value
+                        return
+                    end
+                    return _origSetPref(key, value)
                 end
                 LOG('Default profile created: Player')
             )");
@@ -1241,6 +1378,48 @@ int main(int argc, char* argv[]) {
             } else {
                 spdlog::warn("Front-end CreateUI error: {}", r.error().message);
             }
+        }
+        // Auto-trigger Skirmish: bypass lobby UI, directly launch with sessionConfig
+        if (parse_flag(argc, argv, "--auto-skirmish")) {
+            ui_lua_state.do_string(R"(
+                ForkThread(function()
+                    WaitSeconds(2.0)
+                    LOG('Auto-skirmish: launching with 1 human + 1 AI...')
+                    LaunchSinglePlayerSession({
+                        ScenarioFile = '/maps/SCMP_009/SCMP_009_scenario.lua',
+                        GameOptions = {
+                            ScenarioFile = '/maps/SCMP_009/SCMP_009_scenario.lua',
+                        },
+                        PlayerOptions = {
+                            [1] = {
+                                Human = true,
+                                PlayerName = 'Player',
+                                Faction = 1,
+                                Team = 1,
+                                StartSpot = 1,
+                            },
+                            [2] = {
+                                Human = false,
+                                PlayerName = 'AI: Adaptive',
+                                AIPersonality = 'adaptive',
+                                Faction = 2,
+                                Team = 2,
+                                StartSpot = 2,
+                            },
+                        },
+                    })
+                end)
+            )");
+        }
+        // Auto-trigger lobby via ButtonSkirmish (tests full lobby flow)
+        if (parse_flag(argc, argv, "--auto-lobby")) {
+            ui_lua_state.do_string(R"(
+                ForkThread(function()
+                    WaitSeconds(2.0)
+                    LOG('Auto-lobby: triggering ButtonSkirmish...')
+                    import('/lua/ui/menus/main.lua').ButtonSkirmish()
+                end)
+            )");
         }
         spdlog::info("Front-end UI initialized (no --map)");
     }

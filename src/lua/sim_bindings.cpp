@@ -3876,10 +3876,13 @@ static int l_IssueFactoryRallyPoint(lua_State* L) {
     return 0;
 }
 
-// IssueClearFactoryCommands(units_table) — clears all commands
+// IssueClearFactoryCommands(units_table) — clears factory build QUEUE only.
+// In FA's engine, this clears pending build orders but does NOT abort the
+// unit currently under construction.  Our clear_commands() was too aggressive
+// and also removed the active BuildFactory command, stalling production.
 static int l_IssueClearFactoryCommands(lua_State* L) {
     for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        u->clear_commands();
+        u->clear_queued_commands();
     }, nullptr);
     return 0;
 }
@@ -4370,6 +4373,35 @@ static int l_IssueTeleport(lua_State* L) {
     return 0;
 }
 
+// CreateVisibleAreaAtPoint(army, x, y, z, radius, lifetime) — temporary vision (scrying)
+static int l_CreateVisibleAreaAtPoint(lua_State* L) {
+    int army = static_cast<int>(luaL_checknumber(L, 1)) - 1; // 0-based
+    f32 x = static_cast<f32>(luaL_checknumber(L, 2));
+    // arg 3 = y (unused)
+    f32 z = static_cast<f32>(luaL_checknumber(L, 4));
+    f32 radius = static_cast<f32>(luaL_checknumber(L, 5));
+    f32 lifetime = static_cast<f32>(luaL_optnumber(L, 6, 10.0));
+
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (sim && army >= 0) {
+        sim->add_temp_vision(static_cast<u32>(army), x, z, radius, lifetime);
+    }
+    return 0;
+}
+
+// IssueKillSelf(units_table) — ctrl+K self-destruct
+static int l_IssueKillSelf(lua_State* L) {
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
+        if (u && !u->is_dying() && !u->destroyed()) {
+            u->begin_dying(0.1f); // near-instant death
+        }
+    }, nullptr);
+    return 0;
+}
+
 // IssueFerry(units_table, waypoint) — ferry route waypoint for transports
 static int l_IssueFerry(lua_State* L) {
     auto target_pos = extract_position(L, 2);
@@ -4633,10 +4665,14 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueSacrifice", l_IssueSacrifice);
     state.register_function("IssueTeleport", l_IssueTeleport);
     state.register_function("IssueUpgrade", l_IssueUpgrade);
+    state.register_function("IssueKillSelf", l_IssueKillSelf);
     state.register_function("IssuePause", stub_noop);  // unused in FA
     state.register_function("IssueScript", stub_noop);  // EnhanceTask uses IssueEnhancement
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);
+
+    // Temporary vision (scrying, Eye of Rhianne)
+    state.register_function("CreateVisibleAreaAtPoint", l_CreateVisibleAreaAtPoint);
 
     // Single-unit variants (used by AI code)
     state.register_function("IssueToUnitClearCommands", l_IssueToUnitClearCommands);

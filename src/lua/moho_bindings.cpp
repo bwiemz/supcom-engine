@@ -3450,6 +3450,93 @@ static int unit_GetXPValue(lua_State* L) {
     return 1;
 }
 
+// --- Cloak / Stealth / AutoMode / DeathWeapon bindings ---
+
+static int unit_EnableCloak(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_cloaked(true);
+    return 0;
+}
+static int unit_DisableCloak(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_cloaked(false);
+    return 0;
+}
+static int unit_IsUnitCloaked(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->is_cloaked());
+    return 1;
+}
+static int unit_EnableStealth(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_radar_stealth(true);
+    return 0;
+}
+static int unit_DisableStealth(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_radar_stealth(false);
+    return 0;
+}
+static int unit_EnableSonarStealth(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_sonar_stealth(true);
+    return 0;
+}
+static int unit_DisableSonarStealth(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_sonar_stealth(false);
+    return 0;
+}
+static int unit_SetAutoMode(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_auto_mode(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+static int unit_GetAutoMode(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->auto_mode());
+    return 1;
+}
+static int unit_SetDeathWeaponEnabled(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) return 0;
+    const char* label = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    bool enabled = lua_toboolean(L, 3) != 0;
+    if (label) {
+        for (auto& w : u->weapons()) {
+            if (w->label == label) { w->fire_on_death = enabled; break; }
+        }
+    }
+    return 0;
+}
+static int unit_GetDeathWeaponEnabled(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    const char* label = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
+    if (label) {
+        for (auto& w : u->weapons()) {
+            if (w->label == label) { lua_pushboolean(L, w->fire_on_death ? 1 : 0); return 1; }
+        }
+    }
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+static int unit_HasValidTeleportDest(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) { lua_pushboolean(L, 0); return 1; }
+    auto& cmds = u->command_queue();
+    bool valid = false;
+    for (const auto& cmd : cmds) {
+        if (cmd.type == sim::CommandType::Teleport) {
+            valid = (cmd.target_pos.x != 0.0f || cmd.target_pos.z != 0.0f);
+            break;
+        }
+    }
+    lua_pushboolean(L, valid ? 1 : 0);
+    return 1;
+}
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -3494,7 +3581,7 @@ static const MethodEntry unit_methods[] = {
     {"AddCommandCap",               unit_AddCommandCap},
     {"RemoveCommandCap",            unit_RemoveCommandCap},
     {"RestoreCommandCaps",          unit_RestoreCommandCaps},
-    {"HasValidTeleportDest",        stub_return_false},
+    {"HasValidTeleportDest",        unit_HasValidTeleportDest},
     {"GetWorkProgress",             unit_GetWorkProgress},
     {"SetWorkProgress",             unit_SetWorkProgress},
     // Intel — real implementations
@@ -3622,6 +3709,17 @@ static const MethodEntry unit_methods[] = {
     {"SetVeterancyLevel",           unit_SetVeterancyLevel},
     {"AddXP",                       unit_AddXP},
     {"GetXPValue",                  unit_GetXPValue},
+    {"EnableCloak",                 unit_EnableCloak},
+    {"DisableCloak",                unit_DisableCloak},
+    {"IsUnitCloaked",               unit_IsUnitCloaked},
+    {"EnableStealth",               unit_EnableStealth},
+    {"DisableStealth",              unit_DisableStealth},
+    {"EnableSonarStealth",          unit_EnableSonarStealth},
+    {"DisableSonarStealth",         unit_DisableSonarStealth},
+    {"SetAutoMode",                 unit_SetAutoMode},
+    {"GetAutoMode",                 unit_GetAutoMode},
+    {"SetDeathWeaponEnabled",       unit_SetDeathWeaponEnabled},
+    {"GetDeathWeaponEnabled",       unit_GetDeathWeaponEnabled},
     {nullptr, nullptr},
 };
 
@@ -8692,6 +8790,29 @@ static int control_SetHidden(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     bool h = lua_toboolean(L, 2) != 0;
+
+    // FA calls OnHide(hidden) before applying the state change.
+    // If OnHide returns true, the operation is suppressed.
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "OnHide");
+        lua_gettable(L, 1);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1); // self
+            lua_pushboolean(L, h);
+            if (lua_pcall(L, 2, 1, 0) == 0) {
+                if (lua_toboolean(L, -1)) {
+                    lua_pop(L, 1); // pop return value
+                    return 0; // suppressed
+                }
+                lua_pop(L, 1); // pop return value
+            } else {
+                lua_pop(L, 1); // pop error
+            }
+        } else {
+            lua_pop(L, 1); // pop nil
+        }
+    }
+
     ctrl->set_hidden(h);
     return 0;
 }
@@ -8864,6 +8985,31 @@ static int control_HitTest(lua_State* L) {
     return 1;
 }
 
+static int control_Disable(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_isDisabled");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, 1);
+    return 0;
+}
+
+static int control_Enable(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_isDisabled");
+    lua_pushboolean(L, 0);
+    lua_rawset(L, 1);
+    return 0;
+}
+
+static int control_IsDisabled(lua_State* L) {
+    if (!lua_istable(L, 1)) { lua_pushboolean(L, 0); return 1; }
+    lua_pushstring(L, "_isDisabled");
+    lua_rawget(L, 1);
+    lua_pushboolean(L, lua_toboolean(L, -1));
+    lua_replace(L, -2);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry ui_control_methods[] = {
     {"Destroy",                 control_Destroy},
@@ -8890,6 +9036,9 @@ static const MethodEntry ui_control_methods[] = {
     {"Dump",                    control_Dump},
     {"GetRootFrame",            control_GetRootFrame},
     {"HitTest",                 control_HitTest},
+    {"Disable",                 control_Disable},
+    {"Enable",                  control_Enable},
+    {"IsDisabled",              control_IsDisabled},
     {nullptr, nullptr},
 };
 
@@ -8986,7 +9135,6 @@ static int bitmap_SetNewTexture(lua_State* L) {
             lua_pushstring(L, "Width");
             lua_rawget(L, 1);
             if (lua_istable(L, -1)) {
-                // Call Width:Set(value)
                 lua_pushstring(L, "Set");
                 lua_gettable(L, -2);
                 if (lua_isfunction(L, -1)) {
@@ -9237,8 +9385,17 @@ static const MethodEntry ui_bitmap_methods[] = {
 /// Helper: parse a hex color string like "ff00ff00" or "AARRGGBB" to u32.
 static u32 parse_color_hex(const char* s) {
     if (!s) return 0xFFFFFFFF;
-    u32 val = 0;
+    // Count hex digits
+    int len = 0;
     for (int i = 0; i < 8 && s[i]; i++) {
+        char c = s[i];
+        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
+            len++;
+        else
+            break;
+    }
+    u32 val = 0;
+    for (int i = 0; i < len; i++) {
         char c = s[i];
         u32 nibble = 0;
         if (c >= '0' && c <= '9') nibble = c - '0';
@@ -9246,6 +9403,8 @@ static u32 parse_color_hex(const char* s) {
         else if (c >= 'A' && c <= 'F') nibble = 10 + (c - 'A');
         val = (val << 4) | nibble;
     }
+    // 6-char hex = RRGGBB → default alpha to FF (fully opaque)
+    if (len <= 6) val |= 0xFF000000;
     return val;
 }
 
@@ -9947,6 +10106,43 @@ static int itemlist_SetAlpha(lua_State* L) {
     return 0;
 }
 
+static int itemlist_AddItems(lua_State* L) {
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) return 0;
+    int n = luaL_getn(L, 2);
+    for (int i = 1; i <= n; i++) {
+        lua_rawgeti(L, 2, i);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            lua_pushstring(L, "AddItem");
+            lua_gettable(L, 1);
+            lua_pushvalue(L, 1);
+            lua_pushvalue(L, -3);
+            lua_pcall(L, 2, 0, 0);
+        }
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+static int itemlist_ClearItems(lua_State* L) {
+    lua_pushstring(L, "DeleteAllItems");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        lua_pcall(L, 1, 0, 0);
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+static int itemlist_SetTitleText(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_titleText");
+    lua_pushvalue(L, 2);
+    lua_rawset(L, 1);
+    return 0;
+}
+
 // clang-format off
 static const MethodEntry ui_item_list_methods[] = {
     {"AddItem",             itemlist_AddItem},
@@ -9968,6 +10164,9 @@ static const MethodEntry ui_item_list_methods[] = {
     {"NeedsScrollBar",      itemlist_NeedsScrollBar},
     {"ShowSelection",       itemlist_ShowSelection},
     {"ShowMouseoverItem",   itemlist_ShowMouseoverItem},
+    {"AddItems",            itemlist_AddItems},
+    {"ClearItems",          itemlist_ClearItems},
+    {"SetTitleText",        itemlist_SetTitleText},
     // SetAlpha removed — inherited from Control to avoid ClassUI ambiguity
     {nullptr, nullptr},
 };
@@ -10121,9 +10320,9 @@ static int l_InternalCreateGroup(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit if it exists
+    // Call OnInit if it exists (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10172,9 +10371,9 @@ static int l_InternalCreateFrame(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10227,9 +10426,9 @@ static int l_InternalCreateBitmap(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10293,9 +10492,9 @@ static int l_InternalCreateText(lua_State* L) {
     update_text_advance(ctrl);
     push_font_lazyvars(L, 1, ctrl);
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10349,9 +10548,9 @@ static int l_InternalCreateEdit(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10405,9 +10604,9 @@ static int l_InternalCreateItemList(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10465,9 +10664,9 @@ static int l_InternalCreateScrollbar(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit
+    // Call OnInit (lua_gettable for metatable lookup)
     lua_pushstring(L, "OnInit");
-    lua_rawget(L, 1);
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
@@ -10890,6 +11089,10 @@ static int l_InternalCreateMovie(lua_State* L) {
     // Movie-specific LazyVars
     create_lazyvar(L, 1, "MovieWidth");
     create_lazyvar(L, 1, "MovieHeight");
+
+    // Movie controls are non-interactive backgrounds — disable hit test
+    // so they don't intercept mouse events from interactive controls above.
+    ctrl->set_hit_test_disabled(true);
 
     spdlog::debug("InternalCreateMovie: control #{}", id);
     return 0;
@@ -11649,7 +11852,8 @@ static int l_InternalCreateDiscoveryService(lua_State* L) {
 
 // --- Lobby methods (M76) ---
 
-static int lobby_BroadcastData(lua_State* /*L*/) { return 0; }
+static int lobby_SendData(lua_State* L);
+static int lobby_BroadcastData(lua_State* L) { return lobby_SendData(L); }
 static int lobby_ConnectToPeer(lua_State* /*L*/) { return 0; }
 static int lobby_DebugDump(lua_State* /*L*/) { return 0; }
 static int lobby_Destroy(lua_State* /*L*/) { return 0; }
@@ -11695,7 +11899,69 @@ static int lobby_GetPeers(lua_State* L) {
     return 1;
 }
 
-static int lobby_HostGame(lua_State* /*L*/) { return 0; }
+/// lobby:HostGame() — for single-player, defer ConnectionToHostEstablished
+/// to the next frame via ForkThread. FA's engine fires this asynchronously;
+/// we simulate with a 1-tick delay so InitLobbyComm fully completes first.
+static int lobby_HostGame(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+
+    // Store lobbyComm in a well-known global for the deferred thread to read.
+    // Using rawset to bypass config.lua's global lock.
+    lua_pushstring(L, "__osc_pending_host_comm");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+
+    // Get player name
+    std::string player_name = "Player";
+    lua_pushstring(L, "GetLocalPlayerName");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING)
+            player_name = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pushstring(L, "__osc_pending_host_name");
+    lua_pushstring(L, player_name.c_str());
+    lua_rawset(L, LUA_GLOBALSINDEX);
+
+    // Defer the callback by 1 tick via ForkThread + WaitTicks(1).
+    // Also patch HostUtils.RefreshButtonEnabledness if nil — the HostUtils table
+    // in FAF's lobby.lua is so large that some fields may be missing due to Lua 5.0
+    // table constructor limitations.
+    // Lua 5.0: use luaL_loadbuffer + lua_pcall (no luaL_dostring).
+    {
+        const char* code =
+            "ForkThread(function()\n"
+            "  WaitTicks(1)\n"
+            "  local comm = rawget(_G, '__osc_pending_host_comm')\n"
+            "  local name = rawget(_G, '__osc_pending_host_name') or 'Player'\n"
+            "  rawset(_G, '__osc_pending_host_comm', nil)\n"
+            "  rawset(_G, '__osc_pending_host_name', nil)\n"
+            "  -- Fire Hosting callback first (creates HostUtils, adds host to slot 1)\n"
+            "  if comm and comm.Hosting then\n"
+            "    comm:Hosting()\n"
+            "  end\n"
+            "  -- Then fire ConnectionToHostEstablished (creates the lobby UI)\n"
+            "  if comm and comm.ConnectionToHostEstablished then\n"
+            "    comm:ConnectionToHostEstablished(1, name, 1)\n"
+            "  end\n"
+            "end)\n";
+        if (luaL_loadbuffer(L, code, std::strlen(code), "=HostGame") == 0) {
+            if (lua_pcall(L, 0, 0, 0) != 0) {
+                spdlog::warn("lobby HostGame deferred error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            spdlog::warn("lobby HostGame loadbuffer error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+
+    return 0;
+}
 
 static int lobby_IsHost(lua_State* L) {
     lua_pushboolean(L, 1); // always host in our engine
@@ -11737,7 +12003,51 @@ static int lobby_MakeValidPlayerName(lua_State* L) {
     return 1;
 }
 
-static int lobby_SendData(lua_State* /*L*/) { return 0; }
+static int lobby_SendData(lua_State* L) {
+    // Single-player loopback: call lobbyComm:DataReceived(data) directly
+    // Args: self (lobbyComm), targetID, data
+    if (!lua_istable(L, 1)) return 0;
+    int data_idx = lua_istable(L, 3) ? 3 : (lua_istable(L, 2) ? 2 : 0);
+    if (data_idx == 0) return 0;
+
+    // Inject SenderID and SenderName
+    lua_pushstring(L, "SenderID");
+    lua_pushstring(L, "1");
+    lua_rawset(L, data_idx);
+
+    lua_pushstring(L, "SenderName");
+    lua_pushstring(L, "GetLocalPlayerName");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_type(L, -1) == LUA_TSTRING) {
+            lua_rawset(L, data_idx);
+        } else {
+            lua_pop(L, 1);
+            lua_pushstring(L, "Player");
+            lua_rawset(L, data_idx);
+        }
+    } else {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Player");
+        lua_rawset(L, data_idx);
+    }
+
+    // Call self:DataReceived(data) for loopback
+    lua_pushstring(L, "DataReceived");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        lua_pushvalue(L, data_idx);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            spdlog::warn("SendData loopback error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    return 0;
+}
 
 static const MethodEntry ui_lobby_methods[] = {
     {"BroadcastData",       lobby_BroadcastData},
@@ -14292,8 +14602,33 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // HasCommandLineArg (M147d)
     state.register_function("HasCommandLineArg", l_HasCommandLineArg);
 
+    // GetCommandLineArg(name, count) → array of count values after the named arg, or nil
+    state.register_function("GetCommandLineArg", [](lua_State* L) -> int {
+        lua_pushnil(L); // no FA-style command line args in our engine
+        return 1;
+    });
+
+    // MATH_Lerp(t, t0, t1, v0, v1) → v0 + (v1-v0) * (t-t0) / (t1-t0)
+    state.register_function("MATH_Lerp", [](lua_State* L) -> int {
+        double t  = luaL_checknumber(L, 1);
+        double t0 = luaL_checknumber(L, 2);
+        double t1 = luaL_checknumber(L, 3);
+        double v0 = luaL_checknumber(L, 4);
+        double v1 = luaL_checknumber(L, 5);
+        double denom = t1 - t0;
+        double result = (denom != 0.0) ? v0 + (v1 - v0) * (t - t0) / denom : v0;
+        lua_pushnumber(L, result);
+        return 1;
+    });
+
     // Map preview stub (M148d)
     state.register_function("MapPreview", l_MapPreview);
+
+    // Sound(table) — identity constructor used by FA for sound descriptors
+    state.register_function("Sound", [](lua_State* L) -> int {
+        lua_pushvalue(L, 1);
+        return 1;
+    });
 
     // Audio globals (M147b)
     state.register_function("PlaySound", l_PlaySound);
