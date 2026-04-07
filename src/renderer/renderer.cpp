@@ -1967,8 +1967,18 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
                                     strategic_icon_renderer_.atlas_descriptor(),
                                     window_width_, window_height_);
 
-    // Update profile overlay
+    // Set frame index on all sub-renderers for correct double-buffering
+    unit_renderer_.set_frame_index(fi);
+    ui_renderer_.set_frame_index(fi);
+    overlay_renderer_.set_frame_index(fi);
+    minimap_renderer_.set_frame_index(fi);
+    strategic_icon_renderer_.set_frame_index(fi);
+    hud_renderer_.set_frame_index(fi);
+    selection_info_renderer_.set_frame_index(fi);
+    fog_renderer_.set_frame_index(fi);
     profile_overlay_.set_frame_index(fi);
+
+    // Update profile overlay
     profile_overlay_.update(font_cache_, texture_cache_,
                              window_width_, window_height_);
 
@@ -2652,6 +2662,9 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
         return;
     }
     vkResetFences(device_, 1, &render_fence_[fi]);
+
+    // Set frame index on UI renderer for correct double-buffering
+    ui_renderer_.set_frame_index(fi);
 
     // Flush pending texture uploads BEFORE starting the command buffer
     // (flush_uploads uses its own one-shot command buffers with vkQueueWaitIdle)

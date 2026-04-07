@@ -4509,7 +4509,7 @@ static int weapon_DoInstaHit(lua_State* L) {
         lua_pushnumber(L, amount);
         lua_pushnil(L); // vector (unused)
         lua_pushstring(L, w->damage_type.c_str());
-        lua_pcall(L, 5, 0, 0);
+        if (lua_pcall(L, 5, 0, 0) != 0) { lua_pop(L, 1); }
     } else {
         lua_pop(L, 1);
         // Fallback: direct HP reduction
@@ -4906,7 +4906,7 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
 
     // teamIndex: "Ally", "Enemy", or nil/empty for own army
     int team_arg = radius_arg + 1;
-    const char* team_filter = lua_isstring(L, team_arg)
+    const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
                                   ? lua_tostring(L, team_arg) : "";
 
     // Collect entities in radius
@@ -5261,7 +5261,7 @@ static int brain_GetThreatAtPosition(lua_State* L) {
     f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
 
     // arg 4 = checkVis (ignored)
-    const char* threat_type = lua_isstring(L, 5) ? lua_tostring(L, 5) : "Overall";
+    const char* threat_type = (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
 
     // Optional armyIdx (arg 6) — filter to specific army instead of enemies
     bool filter_specific = lua_isnumber(L, 6);
@@ -5312,7 +5312,7 @@ static int brain_GetThreatsAroundPosition(lua_State* L) {
 
     i32 rings = static_cast<i32>(lua_tonumber(L, 3));
     f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
-    const char* threat_type = lua_isstring(L, 5) ? lua_tostring(L, 5) : "Overall";
+    const char* threat_type = (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
 
     // Optional armyIdx (arg 6) — filter to specific army instead of enemies
     bool filter_specific = lua_isnumber(L, 6);
@@ -5388,7 +5388,7 @@ static int brain_GetHighestThreatPosition(lua_State* L) {
 
     // arg 2 = rings (unused — we scan whole map)
     // arg 3 = checkVis (ignored)
-    const char* threat_type = lua_isstring(L, 4) ? lua_tostring(L, 4) : "Overall";
+    const char* threat_type = (lua_type(L, 4) == LUA_TSTRING) ? lua_tostring(L, 4) : "Overall";
 
     bool filter_specific = lua_isnumber(L, 5);
     i32 specific_army = filter_specific
@@ -5576,7 +5576,7 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
     if (radius <= 0) radius = 1.0f;
 
     int team_arg = radius_arg + 1;
-    const char* team_filter = lua_isstring(L, team_arg)
+    const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
                                   ? lua_tostring(L, team_arg) : "";
 
     auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
@@ -8527,7 +8527,7 @@ static int collision_beam_Enable(lua_State* L) {
         lua_rawget(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1); // self
-            lua_pcall(L, 1, 0, 0);
+            if (lua_pcall(L, 1, 0, 0) != 0) { lua_pop(L, 1); }
         } else {
             lua_pop(L, 1);
         }
@@ -8548,7 +8548,7 @@ static int collision_beam_Disable(lua_State* L) {
         lua_rawget(L, 1);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, 1); // self
-            lua_pcall(L, 1, 0, 0);
+            if (lua_pcall(L, 1, 0, 0) != 0) { lua_pop(L, 1); }
         } else {
             lua_pop(L, 1);
         }
@@ -8590,7 +8590,7 @@ static int collision_beam_SetBeamFx(lua_State* L) {
                 lua_pushvalue(L, 1);       // self
                 lua_pushstring(L, "Terrain"); // impactType
                 lua_pushnil(L);            // targetEntity
-                lua_pcall(L, 3, 0, 0);
+                if (lua_pcall(L, 3, 0, 0) != 0) { lua_pop(L, 1); }
             } else {
                 lua_pop(L, 1);
             }

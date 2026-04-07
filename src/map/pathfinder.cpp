@@ -175,8 +175,13 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
             // Diagonal: also check that both cardinal neighbors are passable
             // (prevent cutting corners through walls)
             if (dir[0] != 0 && dir[1] != 0) {
-                u32 card_x = static_cast<u32>(static_cast<i32>(cx) + dir[0]);
-                u32 card_z = static_cast<u32>(static_cast<i32>(cz) + dir[1]);
+                i32 card_x_i = static_cast<i32>(cx) + dir[0];
+                i32 card_z_i = static_cast<i32>(cz) + dir[1];
+                if (card_x_i < 0 || static_cast<u32>(card_x_i) >= w ||
+                    card_z_i < 0 || static_cast<u32>(card_z_i) >= h)
+                    continue;
+                u32 card_x = static_cast<u32>(card_x_i);
+                u32 card_z = static_cast<u32>(card_z_i);
                 if (!grid_.is_passable_for(card_x, cz, layer, draft, amphibious) ||
                     !grid_.is_passable_for(cx, card_z, layer, draft, amphibious))
                     continue;

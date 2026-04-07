@@ -400,7 +400,7 @@ public:
     bool is_dying() const { return dying_; }
     f32 death_timer() const { return death_timer_; }
     void begin_dying(f32 duration);
-    void tick_dying(f32 dt);
+    void tick_dying(f32 dt, const map::Terrain* terrain);
 
     // Damage/kill flags
     bool can_take_damage() const { return can_take_damage_; }

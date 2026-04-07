@@ -302,7 +302,7 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     // Simulate crash
     osc::f32 prev_y = unit.position().y;
     for (int i = 0; i < 100; i++) {
-        unit.tick_dying(0.1f);
+        unit.tick_dying(0.1f, nullptr);
         if (!unit.is_crashing()) break;
     }
 
@@ -339,7 +339,7 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     // Run crash ticks
     bool hit_ground = false;
     for (int i = 0; i < 200; i++) {
-        unit.tick_dying(0.1f);
+        unit.tick_dying(0.1f, nullptr);
         if (unit.crash_impacted()) {
             hit_ground = true;
             break;

@@ -593,6 +593,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
             entry.depth = depth;
             quads_.push_back(entry);
             quad_count_++;
+
         }
 
         // Edit control: background + text + caret
@@ -615,6 +616,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
             emit_text_quads(ctrl, font_cache, left, top, width, height, depth,
                             parent_clip);
         }
+
     }
 
     lua_pop(L, 1); // pop Lua table

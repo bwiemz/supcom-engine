@@ -50,10 +50,11 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
                 !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)) {
                 target_entity_id = 0;
             } else {
-                // Check range
+                // Check range (3D distance)
                 f32 dx = target->position().x - owner.position().x;
+                f32 dy = target->position().y - owner.position().y;
                 f32 dz = target->position().z - owner.position().z;
-                f32 dist2 = dx * dx + dz * dz;
+                f32 dist2 = dx * dx + dy * dy + dz * dz;
                 f32 max2 = max_range * max_range;
                 f32 min2 = min_range * min_range;
                 if (dist2 <= max2 && dist2 >= min2 &&
@@ -87,8 +88,9 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
             continue;
 
         f32 dx = e->position().x - owner.position().x;
+        f32 dy = e->position().y - owner.position().y;
         f32 dz = e->position().z - owner.position().z;
-        f32 dist2 = dx * dx + dz * dz;
+        f32 dist2 = dx * dx + dy * dy + dz * dz;
         if (dist2 < min2) continue;
         if (dist2 < best_dist2) {
             best_dist2 = dist2;

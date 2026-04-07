@@ -41,7 +41,16 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     command_queue_.push_back(cmd);
 }
 
-void Unit::clear_commands() {
+void Unit::clear_queued_commands() {
+    // Keep the front command (currently executing), remove the rest
+    if (command_queue_.size() > 1) {
+        auto front = command_queue_.front();
+        command_queue_.clear();
+        command_queue_.push_back(front);
+    }
+}
+
+void Unit::clear_commands(const char*) {
     command_queue_.clear();
     navigator_.abort_move();
 }
@@ -196,7 +205,7 @@ void Unit::begin_air_crash(f32 crash_dmg) {
     economy_.production_active = false;
 }
 
-void Unit::tick_dying(f32 dt) {
+void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
     if (!dying_) return;
 
     if (crashing_) {
@@ -217,8 +226,9 @@ void Unit::tick_dying(f32 dt) {
         p.y += crash_velocity_y_ * dt;
 
         // Terrain impact check
-        if (p.y <= 0) {
-            p.y = 0;
+        f32 ground = terrain ? terrain->get_terrain_height(p.x, p.z) : 0.0f;
+        if (p.y <= ground) {
+            p.y = ground;
             set_position(p);
             crash_impacted_ = true;
             crashing_ = false;
@@ -266,7 +276,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
     // Dying units only tick manipulators (for death animation) — skip everything else
     if (dying_) {
-        tick_dying(static_cast<f32>(dt));
+        tick_dying(static_cast<f32>(dt), ctx.terrain);
         tick_manipulators(static_cast<f32>(dt), ctx.L);
         return;
     }
