@@ -228,6 +228,15 @@ private:
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);
 
+    // Stealth-aware intel helpers with pre-cached stealth flags to avoid
+    // redundant per-army is_intel_enabled string lookups in inner loops.
+    bool has_effective_radar_cached(const Entity* entity, u32 req_army,
+                                    bool radar_stealth) const;
+    bool has_effective_sonar_cached(const Entity* entity, u32 req_army,
+                                    bool sonar_stealth) const;
+    bool has_any_intel_cached(const Entity* entity, u32 req_army,
+                              bool radar_stealth, bool sonar_stealth) const;
+
     lua_State* L_;
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;

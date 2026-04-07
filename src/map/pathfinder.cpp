@@ -111,10 +111,14 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
 
     auto idx = [w](u32 x, u32 z) -> u32 { return z * w + x; };
 
-    // g_cost and parent arrays
-    std::vector<f32> g_cost(total, FLT_MAX);
-    std::vector<u32> parent(total, UINT32_MAX);
-    std::vector<bool> closed(total, false);
+    // Reuse persistent buffers to avoid per-call heap allocations.
+    // assign() reuses existing capacity when the vector is already large enough.
+    g_cost_buf_.assign(total, FLT_MAX);
+    parent_buf_.assign(total, UINT32_MAX);
+    closed_buf_.assign(total, false);
+    auto& g_cost = g_cost_buf_;
+    auto& parent = parent_buf_;
+    auto& closed = closed_buf_;
 
     // Priority queue: (f_cost, node_index)
     using PQEntry = std::pair<f32, u32>;

@@ -162,8 +162,12 @@ void ThreadManager::resume_all(u32 current_tick) {
         if (t.dead || t.wait_until_tick > static_cast<i32>(current_tick))
             continue;
 
-        // Set instruction count hook to prevent infinite loops
-        if (instruction_budget_ > 0) {
+        // Set instruction count hook to prevent infinite loops.
+        // Skip hook setup for very large budgets (>= 1M) since they're
+        // effectively unlimited — avoids per-instruction callback overhead.
+        bool need_hook = (instruction_budget_ > 0 &&
+                          instruction_budget_ < 1000000);
+        if (need_hook) {
             lua_sethook(t.coroutine, instruction_hook,
                         LUA_MASKCOUNT, instruction_budget_);
         }
@@ -176,7 +180,7 @@ void ThreadManager::resume_all(u32 current_tick) {
         int status = lua_resume(t.coroutine, nargs);
 
         // Clear hook after resume
-        if (instruction_budget_ > 0) {
+        if (need_hook) {
             lua_sethook(t.coroutine, nullptr, 0, 0);
         }
 

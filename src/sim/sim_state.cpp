@@ -185,6 +185,39 @@ bool SimState::has_any_intel(const Entity* entity, u32 req_army) const {
            visibility_grid_->has_omni(pos.x, pos.z, req_army);
 }
 
+// --- Cached stealth variants (avoid per-army is_intel_enabled string lookups) ---
+
+bool SimState::has_effective_radar_cached(const Entity* entity, u32 req_army,
+                                           bool radar_stealth) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    if (!visibility_grid_->has_radar(pos.x, pos.z, req_army)) return false;
+    if (radar_stealth && !visibility_grid_->has_omni(pos.x, pos.z, req_army))
+        return false;
+    return true;
+}
+
+bool SimState::has_effective_sonar_cached(const Entity* entity, u32 req_army,
+                                           bool sonar_stealth) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    if (!visibility_grid_->has_sonar(pos.x, pos.z, req_army)) return false;
+    if (sonar_stealth && !visibility_grid_->has_omni(pos.x, pos.z, req_army))
+        return false;
+    return true;
+}
+
+bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
+                                     bool radar_stealth,
+                                     bool sonar_stealth) const {
+    if (!visibility_grid_ || !entity) return false;
+    auto& pos = entity->position();
+    return visibility_grid_->has_vision(pos.x, pos.z, req_army) ||
+           has_effective_radar_cached(entity, req_army, radar_stealth) ||
+           has_effective_sonar_cached(entity, req_army, sonar_stealth) ||
+           visibility_grid_->has_omni(pos.x, pos.z, req_army);
+}
+
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
     tick_count_++;
@@ -426,17 +459,23 @@ void SimState::update_visibility() {
     });
 
     // 2b. Paint temporary vision areas (scrying, Eye of Rhianne)
-    for (auto& tv : temp_visions_) {
-        if (tv.remaining_ticks > 0) {
-            visibility_grid_->paint_circle(tv.army, tv.x, tv.z, tv.radius,
-                                           map::VisFlag::Vision);
-            tv.remaining_ticks--;
+    // Single-pass: paint, decrement, and compact in place
+    {
+        size_t write = 0;
+        for (size_t read = 0; read < temp_visions_.size(); ++read) {
+            auto& tv = temp_visions_[read];
+            if (tv.remaining_ticks > 0) {
+                visibility_grid_->paint_circle(tv.army, tv.x, tv.z, tv.radius,
+                                               map::VisFlag::Vision);
+                tv.remaining_ticks--;
+                if (tv.remaining_ticks > 0) {
+                    if (write != read) temp_visions_[write] = tv;
+                    write++;
+                }
+            }
         }
+        temp_visions_.resize(write);
     }
-    temp_visions_.erase(
-        std::remove_if(temp_visions_.begin(), temp_visions_.end(),
-            [](const TempVision& v) { return v.remaining_ticks <= 0; }),
-        temp_visions_.end());
 
     // 3. Share allied vision
     u32 n = static_cast<u32>(
@@ -455,9 +494,14 @@ void SimState::update_visibility() {
     entity_registry_.for_each([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         u32 eid = e.entity_id();
+        // Cache per-unit stealth state before the army loop to avoid
+        // redundant is_intel_enabled string lookups per army iteration.
+        auto* unit = static_cast<Unit*>(&e);
+        bool radar_stealth = unit->has_radar_stealth();
+        bool sonar_stealth = unit->has_sonar_stealth();
         for (u32 a = 0; a < n; ++a) {
             if (static_cast<i32>(a) == e.army()) continue; // skip own army
-            if (has_any_intel(&e, a)) {
+            if (has_any_intel_cached(&e, a, radar_stealth, sonar_stealth)) {
                 // Army can see entity — update cached snapshot
                 auto& snap = blip_cache_[eid][a];
                 snap.last_known_position = e.position();
@@ -470,15 +514,13 @@ void SimState::update_visibility() {
     });
 
     // Erase destroyed entities from blip cache (prevents unbounded growth)
-    {
-        std::vector<u32> dead_ids;
-        for (auto& [eid, _] : blip_cache_) {
-            auto* e = entity_registry_.find(eid);
-            if (!e || e->destroyed())
-                dead_ids.push_back(eid);
+    for (auto it = blip_cache_.begin(); it != blip_cache_.end(); ) {
+        auto* e = entity_registry_.find(it->first);
+        if (!e || e->destroyed()) {
+            it = blip_cache_.erase(it);
+        } else {
+            ++it;
         }
-        for (u32 eid : dead_ids)
-            blip_cache_.erase(eid);
     }
 
     // 4. Detect changes and fire OnIntelChange (stealth-aware)
@@ -495,13 +537,18 @@ void SimState::update_visibility() {
 
         auto& pos = e->position();
 
+        // Cache per-unit stealth state before the army loop.
+        auto* u = static_cast<const Unit*>(e);
+        bool radar_stealth = u->has_radar_stealth();
+        bool sonar_stealth = u->has_sonar_stealth();
+
         for (u32 a = 0; a < n; ++a) {
             if (static_cast<i32>(a) == e->army()) continue; // skip own army
 
             bool cur_vis =
                 visibility_grid_->has_vision(pos.x, pos.z, a);
-            bool cur_rad = has_effective_radar(e, a);
-            bool cur_son = has_effective_sonar(e, a);
+            bool cur_rad = has_effective_radar_cached(e, a, radar_stealth);
+            bool cur_son = has_effective_sonar_cached(e, a, sonar_stealth);
             bool cur_omn =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
 
@@ -538,12 +585,15 @@ void SimState::update_visibility() {
     entity_registry_.for_each([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto& pos = e.position();
+        auto* unit = static_cast<const Unit*>(&e);
+        bool radar_stealth = unit->has_radar_stealth();
+        bool sonar_stealth = unit->has_sonar_stealth();
         std::array<EntityVisSnapshot, MAX_VIS_ARMIES> states{};
         for (u32 a = 0; a < n; ++a) {
             states[a].vision =
                 visibility_grid_->has_vision(pos.x, pos.z, a);
-            states[a].radar = has_effective_radar(&e, a);
-            states[a].sonar = has_effective_sonar(&e, a);
+            states[a].radar = has_effective_radar_cached(&e, a, radar_stealth);
+            states[a].sonar = has_effective_sonar_cached(&e, a, sonar_stealth);
             states[a].omni =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
         }

@@ -53,6 +53,11 @@ private:
 
     static constexpr u32 MAX_NODES_EXPLORED = 50000;
     mutable int requests_this_tick_ = 0;
+
+    // Reusable buffers for A* to avoid per-call heap allocations.
+    mutable std::vector<f32> g_cost_buf_;
+    mutable std::vector<u32> parent_buf_;
+    mutable std::vector<bool> closed_buf_;
 };
 
 } // namespace osc::map
