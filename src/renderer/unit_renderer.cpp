@@ -1,4 +1,5 @@
 #include "renderer/unit_renderer.hpp"
+#include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_types.hpp"
@@ -9,7 +10,6 @@
 
 #include <spdlog/spdlog.h>
 
-#include <array>
 #include <cmath>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,18 +21,6 @@ struct CubeVertex {
     f32 x, y, z;
     f32 nx, ny, nz;
 };
-
-// Default army colors (RGBA, 0-1)
-static constexpr std::array<std::array<f32, 3>, 8> ARMY_COLORS = {{
-    {0.2f, 0.4f, 1.0f},  // ARMY_1: Blue
-    {1.0f, 0.2f, 0.2f},  // ARMY_2: Red
-    {0.2f, 0.8f, 0.2f},  // ARMY_3: Green
-    {1.0f, 1.0f, 0.2f},  // ARMY_4: Yellow
-    {1.0f, 0.5f, 0.1f},  // ARMY_5: Orange
-    {0.7f, 0.2f, 0.9f},  // ARMY_6: Purple
-    {0.2f, 0.9f, 0.9f},  // ARMY_7: Cyan
-    {0.9f, 0.9f, 0.9f},  // ARMY_8: White
-}};
 
 /// Resolve army color for an entity.
 static void get_army_color(const sim::Entity& entity,

@@ -1,4 +1,5 @@
 #include "renderer/strategic_icon_renderer.hpp"
+#include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/sim_state.hpp"
@@ -10,18 +11,6 @@
 #include <cstring>
 
 namespace osc::renderer {
-
-// Default army colors (duplicated from unit_renderer.cpp / minimap_renderer.cpp)
-static constexpr std::array<std::array<f32, 3>, 8> ARMY_COLORS = {{
-    {0.2f, 0.4f, 1.0f},  // Blue
-    {1.0f, 0.2f, 0.2f},  // Red
-    {0.2f, 0.8f, 0.2f},  // Green
-    {1.0f, 1.0f, 0.2f},  // Yellow
-    {1.0f, 0.5f, 0.1f},  // Orange
-    {0.7f, 0.2f, 0.9f},  // Purple
-    {0.2f, 0.9f, 0.9f},  // Cyan
-    {0.9f, 0.9f, 0.9f},  // White
-}};
 
 static void get_army_color(const sim::Entity& entity,
                             const sim::SimState& sim,

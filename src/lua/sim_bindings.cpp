@@ -1718,31 +1718,15 @@ static int l_sim_ResumeSim(lua_State* L) {
 // Misc stubs
 // ====================================================================
 
-static int stub_noop(lua_State*) { return 0; }
-static int stub_false(lua_State* L) {
-    lua_pushboolean(L, 0);
-    return 1;
-}
-static int stub_true(lua_State* L) {
-    lua_pushboolean(L, 1);
-    return 1;
-}
-static int stub_zero(lua_State* L) {
-    lua_pushnumber(L, 0);
-    return 1;
-}
-static int stub_nil(lua_State* L) {
-    lua_pushnil(L);
-    return 1;
-}
-static int stub_empty_table(lua_State* L) {
-    lua_newtable(L);
-    return 1;
-}
-static int stub_return_1000(lua_State* L) {
-    lua_pushnumber(L, 1000);
-    return 1;
-}
+// Stub functions — shared definitions in lua_stubs.hpp, local aliases for brevity
+#include "lua/lua_stubs.hpp"
+static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
+static int (*const stub_false)(lua_State*) = lua_stubs::return_false;
+static int (*const stub_true)(lua_State*) = lua_stubs::return_true;
+static int (*const stub_zero)(lua_State*) = lua_stubs::return_zero;
+static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
+static int (*const stub_empty_table)(lua_State*) = lua_stubs::return_empty_table;
+static int (*const stub_return_1000)(lua_State*) = lua_stubs::return_1000;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
 // for chaining (e.g., CreateAnimator(self):PlayAnim(anim):SetRate(1)).
