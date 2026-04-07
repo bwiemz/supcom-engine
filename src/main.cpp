@@ -1973,6 +1973,9 @@ int main(int argc, char* argv[]) {
                                 sim_accumulator,
                                 launch_scenario);
 
+                            // Reset per-session state for the new game
+                            first_update_fired = false;
+
                             // Re-install instrument harness on new sim VM (M166)
                             if (instrument_harness && sim_lua_state) {
                                 instrument_harness->install_panic_handler(sim_lua_state->raw());

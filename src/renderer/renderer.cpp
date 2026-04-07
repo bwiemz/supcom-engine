@@ -2857,7 +2857,11 @@ void Renderer::recreate_swapchain() {
     VkSwapchainKHR old_sc = swapchain_;
 
     // Recreate
-    create_swapchain(static_cast<u32>(w), static_cast<u32>(h));
+    if (!create_swapchain(static_cast<u32>(w), static_cast<u32>(h))) {
+        spdlog::error("recreate_swapchain: create_swapchain failed");
+        swapchain_ = VK_NULL_HANDLE;
+        return;
+    }
 
     // Destroy retired swapchain (spec requires explicit destroy after recreation)
     if (old_sc != VK_NULL_HANDLE)

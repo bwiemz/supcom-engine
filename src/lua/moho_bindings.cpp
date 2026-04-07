@@ -801,6 +801,9 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // Guard against recursive destruction from OnNotAdjacentTo callbacks
+        if (e->destroyed()) return 0;
+
         // Veterancy + score tracking on first death (not during death animation)
         if (e->is_unit()) {
             auto* dying_unit = static_cast<sim::Unit*>(e);
