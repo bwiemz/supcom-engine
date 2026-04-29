@@ -40,18 +40,18 @@ Some historical plan checkboxes are stale. The following items from the April fu
 - lobby slot config wiring for `Human`, `AIPersonality`, `Faction`, `Team`, `StartSpot`, `PlayerColor`, and `ArmyColor`
 - validated teleport destinations for playable bounds, path passability, and footprint occupancy
 - cloak participation in effective vision and weapon target acquisition
+- cloak intel and maintenance economy behavior: enabling `Cloak` sets the sim cloak flag, and energy stall disables cloak maintenance
 - sim-side focus army normalization for FA Lua's 1-based army ids
 - classification of the known FA AI builder `deepcopy` diagnostic below the active log level
 
 ## Known Gaps And Risks
 
 - `GameOptions.ScenarioFile` still needs tighter end-to-end wiring from lobby/UI selection into reload.
-- Cloak energy-drain and maintenance behavior still need integration; cloak now affects vision and weapon targeting, but the economy side remains incomplete.
 - Several stubs remain intentionally cosmetic, multiplayer-only, debug-only, or deprecated. They should stay classified so gameplay blockers are not hidden among harmless no-ops.
 
 ## Recommended Work Order
 
 1. Keep docs and ignores accurate so local tooling noise does not obscure engine changes.
-2. Finish the remaining cloak economy behavior and any other active-unit maintenance toggles that affect real match balance.
+2. Audit the remaining active-unit maintenance toggles, especially radar, sonar, stealth fields, jamming, and shield-adjacent upkeep, for stall behavior parity.
 3. Tighten lobby-to-reload `GameOptions.ScenarioFile` handling and then revisit score/lobby polish.
 4. Continue classifying stubs by gameplay impact so harmless UI/multiplayer no-ops do not mask skirmish blockers.

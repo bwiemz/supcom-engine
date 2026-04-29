@@ -2428,16 +2428,37 @@ f32 Unit::get_intel_radius(const std::string& type) const {
 
 void Unit::init_intel(const std::string& type, f32 radius) {
     intel_states_[type] = IntelState{radius, true};
+    if (type == "Cloak") {
+        set_cloaked(true);
+    } else if (type == "RadarStealth") {
+        set_radar_stealth(true);
+    } else if (type == "SonarStealth") {
+        set_sonar_stealth(true);
+    }
 }
 
 void Unit::enable_intel(const std::string& type) {
     intel_states_[type].enabled = true;
+    if (type == "Cloak") {
+        set_cloaked(true);
+    } else if (type == "RadarStealth") {
+        set_radar_stealth(true);
+    } else if (type == "SonarStealth") {
+        set_sonar_stealth(true);
+    }
 }
 
 void Unit::disable_intel(const std::string& type) {
     auto it = intel_states_.find(type);
     if (it != intel_states_.end())
         it->second.enabled = false;
+    if (type == "Cloak") {
+        set_cloaked(false);
+    } else if (type == "RadarStealth") {
+        set_radar_stealth(false);
+    } else if (type == "SonarStealth") {
+        set_sonar_stealth(false);
+    }
 }
 
 void Unit::set_intel_radius(const std::string& type, f32 radius) {

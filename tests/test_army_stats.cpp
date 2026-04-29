@@ -1,6 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include "sim/army_brain.hpp"
+#include "sim/entity_registry.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/unit.hpp"
 #include "lua/session_manager.hpp"
+
+#include <memory>
 
 TEST_CASE("ArmyBrain stat storage", "[army][stats]") {
     osc::sim::ArmyBrain brain;
@@ -34,6 +39,40 @@ TEST_CASE("ArmyBrain explicit color state", "[army][color]") {
         REQUIRE(brain.color_g() == 64);
         REQUIRE(brain.color_b() == 128);
     }
+}
+
+TEST_CASE("Cloak intel drives cloak flag", "[cloak][economy]") {
+    osc::sim::Unit unit;
+
+    unit.enable_intel("Cloak");
+    REQUIRE(unit.is_cloaked());
+
+    unit.disable_intel("Cloak");
+    REQUIRE_FALSE(unit.is_cloaked());
+}
+
+TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    brain.set_stored_resources(0.0, 0.0);
+
+    auto cloaked = std::make_unique<osc::sim::Unit>();
+    cloaked->set_army(0);
+    cloaked->set_cloaked(true);
+    cloaked->enable_intel("Cloak");
+    cloaked->economy().maintenance_active = true;
+    cloaked->economy().energy_maintenance_override = 100.0;
+    auto unit_id = registry.register_entity(std::move(cloaked));
+
+    brain.update_economy(registry, 1.0);
+
+    auto* unit = static_cast<osc::sim::Unit*>(registry.find(unit_id));
+    REQUIRE(unit != nullptr);
+    REQUIRE(brain.energy_efficiency() == 0.0);
+    REQUIRE_FALSE(unit->is_cloaked());
+    REQUIRE_FALSE(unit->is_intel_enabled("Cloak"));
+    REQUIRE_FALSE(unit->economy().maintenance_active);
 }
 
 TEST_CASE("SessionManager slot configs override AI and setup defaults", "[session][config]") {

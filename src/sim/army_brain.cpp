@@ -158,6 +158,22 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         energy_efficiency_ = (energy_needed > 0) ? energy_consumed / energy_needed : 1.0;
     }
 
+    if (energy_efficiency_ < 1.0) {
+        registry.for_each([&](Entity& e) {
+            if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
+            auto& unit = static_cast<Unit&>(e);
+            auto& econ = unit.economy();
+            if (!unit.is_cloaked() || !econ.maintenance_active ||
+                econ.energy_maintenance_override <= 0.0) {
+                return;
+            }
+            unit.disable_intel("Cloak");
+            unit.disable_intel("CloakField");
+            unit.set_cloaked(false);
+            econ.maintenance_active = false;
+        });
+    }
+
     // Accumulate total resources collected for score tracking
     if (economy_.mass.income > 0) {
         stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
