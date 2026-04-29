@@ -22,6 +22,17 @@ class SimState;
 
 namespace osc::lua {
 
+struct ArmySlotConfig {
+    bool configured = false;
+    bool human = true;
+    int faction = 1;
+    int team = 1;
+    int start_spot = 0; // 1-based scenario marker index; 0 = default slot
+    int player_color = -1;
+    int army_color = -1;
+    std::string ai_personality;
+};
+
 class SessionManager {
 public:
     /// Run the full session lifecycle:
@@ -49,11 +60,27 @@ public:
     /// "tech", "adaptivecheat").  Default: "adaptive".
     void set_ai_personality(const std::string& p) { ai_personality_ = p; }
 
+    void set_army_slot_configs(const std::vector<ArmySlotConfig>& configs) {
+        army_slot_configs_ = configs;
+    }
+
+    const ArmySlotConfig* slot_config_for_army(int index) const {
+        if (index < 0 ||
+            index >= static_cast<int>(army_slot_configs_.size()) ||
+            !army_slot_configs_[static_cast<size_t>(index)].configured) {
+            return nullptr;
+        }
+        return &army_slot_configs_[static_cast<size_t>(index)];
+    }
+
     /// Set cheat multipliers (only used when personality ends with "cheat").
     void set_cheat_mult(double m) { cheat_mult_ = m; }
     void set_build_mult(double m) { build_mult_ = m; }
 
     bool is_ai_army(int index) const {
+        if (const auto* cfg = slot_config_for_army(index)) {
+            return !cfg->human;
+        }
         return std::find(ai_army_indices_.begin(), ai_army_indices_.end(),
                          index) != ai_army_indices_.end();
     }
@@ -69,6 +96,7 @@ private:
 
     bool session_active_ = false;
     std::vector<int> ai_army_indices_;
+    std::vector<ArmySlotConfig> army_slot_configs_;
     int max_armies_ = 0; // 0 = no limit
     std::string ai_personality_ = "adaptive";
     double cheat_mult_ = 2.0;

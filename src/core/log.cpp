@@ -49,13 +49,26 @@ static std::string lua_concat_args(lua_State* L) {
     return result;
 }
 
+static bool is_builder_deepcopy_diagnostic(const std::string& message) {
+    return message.find("stack traceback:") != std::string::npos &&
+           message.find("/lua/system/utils.lua:158: in function `deepcopy'") !=
+               std::string::npos &&
+           message.find("/lua/sim/builder.lua:234: in function "
+                        "`SetupBuilderConditions'") != std::string::npos;
+}
+
 int l_LOG(lua_State* L) {
     spdlog::info("{}", lua_concat_args(L));
     return 0;
 }
 
 int l_WARN(lua_State* L) {
-    spdlog::warn("{}", lua_concat_args(L));
+    auto message = lua_concat_args(L);
+    if (is_builder_deepcopy_diagnostic(message)) {
+        spdlog::trace("{}", message);
+    } else {
+        spdlog::warn("{}", message);
+    }
     return 0;
 }
 

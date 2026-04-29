@@ -7,6 +7,10 @@
 
 struct lua_State;
 
+namespace osc::map {
+class VisibilityGrid;
+}
+
 namespace osc::sim {
 
 class EntityRegistry;
@@ -49,13 +53,16 @@ public:
 
     /// Per-tick: scan for targets, fire if ready.
     void update(f64 dt, Unit& owner, EntityRegistry& registry,
-                lua_State* L);
+                lua_State* L,
+                const map::VisibilityGrid* visibility_grid = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
-    bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L);
+    bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
+                  const map::VisibilityGrid* visibility_grid = nullptr);
 
 private:
-    void update_targeting(Unit& owner, EntityRegistry& registry);
+    void update_targeting(Unit& owner, EntityRegistry& registry,
+                          const map::VisibilityGrid* visibility_grid);
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.

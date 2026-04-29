@@ -1,4 +1,6 @@
 /.serena
+/.claude
+/.VSCodeCounter
 /build/
 /build-release/
 /.claude/worktrees/

@@ -577,6 +577,7 @@ static bool execute_reload_sequence(
 
         // Try to retrieve sessionConfig from FrontEndData (set by lobby)
         std::vector<int> ai_indices;
+        std::vector<osc::lua::ArmySlotConfig> slot_configs;
         std::string ai_personality = "adaptive";
         int filled_slots = 0;
 
@@ -596,17 +597,22 @@ static bool execute_reload_sequence(
                 if (lua_istable(uiL, -1)) {
                     int po_idx = lua_gettop(uiL);
                     int n = luaL_getn(uiL, po_idx);
+                    slot_configs.resize(static_cast<size_t>(n));
                     for (int slot = 1; slot <= n; slot++) {
                         lua_rawgeti(uiL, po_idx, slot);
                         if (!lua_istable(uiL, -1)) { lua_pop(uiL, 1); continue; }
                         int entry = lua_gettop(uiL);
                         filled_slots++;
+                        auto& slot_cfg =
+                            slot_configs[static_cast<size_t>(slot - 1)];
+                        slot_cfg.configured = true;
 
                         // Check Human field
                         lua_pushstring(uiL, "Human");
                         lua_rawget(uiL, entry);
                         bool is_human = lua_toboolean(uiL, -1) != 0;
                         lua_pop(uiL, 1);
+                        slot_cfg.human = is_human;
 
                         if (!is_human) {
                             // AI army — slot is 1-based, army index is 0-based
@@ -617,6 +623,7 @@ static bool execute_reload_sequence(
                             lua_rawget(uiL, entry);
                             if (lua_type(uiL, -1) == LUA_TSTRING) {
                                 ai_personality = lua_tostring(uiL, -1);
+                                slot_cfg.ai_personality = ai_personality;
                             }
                             lua_pop(uiL, 1);
                         }
@@ -627,6 +634,22 @@ static bool execute_reload_sequence(
                         int faction = lua_isnumber(uiL, -1)
                             ? static_cast<int>(lua_tonumber(uiL, -1)) : 1;
                         lua_pop(uiL, 1);
+                        slot_cfg.faction = faction;
+
+                        auto read_int_field = [&](const char* key, int def) {
+                            lua_pushstring(uiL, key);
+                            lua_rawget(uiL, entry);
+                            int value = lua_isnumber(uiL, -1)
+                                ? static_cast<int>(lua_tonumber(uiL, -1))
+                                : def;
+                            lua_pop(uiL, 1);
+                            return value;
+                        };
+                        slot_cfg.team = read_int_field("Team", slot);
+                        slot_cfg.start_spot = read_int_field("StartSpot", slot);
+                        slot_cfg.player_color =
+                            read_int_field("PlayerColor", -1);
+                        slot_cfg.army_color = read_int_field("ArmyColor", -1);
 
                         // Store faction on the army brain (0-based index)
                         auto* brain = sim_state->get_army(slot - 1);
@@ -641,6 +664,9 @@ static bool execute_reload_sequence(
         }
 
         // Apply parsed config (or fall back to defaults)
+        if (!slot_configs.empty()) {
+            new_session_mgr.set_army_slot_configs(slot_configs);
+        }
         if (!ai_indices.empty()) {
             new_session_mgr.set_ai_armies(ai_indices);
             new_session_mgr.set_ai_personality(ai_personality);

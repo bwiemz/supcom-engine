@@ -1158,17 +1158,21 @@ static int l_ListArmies(lua_State* L) {
 static int l_GetFocusArmy(lua_State* L) {
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_isnil(L, -1)) {
+    if (lua_isnumber(L, -1)) {
+        int stored = static_cast<int>(lua_tonumber(L, -1));
         lua_pop(L, 1);
-        lua_pushnumber(L, 0); // default: player army 0
+        lua_pushnumber(L, stored >= 0 ? stored + 1 : -1);
+        return 1;
     }
+    lua_pop(L, 1);
+    lua_pushnumber(L, 1); // default: ARMY_1 in Lua's 1-based convention
     return 1;
 }
 
 static int l_SetFocusArmy(lua_State* L) {
     int army = static_cast<int>(luaL_checknumber(L, 1));
     lua_pushstring(L, "__osc_focus_army");
-    lua_pushnumber(L, army);
+    lua_pushnumber(L, army > 0 ? army - 1 : army);
     lua_rawset(L, LUA_REGISTRYINDEX);
     spdlog::debug("SetFocusArmy: {}", army);
     return 0;

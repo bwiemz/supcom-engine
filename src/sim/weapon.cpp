@@ -3,6 +3,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/projectile.hpp"
 #include "sim/unit.hpp"
+#include "map/visibility_grid.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -16,8 +17,32 @@ extern "C" {
 
 namespace osc::sim {
 
+namespace {
+
+bool has_omni_detection(const Unit& owner, const Entity& target,
+                        const map::VisibilityGrid* visibility_grid) {
+    if (!visibility_grid || owner.army() < 0) return false;
+    const auto& pos = target.position();
+    return visibility_grid->has_omni(pos.x, pos.z,
+                                     static_cast<u32>(owner.army()));
+}
+
+bool is_weapon_targetable(const Unit& owner, const Entity& target,
+                          const map::VisibilityGrid* visibility_grid) {
+    if (!target.is_unit()) return true;
+    const auto* target_unit = static_cast<const Unit*>(&target);
+    if (target_unit->is_cloaked() &&
+        !has_omni_detection(owner, target, visibility_grid)) {
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 void Weapon::update(f64 dt, Unit& owner, EntityRegistry& registry,
-                    lua_State* L) {
+                    lua_State* L,
+                    const map::VisibilityGrid* visibility_grid) {
     if (!enabled || fire_on_death || manual_fire) return;
     if (max_range <= 0 || damage <= 0) return;
     // HoldFire (1) = don't auto-target or fire at all
@@ -27,24 +52,26 @@ void Weapon::update(f64 dt, Unit& owner, EntityRegistry& registry,
     fire_cooldown = std::max(0.0f, fire_cooldown - static_cast<f32>(dt));
 
     // Target acquisition
-    update_targeting(owner, registry);
+    update_targeting(owner, registry, visibility_grid);
 
     if (target_entity_id == 0) return;
 
     // Fire if cooldown expired
     if (fire_cooldown <= 0) {
-        if (try_fire(owner, registry, L)) {
+        if (try_fire(owner, registry, L, visibility_grid)) {
             fire_cooldown = (rate_of_fire > 0) ? (1.0f / rate_of_fire) : 1.0f;
         }
     }
 }
 
-void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
+void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
+                              const map::VisibilityGrid* visibility_grid) {
     // Check if current target is still valid
     if (target_entity_id > 0) {
         auto* target = registry.find(target_entity_id);
         if (target && !target->destroyed() && target->is_unit() &&
-            !target->do_not_target()) {
+            !target->do_not_target() &&
+            is_weapon_targetable(owner, *target, visibility_grid)) {
             // Layer cap check on existing target
             if (fire_target_layer_caps != 0xFF &&
                 !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)) {
@@ -82,6 +109,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
         if (e->army() == owner.army() || e->army() < 0) continue;
         if (e->entity_id() == owner.entity_id()) continue;
         if (e->do_not_target()) continue;
+        if (!is_weapon_targetable(owner, *e, visibility_grid)) continue;
         // Layer cap filter
         if (fire_target_layer_caps != 0xFF &&
             !(layer_to_bit(static_cast<Unit*>(e)->layer()) & fire_target_layer_caps))
@@ -102,9 +130,11 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry) {
 }
 
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
-                      lua_State* L) {
+                      lua_State* L,
+                      const map::VisibilityGrid* visibility_grid) {
     auto* target = registry.find(target_entity_id);
     if (!target || target->destroyed() || target->do_not_target() ||
+        !is_weapon_targetable(owner, *target, visibility_grid) ||
         (fire_target_layer_caps != 0xFF && target->is_unit() &&
          !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps))) {
         target_entity_id = 0;

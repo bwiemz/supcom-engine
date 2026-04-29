@@ -157,7 +157,9 @@ public:
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {
         color_r_ = r; color_g_ = g; color_b_ = b;
+        has_color_ = true;
     }
+    bool has_color() const { return has_color_; }
     u8 color_r() const { return color_r_; }
     u8 color_g() const { return color_g_; }
     u8 color_b() const { return color_b_; }
@@ -182,6 +184,7 @@ private:
     Vector3 start_position_;
     i32 build_place_counter_ = 0;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
+    bool has_color_ = false;
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
 
     std::string current_plan_;

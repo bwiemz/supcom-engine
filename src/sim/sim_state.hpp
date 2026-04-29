@@ -38,6 +38,7 @@ namespace osc::sim {
 
 class AnimCache;
 class BoneCache;
+class Unit;
 
 /// Camera shake event queued by ShakeCamera moho method.
 struct CameraShakeEvent {
@@ -220,6 +221,9 @@ public:
         return clamped;
     }
 
+    bool is_valid_teleport_destination(const Unit& unit,
+                                       const Vector3& destination) const;
+
 private:
     void update_economies();
     void update_entities();
@@ -235,7 +239,8 @@ private:
     bool has_effective_sonar_cached(const Entity* entity, u32 req_army,
                                     bool sonar_stealth) const;
     bool has_any_intel_cached(const Entity* entity, u32 req_army,
-                              bool radar_stealth, bool sonar_stealth) const;
+                              bool radar_stealth, bool sonar_stealth,
+                              bool cloaked) const;
 
     lua_State* L_;
     EntityRegistry entity_registry_;

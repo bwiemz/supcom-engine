@@ -1,0 +1,1 @@
+=== Smoke Test Report (0 unique issues, 0 total occurrences) ===

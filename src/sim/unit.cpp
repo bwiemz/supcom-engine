@@ -1157,7 +1157,7 @@ weapons_only:
 
     // Update weapons (target scanning + firing)
     for (auto& weapon : weapons_) {
-        weapon->update(dt, *this, registry, L);
+        weapon->update(dt, *this, registry, L, ctx.visibility_grid);
     }
 
     // Update manipulators (rotators, animators, sliders, aim controllers)

@@ -3509,11 +3509,12 @@ static int unit_GetDeathWeaponEnabled(lua_State* L) {
 static int unit_HasValidTeleportDest(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushboolean(L, 0); return 1; }
+    auto* sim = get_sim(L);
     auto& cmds = u->command_queue();
     bool valid = false;
     for (const auto& cmd : cmds) {
         if (cmd.type == sim::CommandType::Teleport) {
-            valid = (cmd.target_pos.x != 0.0f || cmd.target_pos.z != 0.0f);
+            valid = sim && sim->is_valid_teleport_destination(*u, cmd.target_pos);
             break;
         }
     }

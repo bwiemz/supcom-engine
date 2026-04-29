@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
+#include "blueprints/blueprint_store.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -66,6 +68,23 @@ TEST_CASE("SmokeTestHarness intercepts missing globals", "[smoke]") {
         }
     }
     REQUIRE(found);
+}
+
+TEST_CASE("Sim GetFocusArmy defaults to first playable army", "[focus]") {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store(state.raw());
+    osc::sim::SimState sim(state.raw(), &store);
+    osc::lua::register_sim_bindings(state, sim);
+
+    auto result = state.do_string("return GetFocusArmy()");
+    REQUIRE(result.ok());
+    REQUIRE(lua_tonumber(state.raw(), -1) == 1.0);
+    lua_pop(state.raw(), 1);
+
+    result = state.do_string("SetFocusArmy(2); return GetFocusArmy()");
+    REQUIRE(result.ok());
+    REQUIRE(lua_tonumber(state.raw(), -1) == 2.0);
+    lua_pop(state.raw(), 1);
 }
 
 TEST_CASE("Global interceptor does not log existing globals", "[smoke]") {
@@ -238,6 +257,40 @@ TEST_CASE("Weapon layer targeting filters correctly", "[m158]") {
     CHECK((an_caps & osc::sim::layer_to_bit("Sub")) != 0);
     CHECK((an_caps & osc::sim::layer_to_bit("Air")) == 0);
     CHECK((an_caps & osc::sim::layer_to_bit("Land")) == 0);
+}
+
+TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
+    osc::sim::EntityRegistry registry;
+
+    auto owner = std::make_unique<osc::sim::Unit>();
+    owner->set_army(0);
+    owner->set_position({0.0f, 0.0f, 0.0f});
+    auto weapon = std::make_unique<osc::sim::Weapon>();
+    weapon->max_range = 100.0f;
+    weapon->damage = 10.0f;
+    weapon->fire_cooldown = 10.0f;
+    auto* weapon_ptr = weapon.get();
+    owner->add_weapon(std::move(weapon));
+    auto owner_id = registry.register_entity(std::move(owner));
+    auto* owner_ptr =
+        static_cast<osc::sim::Unit*>(registry.find(owner_id));
+
+    auto target = std::make_unique<osc::sim::Unit>();
+    target->set_army(1);
+    target->set_position({20.0f, 0.0f, 0.0f});
+    auto target_id = registry.register_entity(std::move(target));
+    auto* target_ptr =
+        static_cast<osc::sim::Unit*>(registry.find(target_id));
+
+    REQUIRE(owner_ptr != nullptr);
+    REQUIRE(target_ptr != nullptr);
+
+    weapon_ptr->update(0.0, *owner_ptr, registry, nullptr);
+    REQUIRE(weapon_ptr->target_entity_id == target_id);
+
+    target_ptr->set_cloaked(true);
+    weapon_ptr->update(0.0, *owner_ptr, registry, nullptr);
+    REQUIRE(weapon_ptr->target_entity_id == 0);
 }
 
 TEST_CASE("Air unit fuel consumption", "[m158]") {
@@ -516,4 +569,34 @@ TEST_CASE("Unit damage_multiplier applied by weapon", "[m162]") {
     CHECK(u.damage_multiplier() == 1.0f);
     u.set_damage_multiplier(1.5f);
     CHECK(u.damage_multiplier() == 1.5f);
+}
+
+TEST_CASE("Teleport destination validates bounds and occupancy", "[teleport]") {
+    osc::blueprints::BlueprintStore store(nullptr);
+    osc::sim::SimState sim(nullptr, &store);
+    sim.set_playable_rect(0.0f, 0.0f, 100.0f, 100.0f);
+
+    auto teleporter = std::make_unique<osc::sim::Unit>();
+    teleporter->set_layer("Land");
+    teleporter->set_footprint_size(4.0f, 4.0f);
+    teleporter->set_position({20.0f, 0.0f, 20.0f});
+    auto teleporter_id =
+        sim.entity_registry().register_entity(std::move(teleporter));
+    auto* unit = static_cast<osc::sim::Unit*>(
+        sim.entity_registry().find(teleporter_id));
+
+    REQUIRE(unit != nullptr);
+    REQUIRE(sim.is_valid_teleport_destination(*unit, {50.0f, 0.0f, 50.0f}));
+    REQUIRE_FALSE(
+        sim.is_valid_teleport_destination(*unit, {1.0f, 0.0f, 50.0f}));
+
+    auto blocker = std::make_unique<osc::sim::Unit>();
+    blocker->set_layer("Land");
+    blocker->set_footprint_size(6.0f, 6.0f);
+    blocker->set_position({60.0f, 0.0f, 60.0f});
+    sim.entity_registry().register_entity(std::move(blocker));
+
+    REQUIRE_FALSE(
+        sim.is_valid_teleport_destination(*unit, {60.0f, 0.0f, 60.0f}));
+    REQUIRE(sim.is_valid_teleport_destination(*unit, {70.0f, 0.0f, 60.0f}));
 }

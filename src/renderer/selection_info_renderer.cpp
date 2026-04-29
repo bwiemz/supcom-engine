@@ -22,8 +22,7 @@ static void get_army_color(const sim::Entity& entity,
     i32 army = entity.army();
     if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
         auto* brain = sim.army_at(static_cast<size_t>(army));
-        if (brain && (brain->color_r() || brain->color_g() ||
-                      brain->color_b())) {
+        if (brain && brain->has_color()) {
             r = brain->color_r() / 255.0f;
             g = brain->color_g() / 255.0f;
             b = brain->color_b() / 255.0f;

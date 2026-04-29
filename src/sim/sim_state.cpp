@@ -18,6 +18,9 @@ extern "C" {
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace osc::sim {
 
 u32 SimState::s_sim_generation_ = 0;
@@ -36,6 +39,57 @@ SimState::~SimState() {
         lua_pushnil(L_);
         lua_rawset(L_, LUA_REGISTRYINDEX);
     }
+}
+
+bool SimState::is_valid_teleport_destination(
+    const Unit& unit, const Vector3& destination) const {
+    f32 half_x = std::max(unit.footprint_size_x(), 1.0f) * 0.5f;
+    f32 half_z = std::max(unit.footprint_size_z(), 1.0f) * 0.5f;
+
+    if (has_playable_rect_) {
+        if (destination.x - half_x < playable_x0_ ||
+            destination.x + half_x > playable_x1_ ||
+            destination.z - half_z < playable_z0_ ||
+            destination.z + half_z > playable_z1_) {
+            return false;
+        }
+    }
+
+    if (pathfinding_grid_) {
+        u32 gx0, gz0, gx1, gz1;
+        pathfinding_grid_->world_to_grid(destination.x - half_x,
+                                         destination.z - half_z, gx0, gz0);
+        pathfinding_grid_->world_to_grid(destination.x + half_x,
+                                         destination.z + half_z, gx1, gz1);
+        for (u32 gz = gz0; gz <= gz1; ++gz) {
+            for (u32 gx = gx0; gx <= gx1; ++gx) {
+                if (!pathfinding_grid_->is_passable_for(gx, gz,
+                                                        unit.layer())) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    auto nearby = entity_registry_.collect_in_rect(
+        destination.x - half_x, destination.z - half_z,
+        destination.x + half_x, destination.z + half_z);
+    for (u32 id : nearby) {
+        if (id == unit.entity_id()) continue;
+        auto* entity = entity_registry_.find(id);
+        if (!entity || entity->destroyed() || !entity->is_unit()) continue;
+        auto* other = static_cast<const Unit*>(entity);
+        f32 other_half_x = std::max(other->footprint_size_x(), 1.0f) * 0.5f;
+        f32 other_half_z = std::max(other->footprint_size_z(), 1.0f) * 0.5f;
+        const auto& other_pos = other->position();
+        bool overlaps_x = std::abs(destination.x - other_pos.x) <
+                          (half_x + other_half_x);
+        bool overlaps_z = std::abs(destination.z - other_pos.z) <
+                          (half_z + other_half_z);
+        if (overlaps_x && overlaps_z) return false;
+    }
+
+    return true;
 }
 
 void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
@@ -179,10 +233,15 @@ bool SimState::has_effective_sonar(const Entity* entity,
 bool SimState::has_any_intel(const Entity* entity, u32 req_army) const {
     if (!visibility_grid_ || !entity) return false;
     auto& pos = entity->position();
-    return visibility_grid_->has_vision(pos.x, pos.z, req_army) ||
+    bool omni = visibility_grid_->has_omni(pos.x, pos.z, req_army);
+    bool cloaked = entity->is_unit() &&
+                   static_cast<const Unit*>(entity)->is_cloaked();
+    bool vision = visibility_grid_->has_vision(pos.x, pos.z, req_army) &&
+                  (!cloaked || omni);
+    return vision ||
            has_effective_radar(entity, req_army) ||
            has_effective_sonar(entity, req_army) ||
-           visibility_grid_->has_omni(pos.x, pos.z, req_army);
+           omni;
 }
 
 // --- Cached stealth variants (avoid per-army is_intel_enabled string lookups) ---
@@ -209,13 +268,17 @@ bool SimState::has_effective_sonar_cached(const Entity* entity, u32 req_army,
 
 bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
                                      bool radar_stealth,
-                                     bool sonar_stealth) const {
+                                     bool sonar_stealth,
+                                     bool cloaked) const {
     if (!visibility_grid_ || !entity) return false;
     auto& pos = entity->position();
-    return visibility_grid_->has_vision(pos.x, pos.z, req_army) ||
+    bool omni = visibility_grid_->has_omni(pos.x, pos.z, req_army);
+    bool vision = visibility_grid_->has_vision(pos.x, pos.z, req_army) &&
+                  (!cloaked || omni);
+    return vision ||
            has_effective_radar_cached(entity, req_army, radar_stealth) ||
            has_effective_sonar_cached(entity, req_army, sonar_stealth) ||
-           visibility_grid_->has_omni(pos.x, pos.z, req_army);
+           omni;
 }
 
 void SimState::tick() {
@@ -499,9 +562,11 @@ void SimState::update_visibility() {
         auto* unit = static_cast<Unit*>(&e);
         bool radar_stealth = unit->has_radar_stealth();
         bool sonar_stealth = unit->has_sonar_stealth();
+        bool cloaked = unit->is_cloaked();
         for (u32 a = 0; a < n; ++a) {
             if (static_cast<i32>(a) == e.army()) continue; // skip own army
-            if (has_any_intel_cached(&e, a, radar_stealth, sonar_stealth)) {
+            if (has_any_intel_cached(&e, a, radar_stealth, sonar_stealth,
+                                     cloaked)) {
                 // Army can see entity — update cached snapshot
                 auto& snap = blip_cache_[eid][a];
                 snap.last_known_position = e.position();
@@ -541,16 +606,17 @@ void SimState::update_visibility() {
         auto* u = static_cast<const Unit*>(e);
         bool radar_stealth = u->has_radar_stealth();
         bool sonar_stealth = u->has_sonar_stealth();
+        bool cloaked = u->is_cloaked();
 
         for (u32 a = 0; a < n; ++a) {
             if (static_cast<i32>(a) == e->army()) continue; // skip own army
 
-            bool cur_vis =
-                visibility_grid_->has_vision(pos.x, pos.z, a);
-            bool cur_rad = has_effective_radar_cached(e, a, radar_stealth);
-            bool cur_son = has_effective_sonar_cached(e, a, sonar_stealth);
             bool cur_omn =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
+            bool cur_vis = visibility_grid_->has_vision(pos.x, pos.z, a) &&
+                           (!cloaked || cur_omn);
+            bool cur_rad = has_effective_radar_cached(e, a, radar_stealth);
+            bool cur_son = has_effective_sonar_cached(e, a, sonar_stealth);
 
             auto prev_it = prev_entity_vis_.find(eid);
             EntityVisSnapshot prev;
@@ -588,14 +654,15 @@ void SimState::update_visibility() {
         auto* unit = static_cast<const Unit*>(&e);
         bool radar_stealth = unit->has_radar_stealth();
         bool sonar_stealth = unit->has_sonar_stealth();
+        bool cloaked = unit->is_cloaked();
         std::array<EntityVisSnapshot, MAX_VIS_ARMIES> states{};
         for (u32 a = 0; a < n; ++a) {
-            states[a].vision =
-                visibility_grid_->has_vision(pos.x, pos.z, a);
-            states[a].radar = has_effective_radar_cached(&e, a, radar_stealth);
-            states[a].sonar = has_effective_sonar_cached(&e, a, sonar_stealth);
             states[a].omni =
                 visibility_grid_->has_omni(pos.x, pos.z, a);
+            states[a].vision = visibility_grid_->has_vision(pos.x, pos.z, a) &&
+                               (!cloaked || states[a].omni);
+            states[a].radar = has_effective_radar_cached(&e, a, radar_stealth);
+            states[a].sonar = has_effective_sonar_cached(&e, a, sonar_stealth);
         }
         prev_entity_vis_[e.entity_id()] = states;
     });

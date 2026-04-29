@@ -682,8 +682,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             i32 army = owner->army();
             if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
                 auto* brain = sim.army_at(static_cast<size_t>(army));
-                if (brain && (brain->color_r() || brain->color_g() ||
-                              brain->color_b())) {
+                if (brain && brain->has_color()) {
                     sr = brain->color_r() / 255.0f;
                     sg = brain->color_g() / 255.0f;
                     sb = brain->color_b() / 255.0f;
@@ -886,8 +885,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             i32 army = fx_ptr->army();
             if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
                 auto* brain = sim.army_at(static_cast<size_t>(army));
-                if (brain && (brain->color_r() || brain->color_g() ||
-                              brain->color_b())) {
+                if (brain && brain->has_color()) {
                     pr = brain->color_r() / 255.0f;
                     pg = brain->color_g() / 255.0f;
                     pb = brain->color_b() / 255.0f;
