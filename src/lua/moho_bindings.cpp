@@ -3438,12 +3438,12 @@ static int unit_GetXPValue(lua_State* L) {
 
 static int unit_EnableCloak(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_cloaked(true);
+    if (u) u->enable_intel("Cloak");
     return 0;
 }
 static int unit_DisableCloak(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_cloaked(false);
+    if (u) u->disable_intel("Cloak");
     return 0;
 }
 static int unit_IsUnitCloaked(lua_State* L) {
@@ -3453,22 +3453,22 @@ static int unit_IsUnitCloaked(lua_State* L) {
 }
 static int unit_EnableStealth(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_radar_stealth(true);
+    if (u) u->enable_intel("RadarStealth");
     return 0;
 }
 static int unit_DisableStealth(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_radar_stealth(false);
+    if (u) u->disable_intel("RadarStealth");
     return 0;
 }
 static int unit_EnableSonarStealth(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_sonar_stealth(true);
+    if (u) u->enable_intel("SonarStealth");
     return 0;
 }
 static int unit_DisableSonarStealth(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) u->set_sonar_stealth(false);
+    if (u) u->disable_intel("SonarStealth");
     return 0;
 }
 static int unit_SetAutoMode(lua_State* L) {
@@ -12874,14 +12874,23 @@ static int l_GetFocusArmy(lua_State* L) {
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (lua_isnumber(L, -1)) {
-        // Convert 0-based to 1-based
-        lua_pushnumber(L, lua_tonumber(L, -1) + 1);
+        const int stored = static_cast<int>(lua_tonumber(L, -1));
+        lua_pushnumber(L, stored >= 0 ? stored + 1 : -1);
         lua_remove(L, -2);
         return 1;
     }
     lua_pop(L, 1);
     lua_pushnumber(L, 1); // default army 1
     return 1;
+}
+
+static int l_SetFocusArmy(lua_State* L) {
+    int army = static_cast<int>(luaL_checknumber(L, 1));
+    lua_pushstring(L, "__osc_focus_army");
+    lua_pushnumber(L, army > 0 ? army - 1 : army);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    spdlog::debug("UI SetFocusArmy: {}", army);
+    return 0;
 }
 
 // ====================================================================
@@ -13725,18 +13734,32 @@ static int l_WorldIsLoading(lua_State* L) {
 }
 
 /// LaunchSinglePlayerSession(sessionConfig) — launch a game from lobby config.
-/// Reads ScenarioFile from config, stores config in FrontEndData, signals main loop.
+/// Reads ScenarioFile from GameOptions or the legacy top-level field, stores
+/// config in FrontEndData, signals main loop.
 static int l_LaunchSinglePlayerSession(lua_State* L) {
     if (!lua_istable(L, 1)) {
         spdlog::warn("LaunchSinglePlayerSession: expected table arg");
         return 0;
     }
 
-    // Read scenario file path
+    // Read scenario file path. FA lobby configs carry this under GameOptions;
+    // older tests and helpers may still pass a top-level ScenarioFile.
+    std::string scenario;
+    lua_pushstring(L, "GameOptions");
+    lua_rawget(L, 1);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "ScenarioFile");
+        lua_rawget(L, -2);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            scenario = lua_tostring(L, -1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+
     lua_pushstring(L, "ScenarioFile");
     lua_rawget(L, 1);
-    std::string scenario;
-    if (lua_type(L, -1) == LUA_TSTRING) {
+    if (scenario.empty() && lua_type(L, -1) == LUA_TSTRING) {
         scenario = lua_tostring(L, -1);
     }
     lua_pop(L, 1);
@@ -13745,6 +13768,11 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
         spdlog::warn("LaunchSinglePlayerSession: no ScenarioFile in config");
         return 0;
     }
+
+    // Normalize for reload/session code that still expects the legacy field.
+    lua_pushstring(L, "ScenarioFile");
+    lua_pushstring(L, scenario.c_str());
+    lua_rawset(L, 1);
 
     // Store session config in FrontEndData for loader
     auto* fed = get_front_end_data(L);
@@ -14352,6 +14380,14 @@ static int l_ExitGame(lua_State* L) {
     return 0;
 }
 
+/// ReturnToLobby() — score screen continue button signal.
+static int l_ReturnToLobby(lua_State* L) {
+    lua_pushstring(L, "__osc_return_to_lobby");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 /// ExitApplication() — clean shutdown
 static int l_ExitApplication(lua_State* L) {
     lua_pushstring(L, "__osc_exit_requested");
@@ -14425,6 +14461,107 @@ static int l_GetSessionClients(lua_State* L) {
     return 1;
 }
 
+static bool global_is_defined(lua_State* L, const char* name) {
+    lua_pushstring(L, name);
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const bool defined = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    return defined;
+}
+
+void register_front_end_fallback_bindings(LuaState& state) {
+    lua_State* L = state.raw();
+
+    auto set_stub = [&](const char* name) {
+        if (global_is_defined(L, name)) return;
+        lua_pushstring(L, name);
+        lua_pushcfunction(L, [](lua_State*) -> int { return 0; });
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    };
+    auto set_str = [&](const char* name, const char* val) {
+        if (global_is_defined(L, name)) return;
+        lua_pushstring(L, name);
+        lua_pushstring(L, val);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    };
+    auto set_bool_fn = [&](const char* name, bool val) {
+        if (global_is_defined(L, name)) return;
+        lua_pushstring(L, name);
+        lua_pushcfunction(L, val ?
+            +[](lua_State* call_L) -> int { lua_pushboolean(call_L, 1); return 1; } :
+            +[](lua_State* call_L) -> int { lua_pushboolean(call_L, 0); return 1; });
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    };
+    auto set_nil_fn = [&](const char* name) {
+        if (global_is_defined(L, name)) return;
+        lua_pushstring(L, name);
+        lua_pushcfunction(L, [](lua_State* call_L) -> int {
+            lua_pushnil(call_L);
+            return 1;
+        });
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    };
+    auto set_num_fn = [&](const char* name, double val) {
+        if (global_is_defined(L, name)) return;
+        lua_pushstring(L, name);
+        lua_pushnumber(L, val);
+        lua_pushcclosure(L, [](lua_State* call_L) -> int {
+            lua_pushvalue(call_L, lua_upvalueindex(1));
+            return 1;
+        }, 1);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    };
+
+    set_stub("AudioSetLanguage");
+    set_str("__language", "us");
+    set_bool_fn("HasLocalizedVO", false);
+    set_nil_fn("GetOptions");
+    set_num_fn("GetVolume", 1.0);
+    set_stub("SetVolume");
+    set_stub("ConExecute");
+    set_stub("ConExecuteSave");
+    set_stub("EnableWorldSounds");
+    set_stub("DisableWorldSounds");
+    set_stub("AddInputCapture");
+    set_stub("RemoveInputCapture");
+    set_bool_fn("AnyInputCapture", false);
+    set_bool_fn("DebugFacilitiesEnabled", false);
+    set_stub("ExitApplication");
+    set_stub("PrefetchSession");
+    set_stub("SetFocusArmy");
+    set_nil_fn("GetFocusArmy");
+    set_stub("ClearFrame");
+    set_stub("GpgNetSend");
+    set_bool_fn("HasCommandLineArg2", false);
+    set_bool_fn("SessionIsActive", false);
+    set_bool_fn("SessionIsMultiplayer", false);
+    set_bool_fn("SessionIsObservingAllowed", false);
+    set_bool_fn("SessionIsGameOver", false);
+    set_bool_fn("SessionIsBeingRecorded", false);
+    set_bool_fn("SessionCanRestart", false);
+    set_stub("SessionEndGame");
+    set_nil_fn("SessionGetCommandSourceNames");
+    set_nil_fn("SessionGetLocalCommandSource");
+    set_nil_fn("GetMouseScreenPos");
+    set_stub("SetOverlayFilter");
+    set_stub("SetOverlayFilters");
+    set_nil_fn("GetActiveBuildTemplate");
+    set_nil_fn("GetHighlightCommand");
+    set_nil_fn("GetInputCapture");
+    set_stub("RestartSession");
+    set_nil_fn("GetAntiAliasingOptions");
+    set_nil_fn("GetResolution");
+    set_stub("SetResolution");
+
+    if (!global_is_defined(L, "__installedlanguages")) {
+        lua_pushstring(L, "__installedlanguages");
+        lua_newtable(L);
+        lua_pushstring(L, "us");
+        lua_rawseti(L, -2, 1);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
 
@@ -14483,6 +14620,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddSelectUnits", l_AddSelectUnits);
     state.register_function("AddOnSelectionChangedCallback", l_AddOnSelectionChangedCallback);
     state.register_function("ValidateUnitsList", l_ValidateUnitsList);
+    state.register_function("SetFocusArmy", l_SetFocusArmy);
     state.register_function("GetFocusArmy", l_GetFocusArmy);
 
     // SimCallback UI→Sim bridge (M138a)
@@ -14578,6 +14716,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Exit/return (M146d)
     state.register_function("ExitGame", l_ExitGame);
+    state.register_function("ReturnToLobby", l_ReturnToLobby);
     state.register_function("ExitApplication", l_ExitApplication);
 
     // FrontEndData cross-state store (M147c)

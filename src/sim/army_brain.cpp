@@ -1,10 +1,52 @@
 #include "sim/army_brain.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/shield.hpp"
 #include "sim/unit.hpp"
 
 #include <algorithm>
 
 namespace osc::sim {
+
+namespace {
+
+constexpr const char* MAINTENANCE_INTEL_TYPES[] = {
+    "Cloak",
+    "CloakField",
+    "Radar",
+    "Sonar",
+    "Omni",
+    "Jammer",
+    "RadarStealth",
+    "SonarStealth",
+    "RadarStealthField",
+    "SonarStealthField",
+    "StealthField",
+    "WaterVision",
+};
+
+bool disable_maintenance_intel(Unit& unit) {
+    bool disabled = false;
+    for (const char* type : MAINTENANCE_INTEL_TYPES) {
+        if (!unit.is_intel_enabled(type)) continue;
+        unit.disable_intel(type);
+        disabled = true;
+    }
+    return disabled;
+}
+
+bool turn_off_maintained_shield(Unit& unit, const EntityRegistry& registry) {
+    if (unit.shield_entity_id() == 0) return false;
+
+    auto* entity = registry.find(unit.shield_entity_id());
+    if (!entity || entity->destroyed() || !entity->is_shield()) return false;
+
+    auto* shield = static_cast<Shield*>(entity);
+    if (!shield->is_on) return false;
+    shield->is_on = false;
+    return true;
+}
+
+} // namespace
 
 bool ArmyBrain::is_defeated() const {
     return state_ == BrainState::Defeat || state_ == BrainState::Recalled;
@@ -163,14 +205,12 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
             if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
             auto& unit = static_cast<Unit&>(e);
             auto& econ = unit.economy();
-            if (!unit.is_cloaked() || !econ.maintenance_active ||
-                econ.energy_maintenance_override <= 0.0) {
-                return;
-            }
-            unit.disable_intel("Cloak");
-            unit.disable_intel("CloakField");
-            unit.set_cloaked(false);
-            econ.maintenance_active = false;
+            if (!econ.maintenance_active ||
+                econ.energy_maintenance_override <= 0.0) return;
+
+            bool stopped = disable_maintenance_intel(unit);
+            stopped = turn_off_maintained_shield(unit, registry) || stopped;
+            if (stopped) econ.maintenance_active = false;
         });
     }
 

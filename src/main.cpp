@@ -1218,17 +1218,27 @@ int main(int argc, char* argv[]) {
         // errors out and the moho class flatten loop never executes.
         {
             lua_State* uL = ui_lua_state.raw();
+            auto global_is_defined = [&](const char* name) {
+                lua_pushstring(uL, name);
+                lua_rawget(uL, LUA_GLOBALSINDEX);
+                const bool defined = !lua_isnil(uL, -1);
+                lua_pop(uL, 1);
+                return defined;
+            };
             auto set_stub = [&](const char* name) {
+                if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
                 lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
                 lua_rawset(uL, LUA_GLOBALSINDEX);
             };
             auto set_str = [&](const char* name, const char* val) {
+                if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
                 lua_pushstring(uL, val);
                 lua_rawset(uL, LUA_GLOBALSINDEX);
             };
             auto set_bool_fn = [&](const char* name, bool val) {
+                if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
                 lua_pushcfunction(uL, val ?
                     +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
@@ -1241,6 +1251,7 @@ int main(int argc, char* argv[]) {
             // Engine globals needed by FA's UI bootstrap chain
             // (GetOptions, GetVolume, SetVolume, etc.)
             auto set_nil_fn = [&](const char* name) {
+                if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
                 lua_pushcfunction(uL, [](lua_State* L) -> int {
                     lua_pushnil(L);
@@ -1249,6 +1260,7 @@ int main(int argc, char* argv[]) {
                 lua_rawset(uL, LUA_GLOBALSINDEX);
             };
             auto set_num_fn = [&](const char* name, double val) {
+                if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
                 double v = val;
                 lua_pushcfunction(uL, [](lua_State* L) -> int {
@@ -1298,10 +1310,12 @@ int main(int argc, char* argv[]) {
             set_nil_fn("GetResolution");
             set_stub("SetResolution");
             // __installedlanguages — table of available language codes
-            lua_pushstring(uL, "__installedlanguages");
-            lua_newtable(uL);
-            lua_pushstring(uL, "us"); lua_rawseti(uL, -2, 1);
-            lua_rawset(uL, LUA_GLOBALSINDEX);
+            if (!global_is_defined("__installedlanguages")) {
+                lua_pushstring(uL, "__installedlanguages");
+                lua_newtable(uL);
+                lua_pushstring(uL, "us"); lua_rawseti(uL, -2, 1);
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            }
         }
         {
             auto gi_data = vfs.read_file("/lua/globalInit.lua");
@@ -1635,19 +1649,6 @@ int main(int argc, char* argv[]) {
                 lua_pushstring(uL, "__osc_scenario_path");
                 lua_pushstring(uL, map_path.c_str());
                 lua_rawset(uL, LUA_REGISTRYINDEX);
-            }
-
-            // ReturnToLobby global function (M156b)
-            {
-                lua_State* uiL = ui_lua_state.raw();
-                lua_pushstring(uiL, "ReturnToLobby");
-                lua_pushcfunction(uiL, [](lua_State* L) -> int {
-                    lua_pushstring(L, "__osc_return_to_lobby");
-                    lua_pushboolean(L, 1);
-                    lua_rawset(L, LUA_REGISTRYINDEX);
-                    return 0;
-                });
-                lua_rawset(uiL, LUA_GLOBALSINDEX);
             }
 
             // keymap_registry already stored in registry at outer scope
@@ -2113,30 +2114,70 @@ int main(int argc, char* argv[]) {
         harness.set_phase("LOBBY");
         {
             lua_State* uL = ui_lua_state.raw();
-            // Build FrontEndData
-            lua_pushstring(uL, "__osc_front_end_data");
-            lua_newtable(uL);
-            int fed = lua_gettop(uL);
-            lua_pushstring(uL, "ScenarioFile");
-            lua_pushstring(uL, map_path.c_str());
-            lua_rawset(uL, fed);
-            lua_pushstring(uL, "PlayerCount");
-            lua_pushnumber(uL, 2);
-            lua_rawset(uL, fed);
-            lua_pushstring(uL, "AiPersonality");
-            lua_pushstring(uL, ai_personality.c_str());
-            lua_rawset(uL, fed);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
+            auto set_string = [uL](int table_idx, const char* key,
+                                   const char* value) {
+                lua_pushstring(uL, key);
+                lua_pushstring(uL, value);
+                lua_rawset(uL, table_idx);
+            };
+            auto set_number = [uL](int table_idx, const char* key,
+                                   double value) {
+                lua_pushstring(uL, key);
+                lua_pushnumber(uL, value);
+                lua_rawset(uL, table_idx);
+            };
+            auto set_bool = [uL](int table_idx, const char* key, bool value) {
+                lua_pushstring(uL, key);
+                lua_pushboolean(uL, value ? 1 : 0);
+                lua_rawset(uL, table_idx);
+            };
 
-            // Set launch scenario path
-            lua_pushstring(uL, "__osc_launch_scenario");
-            lua_pushstring(uL, map_path.c_str());
-            lua_rawset(uL, LUA_REGISTRYINDEX);
+            lua_getglobal(uL, "LaunchSinglePlayerSession");
+            if (lua_isfunction(uL, -1)) {
+                lua_newtable(uL);
+                int config_idx = lua_gettop(uL);
 
-            // Set launch requested flag
-            lua_pushstring(uL, "__osc_launch_requested");
-            lua_pushboolean(uL, 1);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
+                lua_pushstring(uL, "GameOptions");
+                lua_newtable(uL);
+                int game_options_idx = lua_gettop(uL);
+                set_string(game_options_idx, "ScenarioFile", map_path.c_str());
+                lua_rawset(uL, config_idx);
+
+                lua_pushstring(uL, "PlayerOptions");
+                lua_newtable(uL);
+                int player_options_idx = lua_gettop(uL);
+
+                lua_newtable(uL);
+                int player_idx = lua_gettop(uL);
+                set_bool(player_idx, "Human", true);
+                set_string(player_idx, "PlayerName", "Player");
+                set_number(player_idx, "Faction", 1);
+                set_number(player_idx, "Team", 1);
+                set_number(player_idx, "StartSpot", 1);
+                lua_rawseti(uL, player_options_idx, 1);
+
+                lua_newtable(uL);
+                int ai_idx = lua_gettop(uL);
+                set_bool(ai_idx, "Human", false);
+                set_string(ai_idx, "PlayerName", "AI");
+                set_string(ai_idx, "AIPersonality", ai_personality.c_str());
+                set_number(ai_idx, "Faction", 2);
+                set_number(ai_idx, "Team", 2);
+                set_number(ai_idx, "StartSpot", 2);
+                lua_rawseti(uL, player_options_idx, 2);
+
+                lua_rawset(uL, config_idx);
+
+                if (lua_pcall(uL, 1, 0, 0) != 0) {
+                    spdlog::warn("Full smoke LaunchSinglePlayerSession error: {}",
+                                 lua_tostring(uL, -1) ? lua_tostring(uL, -1)
+                                                      : "unknown");
+                    lua_pop(uL, 1);
+                }
+            } else {
+                lua_pop(uL, 1);
+                spdlog::warn("Full smoke: LaunchSinglePlayerSession unavailable");
+            }
         }
         pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
 

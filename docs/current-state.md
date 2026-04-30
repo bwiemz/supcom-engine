@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-04-29
+Last reviewed: 2026-04-30
 
 ## What This Codebase Is
 
@@ -18,7 +18,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 ## Verified Locally
 
-- `build/tests/Debug/osc_tests.exe` passes: 103 test cases, 1,581 assertions.
+- `build/tests/Debug/osc_tests.exe` passes: 113 test cases, 1,631 assertions.
 - `build/Debug/opensupcom.exe --help` runs and lists the current CLI surface.
 - `build/Debug/opensupcom.exe --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.
@@ -38,20 +38,23 @@ Some historical plan checkboxes are stale. The following items from the April fu
 - `CreateVisibleAreaAtPoint`
 - Movie control MPEG loading/playback path
 - lobby slot config wiring for `Human`, `AIPersonality`, `Faction`, `Team`, `StartSpot`, `PlayerColor`, and `ArmyColor`
+- `GameOptions.ScenarioFile` launch wiring through `LaunchSinglePlayerSession`, registry launch state, reload, and full-smoke session config
+- score-screen `ReturnToLobby` is registered in shared UI bindings and signals the return-to-lobby path
+- front-end fallback globals no longer overwrite real shared UI bindings during no-map menu bootstrap
+- UI `SetFocusArmy` is now a real shared binding, including `-1` observer-mode focus normalization
 - validated teleport destinations for playable bounds, path passability, and footprint occupancy
 - cloak participation in effective vision and weapon target acquisition
-- cloak intel and maintenance economy behavior: enabling `Cloak` sets the sim cloak flag, and energy stall disables cloak maintenance
+- active unit maintenance stall behavior for cloak, radar, sonar, omni, jammer, radar/sonar stealth, stealth fields, water vision, and owner-paid shields
+- moho cloak/stealth helpers now update the same intel state used by visibility, blips, and maintenance shutdown
 - sim-side focus army normalization for FA Lua's 1-based army ids
 - classification of the known FA AI builder `deepcopy` diagnostic below the active log level
 
 ## Known Gaps And Risks
 
-- `GameOptions.ScenarioFile` still needs tighter end-to-end wiring from lobby/UI selection into reload.
 - Several stubs remain intentionally cosmetic, multiplayer-only, debug-only, or deprecated. They should stay classified so gameplay blockers are not hidden among harmless no-ops.
 
 ## Recommended Work Order
 
 1. Keep docs and ignores accurate so local tooling noise does not obscure engine changes.
-2. Audit the remaining active-unit maintenance toggles, especially radar, sonar, stealth fields, jamming, and shield-adjacent upkeep, for stall behavior parity.
-3. Tighten lobby-to-reload `GameOptions.ScenarioFile` handling and then revisit score/lobby polish.
-4. Continue classifying stubs by gameplay impact so harmless UI/multiplayer no-ops do not mask skirmish blockers.
+2. Continue classifying stubs by gameplay impact so harmless UI/multiplayer no-ops do not mask skirmish blockers.
+3. Revisit score/lobby polish in the real windowed UI once the remaining gameplay-impacting stubs are classified.

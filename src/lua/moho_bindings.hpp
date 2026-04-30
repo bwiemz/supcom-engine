@@ -23,6 +23,10 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim);
 /// Must be called after register_moho_bindings.
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry);
 
+/// Register front-end bootstrap fallback globals that the FA UI import chain
+/// expects, without replacing globals already installed by real bindings.
+void register_front_end_fallback_bindings(LuaState& state);
+
 /// Push the current selection as a Lua array table onto the UI Lua state stack.
 /// Each element is a unit table with _c_object, EntityId, Army, and the
 /// __osc_ui_unit_mt metatable (same as GetSelectedUnits()).
