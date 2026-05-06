@@ -20,6 +20,8 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <utility>
 
 namespace osc::sim {
 
@@ -39,6 +41,14 @@ SimState::~SimState() {
         lua_pushnil(L_);
         lua_rawset(L_, LUA_REGISTRYINDEX);
     }
+}
+
+void SimState::set_victory_condition(std::string mode) {
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    victory_condition_ = std::move(mode);
 }
 
 bool SimState::is_valid_teleport_destination(
@@ -339,7 +349,7 @@ void SimState::tick() {
     update_visibility();
 
     // --- ACU death → army defeat check ---
-    if (!game_ended_ && tick_count_ > 50) {
+    if (!game_ended_ && !sandbox_victory() && tick_count_ > 50) {
         for (size_t ai = 0; ai < army_count(); ai++) {
             auto* brain = army_at(ai);
             if (!brain || brain->is_defeated() || brain->is_civilian()) continue;
@@ -369,7 +379,7 @@ void SimState::tick() {
 
     // Defeat detection: mark armies with no living units as defeated
     // (simplified demoralization — FA's CheckVictory Lua thread handles real logic)
-    if (!game_ended_ && tick_count_ > 50) { // grace period: skip first 5 seconds
+    if (!game_ended_ && !sandbox_victory() && tick_count_ > 50) { // grace period: skip first 5 seconds
         for (auto& army : armies_) {
             if (army->is_defeated() || army->is_civilian()) continue;
             if (army->get_unit_cost_total(entity_registry_) == 0) {
@@ -439,7 +449,7 @@ void SimState::update_entities() {
 
     SimContext ctx{entity_registry_, L_, terrain_.get(),
                    pathfinder_.get(), pathfinding_grid_.get(),
-                   visibility_grid_.get(), {}};
+                   visibility_grid_.get(), this, {}};
     for (size_t i = 0; i < armies_.size() && i < SimContext::MAX_EFFICIENCY_ARMIES; ++i) {
         ctx.army_efficiency[i] = {armies_[i]->mass_efficiency(),
                                   armies_[i]->energy_efficiency()};

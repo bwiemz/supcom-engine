@@ -153,6 +153,8 @@ public:
     bool is_build_restricted(const std::string& category) const {
         return build_restrictions_.count(category) > 0;
     }
+    bool is_build_restricted(
+        const std::unordered_set<std::string>& blueprint_categories) const;
 
     // --- Color ---
     void set_color(u8 r, u8 g, u8 b) {

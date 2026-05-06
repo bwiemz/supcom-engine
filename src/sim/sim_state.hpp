@@ -38,6 +38,7 @@ namespace osc::sim {
 
 class AnimCache;
 class BoneCache;
+class SimState;
 class Unit;
 
 /// Camera shake event queued by ShakeCamera moho method.
@@ -79,6 +80,7 @@ struct SimContext {
     const map::Pathfinder* pathfinder;
     map::PathfindingGrid* pathfinding_grid; // non-const for obstacle marking
     const map::VisibilityGrid* visibility_grid;
+    SimState* sim;
     static constexpr u32 MAX_EFFICIENCY_ARMIES = 16;
     std::array<ArmyEfficiency, MAX_EFFICIENCY_ARMIES> army_efficiency;
 };
@@ -156,6 +158,9 @@ public:
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
+    const std::string& victory_condition() const { return victory_condition_; }
+    void set_victory_condition(std::string mode);
+    bool sandbox_victory() const { return victory_condition_ == "sandbox"; }
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
@@ -269,6 +274,7 @@ private:
     std::vector<TempVision> temp_visions_;
     u32 next_command_id_ = 0;
     bool game_ended_ = false;
+    std::string victory_condition_ = "demoralization";
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

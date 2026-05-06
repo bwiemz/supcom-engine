@@ -4,6 +4,7 @@
 #include "sim/unit.hpp"
 
 #include <algorithm>
+#include <sstream>
 
 namespace osc::sim {
 
@@ -108,6 +109,28 @@ i32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
             count++;
     });
     return count;
+}
+
+bool ArmyBrain::is_build_restricted(
+    const std::unordered_set<std::string>& blueprint_categories) const {
+    for (const auto& restriction : build_restrictions_) {
+        if (restriction.empty()) continue;
+        if (blueprint_categories.count(restriction) > 0) return true;
+
+        std::istringstream tokens(restriction);
+        std::string token;
+        bool has_token = false;
+        bool all_tokens_match = true;
+        while (tokens >> token) {
+            has_token = true;
+            if (blueprint_categories.count(token) == 0) {
+                all_tokens_match = false;
+                break;
+            }
+        }
+        if (has_token && all_tokens_match) return true;
+    }
+    return false;
 }
 
 std::vector<Entity*> ArmyBrain::get_units(EntityRegistry& registry) const {

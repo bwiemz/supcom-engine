@@ -33,6 +33,50 @@ struct ArmySlotConfig {
     std::string ai_personality;
 };
 
+struct GameOptionValue {
+    enum class Type {
+        String,
+        Number,
+        Boolean,
+    };
+
+    Type type = Type::String;
+    std::string string_value;
+    double number_value = 0.0;
+    bool bool_value = false;
+};
+
+struct GameOptionsConfig {
+    bool configured = false;
+    std::vector<std::pair<std::string, GameOptionValue>> values;
+    std::vector<std::string> restricted_categories;
+
+    void set_string(std::string key, std::string value) {
+        GameOptionValue option;
+        option.type = GameOptionValue::Type::String;
+        option.string_value = std::move(value);
+        values.emplace_back(std::move(key), std::move(option));
+    }
+
+    void set_number(std::string key, double value) {
+        GameOptionValue option;
+        option.type = GameOptionValue::Type::Number;
+        option.number_value = value;
+        values.emplace_back(std::move(key), option);
+    }
+
+    void set_bool(std::string key, bool value) {
+        GameOptionValue option;
+        option.type = GameOptionValue::Type::Boolean;
+        option.bool_value = value;
+        values.emplace_back(std::move(key), option);
+    }
+};
+
+/// Read a lobby GameOptions table from Lua into a C++ config that can be
+/// applied on the sim Lua state after reload.
+GameOptionsConfig read_game_options(lua_State* L, int table_idx);
+
 class SessionManager {
 public:
     /// Run the full session lifecycle:
@@ -62,6 +106,20 @@ public:
 
     void set_army_slot_configs(const std::vector<ArmySlotConfig>& configs) {
         army_slot_configs_ = configs;
+    }
+
+    void set_game_options(const GameOptionsConfig& options) {
+        game_options_ = options;
+        if (options.configured) {
+            for (const auto& [key, value] : options.values) {
+                if (key == "CheatMult" && value.type == GameOptionValue::Type::Number) {
+                    cheat_mult_ = value.number_value;
+                } else if (key == "BuildMult" &&
+                           value.type == GameOptionValue::Type::Number) {
+                    build_mult_ = value.number_value;
+                }
+            }
+        }
     }
 
     const ArmySlotConfig* slot_config_for_army(int index) const {
@@ -97,6 +155,7 @@ private:
     bool session_active_ = false;
     std::vector<int> ai_army_indices_;
     std::vector<ArmySlotConfig> army_slot_configs_;
+    GameOptionsConfig game_options_;
     int max_armies_ = 0; // 0 = no limit
     std::string ai_personality_ = "adaptive";
     double cheat_mult_ = 2.0;

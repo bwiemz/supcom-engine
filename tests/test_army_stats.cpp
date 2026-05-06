@@ -10,6 +10,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/session_manager.hpp"
 #include "ui/ui_control.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -363,4 +364,196 @@ TEST_CASE("SessionManager slot configs override AI and setup defaults", "[sessio
     auto second = mgr.slot_config_for_army(1);
     REQUIRE(second != nullptr);
     REQUIRE(second->ai_personality == "rushcheat");
+}
+
+TEST_CASE("SessionManager applies lobby game option overrides", "[session][config]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::SessionManager mgr;
+    osc::lua::ScenarioMetadata meta;
+
+    auto setup = lua.do_string("ScenarioInfo = {}");
+    REQUIRE(setup.ok());
+
+    osc::lua::GameOptionsConfig options;
+    options.configured = true;
+    options.set_string("Victory", "sandbox");
+    options.set_string("FogOfWar", "none");
+    options.set_number("UnitCap", 750);
+    options.set_string("PrebuiltUnits", "On");
+    options.set_bool("CheatsEnabled", true);
+    options.set_number("CheatMult", 3.5);
+    options.set_number("BuildMult", 4.25);
+    options.restricted_categories = {"NUKE", "EXPERIMENTAL"};
+    mgr.set_game_options(options);
+
+    auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
+    REQUIRE(result.ok());
+
+    auto check_string = [&](const char* key) {
+        lua_getglobal(lua.raw(), "ScenarioInfo");
+        lua_pushstring(lua.raw(), "Options");
+        lua_rawget(lua.raw(), -2);
+        lua_pushstring(lua.raw(), key);
+        lua_rawget(lua.raw(), -2);
+        std::string value = lua_type(lua.raw(), -1) == LUA_TSTRING
+            ? lua_tostring(lua.raw(), -1)
+            : "";
+        lua_pop(lua.raw(), 3);
+        return value;
+    };
+
+    auto check_number = [&](const char* key) {
+        lua_getglobal(lua.raw(), "ScenarioInfo");
+        lua_pushstring(lua.raw(), "Options");
+        lua_rawget(lua.raw(), -2);
+        lua_pushstring(lua.raw(), key);
+        lua_rawget(lua.raw(), -2);
+        double value = lua_isnumber(lua.raw(), -1) ? lua_tonumber(lua.raw(), -1) : 0.0;
+        lua_pop(lua.raw(), 3);
+        return value;
+    };
+
+    auto check_bool = [&](const char* key) {
+        lua_getglobal(lua.raw(), "ScenarioInfo");
+        lua_pushstring(lua.raw(), "Options");
+        lua_rawget(lua.raw(), -2);
+        lua_pushstring(lua.raw(), key);
+        lua_rawget(lua.raw(), -2);
+        bool value = lua_toboolean(lua.raw(), -1) != 0;
+        lua_pop(lua.raw(), 3);
+        return value;
+    };
+
+    CHECK(check_string("Victory") == "sandbox");
+    CHECK(check_string("FogOfWar") == "none");
+    CHECK(check_string("PrebuiltUnits") == "On");
+    CHECK(check_number("UnitCap") == 750);
+    CHECK(check_bool("CheatsEnabled"));
+    CHECK(check_number("CheatMult") == 3.5);
+    CHECK(check_number("BuildMult") == 4.25);
+
+    lua_getglobal(lua.raw(), "ScenarioInfo");
+    lua_pushstring(lua.raw(), "Options");
+    lua_rawget(lua.raw(), -2);
+    lua_pushstring(lua.raw(), "RestrictedCategories");
+    lua_rawget(lua.raw(), -2);
+    lua_rawgeti(lua.raw(), -1, 1);
+    CHECK(std::string(lua_tostring(lua.raw(), -1)) == "NUKE");
+    lua_pop(lua.raw(), 1);
+    lua_rawgeti(lua.raw(), -1, 2);
+    CHECK(std::string(lua_tostring(lua.raw(), -1)) == "EXPERIMENTAL");
+    lua_pop(lua.raw(), 4);
+}
+
+TEST_CASE("SessionManager seeds native lobby build rules", "[session][rules]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::SessionManager mgr;
+    osc::lua::ScenarioMetadata meta;
+    meta.armies = {"ARMY_1", "ARMY_2"};
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+
+    auto setup = lua.do_string("ScenarioInfo = {}");
+    REQUIRE(setup.ok());
+
+    osc::lua::GameOptionsConfig options;
+    options.configured = true;
+    options.set_number("UnitCap", 42);
+    options.restricted_categories = {"NUKE", "EXPERIMENTAL"};
+    mgr.set_game_options(options);
+
+    auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
+    REQUIRE(result.ok());
+
+    for (int army = 0; army < 2; ++army) {
+        auto* brain = sim.get_army(army);
+        REQUIRE(brain != nullptr);
+        CHECK(brain->unit_cap() == 42);
+        CHECK(brain->is_build_restricted("NUKE"));
+        CHECK(brain->is_build_restricted("EXPERIMENTAL"));
+    }
+}
+
+TEST_CASE("Sandbox victory option suppresses automatic army defeat", "[session][rules]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::SessionManager mgr;
+    osc::lua::ScenarioMetadata meta;
+    meta.armies = {"ARMY_1"};
+    sim.add_army("ARMY_1", "ARMY_1");
+
+    auto setup = lua.do_string("ScenarioInfo = {}");
+    REQUIRE(setup.ok());
+
+    osc::lua::GameOptionsConfig options;
+    options.configured = true;
+    options.set_string("Victory", "sandbox");
+    mgr.set_game_options(options);
+
+    auto result = mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta);
+    REQUIRE(result.ok());
+
+    for (int i = 0; i < 60; ++i) {
+        sim.tick();
+    }
+
+    auto* brain = sim.get_army(0);
+    REQUIRE(brain != nullptr);
+    CHECK(brain->state() == osc::sim::BrainState::InProgress);
+    CHECK(sim.player_result() == 0);
+}
+
+TEST_CASE("GameOptions parser preserves lobby scalar values and restrictions", "[session][config]") {
+    osc::lua::LuaState lua;
+    auto setup = lua.do_string(R"(
+        options = {
+            ScenarioFile = '/maps/example/example_scenario.lua',
+            Victory = 'sandbox',
+            UnitCap = 500,
+            CheatsEnabled = true,
+            CheatMult = 2.75,
+            RestrictedCategories = {'NUKE', 'EXPERIMENTAL'},
+        }
+    )");
+    REQUIRE(setup.ok());
+
+    lua_getglobal(lua.raw(), "options");
+    auto options = osc::lua::read_game_options(lua.raw(), lua_gettop(lua.raw()));
+    lua_pop(lua.raw(), 1);
+
+    REQUIRE(options.configured);
+    REQUIRE(options.restricted_categories.size() == 2);
+    CHECK(options.restricted_categories[0] == "NUKE");
+    CHECK(options.restricted_categories[1] == "EXPERIMENTAL");
+
+    bool saw_victory = false;
+    bool saw_unit_cap = false;
+    bool saw_cheats = false;
+    bool saw_cheat_mult = false;
+    bool saw_scenario = false;
+    for (const auto& [key, value] : options.values) {
+        if (key == "Victory") {
+            saw_victory = value.type == osc::lua::GameOptionValue::Type::String &&
+                          value.string_value == "sandbox";
+        } else if (key == "UnitCap") {
+            saw_unit_cap = value.type == osc::lua::GameOptionValue::Type::Number &&
+                           value.number_value == 500;
+        } else if (key == "CheatsEnabled") {
+            saw_cheats = value.type == osc::lua::GameOptionValue::Type::Boolean &&
+                         value.bool_value;
+        } else if (key == "CheatMult") {
+            saw_cheat_mult = value.type == osc::lua::GameOptionValue::Type::Number &&
+                             value.number_value == 2.75;
+        } else if (key == "ScenarioFile") {
+            saw_scenario = true;
+        }
+    }
+
+    CHECK(saw_victory);
+    CHECK(saw_unit_cap);
+    CHECK(saw_cheats);
+    CHECK(saw_cheat_mult);
+    CHECK_FALSE(saw_scenario);
 }

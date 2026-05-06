@@ -578,6 +578,7 @@ static bool execute_reload_sequence(
         // Try to retrieve sessionConfig from FrontEndData (set by lobby)
         std::vector<int> ai_indices;
         std::vector<osc::lua::ArmySlotConfig> slot_configs;
+        osc::lua::GameOptionsConfig game_options;
         std::string ai_personality = "adaptive";
         int filled_slots = 0;
 
@@ -590,6 +591,13 @@ static bool execute_reload_sequence(
             fed->get(uiL, "sessionConfig");
             if (lua_istable(uiL, -1)) {
                 int cfg_idx = lua_gettop(uiL);
+
+                lua_pushstring(uiL, "GameOptions");
+                lua_rawget(uiL, cfg_idx);
+                if (lua_istable(uiL, -1)) {
+                    game_options = osc::lua::read_game_options(uiL, lua_gettop(uiL));
+                }
+                lua_pop(uiL, 1);
 
                 // Walk PlayerOptions table: {[1]={Human=true,...}, [2]={Human=false,AIPersonality='adaptive',...}}
                 lua_pushstring(uiL, "PlayerOptions");
@@ -666,6 +674,9 @@ static bool execute_reload_sequence(
         // Apply parsed config (or fall back to defaults)
         if (!slot_configs.empty()) {
             new_session_mgr.set_army_slot_configs(slot_configs);
+        }
+        if (game_options.configured) {
+            new_session_mgr.set_game_options(game_options);
         }
         if (!ai_indices.empty()) {
             new_session_mgr.set_ai_armies(ai_indices);

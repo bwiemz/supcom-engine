@@ -2,6 +2,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "lua/smoke_test.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
@@ -183,6 +184,115 @@ TEST_CASE("ArmyBrain build restriction add/remove/check", "[m154]") {
     REQUIRE(brain.is_build_restricted("TECH1 LAND FACTORY"));
     brain.remove_build_restriction("TECH1 LAND FACTORY");
     REQUIRE_FALSE(brain.is_build_restricted("TECH1 LAND FACTORY"));
+}
+
+namespace {
+
+void register_test_unit_blueprint(osc::lua::LuaState& state,
+                                  osc::blueprints::BlueprintStore& store,
+                                  const char* blueprint_id,
+                                  std::initializer_list<const char*> categories,
+                                  double build_rate = 10.0) {
+    lua_State* L = state.raw();
+
+    lua_newtable(L);
+    int bp = lua_gettop(L);
+
+    lua_pushstring(L, "BlueprintId");
+    lua_pushstring(L, blueprint_id);
+    lua_rawset(L, bp);
+
+    lua_pushstring(L, "CategoriesHash");
+    lua_newtable(L);
+    int cats = lua_gettop(L);
+    for (const char* category : categories) {
+        lua_pushstring(L, category);
+        lua_pushboolean(L, 1);
+        lua_rawset(L, cats);
+    }
+    lua_rawset(L, bp);
+
+    lua_pushstring(L, "Economy");
+    lua_newtable(L);
+    int economy = lua_gettop(L);
+    lua_pushstring(L, "BuildRate");
+    lua_pushnumber(L, build_rate);
+    lua_rawset(L, economy);
+    lua_pushstring(L, "BuildTime");
+    lua_pushnumber(L, 10);
+    lua_rawset(L, economy);
+    lua_pushstring(L, "BuildCostMass");
+    lua_pushnumber(L, 10);
+    lua_rawset(L, economy);
+    lua_pushstring(L, "BuildCostEnergy");
+    lua_pushnumber(L, 10);
+    lua_rawset(L, economy);
+    lua_rawset(L, bp);
+
+    lua_pushstring(L, "Defense");
+    lua_newtable(L);
+    lua_pushstring(L, "MaxHealth");
+    lua_pushnumber(L, 100);
+    lua_rawset(L, -3);
+    lua_rawset(L, bp);
+
+    store.register_blueprint(L, osc::blueprints::BlueprintType::Unit, bp);
+    lua_pop(L, 1);
+}
+
+struct BuildRuleHarness {
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store;
+    osc::sim::SimState sim;
+
+    BuildRuleHarness() : store(state.raw()), sim(state.raw(), &store) {
+        osc::lua::register_moho_bindings(state, sim);
+        osc::lua::register_sim_bindings(state, sim);
+        sim.add_army("ARMY_1", "ARMY_1");
+
+        register_test_unit_blueprint(
+            state, store, "test_factory", {"STRUCTURE", "FACTORY"}, 20);
+        register_test_unit_blueprint(
+            state, store, "test_tank", {"MOBILE", "LAND", "TECH1"}, 1);
+        register_test_unit_blueprint(
+            state, store, "test_experimental",
+            {"MOBILE", "LAND", "EXPERIMENTAL"}, 1);
+        store.expose_to_lua(state.raw());
+    }
+};
+
+} // namespace
+
+TEST_CASE("Factory build obeys army unit cap", "[session][rules]") {
+    BuildRuleHarness h;
+    h.sim.get_army(0)->set_unit_cap(1);
+
+    auto result = h.state.do_string(
+        "local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+        "IssueBuildFactory({factory}, 'test_tank', 1)\n");
+    REQUIRE(result);
+    REQUIRE(h.sim.entity_registry().count() == 1);
+
+    h.sim.tick();
+
+    CHECK(h.sim.entity_registry().count() == 1);
+    CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
+}
+
+TEST_CASE("Factory build obeys lobby restricted categories", "[session][rules]") {
+    BuildRuleHarness h;
+    h.sim.get_army(0)->add_build_restriction("EXPERIMENTAL");
+
+    auto result = h.state.do_string(
+        "local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+        "IssueBuildFactory({factory}, 'test_experimental', 1)\n");
+    REQUIRE(result);
+    REQUIRE(h.sim.entity_registry().count() == 1);
+
+    h.sim.tick();
+
+    CHECK(h.sim.entity_registry().count() == 1);
+    CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
 }
 
 TEST_CASE("SimState generation increments on construction", "[m155]") {

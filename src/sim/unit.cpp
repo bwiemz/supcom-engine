@@ -19,6 +19,67 @@ extern "C" {
 
 namespace osc::sim {
 
+namespace {
+
+std::unordered_set<std::string> read_blueprint_categories(lua_State* L,
+                                                          const std::string& bp_id) {
+    std::unordered_set<std::string> categories;
+    if (!L || bp_id.empty()) return categories;
+
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return categories;
+    }
+
+    lua_pushstring(L, bp_id.c_str());
+    lua_gettable(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "CategoriesHash");
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            int cat_tbl = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, cat_tbl) != 0) {
+                if (lua_isstring(L, -2)) {
+                    categories.insert(lua_tostring(L, -2));
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1); // CategoriesHash
+    }
+    lua_pop(L, 2); // blueprint entry + __blueprints
+    return categories;
+}
+
+bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
+                                  const SimContext& ctx) {
+    if (!ctx.sim) return false;
+
+    auto* brain = ctx.sim->get_army(builder.army());
+    if (!brain) return false;
+
+    if (brain->unit_cap() >= 0 &&
+        brain->get_unit_cost_total(ctx.registry) >= brain->unit_cap()) {
+        spdlog::info("Build blocked: army {} unit cap {} reached for {}",
+                     builder.army(), brain->unit_cap(), cmd.blueprint_id);
+        return true;
+    }
+
+    auto categories = read_blueprint_categories(ctx.L, cmd.blueprint_id);
+    if (!categories.empty() && brain->is_build_restricted(categories)) {
+        spdlog::info("Build blocked: army {} restricted blueprint {}",
+                     builder.army(), cmd.blueprint_id);
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
+
 void Unit::add_weapon(std::unique_ptr<Weapon> w) {
     weapons_.push_back(std::move(w));
 }
@@ -394,6 +455,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.abort_move();
 
                 // Phase 2: Spawn skeleton unit
+                if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
                 if (!start_build(cmd, registry, L)) {
                     command_queue_.pop_front();
                     continue;
@@ -410,6 +475,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         case CommandType::BuildFactory: {
             if (build_target_id_ == 0) {
                 // Factory: spawn immediately at own position
+                if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
                 if (!start_build(cmd, registry, L)) {
                     command_queue_.pop_front();
                     continue;
@@ -535,6 +604,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
             // Upgrade: structure builds its replacement at own position
             // Reuses start_build/progress_build/finish_build with "Upgrade" order
             if (build_target_id_ == 0) {
+                if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
+                    command_queue_.pop_front();
+                    continue;
+                }
                 if (!start_build(cmd, registry, L)) {
                     command_queue_.pop_front();
                     continue;

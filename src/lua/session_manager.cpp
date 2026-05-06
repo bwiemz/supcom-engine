@@ -39,7 +39,91 @@ void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain) {
     }
 }
 
+void apply_game_options_to_brain(const GameOptionsConfig& options,
+                                 sim::ArmyBrain* brain) {
+    if (!options.configured || !brain) return;
+
+    for (const auto& [key, value] : options.values) {
+        if (key == "UnitCap" && value.type == GameOptionValue::Type::Number) {
+            brain->set_unit_cap(static_cast<i32>(value.number_value));
+        }
+    }
+
+    for (const auto& category : options.restricted_categories) {
+        brain->add_build_restriction(category);
+    }
+}
+
+void apply_game_options_to_sim(const GameOptionsConfig& options,
+                               sim::SimState& sim) {
+    if (!options.configured) return;
+    for (const auto& [key, value] : options.values) {
+        if (key == "Victory" && value.type == GameOptionValue::Type::String) {
+            sim.set_victory_condition(value.string_value);
+        }
+    }
+}
+
+void push_game_option(lua_State* L, int table_idx, const std::string& key,
+                      const GameOptionValue& value) {
+    lua_pushstring(L, key.c_str());
+    switch (value.type) {
+    case GameOptionValue::Type::String:
+        lua_pushstring(L, value.string_value.c_str());
+        break;
+    case GameOptionValue::Type::Number:
+        lua_pushnumber(L, value.number_value);
+        break;
+    case GameOptionValue::Type::Boolean:
+        lua_pushboolean(L, value.bool_value ? 1 : 0);
+        break;
+    }
+    lua_rawset(L, table_idx);
+}
+
 } // anonymous namespace
+
+GameOptionsConfig read_game_options(lua_State* L, int table_idx) {
+    GameOptionsConfig options;
+    if (!lua_istable(L, table_idx)) return options;
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    options.configured = true;
+
+    lua_pushnil(L);
+    while (lua_next(L, table_idx) != 0) {
+        if (lua_type(L, -2) == LUA_TSTRING) {
+            std::string key = lua_tostring(L, -2);
+            if (key == "ScenarioFile") {
+                lua_pop(L, 1);
+                continue;
+            }
+
+            if (key == "RestrictedCategories" && lua_istable(L, -1)) {
+                int categories_idx = lua_gettop(L);
+                for (int i = 1;; ++i) {
+                    lua_rawgeti(L, categories_idx, i);
+                    if (lua_isnil(L, -1)) {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        options.restricted_categories.emplace_back(lua_tostring(L, -1));
+                    }
+                    lua_pop(L, 1);
+                }
+            } else if (lua_type(L, -1) == LUA_TSTRING) {
+                options.set_string(key, lua_tostring(L, -1));
+            } else if (lua_type(L, -1) == LUA_TNUMBER) {
+                options.set_number(key, lua_tonumber(L, -1));
+            } else if (lua_type(L, -1) == LUA_TBOOLEAN) {
+                options.set_bool(key, lua_toboolean(L, -1) != 0);
+            }
+        }
+        lua_pop(L, 1);
+    }
+
+    return options;
+}
 
 Result<void> SessionManager::start_session(LuaState& state,
                                             const vfs::VirtualFileSystem&,
@@ -50,6 +134,7 @@ Result<void> SessionManager::start_session(LuaState& state,
 
     // Step 1: Populate ScenarioInfo.ArmySetup for Lua code
     setup_army_info(L, meta);
+    apply_game_options_to_sim(game_options_, sim);
 
     // Step 2: Call SetupSession() — loads save + script files
     spdlog::info("  Calling SetupSession()...");
@@ -95,8 +180,10 @@ Result<void> SessionManager::start_session(LuaState& state,
             spdlog::warn("  Failed to create brain for {}: {}",
                           meta.armies[i], result.error().message);
         } else {
+            auto* brain = sim.get_army(static_cast<i32>(i));
             apply_config_to_brain(slot_config_for_army(static_cast<int>(i)),
-                                  sim.get_army(static_cast<i32>(i)));
+                                  brain);
+            apply_game_options_to_brain(game_options_, brain);
             brains_created++;
         }
     }
@@ -236,6 +323,25 @@ void SessionManager::setup_army_info(lua_State* L,
     lua_pushstring(L, "RestrictedCategories");
     lua_newtable(L);
     lua_rawset(L, opts_idx);
+
+    if (game_options_.configured) {
+        for (const auto& [key, value] : game_options_.values) {
+            if (key == "ScenarioFile" || key == "RestrictedCategories") continue;
+            push_game_option(L, opts_idx, key, value);
+        }
+
+        if (!game_options_.restricted_categories.empty()) {
+            lua_pushstring(L, "RestrictedCategories");
+            lua_newtable(L);
+            int restricted_idx = lua_gettop(L);
+            int index = 1;
+            for (const auto& category : game_options_.restricted_categories) {
+                lua_pushstring(L, category.c_str());
+                lua_rawseti(L, restricted_idx, index++);
+            }
+            lua_rawset(L, opts_idx);
+        }
+    }
 
     lua_rawset(L, si_idx); // ScenarioInfo.Options = opts table
 

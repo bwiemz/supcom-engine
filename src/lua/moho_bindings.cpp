@@ -11178,39 +11178,85 @@ static const MethodEntry ui_map_preview_methods[] = {
     {nullptr, nullptr},
 };
 
-static int l_InternalCreateMapPreview(lua_State* L) {
+static void set_map_preview_metatable(lua_State* L, int self_idx) {
+    lua_newtable(L);
+
+    lua_pushstring(L, "__index");
+    lua_newtable(L);
+
+    lua_pushstring(L, "moho");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        const char* method_tables[] = {"control_methods", "ui_map_preview_methods"};
+        for (const char* table_name : method_tables) {
+            lua_pushstring(L, table_name);
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushnil(L);
+                while (lua_next(L, -2) != 0) {
+                    lua_pushvalue(L, -2);
+                    lua_pushvalue(L, -2);
+                    lua_rawset(L, -7);
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    lua_rawset(L, -3);
+    lua_setmetatable(L, self_idx);
+}
+
+static int create_map_preview_control(lua_State* L, int self_idx, int parent_idx) {
     auto* reg = get_ui_registry(L);
     if (!reg) return luaL_error(L, "InternalCreateMapPreview: no UIControlRegistry");
-    if (!lua_istable(L, 1))
-        return luaL_error(L, "InternalCreateMapPreview: arg 1 must be self table");
+    if (!lua_istable(L, self_idx))
+        return luaL_error(L, "InternalCreateMapPreview: self must be a table");
 
     u32 id = reg->create();
     auto* ctrl = reg->get(id);
     if (!ctrl) return luaL_error(L, "InternalCreateMapPreview: failed to create control");
 
-    lua_pushvalue(L, 1);
+    lua_pushvalue(L, self_idx);
     int ref = luaL_ref(L, LUA_REGISTRYINDEX);
     ctrl->set_lua_table_ref(ref);
 
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, ctrl);
-    lua_rawset(L, 1);
+    lua_rawset(L, self_idx);
 
-    if (lua_istable(L, 2)) {
-        auto* parent = check_control(L, 2);
+    if (parent_idx > 0 && lua_istable(L, parent_idx)) {
+        auto* parent = check_control(L, parent_idx);
         if (parent) ctrl->set_parent(parent);
     }
 
-    create_lazyvar(L, 1, "Left");
-    create_lazyvar(L, 1, "Top");
-    create_lazyvar(L, 1, "Right");
-    create_lazyvar(L, 1, "Bottom");
-    create_lazyvar(L, 1, "Width");
-    create_lazyvar(L, 1, "Height");
-    create_lazyvar(L, 1, "Depth");
+    create_lazyvar(L, self_idx, "Left");
+    create_lazyvar(L, self_idx, "Top");
+    create_lazyvar(L, self_idx, "Right");
+    create_lazyvar(L, self_idx, "Bottom");
+    create_lazyvar(L, self_idx, "Width");
+    create_lazyvar(L, self_idx, "Height");
+    create_lazyvar(L, self_idx, "Depth");
 
-    spdlog::debug("InternalCreateMapPreview: control #{}", id);
+    spdlog::debug("MapPreview: control #{}", id);
     return 0;
+}
+
+static int l_InternalCreateMapPreview(lua_State* L) {
+    return create_map_preview_control(L, 1, 2);
+}
+
+static int l_MapPreview(lua_State* L) {
+    const int parent_idx = lua_istable(L, 1) ? 1 : 0;
+    lua_newtable(L);
+    const int self_idx = lua_gettop(L);
+
+    create_map_preview_control(L, self_idx, parent_idx);
+    set_map_preview_metatable(L, self_idx);
+
+    return 1;
 }
 
 // ====================================================================
@@ -11796,15 +11842,91 @@ static const MethodEntry ui_worldview_methods[] = {
 
 // --- Discovery service methods (M76) ---
 
+static void ensure_table_field(lua_State* L, int table_idx, const char* key) {
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    lua_pushstring(L, key);
+    lua_rawget(L, table_idx);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, key);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, table_idx);
+    }
+}
+
+static int sequence_count(lua_State* L, int table_idx) {
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    int count = 0;
+    for (int i = 1;; ++i) {
+        lua_rawgeti(L, table_idx, i);
+        const bool present = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (!present) break;
+        count = i;
+    }
+    return count;
+}
+
 static int discovery_GetGameCount(lua_State* L) {
-    lua_pushnumber(L, 0);
+    if (!lua_istable(L, 1)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    ensure_table_field(L, 1, "__osc_games");
+    int count = sequence_count(L, -1);
+    lua_pop(L, 1);
+    lua_pushnumber(L, count);
     return 1;
 }
 
-static int discovery_Reset(lua_State* /*L*/) { return 0; }
-static int discovery_Destroy(lua_State* /*L*/) { return 0; }
+static int discovery_GetGame(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    int index = static_cast<int>(luaL_checknumber(L, 2));
+    ensure_table_field(L, 1, "__osc_games");
+    lua_rawgeti(L, -1, index);
+    lua_remove(L, -2);
+    return 1;
+}
+
+static int discovery_AddGame(lua_State* L) {
+    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    ensure_table_field(L, 1, "__osc_games");
+    int next = sequence_count(L, -1) + 1;
+    lua_pushvalue(L, 2);
+    lua_rawseti(L, -2, next);
+    lua_pop(L, 1);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int discovery_Reset(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "__osc_games");
+        lua_newtable(L);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
+static int discovery_Destroy(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "__osc_destroyed");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
 
 static const MethodEntry ui_discovery_methods[] = {
+    {"AddGame",      discovery_AddGame},
+    {"GetGame",      discovery_GetGame},
     {"GetGameCount", discovery_GetGameCount},
     {"Reset",        discovery_Reset},
     {"Destroy",      discovery_Destroy},
@@ -11839,11 +11961,82 @@ static int l_InternalCreateDiscoveryService(lua_State* L) {
 
 static int lobby_SendData(lua_State* L);
 static int lobby_BroadcastData(lua_State* L) { return lobby_SendData(L); }
-static int lobby_ConnectToPeer(lua_State* /*L*/) { return 0; }
-static int lobby_DebugDump(lua_State* /*L*/) { return 0; }
-static int lobby_Destroy(lua_State* /*L*/) { return 0; }
-static int lobby_DisconnectFromPeer(lua_State* /*L*/) { return 0; }
-static int lobby_EjectPeer(lua_State* /*L*/) { return 0; }
+
+static const char* lobby_arg_string(lua_State* L, int idx, const char* fallback) {
+    return lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : fallback;
+}
+
+static void lobby_push_peers(lua_State* L, int lobby_idx) {
+    ensure_table_field(L, lobby_idx, "__osc_peers");
+}
+
+static int lobby_ConnectToPeer(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const char* id = lobby_arg_string(L, 2, "1");
+    const char* name = lobby_arg_string(L, 3, id);
+    double port = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 0.0;
+
+    lobby_push_peers(L, 1);
+    lua_newtable(L);
+    lua_pushstring(L, "ID"); lua_pushstring(L, id); lua_rawset(L, -3);
+    lua_pushstring(L, "Name"); lua_pushstring(L, name); lua_rawset(L, -3);
+    lua_pushstring(L, "Port"); lua_pushnumber(L, port); lua_rawset(L, -3);
+    lua_pushstring(L, "Connected"); lua_pushboolean(L, 1); lua_rawset(L, -3);
+    lua_pushstring(L, id);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -4);
+    lua_pop(L, 2);
+
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lobby_DebugDump(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lobby_push_peers(L, 1);
+    spdlog::debug("Lobby peers: {}", luaL_getn(L, -1));
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int lobby_Destroy(lua_State* L) {
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "__osc_destroyed");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, 1);
+        lua_pushstring(L, "__osc_peers");
+        lua_newtable(L);
+        lua_rawset(L, 1);
+    }
+    return 0;
+}
+
+static int lobby_DisconnectFromPeer(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const char* id = lobby_arg_string(L, 2, "");
+    lobby_push_peers(L, 1);
+    lua_pushstring(L, id);
+    lua_rawget(L, -2);
+    bool existed = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    lua_pushstring(L, id);
+    lua_pushnil(L);
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+    lua_pushboolean(L, existed ? 1 : 0);
+    return 1;
+}
+
+static int lobby_EjectPeer(lua_State* L) {
+    return lobby_DisconnectFromPeer(L);
+}
 
 static int lobby_GetLocalPlayerID(lua_State* L) {
     lua_pushstring(L, "0");
@@ -11874,13 +12067,24 @@ static int lobby_GetLocalPort(lua_State* L) {
 }
 
 static int lobby_GetPeer(lua_State* L) {
-    // Return empty peer table
-    lua_newtable(L);
+    if (!lua_istable(L, 1)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const char* id = lobby_arg_string(L, 2, "");
+    lobby_push_peers(L, 1);
+    lua_pushstring(L, id);
+    lua_rawget(L, -2);
+    lua_remove(L, -2);
     return 1;
 }
 
 static int lobby_GetPeers(lua_State* L) {
-    lua_newtable(L); // empty peers list
+    if (!lua_istable(L, 1)) {
+        lua_newtable(L);
+        return 1;
+    }
+    lobby_push_peers(L, 1);
     return 1;
 }
 
@@ -14221,17 +14425,6 @@ static int l_HasCommandLineArg(lua_State* L) {
 }
 
 // ====================================================================
-// Map preview stub (M148d)
-// ====================================================================
-
-/// MapPreview(scenarioFile) -> nil (stub — no heightmap rendering yet)
-static int l_MapPreview(lua_State* L) {
-    spdlog::debug("MapPreview: stub (no heightmap rendering yet)");
-    lua_pushnil(L);
-    return 1;
-}
-
-// ====================================================================
 // Profile system — Prefs table (M149a)
 // ====================================================================
 
@@ -14329,6 +14522,43 @@ static int l_GetKeyBindings(lua_State* L) {
     set("select_all", "Ctrl+Shift+A");
     set("toggle_pause", "Pause");
 
+    lua_pushstring(L, "__osc_key_bindings");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            lua_pushvalue(L, -2);
+            lua_pushvalue(L, -2);
+            lua_rawset(L, -6);
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    return 1;
+}
+
+/// SetKeyBinding(action, key) -> boolean
+static int l_SetKeyBinding(lua_State* L) {
+    const char* action = luaL_checkstring(L, 1);
+    const char* key = luaL_checkstring(L, 2);
+
+    lua_pushstring(L, "__osc_key_bindings");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "__osc_key_bindings");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+
+    lua_pushstring(L, action);
+    lua_pushstring(L, key);
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -14381,7 +14611,14 @@ static int l_ExitGame(lua_State* L) {
 }
 
 /// ReturnToLobby() — score screen continue button signal.
+static void clear_chat_history(lua_State* L) {
+    lua_pushstring(L, "__osc_chat_history");
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 static int l_ReturnToLobby(lua_State* L) {
+    clear_chat_history(L);
     lua_pushstring(L, "__osc_return_to_lobby");
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
@@ -14409,20 +14646,45 @@ static int l_RegisterChatFunc(lua_State* L) {
     return 0;
 }
 
-/// SessionSendChatMessage(clients, msgTable) — send a chat message.
-/// In single-player, echoes to the registered chat function.
-static int l_SessionSendChatMessage(lua_State* L) {
+static void append_chat_history(lua_State* L, int msg_idx) {
+    if (msg_idx < 0) msg_idx = lua_gettop(L) + msg_idx + 1;
+    lua_pushstring(L, "__osc_chat_history");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "__osc_chat_history");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+
+    int next = luaL_getn(L, -1) + 1;
+    lua_pushvalue(L, msg_idx);
+    lua_rawseti(L, -2, next);
+    lua_pop(L, 1);
+}
+
+static void dispatch_chat_message(lua_State* L, int msg_idx, const char* warning_prefix) {
+    if (msg_idx < 0) msg_idx = lua_gettop(L) + msg_idx + 1;
     lua_pushstring(L, "__osc_chat_func");
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 2); // msgTable
+        lua_pushvalue(L, msg_idx);
         if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("ChatFunc error: {}", lua_tostring(L, -1));
+            spdlog::warn("{} error: {}", warning_prefix, lua_tostring(L, -1));
             lua_pop(L, 1);
         }
     } else {
         lua_pop(L, 1);
     }
+}
+
+/// SessionSendChatMessage(clients, msgTable) — send a chat message.
+/// In single-player, echoes to the registered chat function.
+static int l_SessionSendChatMessage(lua_State* L) {
+    if (!lua_istable(L, 2)) return 0;
+    append_chat_history(L, 2);
+    dispatch_chat_message(L, 2, "ChatFunc");
     return 0;
 }
 
@@ -14431,22 +14693,26 @@ static int l_SessionSendChatMessage(lua_State* L) {
 static int l_SendSystemMessage(lua_State* L) {
     const char* text = luaL_checkstring(L, 1);
 
-    lua_pushstring(L, "__osc_chat_func");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_isfunction(L, -1)) {
-        // Build a message table: {from = "System", text = text}
-        lua_newtable(L);
-        lua_pushstring(L, "from"); lua_pushstring(L, "System"); lua_rawset(L, -3);
-        lua_pushstring(L, "text"); lua_pushstring(L, text); lua_rawset(L, -3);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("SendSystemMessage error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-        spdlog::info("System: {}", text);
-    }
+    lua_newtable(L);
+    int msg_idx = lua_gettop(L);
+    lua_pushstring(L, "from"); lua_pushstring(L, "System"); lua_rawset(L, msg_idx);
+    lua_pushstring(L, "text"); lua_pushstring(L, text); lua_rawset(L, msg_idx);
+
+    append_chat_history(L, msg_idx);
+    dispatch_chat_message(L, msg_idx, "SendSystemMessage");
+    lua_pop(L, 1);
     return 0;
+}
+
+/// GetChatHistory() -> array of chat message tables.
+static int l_GetChatHistory(lua_State* L) {
+    lua_pushstring(L, "__osc_chat_history");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+    }
+    return 1;
 }
 
 /// GetSessionClients() → table of connected players.
@@ -14564,6 +14830,7 @@ void register_front_end_fallback_bindings(LuaState& state) {
 
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
+    clear_chat_history(L);
 
     // Initialize FontMetricsProvider with VFS for real TrueType metrics
     auto* vfs = LuaState::get_vfs(L);
@@ -14805,11 +15072,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Key bindings (M149c)
     state.register_function("GetKeyBindings", l_GetKeyBindings);
+    state.register_function("SetKeyBinding", l_SetKeyBinding);
 
     // Chat stubs (M151a-b)
     state.register_function("RegisterChatFunc", l_RegisterChatFunc);
     state.register_function("SessionSendChatMessage", l_SessionSendChatMessage);
     state.register_function("SendSystemMessage", l_SendSystemMessage);
+    state.register_function("GetChatHistory", l_GetChatHistory);
     state.register_function("GetSessionClients", l_GetSessionClients);
 
     // Engine state queries (M144c)
