@@ -11966,8 +11966,83 @@ static const char* lobby_arg_string(lua_State* L, int idx, const char* fallback)
     return lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : fallback;
 }
 
+static std::string lobby_arg_id(lua_State* L, int idx, const char* fallback) {
+    if (lua_type(L, idx) == LUA_TSTRING) return lua_tostring(L, idx);
+    if (lua_type(L, idx) == LUA_TNUMBER) {
+        std::ostringstream ss;
+        ss << static_cast<int>(lua_tonumber(L, idx));
+        return ss.str();
+    }
+    return fallback;
+}
+
+static int lua_abs_index(lua_State* L, int idx) {
+    return idx > 0 ? idx : lua_gettop(L) + idx + 1;
+}
+
+static void lobby_default_number_field(lua_State* L, int table_idx,
+                                       const char* key, double value) {
+    table_idx = lua_abs_index(L, table_idx);
+    lua_pushstring(L, key);
+    lua_rawget(L, table_idx);
+    const bool missing = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (missing) {
+        lua_pushstring(L, key);
+        lua_pushnumber(L, value);
+        lua_rawset(L, table_idx);
+    }
+}
+
+static void lobby_default_string_field(lua_State* L, int table_idx,
+                                       const char* key, const char* value) {
+    table_idx = lua_abs_index(L, table_idx);
+    lua_pushstring(L, key);
+    lua_rawget(L, table_idx);
+    const bool missing = lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (missing) {
+        lua_pushstring(L, key);
+        lua_pushstring(L, value);
+        lua_rawset(L, table_idx);
+    }
+}
+
+static void lobby_sanitize_peer_table(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return;
+    lobby_default_number_field(L, idx, "quiet", 0);
+    lobby_default_number_field(L, idx, "ping", 0);
+    lobby_default_string_field(L, idx, "status", "Established");
+}
+
 static void lobby_push_peers(lua_State* L, int lobby_idx) {
     ensure_table_field(L, lobby_idx, "__osc_peers");
+}
+
+static void lobby_store_peer(lua_State* L, int lobby_idx, const char* id,
+                             const char* name, double port) {
+    lobby_push_peers(L, lobby_idx);
+    lua_newtable(L);
+    lua_pushstring(L, "ID"); lua_pushstring(L, id); lua_rawset(L, -3);
+    lua_pushstring(L, "id"); lua_pushstring(L, id); lua_rawset(L, -3);
+    lua_pushstring(L, "Name"); lua_pushstring(L, name); lua_rawset(L, -3);
+    lua_pushstring(L, "name"); lua_pushstring(L, name); lua_rawset(L, -3);
+    lua_pushstring(L, "Port"); lua_pushnumber(L, port); lua_rawset(L, -3);
+    lua_pushstring(L, "port"); lua_pushnumber(L, port); lua_rawset(L, -3);
+    lua_pushstring(L, "Connected"); lua_pushboolean(L, 1); lua_rawset(L, -3);
+    lua_pushstring(L, "quiet"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+    lua_pushstring(L, "ping"); lua_pushnumber(L, 0); lua_rawset(L, -3);
+    lua_pushstring(L, "status"); lua_pushstring(L, "Established"); lua_rawset(L, -3);
+    lua_pushstring(L, "establishedPeers");
+    lua_newtable(L);
+    lua_pushnumber(L, 1);
+    lua_pushstring(L, "1");
+    lua_rawset(L, -3);
+    lua_rawset(L, -3);
+    lua_pushstring(L, id);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -4);
+    lua_pop(L, 2);
 }
 
 static int lobby_ConnectToPeer(lua_State* L) {
@@ -11976,20 +12051,12 @@ static int lobby_ConnectToPeer(lua_State* L) {
         return 1;
     }
 
-    const char* id = lobby_arg_string(L, 2, "1");
+    std::string id_storage = lobby_arg_id(L, 2, "1");
+    const char* id = id_storage.c_str();
     const char* name = lobby_arg_string(L, 3, id);
     double port = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 0.0;
 
-    lobby_push_peers(L, 1);
-    lua_newtable(L);
-    lua_pushstring(L, "ID"); lua_pushstring(L, id); lua_rawset(L, -3);
-    lua_pushstring(L, "Name"); lua_pushstring(L, name); lua_rawset(L, -3);
-    lua_pushstring(L, "Port"); lua_pushnumber(L, port); lua_rawset(L, -3);
-    lua_pushstring(L, "Connected"); lua_pushboolean(L, 1); lua_rawset(L, -3);
-    lua_pushstring(L, id);
-    lua_pushvalue(L, -2);
-    lua_rawset(L, -4);
-    lua_pop(L, 2);
+    lobby_store_peer(L, 1, id, name, port);
 
     lua_pushboolean(L, 1);
     return 1;
@@ -12020,7 +12087,8 @@ static int lobby_DisconnectFromPeer(lua_State* L) {
         lua_pushboolean(L, 0);
         return 1;
     }
-    const char* id = lobby_arg_string(L, 2, "");
+    std::string id_storage = lobby_arg_id(L, 2, "");
+    const char* id = id_storage.c_str();
     lobby_push_peers(L, 1);
     lua_pushstring(L, id);
     lua_rawget(L, -2);
@@ -12071,10 +12139,20 @@ static int lobby_GetPeer(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    const char* id = lobby_arg_string(L, 2, "");
+    std::string id_storage = lobby_arg_id(L, 2, "");
+    const char* id = id_storage.c_str();
     lobby_push_peers(L, 1);
     lua_pushstring(L, id);
     lua_rawget(L, -2);
+    if (lua_isnil(L, -1) && std::string(id) == "1") {
+        lua_pop(L, 1);
+        lua_pop(L, 1);
+        lobby_store_peer(L, 1, "1", "Player", 0.0);
+        lobby_push_peers(L, 1);
+        lua_pushstring(L, id);
+        lua_rawget(L, -2);
+    }
+    lobby_sanitize_peer_table(L, -1);
     lua_remove(L, -2);
     return 1;
 }
@@ -12093,6 +12171,11 @@ static int lobby_GetPeers(lua_State* L) {
 /// we simulate with a 1-tick delay so InitLobbyComm fully completes first.
 static int lobby_HostGame(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
+
+    lua_pushstring(L, "__osc_lobby_host_game_called");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    spdlog::info("lobby:HostGame invoked");
 
     // Store lobbyComm in a well-known global for the deferred thread to read.
     // Using rawset to bypass config.lua's global lock.
@@ -12115,6 +12198,7 @@ static int lobby_HostGame(lua_State* L) {
     lua_pushstring(L, "__osc_pending_host_name");
     lua_pushstring(L, player_name.c_str());
     lua_rawset(L, LUA_GLOBALSINDEX);
+    lobby_store_peer(L, 1, "1", player_name.c_str(), 0.0);
 
     // Defer the callback by 1 tick via ForkThread + WaitTicks(1).
     // Also patch HostUtils.RefreshButtonEnabledness if nil — the HostUtils table
@@ -12127,15 +12211,19 @@ static int lobby_HostGame(lua_State* L) {
             "  WaitTicks(1)\n"
             "  local comm = rawget(_G, '__osc_pending_host_comm')\n"
             "  local name = rawget(_G, '__osc_pending_host_name') or 'Player'\n"
+            "  local LobbyComm = import('/lua/ui/lobby/lobbyComm.lua')\n"
+            "  if LobbyComm and LobbyComm.quietTimeout == nil then LobbyComm.quietTimeout = 30000 end\n"
             "  rawset(_G, '__osc_pending_host_comm', nil)\n"
             "  rawset(_G, '__osc_pending_host_name', nil)\n"
             "  -- Fire Hosting callback first (creates HostUtils, adds host to slot 1)\n"
             "  if comm and comm.Hosting then\n"
             "    comm:Hosting()\n"
+            "    rawset(_G, '__osc_lobby_hosting_callback_fired', true)\n"
             "  end\n"
             "  -- Then fire ConnectionToHostEstablished (creates the lobby UI)\n"
             "  if comm and comm.ConnectionToHostEstablished then\n"
             "    comm:ConnectionToHostEstablished(1, name, 1)\n"
+            "    rawset(_G, '__osc_lobby_connection_callback_fired', true)\n"
             "  end\n"
             "end)\n";
         if (luaL_loadbuffer(L, code, std::strlen(code), "=HostGame") == 0) {

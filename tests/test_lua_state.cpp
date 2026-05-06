@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include "core/front_end_data.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "sim/sim_state.hpp"
@@ -67,6 +68,13 @@ bool global_bool(lua_State* L, const char* name) {
 std::string global_string(lua_State* L, const char* name) {
     lua_getglobal(L, name);
     std::string value = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return value;
+}
+
+double global_number(lua_State* L, const char* name) {
+    lua_getglobal(L, name);
+    double value = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : 0.0;
     lua_pop(L, 1);
     return value;
 }
@@ -296,6 +304,7 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
         peers_after_connect = lobby:GetPeers()
         peer_after_connect = lobby:GetPeer('2')
         peer_name_after_connect = peer_after_connect and peer_after_connect.Name
+        peer_quiet_after_connect = peer_after_connect and peer_after_connect.quiet
 
         disconnected = lobby:DisconnectFromPeer('2')
         peer_after_disconnect = lobby:GetPeer('2')
@@ -312,6 +321,7 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
     lua_State* L = state.raw();
     CHECK(global_bool(L, "connected"));
     CHECK(global_string(L, "peer_name_after_connect") == "RemotePlayer");
+    CHECK(global_number(L, "peer_quiet_after_connect") == 0.0);
     CHECK(global_bool(L, "disconnected"));
     CHECK(global_bool(L, "ejected"));
 
@@ -321,6 +331,85 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
     lua_getglobal(L, "peer_after_eject");
     CHECK(lua_isnil(L, -1));
     lua_pop(L, 1);
+}
+
+TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][ui]") {
+    LuaState state;
+    osc::sim::SimState sim(state.raw(), nullptr);
+    osc::ui::UIControlRegistry ui_registry;
+    osc::FrontEndData front_end_data;
+
+    register_moho_bindings(state, sim);
+    register_ui_bindings(state, ui_registry);
+
+    lua_State* L = state.raw();
+    lua_pushstring(L, "__osc_front_end_data");
+    lua_pushlightuserdata(L, &front_end_data);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    auto result = state.do_string(R"(
+        LobbyClass = {}
+        for k, v in moho.lobby_methods do LobbyClass[k] = v end
+        lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Host')
+
+        lobby:LaunchGame({
+            GameOptions = {
+                ScenarioFile = '/maps/SCMP_009/SCMP_009_scenario.lua',
+                Victory = 'sandbox',
+                UnitCap = 750,
+            },
+            PlayerOptions = {
+                [1] = {
+                    Human = true,
+                    PlayerName = 'Player',
+                    Faction = 1,
+                    Team = 1,
+                    StartSpot = 1,
+                },
+                [2] = {
+                    Human = false,
+                    PlayerName = 'AI: Turtle',
+                    AIPersonality = 'turtle',
+                    Faction = 2,
+                    Team = 2,
+                    StartSpot = 2,
+                },
+            },
+        })
+
+        launch_requested = false
+        saved_scenario = nil
+        normalized_scenario = nil
+        saved_ai_personality = nil
+
+        saved_config = GetFrontEndData('sessionConfig')
+        if saved_config then
+            normalized_scenario = saved_config.ScenarioFile
+            if saved_config.PlayerOptions and saved_config.PlayerOptions[2] then
+                saved_ai_personality = saved_config.PlayerOptions[2].AIPersonality
+            end
+        end
+    )");
+    if (!result.ok()) {
+        UNSCOPED_INFO(result.error().message);
+    }
+    REQUIRE(result.ok());
+
+    lua_pushstring(L, "__osc_launch_requested");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    CHECK(lua_toboolean(L, -1) != 0);
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "__osc_launch_scenario");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    std::string launch_scenario = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+
+    CHECK(launch_scenario == "/maps/SCMP_009/SCMP_009_scenario.lua");
+    CHECK(global_string(L, "normalized_scenario") == "/maps/SCMP_009/SCMP_009_scenario.lua");
+    CHECK(global_string(L, "saved_ai_personality") == "turtle");
+
+    front_end_data.clear(L);
 }
 
 TEST_CASE("Discovery service tracks advertised lobby entries", "[lua][ui]") {

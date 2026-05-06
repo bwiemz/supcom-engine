@@ -379,6 +379,7 @@ MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
 | `--stress-test` | Extended AI-vs-AI stress test (10,000 ticks, stability validation) |
 | `--draw-test` | Simultaneous ACU death → Draw game-over edge case |
 | `--full-smoke-test` | 5-phase lifecycle smoke test: front-end → lobby → 1000-tick game → score → return-to-lobby |
+| `--lobby-flow-test` | Headless front-end `ButtonSkirmish()` to hosted lobby callback smoke |
 | `--instrument` | Silent smoke harness during interactive play, report on exit to smoke_report.txt |
 
 ## Project Structure

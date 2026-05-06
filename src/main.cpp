@@ -29,6 +29,7 @@
 #include "lua/beat_system.hpp"
 #include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/ui_dispatch.hpp"
 #include "ui/keymap.hpp"
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
@@ -315,6 +316,7 @@ static void print_usage() {
               << "  --edit-test        Edit/ItemList/Scrollbar controls (text input, list ops, scroll)\n"
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
+              << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -768,6 +770,25 @@ static void pump_ui_frames(
     }
 }
 
+static void pump_ui_frames_with_controls(
+    osc::lua::LuaState& ui_lua_state,
+    osc::sim::ThreadManager& ui_thread_manager,
+    osc::lua::BeatFunctionRegistry& beat_registry,
+    osc::ui::UIControlRegistry& ui_registry,
+    int count,
+    osc::u32& ui_frame_counter) {
+    lua_State* uL = ui_lua_state.raw();
+    osc::ui::UIDispatch dispatch;
+    for (int i = 0; i < count; i++) {
+        ui_frame_counter++;
+        ui_thread_manager.resume_all(ui_frame_counter);
+        dispatch.update_controls(uL, ui_registry, 1.0 / 60.0);
+        dispatch.dispatch_events(uL, ui_registry);
+        osc::core::call_on_beat(uL, 1.0 / 30.0);
+        beat_registry.fire_all(uL);
+    }
+}
+
 #ifdef _WIN32
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
     spdlog::critical("CRASH: code={:#x} addr={:#x}",
@@ -850,6 +871,7 @@ int main(int argc, char* argv[]) {
     bool edit_test = parse_flag(argc, argv, "--edit-test");
     bool controls_test = parse_flag(argc, argv, "--controls-test");
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
+    bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
     bool scissor_test = parse_flag(argc, argv, "--scissor-test");
@@ -923,6 +945,7 @@ int main(int argc, char* argv[]) {
                     ui_test || bitmap_test ||
                     text_test || edit_test ||
                     controls_test || uiboot_test ||
+                    lobby_flow_test ||
                     uirender_test || font_test ||
                     scissor_test || border_render_test ||
                     edit_render_test || itemlist_render_test ||
@@ -1576,6 +1599,98 @@ int main(int argc, char* argv[]) {
         game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
     }
 
+    if (lobby_flow_test) {
+        if (!map_path.empty()) {
+            spdlog::error("--lobby-flow-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+
+        static osc::lua::SmokeTestHarness lobby_harness;
+        lobby_harness.activate();
+        lobby_harness.set_phase("LOBBY_FLOW");
+        lobby_harness.install_panic_handler(ui_lua_state.raw());
+        lobby_harness.install_global_interceptor(ui_lua_state.raw());
+        lobby_harness.install_all_method_interceptors(ui_lua_state.raw());
+
+        spdlog::info("=== Lobby Flow Test: ButtonSkirmish -> hosted lobby ===");
+        auto trigger_result = ui_lua_state.do_string(R"(
+            rawset(_G, '__osc_lobby_flow_before_count', GetNumRootFrames())
+            import('/lua/user/prefs.lua').SetToCurrentProfile('MenuTutorialPrompt', true)
+            local main_menu = import('/lua/ui/menus/main.lua')
+            rawset(_G, '__osc_lobby_flow_button_skirmish_type', type(main_menu.ButtonSkirmish))
+            main_menu.ButtonSkirmish()
+        )");
+        if (!trigger_result) {
+            spdlog::error("Lobby flow ButtonSkirmish error: {}",
+                          trigger_result.error().message);
+            lobby_harness.print_report(true);
+            lobby_harness.write_report_to_file("smoke_report.txt");
+            lobby_harness.deactivate();
+            return 1;
+        }
+
+        pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager,
+                                     beat_registry, ui_registry, 180,
+                                     ui_frame_count);
+
+        auto verify_result = ui_lua_state.do_string(R"(
+            __osc_lobby_flow_after_count = GetNumRootFrames()
+            __osc_lobby_flow_hosted =
+                rawget(_G, '__osc_lobby_hosting_callback_fired') == true
+                and rawget(_G, '__osc_lobby_connection_callback_fired') == true
+                and rawget(_G, '__osc_pending_host_comm') == nil
+                and __osc_lobby_flow_after_count >= __osc_lobby_flow_before_count
+        )");
+        if (!verify_result) {
+            spdlog::error("Lobby flow verification error: {}",
+                          verify_result.error().message);
+            lobby_harness.print_report(true);
+            lobby_harness.write_report_to_file("smoke_report.txt");
+            lobby_harness.deactivate();
+            return 1;
+        }
+
+        lua_State* uL = ui_lua_state.raw();
+        lua_getglobal(uL, "__osc_lobby_flow_hosted");
+        const bool hosted = lua_toboolean(uL, -1) != 0;
+        lua_pop(uL, 1);
+
+        if (!hosted) {
+            lua_getglobal(uL, "__osc_lobby_host_game_called");
+            const bool host_game_called = lua_toboolean(uL, -1) != 0;
+            lua_pop(uL, 1);
+            lua_getglobal(uL, "__osc_lobby_hosting_callback_fired");
+            const bool hosting_callback = lua_toboolean(uL, -1) != 0;
+            lua_pop(uL, 1);
+            lua_getglobal(uL, "__osc_lobby_connection_callback_fired");
+            const bool connection_callback = lua_toboolean(uL, -1) != 0;
+            lua_pop(uL, 1);
+            lua_getglobal(uL, "__osc_pending_host_comm");
+            const bool pending_host_comm = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+            lua_getglobal(uL, "__osc_lobby_flow_button_skirmish_type");
+            const char* button_type = lua_tostring(uL, -1);
+            std::string button_type_text = button_type ? button_type : "<nil>";
+            lua_pop(uL, 1);
+
+            spdlog::error(
+                "Lobby flow did not reach hosted lobby state "
+                "(ButtonSkirmish={}, HostGame={}, Hosting={}, Connection={}, pending_comm={})",
+                button_type_text, host_game_called, hosting_callback,
+                connection_callback, pending_host_comm);
+            lobby_harness.print_report(true);
+            lobby_harness.write_report_to_file("smoke_report.txt");
+            lobby_harness.deactivate();
+            return 1;
+        }
+
+        spdlog::info("=== Lobby Flow Test Complete ===");
+        lobby_harness.print_report(true);
+        lobby_harness.write_report_to_file("smoke_report.txt");
+        lobby_harness.deactivate();
+        return 0;
+    }
+
     // Instrumented mode: install SmokeTestHarness for interactive play (M166)
     std::unique_ptr<osc::lua::SmokeTestHarness> instrument_harness;
     if (instrument) {
@@ -2125,69 +2240,49 @@ int main(int argc, char* argv[]) {
         harness.set_phase("LOBBY");
         {
             lua_State* uL = ui_lua_state.raw();
-            auto set_string = [uL](int table_idx, const char* key,
-                                   const char* value) {
-                lua_pushstring(uL, key);
-                lua_pushstring(uL, value);
-                lua_rawset(uL, table_idx);
-            };
-            auto set_number = [uL](int table_idx, const char* key,
-                                   double value) {
-                lua_pushstring(uL, key);
-                lua_pushnumber(uL, value);
-                lua_rawset(uL, table_idx);
-            };
-            auto set_bool = [uL](int table_idx, const char* key, bool value) {
-                lua_pushstring(uL, key);
-                lua_pushboolean(uL, value ? 1 : 0);
-                lua_rawset(uL, table_idx);
-            };
+            lua_pushstring(uL, "__osc_full_smoke_map_path");
+            lua_pushstring(uL, map_path.c_str());
+            lua_rawset(uL, LUA_GLOBALSINDEX);
 
-            lua_getglobal(uL, "LaunchSinglePlayerSession");
-            if (lua_isfunction(uL, -1)) {
-                lua_newtable(uL);
-                int config_idx = lua_gettop(uL);
+            lua_pushstring(uL, "__osc_full_smoke_ai_personality");
+            lua_pushstring(uL, ai_personality.c_str());
+            lua_rawset(uL, LUA_GLOBALSINDEX);
 
-                lua_pushstring(uL, "GameOptions");
-                lua_newtable(uL);
-                int game_options_idx = lua_gettop(uL);
-                set_string(game_options_idx, "ScenarioFile", map_path.c_str());
-                lua_rawset(uL, config_idx);
-
-                lua_pushstring(uL, "PlayerOptions");
-                lua_newtable(uL);
-                int player_options_idx = lua_gettop(uL);
-
-                lua_newtable(uL);
-                int player_idx = lua_gettop(uL);
-                set_bool(player_idx, "Human", true);
-                set_string(player_idx, "PlayerName", "Player");
-                set_number(player_idx, "Faction", 1);
-                set_number(player_idx, "Team", 1);
-                set_number(player_idx, "StartSpot", 1);
-                lua_rawseti(uL, player_options_idx, 1);
-
-                lua_newtable(uL);
-                int ai_idx = lua_gettop(uL);
-                set_bool(ai_idx, "Human", false);
-                set_string(ai_idx, "PlayerName", "AI");
-                set_string(ai_idx, "AIPersonality", ai_personality.c_str());
-                set_number(ai_idx, "Faction", 2);
-                set_number(ai_idx, "Team", 2);
-                set_number(ai_idx, "StartSpot", 2);
-                lua_rawseti(uL, player_options_idx, 2);
-
-                lua_rawset(uL, config_idx);
-
-                if (lua_pcall(uL, 1, 0, 0) != 0) {
-                    spdlog::warn("Full smoke LaunchSinglePlayerSession error: {}",
-                                 lua_tostring(uL, -1) ? lua_tostring(uL, -1)
-                                                      : "unknown");
-                    lua_pop(uL, 1);
-                }
-            } else {
-                lua_pop(uL, 1);
-                spdlog::warn("Full smoke: LaunchSinglePlayerSession unavailable");
+            spdlog::info("Full smoke: launching through lobby:LaunchGame");
+            auto launch_result = ui_lua_state.do_string(R"(
+                local LobbyClass = {}
+                for k, v in moho.lobby_methods do LobbyClass[k] = v end
+                local lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Full Smoke Host')
+                local scenario = rawget(_G, '__osc_full_smoke_map_path')
+                local ai = rawget(_G, '__osc_full_smoke_ai_personality') or 'adaptive'
+                lobby:LaunchGame({
+                    GameOptions = {
+                        ScenarioFile = scenario,
+                    },
+                    PlayerOptions = {
+                        [1] = {
+                            Human = true,
+                            PlayerName = 'Player',
+                            Faction = 1,
+                            Team = 1,
+                            StartSpot = 1,
+                        },
+                        [2] = {
+                            Human = false,
+                            PlayerName = 'AI',
+                            AIPersonality = ai,
+                            Faction = 2,
+                            Team = 2,
+                            StartSpot = 2,
+                        },
+                    },
+                })
+                rawset(_G, '__osc_full_smoke_map_path', nil)
+                rawset(_G, '__osc_full_smoke_ai_personality', nil)
+            )");
+            if (!launch_result) {
+                spdlog::warn("Full smoke lobby LaunchGame error: {}",
+                             launch_result.error().message);
             }
         }
         pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
