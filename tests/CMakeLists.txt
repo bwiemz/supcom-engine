@@ -26,6 +26,7 @@ add_executable(osc_tests
     test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp
+    test_lockstep.cpp
     test_video_decoder.cpp
 )
 

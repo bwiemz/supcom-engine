@@ -72,14 +72,16 @@ covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.
 
 ## Known Gaps And Risks
 
-- **Multiplayer networking is absent** (loopback lobby only). Foundations exist:
-  `SimState::compute_sync_checksum()` (desync/determinism primitive), the
-  tick-keyed `CommandScheduler` (deterministic, lockstep-ready order dispatch with
-  a per-source confirm gate; single-player never stalls), and serializable
-  `Replay` record/playback (`set_recording`/`queue_replay`) that reproduces a match
-  from its command stream. Still to build: routing every `Issue*`/player-input
-  order through `schedule_command`, network transport, and host/peer lifecycle —
-  see `docs/plans/2026-07-03-multiplayer-networking-design.md`.
+- **Multiplayer networking: sync engine done, real transport pending.** Working and
+  tested headless: `compute_sync_checksum()` (desync/determinism primitive), the
+  tick-keyed `CommandScheduler` (deterministic, lockstep-ready dispatch with a
+  per-source confirm gate), serializable `Replay` record/playback, and the
+  `LockstepSession` + `INetTransport`/`LoopbackTransport` that keep two in-process
+  sims bit-for-bit in sync, stall on a missing frame, and detect desync via
+  exchanged checksums. Still to build (needs the Vulkan/`osc::lua` build or real
+  networked clients to validate): a real socket/ICE `INetTransport`, routing every
+  `Issue*`/player-input order through `schedule_command`, host/peer lobby lifecycle,
+  and player-drop handling — see `docs/plans/2026-07-03-multiplayer-networking-design.md`.
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
