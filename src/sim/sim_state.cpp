@@ -43,11 +43,28 @@ SimState::~SimState() {
     }
 }
 
+VictoryMode parse_victory_mode(const std::string& value) {
+    std::string v;
+    v.reserve(value.size());
+    for (unsigned char c : value) v.push_back(static_cast<char>(std::tolower(c)));
+
+    // Canonical FA option keys plus friendly aliases (lobby label text).
+    if (v == "sandbox" || v == "none") return VictoryMode::Sandbox;
+    if (v == "domination" || v == "supremacy" || v == "dominance")
+        return VictoryMode::Domination;
+    if (v == "eradication" || v == "annihilation")
+        return VictoryMode::Eradication;
+    if (v == "demoralization" || v == "assassination")
+        return VictoryMode::Demoralization;
+    return VictoryMode::Demoralization; // FA default
+}
+
 void SimState::set_victory_condition(std::string mode) {
     std::transform(mode.begin(), mode.end(), mode.begin(),
                    [](unsigned char c) {
                        return static_cast<char>(std::tolower(c));
                    });
+    victory_mode_ = parse_victory_mode(mode);
     victory_condition_ = std::move(mode);
 }
 
@@ -348,47 +365,8 @@ void SimState::tick() {
 
     update_visibility();
 
-    // --- ACU death → army defeat check ---
-    if (!game_ended_ && !sandbox_victory() && tick_count_ > 50) {
-        for (size_t ai = 0; ai < army_count(); ai++) {
-            auto* brain = army_at(ai);
-            if (!brain || brain->is_defeated() || brain->is_civilian()) continue;
-
-            // Check if this army still has a living COMMAND unit (ACU)
-            bool has_acu = false;
-            auto units = brain->get_units(entity_registry_);
-            for (auto* e : units) {
-                if (!e->is_unit() || e->destroyed()) continue;
-                auto* unit = static_cast<Unit*>(e);
-                // Must check is_dying() — dying units are not yet destroyed but
-                // are in their death animation (2s). Without this check, defeat
-                // detection would be delayed until the death animation completes.
-                if (unit->categories().count("COMMAND") > 0 && !unit->is_dying()) {
-                    has_acu = true;
-                    break;
-                }
-            }
-
-            if (!has_acu && !units.empty()) {
-                // ACU is dead/dying but army still has other units — trigger defeat
-                spdlog::info("Army {} ACU destroyed — triggering defeat", ai);
-                brain->set_state(BrainState::Defeat);
-            }
-        }
-    }
-
-    // Defeat detection: mark armies with no living units as defeated
-    // (simplified demoralization — FA's CheckVictory Lua thread handles real logic)
-    if (!game_ended_ && !sandbox_victory() && tick_count_ > 50) { // grace period: skip first 5 seconds
-        for (auto& army : armies_) {
-            if (army->is_defeated() || army->is_civilian()) continue;
-            if (army->get_unit_cost_total(entity_registry_) == 0) {
-                army->set_state(BrainState::Defeat);
-                spdlog::info("Army {} ({}) defeated — no units remaining",
-                             army->index(), army->name());
-            }
-        }
-    }
+    // --- Victory-condition enforcement (mode + team aware) ---
+    update_victory();
 
     // Audio: clean up finished one-shot sounds
     if (sound_manager_) {
@@ -731,41 +709,153 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
     lua_pop(L_, 1); // pop brain_tbl
 }
 
-i32 SimState::player_result() const {
-    if (!game_ended_) {
-        auto* player = army_at(0);
-        bool player_defeated = player && player->is_defeated();
+namespace {
+constexpr u32 kVictoryGraceTicks = 50; // ~5s: let armies spawn before eliminating
+} // namespace
 
-        // Check if all non-civilian enemy armies are defeated
-        bool all_enemies_dead = true;
-        for (size_t i = 0; i < army_count(); i++) {
-            auto* brain = army_at(i);
-            if (!brain || brain->is_civilian()) continue;
-            if (static_cast<i32>(i) == 0) continue; // skip player
-            if (player && player->is_ally(static_cast<i32>(i))) continue;
-            if (!brain->is_defeated()) {
-                all_enemies_dead = false;
-                break;
+i32 SimState::count_alliance_components(
+    const std::vector<i32>& army_indices) const {
+    const size_t m = army_indices.size();
+    if (m == 0) return 0;
+    std::vector<char> seen(m, 0);
+    i32 components = 0;
+    std::vector<size_t> stack;
+    for (size_t s = 0; s < m; ++s) {
+        if (seen[s]) continue;
+        ++components;
+        seen[s] = 1;
+        stack.push_back(s);
+        while (!stack.empty()) {
+            size_t cur = stack.back();
+            stack.pop_back();
+            for (size_t t = 0; t < m; ++t) {
+                if (seen[t]) continue;
+                // Alliances are set symmetrically; BFS over the ally graph
+                // yields the transitive team even if only pairwise links exist.
+                if (armies_[army_indices[cur]]->is_ally(army_indices[t])) {
+                    seen[t] = 1;
+                    stack.push_back(t);
+                }
             }
         }
+    }
+    return components;
+}
 
-        // Both player and all enemies defeated same tick → draw
-        if (player_defeated && all_enemies_dead && army_count() > 1) return 3;
-        // Only player defeated → loss
-        if (player_defeated) return 2;
-        // Only enemies defeated → win
-        if (all_enemies_dead && army_count() > 1) return 1;
+i32 SimState::surviving_team_count() const {
+    std::vector<i32> alive;
+    for (size_t i = 0; i < armies_.size(); ++i) {
+        const auto& b = armies_[i];
+        if (b->is_civilian() || b->is_defeated()) continue;
+        alive.push_back(static_cast<i32>(i));
+    }
+    return count_alliance_components(alive);
+}
 
-        return 0; // in progress
+void SimState::update_victory() {
+    if (game_ended_ || victory_mode_ == VictoryMode::Sandbox) return;
+
+    const size_t n = armies_.size();
+
+    // Single registry pass: tally living units per army for each mode's
+    // elimination criterion.
+    struct Tally {
+        i32 all = 0;          // every living unit (eradication)
+        i32 significant = 0;  // excluding WALL / INSIGNIFICANTUNIT (domination)
+        bool has_command = false; // a living, non-dying ACU (demoralization)
+    };
+    std::vector<Tally> tally(n);
+    entity_registry_.for_each([&](Entity& e) {
+        if (!e.is_unit() || e.destroyed()) return;
+        i32 a = e.army();
+        if (a < 0 || a >= static_cast<i32>(n)) return;
+        auto* u = static_cast<Unit*>(&e);
+        Tally& t = tally[static_cast<size_t>(a)];
+        ++t.all;
+        if (!u->has_category("WALL") && !u->has_category("INSIGNIFICANTUNIT"))
+            ++t.significant;
+        // A dying unit is mid death-animation: treat the ACU as already lost so
+        // Assassination resolves the instant the commander starts to die.
+        if (u->has_category("COMMAND") && !u->is_dying())
+            t.has_command = true;
+    });
+
+    for (size_t i = 0; i < n; ++i)
+        if (tally[i].all > 0) armies_[i]->note_has_units();
+
+    // Grace period: don't eliminate anyone until starting units have spawned.
+    if (tick_count_ <= kVictoryGraceTicks) return;
+
+    // A match needs at least two non-civilian participants to auto-resolve.
+    i32 participants = 0;
+    for (size_t i = 0; i < n; ++i)
+        if (!armies_[i]->is_civilian()) ++participants;
+    if (participants < 2) return;
+
+    // Elimination pass (mode-specific). Only armies that have already fielded
+    // units are eligible, so an army still loading isn't declared defeated.
+    std::vector<i32> newly_defeated;
+    for (size_t i = 0; i < n; ++i) {
+        auto& b = armies_[i];
+        if (b->is_civilian() || b->is_defeated() || !b->has_ever_had_units())
+            continue;
+        const Tally& t = tally[i];
+        bool eliminated = false;
+        switch (victory_mode_) {
+        case VictoryMode::Demoralization: eliminated = !t.has_command; break;
+        case VictoryMode::Domination:     eliminated = t.significant == 0; break;
+        case VictoryMode::Eradication:    eliminated = t.all == 0; break;
+        case VictoryMode::Sandbox:        eliminated = false; break;
+        }
+        if (eliminated) {
+            b->set_state(BrainState::Defeat);
+            newly_defeated.push_back(static_cast<i32>(i));
+            spdlog::info("Army {} ({}) eliminated under '{}' victory condition",
+                         i, b->name(), victory_condition_);
+        }
     }
 
-    // Game ended — determine result from brain states
-    auto* player = army_at(0);
-    if (!player) return 3; // draw
-    if (player->state() == BrainState::Victory) return 1;
-    if (player->state() == BrainState::Defeat ||
-        player->state() == BrainState::Recalled) return 2;
-    return 3; // draw
+    // Determine surviving teams (alliance components of the still-alive armies).
+    std::vector<i32> alive;
+    for (size_t i = 0; i < n; ++i) {
+        auto& b = armies_[i];
+        if (b->is_civilian() || b->is_defeated()) continue;
+        alive.push_back(static_cast<i32>(i));
+    }
+    const i32 teams = count_alliance_components(alive);
+
+    if (teams >= 2) return; // game continues
+
+    // Game over: one team (or none) remains.
+    game_ended_ = true;
+    if (teams == 1) {
+        for (i32 idx : alive) {
+            if (armies_[idx]->state() == BrainState::InProgress)
+                armies_[idx]->set_state(BrainState::Victory);
+        }
+        spdlog::info("Game over: one team remains — victory declared");
+    } else {
+        // Every remaining combatant was eliminated on the same tick → draw.
+        for (i32 idx : newly_defeated)
+            armies_[idx]->set_state(BrainState::Draw);
+        spdlog::info("Game over: mutual elimination — draw declared");
+    }
+}
+
+i32 SimState::player_result() const {
+    const ArmyBrain* player = army_at(0);
+    if (!player) return game_ended_ ? 3 : 0;
+    switch (player->state()) {
+    case BrainState::Victory:  return 1;
+    case BrainState::Defeat:
+    case BrainState::Recalled: return 2;
+    case BrainState::Draw:     return 3;
+    case BrainState::InProgress:
+        break;
+    }
+    // Player undecided: report a draw only once the game has otherwise ended
+    // (e.g. the player is an observer / civilian), else still in progress.
+    return game_ended_ ? 3 : 0;
 }
 
 } // namespace osc::sim

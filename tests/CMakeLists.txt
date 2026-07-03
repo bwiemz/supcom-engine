@@ -17,6 +17,7 @@ add_executable(osc_tests
     test_smoke_test.cpp
     test_smoke_harness.cpp
     test_army_stats.cpp
+    test_victory.cpp
     test_video_decoder.cpp
 )
 

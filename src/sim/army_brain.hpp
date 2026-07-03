@@ -68,6 +68,12 @@ public:
     void set_state(BrainState s) { state_ = s; }
     bool is_defeated() const;
 
+    /// True once this army has fielded at least one unit. Victory detection
+    /// uses this to avoid declaring an army defeated before it has spawned
+    /// its starting units (e.g. during the initial load grace period).
+    bool has_ever_had_units() const { return ever_had_units_; }
+    void note_has_units() { ever_had_units_ = true; }
+
     // --- Lua table reference ---
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
@@ -175,6 +181,7 @@ private:
     bool is_civilian_ = false;
 
     BrainState state_ = BrainState::InProgress;
+    bool ever_had_units_ = false;
     int lua_table_ref_ = -2; // LUA_NOREF
 
     EconomyState economy_;

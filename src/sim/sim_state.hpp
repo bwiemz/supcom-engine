@@ -41,6 +41,23 @@ class BoneCache;
 class SimState;
 class Unit;
 
+/// Victory condition (game mode) governing when an army is eliminated.
+/// Maps to FA's lobby `Victory` option keys:
+///   Demoralization = Assassination (lose all COMMAND/ACU units)
+///   Domination     = Supremacy     (lose all structures + significant units)
+///   Eradication    = Annihilation  (lose every unit)
+///   Sandbox        = no win condition
+enum class VictoryMode : i32 {
+    Demoralization = 0,
+    Domination = 1,
+    Eradication = 2,
+    Sandbox = 3,
+};
+
+/// Parse an FA `Victory` option string (or a friendly alias) into a mode.
+/// Unknown values fall back to Demoralization (FA's default).
+VictoryMode parse_victory_mode(const std::string& value);
+
 /// Camera shake event queued by ShakeCamera moho method.
 struct CameraShakeEvent {
     f32 x = 0, z = 0;       // world position of shake source
@@ -160,11 +177,17 @@ public:
     void set_game_ended(bool v) { game_ended_ = v; }
     const std::string& victory_condition() const { return victory_condition_; }
     void set_victory_condition(std::string mode);
-    bool sandbox_victory() const { return victory_condition_ == "sandbox"; }
+    VictoryMode victory_mode() const { return victory_mode_; }
+    bool sandbox_victory() const { return victory_mode_ == VictoryMode::Sandbox; }
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
     i32 player_result() const;
+
+    /// Number of alliance-connected "teams" still in the game (non-civilian,
+    /// non-defeated armies grouped by their alliance graph). Exposed for tests
+    /// and diagnostics.
+    i32 surviving_team_count() const;
 
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
@@ -233,6 +256,9 @@ private:
     void update_economies();
     void update_entities();
     void update_visibility();
+    void update_victory();
+    /// Count alliance-connected components among the given (alive) army indices.
+    i32 count_alliance_components(const std::vector<i32>& army_indices) const;
     void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);
@@ -275,6 +301,7 @@ private:
     u32 next_command_id_ = 0;
     bool game_ended_ = false;
     std::string victory_condition_ = "demoralization";
+    VictoryMode victory_mode_ = VictoryMode::Demoralization;
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
