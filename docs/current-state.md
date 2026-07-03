@@ -72,10 +72,12 @@ covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.
 
 ## Known Gaps And Risks
 
-- **Multiplayer networking is absent** (loopback lobby only). `SimState::compute_sync_checksum()`
-  provides the desync/determinism primitive, but transport, a lockstep command
-  scheduler, and host/peer lifecycle remain to be built — see
-  `docs/plans/2026-07-03-multiplayer-networking-design.md`.
+- **Multiplayer networking is absent** (loopback lobby only). Foundations exist:
+  `SimState::compute_sync_checksum()` (desync/determinism primitive) and the
+  tick-keyed `CommandScheduler` (deterministic, lockstep-ready order dispatch with
+  a per-source confirm gate; single-player never stalls). Still to build: routing
+  every `Issue*`/player-input order through `schedule_command`, network transport,
+  and host/peer lifecycle — see `docs/plans/2026-07-03-multiplayer-networking-design.md`.
 - Some lobby options are still stored-but-unenforced in C++ (NoRush, handicap /
   difficulty tiers, PrebuiltUnits, shared/common-army economy). Cheat multipliers
   are consumed by FA's AI Lua rather than the C++ economy.

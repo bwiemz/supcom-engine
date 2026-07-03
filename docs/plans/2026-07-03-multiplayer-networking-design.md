@@ -33,6 +33,15 @@ consequences drive the whole design:
 - **Sync checksum** — `SimState::compute_sync_checksum()` (added 2026-07-03) hashes
   the authoritative state deterministically. This is the desync-detection primitive
   the lockstep layer needs; it is not yet wired to any network exchange.
+- **Command scheduler** — `CommandScheduler` + `SimState::schedule_command` /
+  `ready_to_run_next_tick` (added 2026-07-03) implement Phase 1: orders are
+  submitted for a future tick and dispatched in a canonical order at the start of
+  that tick. It carries a `command_delay`, per-source confirm-frame tracking, and a
+  lockstep gate (single-player never stalls). Determinism is proven by a test that
+  runs two sims on an identical command stream and asserts equal checksums each
+  tick. **Remaining Phase-1 wiring:** route the existing `Issue*` Lua bindings and
+  the `main.cpp` player-input path through `schedule_command` instead of applying
+  orders directly (a thin change per call site).
 - **Command source stubs** — `GetCurrentCommandSource` → 0, `SessionIsMultiplayer`
   → false, `GpgNetSend` → noop, `ResetSyncTable` → noop.
 
@@ -97,12 +106,15 @@ scheduler exists, and reuses the same checksum for verification.
 
 ## Phased plan
 
-1. **Command scheduler in single-player.** Route all commands through a tick-keyed
-   scheduler with `command_delay = 0`. No wire yet. Deterministic + replay-able SP;
-   fully unit-testable. *(This is the safe, high-value first step and unblocks
-   everything else.)*
-2. **Loopback lockstep.** Two local sims driven by one shared command stream; assert
-   their `compute_sync_checksum()` stay equal every tick. Proves determinism.
+1. **Command scheduler in single-player.** *(Core landed 2026-07-03.)* Tick-keyed
+   `CommandScheduler` integrated into `SimState::tick()` with `command_delay`,
+   canonical dispatch order, and the lockstep gate; determinism proven by the
+   two-sim checksum test. **Still to do:** point the `Issue*` bindings and the
+   player-input path at `schedule_command` so every order flows through it.
+2. **Loopback lockstep.** *(Determinism harness proven in tests.)* Two local sims
+   driven by one shared command stream keep equal `compute_sync_checksum()` every
+   tick — see `tests/test_command_scheduler.cpp`. Next: drive it from one shared
+   stream object rather than two mirrored `schedule_command` calls.
 3. **INetTransport + LAN.** Real sockets, host/join, launch barrier, command
    broadcast, stall-on-missing-frame, periodic checksum exchange.
 4. **Desync + drop handling.** Mismatch detection, player-drop → AI/defeat, timeouts.
