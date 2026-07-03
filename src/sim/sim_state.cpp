@@ -351,14 +351,29 @@ bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
 
 u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
                                const UnitCommand& command, bool clear_existing) {
+    const u32 exec_tick = tick_count_ + 1 + command_delay_;
     ScheduledCommand sc;
-    sc.exec_tick = tick_count_ + 1 + command_delay_;
+    sc.exec_tick = exec_tick;
     sc.source = source;
     sc.command = command;
     sc.unit_ids = unit_ids;
     sc.clear_existing = clear_existing;
+    if (recording_) {
+        recorded_replay_.commands.push_back(sc);
+        if (exec_tick > recorded_replay_.final_tick)
+            recorded_replay_.final_tick = exec_tick;
+        recorded_replay_.command_delay = command_delay_;
+        recorded_replay_.victory_condition = victory_condition_;
+    }
     command_scheduler_.submit(std::move(sc));
-    return tick_count_ + 1 + command_delay_;
+    return exec_tick;
+}
+
+void SimState::queue_replay(const Replay& replay) {
+    command_delay_ = replay.command_delay;
+    if (!replay.victory_condition.empty())
+        set_victory_condition(replay.victory_condition);
+    for (const auto& c : replay.commands) command_scheduler_.submit(c);
 }
 
 void SimState::dispatch_due_commands() {

@@ -6,6 +6,7 @@
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/replay.hpp"
 #include "sim/thread_manager.hpp"
 
 #include <array>
@@ -221,6 +222,19 @@ public:
         return command_scheduler_.ready_to_run(tick_count_ + 1);
     }
 
+    // --- Replay recording / playback ---
+    // With recording on, every scheduled command is captured into a Replay that
+    // (thanks to lockstep determinism) reproduces the match when re-fed into a
+    // fresh sim.
+    void set_recording(bool on) { recording_ = on; }
+    bool recording() const { return recording_; }
+    const Replay& recorded_replay() const { return recorded_replay_; }
+
+    /// Re-submit a recorded command stream into this sim's scheduler. Commands
+    /// carry their original exec ticks, so ticking the sim replays them in
+    /// order. Also restores the recorded command delay / victory condition.
+    void queue_replay(const Replay& replay);
+
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
@@ -373,6 +387,8 @@ private:
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
+    Replay recorded_replay_;
+    bool recording_ = false;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {
