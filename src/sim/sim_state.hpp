@@ -219,6 +219,14 @@ public:
     /// and diagnostics.
     i32 surviving_team_count() const;
 
+    /// Deterministic checksum of the authoritative sim state (tick, army
+    /// economies/states, and every entity's id/army/position/health). Two sims
+    /// fed identical inputs on the same build produce identical checksums; a
+    /// divergence signals a desync. This is the primitive lockstep multiplayer
+    /// uses to detect out-of-sync clients, and validates single-player
+    /// determinism / replay. Order-independent (entities are sorted by id).
+    u32 compute_sync_checksum() const;
+
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
     /// Global sim generation — incremented each time a SimState is constructed.

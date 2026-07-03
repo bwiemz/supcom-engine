@@ -21,7 +21,9 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstring>
 #include <utility>
+#include <vector>
 
 namespace osc::sim {
 
@@ -939,6 +941,50 @@ void SimState::update_victory() {
             armies_[idx]->set_state(BrainState::Draw);
         spdlog::info("Game over: mutual elimination — draw declared");
     }
+}
+
+u32 SimState::compute_sync_checksum() const {
+    // FNV-1a hash over the authoritative sim state.
+    u64 h = 1469598103934665603ULL;
+    auto mix = [&](u64 v) {
+        h ^= v;
+        h *= 1099511628211ULL;
+    };
+    auto mix_f32 = [&](f32 f) {
+        u32 bits;
+        std::memcpy(&bits, &f, sizeof(bits));
+        mix(bits);
+    };
+
+    mix(tick_count_);
+
+    // Army state and stored economy.
+    for (const auto& a : armies_) {
+        mix(static_cast<u64>(a->state()));
+        mix_f32(static_cast<f32>(a->economy().mass.stored));
+        mix_f32(static_cast<f32>(a->economy().energy.stored));
+    }
+
+    // Entities in a deterministic order (the registry hash-map order is not
+    // stable, so sort by id first).
+    std::vector<u32> ids;
+    ids.reserve(entity_registry_.count());
+    entity_registry_.for_each([&](const Entity& e) { ids.push_back(e.entity_id()); });
+    std::sort(ids.begin(), ids.end());
+    for (u32 id : ids) {
+        const Entity* e = entity_registry_.find(id);
+        if (!e) continue;
+        mix(id);
+        mix(static_cast<u64>(static_cast<u32>(e->army())));
+        mix(e->destroyed() ? 1u : 0u);
+        const auto& p = e->position();
+        mix_f32(p.x);
+        mix_f32(p.y);
+        mix_f32(p.z);
+        mix_f32(e->health());
+    }
+
+    return static_cast<u32>(h ^ (h >> 32));
 }
 
 i32 SimState::player_result() const {
