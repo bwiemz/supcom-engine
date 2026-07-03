@@ -104,6 +104,14 @@ Because lockstep already records the full command stream + seed, a replay is jus
 that stream re-fed to the scheduler. Persisting/loading it is nearly free once the
 scheduler exists, and reuses the same checksum for verification.
 
+- **Transport abstraction + loopback lockstep** — `INetTransport` (with a
+  `LoopbackHub`/`LoopbackTransport` in-process impl) and `LockstepSession` (added
+  2026-07-03) implement Phase 2 and the Phase-3 transport seam: a session
+  broadcasts each frame's commands + confirmation + a checksum over the transport,
+  ingests peers' frames, and advances the sim only once every participant has
+  confirmed the tick. Tests drive two in-process sims to bit-for-bit sync, prove
+  the stall-until-confirmed gate, and detect a divergence via exchanged checksums.
+  A real UDP/TCP/ICE transport is now a drop-in behind `INetTransport`.
 - **Replay record/playback** — `Replay` + `SimState::set_recording` /
   `queue_replay` (added 2026-07-03) capture the command stream into a versioned,
   serializable buffer and re-feed it into a fresh sim. A test records a match,
@@ -118,13 +126,17 @@ scheduler exists, and reuses the same checksum for verification.
    canonical dispatch order, and the lockstep gate; determinism proven by the
    two-sim checksum test. **Still to do:** point the `Issue*` bindings and the
    player-input path at `schedule_command` so every order flows through it.
-2. **Loopback lockstep.** *(Determinism harness proven in tests.)* Two local sims
-   driven by one shared command stream keep equal `compute_sync_checksum()` every
-   tick — see `tests/test_command_scheduler.cpp`. Next: drive it from one shared
-   stream object rather than two mirrored `schedule_command` calls.
-3. **INetTransport + LAN.** Real sockets, host/join, launch barrier, command
-   broadcast, stall-on-missing-frame, periodic checksum exchange.
-4. **Desync + drop handling.** Mismatch detection, player-drop → AI/defeat, timeouts.
+2. **Loopback lockstep.** *(Landed 2026-07-03.)* `LockstepSession` + `LoopbackTransport`
+   drive two in-process sims over the transport, exchanging command frames +
+   confirmations + checksums; `tests/test_lockstep.cpp` proves sync, the
+   stall-until-confirmed gate, and desync detection.
+3. **INetTransport + LAN.** *(Transport seam landed; socket impl pending.)* The
+   `INetTransport` interface is in place with a loopback implementation. Remaining:
+   a real UDP/TCP/ICE `INetTransport`, host/join + launch barrier, and pipelined
+   command delay for RTT (the session currently runs strict, one-tick-per-frame
+   lockstep). Needs real networked clients to validate.
+4. **Desync + drop handling.** Checksum-mismatch detection is in (`LockstepSession::desynced`).
+   Remaining: player-drop → AI/defeat, timeouts.
 5. **GpgNet / FAForever.** Matchmaking, ICE, replay upload.
 
 ## Testability note

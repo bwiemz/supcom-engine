@@ -17,6 +17,7 @@ add_library(osc_sim STATIC
     entity_registry.cpp
     thread_manager.cpp
     replay.cpp
+    lockstep_session.cpp
     sim_state.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
