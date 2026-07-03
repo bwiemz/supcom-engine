@@ -188,7 +188,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
 **What's not yet implemented:**
 
 - Networking and multiplayer sync — loopback lobby only; the sync-checksum primitive exists but transport, a lockstep command scheduler, and host/peer lifecycle remain (see `docs/plans/2026-07-03-multiplayer-networking-design.md`)
-- Some lobby options are parsed but not yet enforced in C++: NoRush, handicap / difficulty tiers, PrebuiltUnits, shared/common-army economy
+- Some lobby options are parsed but not yet enforced in C++: handicap / difficulty tiers, PrebuiltUnits, shared/common-army economy (NoRush is now enforced)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites

@@ -6,6 +6,7 @@
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/replay.hpp"
 #include "sim/thread_manager.hpp"
 
 #include <array>
@@ -221,6 +222,19 @@ public:
         return command_scheduler_.ready_to_run(tick_count_ + 1);
     }
 
+    // --- Replay recording / playback ---
+    // With recording on, every scheduled command is captured into a Replay that
+    // (thanks to lockstep determinism) reproduces the match when re-fed into a
+    // fresh sim.
+    void set_recording(bool on) { recording_ = on; }
+    bool recording() const { return recording_; }
+    const Replay& recorded_replay() const { return recorded_replay_; }
+
+    /// Re-submit a recorded command stream into this sim's scheduler. Commands
+    /// carry their original exec ticks, so ticking the sim replays them in
+    /// order. Also restores the recorded command delay / victory condition.
+    void queue_replay(const Replay& replay);
+
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
@@ -233,6 +247,16 @@ public:
     ShareMode share_mode() const { return share_mode_; }
     void set_fog_of_war(std::string mode);
     FogMode fog_mode() const { return fog_mode_; }
+
+    /// "No Rush" rule: for the first `seconds` of game time, units are confined
+    /// within `radius` of their army's start position. seconds <= 0 disables it.
+    void set_no_rush(f32 seconds, f32 radius);
+    f32 no_rush_seconds() const { return no_rush_seconds_; }
+    f32 no_rush_radius() const { return no_rush_radius_; }
+    bool no_rush_active() const {
+        return no_rush_seconds_ > 0.0f &&
+               static_cast<f32>(game_time_) < no_rush_seconds_;
+    }
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
@@ -319,6 +343,10 @@ private:
     void update_entities();
     void update_visibility();
     void dispatch_due_commands();
+    void enforce_no_rush();
+    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
+    /// active. Returns the (possibly clamped) position.
+    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);
@@ -359,6 +387,8 @@ private:
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
+    Replay recorded_replay_;
+    bool recording_ = false;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {
@@ -374,6 +404,8 @@ private:
     std::string share_condition_ = "shareuntildeath";
     ShareMode share_mode_ = ShareMode::ShareUntilDeath;
     FogMode fog_mode_ = FogMode::Explored;
+    f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
+    f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

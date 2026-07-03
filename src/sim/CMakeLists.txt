@@ -16,6 +16,7 @@ add_library(osc_sim STATIC
     navigator.cpp
     entity_registry.cpp
     thread_manager.cpp
+    replay.cpp
     sim_state.cpp
 )
 add_library(osc::sim ALIAS osc_sim)

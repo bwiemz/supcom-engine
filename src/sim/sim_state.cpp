@@ -104,6 +104,11 @@ void SimState::set_fog_of_war(std::string mode) {
     fog_mode_ = parse_fog_mode(mode);
 }
 
+void SimState::set_no_rush(f32 seconds, f32 radius) {
+    no_rush_seconds_ = seconds > 0.0f ? seconds : 0.0f;
+    if (radius > 0.0f) no_rush_radius_ = radius;
+}
+
 bool SimState::is_valid_teleport_destination(
     const Unit& unit, const Vector3& destination) const {
     f32 half_x = std::max(unit.footprint_size_x(), 1.0f) * 0.5f;
@@ -346,26 +351,88 @@ bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
 
 u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
                                const UnitCommand& command, bool clear_existing) {
+    const u32 exec_tick = tick_count_ + 1 + command_delay_;
     ScheduledCommand sc;
-    sc.exec_tick = tick_count_ + 1 + command_delay_;
+    sc.exec_tick = exec_tick;
     sc.source = source;
     sc.command = command;
     sc.unit_ids = unit_ids;
     sc.clear_existing = clear_existing;
+    if (recording_) {
+        recorded_replay_.commands.push_back(sc);
+        if (exec_tick > recorded_replay_.final_tick)
+            recorded_replay_.final_tick = exec_tick;
+        recorded_replay_.command_delay = command_delay_;
+        recorded_replay_.victory_condition = victory_condition_;
+    }
     command_scheduler_.submit(std::move(sc));
-    return tick_count_ + 1 + command_delay_;
+    return exec_tick;
+}
+
+void SimState::queue_replay(const Replay& replay) {
+    command_delay_ = replay.command_delay;
+    if (!replay.victory_condition.empty())
+        set_victory_condition(replay.victory_condition);
+    for (const auto& c : replay.commands) command_scheduler_.submit(c);
 }
 
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
+    const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& sc) {
         for (u32 uid : sc.unit_ids) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
+            auto* unit = static_cast<Unit*>(e);
+            UnitCommand cmd = sc.command;
+            // During No Rush, clamp movement/attack goals into the unit's zone
+            // so scheduler-routed orders stop cleanly at the line.
+            if (no_rush && (cmd.type == CommandType::Move ||
+                            cmd.type == CommandType::Attack)) {
+                cmd.target_pos = clamp_to_no_rush(*unit, cmd.target_pos);
+            }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
-            static_cast<Unit*>(e)->push_command(sc.command, sc.clear_existing);
+            unit->push_command(cmd, sc.clear_existing);
         }
+    });
+}
+
+Vector3 SimState::clamp_to_no_rush(const Unit& unit, const Vector3& target) const {
+    const ArmyBrain* brain = army_at(static_cast<size_t>(unit.army()));
+    if (!brain) return target;
+    const Vector3& c = brain->start_position();
+    f32 dx = target.x - c.x;
+    f32 dz = target.z - c.z;
+    f32 dist_sq = dx * dx + dz * dz;
+    if (dist_sq <= no_rush_radius_ * no_rush_radius_) return target;
+    f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
+    Vector3 clamped = target;
+    clamped.x = c.x + dx * scale;
+    clamped.z = c.z + dz * scale;
+    return clamped;
+}
+
+void SimState::enforce_no_rush() {
+    if (!no_rush_active()) return;
+    PROFILE_ZONE("Sim::no_rush");
+    entity_registry_.for_each([&](Entity& e) {
+        if (e.destroyed() || !e.is_unit()) return;
+        auto* unit = static_cast<Unit*>(&e);
+        const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
+        if (!brain || brain->is_civilian()) return; // wildlife/props aren't confined
+        const Vector3& c = brain->start_position();
+        const Vector3& p = unit->position();
+        f32 dx = p.x - c.x;
+        f32 dz = p.z - c.z;
+        f32 dist_sq = dx * dx + dz * dz;
+        if (dist_sq <= no_rush_radius_ * no_rush_radius_) return;
+        // Pin the unit at the no-rush boundary.
+        f32 scale = no_rush_radius_ / std::sqrt(dist_sq);
+        Vector3 pinned = p;
+        pinned.x = c.x + dx * scale;
+        pinned.z = c.z + dz * scale;
+        unit->set_position(pinned);
     });
 }
 
@@ -427,6 +494,9 @@ void SimState::tick() {
             ce->mark_destroyed();
         }
     }
+
+    // "No Rush": pin units that strayed beyond their confinement radius.
+    enforce_no_rush();
 
     update_visibility();
 

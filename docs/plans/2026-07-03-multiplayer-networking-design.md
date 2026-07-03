@@ -104,6 +104,13 @@ Because lockstep already records the full command stream + seed, a replay is jus
 that stream re-fed to the scheduler. Persisting/loading it is nearly free once the
 scheduler exists, and reuses the same checksum for verification.
 
+- **Replay record/playback** — `Replay` + `SimState::set_recording` /
+  `queue_replay` (added 2026-07-03) capture the command stream into a versioned,
+  serializable buffer and re-feed it into a fresh sim. A test records a match,
+  serializes/reloads it, replays it, and asserts the reproduced sim matches the
+  original checksum. This realizes Phase 7 early (replays fall out of lockstep for
+  free) and doubles as a determinism regression harness.
+
 ## Phased plan
 
 1. **Command scheduler in single-player.** *(Core landed 2026-07-03.)* Tick-keyed
