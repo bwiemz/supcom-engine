@@ -344,10 +344,39 @@ bool SimState::has_any_intel_cached(const Entity* entity, u32 req_army,
            omni;
 }
 
+u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
+                               const UnitCommand& command, bool clear_existing) {
+    ScheduledCommand sc;
+    sc.exec_tick = tick_count_ + 1 + command_delay_;
+    sc.source = source;
+    sc.command = command;
+    sc.unit_ids = unit_ids;
+    sc.clear_existing = clear_existing;
+    command_scheduler_.submit(std::move(sc));
+    return tick_count_ + 1 + command_delay_;
+}
+
+void SimState::dispatch_due_commands() {
+    PROFILE_ZONE("Sim::commands");
+    command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& sc) {
+        for (u32 uid : sc.unit_ids) {
+            auto* e = entity_registry_.find(uid);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            // Each selected unit independently replaces (fresh order) or
+            // appends (queued/shift) — matching the Issue* bindings.
+            static_cast<Unit*>(e)->push_command(sc.command, sc.clear_existing);
+        }
+    });
+}
+
 void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
+
+    // Apply the commands scheduled for this tick before anything simulates,
+    // so orders take effect deterministically at the start of the frame.
+    dispatch_due_commands();
 
     if (pathfinder_) {
         pathfinder_->reset_request_count();
