@@ -93,6 +93,11 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
                        (value.string_value == "On" || value.string_value == "on" ||
                         value.string_value == "true"));
             sim.set_common_army(on);
+        } else if (key == "TeamShareOverflow" &&
+                   value.type == GameOptionValue::Type::String) {
+            // 'none'/'off' disable; anything else (e.g. 'all', 'faction') enables.
+            const std::string& v = value.string_value;
+            sim.set_team_share_overflow(v != "none" && v != "off" && v != "no");
         }
     }
     if (no_rush_minutes > 0.0) {

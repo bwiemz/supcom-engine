@@ -217,16 +217,18 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         f64 mass_avail = mass_income * dt + economy_.mass.stored;
         f64 mass_needed = mass_consumption * dt;
         f64 mass_consumed = (mass_needed > 0) ? std::min(mass_avail, mass_needed) : 0.0;
-        economy_.mass.stored = std::clamp(mass_avail - mass_consumed,
-                                           0.0, economy_.mass.max_storage);
+        f64 mass_raw = mass_avail - mass_consumed;
+        economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
+        economy_.mass.overflow = std::max(0.0, mass_raw - economy_.mass.max_storage);
         mass_efficiency_ = (mass_needed > 0) ? mass_consumed / mass_needed : 1.0;
     }
     {
         f64 energy_avail = energy_income * dt + economy_.energy.stored;
         f64 energy_needed = energy_consumption * dt;
         f64 energy_consumed = (energy_needed > 0) ? std::min(energy_avail, energy_needed) : 0.0;
-        economy_.energy.stored = std::clamp(energy_avail - energy_consumed,
-                                             0.0, economy_.energy.max_storage);
+        f64 energy_raw = energy_avail - energy_consumed;
+        economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
+        economy_.energy.overflow = std::max(0.0, energy_raw - economy_.energy.max_storage);
         energy_efficiency_ = (energy_needed > 0) ? energy_consumed / energy_needed : 1.0;
     }
 

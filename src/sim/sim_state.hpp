@@ -253,6 +253,12 @@ public:
     void set_common_army(bool on) { common_army_ = on; }
     bool common_army() const { return common_army_; }
 
+    /// Team Share Overflow: resources a teammate would waste at full storage
+    /// flow to allies with room, instead of being lost. Off by default. Ignored
+    /// when Common Army is on (full pooling already covers it).
+    void set_team_share_overflow(bool on) { team_share_overflow_ = on; }
+    bool team_share_overflow() const { return team_share_overflow_; }
+
     /// "No Rush" rule: for the first `seconds` of game time, units are confined
     /// within `radius` of their army's start position. seconds <= 0 disables it.
     void set_no_rush(f32 seconds, f32 radius);
@@ -416,6 +422,7 @@ private:
     f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
     f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
     bool common_army_ = false;     // pool allied economies when true
+    bool team_share_overflow_ = false; // route wasted overflow to allies
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

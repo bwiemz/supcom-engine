@@ -571,37 +571,66 @@ std::vector<std::vector<i32>> SimState::alliance_teams() const {
     return teams;
 }
 
+namespace {
+// Distribute a pooled amount of a resource across active members proportional
+// to each member's remaining storage room (capped by that room).
+void distribute_overflow(std::vector<ResourceState*>& res, f64 pool) {
+    if (pool <= 0.0) return;
+    f64 room_total = 0.0;
+    for (auto* r : res) room_total += std::max(0.0, r->max_storage - r->stored);
+    if (room_total <= 0.0) return;
+    f64 give = std::min(pool, room_total);
+    for (auto* r : res) {
+        f64 room = std::max(0.0, r->max_storage - r->stored);
+        r->stored = std::min(r->max_storage, r->stored + give * (room / room_total));
+    }
+}
+} // namespace
+
 void SimState::share_team_economy() {
-    if (!common_army_) return;
+    if (!common_army_ && !team_share_overflow_) return;
     PROFILE_ZONE("Sim::share_econ");
     for (const auto& team : alliance_teams()) {
         if (team.size() < 2) continue;
-        // Pool each resource and redistribute so every member ends the tick at
-        // the same storage fill ratio (a shared pool). Defeated members are
-        // skipped so their reserves aren't resurrected.
-        f64 mass_pool = 0.0, mass_cap = 0.0;
-        f64 energy_pool = 0.0, energy_cap = 0.0;
-        int active = 0;
+        // Active (non-defeated) members only, so a dead ally's reserves aren't
+        // resurrected and don't receive shares.
+        std::vector<ArmyBrain*> members;
         for (i32 idx : team) {
             auto* b = armies_[idx].get();
-            if (b->is_defeated()) continue;
-            ++active;
-            mass_pool += b->economy().mass.stored;
-            mass_cap += b->economy().mass.max_storage;
-            energy_pool += b->economy().energy.stored;
-            energy_cap += b->economy().energy.max_storage;
+            if (!b->is_defeated()) members.push_back(b);
         }
-        if (active < 2) continue;
-        for (i32 idx : team) {
-            auto* b = armies_[idx].get();
-            if (b->is_defeated()) continue;
-            auto& econ = b->economy();
-            econ.mass.stored = mass_cap > 0.0
-                ? mass_pool * (econ.mass.max_storage / mass_cap)
-                : econ.mass.stored;
-            econ.energy.stored = energy_cap > 0.0
-                ? energy_pool * (econ.energy.max_storage / energy_cap)
-                : econ.energy.stored;
+        if (members.size() < 2) continue;
+
+        if (common_army_) {
+            // Full pool: every member ends at the same storage fill ratio.
+            f64 mass_pool = 0.0, mass_cap = 0.0;
+            f64 energy_pool = 0.0, energy_cap = 0.0;
+            for (auto* b : members) {
+                mass_pool += b->economy().mass.stored;
+                mass_cap += b->economy().mass.max_storage;
+                energy_pool += b->economy().energy.stored;
+                energy_cap += b->economy().energy.max_storage;
+            }
+            for (auto* b : members) {
+                auto& econ = b->economy();
+                if (mass_cap > 0.0)
+                    econ.mass.stored = mass_pool * (econ.mass.max_storage / mass_cap);
+                if (energy_cap > 0.0)
+                    econ.energy.stored = energy_pool * (econ.energy.max_storage / energy_cap);
+            }
+        } else {
+            // Overflow only: resources members would waste at full storage flow
+            // to allies with room.
+            f64 mass_overflow = 0.0, energy_overflow = 0.0;
+            std::vector<ResourceState*> mass_res, energy_res;
+            for (auto* b : members) {
+                mass_overflow += b->economy().mass.overflow;
+                energy_overflow += b->economy().energy.overflow;
+                mass_res.push_back(&b->economy().mass);
+                energy_res.push_back(&b->economy().energy);
+            }
+            distribute_overflow(mass_res, mass_overflow);
+            distribute_overflow(energy_res, energy_overflow);
         }
     }
 }
