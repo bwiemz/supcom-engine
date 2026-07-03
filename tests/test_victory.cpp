@@ -388,6 +388,40 @@ TEST_CASE("CivilianDeserter hands a defeated army's units to a civilian army",
     CHECK(sim.get_army(0)->state() == BrainState::Victory);
 }
 
+// The --draw-test / --full-smoke-test harnesses set brain states directly and
+// then poll player_result() WITHOUT ticking through update_victory(). These two
+// cases lock in that inference path.
+TEST_CASE("player_result infers a draw from direct mutual Defeat states",
+          "[victory][result]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(0)->set_state(BrainState::Defeat);
+    sim.get_army(1)->set_state(BrainState::Defeat);
+    CHECK(sim.player_result() == 3); // draw, not loss
+}
+
+TEST_CASE("player_result infers victory when all enemies are defeated",
+          "[victory][result]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(1)->set_state(BrainState::Defeat); // player still InProgress
+    CHECK(sim.player_result() == 1);
+}
+
+TEST_CASE("player_result: player defeated with a live enemy is a loss",
+          "[victory][result]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.get_army(0)->set_state(BrainState::Defeat);
+    CHECK(sim.player_result() == 2);
+}
+
 TEST_CASE("Single participant never auto-resolves", "[victory][edge]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);

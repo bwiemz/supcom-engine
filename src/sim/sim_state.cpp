@@ -990,16 +990,39 @@ u32 SimState::compute_sync_checksum() const {
 i32 SimState::player_result() const {
     const ArmyBrain* player = army_at(0);
     if (!player) return game_ended_ ? 3 : 0;
-    switch (player->state()) {
-    case BrainState::Victory:  return 1;
-    case BrainState::Defeat:
-    case BrainState::Recalled: return 2;
-    case BrainState::Draw:     return 3;
-    case BrainState::InProgress:
-        break;
+
+    // A decisive brain state set by update_victory (or by an external caller)
+    // wins outright.
+    if (player->state() == BrainState::Victory) return 1;
+    if (player->state() == BrainState::Draw) return 3;
+
+    const bool player_defeated = player->is_defeated();
+
+    // Are all of the player's non-civilian, non-allied enemies defeated? This
+    // inference also covers callers that set brain states directly without
+    // ticking through update_victory (e.g. the --draw-test / --full-smoke-test
+    // harnesses).
+    bool all_enemies_dead = true;
+    bool has_enemy = false;
+    for (size_t i = 0; i < army_count(); ++i) {
+        const auto* b = army_at(i);
+        if (!b || b->is_civilian() || static_cast<i32>(i) == 0) continue;
+        if (player->is_ally(static_cast<i32>(i))) continue;
+        has_enemy = true;
+        if (!b->is_defeated()) {
+            all_enemies_dead = false;
+            break;
+        }
     }
-    // Player undecided: report a draw only once the game has otherwise ended
-    // (e.g. the player is an observer / civilian), else still in progress.
+
+    // Player and all enemies defeated → draw; player alone defeated → loss.
+    if (player_defeated && all_enemies_dead && has_enemy) return 3;
+    if (player_defeated) return 2;
+    // All enemies defeated, player still standing → victory.
+    if (all_enemies_dead && has_enemy) return 1;
+
+    // Undecided: report a draw only once the game has otherwise ended (e.g. the
+    // player is an observer / civilian), else still in progress.
     return game_ended_ ? 3 : 0;
 }
 
