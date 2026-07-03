@@ -81,11 +81,11 @@ covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.
   order through `schedule_command`, network transport, and host/peer lifecycle —
   see `docs/plans/2026-07-03-multiplayer-networking-design.md`.
 - Some lobby options are still stored-but-unenforced in C++ (handicap /
-  difficulty tiers, PrebuiltUnits, shared/common-army economy). Cheat multipliers
-  are consumed by FA's AI Lua rather than the C++ economy. **NoRush** is now
-  enforced: for the first N minutes units are confined within a radius of their
-  army's start (scheduler goal-clamp + per-tick boundary pin), wired from the
-  `NoRushOption` / `NoRushRadius` lobby options; see `tests/test_no_rush.cpp`.
+  difficulty tiers, PrebuiltUnits). Cheat multipliers are consumed by FA's AI Lua
+  rather than the C++ economy. Now enforced: **NoRush** (units confined within a
+  radius of their army's start for the first N minutes — scheduler goal-clamp +
+  per-tick pin; `tests/test_no_rush.cpp`) and **CommonArmy** (allied armies pool
+  mass/energy each tick, off by default; `tests/test_common_army.cpp`).
 - Several stubs remain intentionally cosmetic, multiplayer-only, debug-only, or deprecated. They should stay classified so gameplay blockers are not hidden among harmless no-ops.
 
 ## Recommended Work Order

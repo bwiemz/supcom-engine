@@ -86,6 +86,12 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             no_rush_minutes = option_as_number(value);
         } else if (key == "NoRushRadius") {
             no_rush_radius = option_as_number(value);
+        } else if (key == "CommonArmy") {
+            bool on = (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
+                      (value.type == GameOptionValue::Type::String &&
+                       (value.string_value == "On" || value.string_value == "on" ||
+                        value.string_value == "true"));
+            sim.set_common_army(on);
         }
     }
     if (no_rush_minutes > 0.0) {

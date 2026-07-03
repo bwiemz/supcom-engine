@@ -537,6 +537,73 @@ void SimState::update_economies() {
     for (auto& army : armies_) {
         army->update_economy(entity_registry_, SECONDS_PER_TICK);
     }
+    share_team_economy();
+}
+
+std::vector<std::vector<i32>> SimState::alliance_teams() const {
+    std::vector<i32> members;
+    for (size_t i = 0; i < armies_.size(); ++i) {
+        if (!armies_[i]->is_civilian()) members.push_back(static_cast<i32>(i));
+    }
+    const size_t m = members.size();
+    std::vector<char> seen(m, 0);
+    std::vector<std::vector<i32>> teams;
+    std::vector<size_t> stack;
+    for (size_t s = 0; s < m; ++s) {
+        if (seen[s]) continue;
+        std::vector<i32> team;
+        seen[s] = 1;
+        stack.push_back(s);
+        while (!stack.empty()) {
+            size_t cur = stack.back();
+            stack.pop_back();
+            team.push_back(members[cur]);
+            for (size_t t = 0; t < m; ++t) {
+                if (seen[t]) continue;
+                if (armies_[members[cur]]->is_ally(members[t])) {
+                    seen[t] = 1;
+                    stack.push_back(t);
+                }
+            }
+        }
+        teams.push_back(std::move(team));
+    }
+    return teams;
+}
+
+void SimState::share_team_economy() {
+    if (!common_army_) return;
+    PROFILE_ZONE("Sim::share_econ");
+    for (const auto& team : alliance_teams()) {
+        if (team.size() < 2) continue;
+        // Pool each resource and redistribute so every member ends the tick at
+        // the same storage fill ratio (a shared pool). Defeated members are
+        // skipped so their reserves aren't resurrected.
+        f64 mass_pool = 0.0, mass_cap = 0.0;
+        f64 energy_pool = 0.0, energy_cap = 0.0;
+        int active = 0;
+        for (i32 idx : team) {
+            auto* b = armies_[idx].get();
+            if (b->is_defeated()) continue;
+            ++active;
+            mass_pool += b->economy().mass.stored;
+            mass_cap += b->economy().mass.max_storage;
+            energy_pool += b->economy().energy.stored;
+            energy_cap += b->economy().energy.max_storage;
+        }
+        if (active < 2) continue;
+        for (i32 idx : team) {
+            auto* b = armies_[idx].get();
+            if (b->is_defeated()) continue;
+            auto& econ = b->economy();
+            econ.mass.stored = mass_cap > 0.0
+                ? mass_pool * (econ.mass.max_storage / mass_cap)
+                : econ.mass.stored;
+            econ.energy.stored = energy_cap > 0.0
+                ? energy_pool * (econ.energy.max_storage / energy_cap)
+                : econ.energy.stored;
+        }
+    }
 }
 
 void SimState::tick_economy_events() {
