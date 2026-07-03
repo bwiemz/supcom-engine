@@ -56,7 +56,8 @@ VictoryMode parse_victory_mode(const std::string& value) {
         return VictoryMode::Domination;
     if (v == "eradication" || v == "annihilation")
         return VictoryMode::Eradication;
-    if (v == "demoralization" || v == "assassination")
+    // decapitation (a FAF condition) is ACU-kill, like demoralization.
+    if (v == "demoralization" || v == "assassination" || v == "decapitation")
         return VictoryMode::Demoralization;
     return VictoryMode::Demoralization; // FA default
 }
@@ -956,13 +957,26 @@ constexpr f32 kDefeatDeathDuration = 2.0f; // death animation for destroyed unit
 
 i32 SimState::find_share_recipient(i32 defeated_army) const {
     switch (share_mode_) {
-    case ShareMode::FullShare: {
-        // First surviving (non-defeated, non-civilian) ally.
+    // FullShare and PartialShare hand (some) units to a surviving ally. FA gives
+    // to the highest-rated ally; we approximate with the first living ally.
+    case ShareMode::FullShare:
+    case ShareMode::PartialShare: {
         for (size_t i = 0; i < armies_.size(); ++i) {
             if (static_cast<i32>(i) == defeated_army) continue;
             const auto& b = armies_[i];
             if (b->is_civilian() || b->is_defeated()) continue;
             if (is_ally(defeated_army, static_cast<i32>(i)))
+                return static_cast<i32>(i);
+        }
+        return -1;
+    }
+    case ShareMode::Defectors: {
+        // Units defect to a surviving enemy (FA: highest-rated enemy).
+        for (size_t i = 0; i < armies_.size(); ++i) {
+            if (static_cast<i32>(i) == defeated_army) continue;
+            const auto& b = armies_[i];
+            if (b->is_civilian() || b->is_defeated()) continue;
+            if (is_enemy(defeated_army, static_cast<i32>(i)))
                 return static_cast<i32>(i);
         }
         return -1;
@@ -974,17 +988,25 @@ i32 SimState::find_share_recipient(i32 defeated_army) const {
         return -1;
     }
     default:
-        // ShareUntilDeath and the killer-relative modes destroy the units.
+        // ShareUntilDeath destroys the units; TransferToKiller would need
+        // per-unit killer attribution (not modeled) so it also destroys.
         return -1;
     }
 }
 
 void SimState::dispose_defeated_army(i32 army) {
     const i32 recipient = find_share_recipient(army);
+    // PartialShare transfers only structures + engineers; the rest are destroyed.
+    const bool partial = share_mode_ == ShareMode::PartialShare;
+    bool transferred_any = false;
     entity_registry_.for_each([&](Entity& e) {
         if (e.army() != army || e.destroyed() || !e.is_unit()) return;
         auto* u = static_cast<Unit*>(&e);
-        if (recipient >= 0) {
+        bool transfer = recipient >= 0;
+        if (transfer && partial) {
+            transfer = u->has_category("STRUCTURE") || u->has_category("ENGINEER");
+        }
+        if (transfer) {
             u->set_army(recipient);
             // Keep the Lua-side Army field (1-based) in sync, mirroring capture.
             if (u->lua_table_ref() >= 0) {
@@ -994,11 +1016,12 @@ void SimState::dispose_defeated_army(i32 army) {
                 lua_rawset(L_, -3);
                 lua_pop(L_, 1);
             }
+            transferred_any = true;
         } else if (!u->is_dying()) {
             u->begin_dying(kDefeatDeathDuration);
         }
     });
-    if (recipient >= 0) {
+    if (transferred_any) {
         armies_[recipient]->note_has_units();
         spdlog::info("Army {} units transferred to army {} on defeat", army,
                      recipient);
@@ -1050,10 +1073,14 @@ void SimState::update_victory() {
     const size_t n = armies_.size();
 
     // Single registry pass: tally living units per army for each mode's
-    // elimination criterion.
+    // elimination criterion. Categories mirror FA's lua/victory.lua:
+    //   demoralization = COMMAND
+    //   domination     = STRUCTURE + ENGINEER - WALL
+    //   eradication    = ALLUNITS - WALL
     struct Tally {
-        i32 all = 0;          // every living unit (eradication)
-        i32 significant = 0;  // excluding WALL / INSIGNIFICANTUNIT (domination)
+        i32 all = 0;              // every living unit (for the ever-had-units guard)
+        i32 non_wall = 0;         // ALLUNITS - WALL (eradication)
+        i32 struct_or_eng = 0;    // (STRUCTURE|ENGINEER) - WALL (domination)
         bool has_command = false; // a living, non-dying ACU (demoralization)
     };
     std::vector<Tally> tally(n);
@@ -1064,8 +1091,11 @@ void SimState::update_victory() {
         auto* u = static_cast<Unit*>(&e);
         Tally& t = tally[static_cast<size_t>(a)];
         ++t.all;
-        if (!u->has_category("WALL") && !u->has_category("INSIGNIFICANTUNIT"))
-            ++t.significant;
+        if (!u->has_category("WALL")) {
+            ++t.non_wall;
+            if (u->has_category("STRUCTURE") || u->has_category("ENGINEER"))
+                ++t.struct_or_eng;
+        }
         // A dying unit is mid death-animation: treat the ACU as already lost so
         // Assassination resolves the instant the commander starts to die.
         if (u->has_category("COMMAND") && !u->is_dying())
@@ -1095,8 +1125,8 @@ void SimState::update_victory() {
         bool eliminated = false;
         switch (victory_mode_) {
         case VictoryMode::Demoralization: eliminated = !t.has_command; break;
-        case VictoryMode::Domination:     eliminated = t.significant == 0; break;
-        case VictoryMode::Eradication:    eliminated = t.all == 0; break;
+        case VictoryMode::Domination:     eliminated = t.struct_or_eng == 0; break;
+        case VictoryMode::Eradication:    eliminated = t.non_wall == 0; break;
         case VictoryMode::Sandbox:        eliminated = false; break;
         }
         if (eliminated) {

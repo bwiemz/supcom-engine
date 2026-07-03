@@ -55,20 +55,28 @@ Some historical plan checkboxes are stale. The following items from the April fu
 ## Game Modes / Victory Conditions (2026-07-03)
 
 Victory and defeat are entirely C++-driven in `SimState` (FA's `lua/victory.lua` is
-not run). As of 2026-07-03 the four FA game modes are distinct and enforced:
+not run). The game modes are enforced with categories matching FA's real
+`lua/victory.lua` (verified against retail game data):
 
 - **Assassination** (`demoralization`) — eliminated when the last `COMMAND`/ACU dies.
-- **Supremacy** (`domination`) — eliminated when no significant units remain
-  (structures + mobile; `WALL` / `INSIGNIFICANTUNIT` do not count).
-- **Annihilation** (`eradication`) — eliminated only when every unit is gone.
-- **Sandbox** — no elimination.
+- **Supremacy** (`domination`) — `STRUCTURE + ENGINEER - WALL`: eliminated when no
+  structure or engineer remains (the ACU counts as an engineer; mobile combat units
+  and walls do not keep you alive).
+- **Annihilation** (`eradication`) — `ALLUNITS - WALL`: eliminated when only walls
+  (or nothing) remain.
+- **Sandbox** — no elimination. FAF's `decapitation` is treated as an ACU-kill.
 
 Game-over is team-aware: armies are grouped into alliance-connected teams and the
 match ends when one team remains (victory) or zero remain (draw). A defeated player
 whose ally survives no longer ends the game. On defeat, an army's units are handled
-per the `Share` option (`ShareUntilDeath` destroys; `FullShare`/`CivilianDeserter`
-transfer to an ally/civilian). `FogOfWar=none` now reveals the whole map. These are
-covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.cpp`.
+per the `Share` option (`ShareUntilDeath` destroys; `FullShare` → ally; `PartialShare`
+→ structures+engineers to ally, rest destroyed; `Defectors` → enemy; `CivilianDeserter`
+→ civilian). `FogOfWar=none` reveals the whole map; `CommonArmy`
+(`Union`/`Common`/…) pools allied economy; `TeamShareOverflow=enabled` routes wasted
+overflow to allies. Covered by `tests/test_victory.cpp`, `test_fow.cpp`,
+`test_common_army.cpp`, `test_team_share_overflow.cpp`, `test_handicap.cpp`.
+Not yet modeled: FA's 15s allied-victory-request sustain, and `TransferToKiller`
+(needs per-unit killer attribution).
 
 ## Known Gaps And Risks
 
