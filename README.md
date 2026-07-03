@@ -177,11 +177,18 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
   - AI-vs-AI validation: two AI armies load with FA's adaptive AI brain, OnCreateAI succeeds, ExecutePlan runs, 37+ active threads, 6000+ tick stable game loop
   - Score tracking: real GetArmyStat/SetArmyStat storage, kill/loss/resource accumulation, score screen with meaningful stats
   - Performance: periodic Lua GC (every 50 ticks), pathfinding request throttle (8/tick cap), simultaneous-death Draw handling
+- **Game modes / victory conditions (2026-07-03):**
+  - All four FA modes are distinct and enforced in the sim: Assassination (`demoralization`, lose the ACU), Supremacy (`domination`, lose all structures + significant units), Annihilation (`eradication`, lose every unit), Sandbox (no win)
+  - Team-aware game-over: armies group into alliance teams; match ends when one team remains (victory) or zero remain (draw); a defeated player whose ally survives no longer ends the game
+  - Share conditions on defeat: `ShareUntilDeath` destroys the defeated army's units, `FullShare`/`CivilianDeserter` transfer them to an ally/civilian
+  - `FogOfWar=none` reveals the whole map; `explored` keeps normal per-army fog
+  - Deterministic sim sync checksum (`compute_sync_checksum`) for desync detection / determinism validation — the first primitive of lockstep multiplayer
 - 96 unit tests (1,543 assertions), 70+ integration test flags
 
 **What's not yet implemented:**
 
-- Networking and multiplayer sync
+- Networking and multiplayer sync — loopback lobby only; the sync-checksum primitive exists but transport, a lockstep command scheduler, and host/peer lifecycle remain (see `docs/plans/2026-07-03-multiplayer-networking-design.md`)
+- Some lobby options are parsed but not yet enforced in C++: NoRush, handicap / difficulty tiers, PrebuiltUnits, shared/common-army economy
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites

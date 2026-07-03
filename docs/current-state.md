@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-05-06
+Last reviewed: 2026-07-03
 
 ## What This Codebase Is
 
@@ -52,8 +52,33 @@ Some historical plan checkboxes are stale. The following items from the April fu
 - sim-side focus army normalization for FA Lua's 1-based army ids
 - classification of the known FA AI builder `deepcopy` diagnostic below the active log level
 
+## Game Modes / Victory Conditions (2026-07-03)
+
+Victory and defeat are entirely C++-driven in `SimState` (FA's `lua/victory.lua` is
+not run). As of 2026-07-03 the four FA game modes are distinct and enforced:
+
+- **Assassination** (`demoralization`) — eliminated when the last `COMMAND`/ACU dies.
+- **Supremacy** (`domination`) — eliminated when no significant units remain
+  (structures + mobile; `WALL` / `INSIGNIFICANTUNIT` do not count).
+- **Annihilation** (`eradication`) — eliminated only when every unit is gone.
+- **Sandbox** — no elimination.
+
+Game-over is team-aware: armies are grouped into alliance-connected teams and the
+match ends when one team remains (victory) or zero remain (draw). A defeated player
+whose ally survives no longer ends the game. On defeat, an army's units are handled
+per the `Share` option (`ShareUntilDeath` destroys; `FullShare`/`CivilianDeserter`
+transfer to an ally/civilian). `FogOfWar=none` now reveals the whole map. These are
+covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.cpp`.
+
 ## Known Gaps And Risks
 
+- **Multiplayer networking is absent** (loopback lobby only). `SimState::compute_sync_checksum()`
+  provides the desync/determinism primitive, but transport, a lockstep command
+  scheduler, and host/peer lifecycle remain to be built — see
+  `docs/plans/2026-07-03-multiplayer-networking-design.md`.
+- Some lobby options are still stored-but-unenforced in C++ (NoRush, handicap /
+  difficulty tiers, PrebuiltUnits, shared/common-army economy). Cheat multipliers
+  are consumed by FA's AI Lua rather than the C++ economy.
 - Several stubs remain intentionally cosmetic, multiplayer-only, debug-only, or deprecated. They should stay classified so gameplay blockers are not hidden among harmless no-ops.
 
 ## Recommended Work Order

@@ -35,6 +35,12 @@ void VisibilityGrid::clear_transient() {
     }
 }
 
+void VisibilityGrid::reveal_all(u32 army) {
+    if (army >= MAX_ARMIES) return;
+    const VisFlag full = VisFlag::Vision | VisFlag::Omni | VisFlag::EverSeen;
+    for (auto& cell : cells_[army]) cell = full;
+}
+
 void VisibilityGrid::paint_circle(u32 army, f32 wx, f32 wz, f32 radius,
                                   VisFlag flag) {
     if (army >= MAX_ARMIES || radius <= 0.0f) return;

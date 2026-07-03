@@ -54,6 +54,10 @@ public:
     /// Clear transient flags (Vision/Radar/Sonar/Omni) but keep EverSeen.
     void clear_transient();
 
+    /// Reveal the entire map for an army (Vision + Omni + EverSeen on every
+    /// cell). Used by the "No Fog of War" lobby option.
+    void reveal_all(u32 army);
+
     /// Paint a circle of the given flag for the given army.
     /// If flag includes Vision, also sets EverSeen on affected cells.
     void paint_circle(u32 army, f32 wx, f32 wz, f32 radius, VisFlag flag);
