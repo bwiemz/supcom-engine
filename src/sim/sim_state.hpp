@@ -2,6 +2,7 @@
 
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
@@ -197,6 +198,29 @@ public:
     u32 tick_count() const { return tick_count_; }
     f64 game_time() const { return game_time_; }
 
+    // --- Command scheduling (deterministic / lockstep-ready) ---
+    // All player/AI/network orders can be routed through the scheduler so they
+    // apply on a fixed future tick, in a canonical order, identically on every
+    // client. tick() dispatches the commands due for the current tick.
+    CommandScheduler& command_scheduler() { return command_scheduler_; }
+    const CommandScheduler& command_scheduler() const { return command_scheduler_; }
+
+    /// Ticks of delay between submitting an order and it executing (0 = next
+    /// tick). Multiplayer raises this to cover network round-trip.
+    void set_command_delay(u32 ticks) { command_delay_ = ticks; }
+    u32 command_delay() const { return command_delay_; }
+
+    /// Submit an order for `unit_ids` from `source`, to execute after the
+    /// command delay. Returns the tick it will run on.
+    u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
+                         const UnitCommand& command, bool clear_existing);
+
+    /// Whether the next tick may run yet (always true in single-player; in
+    /// lockstep, false until every peer has confirmed its command frame).
+    bool ready_to_run_next_tick() const {
+        return command_scheduler_.ready_to_run(tick_count_ + 1);
+    }
+
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
@@ -294,6 +318,7 @@ private:
     void update_economies();
     void update_entities();
     void update_visibility();
+    void dispatch_due_commands();
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);
@@ -332,6 +357,8 @@ private:
     std::vector<std::unique_ptr<ArmyBrain>> armies_;
     u32 tick_count_ = 0;
     f64 game_time_ = 0.0;
+    CommandScheduler command_scheduler_;
+    u32 command_delay_ = 0;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {
