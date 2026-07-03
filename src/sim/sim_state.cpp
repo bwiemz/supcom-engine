@@ -90,6 +90,18 @@ void SimState::set_share_condition(std::string mode) {
     share_condition_ = std::move(mode);
 }
 
+FogMode parse_fog_mode(const std::string& value) {
+    std::string v;
+    v.reserve(value.size());
+    for (unsigned char c : value) v.push_back(static_cast<char>(std::tolower(c)));
+    if (v == "none" || v == "off") return FogMode::None;
+    return FogMode::Explored; // FA default (covers "explored")
+}
+
+void SimState::set_fog_of_war(std::string mode) {
+    fog_mode_ = parse_fog_mode(mode);
+}
+
 bool SimState::is_valid_teleport_destination(
     const Unit& unit, const Vector3& destination) const {
     f32 half_x = std::max(unit.footprint_size_x(), 1.0f) * 0.5f;
@@ -473,6 +485,15 @@ void SimState::update_visibility() {
 
     // 1. Clear transient flags (keep EverSeen)
     visibility_grid_->clear_transient();
+
+    // "No Fog of War": reveal the whole map to every army, then let the normal
+    // painting run on top (harmlessly). Intel queries then see everything.
+    if (fog_mode_ == FogMode::None) {
+        u32 fn = static_cast<u32>(
+            std::min(army_count(),
+                     static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
+        for (u32 a = 0; a < fn; ++a) visibility_grid_->reveal_all(a);
+    }
 
     // 2. Paint intel radii for each unit
     entity_registry_.for_each([&](Entity& e) {

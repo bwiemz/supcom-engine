@@ -74,6 +74,15 @@ enum class ShareMode : i32 {
 /// Parse an FA `Share` option string into a ShareMode (default ShareUntilDeath).
 ShareMode parse_share_mode(const std::string& value);
 
+/// Fog-of-war mode (FA lobby `FogOfWar` option).
+enum class FogMode : i32 {
+    Explored = 0, // normal fog: unexplored hidden, explored dimmed, seen lit
+    None = 1,     // no fog: the whole map and all units are always revealed
+};
+
+/// Parse an FA `FogOfWar` option string into a FogMode (default Explored).
+FogMode parse_fog_mode(const std::string& value);
+
 /// Camera shake event queued by ShakeCamera moho method.
 struct CameraShakeEvent {
     f32 x = 0, z = 0;       // world position of shake source
@@ -198,6 +207,8 @@ public:
     const std::string& share_condition() const { return share_condition_; }
     void set_share_condition(std::string mode);
     ShareMode share_mode() const { return share_mode_; }
+    void set_fog_of_war(std::string mode);
+    FogMode fog_mode() const { return fog_mode_; }
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
@@ -327,6 +338,7 @@ private:
     VictoryMode victory_mode_ = VictoryMode::Demoralization;
     std::string share_condition_ = "shareuntildeath";
     ShareMode share_mode_ = ShareMode::ShareUntilDeath;
+    FogMode fog_mode_ = FogMode::Explored;
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

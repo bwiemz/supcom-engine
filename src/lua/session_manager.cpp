@@ -62,6 +62,8 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             sim.set_victory_condition(value.string_value);
         } else if (key == "Share" && value.type == GameOptionValue::Type::String) {
             sim.set_share_condition(value.string_value);
+        } else if (key == "FogOfWar" && value.type == GameOptionValue::Type::String) {
+            sim.set_fog_of_war(value.string_value);
         }
     }
 }
