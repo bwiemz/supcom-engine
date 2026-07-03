@@ -18,6 +18,7 @@ add_library(osc_sim STATIC
     thread_manager.cpp
     replay.cpp
     lockstep_session.cpp
+    net_transport.cpp
     sim_state.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
@@ -27,3 +28,8 @@ target_link_libraries(osc_sim
     PUBLIC osc::core osc::map lua50
     PRIVATE spdlog::spdlog osc::audio osc::vfs
 )
+
+# Winsock for the TCP transport (POSIX sockets need no extra link).
+if(WIN32)
+    target_link_libraries(osc_sim PRIVATE ws2_32)
+endif()
