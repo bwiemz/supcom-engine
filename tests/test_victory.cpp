@@ -68,6 +68,8 @@ TEST_CASE("parse_victory_mode maps FA keys and aliases", "[victory][mode]") {
     CHECK(osc::sim::parse_victory_mode("ANNIHILATION") == VictoryMode::Eradication);
     CHECK(osc::sim::parse_victory_mode("sandbox") == VictoryMode::Sandbox);
     CHECK(osc::sim::parse_victory_mode("none") == VictoryMode::Sandbox);
+    // decapitation (FAF) is an ACU-kill mode, treated as demoralization.
+    CHECK(osc::sim::parse_victory_mode("decapitation") == VictoryMode::Demoralization);
     CHECK(osc::sim::parse_victory_mode("nonsense") == VictoryMode::Demoralization);
 }
 
@@ -146,7 +148,7 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_1", "ARMY_1");
         sim.add_army("ARMY_2", "ARMY_2");
 
-        spawn(sim, 0, {"COMMAND"});
+        spawn(sim, 0, {"COMMAND", "ENGINEER"}); // ACU counts (it is an ENGINEER)
         spawn(sim, 1, {"STRUCTURE", "FACTORY"}); // no ACU, but a factory
 
         tick_n(sim, kPastGrace);
@@ -162,13 +164,58 @@ TEST_CASE("Supremacy: a structure keeps you alive, a lone wall does not",
         sim.add_army("ARMY_1", "ARMY_1");
         sim.add_army("ARMY_2", "ARMY_2");
 
-        spawn(sim, 0, {"COMMAND"});
+        spawn(sim, 0, {"COMMAND", "ENGINEER"});
         spawn(sim, 1, {"WALL", "STRUCTURE"}); // walls don't count for domination
 
         tick_n(sim, kPastGrace + 2);
         CHECK(sim.get_army(1)->state() == BrainState::Defeat);
         CHECK(sim.game_ended());
     }
+
+    SECTION("a lone mobile unit does NOT keep you alive (FA: STRUCTURE+ENGINEER)") {
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        sim.set_victory_condition("domination");
+        sim.add_army("ARMY_1", "ARMY_1");
+        sim.add_army("ARMY_2", "ARMY_2");
+
+        spawn(sim, 0, {"COMMAND", "ENGINEER"});
+        spawn(sim, 1, {"MOBILE", "LAND", "DIRECTFIRE"}); // a tank, no structure/engineer
+
+        tick_n(sim, kPastGrace + 2);
+        CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    }
+
+    SECTION("an engineer keeps you alive") {
+        LuaGuard g;
+        SimState sim(g.L, nullptr);
+        sim.set_victory_condition("domination");
+        sim.add_army("ARMY_1", "ARMY_1");
+        sim.add_army("ARMY_2", "ARMY_2");
+
+        spawn(sim, 0, {"COMMAND", "ENGINEER"});
+        spawn(sim, 1, {"MOBILE", "ENGINEER"}); // engineer counts for domination
+
+        tick_n(sim, kPastGrace + 2);
+        CHECK(sim.get_army(1)->state() == BrainState::InProgress);
+        CHECK_FALSE(sim.game_ended());
+    }
+}
+
+TEST_CASE("Annihilation: a lone wall does not keep you alive (ALLUNITS - WALL)",
+          "[victory][eradication]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("eradication");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+
+    spawn(sim, 0, {"COMMAND"});
+    spawn(sim, 1, {"WALL", "STRUCTURE"}); // only a wall → eliminated under eradication
+
+    tick_n(sim, kPastGrace + 2);
+    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    CHECK(sim.game_ended());
 }
 
 TEST_CASE("Sandbox: no army is ever eliminated", "[victory][sandbox]") {
@@ -386,6 +433,61 @@ TEST_CASE("CivilianDeserter hands a defeated army's units to a civilian army",
     CHECK(tank->army() == 2);              // deserted to the civilians
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
     CHECK(sim.get_army(0)->state() == BrainState::Victory);
+}
+
+TEST_CASE("PartialShare transfers structures/engineers to an ally, kills the rest",
+          "[victory][share]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.set_share_condition("PartialShare");
+    sim.add_army("ARMY_1", "ARMY_1"); // player, team A
+    sim.add_army("ARMY_2", "ARMY_2"); // ally, team A
+    sim.add_army("ARMY_3", "ARMY_3"); // enemy
+    sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
+
+    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
+    osc::u32 factory = spawn(sim, 0, {"STRUCTURE", "FACTORY"});
+    osc::u32 tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    spawn(sim, 1, {"COMMAND"});
+    spawn(sim, 2, {"COMMAND"});
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, acu);
+    tick_n(sim, 2);
+
+    auto* f = static_cast<Unit*>(sim.entity_registry().find(factory));
+    auto* t = static_cast<Unit*>(sim.entity_registry().find(tank));
+    REQUIRE(f != nullptr);
+    REQUIRE(t != nullptr);
+    CHECK(f->army() == 1);        // structure handed to the ally
+    CHECK_FALSE(f->is_dying());
+    CHECK(t->army() == 0);        // the tank is destroyed, not transferred
+    CHECK(t->is_dying());
+}
+
+TEST_CASE("Defectors hand a defeated army's units to a surviving enemy",
+          "[victory][share]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.set_share_condition("Defectors");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2"); // enemy of army 0
+
+    osc::u32 acu = spawn(sim, 0, {"COMMAND"});
+    osc::u32 tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    spawn(sim, 1, {"COMMAND"});
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, acu);
+    tick_n(sim, 2);
+
+    auto* t = static_cast<Unit*>(sim.entity_registry().find(tank));
+    REQUIRE(t != nullptr);
+    CHECK(t->army() == 1);        // defected to the enemy
+    CHECK_FALSE(t->is_dying());
+    CHECK(sim.get_army(0)->state() == BrainState::Defeat);
 }
 
 // The --draw-test / --full-smoke-test harnesses set brain states directly and

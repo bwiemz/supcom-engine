@@ -88,16 +88,20 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
         } else if (key == "NoRushRadius") {
             no_rush_radius = option_as_number(value);
         } else if (key == "CommonArmy") {
+            // FAF values: Off / Union / Common / UnionWhenDisconnected. Any of
+            // the sharing variants pools the allied economy ("Off"/false do not).
+            const std::string& v = value.string_value;
             bool on = (value.type == GameOptionValue::Type::Boolean && value.bool_value) ||
                       (value.type == GameOptionValue::Type::String &&
-                       (value.string_value == "On" || value.string_value == "on" ||
-                        value.string_value == "true"));
+                       v != "Off" && v != "off" && v != "false" && v != "none" &&
+                       !v.empty());
             sim.set_common_army(on);
         } else if (key == "TeamShareOverflow" &&
                    value.type == GameOptionValue::Type::String) {
-            // 'none'/'off' disable; anything else (e.g. 'all', 'faction') enables.
+            // FAF values: 'enabled' / 'disabled'. Enable only when explicitly on.
             const std::string& v = value.string_value;
-            sim.set_team_share_overflow(v != "none" && v != "off" && v != "no");
+            sim.set_team_share_overflow(v == "enabled" || v == "on" ||
+                                        v == "true" || v == "all");
         }
     }
     if (no_rush_minutes > 0.0) {
