@@ -33,6 +33,7 @@ struct ResourceState {
     f64 requested = 0.0;
     f64 stored = 0.0;
     f64 max_storage = 200.0;
+    f64 overflow = 0.0; // amount discarded this tick at full storage (for sharing)
 };
 
 struct EconomyState {

@@ -85,8 +85,10 @@ covered by `tests/test_victory.cpp`, `tests/test_fow.cpp`, and `tests/test_sync.
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
   start for the first N minutes; `tests/test_no_rush.cpp`), **CommonArmy** (allied
   armies pool mass/energy each tick, off by default; `tests/test_common_army.cpp`),
-  and per-army **handicap** (`ArmyBrain::set_handicap` scales income; `ArmyGetHandicap`
-  now returns the real value; `tests/test_handicap.cpp`).
+  per-army **handicap** (`ArmyBrain::set_handicap` scales income; `ArmyGetHandicap`
+  now returns the real value; `tests/test_handicap.cpp`), and **TeamShareOverflow**
+  (a full teammate's wasted overflow flows to allies with room, off by default;
+  `tests/test_team_share_overflow.cpp`).
 - Several stubs remain intentionally cosmetic, multiplayer-only, debug-only, or deprecated. They should stay classified so gameplay blockers are not hidden among harmless no-ops.
 
 ## Recommended Work Order
