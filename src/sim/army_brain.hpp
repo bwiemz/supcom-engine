@@ -99,6 +99,14 @@ public:
     i32 unit_cap() const { return unit_cap_; }
     void set_unit_cap(i32 cap) { unit_cap_ = cap; }
 
+    // --- Handicap ---
+    // Fraction (0..1) by which this army's resource income is reduced. 0 = full
+    // strength (default); e.g. 0.25 = 25% weaker economy. Set from the lobby.
+    f64 handicap() const { return handicap_; }
+    void set_handicap(f64 h) {
+        handicap_ = h < 0.0 ? 0.0 : (h > 0.95 ? 0.95 : h);
+    }
+
     i32 get_unit_cost_total(const EntityRegistry& registry) const;
     std::vector<Entity*> get_units(EntityRegistry& registry) const;
 
@@ -188,6 +196,7 @@ private:
     f64 mass_efficiency_ = 1.0;
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;
+    f64 handicap_ = 0.0;
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;

@@ -30,6 +30,7 @@ struct ArmySlotConfig {
     int start_spot = 0; // 1-based scenario marker index; 0 = default slot
     int player_color = -1;
     int army_color = -1;
+    int handicap = 0; // percent income reduction (0 = none)
     std::string ai_personality;
 };
 
