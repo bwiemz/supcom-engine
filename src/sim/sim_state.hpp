@@ -248,6 +248,11 @@ public:
     void set_fog_of_war(std::string mode);
     FogMode fog_mode() const { return fog_mode_; }
 
+    /// Common Army: allied (same-team) armies pool their mass/energy each tick,
+    /// so a teammate's reserves back up one that is stalling. Off by default.
+    void set_common_army(bool on) { common_army_ = on; }
+    bool common_army() const { return common_army_; }
+
     /// "No Rush" rule: for the first `seconds` of game time, units are confined
     /// within `radius` of their army's start position. seconds <= 0 disables it.
     void set_no_rush(f32 seconds, f32 radius);
@@ -340,6 +345,10 @@ public:
 
 private:
     void update_economies();
+    /// Pool mass/energy across allied teams (Common Army). No-op unless enabled.
+    void share_team_economy();
+    /// Partition all non-civilian armies into alliance-connected teams.
+    std::vector<std::vector<i32>> alliance_teams() const;
     void update_entities();
     void update_visibility();
     void dispatch_due_commands();
@@ -406,6 +415,7 @@ private:
     FogMode fog_mode_ = FogMode::Explored;
     f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
     f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
+    bool common_army_ = false;     // pool allied economies when true
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
