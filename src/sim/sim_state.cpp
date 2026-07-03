@@ -68,6 +68,28 @@ void SimState::set_victory_condition(std::string mode) {
     victory_condition_ = std::move(mode);
 }
 
+ShareMode parse_share_mode(const std::string& value) {
+    std::string v;
+    v.reserve(value.size());
+    for (unsigned char c : value) v.push_back(static_cast<char>(std::tolower(c)));
+
+    if (v == "fullshare" || v == "full") return ShareMode::FullShare;
+    if (v == "civiliandeserter") return ShareMode::CivilianDeserter;
+    if (v == "partialshare") return ShareMode::PartialShare;
+    if (v == "transfertokiller") return ShareMode::TransferToKiller;
+    if (v == "defectors") return ShareMode::Defectors;
+    return ShareMode::ShareUntilDeath; // FA default
+}
+
+void SimState::set_share_condition(std::string mode) {
+    std::transform(mode.begin(), mode.end(), mode.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    share_mode_ = parse_share_mode(mode);
+    share_condition_ = std::move(mode);
+}
+
 bool SimState::is_valid_teleport_destination(
     const Unit& unit, const Vector3& destination) const {
     f32 half_x = std::max(unit.footprint_size_x(), 1.0f) * 0.5f;
@@ -711,7 +733,59 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
 namespace {
 constexpr u32 kVictoryGraceTicks = 50; // ~5s: let armies spawn before eliminating
+constexpr f32 kDefeatDeathDuration = 2.0f; // death animation for destroyed units
 } // namespace
+
+i32 SimState::find_share_recipient(i32 defeated_army) const {
+    switch (share_mode_) {
+    case ShareMode::FullShare: {
+        // First surviving (non-defeated, non-civilian) ally.
+        for (size_t i = 0; i < armies_.size(); ++i) {
+            if (static_cast<i32>(i) == defeated_army) continue;
+            const auto& b = armies_[i];
+            if (b->is_civilian() || b->is_defeated()) continue;
+            if (is_ally(defeated_army, static_cast<i32>(i)))
+                return static_cast<i32>(i);
+        }
+        return -1;
+    }
+    case ShareMode::CivilianDeserter: {
+        for (size_t i = 0; i < armies_.size(); ++i) {
+            if (armies_[i]->is_civilian()) return static_cast<i32>(i);
+        }
+        return -1;
+    }
+    default:
+        // ShareUntilDeath and the killer-relative modes destroy the units.
+        return -1;
+    }
+}
+
+void SimState::dispose_defeated_army(i32 army) {
+    const i32 recipient = find_share_recipient(army);
+    entity_registry_.for_each([&](Entity& e) {
+        if (e.army() != army || e.destroyed() || !e.is_unit()) return;
+        auto* u = static_cast<Unit*>(&e);
+        if (recipient >= 0) {
+            u->set_army(recipient);
+            // Keep the Lua-side Army field (1-based) in sync, mirroring capture.
+            if (u->lua_table_ref() >= 0) {
+                lua_rawgeti(L_, LUA_REGISTRYINDEX, u->lua_table_ref());
+                lua_pushstring(L_, "Army");
+                lua_pushnumber(L_, recipient + 1);
+                lua_rawset(L_, -3);
+                lua_pop(L_, 1);
+            }
+        } else if (!u->is_dying()) {
+            u->begin_dying(kDefeatDeathDuration);
+        }
+    });
+    if (recipient >= 0) {
+        armies_[recipient]->note_has_units();
+        spdlog::info("Army {} units transferred to army {} on defeat", army,
+                     recipient);
+    }
+}
 
 i32 SimState::count_alliance_components(
     const std::vector<i32>& army_indices) const {
@@ -814,6 +888,10 @@ void SimState::update_victory() {
                          i, b->name(), victory_condition_);
         }
     }
+
+    // Dispose of each just-defeated army's remaining units per the share rule
+    // (destroy, or transfer to an ally / civilian).
+    for (i32 idx : newly_defeated) dispose_defeated_army(idx);
 
     // Determine surviving teams (alliance components of the still-alive armies).
     std::vector<i32> alive;

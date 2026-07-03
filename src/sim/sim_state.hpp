@@ -58,6 +58,22 @@ enum class VictoryMode : i32 {
 /// Unknown values fall back to Demoralization (FA's default).
 VictoryMode parse_victory_mode(const std::string& value);
 
+/// Share condition (FA lobby `Share` option) governing what happens to a
+/// defeated army's units.
+enum class ShareMode : i32 {
+    ShareUntilDeath = 0,  // FA default — the defeated army's units are destroyed
+    FullShare = 1,        // units transfer to a surviving ally (else destroyed)
+    CivilianDeserter = 2, // units transfer to a civilian army (else destroyed)
+    // Killer-relative modes (TransferToKiller / Defectors) and PartialShare are
+    // accepted but, lacking per-unit killer attribution, resolve to destruction.
+    PartialShare = 3,
+    TransferToKiller = 4,
+    Defectors = 5,
+};
+
+/// Parse an FA `Share` option string into a ShareMode (default ShareUntilDeath).
+ShareMode parse_share_mode(const std::string& value);
+
 /// Camera shake event queued by ShakeCamera moho method.
 struct CameraShakeEvent {
     f32 x = 0, z = 0;       // world position of shake source
@@ -179,6 +195,9 @@ public:
     void set_victory_condition(std::string mode);
     VictoryMode victory_mode() const { return victory_mode_; }
     bool sandbox_victory() const { return victory_mode_ == VictoryMode::Sandbox; }
+    const std::string& share_condition() const { return share_condition_; }
+    void set_share_condition(std::string mode);
+    ShareMode share_mode() const { return share_mode_; }
 
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
@@ -257,6 +276,10 @@ private:
     void update_entities();
     void update_visibility();
     void update_victory();
+    /// Dispose of a just-defeated army's units per the active share condition.
+    void dispose_defeated_army(i32 army);
+    /// Recipient army index for unit transfer on defeat, or -1 to destroy.
+    i32 find_share_recipient(i32 defeated_army) const;
     /// Count alliance-connected components among the given (alive) army indices.
     i32 count_alliance_components(const std::vector<i32>& army_indices) const;
     void tick_economy_events();
@@ -302,6 +325,8 @@ private:
     bool game_ended_ = false;
     std::string victory_condition_ = "demoralization";
     VictoryMode victory_mode_ = VictoryMode::Demoralization;
+    std::string share_condition_ = "shareuntildeath";
+    ShareMode share_mode_ = ShareMode::ShareUntilDeath;
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

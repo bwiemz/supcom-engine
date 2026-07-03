@@ -60,6 +60,8 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
     for (const auto& [key, value] : options.values) {
         if (key == "Victory" && value.type == GameOptionValue::Type::String) {
             sim.set_victory_condition(value.string_value);
+        } else if (key == "Share" && value.type == GameOptionValue::Type::String) {
+            sim.set_share_condition(value.string_value);
         }
     }
 }

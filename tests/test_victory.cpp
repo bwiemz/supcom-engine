@@ -305,6 +305,89 @@ TEST_CASE("Grace: an ACU killed during the grace window is honored after it",
     CHECK(sim.game_ended());
 }
 
+TEST_CASE("parse_share_mode maps FA keys", "[victory][share]") {
+    using osc::sim::ShareMode;
+    CHECK(osc::sim::parse_share_mode("ShareUntilDeath") == ShareMode::ShareUntilDeath);
+    CHECK(osc::sim::parse_share_mode("FullShare") == ShareMode::FullShare);
+    CHECK(osc::sim::parse_share_mode("CivilianDeserter") == ShareMode::CivilianDeserter);
+    CHECK(osc::sim::parse_share_mode("whatever") == ShareMode::ShareUntilDeath);
+}
+
+TEST_CASE("ShareUntilDeath destroys a defeated army's remaining units",
+          "[victory][share]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization"); // default share = ShareUntilDeath
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+
+    spawn(sim, 0, {"COMMAND"});
+    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
+    osc::u32 enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, enemy_acu);
+    tick_n(sim, 2);
+
+    auto* tank = static_cast<Unit*>(sim.entity_registry().find(enemy_tank));
+    REQUIRE(tank != nullptr);
+    CHECK(tank->is_dying());               // leftover unit is being destroyed
+    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+}
+
+TEST_CASE("FullShare transfers a defeated army's units to a surviving ally",
+          "[victory][share]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.set_share_condition("FullShare");
+    sim.add_army("ARMY_1", "ARMY_1"); // player, team A
+    sim.add_army("ARMY_2", "ARMY_2"); // ally, team A
+    sim.add_army("ARMY_3", "ARMY_3"); // enemy, team B
+    sim.set_alliance(0, 1, osc::sim::Alliance::Ally);
+
+    osc::u32 player_acu = spawn(sim, 0, {"COMMAND"});
+    osc::u32 player_tank = spawn(sim, 0, {"MOBILE", "LAND"});
+    spawn(sim, 1, {"COMMAND"});
+    spawn(sim, 2, {"COMMAND"});
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, player_acu);
+    tick_n(sim, 2);
+
+    auto* tank = static_cast<Unit*>(sim.entity_registry().find(player_tank));
+    REQUIRE(tank != nullptr);
+    CHECK(tank->army() == 1);              // handed to the ally
+    CHECK_FALSE(tank->is_dying());
+    CHECK(sim.get_army(0)->state() == BrainState::Defeat);
+    CHECK_FALSE(sim.game_ended());         // team A (ally) fights on
+}
+
+TEST_CASE("CivilianDeserter hands a defeated army's units to a civilian army",
+          "[victory][share]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.set_share_condition("CivilianDeserter");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.add_army("CIVILIAN", "CIVILIAN"); // civilian recipient (not a participant)
+
+    spawn(sim, 0, {"COMMAND"});
+    osc::u32 enemy_acu = spawn(sim, 1, {"COMMAND"});
+    osc::u32 enemy_tank = spawn(sim, 1, {"MOBILE", "LAND"});
+
+    tick_n(sim, kPastGrace);
+    destroy(sim, enemy_acu);
+    tick_n(sim, 2);
+
+    auto* tank = static_cast<Unit*>(sim.entity_registry().find(enemy_tank));
+    REQUIRE(tank != nullptr);
+    CHECK(tank->army() == 2);              // deserted to the civilians
+    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    CHECK(sim.get_army(0)->state() == BrainState::Victory);
+}
+
 TEST_CASE("Single participant never auto-resolves", "[victory][edge]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
