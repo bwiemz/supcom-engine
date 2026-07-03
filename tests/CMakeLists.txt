@@ -24,6 +24,7 @@ add_executable(osc_tests
     test_no_rush.cpp
     test_replay.cpp
     test_common_army.cpp
+    test_handicap.cpp
     test_video_decoder.cpp
 )
 

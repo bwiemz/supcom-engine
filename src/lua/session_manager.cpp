@@ -37,6 +37,7 @@ void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain) {
         const auto& color = kArmyColors[static_cast<size_t>(color_idx)];
         brain->set_color(color[0], color[1], color[2]);
     }
+    if (cfg->handicap > 0) brain->set_handicap(cfg->handicap / 100.0);
 }
 
 void apply_game_options_to_brain(const GameOptionsConfig& options,

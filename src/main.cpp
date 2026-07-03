@@ -660,6 +660,7 @@ static bool execute_reload_sequence(
                         slot_cfg.player_color =
                             read_int_field("PlayerColor", -1);
                         slot_cfg.army_color = read_int_field("ArmyColor", -1);
+                        slot_cfg.handicap = read_int_field("Handicap", 0);
 
                         // Store faction on the army brain (0-based index)
                         auto* brain = sim_state->get_army(slot - 1);

@@ -1293,8 +1293,14 @@ static int l_IsEntity(lua_State* L) {
     return 1;
 }
 
+// ArmyGetHandicap(army) -> handicap fraction (0..1)
 static int l_ArmyGetHandicap(lua_State* L) {
-    lua_pushnumber(L, 0);
+    auto* sim = get_sim(L);
+    if (!sim) { lua_pushnumber(L, 0); return 1; }
+    i32 idx = resolve_army(L, 1, sim);
+    if (idx < 0 || idx >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
+    auto* brain = sim->get_army(idx);
+    lua_pushnumber(L, brain ? brain->handicap() : 0.0);
     return 1;
 }
 
