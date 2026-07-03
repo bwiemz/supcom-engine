@@ -130,11 +130,13 @@ scheduler exists, and reuses the same checksum for verification.
    drive two in-process sims over the transport, exchanging command frames +
    confirmations + checksums; `tests/test_lockstep.cpp` proves sync, the
    stall-until-confirmed gate, and desync detection.
-3. **INetTransport + LAN.** *(Transport seam landed; socket impl pending.)* The
-   `INetTransport` interface is in place with a loopback implementation. Remaining:
-   a real UDP/TCP/ICE `INetTransport`, host/join + launch barrier, and pipelined
-   command delay for RTT (the session currently runs strict, one-tick-per-frame
-   lockstep). Needs real networked clients to validate.
+3. **INetTransport + LAN.** *(Landed 2026-07-03: TCP transport.)* `TcpTransport`
+   (cross-platform POSIX + Winsock, star topology with host relay, length-prefixed
+   framing, non-blocking receive) implements `INetTransport` over real sockets.
+   `tests/test_tcp_transport.cpp` runs message relay and a **full lockstep session
+   over localhost TCP**. Remaining: host/join lobby lifecycle + launch barrier,
+   pipelined command delay for RTT (session is currently strict one-tick-per-frame),
+   and a UDP+reliability transport as a latency follow-up.
 4. **Desync + drop handling.** Checksum-mismatch detection is in (`LockstepSession::desynced`).
    Remaining: player-drop → AI/defeat, timeouts.
 5. **GpgNet / FAForever.** Matchmaking, ICE, replay upload.

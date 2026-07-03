@@ -187,7 +187,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
 
 **What's not yet implemented:**
 
-- Networking and multiplayer sync — the deterministic sync engine is built and tested headless (sync checksum, lockstep command scheduler, `LockstepSession` over an `INetTransport` with a loopback impl, replays); a real socket/ICE transport, host/peer lobby lifecycle, and routing every order through the scheduler remain (see `docs/plans/2026-07-03-multiplayer-networking-design.md`)
+- Networking and multiplayer sync — the deterministic sync engine + a real cross-platform TCP transport are built and tested (sync checksum, lockstep command scheduler, `LockstepSession` running over both loopback and localhost TCP, replays); host/peer lobby lifecycle, routing every order through the scheduler, and a UDP+reliability transport remain (see `docs/plans/2026-07-03-multiplayer-networking-design.md`)
 - Some lobby options are parsed but not yet enforced in C++: difficulty-tier cheat multipliers (consumed by FA's AI Lua), PrebuiltUnits (NoRush, CommonArmy shared economy, TeamShareOverflow, and per-army handicap are now enforced)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
