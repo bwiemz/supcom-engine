@@ -234,6 +234,16 @@ public:
     void set_fog_of_war(std::string mode);
     FogMode fog_mode() const { return fog_mode_; }
 
+    /// "No Rush" rule: for the first `seconds` of game time, units are confined
+    /// within `radius` of their army's start position. seconds <= 0 disables it.
+    void set_no_rush(f32 seconds, f32 radius);
+    f32 no_rush_seconds() const { return no_rush_seconds_; }
+    f32 no_rush_radius() const { return no_rush_radius_; }
+    bool no_rush_active() const {
+        return no_rush_seconds_ > 0.0f &&
+               static_cast<f32>(game_time_) < no_rush_seconds_;
+    }
+
     /// Check if player army (index 0) won, lost, or game still in progress.
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
     i32 player_result() const;
@@ -319,6 +329,10 @@ private:
     void update_entities();
     void update_visibility();
     void dispatch_due_commands();
+    void enforce_no_rush();
+    /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
+    /// active. Returns the (possibly clamped) position.
+    Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);
@@ -374,6 +388,8 @@ private:
     std::string share_condition_ = "shareuntildeath";
     ShareMode share_mode_ = ShareMode::ShareUntilDeath;
     FogMode fog_mode_ = FogMode::Explored;
+    f32 no_rush_seconds_ = 0.0f;   // 0 = No Rush disabled
+    f32 no_rush_radius_ = 75.0f;   // default confinement radius (game units)
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;

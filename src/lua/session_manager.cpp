@@ -54,9 +54,27 @@ void apply_game_options_to_brain(const GameOptionsConfig& options,
     }
 }
 
+namespace {
+// Read a numeric option that may arrive as a Number or a numeric String
+// ("Off"/"none"/non-numeric → 0).
+double option_as_number(const GameOptionValue& value) {
+    if (value.type == GameOptionValue::Type::Number) return value.number_value;
+    if (value.type == GameOptionValue::Type::String) {
+        try {
+            return std::stod(value.string_value);
+        } catch (...) {
+            return 0.0;
+        }
+    }
+    return 0.0;
+}
+} // namespace
+
 void apply_game_options_to_sim(const GameOptionsConfig& options,
                                sim::SimState& sim) {
     if (!options.configured) return;
+    double no_rush_minutes = 0.0;
+    double no_rush_radius = 0.0;
     for (const auto& [key, value] : options.values) {
         if (key == "Victory" && value.type == GameOptionValue::Type::String) {
             sim.set_victory_condition(value.string_value);
@@ -64,7 +82,15 @@ void apply_game_options_to_sim(const GameOptionsConfig& options,
             sim.set_share_condition(value.string_value);
         } else if (key == "FogOfWar" && value.type == GameOptionValue::Type::String) {
             sim.set_fog_of_war(value.string_value);
+        } else if (key == "NoRushOption") {
+            no_rush_minutes = option_as_number(value);
+        } else if (key == "NoRushRadius") {
+            no_rush_radius = option_as_number(value);
         }
+    }
+    if (no_rush_minutes > 0.0) {
+        sim.set_no_rush(static_cast<float>(no_rush_minutes * 60.0),
+                        static_cast<float>(no_rush_radius));
     }
 }
 
