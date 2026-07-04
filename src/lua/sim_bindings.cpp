@@ -3603,19 +3603,21 @@ static int l_IssueAggressiveMove(lua_State* L) {
     return l_IssueMove(L);
 }
 
-// IssueStop(units_table)
+// IssueStop(units_table) — routed as a Stop command so a networked player's
+// stop is broadcast + scheduled; single-player still clears immediately via
+// route_command's direct Stop branch.
 static int l_IssueStop(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        u->clear_commands();
-    }, nullptr);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Stop;
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
-// IssueClearCommands(units_table)
+// IssueClearCommands(units_table) — same clear semantics as Stop here.
 static int l_IssueClearCommands(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        u->clear_commands();
-    }, nullptr);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Stop;
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 

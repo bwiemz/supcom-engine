@@ -384,7 +384,11 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
     for (u32 uid : unit_ids) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
-        static_cast<Unit*>(e)->push_command(command, clear_existing);
+        auto* unit = static_cast<Unit*>(e);
+        // Stop clears the queue outright (rather than queueing a Stop order), so
+        // it matches the old IssueStop's immediate clear_commands() semantics.
+        if (command.type == CommandType::Stop) unit->clear_commands();
+        else unit->push_command(command, clear_existing);
     }
 }
 
@@ -403,6 +407,12 @@ void SimState::dispatch_due_commands() {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<Unit*>(e);
+            // A scheduled Stop clears the queue (mirrors route_command's direct
+            // branch), so a networked player's Stop lands identically on peers.
+            if (sc.command.type == CommandType::Stop) {
+                unit->clear_commands();
+                continue;
+            }
             UnitCommand cmd = sc.command;
             // During No Rush, clamp movement/attack goals into the unit's zone
             // so scheduler-routed orders stop cleanly at the line.
