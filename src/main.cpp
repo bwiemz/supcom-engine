@@ -42,6 +42,7 @@
 #include "sim/net_transport.hpp"
 #include "sim/lockstep_session.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/lan_lobby.hpp"
 #include "lua/smoke_test.hpp"
 
 extern "C" {
@@ -914,7 +915,7 @@ static int run_mp_lan_test(bool is_host, const std::string& address,
         session->send_frame();
         // Pump until this side advances one tick (both peers confirmed frame).
         for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
-            if (is_host) lua::mp_poll_connections();
+            lua::mp_pump(); // drain the mux (game channel) + accept peers
             session->receive_and_advance();
             if (sim->tick_count() <= round)
                 std::this_thread::sleep_for(chrono::milliseconds(1));
@@ -952,6 +953,173 @@ static int run_mp_lan_test(bool is_host, const std::string& address,
     return (desynced || stalled) ? 2 : 0;
 }
 
+// ── Headless two-process LAN lobby lifecycle verification ──
+// `--lan-host` / `--lan-join <ip>` drive the REAL lobby handshake over TCP: the
+// host advertises a config (scenario + seed), the client applies it and readies,
+// the host fires the launch barrier. Both then seed a sim from the shared seed
+// (printed as an rng probe to prove it propagated), attach a LockstepSession over
+// the mux *game* channel of the same connection, and run a scripted lockstep
+// match. Matching scenario/seed/rng/checksum with desynced=0 on both processes ==
+// a synced LAN lobby→game lifecycle. (Uses a minimal sim rather than loading the
+// full scenario, so the network path — not the FA scenario boot — is what's
+// exercised; scenario boot is covered by --full-smoke-test.)
+static int run_lan_lobby_test(bool is_host, const std::string& address,
+                              osc::u16 port, osc::u32 frames) {
+    using namespace osc;
+    namespace chrono = std::chrono;
+
+    auto& mp = lua::mp_net_state();
+    mp.reset();
+    const u64 host_seed = 0xA5A5F00DCAFEBABEull;
+    const std::string scenario = "/maps/SCMP_009/SCMP_009_scenario.lua";
+
+    const bool ok = is_host ? lua::mp_begin_host(port)
+                            : lua::mp_begin_join(address, port);
+    if (!ok) {
+        spdlog::error("[lan] transport setup failed ({})",
+                      is_host ? "host" : "join");
+        return 1;
+    }
+
+    if (is_host) {
+        spdlog::info("[lan] host listening on port {} — waiting for a peer...",
+                     mp.port);
+        bool connected = false;
+        for (int i = 0; i < 6000 && !connected; ++i) {
+            if (lua::mp_poll_connections() >= 1) connected = true;
+            else std::this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        if (!connected) {
+            spdlog::error("[lan] host: no peer connected, aborting");
+            lua::mp_teardown();
+            return 1;
+        }
+        mp.lobby->set_host_config(lua::LanSessionConfig{scenario, host_seed});
+    }
+
+    // Drive the lobby handshake to the launch barrier on both sides.
+    auto* lob = mp.lobby.get();
+    for (int i = 0; i < 10000 && !lob->launch_ready(); ++i) {
+        lua::mp_pump();
+        lob->poll();
+        if (is_host && lob->state() == lua::LanLobby::State::Ready)
+            lob->request_launch();
+        if (!lob->launch_ready())
+            std::this_thread::sleep_for(chrono::milliseconds(1));
+    }
+    if (!lob->launch_ready()) {
+        spdlog::error("[lan] lobby handshake did not reach launch");
+        lua::mp_teardown();
+        return 2;
+    }
+    spdlog::info("[lan] {} launch barrier reached: scenario='{}' seed={:#018x}",
+                 is_host ? "HOST" : "CLIENT", lob->config().scenario,
+                 lob->config().seed);
+
+    // Apply the synced seed and build the lockstep session over the game channel.
+    mp.seed = lob->config().seed;
+    lua_State* L = lua_open();
+    auto sim = std::make_unique<sim::SimState>(L, nullptr);
+    std::vector<u32> unit_ids;
+    for (int i = 0; i < 3; ++i) {
+        auto u = std::make_unique<sim::Unit>();
+        u->set_army(0);
+        u->set_max_speed(4.0f);
+        u->set_position({static_cast<f32>(i * 10), 0.0f, 0.0f});
+        unit_ids.push_back(sim->entity_registry().register_entity(std::move(u)));
+    }
+    lua::mp_attach_session(*sim); // seeds the sim from mp.seed
+    auto* session = mp.session.get();
+    const u32 rng_probe = sim->sim_rand(); // identical iff the seed propagated
+
+    auto issue_move = [&](u32 id, f32 x, f32 z) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Move;
+        cmd.target_pos = {x, 0.0f, z};
+        sim->set_human_input_active(true);
+        sim->route_command({id}, cmd, true);
+        sim->set_human_input_active(false);
+    };
+
+    bool stalled = false;
+    for (u32 round = 0; round < frames; ++round) {
+        if (is_host) {
+            if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
+            if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
+        }
+        session->send_frame();
+        for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
+            lua::mp_pump();
+            session->receive_and_advance();
+            if (sim->tick_count() <= round)
+                std::this_thread::sleep_for(chrono::milliseconds(1));
+        }
+        if (sim->tick_count() <= round) { stalled = true; break; }
+    }
+
+    const u32 checksum = sim->compute_sync_checksum();
+    const bool desynced = session->desynced();
+    spdlog::info("[lan] {} RESULT tick={} checksum={:#010x} rng={:#010x} desynced={}",
+                 is_host ? "HOST" : "CLIENT", sim->tick_count(), checksum,
+                 rng_probe, desynced);
+    std::printf("LAN_RESULT role=%s scenario=%s seed=%08x%08x rng=%08x tick=%u "
+                "checksum=%08x desynced=%d stalled=%d\n",
+                is_host ? "host" : "client", lob->config().scenario.c_str(),
+                static_cast<u32>(lob->config().seed >> 32),
+                static_cast<u32>(lob->config().seed & 0xFFFFFFFFull), rng_probe,
+                sim->tick_count(), checksum, desynced ? 1 : 0, stalled ? 1 : 0);
+    std::fflush(stdout);
+
+    sim->clear_local_command_sink();
+    lua::mp_teardown();
+    sim.reset();
+    lua_close(L);
+    return (desynced || stalled) ? 2 : 0;
+}
+
+// Build a fixed 1v1 human-vs-human sessionConfig for `scenario` and launch it via
+// the existing LaunchSinglePlayerSession global. Both LAN peers build the same
+// config (they differ only in which army is locally focused, decided by role).
+static void lan_launch_session(lua_State* uL, const std::string& scenario) {
+    lua_pushstring(uL, "LaunchSinglePlayerSession");
+    lua_rawget(uL, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(uL, -1)) {
+        lua_pop(uL, 1);
+        spdlog::warn("[lan] LaunchSinglePlayerSession not available");
+        return;
+    }
+    lua_newtable(uL); // config
+    lua_pushstring(uL, "ScenarioFile");
+    lua_pushstring(uL, scenario.c_str());
+    lua_rawset(uL, -3);
+    lua_pushstring(uL, "GameOptions");
+    lua_newtable(uL);
+    lua_pushstring(uL, "ScenarioFile");
+    lua_pushstring(uL, scenario.c_str());
+    lua_rawset(uL, -3);
+    lua_rawset(uL, -3);
+    lua_pushstring(uL, "PlayerOptions");
+    lua_newtable(uL);
+    auto push_slot = [&](int idx, const char* name, int faction, int team) {
+        lua_pushnumber(uL, idx);
+        lua_newtable(uL);
+        lua_pushstring(uL, "Human"); lua_pushboolean(uL, 1); lua_rawset(uL, -3);
+        lua_pushstring(uL, "PlayerName"); lua_pushstring(uL, name); lua_rawset(uL, -3);
+        lua_pushstring(uL, "Faction"); lua_pushnumber(uL, faction); lua_rawset(uL, -3);
+        lua_pushstring(uL, "Team"); lua_pushnumber(uL, team); lua_rawset(uL, -3);
+        lua_pushstring(uL, "StartSpot"); lua_pushnumber(uL, idx); lua_rawset(uL, -3);
+        lua_rawset(uL, -3);
+    };
+    push_slot(1, "Host", 1, 1);
+    push_slot(2, "Client", 2, 2);
+    lua_rawset(uL, -3); // config.PlayerOptions
+    if (lua_pcall(uL, 1, 0, 0) != 0) {
+        spdlog::warn("[lan] LaunchSinglePlayerSession error: {}",
+                     lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)");
+        lua_pop(uL, 1);
+    }
+}
+
 int main(int argc, char* argv[]) {
     osc::log::init();
 #ifdef _WIN32
@@ -973,6 +1141,17 @@ int main(int argc, char* argv[]) {
             auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
             return run_mp_lan_test(mp_host, mp_join, port, frames, inject_desync);
+        }
+
+        // Headless LAN lobby lifecycle verification (host + client processes).
+        bool lan_host = parse_flag(argc, argv, "--lan-host");
+        std::string lan_join = parse_string_arg(argc, argv, "--lan-join", "");
+        if (lan_host || !lan_join.empty()) {
+            std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
+            std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "40");
+            auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
+            auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
+            return run_lan_lobby_test(lan_host, lan_join, port, frames);
         }
     }
 
@@ -1966,6 +2145,22 @@ int main(int argc, char* argv[]) {
             double display_fps = 0.0;
             std::unordered_set<osc::u32> prev_selection;
 
+            // Windowed LAN entry: create the transport up front so the front-end
+            // can host/join while it renders; the game loop then drives the lobby
+            // handshake to launch. Same networking path as --lan-host/--lan-join
+            // (verified headless). Absent these flags, single-player is untouched.
+            bool lan_launch_fired = false;
+            bool lan_host_cfg_set = false;
+            {
+                std::string lwp = parse_string_arg(argc, argv, "--mp-port", "47624");
+                auto lport = static_cast<osc::u16>(std::strtoul(lwp.c_str(), nullptr, 10));
+                if (parse_flag(argc, argv, "--lan-window-host")) {
+                    osc::lua::mp_begin_host(lport);
+                }
+                std::string lwj = parse_string_arg(argc, argv, "--lan-window-join", "");
+                if (!lwj.empty()) osc::lua::mp_begin_join(lwj, lport);
+            }
+
             while (!renderer.should_close()) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
@@ -2074,7 +2269,7 @@ int main(int argc, char* argv[]) {
                                guard++ < 4) {
                             sim_accumulator -=
                                 osc::sim::SimState::SECONDS_PER_TICK;
-                            osc::lua::mp_poll_connections();
+                            osc::lua::mp_pump(); // drain mux game channel + peers
                             session->send_frame();
                             session->receive_and_advance();
                         }
@@ -2278,6 +2473,34 @@ int main(int argc, char* argv[]) {
                         break;
                     }
                     lua_pop(uiL, 1);
+                }
+
+                // LAN lobby: drive the host/client handshake during the
+                // front-end and fire the launch barrier. Inert unless a LAN
+                // transport exists (only when the LAN window flags were set).
+                {
+                    auto& mpn = osc::lua::mp_net_state();
+                    auto* lob = osc::lua::mp_lobby();
+                    if (lob && !mpn.active() && !lan_launch_fired) {
+                        if (lob->role() == osc::lua::LanLobby::Role::Host &&
+                            !lan_host_cfg_set) {
+                            lob->set_host_config(osc::lua::LanSessionConfig{
+                                "/maps/SCMP_009/SCMP_009_scenario.lua", mpn.seed});
+                            lan_host_cfg_set = true;
+                        }
+                        osc::lua::mp_pump();
+                        lob->poll();
+                        if (lob->role() == osc::lua::LanLobby::Role::Host &&
+                            lob->state() == osc::lua::LanLobby::State::Ready) {
+                            lob->request_launch();
+                        }
+                        if (lob->launch_ready()) {
+                            lan_launch_fired = true;
+                            mpn.seed = lob->config().seed;
+                            lan_launch_session(ui_lua_state.raw(),
+                                               lob->config().scenario);
+                        }
+                    }
                 }
 
                 // Check for game launch request from lobby (M148a)
