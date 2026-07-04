@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/sim_random.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -54,9 +55,18 @@ public:
     u32 grid_height() const { return grid_height_; }
     bool grid_initialized() const { return grid_initialized_; }
 
+    /// Deterministic sim RNG used by sim code (e.g. weapon firing randomness).
+    /// SimState points this at its own SimRandom so every client shares one
+    /// seeded stream; a bare registry (unit tests) falls back to its own.
+    void set_sim_random(SimRandom* r) { sim_random_ = r ? r : &default_random_; }
+    SimRandom& sim_random() { return *sim_random_; }
+
 private:
     std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
     u32 next_id_ = 1;
+
+    SimRandom default_random_;
+    SimRandom* sim_random_ = &default_random_;
 
     // Spatial hash grid
     bool grid_initialized_ = false;

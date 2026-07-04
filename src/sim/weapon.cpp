@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <random>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -175,11 +174,11 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     vel.y = 0;
     vel.z = dz * inv_dist * muzzle_velocity;
 
-    // Apply firing randomness as angular offset to velocity direction
+    // Apply firing randomness as angular offset to velocity direction.
+    // Drawn from the deterministic sim RNG so every lockstep client rolls the
+    // same spread (a per-process std::random_device would desync clients).
     if (firing_randomness > 0) {
-        static thread_local std::mt19937 rng{std::random_device{}()};
-        std::uniform_real_distribution<f32> ang_dist(-firing_randomness, firing_randomness);
-        f32 angle = ang_dist(rng);
+        f32 angle = registry.sim_random().range(-firing_randomness, firing_randomness);
         f32 c = std::cos(angle), s = std::sin(angle);
         f32 nx = vel.x * c - vel.z * s;
         f32 nz = vel.x * s + vel.z * c;

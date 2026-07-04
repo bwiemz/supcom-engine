@@ -321,6 +321,14 @@ public:
     /// determinism / replay. Order-independent (entities are sorted by id).
     u32 compute_sync_checksum() const;
 
+    // --- Deterministic sim RNG ---
+    // Any sim randomness (e.g. weapon firing spread) must draw from this seeded
+    // stream so every lockstep client rolls identically. The host chooses the
+    // seed and broadcasts it; single-player uses the fixed default.
+    void set_seed(u64 s) { sim_random_.seed(s); }
+    u32 sim_rand() { return sim_random_.next_u32(); }
+    f32 sim_rand_range(f32 lo, f32 hi) { return sim_random_.range(lo, hi); }
+
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
     /// Global sim generation — incremented each time a SimState is constructed.
@@ -437,6 +445,7 @@ private:
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
+    SimRandom sim_random_;                    // deterministic, seeded per game
     LocalCommandSink local_command_sink_;   // set → networked multiplayer
     bool human_input_active_ = false;        // raised around local human input
     Replay recorded_replay_;
