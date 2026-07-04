@@ -18,7 +18,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 ## Verified Locally
 
-- `build/tests/Debug/osc_tests.exe` passes: 201 test cases, 2,909 assertions.
+- `build/tests/Debug/osc_tests.exe` passes: 208 test cases, 5,026 assertions.
 - `build/Debug/opensupcom.exe --help` runs and lists the current CLI surface.
 - **Multiplayer (LAN lockstep), verified across two OS processes over localhost TCP:**
   `opensupcom.exe --mp-host` + `opensupcom.exe --mp-join 127.0.0.1` reach identical
@@ -27,6 +27,18 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   injected divergence. Command routing (`SimState::route_command`) sends local human
   orders to the `LockstepSession` in multiplayer and applies them directly in
   single-player (unchanged). See `docs/plans/2026-07-03-multiplayer-networking-design.md`.
+- **LAN lobby lifecycle, verified across two OS processes:** `opensupcom.exe
+  --lan-host` + `opensupcom.exe --lan-join 127.0.0.1` run the real lobby handshake
+  (host advertises scenario + RNG seed, client applies + readies, host fires the
+  launch barrier) over a `MuxTransport` that carries both the lobby channel and the
+  lockstep channel on one connection, then play a synced lockstep match. Both print
+  matching scenario, seed, an RNG probe (proving the shared seed reached each sim —
+  the fix for `weapon.cpp`'s previously non-deterministic firing randomness), and
+  final checksum with `desynced=0`. Windowed reachability: `--lan-window-host` /
+  `--lan-window-join <ip>` create the transport at startup and the game loop drives
+  the same handshake to launch (a two-window play verified only by logic-equivalence
+  to the headless run; a lobby IP-entry UI field is the remaining follow-up). See
+  `docs/superpowers/specs/2026-07-04-windowed-lan-lobby-design.md`.
 - `build/Debug/opensupcom.exe --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `build/Debug/opensupcom.exe --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.

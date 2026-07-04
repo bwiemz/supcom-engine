@@ -321,6 +321,14 @@ public:
     /// determinism / replay. Order-independent (entities are sorted by id).
     u32 compute_sync_checksum() const;
 
+    // --- Deterministic sim RNG ---
+    // Any sim randomness (e.g. weapon firing spread) must draw from this seeded
+    // stream so every lockstep client rolls identically. The host chooses the
+    // seed and broadcasts it; single-player uses the fixed default.
+    void set_seed(u64 s) { sim_random_.seed(s); }
+    u32 sim_rand() { return sim_random_.next_u32(); }
+    f32 sim_rand_range(f32 lo, f32 hi) { return sim_random_.range(lo, hi); }
+
     static constexpr f64 SECONDS_PER_TICK = 0.1;
 
     /// Global sim generation — incremented each time a SimState is constructed.
@@ -419,6 +427,9 @@ private:
                               bool cloaked) const;
 
     lua_State* L_;
+    // Declared before entity_registry_ so it outlives the registry that holds a
+    // SimRandom* into it (registry destruction must not see a dead RNG).
+    SimRandom sim_random_;                    // deterministic, seeded per game
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;

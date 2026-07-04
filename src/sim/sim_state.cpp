@@ -32,6 +32,9 @@ u32 SimState::s_sim_generation_ = 0;
 SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     : L_(L), thread_manager_(L), blueprint_store_(store) {
     ++s_sim_generation_;
+    // Sim code (e.g. weapons) draws randomness from this seeded stream via the
+    // registry, so every lockstep client rolls identically.
+    entity_registry_.set_sim_random(&sim_random_);
 }
 
 SimState::~SimState() {
