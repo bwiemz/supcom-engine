@@ -28,6 +28,7 @@ add_executable(osc_tests
     test_team_share_overflow.cpp
     test_lockstep.cpp
     test_tcp_transport.cpp
+    test_command_routing.cpp
     test_video_decoder.cpp
 )
 

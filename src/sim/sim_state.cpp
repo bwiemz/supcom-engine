@@ -370,6 +370,24 @@ u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
     return exec_tick;
 }
 
+void SimState::route_command(const std::vector<u32>& unit_ids,
+                             const UnitCommand& command, bool clear_existing) {
+    // Local human order under an active network session → broadcast + schedule
+    // so every peer runs it on the same tick.
+    if (local_command_sink_ && human_input_active_) {
+        local_command_sink_(unit_ids, command, clear_existing);
+        return;
+    }
+    // Single-player, or a deterministic AI/sim order in multiplayer: apply now.
+    // (AI runs identically on every client, so its orders stay in sync without
+    // being sent over the wire.)
+    for (u32 uid : unit_ids) {
+        auto* e = entity_registry_.find(uid);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        static_cast<Unit*>(e)->push_command(command, clear_existing);
+    }
+}
+
 void SimState::queue_replay(const Replay& replay) {
     command_delay_ = replay.command_delay;
     if (!replay.victory_condition.empty())

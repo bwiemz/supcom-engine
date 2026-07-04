@@ -36,6 +36,12 @@
 #include "renderer/input_handler.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/shield.hpp"
+#include "sim/net_transport.hpp"
+#include "sim/lockstep_session.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/smoke_test.hpp"
 
 extern "C" {
@@ -51,6 +57,8 @@ extern "C" {
 #include <iostream>
 #include <memory>
 #include <set>
+#include <thread>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 // ── Engine global Lua C functions (file-static, outside main) ──
@@ -473,7 +481,11 @@ static bool execute_reload_sequence(
     // 1. GPU fence — ensure no in-flight work
     if (renderer) renderer->clear_scene();
 
-    // 2. Destroy old SimState and sim Lua state
+    // 2. Destroy old SimState and sim Lua state. A multiplayer LockstepSession
+    // holds a reference to the SimState, so drop any stale session first (but
+    // keep the transport — HostGame/JoinGame created it before launch and
+    // mp_attach_session rebuilds the session over it once the fresh sim exists).
+    osc::lua::mp_net_state().session.reset();
     sim_state.reset();
     sim_lua_state.reset();
 
@@ -800,6 +812,119 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
 }
 #endif
 
+// ── Headless two-process LAN lockstep verification (multiplayer step 4) ──
+// One process runs `--mp-host`, another `--mp-join <addr>`. They connect over
+// real TCP, build identical minimal sims, and drive a LockstepSession: the host
+// issues scripted player orders through the SAME route_command path the game
+// uses; both sims advance in lockstep, exchanging command frames + checksums.
+// Each side self-reports its final tick / checksum and whether it desynced —
+// matching checksums with desynced()==false on both processes is a synced match.
+static int run_mp_lan_test(bool is_host, const std::string& address,
+                           osc::u16 port, osc::u32 frames) {
+    using namespace osc;
+    namespace chrono = std::chrono;
+
+    // Stand up the transport through the SAME entry points the lobby
+    // HostGame / JoinGame bindings use, so this verifies that plumbing too.
+    auto& mp = lua::mp_net_state();
+    mp.reset();
+    const bool ok = is_host ? lua::mp_begin_host(port)
+                            : lua::mp_begin_join(address, port);
+    if (!ok) {
+        spdlog::error("[mp] transport setup failed ({})",
+                      is_host ? "host" : "join");
+        return 1;
+    }
+
+    if (is_host) {
+        spdlog::info("[mp] host listening on port {} — waiting for a peer...",
+                     mp.port);
+        bool connected = false;
+        for (int i = 0; i < 6000 && !connected; ++i) { // up to ~60s
+            if (lua::mp_poll_connections() >= 1) connected = true;
+            else std::this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        if (!connected) {
+            spdlog::error("[mp] host: no peer connected, aborting");
+            lua::mp_teardown();
+            return 1;
+        }
+        spdlog::info("[mp] host: peer connected");
+    } else {
+        spdlog::info("[mp] client connected to {}:{}", address, port);
+    }
+
+    // Minimal deterministic sim, constructed identically on both sides.
+    lua_State* L = lua_open();
+    auto sim = std::make_unique<sim::SimState>(L, nullptr);
+    std::vector<u32> unit_ids;
+    for (int i = 0; i < 3; ++i) {
+        auto u = std::make_unique<sim::Unit>();
+        u->set_army(0);
+        u->set_max_speed(4.0f);
+        u->set_position({static_cast<f32>(i * 10), 0.0f, 0.0f});
+        unit_ids.push_back(
+            sim->entity_registry().register_entity(std::move(u)));
+    }
+
+    // Build the LockstepSession over the transport and install the sim's
+    // command sink — exactly what the game does at launch.
+    lua::mp_attach_session(*sim);
+    auto* session = mp.session.get();
+
+    auto issue_move = [&](u32 unit_id, f32 x, f32 z) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Move;
+        cmd.target_pos = {x, 0.0f, z};
+        sim->set_human_input_active(true);   // player order → sink → session
+        sim->route_command({unit_id}, cmd, true);
+        sim->set_human_input_active(false);
+    };
+
+    bool stalled = false;
+    for (u32 round = 0; round < frames && !session->desynced(); ++round) {
+        // Host scripts a few player orders at known frames (client stays silent).
+        if (is_host) {
+            if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
+            if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
+            if (round == 20) issue_move(unit_ids[2], 100.0f, -400.0f);
+        }
+        session->send_frame();
+        // Pump until this side advances one tick (both peers confirmed frame).
+        for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
+            if (is_host) lua::mp_poll_connections();
+            session->receive_and_advance();
+            if (sim->tick_count() <= round)
+                std::this_thread::sleep_for(chrono::milliseconds(1));
+        }
+        if (sim->tick_count() <= round) {
+            spdlog::error("[mp] stalled at round {} (tick {})", round,
+                          sim->tick_count());
+            stalled = true;
+            break;
+        }
+    }
+
+    const u32 final_tick = sim->tick_count();
+    const u32 checksum = sim->compute_sync_checksum();
+    const bool desynced = session->desynced();
+    spdlog::info("[mp] {} RESULT: tick={} checksum={:#010x} desynced={}",
+                 is_host ? "HOST" : "CLIENT", final_tick, checksum, desynced);
+    // Machine-greppable summary line (stdout).
+    std::printf("MP_RESULT role=%s tick=%u checksum=%08x desynced=%d stalled=%d\n",
+                is_host ? "host" : "client", final_tick, checksum,
+                desynced ? 1 : 0, stalled ? 1 : 0);
+    std::fflush(stdout);
+
+    // Tear down the session/transport before destroying the sim + Lua state
+    // (the session references the sim; the sim references L).
+    sim->clear_local_command_sink();
+    lua::mp_teardown();
+    sim.reset();
+    lua_close(L);
+    return (desynced || stalled) ? 2 : 0;
+}
+
 int main(int argc, char* argv[]) {
     osc::log::init();
 #ifdef _WIN32
@@ -807,6 +932,22 @@ int main(int argc, char* argv[]) {
 #endif
 
     auto config = parse_args(argc, argv);
+
+    // Multiplayer LAN verification: two processes (host + join) run a real
+    // TCP lockstep match and self-report sync. Handled before any engine init
+    // since it needs no FA data / window.
+    {
+        bool mp_host = parse_flag(argc, argv, "--mp-host");
+        std::string mp_join = parse_string_arg(argc, argv, "--mp-join", "");
+        if (mp_host || !mp_join.empty()) {
+            std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
+            std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "60");
+            auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
+            auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
+            return run_mp_lan_test(mp_host, mp_join, port, frames);
+        }
+    }
+
     auto map_path = parse_map_arg(argc, argv);
     auto tick_count = parse_ticks_arg(argc, argv);
     bool damage_test = parse_flag(argc, argv, "--damage-test");
@@ -1892,11 +2033,30 @@ int main(int argc, char* argv[]) {
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
                 if (!game_state_mgr.paused() && sim_state) {
-                    sim_accumulator += dt * game_state_mgr.speed();
-                    while (sim_accumulator >=
-                           osc::sim::SimState::SECONDS_PER_TICK) {
-                        sim_state->tick();
-                        sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+                    if (osc::lua::mp_net_state().active()) {
+                        // Multiplayer: advance in lockstep. Pace command frames
+                        // at the sim tick rate; the session only advances the
+                        // sim once every peer has confirmed the next frame
+                        // (the classic "waiting for players" stall otherwise).
+                        sim_accumulator += dt * game_state_mgr.speed();
+                        auto* session = osc::lua::mp_net_state().session.get();
+                        int guard = 0;
+                        while (sim_accumulator >=
+                                   osc::sim::SimState::SECONDS_PER_TICK &&
+                               guard++ < 4) {
+                            sim_accumulator -=
+                                osc::sim::SimState::SECONDS_PER_TICK;
+                            osc::lua::mp_poll_connections();
+                            session->send_frame();
+                            session->receive_and_advance();
+                        }
+                    } else {
+                        sim_accumulator += dt * game_state_mgr.speed();
+                        while (sim_accumulator >=
+                               osc::sim::SimState::SECONDS_PER_TICK) {
+                            sim_state->tick();
+                            sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
+                        }
                     }
                 }
 
@@ -1904,6 +2064,12 @@ int main(int argc, char* argv[]) {
                 if (!sim_callback_queue.empty() && sim_state && sim_lua_state) {
                     auto callbacks = sim_callback_queue.drain();
                     lua_State* sL = sim_lua_state->raw();
+
+                    // These callbacks carry the local player's UI-panel orders,
+                    // so mark human input active: in multiplayer route_command
+                    // then forwards them to the lockstep session for broadcast
+                    // (single-player applies them directly, unaffected).
+                    sim_state->set_human_input_active(true);
 
                     // Import SimCallbacks module once for the batch
                     lua_pushstring(sL, "import");
@@ -1980,6 +2146,7 @@ int main(int argc, char* argv[]) {
                         }
                         lua_pop(sL, 1); // pop module table
                     }
+                    sim_state->set_human_input_active(false);
                 }
 
                 // OnFirstUpdate — fire once after first sim tick
@@ -2130,6 +2297,14 @@ int main(int argc, char* argv[]) {
                             // Reset per-session state for the new game
                             first_update_fired = false;
 
+                            // Multiplayer: if the lobby stood up a network
+                            // transport (HostGame/JoinGame), build the lockstep
+                            // session over it now that the game's sim exists.
+                            // No-op in single-player.
+                            if (sim_state) {
+                                osc::lua::mp_attach_session(*sim_state);
+                            }
+
                             // Re-install instrument harness on new sim VM (M166)
                             if (instrument_harness && sim_lua_state) {
                                 instrument_harness->install_panic_handler(sim_lua_state->raw());
@@ -2159,6 +2334,10 @@ int main(int argc, char* argv[]) {
                         lua_rawset(uiL, LUA_REGISTRYINDEX);
 
                         spdlog::info("Returning to lobby...");
+
+                        // Tear down any multiplayer session/transport before the
+                        // sim it references is destroyed.
+                        osc::lua::mp_teardown();
 
                         // Tear down game state
                         renderer.clear_scene();

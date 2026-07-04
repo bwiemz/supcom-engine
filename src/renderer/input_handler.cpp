@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace osc::renderer {
 
@@ -107,17 +108,21 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
 
             bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                          renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+            sim::UnitCommand cmd;
+            cmd.type = sim::CommandType::Move;
+            cmd.target_pos = {mm_wx, wy, mm_wz};
+            cmd.command_id = sim.next_command_id();
+            std::vector<u32> ids;
             for (u32 uid : selected_) {
                 auto* e = sim.entity_registry().find(uid);
                 if (!e || !e->is_unit() || e->destroyed()) continue;
-                auto* unit = static_cast<sim::Unit*>(e);
-
-                sim::UnitCommand cmd;
-                cmd.type = sim::CommandType::Move;
-                cmd.target_pos = {mm_wx, wy, mm_wz};
-                cmd.command_id = sim.next_command_id();
-                unit->push_command(cmd, !shift); // shift-click queues without clearing
+                ids.push_back(uid);
             }
+            // Player-issued order: route through the sim so a networked match
+            // broadcasts + schedules it (single-player applies it directly).
+            sim.set_human_input_active(true);
+            sim.route_command(ids, cmd, !shift); // shift-click queues, no clear
+            sim.set_human_input_active(false);
             spdlog::debug("Minimap move: {} units to ({:.0f},{:.0f})",
                           selected_.size(), mm_wx, mm_wz);
         } else {
@@ -227,24 +232,28 @@ void InputHandler::handle_right_click(Renderer& renderer,
     bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                  renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
 
-    // Issue commands to all selected units
+    // Build one group order and route it to all selected units.
+    sim::UnitCommand cmd;
+    if (enemy_id != 0) {
+        cmd.type = sim::CommandType::Attack;
+        cmd.target_id = enemy_id;
+        cmd.target_pos = {wx, wy, wz};
+    } else {
+        cmd.type = sim::CommandType::Move;
+        cmd.target_pos = {wx, wy, wz};
+    }
+    cmd.command_id = sim.next_command_id();
+    std::vector<u32> ids;
     for (u32 uid : selected_) {
         auto* e = sim.entity_registry().find(uid);
         if (!e || !e->is_unit() || e->destroyed()) continue;
-        auto* unit = static_cast<sim::Unit*>(e);
-
-        sim::UnitCommand cmd;
-        if (enemy_id != 0) {
-            cmd.type = sim::CommandType::Attack;
-            cmd.target_id = enemy_id;
-            cmd.target_pos = {wx, wy, wz};
-        } else {
-            cmd.type = sim::CommandType::Move;
-            cmd.target_pos = {wx, wy, wz};
-        }
-        cmd.command_id = sim.next_command_id();
-        unit->push_command(cmd, !shift); // shift-click queues without clearing
+        ids.push_back(uid);
     }
+    // Player-issued order: route through the sim so a networked match
+    // broadcasts + schedules it (single-player applies it directly).
+    sim.set_human_input_active(true);
+    sim.route_command(ids, cmd, !shift); // shift-click queues without clearing
+    sim.set_human_input_active(false);
 
     spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
                   enemy_id ? "Attack" : "Move",

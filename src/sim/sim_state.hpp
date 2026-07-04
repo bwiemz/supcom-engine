@@ -222,6 +222,41 @@ public:
         return command_scheduler_.ready_to_run(tick_count_ + 1);
     }
 
+    // --- Multiplayer local-command routing ---
+    // In single-player, player/AI orders apply to their units directly. In
+    // multiplayer (lockstep), a client's *local human* orders must instead be
+    // handed to the network session so they are broadcast to every peer and
+    // scheduled to run on a common future tick — otherwise the clients desync.
+    // AI / sim-internal orders stay direct: every client runs the same
+    // deterministic AI, so those orders are already identical everywhere and
+    // must NOT be re-broadcast (that would double-apply them).
+    //
+    // The game loop installs a LocalCommandSink (pointing at
+    // LockstepSession::submit_local) and raises `human_input_active_` only around
+    // local human input (InputHandler and the human UI-command drain).
+    // `route_command` forwards to the sink while human input is active and MP is
+    // on; otherwise it applies the order directly this instant.
+    using LocalCommandSink =
+        std::function<void(const std::vector<u32>& unit_ids,
+                           const UnitCommand& command, bool clear_existing)>;
+    void set_local_command_sink(LocalCommandSink sink) {
+        local_command_sink_ = std::move(sink);
+    }
+    void clear_local_command_sink() { local_command_sink_ = nullptr; }
+    /// True once a network command sink is installed (i.e. this is a networked
+    /// multiplayer session rather than local single-player).
+    bool multiplayer() const { return static_cast<bool>(local_command_sink_); }
+
+    void set_human_input_active(bool on) { human_input_active_ = on; }
+    bool human_input_active() const { return human_input_active_; }
+
+    /// Route an order for `unit_ids`. In multiplayer, local human orders (those
+    /// issued while human input is active) go to the network sink to be
+    /// broadcast + scheduled; every other order (single-player, or a
+    /// deterministic AI/sim order under multiplayer) applies directly now.
+    void route_command(const std::vector<u32>& unit_ids,
+                       const UnitCommand& command, bool clear_existing);
+
     // --- Replay recording / playback ---
     // With recording on, every scheduled command is captured into a Replay that
     // (thanks to lockstep determinism) reproduces the match when re-fed into a
@@ -402,6 +437,8 @@ private:
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
+    LocalCommandSink local_command_sink_;   // set → networked multiplayer
+    bool human_input_active_ = false;        // raised around local human input
     Replay recorded_replay_;
     bool recording_ = false;
 

@@ -41,6 +41,7 @@
 #include "core/localization.hpp"
 #include "core/preferences.hpp"
 #include "lua/beat_system.hpp"
+#include "lua/mp_net_state.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -12177,6 +12178,18 @@ static int lobby_HostGame(lua_State* L) {
     lua_rawset(L, LUA_GLOBALSINDEX);
     spdlog::info("lobby:HostGame invoked");
 
+    // Multiplayer: if a LAN host port was requested, stand up the real TCP
+    // transport now so peers can connect while the lobby is open. Absent → the
+    // single-player loopback path below runs unchanged.
+    {
+        lua_pushstring(L, "__osc_mp_host_port");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_type(L, -1) == LUA_TNUMBER && !mp_net_state().transport_ready) {
+            mp_begin_host(static_cast<u16>(lua_tonumber(L, -1)));
+        }
+        lua_pop(L, 1);
+    }
+
     // Store lobbyComm in a well-known global for the deferred thread to read.
     // Using rawset to bypass config.lua's global lock.
     lua_pushstring(L, "__osc_pending_host_comm");
@@ -12245,7 +12258,26 @@ static int lobby_IsHost(lua_State* L) {
     return 1;
 }
 
-static int lobby_JoinGame(lua_State* /*L*/) { return 0; }
+/// lobby:JoinGame(...) — for a LAN client, connect to the host over TCP if a
+/// join address has been configured (single-player never sets one, so this is
+/// a no-op there, matching the old loopback behavior).
+static int lobby_JoinGame(lua_State* L) {
+    lua_pushstring(L, "__osc_mp_join_address");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    std::string addr =
+        lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : std::string();
+    lua_pop(L, 1);
+    if (!addr.empty() && !mp_net_state().transport_ready) {
+        lua_pushstring(L, "__osc_mp_join_port");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        u16 port = lua_type(L, -1) == LUA_TNUMBER
+                       ? static_cast<u16>(lua_tonumber(L, -1))
+                       : static_cast<u16>(47624);
+        lua_pop(L, 1);
+        mp_begin_join(addr, port);
+    }
+    return 0;
+}
 /// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession
 static int lobby_LaunchGame(lua_State* L) {
     lua_pushstring(L, "LaunchSinglePlayerSession");
