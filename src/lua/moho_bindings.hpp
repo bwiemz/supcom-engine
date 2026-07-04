@@ -23,6 +23,10 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim);
 /// Must be called after register_moho_bindings.
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry);
 
+/// Register the LAN multiplayer UI globals (LanHost/LanJoin/LanNetStatus).
+/// Called by register_ui_bindings; also usable standalone (e.g. --lan-ui-test).
+void register_lan_ui_bindings(LuaState& state);
+
 /// Register front-end bootstrap fallback globals that the FA UI import chain
 /// expects, without replacing globals already installed by real bindings.
 void register_front_end_fallback_bindings(LuaState& state);

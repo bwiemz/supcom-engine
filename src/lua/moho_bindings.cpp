@@ -14948,6 +14948,58 @@ void register_front_end_fallback_bindings(LuaState& state) {
     }
 }
 
+// Read an optional Lua port arg, clamped to [0, 65535] (casting an out-of-range
+// double straight to u16 would be undefined behavior; these globals are
+// script-callable, so a bad value must not trip UB).
+static u16 lan_port_arg(lua_State* L, int idx, u16 dflt) {
+    if (!lua_isnumber(L, idx)) return dflt;
+    double p = lua_tonumber(L, idx);
+    if (p < 0.0) p = 0.0;
+    if (p > 65535.0) p = 65535.0;
+    return static_cast<u16>(p);
+}
+
+// LanHost([port]) -> bool : start hosting a LAN game (default port 47624).
+static int l_LanHost(lua_State* L) {
+    if (mp_net_state().transport_ready) { lua_pushboolean(L, 0); return 1; }
+    bool ok = mp_begin_host(lan_port_arg(L, 1, 47624));
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// LanJoin(ip[, port]) -> bool : connect to a LAN host at ip[:port].
+static int l_LanJoin(lua_State* L) {
+    if (mp_net_state().transport_ready) { lua_pushboolean(L, 0); return 1; }
+    if (lua_type(L, 1) != LUA_TSTRING) { lua_pushboolean(L, 0); return 1; }
+    std::string ip = lua_tostring(L, 1);
+    size_t a = ip.find_first_not_of(" \t");
+    size_t b = ip.find_last_not_of(" \t");
+    ip = (a == std::string::npos) ? std::string() : ip.substr(a, b - a + 1);
+    if (ip.empty()) { lua_pushboolean(L, 0); return 1; }
+    bool ok = mp_begin_join(ip, lan_port_arg(L, 2, 47624));
+    lua_pushboolean(L, ok ? 1 : 0);
+    return 1;
+}
+
+// LanNetStatus() -> string : short status for the LAN dialog to display.
+static int l_LanNetStatus(lua_State* L) {
+    auto& s = mp_net_state();
+    const char* status;
+    if (s.session) status = "in game";
+    else if (!s.transport_ready) status = "idle";
+    else if (s.role == MpNetState::Role::Host)
+        status = "hosting: waiting for player";
+    else status = "connecting";
+    lua_pushstring(L, status);
+    return 1;
+}
+
+void register_lan_ui_bindings(LuaState& state) {
+    state.register_function("LanHost", l_LanHost);
+    state.register_function("LanJoin", l_LanJoin);
+    state.register_function("LanNetStatus", l_LanNetStatus);
+}
+
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     lua_State* L = state.raw();
     clear_chat_history(L);
@@ -14987,6 +15039,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetCursor", l_GetCursor);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("GetCamera", l_GetCamera);
+
+    // LAN multiplayer globals (LanHost/LanJoin/LanNetStatus)
+    register_lan_ui_bindings(state);
 
     // Localization globals
     state.register_function("LOC", l_LOC);
