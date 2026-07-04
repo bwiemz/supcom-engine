@@ -1,8 +1,33 @@
 # Multiplayer Networking — Design & Roadmap
 
-Status: **design / not yet implemented.** This document scopes the work needed to
-take OpenSupCom from single-player + loopback lobby to real networked multiplayer,
-and records what already exists.
+Status: **Phases 1–3 landed and headless-verified (2026-07-04).** Phase 1's
+remaining command wiring, the lobby `HostGame`/`JoinGame` → `TcpTransport` +
+`LockstepSession` hookup, and a two-process LAN verification are done (PRs #12,
+#13). What remains is the windowed lobby lifecycle (Phase 3 tail) and Phases 4–5.
+This document scopes the work needed to take OpenSupCom from single-player +
+loopback lobby to real networked multiplayer, and records what exists.
+
+## Integration status (2026-07-04)
+
+- **Command routing landed.** `SimState::route_command()` sends a local human
+  order to a network sink (→ `LockstepSession::submit_local`, broadcast +
+  scheduled) when multiplayer is active and human input is in scope; otherwise it
+  applies directly. Single-player installs no sink, so it is bit-identical. AI /
+  sim orders stay direct (deterministic on every client — never broadcast). The
+  `Issue*` bindings, `InputHandler` right-click/minimap, and the UI-panel
+  SimCallback drain all route through this seam. `Stop`/`ClearCommands` are
+  network-safe (routed as `CommandType::Stop`, cleared in both branches).
+- **Lobby wired.** `mp_net_state` holds the session; `HostGame`/`JoinGame` create
+  the `TcpTransport` when a LAN host port / join address is configured (rawget
+  globals, bypassing the config.lua lock); `mp_attach_session` builds the
+  `LockstepSession` at launch; the tick loop drives via the session when active.
+- **Verified headless.** `opensupcom --mp-host` / `--mp-join <addr>` run a real
+  two-process TCP lockstep match: identical sync checksums with `desynced=0`
+  (positive, incl. a mid-move Stop), and `--mp-desync` proves both peers detect
+  an injected divergence. `test_command_routing.cpp` covers the routing seam.
+- **Not yet done:** two *windowed* instances rendezvousing through the lobby
+  (needs the lobby data channel over the transport + a launch barrier + slot/seed
+  broadcast); `Enhance` routing; player-drop/timeout; cross-build FP determinism.
 
 ## Goal
 
@@ -121,24 +146,26 @@ scheduler exists, and reuses the same checksum for verification.
 
 ## Phased plan
 
-1. **Command scheduler in single-player.** *(Core landed 2026-07-03.)* Tick-keyed
+1. **Command scheduler in single-player.** *(Complete 2026-07-04.)* Tick-keyed
    `CommandScheduler` integrated into `SimState::tick()` with `command_delay`,
    canonical dispatch order, and the lockstep gate; determinism proven by the
-   two-sim checksum test. **Still to do:** point the `Issue*` bindings and the
-   player-input path at `schedule_command` so every order flows through it.
+   two-sim checksum test. The `Issue*` bindings and the player-input path now flow
+   through `SimState::route_command()` (→ scheduler/session in MP, direct in SP).
 2. **Loopback lockstep.** *(Landed 2026-07-03.)* `LockstepSession` + `LoopbackTransport`
    drive two in-process sims over the transport, exchanging command frames +
    confirmations + checksums; `tests/test_lockstep.cpp` proves sync, the
    stall-until-confirmed gate, and desync detection.
-3. **INetTransport + LAN.** *(Landed 2026-07-03: TCP transport.)* `TcpTransport`
-   (cross-platform POSIX + Winsock, star topology with host relay, length-prefixed
-   framing, non-blocking receive) implements `INetTransport` over real sockets.
-   `tests/test_tcp_transport.cpp` runs message relay and a **full lockstep session
-   over localhost TCP**. Remaining: host/join lobby lifecycle + launch barrier,
-   pipelined command delay for RTT (session is currently strict one-tick-per-frame),
-   and a UDP+reliability transport as a latency follow-up.
-4. **Desync + drop handling.** Checksum-mismatch detection is in (`LockstepSession::desynced`).
-   Remaining: player-drop → AI/defeat, timeouts.
+3. **INetTransport + LAN.** *(TCP transport landed 2026-07-03; lobby wiring + two-
+   process LAN verification 2026-07-04.)* `TcpTransport` implements `INetTransport`
+   over real sockets; `HostGame`/`JoinGame` create it and `mp_attach_session`
+   drives the game sim through a `LockstepSession`. `opensupcom --mp-host` /
+   `--mp-join` verify a synced match between two OS processes. **Remaining:** the
+   *windowed* host/join lobby lifecycle + launch barrier (slot/seed broadcast over
+   the transport), pipelined command delay for RTT (session is currently strict
+   one-tick-per-frame), and a UDP+reliability transport as a latency follow-up.
+4. **Desync + drop handling.** Checksum-mismatch detection is in
+   (`LockstepSession::desynced`) and verified across two processes via
+   `--mp-desync`. Remaining: player-drop → AI/defeat, timeouts.
 5. **GpgNet / FAForever.** Matchmaking, ICE, replay upload.
 
 ## Testability note

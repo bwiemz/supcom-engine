@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-07-03
+Last reviewed: 2026-07-04
 
 ## What This Codebase Is
 
@@ -18,8 +18,15 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 ## Verified Locally
 
-- `build/tests/Debug/osc_tests.exe` passes: 128 test cases, 1,726 assertions.
+- `build/tests/Debug/osc_tests.exe` passes: 201 test cases, 2,909 assertions.
 - `build/Debug/opensupcom.exe --help` runs and lists the current CLI surface.
+- **Multiplayer (LAN lockstep), verified across two OS processes over localhost TCP:**
+  `opensupcom.exe --mp-host` + `opensupcom.exe --mp-join 127.0.0.1` reach identical
+  sync checksums with `desynced=0` through scripted player orders (incl. a mid-move
+  Stop); adding `--mp-desync` makes both peers correctly report `desynced=1` for an
+  injected divergence. Command routing (`SimState::route_command`) sends local human
+  orders to the `LockstepSession` in multiplayer and applies them directly in
+  single-player (unchanged). See `docs/plans/2026-07-03-multiplayer-networking-design.md`.
 - `build/Debug/opensupcom.exe --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `build/Debug/opensupcom.exe --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.
