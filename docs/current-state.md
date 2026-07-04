@@ -37,8 +37,17 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   final checksum with `desynced=0`. Windowed reachability: `--lan-window-host` /
   `--lan-window-join <ip>` create the transport at startup and the game loop drives
   the same handshake to launch (a two-window play verified only by logic-equivalence
-  to the headless run; a lobby IP-entry UI field is the remaining follow-up). See
+  to the headless run). See
   `docs/superpowers/specs/2026-07-04-windowed-lan-lobby-design.md`.
+- **LAN IP-entry UI:** a front-end "LAN Game" button opens a dialog (host-IP field +
+  Host/Join/Close + status) that calls the `LanHost([port])` / `LanJoin(ip[, port])` /
+  `LanNetStatus()` engine globals over the LAN lifecycle above. `--lan-ui-test`
+  verifies the globals headlessly (`LanHost` creates a listening transport,
+  `LanJoin("")` is rejected) and that the dialog Lua snippet parses + `pcall`-degrades
+  gracefully. The dialog is built with FA `maui`/`UIUtil`; its actual rendering/click
+  is verified only in a live window (no GUI automation in CI) and is fully
+  `pcall`-guarded so any UI mismatch logs a warning rather than breaking the menu.
+  See `docs/superpowers/specs/2026-07-04-lan-ip-entry-ui-design.md`.
 - `build/Debug/opensupcom.exe --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `build/Debug/opensupcom.exe --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.

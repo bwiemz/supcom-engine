@@ -43,6 +43,7 @@
 #include "sim/lockstep_session.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/lan_lobby.hpp"
+#include "lua/lan_dialog_ui.hpp"
 #include "lua/smoke_test.hpp"
 
 extern "C" {
@@ -1185,6 +1186,29 @@ int main(int argc, char* argv[]) {
                 spdlog::info("[lan-ui] LanJoin(empty) correctly rejected");
             }
             osc::lua::mp_teardown();
+            // The LAN dialog snippet must be syntactically valid and pcall-safe:
+            // on a bare state (no maui/UIUtil) it runs its guard, fails to build
+            // the UI, catches that in its pcall, and returns cleanly.
+            uiL.do_string("function LOG(s) end"); // stub the FA logger
+            {
+                auto lr = uiL.do_string(osc::lua::kLanDialogLua);
+                if (!lr) {
+                    spdlog::error("[lan-ui] dialog snippet errored: {}",
+                                  lr.error().message);
+                    fails++;
+                }
+                lua_State* L = uiL.raw();
+                lua_pushstring(L, "__osc_lan_dialog_built");
+                lua_rawget(L, LUA_GLOBALSINDEX);
+                bool built_flag = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                if (!built_flag) {
+                    spdlog::error("[lan-ui] dialog snippet did not execute");
+                    fails++;
+                } else {
+                    spdlog::info("[lan-ui] dialog snippet parses + degrades gracefully");
+                }
+            }
             std::printf("LAN_UI_TEST fails=%d\n", fails);
             std::fflush(stdout);
             return fails == 0 ? 0 : 1;
@@ -1836,6 +1860,11 @@ int main(int argc, char* argv[]) {
                 spdlog::info("Front-end menu CreateUI() succeeded");
             } else {
                 spdlog::warn("Front-end CreateUI error: {}", r.error().message);
+            }
+            // Add the LAN Game button + IP/Host/Join dialog to the front end.
+            {
+                auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua);
+                if (!lr) spdlog::warn("LAN dialog UI error: {}", lr.error().message);
             }
         }
         // Auto-trigger Skirmish: bypass lobby UI, directly launch with sessionConfig
@@ -2649,6 +2678,17 @@ int main(int argc, char* argv[]) {
 
                         // Re-show lobby UI
                         osc::core::call_lua_global(uiL, "CreateUI");
+
+                        // Rebuild the LAN dialog on the fresh front end.
+                        {
+                            lua_pushstring(uiL, "__osc_lan_dialog_built");
+                            lua_pushnil(uiL);
+                            lua_rawset(uiL, LUA_GLOBALSINDEX);
+                            auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua);
+                            if (!lr)
+                                spdlog::warn("LAN dialog UI (relobby) error: {}",
+                                             lr.error().message);
+                        }
 
                         spdlog::info("=== Returned to lobby ===");
                     } else {
