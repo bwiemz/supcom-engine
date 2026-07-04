@@ -820,7 +820,7 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
 // Each side self-reports its final tick / checksum and whether it desynced —
 // matching checksums with desynced()==false on both processes is a synced match.
 static int run_mp_lan_test(bool is_host, const std::string& address,
-                           osc::u16 port, osc::u32 frames) {
+                           osc::u16 port, osc::u32 frames, bool inject_desync) {
     using namespace osc;
     namespace chrono = std::chrono;
 
@@ -872,22 +872,44 @@ static int run_mp_lan_test(bool is_host, const std::string& address,
     lua::mp_attach_session(*sim);
     auto* session = mp.session.get();
 
-    auto issue_move = [&](u32 unit_id, f32 x, f32 z) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Move;
-        cmd.target_pos = {x, 0.0f, z};
+    auto issue = [&](u32 unit_id, const sim::UnitCommand& cmd) {
         sim->set_human_input_active(true);   // player order → sink → session
         sim->route_command({unit_id}, cmd, true);
         sim->set_human_input_active(false);
     };
+    auto issue_move = [&](u32 unit_id, f32 x, f32 z) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Move;
+        cmd.target_pos = {x, 0.0f, z};
+        issue(unit_id, cmd);
+    };
+    auto issue_stop = [&](u32 unit_id) {
+        sim::UnitCommand cmd;
+        cmd.type = sim::CommandType::Stop;
+        issue(unit_id, cmd);
+    };
 
     bool stalled = false;
-    for (u32 round = 0; round < frames && !session->desynced(); ++round) {
+    // Run the full frame count (don't early-exit on desync): both peers must keep
+    // exchanging frames so a divergence is detected symmetrically on both sides —
+    // if one side bailed the moment it noticed, it would starve the other of the
+    // frame carrying the mismatching checksum.
+    for (u32 round = 0; round < frames; ++round) {
         // Host scripts a few player orders at known frames (client stays silent).
         if (is_host) {
             if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
             if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
             if (round == 20) issue_move(unit_ids[2], 100.0f, -400.0f);
+            if (round == 30) issue_stop(unit_ids[0]); // mid-move Stop → must sync
+            if (inject_desync && round == 15) {
+                // Negative test: apply a LOCAL-only order (human input inactive
+                // → route_command's direct branch, NOT broadcast) so this sim
+                // deliberately diverges. The checksum exchange must catch it.
+                sim::UnitCommand cmd;
+                cmd.type = sim::CommandType::Move;
+                cmd.target_pos = {999.0f, 0.0f, 999.0f};
+                sim->route_command({unit_ids[1]}, cmd, true);
+            }
         }
         session->send_frame();
         // Pump until this side advances one tick (both peers confirmed frame).
@@ -922,6 +944,11 @@ static int run_mp_lan_test(bool is_host, const std::string& address,
     lua::mp_teardown();
     sim.reset();
     lua_close(L);
+
+    if (inject_desync) {
+        // Negative test: success == the injected divergence WAS detected.
+        return (desynced && !stalled) ? 0 : 3;
+    }
     return (desynced || stalled) ? 2 : 0;
 }
 
@@ -942,9 +969,10 @@ int main(int argc, char* argv[]) {
         if (mp_host || !mp_join.empty()) {
             std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
             std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "60");
+            bool inject_desync = parse_flag(argc, argv, "--mp-desync");
             auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
-            return run_mp_lan_test(mp_host, mp_join, port, frames);
+            return run_mp_lan_test(mp_host, mp_join, port, frames, inject_desync);
         }
     }
 

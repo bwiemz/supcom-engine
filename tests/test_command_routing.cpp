@@ -114,6 +114,49 @@ TEST_CASE("route_command keeps AI/sim orders direct even in multiplayer",
     CHECK(unit_of(sim, id)->command_queue().size() == 1);
 }
 
+TEST_CASE("route_command Stop clears the queue directly in single-player",
+          "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+
+    // Give the unit an order, then Stop it.
+    sim.route_command({id}, move_to(100.0f, 0.0f), true);
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
+
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, true);
+
+    // Stop clears the queue outright (not a queued Stop order).
+    CHECK(unit_of(sim, id)->command_queue().empty());
+}
+
+TEST_CASE("route_command Stop goes to the sink for a networked human", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    sim.route_command({id}, move_to(100.0f, 0.0f), true);
+
+    CommandType captured_type = CommandType::Move;
+    int sink_calls = 0;
+    sim.set_local_command_sink(
+        [&](const std::vector<osc::u32>&, const UnitCommand& cmd, bool) {
+            captured_type = cmd.type;
+            ++sink_calls;
+        });
+    sim.set_human_input_active(true);
+
+    UnitCommand stop;
+    stop.type = CommandType::Stop;
+    sim.route_command({id}, stop, true);
+
+    // Broadcast to peers; not cleared locally (the session schedules it).
+    CHECK(sink_calls == 1);
+    CHECK(captured_type == CommandType::Stop);
+    CHECK(unit_of(sim, id)->command_queue().size() == 1);
+}
+
 TEST_CASE("clear_local_command_sink returns to single-player behavior",
           "[routing]") {
     LuaGuard g;
