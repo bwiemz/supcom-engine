@@ -1153,6 +1153,42 @@ int main(int argc, char* argv[]) {
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
             return run_lan_lobby_test(lan_host, lan_join, port, frames);
         }
+
+        // Headless check of the LAN UI engine globals (LanHost/LanJoin bindings).
+        if (parse_flag(argc, argv, "--lan-ui-test")) {
+            osc::lua::LuaState uiL;
+            osc::lua::register_lan_ui_bindings(uiL);
+            auto& mp = osc::lua::mp_net_state();
+            mp.reset();
+            int fails = 0;
+            uiL.do_string("__r_host = LanHost()");
+            if (!mp.transport_ready) {
+                spdlog::error("[lan-ui] LanHost did not create a transport");
+                fails++;
+            } else {
+                spdlog::info("[lan-ui] LanHost OK (listening on port {})", mp.port);
+            }
+            osc::lua::mp_teardown();
+            uiL.do_string("__r_join = LanJoin('')");
+            bool rj = false;
+            {
+                lua_State* L = uiL.raw();
+                lua_pushstring(L, "__r_join");
+                lua_rawget(L, LUA_GLOBALSINDEX);
+                rj = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            if (rj || mp.transport_ready) {
+                spdlog::error("[lan-ui] LanJoin(empty) was not rejected");
+                fails++;
+            } else {
+                spdlog::info("[lan-ui] LanJoin(empty) correctly rejected");
+            }
+            osc::lua::mp_teardown();
+            std::printf("LAN_UI_TEST fails=%d\n", fails);
+            std::fflush(stdout);
+            return fails == 0 ? 0 : 1;
+        }
     }
 
     auto map_path = parse_map_arg(argc, argv);
