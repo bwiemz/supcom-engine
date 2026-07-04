@@ -4,6 +4,7 @@ add_library(osc_lua STATIC
     engine_bindings.cpp
     blueprint_bindings.cpp
     moho_bindings.cpp
+    mp_net_state.cpp
     sim_bindings.cpp
     sim_loader.cpp
     scenario_loader.cpp

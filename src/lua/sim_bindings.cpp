@@ -3554,15 +3554,47 @@ static sim::Vector3 extract_position(lua_State* L, int idx) {
     return pos;
 }
 
+// Collect the entity ids of live units from a Lua table of unit tables.
+static std::vector<u32> collect_unit_ids(lua_State* L, int table_idx) {
+    std::vector<u32> ids;
+    if (!lua_istable(L, table_idx)) return ids;
+    lua_pushnil(L);
+    while (lua_next(L, table_idx) != 0) {
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, -2);
+            if (lua_isuserdata(L, -1)) {
+                auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+                if (e && e->is_unit() && !e->destroyed())
+                    ids.push_back(e->entity_id());
+            }
+            lua_pop(L, 1); // _c_object
+        }
+        lua_pop(L, 1); // value (keep key for lua_next)
+    }
+    return ids;
+}
+
+// Route a command for a table of units through SimState. In single-player (and
+// for deterministic AI/sim orders under multiplayer) this applies the order
+// directly; a networked client's *local human* orders are instead handed to the
+// lockstep session to broadcast + schedule. Replaces the direct push_command
+// loops so every Issue* obeys the multiplayer command path uniformly.
+static void route_units_command(lua_State* L, int table_idx,
+                                const sim::UnitCommand& cmd, bool clear) {
+    auto* sim = get_sim(L);
+    if (!sim) return;
+    auto ids = collect_unit_ids(L, table_idx);
+    if (!ids.empty()) sim->route_command(ids, cmd, clear);
+}
+
 // IssueMove(units_table, position)
 static int l_IssueMove(lua_State* L) {
     auto target_pos = extract_position(L, 2);
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), false);
-    }, &cmd);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -3652,9 +3684,7 @@ static int l_IssueAttack(lua_State* L) {
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3670,9 +3700,7 @@ static int l_IssueGuard(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3688,9 +3716,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3706,18 +3732,14 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
 static int l_IssueDive(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Dive;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3789,9 +3811,7 @@ static int l_IssueUpgrade(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Upgrade;
     cmd.blueprint_id = bp_id;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3826,9 +3846,7 @@ static int l_IssueBuildMobile(lua_State* L) {
     cmd.target_pos = target_pos;
     cmd.blueprint_id = bp_id;
 
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), false);
-    }, &cmd);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -3842,9 +3860,7 @@ static int l_IssueBuildFactory(lua_State* L) {
     cmd.blueprint_id = bp_id;
 
     for (int i = 0; i < count; i++) {
-        for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-            u->push_command(*static_cast<sim::UnitCommand*>(c), false);
-        }, &cmd);
+        route_units_command(L, 1, cmd, false);
     }
     return 0;
 }
@@ -3855,9 +3871,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -3893,9 +3907,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4251,9 +4263,7 @@ static int l_IssuePatrol(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), false);
-    }, &cmd);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4271,9 +4281,7 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
 
     return 0;
 }
@@ -4287,9 +4295,7 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
 
     return 0;
 }
@@ -4300,9 +4306,7 @@ static int l_IssueNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Nuke;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4319,9 +4323,7 @@ static int l_IssueTactical(lua_State* L) {
     } else {
         cmd.target_pos = extract_position(L, 2);
     }
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4334,9 +4336,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4349,9 +4349,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4361,9 +4359,7 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->push_command(*static_cast<sim::UnitCommand*>(c), true);
-    }, &cmd);
+    route_units_command(L, 1, cmd, true);
     return 0;
 }
 
@@ -4402,10 +4398,8 @@ static int l_IssueFerry(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Ferry;
     cmd.target_pos = target_pos;
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        // Ferry appends like Patrol, doesn't clear
-        u->push_command(*static_cast<sim::UnitCommand*>(c), false);
-    }, &cmd);
+    // Ferry appends like Patrol, doesn't clear
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
