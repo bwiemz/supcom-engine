@@ -427,6 +427,9 @@ private:
                               bool cloaked) const;
 
     lua_State* L_;
+    // Declared before entity_registry_ so it outlives the registry that holds a
+    // SimRandom* into it (registry destruction must not see a dead RNG).
+    SimRandom sim_random_;                    // deterministic, seeded per game
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;
@@ -445,7 +448,6 @@ private:
     f64 game_time_ = 0.0;
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
-    SimRandom sim_random_;                    // deterministic, seeded per game
     LocalCommandSink local_command_sink_;   // set → networked multiplayer
     bool human_input_active_ = false;        // raised around local human input
     Replay recorded_replay_;
