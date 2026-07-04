@@ -14948,12 +14948,21 @@ void register_front_end_fallback_bindings(LuaState& state) {
     }
 }
 
+// Read an optional Lua port arg, clamped to [0, 65535] (casting an out-of-range
+// double straight to u16 would be undefined behavior; these globals are
+// script-callable, so a bad value must not trip UB).
+static u16 lan_port_arg(lua_State* L, int idx, u16 dflt) {
+    if (!lua_isnumber(L, idx)) return dflt;
+    double p = lua_tonumber(L, idx);
+    if (p < 0.0) p = 0.0;
+    if (p > 65535.0) p = 65535.0;
+    return static_cast<u16>(p);
+}
+
 // LanHost([port]) -> bool : start hosting a LAN game (default port 47624).
 static int l_LanHost(lua_State* L) {
     if (mp_net_state().transport_ready) { lua_pushboolean(L, 0); return 1; }
-    auto port = static_cast<u16>(
-        lua_isnumber(L, 1) ? static_cast<u16>(lua_tonumber(L, 1)) : 47624);
-    bool ok = mp_begin_host(port);
+    bool ok = mp_begin_host(lan_port_arg(L, 1, 47624));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
@@ -14967,9 +14976,7 @@ static int l_LanJoin(lua_State* L) {
     size_t b = ip.find_last_not_of(" \t");
     ip = (a == std::string::npos) ? std::string() : ip.substr(a, b - a + 1);
     if (ip.empty()) { lua_pushboolean(L, 0); return 1; }
-    auto port = static_cast<u16>(
-        lua_isnumber(L, 2) ? static_cast<u16>(lua_tonumber(L, 2)) : 47624);
-    bool ok = mp_begin_join(ip, port);
+    bool ok = mp_begin_join(ip, lan_port_arg(L, 2, 47624));
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
