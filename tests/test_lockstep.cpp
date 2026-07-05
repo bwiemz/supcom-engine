@@ -172,4 +172,13 @@ TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
     sa.send_frame();
     sa.receive_and_advance();
     REQUIRE(a.tick_count() > before);
+
+    // Late/buffered data from the dropped peer must not re-register it and
+    // re-stall the survivor.
+    sb.send_frame(); // B (already dropped by A) emits one more frame
+    osc::u32 t2 = a.tick_count();
+    sa.send_frame();
+    sa.receive_and_advance();
+    REQUIRE(a.tick_count() > t2); // A ignored B's late frame and kept advancing
+    REQUIRE(sa.has_dropped(1));
 }

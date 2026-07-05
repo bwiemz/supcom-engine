@@ -1056,6 +1056,7 @@ static int run_lan_lobby_test(bool is_host, const std::string& address,
             if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
         }
         session->send_frame();
+        auto last_resend = chrono::steady_clock::now();
         for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
             lua::mp_pump();
             session->receive_and_advance();
@@ -1064,10 +1065,15 @@ static int run_lan_lobby_test(bool is_host, const std::string& address,
                 spdlog::warn("[lan] peer {} dropped — continuing solo", s);
             }
             if (sim->tick_count() <= round) {
-                // Keep sending frames while stalled so a silent peer's drop timer
-                // accrues (behind = next_frame_ - peer_confirmed grows only when
-                // next_frame_ advances, i.e. on send_frame).
-                session->send_frame();
+                // Resend while stalled so a silent peer's drop timer accrues
+                // (behind = next_frame_ - peer_confirmed grows only on send_frame),
+                // but only at the ~10 Hz sim cadence — resending every poll would
+                // race next_frame_ ahead and false-drop a merely-slow peer.
+                auto now = chrono::steady_clock::now();
+                if (now - last_resend >= chrono::milliseconds(100)) {
+                    session->send_frame();
+                    last_resend = now;
+                }
                 std::this_thread::sleep_for(chrono::milliseconds(1));
             }
         }

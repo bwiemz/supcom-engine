@@ -150,6 +150,10 @@ void LockstepSession::receive_and_advance() {
     for (const auto& raw : transport_.receive()) {
         Reader r{raw};
         u32 source = r.u32v();
+        // Ignore any late/buffered data from a source we already dropped —
+        // re-registering it (via submit/confirm_frame) would put it back in the
+        // scheduler gate and re-stall the survivor.
+        if (has_dropped(source)) continue;
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_tick = r.u32v();
