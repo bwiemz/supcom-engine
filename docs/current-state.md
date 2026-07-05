@@ -39,6 +39,16 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   the same handshake to launch (a two-window play verified only by logic-equivalence
   to the headless run). See
   `docs/superpowers/specs/2026-07-04-windowed-lan-lobby-design.md`.
+- **Player-drop / timeout handling, verified across two OS processes:** if a peer
+  disconnects or freezes, `LockstepSession` declares it dropped after ~3s (30
+  command frames) of missing confirmations, removes it from the scheduler gate so
+  the survivor un-stalls, and reports it; the game loop defeats the dropped army
+  (`SimState::defeat_army`, reusing the share-rule dispose path) so the match
+  resolves instead of hanging. Verified: `--lan-join ... --mp-drop-at 20` makes the
+  client leave mid-match; the host logs `peer source 1 timed out (31 frames behind)
+  — dropped`, continues to completion (`stalled=0 dropped=1`), while a normal
+  no-drop match still syncs (`dropped=0`). See
+  `docs/superpowers/specs/2026-07-04-mp-player-drop-design.md`.
 - **LAN IP-entry UI:** a front-end "LAN Game" button opens a dialog (host-IP field +
   Host/Join/Close + status) that calls the `LanHost([port])` / `LanJoin(ip[, port])` /
   `LanNetStatus()` engine globals over the LAN lifecycle above. `--lan-ui-test`

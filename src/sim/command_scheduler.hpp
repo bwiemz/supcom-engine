@@ -45,6 +45,14 @@ public:
     /// `ready_to_run` waits for its confirmations in lockstep mode.
     void add_source(u32 source) { register_source(source); }
 
+    /// Stop treating `source` as a participant (e.g. a dropped peer), so
+    /// `ready_to_run` no longer waits on its confirmations.
+    void remove_source(u32 source) {
+        auto it = std::lower_bound(sources_.begin(), sources_.end(), source);
+        if (it != sources_.end() && *it == source) sources_.erase(it);
+        confirmed_frame_.erase(source);
+    }
+
     /// Mark that `source` has submitted every command through `tick`.
     void confirm_frame(u32 source, u32 tick) {
         register_source(source);

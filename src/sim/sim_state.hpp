@@ -308,6 +308,11 @@ public:
     /// Returns: 0 = in progress, 1 = victory, 2 = defeat, 3 = draw.
     i32 player_result() const;
 
+    /// Force an army into the Defeat state and dispose its units per the share
+    /// rule. Idempotent + bounds-checked. Used when a networked peer drops so the
+    /// match resolves (the survivor wins) instead of hanging.
+    void defeat_army(i32 army);
+
     /// Number of alliance-connected "teams" still in the game (non-civilian,
     /// non-defeated armies grouped by their alliance graph). Exposed for tests
     /// and diagnostics.

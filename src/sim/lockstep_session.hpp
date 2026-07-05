@@ -44,6 +44,16 @@ public:
     u32 current_frame() const { return next_frame_; }
     bool desynced() const { return desynced_; }
 
+    // --- Peer-drop detection ---
+    // Declare a peer dropped once it is more than `frames` command frames behind
+    // in confirmations (default 30 ≈ 3s at 10 Hz). 0 disables detection. A
+    // dropped source is removed from the scheduler gate so the survivor stops
+    // stalling; the game loop defeats its army.
+    void set_drop_timeout(u32 frames) { drop_timeout_frames_ = frames; }
+    /// Sources newly declared dropped since the last call (drained on return).
+    std::vector<u32> take_dropped();
+    bool has_dropped(u32 src) const;
+
 private:
     SimState& sim_;
     INetTransport& transport_;
@@ -53,6 +63,10 @@ private:
     std::unordered_map<u32, u32> my_checksums_;   // tick -> local checksum
     std::unordered_map<u32, u32> peer_checksums_; // tick -> a peer's reported checksum
     bool desynced_ = false;
+    u32 drop_timeout_frames_ = 30;
+    std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
+    std::vector<u32> dropped_;                    // sources already declared dropped
+    std::vector<u32> newly_dropped_;              // drained by take_dropped()
 
     void note_peer_checksum(u32 tick, u32 checksum);
     void record_local_checksum(u32 tick, u32 checksum);

@@ -965,7 +965,7 @@ static int run_mp_lan_test(bool is_host, const std::string& address,
 // full scenario, so the network path — not the FA scenario boot — is what's
 // exercised; scenario boot is covered by --full-smoke-test.)
 static int run_lan_lobby_test(bool is_host, const std::string& address,
-                              osc::u16 port, osc::u32 frames) {
+                              osc::u16 port, osc::u32 frames, osc::u32 drop_at) {
     using namespace osc;
     namespace chrono = std::chrono;
 
@@ -1043,32 +1043,55 @@ static int run_lan_lobby_test(bool is_host, const std::string& address,
     };
 
     bool stalled = false;
+    u32 dropped_count = 0;
     for (u32 round = 0; round < frames; ++round) {
+        // Optional: the client leaves mid-match to exercise drop handling.
+        if (!is_host && drop_at > 0 && round == drop_at) {
+            spdlog::warn("[lan] client leaving at round {} (--mp-drop-at)", round);
+            std::fflush(stdout);
+            std::exit(0);
+        }
         if (is_host) {
             if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
             if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
         }
         session->send_frame();
+        auto last_resend = chrono::steady_clock::now();
         for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
             lua::mp_pump();
             session->receive_and_advance();
-            if (sim->tick_count() <= round)
+            for (u32 s : session->take_dropped()) {
+                ++dropped_count;
+                spdlog::warn("[lan] peer {} dropped — continuing solo", s);
+            }
+            if (sim->tick_count() <= round) {
+                // Resend while stalled so a silent peer's drop timer accrues
+                // (behind = next_frame_ - peer_confirmed grows only on send_frame),
+                // but only at the ~10 Hz sim cadence — resending every poll would
+                // race next_frame_ ahead and false-drop a merely-slow peer.
+                auto now = chrono::steady_clock::now();
+                if (now - last_resend >= chrono::milliseconds(100)) {
+                    session->send_frame();
+                    last_resend = now;
+                }
                 std::this_thread::sleep_for(chrono::milliseconds(1));
+            }
         }
         if (sim->tick_count() <= round) { stalled = true; break; }
     }
 
     const u32 checksum = sim->compute_sync_checksum();
     const bool desynced = session->desynced();
-    spdlog::info("[lan] {} RESULT tick={} checksum={:#010x} rng={:#010x} desynced={}",
+    spdlog::info("[lan] {} RESULT tick={} checksum={:#010x} rng={:#010x} desynced={} dropped={}",
                  is_host ? "HOST" : "CLIENT", sim->tick_count(), checksum,
-                 rng_probe, desynced);
+                 rng_probe, desynced, dropped_count);
     std::printf("LAN_RESULT role=%s scenario=%s seed=%08x%08x rng=%08x tick=%u "
-                "checksum=%08x desynced=%d stalled=%d\n",
+                "checksum=%08x desynced=%d stalled=%d dropped=%d\n",
                 is_host ? "host" : "client", lob->config().scenario.c_str(),
                 static_cast<u32>(lob->config().seed >> 32),
                 static_cast<u32>(lob->config().seed & 0xFFFFFFFFull), rng_probe,
-                sim->tick_count(), checksum, desynced ? 1 : 0, stalled ? 1 : 0);
+                sim->tick_count(), checksum, desynced ? 1 : 0, stalled ? 1 : 0,
+                dropped_count > 0 ? 1 : 0);
     std::fflush(stdout);
 
     sim->clear_local_command_sink();
@@ -1150,9 +1173,11 @@ int main(int argc, char* argv[]) {
         if (lan_host || !lan_join.empty()) {
             std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
             std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "40");
+            std::string drop_s = parse_string_arg(argc, argv, "--mp-drop-at", "0");
             auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
-            return run_lan_lobby_test(lan_host, lan_join, port, frames);
+            auto drop_at = static_cast<osc::u32>(std::strtoul(drop_s.c_str(), nullptr, 10));
+            return run_lan_lobby_test(lan_host, lan_join, port, frames, drop_at);
         }
 
         // Headless check of the LAN UI engine globals (LanHost/LanJoin bindings).
@@ -2337,6 +2362,14 @@ int main(int argc, char* argv[]) {
                             osc::lua::mp_pump(); // drain mux game channel + peers
                             session->send_frame();
                             session->receive_and_advance();
+                            // A timed-out peer is defeated so the match resolves
+                            // instead of stalling in "waiting for players".
+                            for (osc::u32 src : session->take_dropped()) {
+                                spdlog::warn("[mp] peer {} dropped — defeating "
+                                             "its army",
+                                             src);
+                                sim_state->defeat_army(static_cast<osc::i32>(src));
+                            }
                         }
                     } else {
                         sim_accumulator += dt * game_state_mgr.speed();

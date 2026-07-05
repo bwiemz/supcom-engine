@@ -18,7 +18,9 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <algorithm>
 #include <memory>
+#include <vector>
 
 using osc::sim::CommandType;
 using osc::sim::LockstepSession;
@@ -133,4 +135,50 @@ TEST_CASE("Exchanged checksums flag a desync", "[lockstep]") {
 
     CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
     CHECK((sa.desynced() || sb.desynced())); // divergence detected in-protocol
+}
+
+TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
+    LoopbackHub hub;
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+    sa.set_drop_timeout(5);
+
+    // A few healthy rounds so each side's peer_confirmed_ is armed.
+    for (int r = 0; r < 3; ++r) {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+    REQUIRE(sa.take_dropped().empty());
+
+    // B goes silent; only A keeps sending. A must drop source 1 within ~5 rounds.
+    bool dropped = false;
+    for (int r = 0; r < 30 && !dropped; ++r) {
+        sa.send_frame();
+        sa.receive_and_advance();
+        auto d = sa.take_dropped();
+        if (std::find(d.begin(), d.end(), 1u) != d.end()) dropped = true;
+    }
+    REQUIRE(dropped);
+    REQUIRE(sa.has_dropped(1));
+
+    // After the drop, A is no longer gated on the silent peer — it advances.
+    osc::u32 before = a.tick_count();
+    sa.send_frame();
+    sa.receive_and_advance();
+    REQUIRE(a.tick_count() > before);
+
+    // Late/buffered data from the dropped peer must not re-register it and
+    // re-stall the survivor.
+    sb.send_frame(); // B (already dropped by A) emits one more frame
+    osc::u32 t2 = a.tick_count();
+    sa.send_frame();
+    sa.receive_and_advance();
+    REQUIRE(a.tick_count() > t2); // A ignored B's late frame and kept advancing
+    REQUIRE(sa.has_dropped(1));
 }
