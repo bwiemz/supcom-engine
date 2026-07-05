@@ -235,3 +235,14 @@ TEST_CASE("ready_to_run_next_tick reflects the lockstep gate", "[cmd][sim]") {
     sim.command_scheduler().confirm_frame(1, sim.tick_count() + 1);
     CHECK(sim.ready_to_run_next_tick());
 }
+
+TEST_CASE("remove_source stops ready_to_run waiting on a dropped peer", "[cmd]") {
+    CommandScheduler s;
+    s.set_lockstep(true);
+    s.add_source(0);
+    s.add_source(1);
+    s.confirm_frame(0, 5); // only source 0 confirmed
+    REQUIRE_FALSE(s.ready_to_run(5)); // still waiting on source 1
+    s.remove_source(1);
+    REQUIRE(s.ready_to_run(5)); // source 1 no longer a participant
+}
