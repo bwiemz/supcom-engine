@@ -1025,6 +1025,15 @@ i32 SimState::find_share_recipient(i32 defeated_army) const {
     }
 }
 
+void SimState::defeat_army(i32 army) {
+    if (army < 0 || static_cast<size_t>(army) >= armies_.size()) return;
+    auto& b = armies_[static_cast<size_t>(army)];
+    if (!b || b->is_defeated()) return; // idempotent
+    b->set_state(BrainState::Defeat);
+    dispose_defeated_army(army);
+    spdlog::info("Army {} ({}) defeated (player drop)", army, b->name());
+}
+
 void SimState::dispose_defeated_army(i32 army) {
     const i32 recipient = find_share_recipient(army);
     // PartialShare transfers only structures + engineers; the rest are destroyed.
