@@ -3,7 +3,10 @@
 #include "sim/net_transport.hpp"
 #include "sim/sim_state.hpp"
 
+#include <algorithm>
 #include <cstring>
+
+#include <spdlog/spdlog.h>
 
 namespace osc::sim {
 
@@ -157,6 +160,8 @@ void LockstepSession::receive_and_advance() {
         }
         if (!r.ok) continue; // malformed frame — ignore
         sim_.command_scheduler().confirm_frame(source, frame);
+        u32& pc = peer_confirmed_[source];
+        if (frame > pc) pc = frame; // arms the drop timer after first contact
         if (has_cs) note_peer_checksum(cs_tick, cs_val);
     }
 
@@ -165,6 +170,38 @@ void LockstepSession::receive_and_advance() {
         sim_.tick();
         record_local_checksum(sim_.tick_count(), sim_.compute_sync_checksum());
     }
+
+    // A peer that has gone silent falls further behind each round (next_frame_
+    // keeps advancing while its confirmed frame is frozen). Past the timeout,
+    // declare it dropped and stop the scheduler waiting on it. Only sources that
+    // have confirmed at least one frame are armed, so a slow first frame at
+    // session start can't false-drop.
+    if (drop_timeout_frames_ > 0) {
+        for (const auto& [src, confirmed] : peer_confirmed_) {
+            if (src == local_source_) continue;
+            if (std::find(dropped_.begin(), dropped_.end(), src) != dropped_.end())
+                continue;
+            u32 behind = next_frame_ > confirmed ? next_frame_ - confirmed : 0;
+            if (behind > drop_timeout_frames_) {
+                dropped_.push_back(src);
+                newly_dropped_.push_back(src);
+                sim_.command_scheduler().remove_source(src);
+                spdlog::warn("[lockstep] peer source {} timed out ({} frames "
+                             "behind) — dropped",
+                             src, behind);
+            }
+        }
+    }
+}
+
+std::vector<u32> LockstepSession::take_dropped() {
+    std::vector<u32> out;
+    out.swap(newly_dropped_);
+    return out;
+}
+
+bool LockstepSession::has_dropped(u32 src) const {
+    return std::find(dropped_.begin(), dropped_.end(), src) != dropped_.end();
 }
 
 void LockstepSession::note_peer_checksum(u32 tick, u32 checksum) {
