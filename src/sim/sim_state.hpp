@@ -172,8 +172,10 @@ public:
     }
 
     // Audio
-    void set_sound_manager(std::unique_ptr<audio::SoundManager> mgr);
-    audio::SoundManager* sound_manager() { return sound_manager_.get(); }
+    /// The application's sound engine (not owned: it outlives the sim, and
+    /// the front end plays sound too).
+    void set_sound_manager(audio::SoundManager* mgr);
+    audio::SoundManager* sound_manager() { return sound_manager_; }
 
     // Bones
     void set_bone_cache(std::unique_ptr<BoneCache> cache);
@@ -467,7 +469,7 @@ private:
 
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
-    std::unique_ptr<audio::SoundManager> sound_manager_;
+    audio::SoundManager* sound_manager_ = nullptr;
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;

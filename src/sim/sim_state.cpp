@@ -110,9 +110,8 @@ void SimState::on_entity_unregistered(Entity& entity) {
 }
 
 SimState::~SimState() {
-    // Clear sound manager lightuserdata from Lua registry before the
-    // unique_ptr is destroyed, preventing a dangling pointer if any
-    // Lua __gc metamethods fire during VM shutdown.
+    // The sim Lua state may outlive this sim; it must not keep reaching the
+    // sound engine through it.
     if (L_ && sound_manager_) {
         lua_pushstring(L_, "osc_sound_manager");
         lua_pushnil(L_);
@@ -240,8 +239,8 @@ void SimState::set_terrain(std::unique_ptr<map::Terrain> terrain) {
     terrain_ = std::move(terrain);
 }
 
-void SimState::set_sound_manager(std::unique_ptr<audio::SoundManager> mgr) {
-    sound_manager_ = std::move(mgr);
+void SimState::set_sound_manager(audio::SoundManager* mgr) {
+    sound_manager_ = mgr;
 }
 
 void SimState::set_bone_cache(std::unique_ptr<BoneCache> cache) {
@@ -611,10 +610,10 @@ void SimState::tick() {
     // --- Victory-condition enforcement (mode + team aware) ---
     update_victory();
 
-    // Audio: clean up finished one-shot sounds
-    if (sound_manager_) {
-        PROFILE_ZONE("Sim::audio_gc");
-        sound_manager_->gc();
+    // Audio: a headless run has no frames, so the sim tick is its clock.
+    if (sound_manager_ && sound_manager_->sim_clocked()) {
+        PROFILE_ZONE("Sim::audio");
+        sound_manager_->update(0.1f);
     }
 
     // Economy events: tick drains, wake waiting threads on completion

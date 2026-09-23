@@ -516,6 +516,17 @@ static void detach_ui_from_sim(lua_State* uiL) {
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
 //    reloads blueprints/scenario, boots sim, rebuilds renderer scene. ──
 // Returns true on success, false on critical failure.
+/// Give a sim (and its Lua state) the application's sound engine.
+static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
+                         osc::audio::SoundManager* sound) {
+    lua_State* L = sim_lua.raw();
+    lua_pushstring(L, "osc_sound_manager");
+    if (sound) lua_pushlightuserdata(L, sound);
+    else lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    sim.set_sound_manager(sound);
+}
+
 static bool execute_reload_sequence(
     std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     std::unique_ptr<osc::sim::SimState>& sim_state,
@@ -569,15 +580,14 @@ static bool execute_reload_sequence(
     // 6. Create fresh SimState
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
-    // 7. Audio, bone cache, anim cache
+    // 7. Audio (the application's engine, kept in the UI state), bone
+    // cache, anim cache
     {
-        auto new_sound = std::make_unique<osc::audio::SoundManager>(
-            config.fa_path / "sounds");
-        lua_State* sL = sim_lua_state->raw();
-        lua_pushstring(sL, "osc_sound_manager");
-        lua_pushlightuserdata(sL, new_sound.get());
-        lua_rawset(sL, LUA_REGISTRYINDEX);
-        sim_state->set_sound_manager(std::move(new_sound));
+        lua_pushstring(uiL, "osc_sound_manager");
+        lua_rawget(uiL, LUA_REGISTRYINDEX);
+        auto* sound = static_cast<osc::audio::SoundManager*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+        attach_sound(*sim_lua_state, *sim_state, sound);
     }
     sim_state->set_bone_cache(
         std::make_unique<osc::sim::BoneCache>(&vfs, &store));
@@ -1908,6 +1918,14 @@ int main(int argc, char* argv[]) {
 
     spdlog::info("OpenSupCom initialization complete.");
 
+    // Audio: FA's sounds for the whole run (front end, lobby, games). Tests
+    // and captures run it without an output device; headless runs have no
+    // frames, so their sim tick is its clock.
+    const bool silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                                !parse_string_arg(argc, argv, "--golden", "").empty();
+    osc::audio::SoundManager sound(config.fa_path / "sounds", !headless && !silent_capture);
+    sound.set_sim_clocked(headless);
+
     // Phase 3: Map + Sim boot (only when --map provided)
     std::unique_ptr<osc::sim::SimState> sim_state;
     osc::lua::ScenarioMetadata scenario_meta;
@@ -1915,16 +1933,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty()) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
-    // Audio system
-    auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
-        config.fa_path / "sounds");
-    {
-        lua_State* L = sim_lua_state->raw();
-        lua_pushstring(L, "osc_sound_manager");
-        lua_pushlightuserdata(L, sound_mgr.get());
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    sim_state->set_sound_manager(std::move(sound_mgr));
+    attach_sound(*sim_lua_state, *sim_state, &sound);
 
     // Bone cache (lazy-loaded per-blueprint SCM bone data)
     auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
@@ -1999,6 +2008,12 @@ int main(int argc, char* argv[]) {
     osc::lua::LuaState ui_lua_state;
     ui_lua_state.set_vfs(&vfs);
     ui_lua_state.set_blueprint_store(&store);
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "osc_sound_manager");
+        lua_pushlightuserdata(uL, &sound);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
 
     // Run init sequence on UI state (polyfills, config, class system, import)
     auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
@@ -2748,6 +2763,25 @@ int main(int argc, char* argv[]) {
                 if (!screenshot_path.empty()) dt = kScreenshotFrameDt;
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
+
+                // Audio: the camera is the listener, and FA's zoom and angle
+                // curves read its distance and pitch.
+                {
+                    const auto& cam = renderer.camera();
+                    osc::f32 ex = 0, ey = 0, ez = 0;
+                    cam.eye_position(ex, ey, ez);
+                    const osc::f32 fx = cam.target_x() - ex;
+                    const osc::f32 fy = -ey;
+                    const osc::f32 fz = cam.target_z() - ez;
+                    const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
+                    sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});
+                    sound.set_global_variable("CameraDistance", cam.distance());
+                    const osc::f32 zoom_span = std::max(1.0f, cam.max_zoom() - cam.min_zoom());
+                    sound.set_global_variable(
+                        "ZoomPercent", 100.0f * (cam.distance() - cam.min_zoom()) / zoom_span);
+                    sound.set_global_variable("Angle", cam.pitch() * 57.29578f);
+                    sound.update(static_cast<osc::f32>(dt));
+                }
 
                 // FPS tracking
                 fps_accum += dt;
