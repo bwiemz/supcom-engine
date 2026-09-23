@@ -4,9 +4,12 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct lua_State;
+
+namespace osc::vfs { class VirtualFileSystem; }
 
 namespace osc::renderer {
 
@@ -74,18 +77,27 @@ struct EmitterBlueprintData {
 /// Cache of parsed EmitterBlueprintData, keyed by VFS path.
 class EmitterBlueprintCache {
 public:
-    /// Parse an emitter blueprint from a Lua table on the stack.
-    /// The table should be the result of loading a .bp file.
-    /// Returns cached data (or loads from VFS on first access).
+    /// Emitter blueprints are read through the game's VFS (they live in
+    /// effects.scd); without one every lookup fails.
+    void set_vfs(const vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
+
+    /// The emitter blueprint at `bp_path` (a VFS path), loaded on first use:
+    /// the file is run in `L` with EmitterBlueprint capturing the table it
+    /// is called with (FA .bp files are `EmitterBlueprint { ... }`
+    /// statements, not returns). Null if it can't be loaded; a failed path
+    /// is remembered and not retried.
     const EmitterBlueprintData* get(const std::string& bp_path, lua_State* L);
 
-    void clear() { cache_.clear(); }
+    void clear() { cache_.clear(); failed_.clear(); }
 
 private:
     static EmitterBlueprintData parse_from_lua(lua_State* L, int table_idx);
     static EmitterCurve parse_curve(lua_State* L, int table_idx, const char* field_name);
+    bool load(const std::string& bp_path, lua_State* L, EmitterBlueprintData& out) const;
 
+    const vfs::VirtualFileSystem* vfs_ = nullptr;
     std::unordered_map<std::string, EmitterBlueprintData> cache_;
+    std::unordered_set<std::string> failed_;
 };
 
 } // namespace osc::renderer

@@ -1,4 +1,5 @@
 #include "renderer/emitter_blueprint.hpp"
+#include "vfs/virtual_file_system.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -234,72 +235,71 @@ EmitterBlueprintData EmitterBlueprintCache::parse_from_lua(lua_State* L,
 
 const EmitterBlueprintData*
 EmitterBlueprintCache::get(const std::string& bp_path, lua_State* L) {
-    auto it = cache_.find(bp_path);
-    if (it != cache_.end()) {
-        return &it->second;
-    }
+    if (auto it = cache_.find(bp_path); it != cache_.end()) return &it->second;
+    if (failed_.count(bp_path)) return nullptr;
 
-    // Load .bp file via Lua dofile.  FA emitter .bp files call a global
-    // function "EmitterBlueprint { ... }" which we define as a capture.
-    // Strategy: save old EmitterBlueprint global, install a pass-through
-    // capture, dofile the .bp, then restore the original global.
-
-    int top = lua_gettop(L);
-
-    // Save previous EmitterBlueprint global (if any)
-    lua_pushstring(L, "EmitterBlueprint");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    int saved_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    // Define capture: EmitterBlueprint = function(t) return t end
-    lua_pushstring(L, "EmitterBlueprint");
-    lua_pushcclosure(L, [](lua_State* Ls) -> int {
-        return 1; // pass table through
-    }, 0);
-    lua_rawset(L, LUA_GLOBALSINDEX);
-
-    // Call dofile(bp_path) safely (no string interpolation)
-    lua_pushstring(L, "dofile");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    lua_pushstring(L, bp_path.c_str());
-    if (lua_pcall(L, 1, 1, 0) != 0) {
-        spdlog::warn("EmitterBlueprint: failed to load {}: {}", bp_path,
-                     lua_tostring(L, -1));
-        // Restore old EmitterBlueprint
-        lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_pushstring(L, "EmitterBlueprint");
-        lua_insert(L, -2);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-        luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_settop(L, top);
+    EmitterBlueprintData data;
+    if (!load(bp_path, L, data)) {
+        failed_.insert(bp_path);
         return nullptr;
     }
-
-    if (!lua_istable(L, -1)) {
-        spdlog::warn("EmitterBlueprint: {} did not return a table",
-                     bp_path);
-        lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_pushstring(L, "EmitterBlueprint");
-        lua_insert(L, -2);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-        luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
-        lua_settop(L, top);
-        return nullptr;
-    }
-
-    EmitterBlueprintData data = parse_from_lua(L, lua_gettop(L));
     data.blueprint_id = bp_path;
-
-    // Restore old EmitterBlueprint global
-    lua_rawgeti(L, LUA_REGISTRYINDEX, saved_ref);
-    lua_pushstring(L, "EmitterBlueprint");
-    lua_insert(L, -2);
-    lua_rawset(L, LUA_GLOBALSINDEX);
-    luaL_unref(L, LUA_REGISTRYINDEX, saved_ref);
-    lua_settop(L, top);
-
     auto [ins, _] = cache_.emplace(bp_path, std::move(data));
     return &ins->second;
+}
+
+namespace {
+/// Registry key the capturing EmitterBlueprint stores its argument under.
+constexpr const char* kCaptureKey = "__osc_emitter_bp_capture";
+
+int capture_emitter_blueprint(lua_State* L) {
+    lua_pushstring(L, kCaptureKey);
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+} // namespace
+
+bool EmitterBlueprintCache::load(const std::string& bp_path, lua_State* L,
+                                 EmitterBlueprintData& out) const {
+    if (!vfs_ || !L) return false;
+    auto content = vfs_->read_file(bp_path);
+    if (!content) {
+        spdlog::warn("EmitterBlueprint: {} not found", bp_path);
+        return false;
+    }
+
+    const int top = lua_gettop(L);
+    // Swap in a capturing EmitterBlueprint for the duration of the run.
+    lua_pushstring(L, "EmitterBlueprint");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int saved = lua_gettop(L);
+    lua_pushstring(L, "EmitterBlueprint");
+    lua_pushcfunction(L, capture_emitter_blueprint);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+
+    const std::string chunk = "@" + bp_path;
+    bool ok = luaL_loadbuffer(L, content->data(), content->size(), chunk.c_str()) == 0 &&
+              lua_pcall(L, 0, 0, 0) == 0;
+    if (!ok) spdlog::warn("EmitterBlueprint: failed to load {}: {}", bp_path,
+                          lua_tostring(L, -1));
+
+    // Restore the previous global and take the captured table.
+    lua_pushstring(L, "EmitterBlueprint");
+    lua_pushvalue(L, saved);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, kCaptureKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (ok && !lua_istable(L, -1)) {
+        spdlog::warn("EmitterBlueprint: {} defined no emitter", bp_path);
+        ok = false;
+    }
+    if (ok) out = parse_from_lua(L, lua_gettop(L));
+    lua_pushstring(L, kCaptureKey);
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_settop(L, top);
+    return ok;
 }
 
 } // namespace osc::renderer

@@ -1473,6 +1473,7 @@ void Renderer::clear_scene() {
 
 void Renderer::build_scene(const sim::SimState& sim,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
+    emitter_bp_cache_.set_vfs(vfs);
     auto* terrain = sim.terrain();
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");

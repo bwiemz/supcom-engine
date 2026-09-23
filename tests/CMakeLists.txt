@@ -17,6 +17,7 @@ add_executable(osc_tests
     test_blueprint_loading.cpp
     test_map.cpp
     test_anim_blend.cpp
+    test_emitter_blueprint.cpp
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp
