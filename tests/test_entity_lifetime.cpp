@@ -9,6 +9,7 @@
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/projectile.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -169,4 +170,34 @@ TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]")
 
     CHECK(sim.entity_registry().find(id) == nullptr); // impacted and removed
     CHECK(sim.entity_registry().count() == before - 1);
+}
+
+TEST_CASE("an expired projectile's Lua table no longer points at it",
+          "[lifetime]") {
+    // UEF build effects keep projectile handles in a trash bag and Destroy
+    // them from Lua after the projectile's own lifetime has run out.
+    LuaGuard g;
+    lua_State* L = g.L;
+    SimState sim(L, nullptr);
+
+    auto p = std::make_unique<osc::sim::Projectile>();
+    p->lifetime = 0.05f;
+    auto* raw = p.get();
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(p));
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, raw);
+    lua_rawset(L, -3);
+    lua_pushvalue(L, -1);
+    lua_setglobal(L, "proj_table");
+    raw->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+
+    raw->update(0.1, sim.entity_registry(), L, nullptr); // lifetime runs out
+    REQUIRE(sim.entity_registry().find(id) == nullptr);
+
+    lua_getglobal(L, "proj_table");
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    CHECK(lua_touserdata(L, -1) == nullptr);
+    lua_pop(L, 2);
 }

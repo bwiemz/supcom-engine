@@ -35,11 +35,10 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     lifetime -= static_cast<f32>(dt);
     if (lifetime <= 0) {
         mark_destroyed();
-        // Unregister from Lua
-        if (lua_table_ref() >= 0 && L) {
-            luaL_unref(L, LUA_REGISTRYINDEX, lua_table_ref());
-            set_lua_table_ref(-2); // LUA_NOREF
-        }
+        // The unregister hook nulls the Lua table's _c_object and releases
+        // its ref; releasing the ref here first left scripts holding a
+        // dangling pointer (UEF build-effect projectiles are destroyed from
+        // Lua after they expire).
         registry.unregister_entity(entity_id());
         return;
     }
@@ -253,12 +252,8 @@ void Projectile::on_impact(lua_State* L, Entity* target,
         }
     }
 
-    // Destroy projectile
+    // Destroy projectile (the unregister hook detaches its Lua table)
     mark_destroyed();
-    if (lua_table_ref() >= 0) {
-        luaL_unref(L, LUA_REGISTRYINDEX, lua_table_ref());
-        set_lua_table_ref(-2); // LUA_NOREF
-    }
     registry.unregister_entity(entity_id());
 }
 
