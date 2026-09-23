@@ -183,17 +183,20 @@ Result<void> SimLoader::boot_sim(LuaState& state,
     // silently skip all mass marker pathing checks.
     // Override: always return true — actual pathfinding happens when move/build
     // commands are issued via our Navigator A* implementation.
-    state.do_string(
-        "do\n"
-        "    local ok, mod = pcall(import, '/lua/sim/navutils.lua')\n"
-        "    if ok and type(mod) == 'table' then\n"
-        "        mod.CanPathTo = function(layer, origin, destination)\n"
-        "            return true\n"
-        "        end\n"
-        "        LOG('NavUtils.CanPathTo overridden (NavGenerator not available)')\n"
-        "    end\n"
-        "end\n");
-    spdlog::info("  NavUtils.CanPathTo overridden (NavGenerator bypass)");
+    // navutils.lua is FAF-only; retail FA has no NavGenerator to bypass.
+    if (vfs.file_exists("/lua/sim/navutils.lua")) {
+        state.do_string(
+            "do\n"
+            "    local ok, mod = pcall(import, '/lua/sim/navutils.lua')\n"
+            "    if ok and type(mod) == 'table' then\n"
+            "        mod.CanPathTo = function(layer, origin, destination)\n"
+            "            return true\n"
+            "        end\n"
+            "        LOG('NavUtils.CanPathTo overridden (NavGenerator not available)')\n"
+            "    end\n"
+            "end\n");
+        spdlog::info("  NavUtils.CanPathTo overridden (NavGenerator bypass)");
+    }
 
     spdlog::info("Sim environment ready.");
     return {};
