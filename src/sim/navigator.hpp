@@ -17,7 +17,10 @@ class Unit;
 
 class Navigator {
 public:
-    enum class Status : u8 { Idle, Moving };
+    /// Idle: no goal. Moving: following a path. WaitingForPath: the per-tick
+    /// pathfinding budget was spent; the goal is kept and callers retry
+    /// set_goal next tick (see is_moving()).
+    enum class Status : u8 { Idle, Moving, WaitingForPath };
 
     /// Set goal with A* pathfinding (preferred).
     void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
@@ -31,9 +34,15 @@ public:
 
     const Vector3& goal() const { return goal_; }
     Status status() const { return status_; }
+    /// True only while following a path. False while waiting for one, so the
+    /// usual `if (!is_moving() || goal changed) set_goal(...)` retries it.
     bool is_moving() const { return status_ == Status::Moving; }
+    /// True while a move is in progress or pending a path -- i.e. the goal
+    /// has not been reached. Use this, not is_moving(), to detect arrival.
+    bool busy() const { return status_ != Status::Idle; }
 
-    /// Move entity toward goal. Returns true if still moving.
+    /// Move entity toward goal. Returns true until the goal is reached
+    /// (including while waiting for a throttled path, without moving).
     /// If terrain is provided, sets entity Y to surface height.
     bool update(Entity& entity, f32 max_speed, f64 dt,
                 const map::Terrain* terrain = nullptr);

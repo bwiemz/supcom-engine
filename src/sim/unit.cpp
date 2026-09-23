@@ -1138,7 +1138,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                                     naval_draft_, is_amphibious() || is_hover());
             }
             navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-            if (!navigator_.is_moving()) {
+            if (!navigator_.busy()) {
                 // Reached waypoint — cycle to end of queue
                 auto finished = cmd;
                 command_queue_.pop_front();

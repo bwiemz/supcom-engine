@@ -2154,7 +2154,7 @@ static int nav_GetGoal(lua_State* L) {
     auto* unit = check_nav_unit(L);
     if (!unit || unit->destroyed()) { lua_pushnil(L); return 1; }
     auto* nav = check_navigator(L);
-    if (!nav || !nav->is_moving()) {
+    if (!nav || !nav->busy()) { // a goal awaiting its path is still the goal
         lua_pushnil(L);
         return 1;
     }
