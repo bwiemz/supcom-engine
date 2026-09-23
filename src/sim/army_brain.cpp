@@ -173,8 +173,10 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 total_storage_mass = 200.0 + bonus_storage_mass_; // base + GiveStorage
     f64 total_storage_energy = 200.0 + bonus_storage_energy_;
 
+    u32 active_units = 0;
     registry.for_each([&](const Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
+        ++active_units;
         const auto& unit = static_cast<const Unit&>(e);
         const auto& econ = unit.economy();
 
@@ -213,10 +215,11 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
 
     // Storage-aware efficiency: storage acts as buffer that smoothly drains
     // before stalling kicks in. available = income*dt + stored
+    f64 mass_consumed = 0.0, energy_consumed = 0.0;
     {
         f64 mass_avail = mass_income * dt + economy_.mass.stored;
         f64 mass_needed = mass_consumption * dt;
-        f64 mass_consumed = (mass_needed > 0) ? std::min(mass_avail, mass_needed) : 0.0;
+        mass_consumed = (mass_needed > 0) ? std::min(mass_avail, mass_needed) : 0.0;
         f64 mass_raw = mass_avail - mass_consumed;
         economy_.mass.stored = std::clamp(mass_raw, 0.0, economy_.mass.max_storage);
         economy_.mass.overflow = std::max(0.0, mass_raw - economy_.mass.max_storage);
@@ -225,7 +228,7 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     {
         f64 energy_avail = energy_income * dt + economy_.energy.stored;
         f64 energy_needed = energy_consumption * dt;
-        f64 energy_consumed = (energy_needed > 0) ? std::min(energy_avail, energy_needed) : 0.0;
+        energy_consumed = (energy_needed > 0) ? std::min(energy_avail, energy_needed) : 0.0;
         f64 energy_raw = energy_avail - energy_consumed;
         economy_.energy.stored = std::clamp(energy_raw, 0.0, economy_.energy.max_storage);
         economy_.energy.overflow = std::max(0.0, energy_raw - economy_.energy.max_storage);
@@ -246,13 +249,48 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         });
     }
 
-    // Accumulate total resources collected for score tracking
+    // Moho's economy stats (the score reads them): totals produced and spent,
+    // the current rates per second, and what full storage wasted.
     if (economy_.mass.income > 0) {
         stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
     }
     if (economy_.energy.income > 0) {
         stats_["Economy_TotalProduced_Energy"] += economy_.energy.income * dt;
     }
+    stats_["Economy_TotalConsumed_Mass"] += mass_consumed;
+    stats_["Economy_TotalConsumed_Energy"] += energy_consumed;
+    stats_["Economy_Income_Mass"] = mass_income;
+    stats_["Economy_Income_Energy"] = energy_income;
+    stats_["Economy_Output_Mass"] = dt > 0 ? mass_consumed / dt : 0.0;
+    stats_["Economy_Output_Energy"] = dt > 0 ? energy_consumed / dt : 0.0;
+    stats_["Economy_AccumExcess_Mass"] += economy_.mass.overflow;
+    stats_["Economy_AccumExcess_Energy"] += economy_.energy.overflow;
+    stats_["Units_Active"] = static_cast<f64>(active_units);
+    stats_["UnitCap_Current"] = static_cast<f64>(active_units);
+    stats_["UnitCap_MaxCap"] = static_cast<f64>(unit_cap_);
+}
+
+void ArmyBrain::record_unit_built(const std::string& bp_id, f64 mass, f64 energy) {
+    stats_["Units_History"] += 1.0;
+    blueprint_stats_["Units_History"][bp_id] += 1.0;
+    stats_["Units_MassValue_Built"] += mass;
+    stats_["Units_EnergyValue_Built"] += energy;
+}
+
+void ArmyBrain::record_unit_lost(const std::string& bp_id, f64 mass, f64 energy) {
+    stats_["Units_Killed"] += 1.0;
+    blueprint_stats_["Units_Killed"][bp_id] += 1.0;
+    stats_["Units_MassValue_Lost"] += mass;
+    stats_["Units_EnergyValue_Lost"] += energy;
+}
+
+void ArmyBrain::record_enemy_killed(const std::string& bp_id, f64 mass, f64 energy,
+                                    bool commander) {
+    stats_["Enemies_Killed"] += 1.0;
+    blueprint_stats_["Enemies_Killed"][bp_id] += 1.0;
+    stats_["Enemies_MassValue_Destroyed"] += mass;
+    stats_["Enemies_EnergyValue_Destroyed"] += energy;
+    if (commander) stats_["Enemies_Commanders_Destroyed"] += 1.0;
 }
 
 Platoon* ArmyBrain::create_platoon(const std::string& name) {

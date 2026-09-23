@@ -3405,7 +3405,7 @@ int main(int argc, char* argv[]) {
                 spdlog::info("  Army {} ({}): {} units, {} structures, kills={:.0f} built={:.0f}",
                              a, brain->name(), units, structures,
                              brain->get_stat("Units_Killed"),
-                             brain->get_stat("Units_Built"));
+                             brain->get_stat("Units_History"));
             }
         }
 
@@ -3638,8 +3638,8 @@ int main(int argc, char* argv[]) {
             spdlog::info("  Army {} ({}): kills={:.0f} losses={:.0f} built={:.0f} mass={:.0f}",
                          i, brain->name(),
                          brain->get_stat("Units_Killed"),
-                         brain->get_stat("Units_Lost"),
-                         brain->get_stat("Units_Built"),
+                         brain->get_stat("Units_Killed"),
+                         brain->get_stat("Units_History"),
                          brain->get_stat("Economy_TotalProduced_Mass"));
         }
 

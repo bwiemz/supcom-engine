@@ -16,18 +16,19 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <memory>
 #include <string_view>
 
 TEST_CASE("ArmyBrain stat storage", "[army][stats]") {
     osc::sim::ArmyBrain brain;
     SECTION("default stat returns default value") {
-        REQUIRE(brain.get_stat("Units_Built", 0.0) == 0.0);
+        REQUIRE(brain.get_stat("Units_History", 0.0) == 0.0);
         REQUIRE(brain.get_stat("Mass_Collected", 42.0) == 42.0);
     }
     SECTION("set and get stat") {
-        brain.set_stat("Units_Built", 5.0);
-        REQUIRE(brain.get_stat("Units_Built") == 5.0);
+        brain.set_stat("Units_History", 5.0);
+        REQUIRE(brain.get_stat("Units_History") == 5.0);
     }
     SECTION("add_stat accumulates") {
         brain.add_stat("Units_Killed", 1.0);
@@ -35,6 +36,64 @@ TEST_CASE("ArmyBrain stat storage", "[army][stats]") {
         brain.add_stat("Units_Killed", 1.0);
         REQUIRE(brain.get_stat("Units_Killed") == 3.0);
     }
+}
+
+TEST_CASE("Army stats use Moho's names and meanings", "[army][stats]") {
+    // Retail's score (aibrain.lua) reads these: Units_Killed is the army's
+    // *losses*, Enemies_Killed its kills, Units_History what it built.
+    osc::sim::ArmyBrain brain;
+    brain.record_unit_built("uel0101", 52.0, 260.0);
+    brain.record_unit_built("uel0101", 52.0, 260.0);
+    brain.record_unit_lost("uel0101", 52.0, 260.0);
+    brain.record_enemy_killed("url0001", 18000.0, 5000000.0, /*commander=*/true);
+    brain.record_enemy_killed("url0106", 30.0, 150.0, false);
+
+    CHECK(brain.get_stat("Units_History") == 2.0);
+    CHECK(brain.get_stat("Units_MassValue_Built") == 104.0);
+    CHECK(brain.get_stat("Units_Killed") == 1.0);
+    CHECK(brain.get_stat("Units_MassValue_Lost") == 52.0);
+    CHECK(brain.get_stat("Units_EnergyValue_Lost") == 260.0);
+    CHECK(brain.get_stat("Enemies_Killed") == 2.0);
+    CHECK(brain.get_stat("Enemies_MassValue_Destroyed") == 18030.0);
+    CHECK(brain.get_stat("Enemies_Commanders_Destroyed") == 1.0);
+
+    // Counts are kept per blueprint too (GetBlueprintStat by category).
+    const auto* killed = brain.blueprint_stats("Enemies_Killed");
+    REQUIRE(killed);
+    CHECK(killed->at("url0001") == 1.0);
+    CHECK(killed->at("url0106") == 1.0);
+    CHECK(brain.blueprint_stats("Units_History")->at("uel0101") == 2.0);
+    CHECK(brain.blueprint_stats("Nope") == nullptr);
+}
+
+TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+    brain.set_unit_cap(500);
+
+    auto producer = std::make_unique<osc::sim::Unit>();
+    producer->set_army(0);
+    producer->economy().production_mass = 10.0; // per second
+    producer->economy().production_active = true;
+    registry.register_entity(std::move(producer));
+    auto spender = std::make_unique<osc::sim::Unit>();
+    spender->set_army(0);
+    spender->economy().consumption_mass = 4.0;
+    spender->economy().consumption_active = true;
+    registry.register_entity(std::move(spender));
+
+    for (int i = 0; i < 10; ++i) brain.update_economy(registry, 0.1); // 1 s
+    CHECK(brain.get_stat("Economy_Income_Mass") == 10.0);
+    CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 10.0) < 1e-9);
+    CHECK(std::abs(brain.get_stat("Economy_TotalConsumed_Mass") - 4.0) < 1e-9);
+    CHECK(std::abs(brain.get_stat("Economy_Output_Mass") - 4.0) < 1e-9);
+    CHECK(brain.get_stat("UnitCap_Current") == 2.0);
+    CHECK(brain.get_stat("UnitCap_MaxCap") == 500.0);
+
+    // Full storage wastes the surplus: 6/s over the 200 base storage.
+    for (int i = 0; i < 400; ++i) brain.update_economy(registry, 0.1); // 40 s
+    CHECK(brain.get_stat("Economy_AccumExcess_Mass") > 0.0);
 }
 
 TEST_CASE("ArmyBrain explicit color state", "[army][color]") {

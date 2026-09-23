@@ -9061,6 +9061,17 @@ void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_fr
         spdlog::info("[PASS] Test 9: the game plays on after game over");
     else
         osc::test_status::fail("[FAIL] Test 9: the sim stopped at game over");
+
+    // Retail's score threads (aibrain.lua CollectCurrentScores and
+    // SyncCurrentScores) read the engine's army stats under Moho's names;
+    // the score panel's data arrives through Sync.Score.
+    lua_ok("Test 10: retail's score counts each lost commander", R"(
+        local scores = import('/lua/ui/game/score.lua').currentScores
+        if not scores or not scores[1] or not scores[2] then error('no scores synced') end
+        if scores[2].units.cdr.lost ~= 1 then error('army 2 commanders lost: ' .. tostring(scores[2].units.cdr.lost)) end
+        if scores[2].general.lost.count < 1 then error('army 2 lost ' .. tostring(scores[2].general.lost.count)) end
+        if scores[1].units.cdr.lost ~= 0 then error('army 1 lost its commander?') end
+    )");
     (void)L;
 }
 
