@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "renderer/dds_parser.hpp"
 #include "platform/paths.hpp"
 #include "core/profiler.hpp"
 #include "renderer/pipeline_builder.hpp"
@@ -1560,10 +1561,26 @@ void Renderer::build_scene(const sim::SimState& sim,
         VkImageView zero_view = texture_cache_.zero_fallback_view();
         VkImageView normal_fb_view = texture_cache_.normal_fallback_view();
 
+        // A stratum with no albedo texture must have no influence. FA ignores
+        // such strata, and maps rely on it: SCMP_009 stores a copy of blend0
+        // as blend1 while strata 5-8 are empty, which painted most of the
+        // terrain in the black placeholder. Zero those weight channels.
+        auto masked_blend = [&](const std::vector<char>& dds, size_t first_stratum) {
+            std::vector<char> copy = dds;
+            bool unused[4];
+            for (size_t c = 0; c < 4; ++c) {
+                const size_t s = first_stratum + c;
+                unused[c] = s >= strata.size() || strata[s].albedo_path.empty();
+            }
+            zero_dds_channels(copy, unused);
+            return copy;
+        };
         auto* blend0 = terrain->blend_dds_0().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend0", terrain->blend_dds_0());
+            : texture_cache_.get_raw("__terrain_blend0",
+                                     masked_blend(terrain->blend_dds_0(), 1));
         auto* blend1 = terrain->blend_dds_1().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend1", terrain->blend_dds_1());
+            : texture_cache_.get_raw("__terrain_blend1",
+                                     masked_blend(terrain->blend_dds_1(), 5));
 
         views[0] = blend0 ? blend0->image.view : zero_view;  // black = no blending
         views[1] = blend1 ? blend1->image.view : zero_view;

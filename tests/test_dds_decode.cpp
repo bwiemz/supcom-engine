@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "renderer/dds_decode.hpp"
+#include "renderer/dds_parser.hpp"
 
 #include <cstring>
+#include <vector>
 
 using namespace osc;
 using namespace osc::renderer;
@@ -110,4 +112,53 @@ TEST_CASE("decode_bc3_to_rgba: non-multiple-of-4 dimensions", "[dds_decode]") {
     u32 off = (4 * 5 + 4) * 4;
     CHECK(pixels[off + 0] == 255);
     CHECK(pixels[off + 3] == 255);
+}
+
+namespace {
+
+/// Minimal uncompressed 32bpp DDS (A8R8G8B8 masks, like FA's blend maps)
+/// holding the given little-endian pixels.
+std::vector<char> make_argb_dds(const std::vector<osc::u32>& pixels) {
+    std::vector<char> f(128 + pixels.size() * 4, 0);
+    auto put = [&](size_t off, osc::u32 v) {
+        for (int i = 0; i < 4; ++i) f[off + i] = static_cast<char>((v >> (8 * i)) & 0xFF);
+    };
+    put(0, 0x20534444u);   // "DDS "
+    put(4, 124);           // header size
+    put(12, 1);            // height
+    put(16, static_cast<osc::u32>(pixels.size())); // width
+    put(80, 0x41);         // DDPF_RGB | DDPF_ALPHAPIXELS
+    put(88, 32);           // bits
+    put(92, 0x00FF0000);   // R
+    put(96, 0x0000FF00);   // G
+    put(100, 0x000000FF);  // B
+    put(104, 0xFF000000);  // A
+    for (size_t i = 0; i < pixels.size(); ++i) put(128 + i * 4, pixels[i]);
+    return f;
+}
+
+osc::u32 pixel_at(const std::vector<char>& f, size_t i) {
+    osc::u32 v = 0;
+    for (int b = 0; b < 4; ++b)
+        v |= static_cast<osc::u32>(static_cast<unsigned char>(f[128 + i * 4 + b])) << (8 * b);
+    return v;
+}
+
+} // namespace
+
+TEST_CASE("zero_dds_channels clears only the requested channels", "[dds]") {
+    auto f = make_argb_dds({0x44332211u, 0xDDCCBBAAu}); // A R G B per pixel
+    const bool clear_g_and_a[4] = {false, true, false, true};
+    REQUIRE(osc::renderer::zero_dds_channels(f, clear_g_and_a));
+    CHECK(pixel_at(f, 0) == 0x00330011u); // A and G gone, R and B kept
+    CHECK(pixel_at(f, 1) == 0x00CC00AAu);
+}
+
+TEST_CASE("zero_dds_channels leaves compressed files alone", "[dds]") {
+    auto f = make_argb_dds({0x11223344u});
+    f[84] = 'D'; f[85] = 'X'; f[86] = 'T'; f[87] = '5'; // fourCC
+    const auto before = f;
+    const bool all[4] = {true, true, true, true};
+    CHECK_FALSE(osc::renderer::zero_dds_channels(f, all));
+    CHECK(f == before);
 }
