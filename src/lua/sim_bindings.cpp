@@ -1301,14 +1301,18 @@ static int l_KillThread(lua_State* L) {
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "_c_ref");
         lua_rawget(L, 1);
-        if (lua_isnumber(L, -1)) {
-            int ref = static_cast<int>(lua_tonumber(L, -1));
+        lua_pushstring(L, "_c_serial");
+        lua_rawget(L, 1);
+        if (lua_isnumber(L, -2)) {
+            int ref = static_cast<int>(lua_tonumber(L, -2));
+            // The serial names the thread: its ref may be another's by now.
+            const u64 serial = lua_isnumber(L, -1) ? static_cast<u64>(lua_tonumber(L, -1)) : 0;
             auto* sim = get_sim(L);
             if (sim && ref >= 0) {
-                sim->thread_manager().kill_thread(ref);
+                sim->thread_manager().kill_thread(ref, serial);
             }
         }
-        lua_pop(L, 1);
+        lua_pop(L, 2);
     }
     return 0;
 }

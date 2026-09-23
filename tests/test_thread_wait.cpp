@@ -94,3 +94,42 @@ TEST_CASE("WaitFor: a wake reaches only the thread that waited", "[threads]") {
     CHECK(global_true(L, "waiter_resumed"));
     g_wait = nullptr;
 }
+
+TEST_CASE("KillThread: a stale handle can't kill the thread that took its ref", "[threads]") {
+    // A trash bag keeps a finished thread's handle; its ref goes back to
+    // Lua's free list and a new thread gets it. Destroying the bag must not
+    // kill the new thread (a unit's death thread was killed this way, so
+    // the unit never died).
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    tm.register_in_registry(L);
+    lua_register(L, "Sleep", sleep_ticks);
+    REQUIRE(state.do_string(R"(
+        function quick() end
+        function sleeper() Sleep(1000) sleeper_resumed = true end
+    )"));
+
+    lua_settop(L, 0);
+    lua_pushstring(L, "quick");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    tm.fork_thread(L);
+    lua_pushstring(L, "stale");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_GLOBALSINDEX); // stale = the quick thread's handle
+    lua_pushstring(L, "_c_ref");
+    lua_rawget(L, -2);
+    const int quick_ref = static_cast<int>(lua_tonumber(L, -1));
+    lua_settop(L, 0);
+    tm.resume_all(1); // it finishes
+    tm.resume_all(2); // and its ref is released
+
+    const int sleeper_ref = fork(tm, L, "sleeper");
+    REQUIRE(sleeper_ref == quick_ref); // the ref is reused
+    tm.resume_all(3);
+    REQUIRE(tm.active_count() == 1);
+
+    REQUIRE(state.do_string("stale:Destroy()"));
+    tm.resume_all(4);
+    CHECK(tm.active_count() == 1); // the sleeper lives on
+}

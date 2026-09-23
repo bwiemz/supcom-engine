@@ -31,6 +31,10 @@ static int l_thread_destroy(lua_State* L) {
     }
     int ref = static_cast<int>(lua_tonumber(L, -1));
     lua_pop(L, 1);
+    lua_pushstring(L, "_c_serial");
+    lua_rawget(L, 1);
+    const u64 serial = lua_isnumber(L, -1) ? static_cast<u64>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
 
     lua_pushstring(L, "osc_thread_mgr");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -38,7 +42,7 @@ static int l_thread_destroy(lua_State* L) {
     lua_pop(L, 1);
 
     if (mgr && ref >= 0) {
-        mgr->kill_thread(ref);
+        mgr->kill_thread(ref, serial);
     }
     return 0;
 }
@@ -125,13 +129,17 @@ int ThreadManager::fork_thread(lua_State* L) {
     // The raw thread stays alive via the registry ref.
     lua_pop(L, 1);
 
-    // Build wrapper: { _c_ref = ref } with shared metatable that has Destroy.
+    // Build wrapper: { _c_ref, _c_serial } with shared metatable that has Destroy.
     // This matches the original engine's CThread userdata behavior.
     lua_newtable(L);
     int wrapper = lua_gettop(L);
 
     lua_pushstring(L, "_c_ref");
     lua_pushnumber(L, ref);
+    lua_rawset(L, wrapper);
+    // Which thread, not only which ref: refs are reused (see kill_thread).
+    lua_pushstring(L, "_c_serial");
+    lua_pushnumber(L, static_cast<lua_Number>(entry.serial));
     lua_rawset(L, wrapper);
 
     // Get or create the shared "__osc_thread_mt" metatable
@@ -146,12 +154,21 @@ int ThreadManager::fork_thread(lua_State* L) {
     return 1;
 }
 
-void ThreadManager::kill_thread(int ref) {
+void ThreadManager::kill_thread(int ref, u64 serial) {
+    auto match = [&](const ThreadEntry& t) {
+        return t.lua_ref == ref && (serial == 0 || t.serial == serial);
+    };
     for (auto& t : threads_) {
-        if (t.lua_ref == ref) { t.dead = true; return; }
+        if (match(t)) {
+            t.dead = true;
+            return;
+        }
     }
     for (auto& t : pending_threads_) {
-        if (t.lua_ref == ref) { t.dead = true; return; }
+        if (match(t)) {
+            t.dead = true;
+            return;
+        }
     }
 }
 

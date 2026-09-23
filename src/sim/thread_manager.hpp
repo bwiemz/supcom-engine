@@ -36,8 +36,11 @@ public:
     /// Returns a wrapper table with Destroy() support (like CThread).
     int fork_thread(lua_State* L);
 
-    /// Kill a thread by its registry ref.
-    void kill_thread(int ref);
+    /// Kill a thread by its registry ref and serial. Refs are reused once a
+    /// thread ends, so a stale handle (a finished thread's, kept in a trash
+    /// bag) must not kill the thread that took its ref: the serial must
+    /// match too. Serial 0 matches the ref alone.
+    void kill_thread(int ref, u64 serial = 0);
 
     /// Store a pointer to this ThreadManager in the Lua registry
     /// so thread wrapper Destroy() can find it.
