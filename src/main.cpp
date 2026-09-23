@@ -1,3 +1,4 @@
+#include "core/fixed_step.hpp"
 #include "core/image.hpp"
 #include "core/test_status.hpp"
 #include "core/front_end_data.hpp"
@@ -2161,7 +2162,12 @@ int main(int argc, char* argv[]) {
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!headless) {
         osc::renderer::Renderer renderer;
-        if (renderer.init(1600, 900, "OpenSupCom")) {
+        // Scripted captures render offscreen: no window to show, focus to
+        // steal, or compositor to wait for.
+        const bool offscreen_capture =
+            !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+            !parse_string_arg(argc, argv, "--golden", "").empty();
+        if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
             // Build 3D scene if we have a sim state (--map was provided)
             if (sim_state) {
                 renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
@@ -2437,12 +2443,12 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     } else {
-                        sim_accumulator += dt * game_state_mgr.speed();
-                        while (sim_accumulator >=
-                               osc::sim::SimState::SECONDS_PER_TICK) {
-                            sim_state->tick();
-                            sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                        }
+                        // At most 8 ticks per frame; a slower-than-real-time
+                        // sim slows the game rather than stalling every frame.
+                        const int ticks = osc::consume_fixed_steps(
+                            sim_accumulator, dt * game_state_mgr.speed(),
+                            osc::sim::SimState::SECONDS_PER_TICK, 8);
+                        for (int t = 0; t < ticks; ++t) sim_state->tick();
                     }
                 }
 
@@ -2813,6 +2819,12 @@ int main(int argc, char* argv[]) {
             }
 
             renderer.shutdown();
+            if (!screenshot_path.empty() &&
+                osc::renderer::Renderer::validation_error_count() > 0) {
+                spdlog::error("{} Vulkan validation error(s) during the capture run",
+                              osc::renderer::Renderer::validation_error_count());
+                return 1;
+            }
             if (!golden_name.empty() && !golden_update) {
                 if (!screenshot_ok) return 1;
                 auto golden = osc::read_png(golden_path);

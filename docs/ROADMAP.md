@@ -351,11 +351,15 @@ in the repo if they contain game assets).
 | B–I | Not started. The Phase A baseline sized Phase B: 56 `retail-gap` modes, and about 60 methods plus 95 globals referenced by retail Lua but not yet bound. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)
-- **Fog of war:** the area around the focus army's own ACU renders dark while
-  distant patches are lit. This suggests the fog texture is mis-mapped
-  (transposed or mirrored) or tracks the wrong army. Belongs to M215; investigate
-  during A′ because it is cheap to check with `--golden`.
-- **The initial camera starts at the map centre.** FA starts on the focus army's
-  start position (M217).
-- **Close-range terrain is blurry.** The per-stratum UV scales need checking
-  (M212).
+- ~~**Fog of war** looks wrong around the focus army's ACU~~ Diagnosed with
+  A/B captures (M183): the cause was neither fog of war nor shadows. The map's
+  second blend texture duplicates the first while strata 5–8 have no
+  textures, and those strata painted the black placeholder over the terrain.
+  **Fixed**: texture-less strata get no weight.
+- **The base stratum renders pale grey-white.** The `.scmap` lighting block
+  (sun colour, lighting multiplier, specular) is still ignored. Compare with a
+  capture of the original game under Proton before tuning (M210).
+- **The initial camera starts at the map centre.** FA starts on the focus
+  army's start position (M217).
+- **Close-range terrain is blurry.** Per-stratum UV scales and normal-map
+  scales need checking against FA (M212).

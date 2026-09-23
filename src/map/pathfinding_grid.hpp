@@ -48,9 +48,13 @@ public:
 
     /// Mark a rectangular footprint as Obstacle.
     /// (wx, wz) = center in world coords, sizeX/sizeZ in world units.
+    /// Obstacles are reference-counted per cell: adjacent footprints can
+    /// share a border cell after rounding, and it must stay blocked until
+    /// every footprint covering it is cleared.
     void mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ);
 
-    /// Clear obstacle back to original terrain passability.
+    /// Undo one mark_obstacle() with the same rectangle. A cell returns to
+    /// its terrain passability once no footprint covers it.
     void clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ);
 
 private:
@@ -61,6 +65,7 @@ private:
     u32 map_height_;
     std::vector<CellPassability> cells_;
     std::vector<CellPassability> base_cells_; // terrain-only (for restore)
+    std::vector<u16> obstacle_refs_;           // footprints covering each cell
     std::vector<f32> water_depth_;
     f32 water_elevation_ = 0;
 };

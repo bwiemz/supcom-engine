@@ -100,7 +100,15 @@ private:
     GPUTexture specteam_fallback_{};
     GPUTexture normal_fallback_{};
 
-    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE; // current (allocating)
+    /// Exhausted pools, kept alive because their sets are still in use.
+    std::vector<VkDescriptorPool> full_pools_;
+    /// Sets allocated from descriptor_pool_; it is replaced before it would
+    /// overflow (on Vulkan 1.0 allocating from a full pool is invalid usage).
+    u32 sets_in_pool_ = 0;
+    static constexpr u32 kSetsPerPool = 512;
+    /// Create a fresh descriptor_pool_ (one texture = one set).
+    bool create_descriptor_pool();
     VkDescriptorSetLayout ds_layout_ = VK_NULL_HANDLE;
     VkSampler sampler_ = VK_NULL_HANDLE;
 

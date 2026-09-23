@@ -35,6 +35,49 @@ SimState::SimState(lua_State* L, blueprints::BlueprintStore* store)
     // Sim code (e.g. weapons) draws randomness from this seeded stream via the
     // registry, so every lockstep client rolls identically.
     entity_registry_.set_sim_random(&sim_random_);
+    entity_registry_.set_unregister_hook(
+        [this](Entity& entity) { on_entity_unregistered(entity); });
+}
+
+void SimState::occupy_footprint(Unit& unit) {
+    if (!pathfinding_grid_ || !unit.has_category("STRUCTURE") ||
+        unit.footprint_size_x() <= 0 || unit.footprint_size_z() <= 0) {
+        return;
+    }
+    const Footprint fp{unit.position().x, unit.position().z,
+                       unit.footprint_size_x(), unit.footprint_size_z()};
+    if (!occupied_footprints_.emplace(unit.entity_id(), fp).second) return;
+    pathfinding_grid_->mark_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
+}
+
+void SimState::on_entity_unregistered(Entity& entity) {
+    // A dead structure stops blocking paths (it used to block forever).
+    if (auto it = occupied_footprints_.find(entity.entity_id());
+        it != occupied_footprints_.end()) {
+        if (pathfinding_grid_) {
+            const auto& fp = it->second;
+            pathfinding_grid_->clear_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
+        }
+        occupied_footprints_.erase(it);
+    }
+
+    // The Lua table outlives the C++ object: null its _c_object so methods
+    // called on a stale handle see "destroyed" instead of freed memory, and
+    // release the registry reference. entity_Destroy already does this for
+    // Lua-initiated destruction; reclaim, sacrifice and projectile impact
+    // unregister directly from C++ and relied on this path.
+    const int ref = entity.lua_table_ref();
+    if (L_ && ref >= 0) {
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+        if (lua_istable(L_, -1)) {
+            lua_pushstring(L_, "_c_object");
+            lua_pushlightuserdata(L_, nullptr);
+            lua_rawset(L_, -3);
+        }
+        lua_pop(L_, 1);
+        luaL_unref(L_, LUA_REGISTRYINDEX, ref);
+        entity.set_lua_table_ref(LUA_NOREF);
+    }
 }
 
 SimState::~SimState() {
@@ -523,7 +566,11 @@ void SimState::tick() {
 
             add_death_event(ce->position().x, ce->position().y,
                             ce->position().z, crash_radius, ce->army());
+            // Remove the wreck of the aircraft: it used to stay registered
+            // (marked destroyed) forever, iterated every tick, with its Lua
+            // table still pointing at it. The unregister hook severs that.
             ce->mark_destroyed();
+            entity_registry_.unregister_entity(crash_id);
         }
     }
 

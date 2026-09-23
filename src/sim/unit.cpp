@@ -1138,7 +1138,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                                     naval_draft_, is_amphibious() || is_hover());
             }
             navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-            if (!navigator_.is_moving()) {
+            if (!navigator_.busy()) {
                 // Reached waypoint — cycle to end of queue
                 auto finished = cmd;
                 command_queue_.pop_front();
@@ -1468,15 +1468,14 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
         // (Lua callback may have destroyed the entity)
         target = registry.find(build_target_id_);
 
-        // Mark completed structure as obstacle on pathfinding grid
+        // The completed structure now blocks paths until it is removed
         // (after re-validation — only if target survived OnStopBeingBuilt)
-        if (grid && target && !target->destroyed() && target->is_unit()) {
-            auto* tu = static_cast<Unit*>(target);
-            if (tu->has_category("STRUCTURE") && tu->footprint_size_x() > 0) {
-                grid->mark_obstacle(
-                    target->position().x, target->position().z,
-                    tu->footprint_size_x(), tu->footprint_size_z());
-            }
+        if (target && !target->destroyed() && target->is_unit()) {
+            lua_pushstring(L, "osc_sim_state");
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+            if (sim) sim->occupy_footprint(*static_cast<Unit*>(target));
         }
 
         // Fire adjacency callbacks for newly completed structure

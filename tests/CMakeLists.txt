@@ -7,6 +7,9 @@ add_executable(osc_tests
     test_script_hooks.cpp
     test_blueprint_categories.cpp
     test_image.cpp
+    test_navigation_throttle.cpp
+    test_entity_lifetime.cpp
+    test_fixed_step.cpp
     test_lua_state.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp

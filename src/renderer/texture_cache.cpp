@@ -21,22 +21,7 @@ void TextureCache::init(VkDevice device, VmaAllocator allocator,
     sampler_ = sampler;
     vfs_ = vfs;
 
-    // Descriptor pool — up to 512 combined image samplers
-    VkDescriptorPoolSize pool_size{};
-    pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool_size.descriptorCount = 512;
-
-    VkDescriptorPoolCreateInfo pool_ci{};
-    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_ci.maxSets = 512;
-    pool_ci.poolSizeCount = 1;
-    pool_ci.pPoolSizes = &pool_size;
-    if (vkCreateDescriptorPool(device_, &pool_ci, nullptr, &descriptor_pool_) !=
-        VK_SUCCESS) {
-        spdlog::error("TextureCache: failed to create descriptor pool");
-        descriptor_pool_ = VK_NULL_HANDLE;
-        return;
-    }
+    if (!create_descriptor_pool()) return;
 
     create_fallback();
     create_specteam_fallback();
@@ -568,7 +553,38 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     return result;
 }
 
+bool TextureCache::create_descriptor_pool() {
+    sets_in_pool_ = 0;
+    VkDescriptorPoolSize pool_size{};
+    pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    pool_size.descriptorCount = kSetsPerPool;
+
+    VkDescriptorPoolCreateInfo pool_ci{};
+    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.maxSets = kSetsPerPool;
+    pool_ci.poolSizeCount = 1;
+    pool_ci.pPoolSizes = &pool_size;
+    if (vkCreateDescriptorPool(device_, &pool_ci, nullptr, &descriptor_pool_) !=
+        VK_SUCCESS) {
+        spdlog::error("TextureCache: failed to create descriptor pool");
+        descriptor_pool_ = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
 VkDescriptorSet TextureCache::allocate_and_write_descriptor(VkImageView view) {
+    // A long game can load more textures than one pool holds. Move to a fresh
+    // pool before this one would overflow, keeping the full one alive for its
+    // sets. (Before, allocation failed and the texture drew as nothing.)
+    if (sets_in_pool_ >= kSetsPerPool) {
+        full_pools_.push_back(descriptor_pool_);
+        descriptor_pool_ = VK_NULL_HANDLE;
+        if (!create_descriptor_pool()) return VK_NULL_HANDLE;
+        spdlog::debug("TextureCache: descriptor pool {} started",
+                      full_pools_.size() + 1);
+    }
+
     VkDescriptorSetAllocateInfo alloc_ci{};
     alloc_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc_ci.descriptorPool = descriptor_pool_;
@@ -576,8 +592,11 @@ VkDescriptorSet TextureCache::allocate_and_write_descriptor(VkImageView view) {
     alloc_ci.pSetLayouts = &ds_layout_;
 
     VkDescriptorSet ds = VK_NULL_HANDLE;
-    if (vkAllocateDescriptorSets(device_, &alloc_ci, &ds) != VK_SUCCESS) {
-        spdlog::warn("TextureCache: descriptor set allocation failed");
+    const VkResult res = vkAllocateDescriptorSets(device_, &alloc_ci, &ds);
+    if (res == VK_SUCCESS) ++sets_in_pool_;
+    if (res != VK_SUCCESS) {
+        spdlog::error("TextureCache: descriptor set allocation failed ({})",
+                      static_cast<int>(res));
         return VK_NULL_HANDLE;
     }
 
@@ -948,7 +967,9 @@ void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
                         normal_fallback_.image.allocation);
     normal_fallback_ = {};
 
-    // Pool (frees all descriptor sets)
+    // Pools (free all descriptor sets)
+    for (auto pool : full_pools_) vkDestroyDescriptorPool(device, pool, nullptr);
+    full_pools_.clear();
     if (descriptor_pool_)
         vkDestroyDescriptorPool(device, descriptor_pool_, nullptr);
     descriptor_pool_ = VK_NULL_HANDLE;

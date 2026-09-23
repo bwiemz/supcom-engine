@@ -75,7 +75,8 @@ jobs:
           "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        # No GPU on CI runners: skip building the Vulkan validation layer.
+        run: cmake --preset ${{ matrix.preset }} -DVCPKG_MANIFEST_FEATURES=
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

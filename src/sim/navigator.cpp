@@ -25,6 +25,20 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
         return;
     }
 
+    // Same unreachable question as last time? Answer from the memo.
+    auto near = [](const Vector3& a, const Vector3& b) {
+        const f32 dx = a.x - b.x, dz = a.z - b.z;
+        return dx * dx + dz * dz < 1.0f;
+    };
+    if (has_failed_request_ && near(pos, failed_goal_) &&
+        near(current_pos, failed_from_) &&
+        ++suppressed_requests_ < FAILED_PATH_RETRY_CALLS) {
+        status_ = Status::Idle;
+        return;
+    }
+    has_failed_request_ = false;
+    suppressed_requests_ = 0;
+
     auto result = pathfinder->find_path(
         current_pos.x, current_pos.z, pos.x, pos.z, layer, draft, amphibious);
 
@@ -33,14 +47,22 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
         spdlog::debug("Navigator: path found with {} waypoints", waypoints_.size());
     } else if (result.throttled) {
         // Budget exhausted — don't fall back to straight-line (would clip walls).
-        // Leave unit idle; command processing will retry next tick.
+        // Keep the goal and report "busy" so the command survives; its handler
+        // re-requests the path next tick because is_moving() is false. (Going
+        // Idle here made Move orders pop as if arrived and spun Patrol forever.)
         spdlog::debug("Navigator: pathfinding throttled, will retry next tick");
-        status_ = Status::Idle;
+        status_ = Status::WaitingForPath;
         return;
     } else {
-        // Genuinely no path — fall back to straight line
-        waypoints_.push_back(pos);
-        spdlog::debug("Navigator: no path found, falling back to straight line");
+        // Nowhere reachable to go (enclosed, or no passable cell near the
+        // goal). Stay put: the old straight-line fallback drove units
+        // through cliffs and buildings.
+        spdlog::debug("Navigator: no reachable destination, not moving");
+        has_failed_request_ = true;
+        failed_goal_ = pos;
+        failed_from_ = current_pos;
+        status_ = Status::Idle;
+        return;
     }
 
     status_ = Status::Moving;
@@ -62,6 +84,7 @@ void Navigator::abort_move() {
 
 bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
                         const map::Terrain* terrain) {
+    if (status_ == Status::WaitingForPath) return true; // not there yet
     if (status_ == Status::Idle || max_speed <= 0) return false;
     if (waypoints_.empty() || waypoint_index_ >= waypoints_.size()) {
         status_ = Status::Idle;
@@ -149,6 +172,7 @@ bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
 
 bool Navigator::update_air(Unit& unit, f64 dt,
                             const map::Terrain* terrain) {
+    if (status_ == Status::WaitingForPath) return true; // air never throttles; defensive
     if (status_ == Status::Idle) return false;
     if (waypoints_.empty() || waypoint_index_ >= waypoints_.size()) {
         status_ = Status::Idle;

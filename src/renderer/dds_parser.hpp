@@ -32,4 +32,10 @@ struct DDSTexture {
 /// Returns nullopt on failure (bad magic, unsupported format, truncated).
 std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data);
 
+/// Zero the selected colour channels of an uncompressed 32-bit DDS in place
+/// (every mip level), locating each channel through the header's bit masks.
+/// channels: which of {R, G, B, A} to clear. Returns false, leaving the data
+/// untouched, if the file is not uncompressed 32 bpp.
+bool zero_dds_channels(std::vector<char>& file_data, const bool (&channels)[4]);
+
 } // namespace osc::renderer

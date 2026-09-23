@@ -1,4 +1,6 @@
 #include "map/pathfinding_grid.hpp"
+
+#include <cstdint>
 #include "map/heightmap.hpp"
 
 #include <algorithm>
@@ -146,14 +148,18 @@ void PathfindingGrid::mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
     world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
     world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
 
+    if (obstacle_refs_.size() != cells_.size()) obstacle_refs_.assign(cells_.size(), 0);
     for (u32 z = gz0; z <= gz1; ++z) {
         for (u32 x = gx0; x <= gx1; ++x) {
-            cells_[z * grid_width_ + x] = CellPassability::Obstacle;
+            const size_t i = static_cast<size_t>(z) * grid_width_ + x;
+            if (obstacle_refs_[i] < UINT16_MAX) ++obstacle_refs_[i];
+            cells_[i] = CellPassability::Obstacle;
         }
     }
 }
 
 void PathfindingGrid::clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
+    if (obstacle_refs_.size() != cells_.size()) return; // nothing was marked
     f32 half_x = sizeX * 0.5f;
     f32 half_z = sizeZ * 0.5f;
     u32 gx0, gz0, gx1, gz1;
@@ -162,8 +168,11 @@ void PathfindingGrid::clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
 
     for (u32 z = gz0; z <= gz1; ++z) {
         for (u32 x = gx0; x <= gx1; ++x) {
-            // Restore to original terrain passability
-            cells_[z * grid_width_ + x] = base_cells_[z * grid_width_ + x];
+            const size_t i = static_cast<size_t>(z) * grid_width_ + x;
+            if (obstacle_refs_[i] == 0) continue;
+            if (--obstacle_refs_[i] == 0) {
+                cells_[i] = base_cells_[i]; // restore terrain passability
+            }
         }
     }
 }

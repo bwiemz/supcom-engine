@@ -14,6 +14,9 @@ class PathfindingGrid;
 struct PathResult {
     bool found = false;
     bool throttled = false;  // true if request was deferred (budget exhausted)
+    /// found, but the goal itself is unreachable: the path ends at the
+    /// reachable cell closest to it (as FA units stop at the cliff edge).
+    bool partial = false;
     std::vector<sim::Vector3> waypoints; // world-space positions
 };
 
@@ -31,13 +34,21 @@ public:
     bool can_pathfind() const { return requests_this_tick_ < MAX_REQUESTS_PER_TICK; }
     void increment_request_count() const { ++requests_this_tick_; }
     void reset_request_count() const { requests_this_tick_ = 0; }
+    int requests_this_tick() const { return requests_this_tick_; }
     static constexpr int MAX_REQUESTS_PER_TICK = 8;
 
 private:
-    /// Raw A* on the grid. Returns grid cell path (start→goal).
-    std::vector<std::pair<u32, u32>> astar(
-        u32 sx, u32 sz, u32 gx, u32 gz,
-        const std::string& layer, f32 draft = 0, bool amphibious = false) const;
+    struct GridPath {
+        std::vector<std::pair<u32, u32>> cells; ///< start -> end, inclusive
+        bool reached_goal = false;
+    };
+
+    /// Raw A* on the grid. If the goal is unreachable (or the search limit
+    /// is hit) the path leads to the explored cell closest to the goal
+    /// instead; empty only when no cell other than the start is reachable.
+    GridPath astar(u32 sx, u32 sz, u32 gx, u32 gz,
+                   const std::string& layer, f32 draft = 0,
+                   bool amphibious = false) const;
 
     /// Smooth path by removing redundant waypoints via line-of-sight.
     std::vector<std::pair<u32, u32>> smooth_path(

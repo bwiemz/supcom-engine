@@ -17,7 +17,10 @@ class Unit;
 
 class Navigator {
 public:
-    enum class Status : u8 { Idle, Moving };
+    /// Idle: no goal. Moving: following a path. WaitingForPath: the per-tick
+    /// pathfinding budget was spent; the goal is kept and callers retry
+    /// set_goal next tick (see is_moving()).
+    enum class Status : u8 { Idle, Moving, WaitingForPath };
 
     /// Set goal with A* pathfinding (preferred).
     void set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
@@ -31,9 +34,15 @@ public:
 
     const Vector3& goal() const { return goal_; }
     Status status() const { return status_; }
+    /// True only while following a path. False while waiting for one, so the
+    /// usual `if (!is_moving() || goal changed) set_goal(...)` retries it.
     bool is_moving() const { return status_ == Status::Moving; }
+    /// True while a move is in progress or pending a path -- i.e. the goal
+    /// has not been reached. Use this, not is_moving(), to detect arrival.
+    bool busy() const { return status_ != Status::Idle; }
 
-    /// Move entity toward goal. Returns true if still moving.
+    /// Move entity toward goal. Returns true until the goal is reached
+    /// (including while waiting for a throttled path, without moving).
     /// If terrain is provided, sets entity Y to surface height.
     bool update(Entity& entity, f32 max_speed, f64 dt,
                 const map::Terrain* terrain = nullptr);
@@ -48,6 +57,15 @@ public:
 
     void set_sim_state(const SimState* sim) { sim_ = sim; }
 
+    /// After a path request fails outright (nothing reachable is closer to
+    /// the goal), identical requests -- same goal, unit still where it was --
+    /// return without searching, except every Nth call, since a blocking
+    /// structure may have died meanwhile. Chase-style command handlers
+    /// re-request every tick while not moving; without this a unit parked at
+    /// the closest point to an unreachable target ran a full A* each tick and
+    /// could starve the shared per-tick path budget.
+    static constexpr int FAILED_PATH_RETRY_CALLS = 50;
+
 private:
     const SimState* sim_ = nullptr;
     Vector3 goal_;
@@ -55,6 +73,12 @@ private:
     bool speed_through_goal_ = false;
     std::vector<Vector3> waypoints_;
     size_t waypoint_index_ = 0;
+
+    // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
+    bool has_failed_request_ = false;
+    Vector3 failed_goal_;
+    Vector3 failed_from_;
+    int suppressed_requests_ = 0;
     static constexpr f32 ARRIVAL_TOLERANCE = 0.5f;
     static constexpr f32 WAYPOINT_TOLERANCE = 1.5f;
 };

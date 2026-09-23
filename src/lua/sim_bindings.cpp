@@ -848,6 +848,9 @@ static int l_CreateUnit(lua_State* L) {
     // OnStopBeingBuilt (only for pre-placed units)
     auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
     if (unit_ptr && !unit_ptr->is_being_built()) {
+        // A structure created complete (map-placed, scripted) blocks paths
+        // like a freshly built one; released when it leaves the registry.
+        sim->occupy_footprint(*unit_ptr);
         lua_pushstring(L, "OnStopBeingBuilt");
         lua_gettable(L, tbl);
         if (lua_isfunction(L, -1)) {

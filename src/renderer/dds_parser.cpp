@@ -184,4 +184,34 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
     return tex;
 }
 
+bool zero_dds_channels(std::vector<char>& file_data, const bool (&channels)[4]) {
+    constexpr size_t kHeaderEnd = 4 + 124; // magic + DDS_HEADER
+    if (file_data.size() < kHeaderEnd) return false;
+    auto u8_at = [&](size_t off) {
+        return static_cast<u32>(static_cast<unsigned char>(file_data[off]));
+    };
+    auto read_u32_at = [&](size_t off) {
+        return u8_at(off) | (u8_at(off + 1) << 8) | (u8_at(off + 2) << 16) |
+               (u8_at(off + 3) << 24);
+    };
+    if (read_u32_at(0) != 0x20534444u) return false;              // "DDS "
+    if (read_u32_at(OFF_FOURCC) != 0 || read_u32_at(OFF_RGBBITCNT) != 32) return false;
+
+    const u32 masks[4] = {read_u32_at(OFF_RBITMASK), read_u32_at(OFF_GBITMASK),
+                          read_u32_at(OFF_BBITMASK), read_u32_at(OFF_ABITMASK)};
+    // Little-endian pixels: mask 0x000000FF is byte 0, 0x0000FF00 byte 1, ...
+    int byte_of[4] = {-1, -1, -1, -1};
+    for (int c = 0; c < 4; ++c) {
+        for (int b = 0; b < 4; ++b) {
+            if (masks[c] == (0xFFu << (8 * b))) byte_of[c] = b;
+        }
+    }
+    for (size_t px = kHeaderEnd; px + 4 <= file_data.size(); px += 4) {
+        for (int c = 0; c < 4; ++c) {
+            if (channels[c] && byte_of[c] >= 0) file_data[px + byte_of[c]] = 0;
+        }
+    }
+    return true;
+}
+
 } // namespace osc::renderer

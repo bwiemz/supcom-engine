@@ -1,5 +1,7 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "renderer/dds_parser.hpp"
+#include "platform/paths.hpp"
 #include "core/profiler.hpp"
 #include "renderer/pipeline_builder.hpp"
 #include "renderer/shader_utils.hpp"
@@ -19,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 
@@ -46,7 +49,8 @@ void Renderer::on_scroll(f64 y_offset) {
         std::clamp(camera_.distance() * zoom_factor, 30.0f, 2000.0f));
 }
 
-bool Renderer::init(u32 width, u32 height, const std::string& title) {
+bool Renderer::init(u32 width, u32 height, const std::string& title,
+                    bool offscreen) {
     // GLFW
     if (!glfwInit()) {
         spdlog::error("Failed to initialize GLFW");
@@ -54,7 +58,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
+    // Offscreen keeps a hidden window (input and timing code expect one) but
+    // never shows it: GLFW's show waits for the compositor to map the window.
+    glfwWindowHint(GLFW_VISIBLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
     window_ = glfwCreateWindow(static_cast<int>(width),
                                static_cast<int>(height),
                                title.c_str(), nullptr, nullptr);
@@ -70,14 +77,40 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     glfwSetScrollCallback(window_, glfw_scroll_callback);
     ui_dispatch_.install_callbacks(window_);
 
-    // Vulkan instance (vk-bootstrap)
+    // Vulkan instance (vk-bootstrap). Validation: on in debug builds, off in
+    // release; OSC_VK_VALIDATION=0/1 overrides either way.
+    bool validation =
+#ifdef NDEBUG
+        false;
+#else
+        true;
+#endif
+    if (const char* v = std::getenv("OSC_VK_VALIDATION")) validation = v[0] == '1';
+#ifdef OSC_VULKAN_LAYER_PATH
+    if (validation) platform::set_env_default("VK_ADD_LAYER_PATH", OSC_VULKAN_LAYER_PATH);
+#endif
+    if (validation) {
+        auto sys = vkb::SystemInfo::get_system_info();
+        if (!sys || !sys.value().validation_layers_available) {
+            spdlog::warn("Vulkan validation requested but VK_LAYER_KHRONOS_validation "
+                         "is not installed; running without it");
+            validation = false;
+        }
+    }
     vkb::InstanceBuilder inst_builder;
-    auto inst_ret = inst_builder
-        .set_app_name("OpenSupCom")
-        .request_validation_layers(true)
-        .use_default_debug_messenger()
-        .require_api_version(1, 0, 0)
-        .build();
+    inst_builder.set_app_name("OpenSupCom")
+        .request_validation_layers(validation)
+        .require_api_version(1, 0, 0);
+    if (offscreen && std::getenv("OSC_HEADLESS_SURFACE")) {
+        inst_builder.set_headless(true)
+            .enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
+            .enable_extension(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
+    }
+    if (validation) inst_builder.set_debug_callback(&Renderer::vulkan_debug_callback);
+    auto inst_ret = inst_builder.build();
+    if (inst_ret) {
+        spdlog::info("Vulkan validation: {}", validation ? "enabled" : "disabled");
+    }
 
     if (!inst_ret) {
         spdlog::error("Failed to create Vulkan instance: {}",
@@ -92,8 +125,20 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     debug_messenger_ = vkb_inst.debug_messenger;
 
     // Surface
-    if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) !=
-        VK_SUCCESS) {
+    if (offscreen && std::getenv("OSC_HEADLESS_SURFACE")) {
+        auto create_headless = reinterpret_cast<PFN_vkCreateHeadlessSurfaceEXT>(
+            vkGetInstanceProcAddr(instance_, "vkCreateHeadlessSurfaceEXT"));
+        VkHeadlessSurfaceCreateInfoEXT hs_ci{};
+        hs_ci.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
+        if (!create_headless ||
+            create_headless(instance_, &hs_ci, nullptr, &surface_) != VK_SUCCESS) {
+            spdlog::error("Offscreen rendering needs VK_EXT_headless_surface, "
+                          "which this Vulkan driver does not provide");
+            return false;
+        }
+        spdlog::info("Rendering offscreen (headless surface)");
+    } else if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) !=
+               VK_SUCCESS) {
         spdlog::error("Failed to create window surface");
         return false;
     }
@@ -186,7 +231,6 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VK_CHECK(vkCreateFence(device_, &fence_ci, nullptr, &render_fence_[i]));
         VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &present_semaphore_[i]));
-        VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &render_semaphore_[i]));
     }
 
     // Texture descriptor set layout (set=0, binding=0: combined image sampler)
@@ -336,6 +380,16 @@ bool Renderer::create_swapchain(u32 width, u32 height) {
     window_width_ = vkb_sc.extent.width;
     window_height_ = vkb_sc.extent.height;
 
+    // One render-finished semaphore per image (the device is idle here: first
+    // creation, or recreate_swapchain() after vkDeviceWaitIdle).
+    for (auto sem : render_finished_) vkDestroySemaphore(device_, sem, nullptr);
+    render_finished_.assign(swapchain_images_.size(), VK_NULL_HANDLE);
+    VkSemaphoreCreateInfo sem_ci{};
+    sem_ci.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (auto& sem : render_finished_) {
+        VK_CHECK(vkCreateSemaphore(device_, &sem_ci, nullptr, &sem));
+    }
+
     return true;
 }
 
@@ -408,13 +462,20 @@ void Renderer::create_render_pass() {
 
     std::array<VkSubpassDependency, 2> deps{};
     // Incoming: external writes complete before we start
+    // The depth image is shared by every frame in flight, so the previous
+    // frame's depth writes (early AND late tests) must finish before this
+    // frame clears and writes it.
     deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
     deps[0].dstSubpass = 0;
     deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                           VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                           VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     // Outgoing: color writes visible to subsequent fragment reads (bloom compatibility)
     deps[1].srcSubpass = 0;
@@ -509,14 +570,26 @@ void Renderer::create_shadow_resources() {
         subpass.colorAttachmentCount = 0;
         subpass.pDepthStencilAttachment = &depth_ref;
 
-        VkSubpassDependency dep{};
-        dep.srcSubpass = 0;
-        dep.dstSubpass = VK_SUBPASS_EXTERNAL;
-        dep.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                         | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        dep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        dep.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        dep.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        // The single shadow map is shared by all frames in flight.
+        //   [0] incoming: the previous frame's shadow SAMPLING must finish
+        //       before this frame overwrites the map (write-after-read).
+        //   [1] outgoing: this frame's depth writes are visible to sampling.
+        std::array<VkSubpassDependency, 2> deps{};
+        deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+        deps[0].dstSubpass = 0;
+        deps[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[0].dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                             | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].srcAccessMask = 0; // WAR: an execution dependency suffices
+        deps[0].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                              | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].srcSubpass = 0;
+        deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+        deps[1].srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                             | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        deps[1].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         VkRenderPassCreateInfo rp_ci{};
         rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -524,8 +597,8 @@ void Renderer::create_shadow_resources() {
         rp_ci.pAttachments = &depth_att;
         rp_ci.subpassCount = 1;
         rp_ci.pSubpasses = &subpass;
-        rp_ci.dependencyCount = 1;
-        rp_ci.pDependencies = &dep;
+        rp_ci.dependencyCount = static_cast<u32>(deps.size());
+        rp_ci.pDependencies = deps.data();
 
         VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &shadow_render_pass_));
     }
@@ -1100,14 +1173,21 @@ void Renderer::create_bloom_resources() {
 
         std::array<VkSubpassDependency, 2> deps{};
         // Incoming: external writes complete before we start
+        // The depth image is shared by every frame in flight, so the previous
+        // frame's depth writes (early AND late tests) must finish before this
+        // frame clears and writes it.
         deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
         deps[0].dstSubpass = 0;
         deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
         deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+                               VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        deps[0].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         // Outgoing: finalLayout transition visible to subsequent fragment reads
         deps[1].srcSubpass = 0;
         deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
@@ -1481,10 +1561,26 @@ void Renderer::build_scene(const sim::SimState& sim,
         VkImageView zero_view = texture_cache_.zero_fallback_view();
         VkImageView normal_fb_view = texture_cache_.normal_fallback_view();
 
+        // A stratum with no albedo texture must have no influence. FA ignores
+        // such strata, and maps rely on it: SCMP_009 stores a copy of blend0
+        // as blend1 while strata 5-8 are empty, which painted most of the
+        // terrain in the black placeholder. Zero those weight channels.
+        auto masked_blend = [&](const std::vector<char>& dds, size_t first_stratum) {
+            std::vector<char> copy = dds;
+            bool unused[4];
+            for (size_t c = 0; c < 4; ++c) {
+                const size_t s = first_stratum + c;
+                unused[c] = s >= strata.size() || strata[s].albedo_path.empty();
+            }
+            zero_dds_channels(copy, unused);
+            return copy;
+        };
         auto* blend0 = terrain->blend_dds_0().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend0", terrain->blend_dds_0());
+            : texture_cache_.get_raw("__terrain_blend0",
+                                     masked_blend(terrain->blend_dds_0(), 1));
         auto* blend1 = terrain->blend_dds_1().empty() ? nullptr
-            : texture_cache_.get_raw("__terrain_blend1", terrain->blend_dds_1());
+            : texture_cache_.get_raw("__terrain_blend1",
+                                     masked_blend(terrain->blend_dds_1(), 5));
 
         views[0] = blend0 ? blend0->image.view : zero_view;  // black = no blending
         views[1] = blend1 ? blend1->image.view : zero_view;
@@ -1822,6 +1918,21 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     vkResetFences(device_, 1, &render_fence_[fi]);
 
+    // Publish this frame's index to every sub-renderer BEFORE any of them
+    // writes its per-frame buffers: fence[fi] was just waited on, so only
+    // slot fi is free. (Setting it after the updates made them write into
+    // the other slot while the GPU could still be reading it, and the draws
+    // then showed data one frame old.)
+    unit_renderer_.set_frame_index(fi);
+    ui_renderer_.set_frame_index(fi);
+    overlay_renderer_.set_frame_index(fi);
+    minimap_renderer_.set_frame_index(fi);
+    strategic_icon_renderer_.set_frame_index(fi);
+    hud_renderer_.set_frame_index(fi);
+    selection_info_renderer_.set_frame_index(fi);
+    fog_renderer_.set_frame_index(fi);
+    profile_overlay_.set_frame_index(fi);
+
     // Process camera shake events from sim
     {
         auto shakes = sim.camera_shake_events(); // copy before clear
@@ -1977,17 +2088,6 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
                                     strategic_icon_renderer_.atlas_descriptor(),
                                     window_width_, window_height_);
-
-    // Set frame index on all sub-renderers for correct double-buffering
-    unit_renderer_.set_frame_index(fi);
-    ui_renderer_.set_frame_index(fi);
-    overlay_renderer_.set_frame_index(fi);
-    minimap_renderer_.set_frame_index(fi);
-    strategic_icon_renderer_.set_frame_index(fi);
-    hud_renderer_.set_frame_index(fi);
-    selection_info_renderer_.set_frame_index(fi);
-    fog_renderer_.set_frame_index(fi);
-    profile_overlay_.set_frame_index(fi);
 
     // Update profile overlay
     profile_overlay_.update(font_cache_, texture_cache_,
@@ -2636,14 +2736,14 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_semaphore_[fi];
+    submit.pSignalSemaphores = &render_finished_[image_index];
     VK_CHECK(vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]));
 
     // Present
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_semaphore_[fi];
+    present.pWaitSemaphores = &render_finished_[image_index];
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
@@ -2765,14 +2865,14 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &cmd_buf_[fi];
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_semaphore_[fi];
+    submit.pSignalSemaphores = &render_finished_[image_index];
     vkQueueSubmit(graphics_queue_, 1, &submit, render_fence_[fi]);
 
     // Present
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_semaphore_[fi];
+    present.pWaitSemaphores = &render_finished_[image_index];
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
@@ -2783,12 +2883,6 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
         pres_result == VK_SUBOPTIMAL_KHR) {
         recreate_swapchain();
     }
-
-    // Wait for present to complete before reusing semaphores.
-    // With 3 swapchain images and 2 frames-in-flight, the present semaphore
-    // can still be in-flight when reused. This is only called for UI-only
-    // frames (menu/lobby) where max throughput isn't needed.
-    vkQueueWaitIdle(graphics_queue_);
 
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
@@ -2841,6 +2935,25 @@ void Renderer::poll_events(f64 dt) {
     b_key_was_pressed_ = b_pressed;
 
     camera_.update(window_, dt);
+}
+
+// --- Vulkan validation messages ---
+
+std::atomic<u32> Renderer::validation_errors_{0};
+
+VkBool32 VKAPI_CALL Renderer::vulkan_debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*type*/,
+    const VkDebugUtilsMessengerCallbackDataEXT* data, void* /*user*/) {
+    const char* msg = data && data->pMessage ? data->pMessage : "(no message)";
+    const char* id = data && data->pMessageIdName ? data->pMessageIdName : "-";
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        ++validation_errors_;
+        spdlog::error("Vulkan validation [{}]: {}", id, msg);
+    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        spdlog::warn("Vulkan validation [{}]: {}", id, msg);
+    }
+    return VK_FALSE; // never abort the call
 }
 
 // --- Frame capture (screenshots / golden images) ---
@@ -3087,8 +3200,9 @@ void Renderer::shutdown() {
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         vkDestroyFence(device_, render_fence_[i], nullptr);
         vkDestroySemaphore(device_, present_semaphore_[i], nullptr);
-        vkDestroySemaphore(device_, render_semaphore_[i], nullptr);
     }
+    for (auto sem : render_finished_) vkDestroySemaphore(device_, sem, nullptr);
+    render_finished_.clear();
 
     // Command pool
     vkDestroyCommandPool(device_, cmd_pool_, nullptr);
