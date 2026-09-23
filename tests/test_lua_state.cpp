@@ -734,3 +734,26 @@ TEST_CASE("Fresh front-end boot clears stale chat history", "[lua][ui]") {
     lua_pop(L, 1);
     CHECK(global_string(L, "boot_first_text").empty());
 }
+
+TEST_CASE("Moho Lua: indexing nil or a boolean gives nil, other values still error",
+          "[lua][luaplus]") {
+    LuaState state;
+    // Retail's and FAF's Unit.lua mark a dead unit's UnitData entry false;
+    // SimSync's NoteFocusArmyChanged then reads data.OwnerArmy of it.
+    auto ok = state.do_string(R"(
+        local dead = false
+        local none = nil
+        if dead.OwnerArmy ~= nil then error('boolean index') end
+        if none.OwnerArmy ~= nil then error('nil index') end
+        local UnitData = { [7] = false, [8] = { OwnerArmy = 2 } }
+        local owners = 0
+        for id, data in UnitData do
+            if data.OwnerArmy == 2 then owners = owners + 1 end
+        end
+        if owners ~= 1 then error('owners ' .. owners) end
+    )");
+    INFO((ok ? std::string() : ok.error().message));
+    CHECK(ok);
+    CHECK_FALSE(state.do_string("local n = 5; return n.field"));
+    CHECK_FALSE(state.do_string("local f = function() end; return f.field"));
+}
