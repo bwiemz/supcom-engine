@@ -155,9 +155,9 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 
 - **Multiplayer:** the lockstep session, lobby handshake, command routing,
   desync detection and peer drop all work across two processes. They are
-  exercised on every CI run (`ctest -L mp`). SimCallbacks and the orders
-  panel's unit settings (pause, fire state, toggles) travel in the command
-  stream and run on every peer on the same tick (M198). Still missing:
+  exercised on every CI run (`ctest -L mp`). Every player input reaches the
+  sim as a command applied inside a tick, on every peer on the same tick
+  (M198): orders, SimCallbacks, and the orders panel's unit settings. Still missing:
   pipelined command delay, slot and faction sync, LAN discovery, and peers
   agreeing on a dropped player's last tick (M198b). Cross-OS determinism is
   not yet demonstrated. The sim walks entities in id order (M195) and draws all its
