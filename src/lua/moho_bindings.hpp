@@ -14,6 +14,11 @@ namespace osc::lua {
 
 class LuaState;
 
+/// Advance the UI state's clock (what CurrentTime() returns) by one frame's
+/// dt. Call once per UI frame: real dt in the window, a fixed step when
+/// pumping frames headless.
+void advance_ui_clock(lua_State* L, double dt);
+
 /// Populate the `moho` global table with all class method tables.
 /// Must be called before globalInit.lua executes.
 void register_moho_bindings(LuaState& state, sim::SimState& sim);

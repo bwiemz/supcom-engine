@@ -17,6 +17,7 @@
 #include "lua/script_loader.hpp"
 #include "lua/binding_coverage.hpp"
 #include "lua/scenario_loader.hpp"
+#include "lua/sim_bindings.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/sim_state.hpp"
@@ -846,6 +847,7 @@ static void pump_ui_frames(
     lua_State* uL = ui_lua_state.raw();
     for (int i = 0; i < count; i++) {
         ui_frame_counter++;
+        osc::lua::advance_ui_clock(uL, 1.0 / 60.0);
         ui_thread_manager.resume_all(ui_frame_counter);
         osc::core::call_on_beat(uL, 1.0 / 30.0);
         beat_registry.fire_all(uL);
@@ -863,6 +865,7 @@ static void pump_ui_frames_with_controls(
     osc::ui::UIDispatch dispatch;
     for (int i = 0; i < count; i++) {
         ui_frame_counter++;
+        osc::lua::advance_ui_clock(uL, 1.0 / 60.0);
         ui_thread_manager.resume_all(ui_frame_counter);
         dispatch.update_controls(uL, ui_registry, 1.0 / 60.0);
         dispatch.dispatch_events(uL, ui_registry);
@@ -1738,142 +1741,129 @@ int main(int argc, char* argv[]) {
     ui_lua_state.register_function("GetArmiesTable", l_GetArmiesTable);
     ui_lua_state.register_function("IsAlly", l_ui_IsAlly);
 
+    // User-state init, as Moho runs it for every UI state (front end and
+    // game): retail /lua/userInit.lua -- plus its /schook hook -- runs
+    // globalInit (which turns the moho.* tables into Lua classes, so MAUI's
+    // Class(moho.frame_methods, Control) works), and defines WaitSeconds,
+    // FrontEndData and the Prefetcher. The engine globals it and the UI
+    // bootstrap expect must exist first.
+    osc::lua::register_prefetch_bindings(ui_lua_state);
+    {
+        lua_State* uL = ui_lua_state.raw();
+        auto global_is_defined = [&](const char* name) {
+            lua_pushstring(uL, name);
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            const bool defined = !lua_isnil(uL, -1);
+            lua_pop(uL, 1);
+            return defined;
+        };
+        auto set_stub = [&](const char* name) {
+            if (global_is_defined(name)) return;
+            lua_pushstring(uL, name);
+            lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        };
+        auto set_str = [&](const char* name, const char* val) {
+            if (global_is_defined(name)) return;
+            lua_pushstring(uL, name);
+            lua_pushstring(uL, val);
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        };
+        auto set_bool_fn = [&](const char* name, bool val) {
+            if (global_is_defined(name)) return;
+            lua_pushstring(uL, name);
+            lua_pushcfunction(uL, val ?
+                +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
+                +[](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; });
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        };
+        set_stub("AudioSetLanguage");
+        set_str("__language", "us");
+        set_bool_fn("HasLocalizedVO", false);
+        // Engine globals needed by FA's UI bootstrap chain
+        // (GetOptions, GetVolume, SetVolume, etc.)
+        auto set_nil_fn = [&](const char* name) {
+            if (global_is_defined(name)) return;
+            lua_pushstring(uL, name);
+            lua_pushcfunction(uL, [](lua_State* L) -> int {
+                lua_pushnil(L);
+                return 1;
+            });
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        };
+        auto set_num_fn = [&](const char* name, double val) {
+            if (global_is_defined(name)) return;
+            lua_pushstring(uL, name);
+            lua_pushcfunction(uL, [](lua_State* L) -> int {
+                lua_pushnumber(L, 1.0); // default volume
+                return 1;
+            });
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        };
+        set_nil_fn("GetOptions");          // prefs.lua
+        set_num_fn("GetVolume", 1.0);      // usermusic.lua
+        set_stub("SetVolume");             // volume control
+        set_stub("ConExecute");            // console commands
+        set_stub("ConExecuteSave");        // console commands
+        set_stub("EnableWorldSounds");     // audio
+        set_stub("DisableWorldSounds");    // audio
+        set_stub("AddInputCapture");       // input system
+        set_stub("RemoveInputCapture");    // input system
+        set_bool_fn("AnyInputCapture", false);
+        set_bool_fn("DebugFacilitiesEnabled", false);
+        set_stub("ExitApplication");       // exit
+        set_stub("PrefetchSession");       // loading optimization
+        set_stub("SetFocusArmy");          // army focus
+        set_nil_fn("GetFocusArmy");        // army focus
+        set_stub("ClearFrame");            // UI cleanup
+        set_stub("GpgNetSend");            // multiplayer
+        set_bool_fn("HasCommandLineArg2", false); // command line
+        // Session functions
+        set_bool_fn("SessionIsActive", false);
+        set_bool_fn("SessionIsMultiplayer", false);
+        set_bool_fn("SessionIsObservingAllowed", false);
+        set_bool_fn("SessionIsGameOver", false);
+        set_bool_fn("SessionIsBeingRecorded", false);
+        set_bool_fn("SessionCanRestart", false);
+        set_stub("SessionEndGame");
+        set_nil_fn("SessionGetCommandSourceNames");
+        set_nil_fn("SessionGetLocalCommandSource");
+        // System info
+        set_nil_fn("GetMouseScreenPos");
+        set_stub("SetOverlayFilter");
+        set_stub("SetOverlayFilters");
+        set_nil_fn("GetActiveBuildTemplate");
+        set_nil_fn("GetHighlightCommand");
+        set_nil_fn("GetInputCapture");
+        set_stub("RemoveInputCapture");
+        set_stub("RestartSession");
+        set_nil_fn("GetAntiAliasingOptions");
+        set_nil_fn("GetResolution");
+        set_stub("SetResolution");
+        // __installedlanguages — table of available language codes
+        if (!global_is_defined("__installedlanguages")) {
+            lua_pushstring(uL, "__installedlanguages");
+            lua_newtable(uL);
+            lua_pushstring(uL, "us"); lua_rawseti(uL, -2, 1);
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+        }
+    }
+    {
+        const char* init_script = vfs.file_exists("/lua/userInit.lua")
+                                      ? "/lua/userInit.lua" : "/lua/globalInit.lua";
+        if (auto r = osc::lua::run_vfs_script(ui_lua_state.raw(), init_script)) {
+            spdlog::info("Loaded {} on ui_L", init_script);
+        } else {
+            spdlog::warn("{} error: {}", init_script, r.error().message);
+        }
+    }
+
     // State transition: INIT → GAME or INIT → FRONT_END
     if (!map_path.empty()) {
         osc::core::call_setup_ui(ui_lua_state.raw());
         osc::core::call_start_game_ui(ui_lua_state.raw());
     } else {
         // No map: bootstrap front-end menu UI
-        // 1. Run globalInit.lua to flatten moho classes (makes ClassUI work)
-        // Pre-register globals that globalInit.lua's import chain needs.
-        // These must exist before globalInit runs, otherwise Localization.lua
-        // errors out and the moho class flatten loop never executes.
-        {
-            lua_State* uL = ui_lua_state.raw();
-            auto global_is_defined = [&](const char* name) {
-                lua_pushstring(uL, name);
-                lua_rawget(uL, LUA_GLOBALSINDEX);
-                const bool defined = !lua_isnil(uL, -1);
-                lua_pop(uL, 1);
-                return defined;
-            };
-            auto set_stub = [&](const char* name) {
-                if (global_is_defined(name)) return;
-                lua_pushstring(uL, name);
-                lua_pushcfunction(uL, [](lua_State*) -> int { return 0; });
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            };
-            auto set_str = [&](const char* name, const char* val) {
-                if (global_is_defined(name)) return;
-                lua_pushstring(uL, name);
-                lua_pushstring(uL, val);
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            };
-            auto set_bool_fn = [&](const char* name, bool val) {
-                if (global_is_defined(name)) return;
-                lua_pushstring(uL, name);
-                lua_pushcfunction(uL, val ?
-                    +[](lua_State* L) -> int { lua_pushboolean(L, 1); return 1; } :
-                    +[](lua_State* L) -> int { lua_pushboolean(L, 0); return 1; });
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            };
-            set_stub("AudioSetLanguage");
-            set_str("__language", "us");
-            set_bool_fn("HasLocalizedVO", false);
-            // Engine globals needed by FA's UI bootstrap chain
-            // (GetOptions, GetVolume, SetVolume, etc.)
-            auto set_nil_fn = [&](const char* name) {
-                if (global_is_defined(name)) return;
-                lua_pushstring(uL, name);
-                lua_pushcfunction(uL, [](lua_State* L) -> int {
-                    lua_pushnil(L);
-                    return 1;
-                });
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            };
-            auto set_num_fn = [&](const char* name, double val) {
-                if (global_is_defined(name)) return;
-                lua_pushstring(uL, name);
-                lua_pushcfunction(uL, [](lua_State* L) -> int {
-                    lua_pushnumber(L, 1.0); // default volume
-                    return 1;
-                });
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            };
-            set_nil_fn("GetOptions");          // prefs.lua
-            set_num_fn("GetVolume", 1.0);      // usermusic.lua
-            set_stub("SetVolume");             // volume control
-            set_stub("ConExecute");            // console commands
-            set_stub("ConExecuteSave");        // console commands
-            set_stub("EnableWorldSounds");     // audio
-            set_stub("DisableWorldSounds");    // audio
-            set_stub("AddInputCapture");       // input system
-            set_stub("RemoveInputCapture");    // input system
-            set_bool_fn("AnyInputCapture", false);
-            set_bool_fn("DebugFacilitiesEnabled", false);
-            set_stub("ExitApplication");       // exit
-            set_stub("PrefetchSession");       // loading optimization
-            set_stub("SetFocusArmy");          // army focus
-            set_nil_fn("GetFocusArmy");        // army focus
-            set_stub("ClearFrame");            // UI cleanup
-            set_stub("GpgNetSend");            // multiplayer
-            set_bool_fn("HasCommandLineArg2", false); // command line
-            // Session functions
-            set_bool_fn("SessionIsActive", false);
-            set_bool_fn("SessionIsMultiplayer", false);
-            set_bool_fn("SessionIsObservingAllowed", false);
-            set_bool_fn("SessionIsGameOver", false);
-            set_bool_fn("SessionIsBeingRecorded", false);
-            set_bool_fn("SessionCanRestart", false);
-            set_stub("SessionEndGame");
-            set_nil_fn("SessionGetCommandSourceNames");
-            set_nil_fn("SessionGetLocalCommandSource");
-            // System info
-            set_nil_fn("GetMouseScreenPos");
-            set_stub("SetOverlayFilter");
-            set_stub("SetOverlayFilters");
-            set_nil_fn("GetActiveBuildTemplate");
-            set_nil_fn("GetHighlightCommand");
-            set_nil_fn("GetInputCapture");
-            set_stub("RemoveInputCapture");
-            set_stub("RestartSession");
-            set_nil_fn("GetAntiAliasingOptions");
-            set_nil_fn("GetResolution");
-            set_stub("SetResolution");
-            // __installedlanguages — table of available language codes
-            if (!global_is_defined("__installedlanguages")) {
-                lua_pushstring(uL, "__installedlanguages");
-                lua_newtable(uL);
-                lua_pushstring(uL, "us"); lua_rawseti(uL, -2, 1);
-                lua_rawset(uL, LUA_GLOBALSINDEX);
-            }
-        }
-        {
-            if (vfs.file_exists("/lua/globalInit.lua")) {
-                auto r = osc::lua::run_vfs_script(ui_lua_state.raw(),
-                                                  "/lua/globalInit.lua");
-                if (r) {
-                    spdlog::info("Loaded /lua/globalInit.lua on ui_L");
-                } else {
-                    spdlog::warn("globalInit.lua error: {}", r.error().message);
-                }
-            }
-        }
-        // (debug dump removed)
-        // 2. Load uimain.lua to define global SetupUI()
-        {
-            if (vfs.file_exists("/lua/ui/uimain.lua")) {
-                auto r = osc::lua::run_vfs_script(ui_lua_state.raw(),
-                                                  "/lua/ui/uimain.lua");
-                if (r) {
-                    spdlog::info("Loaded /lua/ui/uimain.lua");
-                } else {
-                    spdlog::warn("uimain.lua error: {}", r.error().message);
-                }
-            } else {
-                spdlog::warn("uimain.lua not found in VFS");
-            }
-        }
         // 2. Call SetupUI() (creates cursor, sets skin)
         osc::core::call_setup_ui(ui_lua_state.raw());
         // 2b. Pre-create a default profile so FA skips the profile dialog.
@@ -2101,8 +2091,10 @@ int main(int argc, char* argv[]) {
         lua_pushlightuserdata(uL, &game_state_mgr);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
+    // SetupUI already ran during the UI state's boot above; the initial
+    // transitions pass nullptr so it does not run a second time.
     if (!map_path.empty()) {
-        game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
+        game_state_mgr.transition_to(osc::GameState::GAME, nullptr);
         if (sim_lua_state) {
             lua_State* sL = sim_lua_state->raw();
             lua_pushstring(sL, "__osc_game_state_mgr");
@@ -2111,7 +2103,7 @@ int main(int argc, char* argv[]) {
         }
     } else {
         // No map: start in FRONT_END state (main menu)
-        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
+        game_state_mgr.transition_to(osc::GameState::FRONT_END, nullptr);
     }
 
     if (lobby_flow_test) {
@@ -2152,7 +2144,6 @@ int main(int argc, char* argv[]) {
             __osc_lobby_flow_after_count = GetNumRootFrames()
             __osc_lobby_flow_hosted =
                 rawget(_G, '__osc_lobby_hosting_callback_fired') == true
-                and rawget(_G, '__osc_lobby_connection_callback_fired') == true
                 and rawget(_G, '__osc_pending_host_comm') == nil
                 and __osc_lobby_flow_after_count >= __osc_lobby_flow_before_count
         )");
@@ -2177,9 +2168,6 @@ int main(int argc, char* argv[]) {
             lua_getglobal(uL, "__osc_lobby_hosting_callback_fired");
             const bool hosting_callback = lua_toboolean(uL, -1) != 0;
             lua_pop(uL, 1);
-            lua_getglobal(uL, "__osc_lobby_connection_callback_fired");
-            const bool connection_callback = lua_toboolean(uL, -1) != 0;
-            lua_pop(uL, 1);
             lua_getglobal(uL, "__osc_pending_host_comm");
             const bool pending_host_comm = !lua_isnil(uL, -1);
             lua_pop(uL, 1);
@@ -2190,9 +2178,9 @@ int main(int argc, char* argv[]) {
 
             spdlog::error(
                 "Lobby flow did not reach hosted lobby state "
-                "(ButtonSkirmish={}, HostGame={}, Hosting={}, Connection={}, pending_comm={})",
+                "(ButtonSkirmish={}, HostGame={}, Hosting={}, pending_comm={})",
                 button_type_text, host_game_called, hosting_callback,
-                connection_callback, pending_host_comm);
+                pending_host_comm);
             lobby_harness.print_report(true);
             lobby_harness.write_report_to_file("smoke_report.txt");
             lobby_harness.deactivate();
@@ -2617,6 +2605,7 @@ int main(int argc, char* argv[]) {
 
                 // Resume UI coroutines
                 ++ui_frame_count;
+                osc::lua::advance_ui_clock(ui_lua_state.raw(), dt);
                 ui_thread_manager.resume_all(ui_frame_count);
 
                 // OnBeat — UI heartbeat each frame
@@ -3190,6 +3179,7 @@ int main(int argc, char* argv[]) {
 
         spdlog::info("=== Smoke Test: Running 100 UI frame dispatches ===");
         for (int i = 0; i < 100; i++) {
+            osc::lua::advance_ui_clock(ui_lua_state.raw(), 1.0 / 60.0);
             ui_thread_manager.resume_all(static_cast<osc::u32>(i));
         }
 
@@ -3375,6 +3365,9 @@ int main(int argc, char* argv[]) {
     // ── Integration tests (require --map) ──
     if (sim_state && sim_lua_state) {
     osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
+    // UI tests run against the UI Lua state, where the UI factories live
+    // (the sim and UI states have been separate since M135c).
+    osc::test::TestContext ui_test_ctx{*sim_state, ui_lua_state, ui_lua_state.raw(), vfs, store};
     osc::test::register_test_helpers(sim_lua_state->raw());
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
@@ -3434,25 +3427,25 @@ int main(int argc, char* argv[]) {
     if (medstub_test && !map_path.empty()) osc::test::test_medstub(test_ctx);
     if (lowstub_test && !map_path.empty()) osc::test::test_lowstub(test_ctx);
     if (blend_test && !map_path.empty()) osc::test::test_blend(test_ctx);
-    if (ui_test && !map_path.empty()) osc::test::test_ui(test_ctx);
-    if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(test_ctx);
-    if (text_test && !map_path.empty()) osc::test::test_text(test_ctx);
-    if (edit_test && !map_path.empty()) osc::test::test_edit(test_ctx);
-    if (controls_test && !map_path.empty()) osc::test::test_controls(test_ctx);
-    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(test_ctx);
-    if (uirender_test && !map_path.empty()) osc::test::test_uirender(test_ctx);
-    if (font_test && !map_path.empty()) osc::test::test_font(test_ctx);
-    if (scissor_test && !map_path.empty()) osc::test::test_scissor(test_ctx);
-    if (border_render_test && !map_path.empty()) osc::test::test_border_render(test_ctx);
-    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(test_ctx);
-    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(test_ctx);
-    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(test_ctx);
-    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(test_ctx);
-    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(test_ctx);
-    if (input_test && !map_path.empty()) osc::test::test_input(test_ctx);
-    if (onframe_test && !map_path.empty()) osc::test::test_onframe(test_ctx);
-    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(test_ctx);
-    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(test_ctx);
+    if (ui_test && !map_path.empty()) osc::test::test_ui(ui_test_ctx);
+    if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(ui_test_ctx);
+    if (text_test && !map_path.empty()) osc::test::test_text(ui_test_ctx);
+    if (edit_test && !map_path.empty()) osc::test::test_edit(ui_test_ctx);
+    if (controls_test && !map_path.empty()) osc::test::test_controls(ui_test_ctx);
+    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(ui_test_ctx);
+    if (uirender_test && !map_path.empty()) osc::test::test_uirender(ui_test_ctx);
+    if (font_test && !map_path.empty()) osc::test::test_font(ui_test_ctx);
+    if (scissor_test && !map_path.empty()) osc::test::test_scissor(ui_test_ctx);
+    if (border_render_test && !map_path.empty()) osc::test::test_border_render(ui_test_ctx);
+    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(ui_test_ctx);
+    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(ui_test_ctx);
+    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(ui_test_ctx);
+    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(ui_test_ctx);
+    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(ui_test_ctx);
+    if (input_test && !map_path.empty()) osc::test::test_input(ui_test_ctx);
+    if (onframe_test && !map_path.empty()) osc::test::test_onframe(ui_test_ctx);
+    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(ui_test_ctx);
+    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(ui_test_ctx);
     if (emitter_test && !map_path.empty()) osc::test::test_emitter(test_ctx);
     if (collision_test && !map_path.empty()) osc::test::test_collision_beam(test_ctx);
     if (decalsplat_test && !map_path.empty()) osc::test::test_decal_splat(test_ctx);

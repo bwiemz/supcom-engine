@@ -58,12 +58,23 @@ std::optional<std::vector<char>> DirectoryMount::read_file(
     std::string_view relative_path) const {
     auto full_path = resolve(relative_path);
 
+    // Only regular files: on Linux an ifstream opens a directory, and its
+    // tellg() of -1 then became a SIZE_MAX allocation (an empty path
+    // resolves to the mount root).
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(full_path, ec)) {
+        return std::nullopt;
+    }
+
     std::ifstream file(full_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         return std::nullopt;
     }
 
     auto size = file.tellg();
+    if (size < 0) {
+        return std::nullopt;
+    }
     file.seekg(0, std::ios::beg);
 
     std::vector<char> buffer(static_cast<size_t>(size));

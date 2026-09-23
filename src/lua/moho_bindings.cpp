@@ -360,14 +360,29 @@ static int weapon_PlaySound(lua_State* L) {
     return 0;
 }
 
-/// Look up Blueprint.Audio[soundName] from unit table at stack index self_idx.
+/// Push the entity's blueprint table from the blueprint store (what
+/// GetBlueprint returns). Engine code reads blueprints this way, never through
+/// self.Blueprint: that is a field FAF's scripts set and retail's do not.
+/// Pushes nothing and returns false when the entity has no blueprint.
+static bool push_entity_blueprint(lua_State* L, const sim::Entity* e) {
+    if (!e || e->blueprint_id().empty()) return false;
+    auto* store = LuaState::get_blueprint_store(L);
+    if (!store) return false;
+    auto* entry = store->find(e->blueprint_id());
+    if (!entry) return false;
+    store->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
+/// Look up Blueprint.Audio[soundName] for entity e.
 /// On success pushes 3 values (Blueprint, Audio, audioEntry) and returns true.
 /// On failure pops any partial pushes and returns false.
-static bool lookup_blueprint_audio(lua_State* L, int self_idx, int sound_arg) {
+static bool lookup_blueprint_audio(lua_State* L, const sim::Entity* e,
+                                   int sound_arg) {
     if (lua_type(L, sound_arg) != LUA_TSTRING) return false;
-    lua_pushstring(L, "Blueprint");
-    lua_rawget(L, self_idx);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
+    if (!push_entity_blueprint(L, e)) return false;
     lua_pushstring(L, "Audio");
     lua_rawget(L, -2);
     if (!lua_istable(L, -1)) { lua_pop(L, 2); return false; }
@@ -383,7 +398,7 @@ static int unit_PlayUnitSound(lua_State* L) {
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
     int audio_idx = lua_gettop(L);
@@ -406,7 +421,7 @@ static int unit_PlayUnitAmbientSound(lua_State* L) {
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
     int audio_idx = lua_gettop(L);
@@ -695,25 +710,7 @@ static int entity_GetArmy(lua_State* L) {
 }
 
 static int entity_GetBlueprint(lua_State* L) {
-    auto* e = check_entity(L);
-    if (!e || e->blueprint_id().empty()) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    auto* store = LuaState::get_blueprint_store(L);
-    if (!store) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    auto* entry = store->find(e->blueprint_id());
-    if (!entry) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    store->push_lua_table(*entry, L);
+    if (!push_entity_blueprint(L, check_entity(L))) lua_pushnil(L);
     return 1;
 }
 
@@ -2563,33 +2560,26 @@ static int unit_CreateEnhancement(lua_State* L) {
     if (!u) return 0;
     const char* name = luaL_checkstring(L, 2);
 
-    // Read Slot from self.Blueprint.Enhancements[name]
-    if (u->lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
-        int self_tbl = lua_gettop(L);
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
+    // Read Slot from Blueprint.Enhancements[name]
+    if (push_entity_blueprint(L, u)) {
+        lua_pushstring(L, "Enhancements");
+        lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Enhancements");
+            lua_pushstring(L, name);
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
-                lua_pushstring(L, name);
+                lua_pushstring(L, "Slot");
                 lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Slot");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string slot = lua_tostring(L, -1);
-                        u->add_enhancement(slot, name);
-                    }
-                    lua_pop(L, 1); // Slot
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    std::string slot = lua_tostring(L, -1);
+                    u->add_enhancement(slot, name);
                 }
-                lua_pop(L, 1); // enh entry
+                lua_pop(L, 1); // Slot
             }
-            lua_pop(L, 1); // Enhancements
+            lua_pop(L, 1); // enh entry
         }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
+        lua_pop(L, 1); // Enhancements
+        lua_pop(L, 1); // blueprint
     }
     return 0;
 }
@@ -2759,25 +2749,17 @@ static int unit_CanBuild(lua_State* L) {
     const char* target_bp = luaL_checkstring(L, 2);
     if (!target_bp) { lua_pushboolean(L, 0); return 1; }
 
-    // Collect target blueprint's categories
-    std::set<std::string> target_cats;
+    // Collect target blueprint's categories (retail list or FAF hash). The
+    // old loop lua_tostring'd the list's numeric keys in place, which broke
+    // lua_next ("invalid key for `next'") and collected indices, not names.
+    std::unordered_set<std::string> target_cats;
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
         lua_pushstring(L, target_bp);
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Categories");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushnil(L);
-                while (lua_next(L, -2) != 0) {
-                    lua_pop(L, 1); // pop value
-                    if (lua_isstring(L, -1))
-                        target_cats.insert(lua_tostring(L, -1));
-                }
-            }
-            lua_pop(L, 1); // Categories
+            sim::collect_blueprint_categories(L, lua_gettop(L), target_cats);
         }
         lua_pop(L, 1); // target bp table
     }
@@ -3476,9 +3458,18 @@ static int unit_GetXPValue(lua_State* L) {
 
 // --- Cloak / Stealth / AutoMode / DeathWeapon bindings ---
 
+// EnableCloak/EnableStealth/EnableSonarStealth are not Moho methods (the
+// retail binary has no such names); scripts calling them mean "make this
+// unit stealthy", so they grant the intel rather than following
+// EnableIntel's has-it-already rule.
+static void grant_intel(sim::Unit* u, const char* type) {
+    if (!u) return;
+    u->add_intel(type, 0.0f);
+    u->enable_intel(type);
+}
+
 static int unit_EnableCloak(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("Cloak");
+    grant_intel(check_unit(L), "Cloak");
     return 0;
 }
 static int unit_DisableCloak(lua_State* L) {
@@ -3492,8 +3483,7 @@ static int unit_IsUnitCloaked(lua_State* L) {
     return 1;
 }
 static int unit_EnableStealth(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("RadarStealth");
+    grant_intel(check_unit(L), "RadarStealth");
     return 0;
 }
 static int unit_DisableStealth(lua_State* L) {
@@ -3502,8 +3492,7 @@ static int unit_DisableStealth(lua_State* L) {
     return 0;
 }
 static int unit_EnableSonarStealth(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("SonarStealth");
+    grant_intel(check_unit(L), "SonarStealth");
     return 0;
 }
 static int unit_DisableSonarStealth(lua_State* L) {
@@ -7627,11 +7616,10 @@ static int brain_GiveStorage(lua_State* L) {
     if (lua_type(L, 2) != LUA_TSTRING) return 0;
     std::string type = lua_tostring(L, 2);
     f64 amount = lua_tonumber(L, 3);
-    if (amount <= 0) return 0; // guard: storage can only increase via GiveStorage
     if (type == "MASS" || type == "Mass")
-        brain->economy().mass.max_storage += amount;
+        brain->give_storage(amount, 0.0);
     else if (type == "ENERGY" || type == "Energy")
-        brain->economy().energy.max_storage += amount;
+        brain->give_storage(0.0, amount);
     return 0;
 }
 
@@ -7812,17 +7800,6 @@ static const MethodEntry shield_methods[] = {
 // ---------------------------------------------------------------------------
 
 // Helper: extract entity from blip table (same _c_object pattern as check_entity)
-static sim::Entity* check_blip_entity(lua_State* L) {
-    if (!lua_istable(L, 1)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, 1);
-    auto* entity = lua_isuserdata(L, -1)
-                       ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                       : nullptr;
-    lua_pop(L, 1);
-    return entity;
-}
-
 /// Read _c_entity_id from blip table (arg 1).
 static u32 get_blip_entity_id(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
@@ -7831,6 +7808,16 @@ static u32 get_blip_entity_id(lua_State* L) {
     u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
     lua_pop(L, 1);
     return id;
+}
+
+/// The live entity behind a blip, or nullptr. Resolved by id: AI scripts
+/// keep blips across ticks, and the entity may be gone.
+static sim::Entity* check_blip_entity(lua_State* L) {
+    auto* sim = get_sim(L);
+    const u32 id = get_blip_entity_id(L);
+    if (!sim || id == 0) return nullptr;
+    auto* e = sim->entity_registry().find(id);
+    return (e && !e->destroyed()) ? e : nullptr;
 }
 
 /// Read _c_req_army from blip table (arg 1). Returns 0-based army, -1 if absent.
@@ -12118,11 +12105,6 @@ static int worldview_ZoomScale(lua_State* L) {
 }
 
 /// worldview:HitTest(x, y) — always returns true (the world view covers its area)
-static int worldview_HitTest(lua_State* L) {
-    lua_pushboolean(L, 1);
-    return 1;
-}
-
 /// worldview:Register(cameraName, terrain, ...) — associate with renderer camera/terrain
 static int worldview_Register(lua_State* L) {
     auto* wv = check_world_view(L);
@@ -12207,7 +12189,6 @@ static const MethodEntry ui_worldview_methods[] = {
     {"GetScreenPos",               worldview_GetScreenPos},
     {"GetsGlobalCameraCommands",   worldview_GetsGlobalCameraCommands},
     {"HasHighlightCommand",        worldview_HasHighlightCommand},
-    {"HitTest",                    worldview_HitTest},
     {"IsCartographic",             worldview_IsCartographic},
     {"IsInputLocked",              worldview_IsInputLocked},
     {"IsResourceRenderingEnabled", worldview_IsResourceRenderingEnabled},
@@ -12613,15 +12594,13 @@ static int lobby_HostGame(lua_State* L) {
             "  if LobbyComm and LobbyComm.quietTimeout == nil then LobbyComm.quietTimeout = 30000 end\n"
             "  rawset(_G, '__osc_pending_host_comm', nil)\n"
             "  rawset(_G, '__osc_pending_host_name', nil)\n"
-            "  -- Fire Hosting callback first (creates HostUtils, adds host to slot 1)\n"
+            "  -- Hosting() is the host's only callback: it takes slot 1 and\n"
+            "  -- builds the lobby UI (retail and FAF alike). ConnectionToHost-\n"
+            "  -- Established is for joining clients; firing it on the host made\n"
+            "  -- the lobby add the host again as a remote player.\n"
             "  if comm and comm.Hosting then\n"
             "    comm:Hosting()\n"
             "    rawset(_G, '__osc_lobby_hosting_callback_fired', true)\n"
-            "  end\n"
-            "  -- Then fire ConnectionToHostEstablished (creates the lobby UI)\n"
-            "  if comm and comm.ConnectionToHostEstablished then\n"
-            "    comm:ConnectionToHostEstablished(1, name, 1)\n"
-            "    rawset(_G, '__osc_lobby_connection_callback_fired', true)\n"
             "  end\n"
             "end)\n";
         if (luaL_loadbuffer(L, code, std::strlen(code), "=HostGame") == 0) {
@@ -12743,6 +12722,15 @@ static int lobby_SendData(lua_State* L) {
     return 0;
 }
 
+// Steam-build lobby methods (retail FA 3599 on Steam). UpdateSteamLobby
+// publishes lobby metadata to Steam matchmaking: offline, nothing to publish.
+// JoinSteamGame joins through a Steam lobby id; with no Steam backend it is
+// the regular JoinGame.
+static int lobby_UpdateSteamLobby(lua_State* L) { // stub: no Steam backend
+    (void)L;
+    return 0;
+}
+
 static const MethodEntry ui_lobby_methods[] = {
     {"BroadcastData",       lobby_BroadcastData},
     {"ConnectToPeer",       lobby_ConnectToPeer},
@@ -12762,6 +12750,8 @@ static const MethodEntry ui_lobby_methods[] = {
     {"MakeValidGameName",   lobby_MakeValidGameName},
     {"MakeValidPlayerName", lobby_MakeValidPlayerName},
     {"SendData",            lobby_SendData},
+    {"UpdateSteamLobby",    lobby_UpdateSteamLobby},
+    {"JoinSteamGame",       lobby_JoinGame},
     {nullptr, nullptr},
 };
 
@@ -13078,28 +13068,30 @@ static const MohoClassDef moho_classes[] = {
     {"FootPlantManipulator",    empty_methods,                  "manipulator_methods"},
     {"CollisionManipulator",    collision_manipulator_methods,   "manipulator_methods"},
 
-    // UI classes — M71: control/group/frame are real, rest are stubs
-    // Base class inheritance is nullptr — FA's ClassUI(moho.xxx_methods, Control)
-    // handles inheritance on the Lua side. C++-side base refs would cause
-    // "ambiguous field" errors in ClassUI when both moho and Control have SetAlpha etc.
+    // UI classes. As in Moho, the controls derive from control_methods
+    // ([1] = base, per FAF's engine annotations): globalInit's class
+    // conversion (retail ConvertCClassToLuaClass, FAF's flattening
+    // ConvertCClassToLuaSimplifiedClass) folds the base in, and both class
+    // systems resolve Class(moho.bitmap_methods, Control) through the
+    // hierarchy -- Control's Lua overrides win over the C base's.
     {"control_methods",         ui_control_methods, nullptr},
-    {"group_methods",           ui_group_methods,  nullptr},
-    {"frame_methods",           ui_frame_methods,  nullptr},
-    {"bitmap_methods",          ui_bitmap_methods,  nullptr},
-    {"border_methods",          ui_border_methods,  nullptr},
+    {"group_methods",           ui_group_methods,  "control_methods"},
+    {"frame_methods",           ui_frame_methods,  "control_methods"},
+    {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
+    {"border_methods",          ui_border_methods,  "control_methods"},
     {"cursor_methods",          ui_cursor_methods,  nullptr},
     {"discovery_service_methods", ui_discovery_methods, nullptr},
     {"dragger_methods",         ui_dragger_methods,  nullptr},
-    {"edit_methods",            ui_edit_methods,  nullptr},
-    {"histogram_methods",       ui_histogram_methods,  nullptr},
-    {"item_list_methods",       ui_item_list_methods,  nullptr},
+    {"edit_methods",            ui_edit_methods,  "control_methods"},
+    {"histogram_methods",       ui_histogram_methods,  "control_methods"},
+    {"item_list_methods",       ui_item_list_methods,  "control_methods"},
     {"lobby_methods",           ui_lobby_methods,  nullptr},
-    {"mesh_methods",            empty_methods,  nullptr},
-    {"movie_methods",           ui_movie_methods,  nullptr},
-    {"ui_map_preview_methods",  ui_map_preview_methods, nullptr},
-    {"scrollbar_methods",       ui_scrollbar_methods,  nullptr},
-    {"text_methods",            ui_text_methods,  nullptr},
-    {"UIWorldView",             ui_worldview_methods,  nullptr},
+    {"mesh_methods",            empty_methods,  "control_methods"},
+    {"movie_methods",           ui_movie_methods,  "control_methods"},
+    {"ui_map_preview_methods",  ui_map_preview_methods, "control_methods"},
+    {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
+    {"text_methods",            ui_text_methods,  "control_methods"},
+    {"UIWorldView",             ui_worldview_methods,  "control_methods"},
     {"camera_methods",          camera_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
@@ -14565,11 +14557,31 @@ static int l_GetSimRate(lua_State* L) {
 }
 
 /// CurrentTime() → number (wall-clock seconds for UI animations)
+// The UI clock: seconds of UI frame time, advanced once per UI frame by
+// advance_ui_clock(). CurrentTime() reads it, so UI scripts' timing (retail
+// userInit's WaitSeconds polls CurrentTime) follows frames: real time in the
+// window, a fixed step in headless pumps, which outrun the wall clock.
+static constexpr const char* kUiClockKey = "__osc_ui_clock";
+
+void advance_ui_clock(lua_State* L, double dt) {
+    lua_pushstring(L, kUiClockKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const double now = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0.0;
+    lua_pop(L, 1);
+    lua_pushstring(L, kUiClockKey);
+    lua_pushnumber(L, now + dt);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 static int l_CurrentTime(lua_State* L) {
+    lua_pushstring(L, kUiClockKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) return 1;
+    lua_pop(L, 1);
+    // No frames yet: time since start.
     using namespace std::chrono;
-    auto now = high_resolution_clock::now().time_since_epoch();
-    double secs = duration<double>(now).count();
-    lua_pushnumber(L, secs);
+    static const auto start = steady_clock::now();
+    lua_pushnumber(L, duration<double>(steady_clock::now() - start).count());
     return 1;
 }
 

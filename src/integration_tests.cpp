@@ -63,10 +63,41 @@ static int l_test_acu_id(lua_State* L) {
     return 1;
 }
 
+// __osc_test_find_unit(bp_id [, army]) -> the live unit of that blueprint
+// with the lowest entity id, or nil. Retail spends the low ids on props and
+// deposits, so tests must not scan a fixed id range for what they built.
+static int l_test_find_unit(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    const std::string bp = luaL_checkstring(L, 1);
+    const bool any_army = !lua_isnumber(L, 2);
+    const i32 army = any_army ? -1 : static_cast<i32>(lua_tonumber(L, 2)) - 1;
+    const sim::Entity* best = nullptr;
+    if (sim) {
+        sim->entity_registry().for_each([&](sim::Entity& e) {
+            if (!e.is_unit() || e.destroyed() || e.lua_table_ref() < 0) return;
+            if (!any_army && e.army() != army) return;
+            if (static_cast<sim::Unit&>(e).unit_id() != bp) return;
+            if (!best || e.entity_id() < best->entity_id()) best = &e;
+        });
+    }
+    if (best) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, best->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
 void register_test_helpers(lua_State* L) {
     lua_pushstring(L, "__osc_test_acu_id");
     lua_pushcfunction(L, l_test_acu_id);
     lua_rawset(L, LUA_GLOBALSINDEX); // rawset: config.lua locks globals
+    lua_pushstring(L, "__osc_test_find_unit");
+    lua_pushcfunction(L, l_test_find_unit);
+    lua_rawset(L, LUA_GLOBALSINDEX);
 
     // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or false: the free
     // site for `bp` nearest `near`, via FindPlaceToBuild over a 2-unit grid
@@ -1228,16 +1259,7 @@ void test_repair(TestContext& ctx) {
 
             -- Find the pgen
             local pgen = nil
-            for id = 2, 200 do
-                local e = GetEntityById(id)
-                if e and not IsDestroyed(e) then
-                    local ok, uid = pcall(function() return e:GetUnitId() end)
-                    if ok and uid == 'ueb1101' then
-                        pgen = e
-                        break
-                    end
-                end
-            end
+            pgen = __osc_test_find_unit('ueb1101')
 
             if not pgen then
                 LOG('REPAIR TEST FAILED: pgen not found after build')
@@ -1337,16 +1359,7 @@ void test_upgrade(TestContext& ctx) {
 
             -- Find the T1 mex
             local mex = nil
-            for id = 2, 200 do
-                local e = GetEntityById(id)
-                if e and not IsDestroyed(e) then
-                    local ok, uid = pcall(function() return e:GetUnitId() end)
-                    if ok and uid == 'ueb1103' then
-                        mex = e
-                        break
-                    end
-                end
-            end
+            mex = __osc_test_find_unit('ueb1103')
 
             if not mex then
                 LOG('UPGRADE TEST FAILED: T1 mex not found after build')
@@ -1377,16 +1390,7 @@ void test_upgrade(TestContext& ctx) {
                 WaitTicks(5)
 
                 -- Check for a T2 mex entity
-                for id = 2, 200 do
-                    local e = GetEntityById(id)
-                    if e and not IsDestroyed(e) then
-                        local ok, uid = pcall(function() return e:GetUnitId() end)
-                        if ok and uid == 'ueb1202' then
-                            t2_mex = e
-                            break
-                        end
-                    end
-                end
+                t2_mex = __osc_test_find_unit('ueb1202')
 
                 if t2_mex and t2_mex:GetFractionComplete() >= 1.0 then
                     LOG('Upgrade test: T2 mex #' .. t2_mex:GetEntityId() ..
@@ -1465,16 +1469,7 @@ void test_capture(TestContext& ctx) {
 
             -- Find the pgen
             local enemy_pgen = nil
-            for id = 2, 200 do
-                local e = GetEntityById(id)
-                if e and not IsDestroyed(e) then
-                    local ok, uid = pcall(function() return e:GetUnitId() end)
-                    if ok and uid == 'ueb1101' then
-                        enemy_pgen = e
-                        break
-                    end
-                end
-            end
+            enemy_pgen = __osc_test_find_unit('ueb1101')
 
             if not enemy_pgen then
                 LOG('CAPTURE TEST FAILED: pgen not found after build')
@@ -1880,10 +1875,14 @@ void test_toggle(TestContext& ctx) {
 void test_enhance(TestContext& ctx) {
     spdlog::info("=== Enhancement Test ===");
 
-    // Give ARMY_1 enough resources for the enhancement
+    // Give ARMY_1 enough resources for the enhancement. GiveResource clamps
+    // to storage (as in Moho), so raise storage first: the upgrade drains
+    // far more than a starting ACU produces or stores.
     ctx.lua_state.do_string(R"(
         local brain = GetArmyBrain('ARMY_1')
         if brain then
+            brain:GiveStorage('MASS', 50000)
+            brain:GiveStorage('ENERGY', 500000)
             brain:GiveResource('MASS', 50000)
             brain:GiveResource('ENERGY', 500000)
         end
@@ -2183,13 +2182,16 @@ void test_shield(TestContext& ctx) {
                 ' (expected 4000)')
         end
 
-        -- Test 5: Shield has Army and EntityId
-        if shield.Army and shield.EntityId then
-            LOG('SHIELD TEST 5 PASSED: Army=' .. tostring(shield.Army) ..
-                ' EntityId=' .. tostring(shield.EntityId))
+        -- Test 5: the shield entity belongs to its owner's army. Asked of the
+        -- engine: shield.Army is a FAF script field retail never sets.
+        local shieldArmy = shield:GetArmy()
+        local shieldId = shield:GetEntityId()
+        if shieldArmy == acu:GetArmy() and shieldId then
+            LOG('SHIELD TEST 5 PASSED: Army=' .. tostring(shieldArmy) ..
+                ' EntityId=' .. tostring(shieldId))
         else
-            LOG('SHIELD TEST 5 FAILED: Army=' .. tostring(shield.Army) ..
-                ' EntityId=' .. tostring(shield.EntityId))
+            LOG('SHIELD TEST 5 FAILED: Army=' .. tostring(shieldArmy) ..
+                ' EntityId=' .. tostring(shieldId))
         end
 
         -- Test 6: Shield Owner reference
@@ -2214,11 +2216,13 @@ void test_shield(TestContext& ctx) {
             LOG('SHIELD TEST 7b FAILED: EnableShield error: ' .. tostring(enableErr))
         end
 
-        -- Test 8: Shield ShieldType is set
-        if shield.ShieldType then
-            LOG('SHIELD TEST 8 PASSED: ShieldType=' .. tostring(shield.ShieldType))
+        -- Test 8: EnableShield put the shield script back in its on state
+        -- (IsOn is state-dependent in both retail and FAF shield.lua;
+        -- FAF's ShieldType field has no retail counterpart).
+        if shield:IsOn() then
+            LOG('SHIELD TEST 8 PASSED: shield is on after EnableShield')
         else
-            LOG('SHIELD TEST 8 FAILED: ShieldType is nil')
+            LOG('SHIELD TEST 8 FAILED: shield:IsOn() false after EnableShield')
         end
 
         LOG('SHIELD TEST: ALL CORE TESTS PASSED')
@@ -3209,14 +3213,15 @@ void test_stub(TestContext& ctx) {
                 LOG('STUB TEST 7 FAILED: ShieldIsOn=true for unit without shield')
             end
 
-            -- Test 8: CanBuild — true for ACU (COMMAND), false for assault bot
-            local canBuild1 = acu:CanBuild('uel0001')
+            -- Test 8: CanBuild — a T1 power generator (BUILTBYCOMMANDER UEF) is
+            -- buildable by the ACU, not by an assault bot
+            local canBuild1 = acu:CanBuild('ueb1101')
             local bot = CreateUnit('uel0201', 1,
                 acu:GetPosition()[1] + 10, acu:GetPosition()[2],
                 acu:GetPosition()[3], 0, 0, 0)
             local canBuild2 = false
             if bot then
-                canBuild2 = bot:CanBuild('uel0001')
+                canBuild2 = bot:CanBuild('ueb1101')
             end
             if canBuild1 and not canBuild2 then
                 LOG('STUB TEST 8 PASSED: CanBuild ACU=true, assault bot=false')
@@ -3872,15 +3877,26 @@ void test_armor(TestContext& ctx) {
             -- Tick so it's fully built
             s:SetHealth(s, s:GetMaxHealth())
             local hp_before = s:GetHealth()
-            -- Deal 1000 Overcharge damage (Structure armor = 0.25x)
+            -- The multiplier the loaded armor data gives (retail and FAF differ, e.g.
+            -- Structure/Overcharge is 0.066666 in retail, 0.25 in FAF).
+            local function data_mult(armor, damage)
+                for _, def in rawget(_G, 'armordefinition') or {} do
+                    if def[1] == armor then
+                        for i = 2, table.getn(def) do
+                            local _, _, name, v = string.find(def[i], '^(%S+)%s+([%d%.]+)$')
+                            if name == damage then return tonumber(v) end
+                        end
+                    end
+                end
+            end
+            local expected = 1000 * (data_mult('Structure', 'Overcharge') or 1)
             Damage(s, s, 1000, nil, 'Overcharge')
             local hp_after = s:GetHealth()
             local lost = hp_before - hp_after
-            -- Expected: 1000 * 0.25 = 250
-            if math.abs(lost - 250) < 1 then
-                LOG('Armor test 2: PASS - Overcharge on Structure = ' .. lost .. ' (0.25x)')
+            if expected < 1000 and math.abs(lost - expected) < 1 then
+                LOG('Armor test 2: PASS - Overcharge on Structure = ' .. lost)
             else
-                WARN('Armor test 2: FAIL - expected ~250, got ' .. lost)
+                WARN('Armor test 2: FAIL - expected ~' .. expected .. ', got ' .. lost)
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 2: Structure takes 0.25x Overcharge"); }
@@ -3935,10 +3951,23 @@ void test_armor(TestContext& ctx) {
             local s = CreateUnitHPR('ueb1103', 1, 300, 25, 300, 0, 0, 0)
             if not s then WARN('Armor test 5: FAIL - no structure'); return end
             local mult = s:GetArmorMult('Overcharge')
-            if math.abs(mult - 0.25) < 0.01 then
+            -- The multiplier the loaded armor data gives (retail and FAF differ, e.g.
+            -- Structure/Overcharge is 0.066666 in retail, 0.25 in FAF).
+            local function data_mult(armor, damage)
+                for _, def in rawget(_G, 'armordefinition') or {} do
+                    if def[1] == armor then
+                        for i = 2, table.getn(def) do
+                            local _, _, name, v = string.find(def[i], '^(%S+)%s+([%d%.]+)$')
+                            if name == damage then return tonumber(v) end
+                        end
+                    end
+                end
+            end
+            local expected = data_mult('Structure', 'Overcharge')
+            if expected and expected < 1 and math.abs(mult - expected) < 0.001 then
                 LOG('Armor test 5: PASS - GetArmorMult(Overcharge) = ' .. mult)
             else
-                WARN('Armor test 5: FAIL - expected 0.25, got ' .. tostring(mult))
+                WARN('Armor test 5: FAIL - expected ' .. tostring(expected) .. ', got ' .. tostring(mult))
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 5: GetArmorMult returns correct multiplier"); }
@@ -4593,14 +4622,10 @@ void test_layercap(TestContext& ctx) {
         "local w = u:GetWeapon(1)\n"
         "if not w then error('entity 1 has no weapon') end\n"
         "w:ChangeMaxRadius(999)\n"  // ensure range covers the whole map
-        "local enemy = nil\n"
-        "for i = 2, 20 do\n"
-        "    local e = GetEntityById(i)\n"
-        "    if e and e:GetArmy() ~= u:GetArmy() then\n"
-        "        enemy = e\n"
-        "        break\n"
-        "    end\n"
-        "end\n"
+        // A visible enemy beside the ACU: army 2's own ACU is under fog of
+        // war across the map, and fogged units are not weapon targets.
+        "local p = u:GetPosition()\n"
+        "local enemy = CreateUnitHPR('uel0106', 2, p[1] + 12, p[2], p[3], 0, 0, 0)\n"
         "if not enemy then error('no enemy found') end\n"
         "rawset(_G, '__lc_weapon_ref', w)\n"
         "rawset(_G, '__lc_enemy_ref', enemy)\n");
@@ -4750,14 +4775,7 @@ void test_massstub(TestContext& ctx) {
             "w:SetFireTargetLayerCaps('Land|Water|Air|Sub|Seabed')\n"
             "w:ChangeMaxRadius(999)\n"
             // Find an enemy and force-fire
-            "local enemy = nil\n"
-            "for i = 2, 20 do\n"
-            "    local e = GetEntityById(i)\n"
-            "    if e and e:GetArmy() ~= u:GetArmy() then\n"
-            "        enemy = e\n"
-            "        break\n"
-            "    end\n"
-            "end\n"
+            "local enemy = GetEntityById(__osc_test_acu_id(2)) -- army 2's ACU\n"
             "if not enemy then error('no enemy found') end\n"
             "w:SetTargetEntity(enemy)\n");
         if (!r) {
@@ -4851,14 +4869,7 @@ void test_massstub2(TestContext& ctx) {
             "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local hp_before = u:GetHealth()\n"
             // First, damage while can_take_damage is true to verify GetAttacker
-            "local enemy = nil\n"
-            "for i = 2, 20 do\n"
-            "    local e = GetEntityById(i)\n"
-            "    if e and e:GetArmy() ~= u:GetArmy() then\n"
-            "        enemy = e\n"
-            "        break\n"
-            "    end\n"
-            "end\n"
+            "local enemy = GetEntityById(__osc_test_acu_id(2)) -- army 2's ACU\n"
             "if not enemy then error('no enemy found') end\n"
             "Damage(enemy, u, 10, 'Normal')\n"
             "local hp_after = u:GetHealth()\n"
@@ -4878,14 +4889,15 @@ void test_massstub2(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
-    // Test 2: Kill flag — SetCanBeKilled(false) blocks Destroy()
+    // Test 2: Kill flag — SetCanBeKilled(false) blocks Kill() (not Destroy(),
+    // which in Moho always frees the entity)
     {
         auto r = ctx.lua_state.do_string(
             "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local hp_before = u:GetHealth()\n"
             "u:SetCanBeKilled(false)\n"
-            "u:Destroy()\n"  // should be blocked by can_be_killed guard
-            "-- If we get here, Destroy was blocked (entity still alive)\n"
+            "u:Kill()\n"  // blocked: the unit must neither die nor lose health
+            "if u:BeenDestroyed() or u.Dead then error('Kill was not blocked') end\n"
             "local hp = u:GetHealth()\n"
             "if hp ~= hp_before then error('HP should be unchanged, was ' .. hp_before .. ' now ' .. hp) end\n"
             "u:SetCanBeKilled(true)\n"  // restore
@@ -6570,17 +6582,20 @@ void test_unitsound(TestContext& ctx) {
     }
     spdlog::info("Using entity #{} for unit sound tests", test_id);
 
-    // Inject test audio entries into the unit's Blueprint.Audio
+    // Inject test audio entries into the unit's blueprint Audio table. The
+    // engine reads the blueprint from the store (GetBlueprint); e.Blueprint
+    // is a FAF script field retail units don't have.
     std::string id_str = std::to_string(test_id);
     auto inject = ctx.lua_state.do_string(
         "local e = GetEntityById(" + id_str + ")\n"
         "if not e then error('inject: entity not found') end\n"
-        "if not e.Blueprint then error('inject: no Blueprint') end\n"
-        "if not e.Blueprint.Audio then e.Blueprint.Audio = {} end\n"
-        "e.Blueprint.Audio['TestOneShot'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['TestAmbient'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['Ambient1']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['Ambient2']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n");
+        "local bp = e:GetBlueprint()\n"
+        "if not bp then error('inject: no blueprint') end\n"
+        "if not bp.Audio then bp.Audio = {} end\n"
+        "bp.Audio['TestOneShot'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['TestAmbient'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['Ambient1']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['Ambient2']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n");
     if (!inject) {
         osc::test_status::fail("[FAIL] Audio inject: {}", inject.error().message);
         return;
@@ -8254,7 +8269,7 @@ void test_controls(TestContext& ctx) {
             "local m = {}\n"
             "setmetatable(m, {__index = moho.movie_methods})\n"
             "InternalCreateMovie(m, test_frame)\n"
-            "local ok1 = m:InternalSet('/movies/intro.sfd')\n"
+            "local ok1 = m:InternalSet('/movies/fmv_scx_intro.sfd') -- ships with FA (retail and FAF)\n"
             "m:Play()\n"
             "m:Stop()\n"
             "return ok1 == true\n");
@@ -12309,19 +12324,19 @@ void test_commands(TestContext& ctx) {
         ctx.sim.tick();
     }
 
-    // Test 5: IssueTeleport moves unit
+    // Test 5: IssueTeleport moves unit. The script charges the teleport
+    // (an energy drain sized from the unit's cost) and warps at the end, so
+    // use a cheap unit and give it a few ticks.
     {
         auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "if not u then error('no entity') end\n"
-            "local p = u:GetPosition()\n"
-            "rawset(_G, '_cmd5_oldx', p[1])\n"
-            "rawset(_G, '_cmd5_oldz', p[3])\n"
-            "IssueTeleport({u}, {200, 25, 300})\n").c_str());
+            "local u = CreateUnitHPR('uel0105', 1, 150, 25, 150, 0, 0, 0)\n"
+            "if not u then error('no engineer') end\n"
+            "rawset(_G, '_cmd5_unit', u)\n"
+            "IssueTeleport({u}, {200, 25, 300})\n");
         if (r) {
-            ctx.sim.tick();
+            for (int t = 0; t < 40; ++t) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                ("local u = GetEntityById(" + u1 + ")\n"
+                std::string("local u = rawget(_G, '_cmd5_unit')\n"
                 "local p = u:GetPosition()\n"
                 "if math.abs(p[1] - 200) < 1 and math.abs(p[3] - 300) < 1 then\n"
                 "    LOG('cmd test 5: PASS')\n"

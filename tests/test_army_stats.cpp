@@ -55,12 +55,71 @@ TEST_CASE("ArmyBrain explicit color state", "[army][color]") {
 
 TEST_CASE("Cloak intel drives cloak flag", "[cloak][economy]") {
     osc::sim::Unit unit;
+    unit.add_intel("Cloak", 0.0f);
+    REQUIRE_FALSE(unit.is_cloaked()); // blueprint intel starts off
 
     unit.enable_intel("Cloak");
     REQUIRE(unit.is_cloaked());
 
     unit.disable_intel("Cloak");
     REQUIRE_FALSE(unit.is_cloaked());
+}
+
+TEST_CASE("GiveStorage survives the per-tick storage recount", "[army][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+
+    auto unit = std::make_unique<osc::sim::Unit>();
+    unit->set_army(0);
+    unit->economy().storage_energy = 4000.0;
+    registry.register_entity(std::move(unit));
+
+    brain.update_economy(registry, 0.1);
+    const double base = brain.economy().energy.max_storage;
+    REQUIRE(base == 4200.0); // 200 army base + the unit's storage
+
+    brain.give_storage(0.0, 10000.0);
+    // Usable at once: storage can be filled before the next economy tick.
+    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
+    brain.update_economy(registry, 0.1);
+    brain.update_economy(registry, 0.1);
+    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
+    REQUIRE(brain.economy().mass.max_storage == 200.0);
+
+    // Negative or zero amounts never shrink storage.
+    brain.give_storage(-500.0, 0.0);
+    brain.update_economy(registry, 0.1);
+    REQUIRE(brain.economy().mass.max_storage == 200.0);
+}
+
+TEST_CASE("EnableIntel only enables intel the unit has", "[intel]") {
+    // Retail SetupIntel calls EnableIntel for every intel type it knows
+    // (Radar, Sonar, Omni, Cloak, stealth, Jammer, ...) and checks
+    // IsIntelEnabled afterwards: in Moho the call does nothing for intel the
+    // unit lacks. Enabling it anyway cloaked and stealthed every unit.
+    osc::sim::Unit unit;
+    unit.init_intel("Vision", 26.0f);
+    unit.add_intel("RadarStealth", 0.0f);
+
+    for (const char* intel : {"Radar", "Omni", "Cloak", "RadarStealth",
+                              "SonarStealth", "Jammer"}) {
+        unit.enable_intel(intel);
+    }
+    REQUIRE(unit.is_intel_enabled("Vision"));
+    REQUIRE(unit.is_intel_enabled("RadarStealth"));
+    REQUIRE(unit.has_radar_stealth());
+    REQUIRE_FALSE(unit.is_intel_enabled("Cloak"));
+    REQUIRE_FALSE(unit.is_cloaked());
+    REQUIRE_FALSE(unit.is_intel_enabled("SonarStealth"));
+    REQUIRE_FALSE(unit.has_sonar_stealth());
+    REQUIRE_FALSE(unit.is_intel_enabled("Radar"));
+    REQUIRE_FALSE(unit.is_intel_enabled("Jammer"));
+
+    // add_intel never resets intel the unit already has.
+    unit.add_intel("Vision", 5.0f);
+    REQUIRE(unit.is_intel_enabled("Vision"));
+    REQUIRE(unit.get_intel_radius("Vision") == 26.0f);
 }
 
 TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
@@ -71,8 +130,7 @@ TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
 
     auto cloaked = std::make_unique<osc::sim::Unit>();
     cloaked->set_army(0);
-    cloaked->set_cloaked(true);
-    cloaked->enable_intel("Cloak");
+    cloaked->init_intel("Cloak", 0.0f);
     cloaked->economy().maintenance_active = true;
     cloaked->economy().energy_maintenance_override = 100.0;
     auto unit_id = registry.register_entity(std::move(cloaked));
@@ -99,7 +157,7 @@ TEST_CASE("Energy stall disables active intel maintenance toggles", "[intel][eco
              "Radar", "Sonar", "Omni", "Jammer",
              "RadarStealth", "SonarStealth", "CloakField",
          }) {
-        intel_unit->enable_intel(std::string(intel));
+        intel_unit->init_intel(std::string(intel), 10.0f);
     }
     intel_unit->economy().maintenance_active = true;
     intel_unit->economy().energy_maintenance_override = 100.0;

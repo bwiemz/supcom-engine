@@ -58,16 +58,7 @@ void GameStateManager::set_speed(f64 s) {
 }
 
 void GameStateManager::call_setup_ui(lua_State* ui_L) {
-    lua_pushstring(ui_L, "SetupUI");
-    lua_rawget(ui_L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(ui_L, -1)) {
-        if (lua_pcall(ui_L, 0, 0, 0) != 0) {
-            spdlog::warn("SetupUI error: {}", lua_tostring(ui_L, -1));
-            lua_pop(ui_L, 1);
-        }
-    } else {
-        lua_pop(ui_L, 1);
-    }
+    osc::core::call_setup_ui(ui_L);
 }
 
 } // namespace osc

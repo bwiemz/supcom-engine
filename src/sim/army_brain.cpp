@@ -170,8 +170,8 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 energy_income = 0.0;
     f64 mass_consumption = 0.0;
     f64 energy_consumption = 0.0;
-    f64 total_storage_mass = 200.0;    // base storage
-    f64 total_storage_energy = 200.0;
+    f64 total_storage_mass = 200.0 + bonus_storage_mass_; // base + GiveStorage
+    f64 total_storage_energy = 200.0 + bonus_storage_energy_;
 
     registry.for_each([&](const Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;

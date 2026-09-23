@@ -14,6 +14,7 @@
 #include <vector>
 
 namespace osc::sim { class Manipulator; }
+namespace osc::blueprints { class BlueprintStore; }
 
 struct lua_State;
 
@@ -253,7 +254,10 @@ public:
     const std::unordered_map<std::string, std::string>& enhancements() const { return enhancements_; }
     bool is_enhancing() const { return enhancing_; }
     const std::string& enhance_name() const { return enhance_name_; }
-    bool start_enhance(const UnitCommand& cmd, lua_State* L);
+    /// Reads the enhancement from the unit's own blueprint in `store` (not
+    /// self.Blueprint, which only FAF's unit script sets).
+    bool start_enhance(const UnitCommand& cmd, lua_State* L,
+                       const blueprints::BlueprintStore* store);
     bool progress_enhance(f64 dt, lua_State* L, f32 efficiency = 1.0f);
     void finish_enhance(lua_State* L);
     void cancel_enhance(lua_State* L);
@@ -467,11 +471,19 @@ public:
     /// every Lua ref the weapons and the on-given callbacks hold. Idempotent;
     /// runs however the unit leaves the sim (entity_Destroy or C++ removal).
     void release_weapon_scripts(lua_State* L);
+    /// Hand a teleport to the script (OnTeleportUnit(self, location,
+    /// orientation)); false if the unit's class has no handler.
+    bool call_on_teleport_unit(lua_State* L, const Vector3& location);
 
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
     f32 get_intel_radius(const std::string& type) const;
+    /// InitIntel: give the unit this intel, switched on.
     void init_intel(const std::string& type, f32 radius);
+    /// Register intel the unit has (from its blueprint), switched off until
+    /// the script enables it. Leaves intel the unit already has untouched.
+    void add_intel(const std::string& type, f32 radius);
+    /// EnableIntel: a no-op for intel the unit doesn't have, as in Moho.
     void enable_intel(const std::string& type);
     void disable_intel(const std::string& type);
     void set_intel_radius(const std::string& type, f32 radius);
@@ -565,6 +577,7 @@ private:
     bool enhancing_ = false;
     f64 enhance_build_time_ = 0;
     std::string enhance_name_;
+    std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)

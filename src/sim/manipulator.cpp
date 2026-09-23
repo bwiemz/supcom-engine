@@ -210,29 +210,35 @@ void AnimManipulator::set_animation_time(f32 time) {
 }
 
 void AnimManipulator::tick(f32 dt) {
-    if (finished_ || current_anim_.empty()) return;
-    if (rate_ == 0) return;
+    if (current_anim_.empty()) return;
 
-    fraction_ += (rate_ * dt) / duration_;
+    // Only the playhead stops when the animation is finished or paused: the
+    // pose is written every tick regardless, because Unit::tick_manipulators
+    // resets all bones to identity first. Scripts rely on this to hold a
+    // pose (PlayAnim + SetRate(0) + SetAnimationFraction, or a one-shot
+    // animation left at its last frame).
+    if (!finished_ && rate_ != 0) {
+        fraction_ += (rate_ * dt) / duration_;
 
-    if (rate_ > 0) {
-        if (fraction_ >= 1.0f) {
-            if (looping_) {
-                fraction_ = std::fmod(fraction_, 1.0f);
-            } else {
-                fraction_ = 1.0f;
-                finished_ = true;
+        if (rate_ > 0) {
+            if (fraction_ >= 1.0f) {
+                if (looping_) {
+                    fraction_ = std::fmod(fraction_, 1.0f);
+                } else {
+                    fraction_ = 1.0f;
+                    finished_ = true;
+                }
             }
-        }
-    } else {
-        // Negative rate = reverse playback
-        if (fraction_ <= 0.0f) {
-            if (looping_) {
-                fraction_ = std::fmod(fraction_, 1.0f);
-                if (fraction_ < 0.0f) fraction_ += 1.0f;
-            } else {
-                fraction_ = 0.0f;
-                finished_ = true;
+        } else {
+            // Negative rate = reverse playback
+            if (fraction_ <= 0.0f) {
+                if (looping_) {
+                    fraction_ = std::fmod(fraction_, 1.0f);
+                    if (fraction_ < 0.0f) fraction_ += 1.0f;
+                } else {
+                    fraction_ = 0.0f;
+                    finished_ = true;
+                }
             }
         }
     }

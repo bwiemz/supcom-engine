@@ -22,15 +22,15 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 |---|---|
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`. |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
-| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. |
+| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. Retail's own front end boots and reaches a hosted skirmish lobby. |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 289 cases / 5,396 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
+| Unit tests (Catch2) | 290 cases / 5,401 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
-| Data-backed gate on retail (`ctest -L gate`) | 66 modes plus the `data.binding_coverage` ratchet, all passing. |
-| Data-backed modes failing on retail (`-L retail-gap`) | 34 (33 plus `lobby-flow-test`). Mostly UI tests that run against the sim state, and missing unit-script behaviour. The causes are listed in `tests/integration/data_tests.cmake`. |
+| Data-backed gate on retail (`ctest -L gate`) | All 99 modes plus the no-map lobby flow and the `data.binding_coverage` ratchet, all passing. The golden capture also matches. |
+| Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
 | Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 
 ## Verified Locally

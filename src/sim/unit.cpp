@@ -1,4 +1,5 @@
 #include "sim/unit.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
@@ -898,7 +899,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
         case CommandType::Enhance: {
             if (!enhancing_) {
-                if (!start_enhance(cmd, L)) {
+                auto* store = ctx.sim ? ctx.sim->blueprint_store() : nullptr;
+                if (!start_enhance(cmd, L, store)) {
                     command_queue_.pop_front();
                     continue;
                 }
@@ -1123,11 +1125,15 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
 
         case CommandType::Teleport: {
-            // Teleport: instant move to target position
-            // FA handles energy drain via economy events in Lua; we just move
-            set_position(cmd.target_pos);
-            call_lua_method(L, "OnTeleportUnit");
+            // Moho hands the teleport to the script: OnTeleportUnit(teleporter,
+            // location, orientation) charges it (an economy event sized from
+            // the blueprint's cost) and Warp()s the unit when it completes.
+            // Only a unit without the handler moves at once.
+            if (!call_on_teleport_unit(L, cmd.target_pos)) {
+                set_position(cmd.target_pos);
+            }
             command_queue_.pop_front();
+            if (destroyed() || !in_registry()) return;
             continue;
         }
 
@@ -2235,18 +2241,18 @@ void Unit::remove_enhancement(const std::string& enh) {
     }
 }
 
-bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
+bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L,
+                         const blueprints::BlueprintStore* store) {
     enhance_name_ = cmd.blueprint_id;
+    enhance_slot_.clear();
 
-    // Read enhancement BP from self.Blueprint.Enhancements[name]
+    // Read the enhancement from Blueprint.Enhancements[name]
     f64 enh_build_time = 0, enh_cost_mass = 0, enh_cost_energy = 0;
 
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int self_tbl = lua_gettop(L);
-
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
+    const blueprints::BlueprintEntry* entry =
+        store ? store->find(blueprint_id()) : nullptr;
+    if (entry) {
+        store->push_lua_table(*entry, L);
         if (lua_istable(L, -1)) {
             lua_pushstring(L, "Enhancements");
             lua_gettable(L, -2);
@@ -2268,13 +2274,18 @@ bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
                     lua_gettable(L, -2);
                     if (lua_isnumber(L, -1)) enh_cost_energy = lua_tonumber(L, -1);
                     lua_pop(L, 1);
+
+                    lua_pushstring(L, "Slot");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING)
+                        enhance_slot_ = lua_tostring(L, -1);
+                    lua_pop(L, 1);
                 }
                 lua_pop(L, 1); // enh entry
             }
             lua_pop(L, 1); // Enhancements
         }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
+        lua_pop(L, 1); // blueprint
     }
 
     if (enh_build_time <= 0 || build_rate_ <= 0) {
@@ -2382,34 +2393,8 @@ void Unit::finish_enhance(lua_State* L) {
         lua_pop(L, 1); // self_tbl
     }
 
-    // Also add to C++ enhancement map by reading Slot from blueprint
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int self_tbl = lua_gettop(L);
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Enhancements");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, enhance_name_.c_str());
-                lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Slot");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string slot = lua_tostring(L, -1);
-                        enhancements_[slot] = enhance_name_;
-                    }
-                    lua_pop(L, 1); // Slot
-                }
-                lua_pop(L, 1); // enh entry
-            }
-            lua_pop(L, 1); // Enhancements
-        }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
-    }
+    // Also add to the C++ enhancement map (slot read in start_enhance)
+    if (!enhance_slot_.empty()) enhancements_[enhance_slot_] = enhance_name_;
 
     spdlog::info("finish_enhance: entity #{} completed enhancement '{}'",
                  entity_id(), enhance_name_);
@@ -2475,8 +2460,14 @@ void Unit::init_intel(const std::string& type, f32 radius) {
     }
 }
 
+void Unit::add_intel(const std::string& type, f32 radius) {
+    intel_states_.try_emplace(type, IntelState{radius, false});
+}
+
 void Unit::enable_intel(const std::string& type) {
-    intel_states_[type].enabled = true;
+    auto it = intel_states_.find(type);
+    if (it == intel_states_.end()) return;
+    it->second.enabled = true;
     if (type == "Cloak") {
         set_cloaked(true);
     } else if (type == "RadarStealth") {
@@ -2633,6 +2624,43 @@ void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
 // ---------------------------------------------------------------------------
 // Lua callback helpers
 // ---------------------------------------------------------------------------
+
+bool Unit::call_on_teleport_unit(lua_State* L, const Vector3& location) {
+    if (lua_table_ref() < 0) return false;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnTeleportUnit");
+    lua_gettable(L, tbl);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return false;
+    }
+    lua_pushvalue(L, tbl); // self
+    lua_pushvalue(L, tbl); // teleporter: the unit teleports itself
+    lua_newtable(L);       // location
+    lua_pushnumber(L, location.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, location.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, location.z);
+    lua_rawseti(L, -2, 3);
+    lua_newtable(L);       // orientation: keep the current one
+    const auto& q = orientation();
+    lua_pushnumber(L, q.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, q.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, q.z);
+    lua_rawseti(L, -2, 3);
+    lua_pushnumber(L, q.w);
+    lua_rawseti(L, -2, 4);
+    if (lua_pcall(L, 4, 0, 0) != 0) {
+        spdlog::warn("OnTeleportUnit error: {}", lua_tostring(L, -1));
+    }
+    lua_settop(L, top);
+    return true;
+}
 
 void Unit::call_lua_method(lua_State* L, const char* method_name) {
     if (lua_table_ref() < 0) return;

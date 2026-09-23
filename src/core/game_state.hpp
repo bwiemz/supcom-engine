@@ -4,6 +4,8 @@
 #include "lua/smoke_test.hpp"
 #include <spdlog/spdlog.h>
 
+#include <cstring>
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -64,7 +66,34 @@ inline void call_lua_global(lua_State* L, const char* name) {
     }
 }
 
-inline void call_setup_ui(lua_State* L) { call_lua_global(L, "SetupUI"); }
+/// Push uimain's SetupUI: the global if a script defined one (FAF's
+/// doscript'ed uimain), else import('/lua/ui/uimain.lua').SetupUI as Moho
+/// calls it -- retail uimain imports module-relatively ('uiutil.lua') and
+/// only works loaded as a module. Pushes nil when neither exists.
+inline void push_setup_ui(lua_State* L) {
+    lua_pushstring(L, "SetupUI");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) return;
+    lua_pop(L, 1);
+    static const char* kImport =
+        "local ok, m = pcall(import, '/lua/ui/uimain.lua')\n"
+        "if ok and type(m) == 'table' then return m.SetupUI end\n";
+    if (luaL_loadbuffer(L, kImport, std::strlen(kImport), "=SetupUI") != 0 ||
+        lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::warn("uimain import error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+}
+
+inline void call_setup_ui(lua_State* L) {
+    push_setup_ui(L);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+    if (lua_pcall(L, 0, 0, 0) != 0) {
+        spdlog::warn("SetupUI error: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
 inline void call_start_game_ui(lua_State* L) { call_lua_global(L, "StartGameUI"); }
 inline void call_on_first_update(lua_State* L) { call_lua_global(L, "OnFirstUpdate"); }
 
