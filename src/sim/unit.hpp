@@ -8,6 +8,8 @@
 #include <array>
 #include <deque>
 #include <memory>
+#include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -251,7 +253,8 @@ public:
     bool has_enhancement(const std::string& enh) const;
     void add_enhancement(const std::string& slot, const std::string& enh);
     void remove_enhancement(const std::string& enh);
-    const std::unordered_map<std::string, std::string>& enhancements() const { return enhancements_; }
+    /// Slot -> enhancement, by slot name (scripts see them in this order).
+    const std::map<std::string, std::string>& enhancements() const { return enhancements_; }
     bool is_enhancing() const { return enhancing_; }
     const std::string& enhance_name() const { return enhance_name_; }
     /// Reads the enhancement from the unit's own blueprint in `store` (not
@@ -494,7 +497,8 @@ public:
     const std::unordered_map<std::string, IntelState>& intel_states() const { return intel_states_; }
 
     // Adjacency system
-    const std::unordered_set<u32>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
+    /// Adjacent structures in id order: their callbacks fire in this order.
+    const std::set<u32>& adjacent_unit_ids() const { return adjacent_unit_ids_; }
     void add_adjacent(u32 id) { adjacent_unit_ids_.insert(id); }
     void remove_adjacent(u32 id) { adjacent_unit_ids_.erase(id); }
     void clear_adjacents() { adjacent_unit_ids_.clear(); }
@@ -577,7 +581,7 @@ private:
     f32 sub_threat_ = 0;
     f32 economy_threat_ = 0;
     // Enhancement system
-    std::unordered_map<std::string, std::string> enhancements_; // slot → enh name
+    std::map<std::string, std::string> enhancements_; // slot → enh name
     bool enhancing_ = false;
     f64 enhance_build_time_ = 0;
     std::string enhance_name_;
@@ -612,7 +616,7 @@ private:
     i32 nuke_silo_ammo_ = 0;
     i32 tactical_silo_ammo_ = 0;
     // Adjacency system
-    std::unordered_set<u32> adjacent_unit_ids_;
+    std::set<u32> adjacent_unit_ids_;
     f32 skirt_size_x_ = 0;
     f32 skirt_size_z_ = 0;
     f32 skirt_offset_x_ = 0;
