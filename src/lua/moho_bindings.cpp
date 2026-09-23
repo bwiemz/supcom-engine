@@ -15917,7 +15917,35 @@ static int l_GetLayoutPreference(lua_State* L) {
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
+static void clear_chat_history(lua_State* L);
+
+/// SessionIsGameOver() -> whether the session has ended (the sim called
+/// EndGame, or the score screen ended it).
+static int l_SessionIsGameOver(lua_State* L) {
+    auto* sim = get_sim(L);
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, (sim && sim->game_ended()) || (mgr && mgr->sim_stopped()) ? 1 : 0);
+    return 1;
+}
+
+/// SessionEndGame() -- the score screen ends the session: this client's sim
+/// stops. It is a local UI action, so it leaves sim state alone; writing it
+/// there would diverge from the other peers.
+static int l_SessionEndGame(lua_State* L) {
+    if (auto* mgr = get_game_state_mgr(L)) mgr->stop_sim();
+    return 0;
+}
+
 static int l_ExitGame(lua_State* L) {
+    // Leaving a game (the score screen's Continue): tear the session down
+    // and return to the front end, as ReturnToLobby does.
+    if (get_sim(L)) {
+        clear_chat_history(L);
+        lua_pushstring(L, "__osc_return_to_lobby");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        return 0;
+    }
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
     auto* beat = get_beat_registry(L);
@@ -16115,10 +16143,8 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
     set_bool_fn("SessionIsObservingAllowed", false);
-    set_bool_fn("SessionIsGameOver", false);
     set_bool_fn("SessionIsBeingRecorded", false);
     set_bool_fn("SessionCanRestart", false);
-    set_stub("SessionEndGame");
     set_nil_fn("SessionGetCommandSourceNames");
     set_nil_fn("SessionGetLocalCommandSource");
     set_nil_fn("GetMouseScreenPos");
@@ -16371,6 +16397,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Exit/return (M146d)
     state.register_function("ExitGame", l_ExitGame);
+    state.register_function("SessionIsGameOver", l_SessionIsGameOver);
+    state.register_function("SessionEndGame", l_SessionEndGame);
     state.register_function("ReturnToLobby", l_ReturnToLobby);
     state.register_function("ExitApplication", l_ExitApplication);
 

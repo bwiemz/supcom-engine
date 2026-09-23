@@ -23,6 +23,7 @@
 #     gamemain.CreateUI) and the sim -> UI sync channel.
 #   M188: audio-data-test -- every retail cue resolves through the XACT
 #     data (sound banks, wave banks by internal name, global settings).
+#   M189: victory-test -- retail's victory.lua decides a game end to end.
 
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test anim-render-test anim-test armor-test audio-test
@@ -44,7 +45,7 @@ set(OSC_DATA_TESTS_GATE
     terrain-normal-test terrain-tex-test text-test threat-test
     tiled-render-test toggle-test transport-silo-test transport-test ui-test
     uiboot-test uirender-test unitsound-test upgrade-test vet-adj-render-test
-    vet-test vfx-render-test wreck-test
+    vet-test vfx-render-test victory-test wreck-test
 )
 
 set(OSC_DATA_TESTS_RETAIL_GAP

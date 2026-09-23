@@ -258,6 +258,25 @@ Result<void> SessionManager::start_session(LuaState& state,
                       begin_result.error().message);
     }
 
+    // Retail and FAF start /lua/victory.lua's CheckVictory from BeginSession
+    // (a schook hook in retail): then the scripts decide the game, as in
+    // Moho, and the engine's own adjudication stands down.
+    {
+        lua_pushstring(L, "__modules");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        bool loaded = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "/lua/victory.lua");
+            lua_rawget(L, -2);
+            loaded = !lua_isnil(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        sim.set_script_victory(loaded);
+        spdlog::info("  Victory: {}", loaded ? "the scenario's scripts decide (victory.lua)"
+                                             : "the engine decides (no victory script)");
+    }
+
     // Step 6: Ensure each non-civilian army has at least one unit (ACU).
     //         FA's OnPopulate may fail in our engine, so we create ACUs
     //         directly via the sim C++ API if they weren't spawned.

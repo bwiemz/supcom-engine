@@ -1160,6 +1160,9 @@ i32 SimState::find_share_recipient(i32 defeated_army) const {
 
 void SimState::defeat_army(i32 army) {
     if (army < 0 || static_cast<size_t>(army) >= armies_.size()) return;
+    // Once the match is decided a quiet peer is a player leaving the score
+    // screen, not a drop: the result stands.
+    if (game_ended_) return;
     auto& b = armies_[static_cast<size_t>(army)];
     if (!b || b->is_defeated()) return; // idempotent
     b->set_state(BrainState::Defeat);
@@ -1241,7 +1244,8 @@ i32 SimState::surviving_team_count() const {
 }
 
 void SimState::update_victory() {
-    if (game_ended_ || victory_mode_ == VictoryMode::Sandbox) return;
+    // The scripts' own victory check owns the outcome when it runs.
+    if (script_victory_ || game_ended_ || victory_mode_ == VictoryMode::Sandbox) return;
 
     const size_t n = armies_.size();
 

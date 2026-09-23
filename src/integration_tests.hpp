@@ -115,6 +115,15 @@ void test_onframe(TestContext& ctx);
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
                  const std::function<bool(f32, f32, bool)>& click);
+
+/// --victory-test: retail's /lua/victory.lua decides a real game. Every
+/// other army loses its commander; the script defeats them (OnDefeat ->
+/// SetArmyOutOfGame and Sync.GameResult), declares the survivor's victory
+/// after its 15 s hold, and ends the session (EndGame); the UI hears each
+/// result (DoGameResult) and NoteGameOver, and the game is not paused.
+void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_frames,
+                       const std::function<void(int)>& play,
+                       const std::function<bool(const char*)>& sim_lua);
 void test_cursor_render(TestContext& ctx);
 void test_drag_render(TestContext& ctx);
 void test_emitter(TestContext& ctx);
