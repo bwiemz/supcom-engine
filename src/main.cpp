@@ -566,7 +566,9 @@ static bool execute_reload_sequence(
     // Moho creates only those, and retail InitializeArmies spawns an ACU for
     // every army ListArmies() returns -- an army without a brain then runs
     // its commander's scripts against no brain at all.
-    size_t session_slots = 0; // highest filled slot; 0 = no lobby config
+    // Counted the way SessionManager counts them (it creates brains for the
+    // first N armies, N = filled slots), so every army gets a brain.
+    size_t session_slots = 0; // filled slots; 0 = no lobby config
     {
         lua_pushstring(uiL, "__osc_front_end_data");
         lua_rawget(uiL, LUA_REGISTRYINDEX);
@@ -582,7 +584,7 @@ static bool execute_reload_sequence(
                     const int n = luaL_getn(uiL, lua_gettop(uiL));
                     for (int slot = 1; slot <= n; ++slot) {
                         lua_rawgeti(uiL, -1, slot);
-                        if (lua_istable(uiL, -1)) session_slots = static_cast<size_t>(slot);
+                        if (lua_istable(uiL, -1)) ++session_slots;
                         lua_pop(uiL, 1);
                     }
                 }
