@@ -785,6 +785,34 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 unit->set_turn_rate_rad(1.5f); // ~86 deg/s default
         }
 
+        // General.CommandCaps / ToggleCaps: the orders and toggles a unit
+        // starts with, as in Moho (scripts add and remove from there). The
+        // UI's orders panel and command-mode clicks go by them.
+        {
+            store->push_lua_table(*entry, L);
+            lua_pushstring(L, "General");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                for (const bool command : {true, false}) {
+                    lua_pushstring(L, command ? "CommandCaps" : "ToggleCaps");
+                    lua_rawget(L, -2);
+                    if (lua_istable(L, -1)) {
+                        lua_pushnil(L);
+                        while (lua_next(L, -2) != 0) {
+                            if (lua_type(L, -2) == LUA_TSTRING && lua_toboolean(L, -1)) {
+                                const std::string cap = lua_tostring(L, -2);
+                                if (command) unit->add_command_cap(cap);
+                                else unit->add_toggle_cap(cap);
+                            }
+                            lua_pop(L, 1); // value; key stays for lua_next
+                        }
+                    }
+                    lua_pop(L, 1); // caps table (or nil)
+                }
+            }
+            lua_pop(L, 2); // General (or nil) + bp table
+        }
+
         // Read General.CrashDamage for air units
         if (unit->is_air_unit()) {
             store->push_lua_table(*entry, L);
