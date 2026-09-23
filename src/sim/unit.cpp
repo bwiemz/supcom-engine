@@ -1131,6 +1131,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             // Only a unit without the handler moves at once.
             if (!call_on_teleport_unit(L, cmd.target_pos)) {
                 set_position(cmd.target_pos);
+                note_snap();
             }
             command_queue_.pop_front();
             if (destroyed() || !in_registry()) return;
@@ -2520,7 +2521,9 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     transport->add_cargo(entity_id());
     set_unit_state("Attached", true);
     navigator_.abort_move();
+    // Boarding pops the unit onto the transport; the renderer jumps it.
     set_position(transport->position());
+    note_snap();
 
     spdlog::info("Transport: entity #{} loaded onto transport #{}",
                  entity_id(), transport->entity_id());

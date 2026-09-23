@@ -132,10 +132,16 @@ void SimState::follow_attachments() {
     // The parent's pose is read during the walk and applied after it: a
     // chain (A on B on C) then lags one tick per link whatever the
     // registry's iteration order, as lockstep needs.
+    //
+    // A child jumps (Entity::note_snap) on its first follow -- attaching is
+    // a jump onto the parent -- and whenever its parent has jumped since, so
+    // the renderer pops attachments along with a teleport, link by link.
     struct Move {
         Entity* child;
         Vector3 pos;
         Quaternion orient;
+        u32 parent_snap;
+        bool snap;
     };
     std::vector<Move> moves;
     entity_registry_.for_each([&](const Entity& e) {
@@ -146,14 +152,19 @@ void SimState::follow_attachments() {
         const Quaternion& q = parent->orientation();
         const Vector3& c = e.position();
         const Quaternion& o = e.orientation();
-        if (c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y || o.z != q.z ||
-            o.w != q.w)
-            moves.push_back({const_cast<Entity*>(&e), p, q});
+        const bool snap = e.followed_parent_snap() != parent->snap_serial();
+        if (snap || c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y ||
+            o.z != q.z || o.w != q.w)
+            moves.push_back({const_cast<Entity*>(&e), p, q, parent->snap_serial(), snap});
     });
     // Applied after the walk: set_position updates the spatial grid.
     for (const auto& m : moves) {
         m.child->set_position(m.pos);
         m.child->set_orientation(m.orient);
+        if (m.snap) {
+            m.child->note_snap();
+            m.child->set_followed_parent_snap(m.parent_snap);
+        }
     }
 }
 
@@ -685,6 +696,11 @@ void SimState::tick() {
     // Entities unregistered this tick may still have been on the C++ stack
     // (destroyed from their own callbacks); only now is freeing them safe.
     entity_registry_.collect_garbage();
+
+    if (tick_observer_) {
+        PROFILE_ZONE("Sim::observer");
+        tick_observer_(*this);
+    }
 }
 
 void SimState::update_economies() {

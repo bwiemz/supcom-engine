@@ -1436,7 +1436,8 @@ static int l_GetEntityById(lua_State* L) {
 }
 
 static int l_Warp(lua_State* L) {
-    // Warp(entity, position) — entity is self table, position is vector
+    // Warp(entity, position, [orientation]) — FA's teleport: the entity
+    // jumps to its new pose rather than being drawn sliding there.
     auto* sim = get_sim(L);
     if (!sim) return 0;
 
@@ -1461,6 +1462,17 @@ static int l_Warp(lua_State* L) {
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
         entity->set_position(v);
+        entity->note_snap();
+    }
+    // Orientation is a quaternion {x, y, z, w}, as GetOrientation returns it.
+    if (lua_istable(L, 3)) {
+        f32 q[4];
+        for (int i = 0; i < 4; ++i) {
+            lua_rawgeti(L, 3, i + 1);
+            q[i] = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        entity->set_orientation({q[0], q[1], q[2], q[3]});
     }
     return 0;
 }

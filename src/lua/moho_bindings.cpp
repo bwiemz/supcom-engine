@@ -634,6 +634,9 @@ static int entity_SetPosition(lua_State* L) {
         v.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 3);
         e->set_position(v);
+        // SetPosition(pos, immediate): an immediate move is a teleport, which
+        // the renderer shows as a jump, not a slide.
+        if (lua_toboolean(L, 3)) e->note_snap();
     }
     return 0;
 }
