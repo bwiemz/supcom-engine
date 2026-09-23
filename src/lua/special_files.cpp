@@ -32,12 +32,6 @@ constexpr SpecialFiles::Type kTypes[] = {
     {"SaveGame", "savegames", "oscsave"},
 };
 
-/// A profile or file name the scripts pass: one path component, no more.
-bool plain_name(std::string_view name) {
-    return !name.empty() && name != "." && name != ".." &&
-           name.find_first_of("/\\:") == std::string_view::npos;
-}
-
 const SpecialFiles::Type* check_type(lua_State* L, int idx) {
     const auto* type = SpecialFiles::find_type(luaL_checkstring(L, idx));
     if (!type) luaL_error(L, "unknown special file type '%s'", lua_tostring(L, idx));
@@ -51,8 +45,7 @@ fs::path file_of(lua_State* L, int first) {
     const char* profile = luaL_checkstring(L, first);
     const char* base = luaL_checkstring(L, first + 1);
     const auto* type = check_type(L, first + 2);
-    if (!files || !plain_name(profile) || !plain_name(base)) return {};
-    return files->path(*type, profile, base);
+    return files ? files->path(*type, profile, base) : fs::path();
 }
 
 void set_field(lua_State* L, const char* key, double value) {
@@ -150,9 +143,9 @@ int l_CopyCurrentReplay(lua_State* L) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     const auto* sim = static_cast<const sim::SimState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (!files || !sim || !sim->recording() || !plain_name(profile) || !plain_name(base)) return 0;
-    const auto* type = SpecialFiles::find_type("Replay");
-    write_replay_file(sim->recorded_replay(), files->path(*type, profile, base));
+    if (!files || !sim || !sim->recording()) return 0;
+    const auto path = files->path(*SpecialFiles::find_type("Replay"), profile, base);
+    if (!path.empty()) write_replay_file(sim->recorded_replay(), path);
     return 0;
 }
 
@@ -192,8 +185,14 @@ const SpecialFiles::Type* SpecialFiles::find_type(std::string_view name) {
     return nullptr;
 }
 
+bool SpecialFiles::plain_name(std::string_view name) {
+    return !name.empty() && name != "." && name != ".." &&
+           name.find_first_of("/\\:") == std::string_view::npos;
+}
+
 fs::path SpecialFiles::path(const Type& type, std::string_view profile,
                             std::string_view base) const {
+    if (!plain_name(profile) || !plain_name(base)) return {};
     return directory(type) / std::string(profile) / (std::string(base) + "." + type.extension);
 }
 

@@ -15329,6 +15329,10 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
     lua_pushstring(L, "__osc_launch_requested");
     lua_pushboolean(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
+    // A lobby game, not a replay a LaunchReplaySession asked for before it.
+    lua_pushstring(L, "__osc_launch_replay");
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
 
     spdlog::info("LaunchSinglePlayerSession: scenario={}", scenario);
     return 0;

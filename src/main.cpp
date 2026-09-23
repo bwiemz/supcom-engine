@@ -2171,7 +2171,13 @@ int main(int argc, char* argv[]) {
         const std::string profile =
             prefs.get_string(prefs.current_profile_path() + ".Name", "Player");
         const auto* type = osc::lua::SpecialFiles::find_type("Replay");
-        osc::lua::write_replay_file(replay, special_files.path(*type, profile, "LastGame"));
+        const auto path = special_files.path(*type, profile, "LastGame");
+        if (path.empty()) {
+            spdlog::warn("Replay: profile name '{}' can't be a folder name; LastGame not saved",
+                         profile);
+            return;
+        }
+        osc::lua::write_replay_file(replay, path);
     };
 
     // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider

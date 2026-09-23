@@ -37,7 +37,12 @@ public:
 
     const std::filesystem::path& root() const { return root_; }
     std::filesystem::path directory(const Type& type) const { return root_ / type.folder; }
-    /// <directory>/<profile>/<base>.<extension>
+    /// Whether a profile or file name is one plain path component (not
+    /// empty, ".", ".." or anything with a separator or drive colon).
+    static bool plain_name(std::string_view name);
+    /// <directory>/<profile>/<base>.<extension>; empty unless both names are
+    /// plain, so no name -- from a script or a stored preference -- reaches
+    /// outside the folder (an absolute one would replace it outright).
     std::filesystem::path path(const Type& type, std::string_view profile,
                                std::string_view base) const;
     /// Each profile's files of a type (base names, sorted).

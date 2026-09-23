@@ -66,6 +66,12 @@ TEST_CASE("Special files live per profile, with our own extension", "[specialfil
 
     CHECK(files.path(*replay, "Player", "LastGame") ==
           dir.path / "replays" / "Player" / "LastGame.oscreplay");
+    // No name reaches outside the folder, whoever passes it (a script, or a
+    // profile name stored in the preferences).
+    for (const char* bad : {"", ".", "..", "a/b", "a\\b", "C:", "/etc/cron.d"}) {
+        CHECK(files.path(*replay, bad, "LastGame").empty());
+        CHECK(files.path(*replay, "Player", bad).empty());
+    }
 
     touch(files.path(*replay, "Player", "b"));
     touch(files.path(*replay, "Player", "a"));
