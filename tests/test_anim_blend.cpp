@@ -207,3 +207,63 @@ TEST_CASE("Identity reset clears stale bone data", "[anim]") {
     CHECK_THAT(static_cast<double>(result[10]), WithinAbs(1.0, 0.001));
     CHECK_THAT(static_cast<double>(result[15]), WithinAbs(1.0, 0.001));
 }
+
+// ---------------------------------------------------------------------------
+// A finished or paused animation keeps posing its bones. Unit::tick_manipulators
+// resets every bone to identity each tick, so an animator that stops writing
+// would snap the unit back to its bind pose.
+// ---------------------------------------------------------------------------
+static void reset_to_identity(Unit& unit) {
+    for (auto& m : unit.animated_bone_matrices())
+        m = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+}
+
+TEST_CASE("Finished non-looping animation holds its last frame", "[anim]") {
+    BoneData bd = make_one_bone();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+
+    AnimCache cache(nullptr);
+    cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
+
+    AnimManipulator anim;
+    anim.set_owner(&unit);
+    anim.set_bone_index(0);
+    anim.play_anim("/anim_a.sca", false, &cache);
+    anim.set_rate(1.0f);
+    anim.tick(1.0f);
+    REQUIRE(anim.is_at_goal());
+
+    reset_to_identity(unit);
+    anim.tick(0.1f);
+    auto& mat = unit.animated_bone_matrices()[0];
+    CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(1.0, 0.01));
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(1.0, 0.001));
+}
+
+TEST_CASE("Paused animation poses at its set fraction", "[anim]") {
+    BoneData bd = make_one_bone();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+
+    AnimCache cache(nullptr);
+    cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
+
+    // Scripts pose units this way: PlayAnim, SetRate(0), SetAnimationFraction.
+    AnimManipulator anim;
+    anim.set_owner(&unit);
+    anim.set_bone_index(0);
+    anim.play_anim("/anim_a.sca", false, &cache);
+    anim.set_rate(0.0f);
+    anim.set_animation_fraction(0.5f);
+
+    for (int i = 0; i < 3; ++i) {
+        reset_to_identity(unit);
+        anim.tick(0.1f);
+        auto& mat = unit.animated_bone_matrices()[0];
+        CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.5, 0.01));
+    }
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.5, 0.001));
+}
