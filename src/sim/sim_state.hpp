@@ -153,6 +153,12 @@ public:
     /// long as the unit exists (released automatically when it is removed
     /// from the registry). No-op for non-structures and repeat calls.
     void occupy_footprint(Unit& unit);
+
+    /// Run the entity's script OnDestroy, once (see
+    /// Entity::script_destroy_notified). Both removal paths call it before
+    /// the Lua table is detached, so the script still sees a live object.
+    void notify_script_destroy(Entity& entity);
+
     /// Whether this entity currently blocks the grid (tests / diagnostics).
     bool occupies_footprint(u32 entity_id) const {
         return occupied_footprints_.count(entity_id) != 0;
@@ -458,6 +464,7 @@ private:
     /// Registry unregister hook: sever the entity's Lua table from the C++
     /// object and release its footprint.
     void on_entity_unregistered(Entity& entity);
+
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::unique_ptr<audio::SoundManager> sound_manager_;

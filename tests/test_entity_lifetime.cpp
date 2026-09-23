@@ -8,6 +8,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/shield.hpp"
@@ -200,4 +201,23 @@ TEST_CASE("an expired projectile's Lua table no longer points at it",
     lua_rawget(L, -2);
     CHECK(lua_touserdata(L, -1) == nullptr);
     lua_pop(L, 2);
+}
+
+TEST_CASE("an unregistered entity stays allocated until the tick's garbage collection",
+          "[lifetime]") {
+    // Scripts destroy a unit from inside its own callbacks (a structure
+    // finishing an upgrade replaces itself) while C++ is still in that
+    // unit's update; the object must outlive the call.
+    osc::sim::EntityRegistry registry;
+    auto u = std::make_unique<Unit>();
+    auto* raw = u.get();
+    const osc::u32 id = registry.register_entity(std::move(u));
+
+    registry.unregister_entity(id);
+    CHECK(registry.find(id) == nullptr); // gone for every lookup at once
+    CHECK_FALSE(raw->in_registry());     // ...but still safe to touch
+    CHECK(raw->entity_id() == id);
+
+    registry.collect_garbage();
+    CHECK(registry.count() == 0);
 }

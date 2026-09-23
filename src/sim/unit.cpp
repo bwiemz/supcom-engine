@@ -359,6 +359,9 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
     // Process head command
     while (!command_queue_.empty()) {
+        // Orders run script callbacks, which may destroy this unit (it stays
+        // allocated until the tick ends, see EntityRegistry::collect_garbage).
+        if (destroyed() || !in_registry()) return;
         auto& cmd = command_queue_.front();
 
         switch (cmd.type) {
@@ -1153,6 +1156,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
     }
 done_commands:
+    if (destroyed() || !in_registry()) return;
 
     // Amphibious layer transition: auto-switch Land↔Water based on terrain
     if (is_amphibious() && !dying_ && ctx.terrain) {
@@ -2708,6 +2712,71 @@ Manipulator* Unit::add_manipulator(std::unique_ptr<Manipulator> m) {
     return raw;
 }
 
+namespace {
+
+/// Null the Lua table's pointer to `m` and drop the ref, before `m` is freed.
+void detach_manipulator_table(lua_State* L, Manipulator& m) {
+    if (!L || m.lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, m.lua_table_ref());
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, nullptr);
+        lua_rawset(L, -3);
+    }
+    lua_pop(L, 1);
+    luaL_unref(L, LUA_REGISTRYINDEX, m.lua_table_ref());
+    m.set_lua_table_ref(LUA_NOREF);
+}
+
+} // namespace
+
+void Unit::release_manipulators(lua_State* L) {
+    for (auto& m : manipulators_) detach_manipulator_table(L, *m);
+    manipulators_.clear();
+}
+
+void Unit::release_weapon_scripts(lua_State* L) {
+    if (!L) return;
+    auto unref = [L](int& ref) {
+        if (ref >= 0) luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        ref = LUA_NOREF;
+    };
+    for (i32 i = 0; i < weapon_count(); ++i) {
+        auto* w = get_weapon(i);
+        if (!w) continue;
+        if (w->lua_table_ref >= 0) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, w->lua_table_ref);
+            if (lua_istable(L, -1)) {
+                // The weapon goes with its unit: its script OnDestroy runs
+                // first (DefaultProjectileWeapon switches to DeadState,
+                // ending its state thread).
+                lua_pushstring(L, "OnDestroy");
+                lua_gettable(L, -2);
+                if (lua_isfunction(L, -1)) {
+                    lua_pushvalue(L, -2);
+                    if (lua_pcall(L, 1, 0, 0) != 0) {
+                        spdlog::warn("Weapon OnDestroy error: {}", lua_tostring(L, -1));
+                        lua_pop(L, 1);
+                    }
+                } else {
+                    lua_pop(L, 1);
+                }
+                for (const char* key : {"_c_object", "_c_unit"}) {
+                    lua_pushstring(L, key);
+                    lua_pushlightuserdata(L, nullptr);
+                    lua_rawset(L, -3);
+                }
+            }
+            lua_pop(L, 1);
+        }
+        unref(w->lua_table_ref);
+        unref(w->blueprint_ref);
+        unref(w->targeting_priorities_ref);
+        unref(w->weapon_priorities_ref);
+    }
+    clear_on_given_callbacks(L);
+}
+
 void Unit::remove_manipulator(Manipulator* m) {
     for (auto it = manipulators_.begin(); it != manipulators_.end(); ++it) {
         if (it->get() == m) {
@@ -2727,7 +2796,10 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
         m = IDENTITY;
     }
 
-    for (auto& m : manipulators_) {
+    // By index: a tick may wake script threads, and nothing here may assume
+    // the vector is left untouched.
+    for (size_t i = 0; i < manipulators_.size(); ++i) {
+        Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
         bool was_at_goal = m->is_at_goal();
         m->tick(dt);
@@ -2752,7 +2824,10 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
             m->set_waiting_thread_ref(-2); // LUA_NOREF
         }
     }
-    // Clean up destroyed manipulators
+    // Free destroyed manipulators, detaching their Lua tables first.
+    for (auto& m : manipulators_) {
+        if (m->is_destroyed()) detach_manipulator_table(L, *m);
+    }
     manipulators_.erase(
         std::remove_if(manipulators_.begin(), manipulators_.end(),
                         [](const auto& m) { return m->is_destroyed(); }),

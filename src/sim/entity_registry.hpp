@@ -40,6 +40,14 @@ public:
     /// Number of active entities.
     size_t count() const { return entities_.size(); }
 
+    /// Free the entities unregistered since the last call. An unregistered
+    /// entity leaves every lookup immediately but its memory lives until
+    /// here: scripts routinely destroy a unit from inside one of its own
+    /// callbacks (a structure finishing its upgrade replaces itself), and the
+    /// C++ frame that ran the callback is still inside that unit's update.
+    /// SimState calls this at the end of each tick.
+    void collect_garbage() { graveyard_.clear(); }
+
     /// Initialize spatial hash grid. Must be called after map dimensions are known.
     /// If not called, collect_in_radius/collect_in_rect fall back to O(N) scan.
     void init_spatial_grid(u32 map_width, u32 map_height);
@@ -72,6 +80,7 @@ public:
 
 private:
     std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
+    std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
     UnregisterHook unregister_hook_;
     u32 next_id_ = 1;
 

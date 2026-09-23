@@ -1871,13 +1871,25 @@ static sim::Entity* effect_check_entity(lua_State* L, int idx) {
     return e;
 }
 
-/// Push a new IEffect Lua table onto the stack with _c_object and __osc_ieffect_mt.
+/// A bone argument to an effect function: a bone name (as retail scripts
+/// mostly pass), an index, or nil. Unknown names and nil give `fallback`.
+static i32 effect_bone_arg(lua_State* L, int idx, const sim::Entity* entity, i32 fallback) {
+    if (lua_type(L, idx) == LUA_TNUMBER) return static_cast<i32>(lua_tonumber(L, idx));
+    if (lua_type(L, idx) == LUA_TSTRING && entity && entity->bone_data()) {
+        const i32 bone = entity->bone_data()->find_bone(lua_tostring(L, idx));
+        return bone >= 0 ? bone : fallback;
+    }
+    return fallback;
+}
+
+/// Push a new IEffect Lua table (with __osc_ieffect_mt) onto the stack. It
+/// names its effect by id, resolved through the registry on every call: the
+/// registry frees destroyed effects while scripts still hold the handles.
 static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
     lua_newtable(L); // the effect table
 
-    // _c_object = lightuserdata
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, fx);
+    lua_pushstring(L, "_c_effect_id");
+    lua_pushnumber(L, fx->id());
     lua_rawset(L, -3);
 
     // Set metatable: cached __osc_ieffect_mt in registry
@@ -2008,14 +2020,17 @@ static int l_AttachBeamToEntity(lua_State* L) {
     // arg1 = emitter (IEffect table), arg2 = entity, arg3 = bone, arg4 = army
     // Read _c_object from emitter
     if (lua_istable(L, 1)) {
-        lua_pushstring(L, "_c_object");
+        lua_pushstring(L, "_c_effect_id");
         lua_rawget(L, 1);
-        auto* fx = static_cast<sim::IEffect*>(lua_touserdata(L, -1));
+        auto* sim = get_sim(L);
+        auto* fx = sim && lua_isnumber(L, -1)
+                       ? sim->effect_registry().find(static_cast<u32>(lua_tonumber(L, -1)))
+                       : nullptr;
         lua_pop(L, 1);
         if (fx) {
             auto* entity = effect_check_entity(L, 2);
             fx->set_entity_id(entity ? entity->entity_id() : 0);
-            fx->set_bone_index(static_cast<i32>(luaL_optnumber(L, 3, -1)));
+            fx->set_bone_index(effect_bone_arg(L, 3, entity, -1));
         }
     }
     lua_pushvalue(L, 1); // return emitter
@@ -2265,6 +2280,16 @@ static void set_manip_metatable(lua_State* L, int table_idx,
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     lua_setmetatable(L, table_idx);
+
+    // Let the manipulator detach this table when it is freed.
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, table_idx);
+    auto* manip = static_cast<sim::Manipulator*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (manip && manip->lua_table_ref() < 0) {
+        lua_pushvalue(L, table_idx);
+        manip->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    }
 }
 
 // ====================================================================

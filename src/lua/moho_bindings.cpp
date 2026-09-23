@@ -713,21 +713,8 @@ static int entity_GetFractionComplete(lua_State* L) {
 
 static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
+    if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
     if (e) {
-        // can_be_killed guard — check both C++ field and Lua field
-        // (FA's SetCanBeKilled sets a Lua field, not the C++ field)
-        if (e->is_unit()) {
-            auto* u = static_cast<sim::Unit*>(e);
-            if (!u->can_be_killed()) return 0;
-            // Also check Lua-side CanBeKilled field
-            lua_pushstring(L, "CanBeKilled");
-            lua_rawget(L, 1);
-            if (lua_isboolean(L, -1) && !lua_toboolean(L, -1)) {
-                lua_pop(L, 1);
-                return 0;
-            }
-            lua_pop(L, 1);
-        }
         // Stop ambient sound before destruction
         if (e->ambient_sound_handle() != 0) {
             auto* mgr = get_sound_mgr(L);
@@ -878,8 +865,9 @@ static int entity_Destroy(lua_State* L) {
 
         // Check if unit should enter dying state (death animation) instead of
         // immediate destruction. Must be a fully-built unit that isn't already
-        // dying or wreckage, with a blueprint AnimationDeath path.
-        if (e->is_unit() && !e->is_wreckage() &&
+        // dying or wreckage, with a blueprint AnimationDeath path -- and whose
+        // death the script isn't already playing out (see entity_Kill).
+        if (e->is_unit() && !e->is_wreckage() && !e->script_owns_death() &&
             e->fraction_complete() >= 1.0f) {
             auto* dying_unit = static_cast<sim::Unit*>(e);
             if (!dying_unit->is_dying()) {
@@ -908,7 +896,7 @@ static int entity_Destroy(lua_State* L) {
         }
 
         // Air units always crash on death, even without AnimationDeath
-        if (e->is_unit()) {
+        if (e->is_unit() && !e->script_owns_death()) {
             auto* air_unit = static_cast<sim::Unit*>(e);
             if (air_unit->is_air_unit() && !air_unit->is_dying() && !air_unit->is_crashing()) {
                 air_unit->begin_air_crash(air_unit->crash_damage());
@@ -926,42 +914,16 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // Moho calls the script's OnDestroy while the object is still live.
+        if (auto* sim = get_sim(L)) {
+            sim->notify_script_destroy(*e);
+            if (e->destroyed()) return 0; // its OnDestroy finished the job
+        }
+
         e->mark_destroyed();
 
-        // If this is a unit, clean up weapon Lua refs before freeing
-        if (e->is_unit()) {
-            auto* unit = static_cast<sim::Unit*>(e);
-            for (i32 i = 0; i < unit->weapon_count(); ++i) {
-                auto* w = unit->get_weapon(i);
-                if (!w) continue;
-                // Null out _c_object in the weapon's Lua table
-                if (w->lua_table_ref >= 0) {
-                    lua_rawgeti(L, LUA_REGISTRYINDEX, w->lua_table_ref);
-                    lua_pushstring(L, "_c_object");
-                    lua_pushlightuserdata(L, nullptr);
-                    lua_rawset(L, -3);
-                    lua_pop(L, 1);
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->lua_table_ref);
-                    w->lua_table_ref = LUA_NOREF;
-                }
-                // Release weapon blueprint ref
-                if (w->blueprint_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->blueprint_ref);
-                    w->blueprint_ref = LUA_NOREF;
-                }
-                // Release targeting/weapon priorities refs
-                if (w->targeting_priorities_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->targeting_priorities_ref);
-                    w->targeting_priorities_ref = LUA_NOREF;
-                }
-                if (w->weapon_priorities_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->weapon_priorities_ref);
-                    w->weapon_priorities_ref = LUA_NOREF;
-                }
-            }
-            // Release on-given callback refs
-            unit->clear_on_given_callbacks(L);
-        }
+        // If this is a unit, detach its weapons' Lua tables before freeing
+        if (e->is_unit()) static_cast<sim::Unit*>(e)->release_weapon_scripts(L);
 
         // Null out _c_object in the Lua table to prevent use-after-free
         lua_pushstring(L, "_c_object");
@@ -977,6 +939,46 @@ static int entity_Destroy(lua_State* L) {
 
         auto* sim = get_sim(L);
         if (sim) sim->entity_registry().unregister_entity(id);
+    }
+    return 0;
+}
+
+// entity:Kill([instigator, damageType, excessDamageRatio]). Moho hands the
+// death to the script's OnKilled, which plays the death sequence (death
+// weapon, animation, wreckage) and calls Destroy() when it ends. Without an
+// OnKilled the entity is destroyed at once. SetCanBeKilled(false) blocks it.
+static int entity_Kill(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->destroyed() || e->script_owns_death()) return 0;
+    if (e->is_unit()) {
+        auto* u = static_cast<sim::Unit*>(e);
+        if (!u->can_be_killed() || u->is_dying()) return 0;
+        lua_pushstring(L, "CanBeKilled"); // SetCanBeKilled sets this Lua field
+        lua_rawget(L, 1);
+        const bool blocked = lua_isboolean(L, -1) && !lua_toboolean(L, -1);
+        lua_pop(L, 1);
+        if (blocked) return 0;
+    }
+    lua_settop(L, 4); // self, instigator, damageType, excessDamageRatio
+    lua_pushstring(L, "OnKilled");
+    lua_gettable(L, 1);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, 1);
+        return entity_Destroy(L);
+    }
+    e->set_script_owns_death();
+    // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
+    lua_insert(L, 1);
+    lua_pushvalue(L, 2);
+    lua_insert(L, 1); // self (kept), OnKilled, self, instigator, type, ratio
+    if (lua_pcall(L, 4, 0, 0) != 0) {
+        // The death sequence broke before it could Destroy() the unit (e.g.
+        // a failing death weapon); finish the job rather than leave it
+        // half-dead forever.
+        spdlog::warn("OnKilled error: {}", lua_tostring(L, -1));
+        lua_settop(L, 1);
+        if (auto* still = check_entity(L); still && !still->destroyed())
+            return entity_Destroy(L);
     }
     return 0;
 }
@@ -3665,7 +3667,7 @@ static const MethodEntry unit_methods[] = {
     {"SetBuildingUnit",             unit_SetBuildingUnit},
     {"GetUnitBeingBuilt",           unit_GetUnitBeingBuilt},
     {"Stop",                        unit_Stop},
-    {"Kill",                        entity_Destroy},
+    {"Kill",                        entity_Kill},
     {"GetFocusUnit",                unit_GetFocusUnit},
     {"RestoreBuildRestrictions",    unit_RestoreBuildRestrictions},
     {"SetCreator",                  unit_SetCreator},
@@ -8609,12 +8611,14 @@ static const MethodEntry builder_arm_methods[] = {
 // IEffect — real methods that update C++ state and return self for chaining.
 // _c_object lightuserdata points to sim::IEffect*.
 
+// Effects are named by id (see push_ieffect_table): nullptr once destroyed.
 static sim::IEffect* check_ieffect(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
+    auto* sim = get_sim(L);
+    lua_pushstring(L, "_c_effect_id");
     lua_rawget(L, idx);
-    auto* fx = lua_isuserdata(L, -1)
-                   ? static_cast<sim::IEffect*>(lua_touserdata(L, -1))
+    auto* fx = sim && lua_isnumber(L, -1)
+                   ? sim->effect_registry().find(static_cast<u32>(lua_tonumber(L, -1)))
                    : nullptr;
     lua_pop(L, 1);
     return fx;

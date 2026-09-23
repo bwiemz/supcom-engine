@@ -152,6 +152,16 @@ public:
     bool destroyed() const { return destroyed_; }
     void mark_destroyed() { destroyed_ = true; }
 
+    /// The script's OnDestroy has run (Moho calls it once, however the
+    /// entity goes: script Destroy or engine removal).
+    bool script_destroy_notified() const { return script_destroy_notified_; }
+    void set_script_destroy_notified() { script_destroy_notified_ = true; }
+    /// Kill() handed the death to the script's OnKilled, which destroys the
+    /// entity itself when its death sequence ends; the engine's own death
+    /// animation and crash handling then stay out of the way.
+    bool script_owns_death() const { return script_owns_death_; }
+    void set_script_owns_death() { script_owns_death_ = true; }
+
     const std::string& blueprint_id() const { return blueprint_id_; }
     void set_blueprint_id(const std::string& id) { blueprint_id_ = id; }
 
@@ -234,6 +244,8 @@ public:
     i32 grid_cell_z() const { return grid_cell_z_; }
     void set_grid_cell(i32 cx, i32 cz) { grid_cell_x_ = cx; grid_cell_z_ = cz; }
     void set_registry(EntityRegistry* r) { registry_ = r; }
+    /// False once unregistered (the object may outlive that until the tick ends).
+    bool in_registry() const { return registry_ != nullptr; }
 
     virtual bool is_unit() const { return false; }
     virtual bool is_projectile() const { return false; }
@@ -288,6 +300,8 @@ private:
     i32 grid_cell_x_ = -1; // spatial grid cell, -1 = not in grid
     i32 grid_cell_z_ = -1;
     EntityRegistry* registry_ = nullptr; // back-pointer for auto grid update
+    bool script_destroy_notified_ = false;
+    bool script_owns_death_ = false;
     // CollisionBeam fields
     bool is_collision_beam_ = false;
     bool beam_enabled_ = false;
