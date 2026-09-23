@@ -23,6 +23,7 @@ add_library(osc_sim STATIC
     net_transport.cpp
     sim_state.cpp
     world_snapshot.cpp
+    command_codec.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 
