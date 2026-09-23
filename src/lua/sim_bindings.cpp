@@ -290,6 +290,16 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                             static_cast<u32>(std::clamp(ticks, 1.0, 1.0e4));
                     }
                     lua_pop(L, 1);
+                    for (auto [field, value] :
+                         {std::pair{"FiringTolerance", &weapon->firing_tolerance},
+                          std::pair{"TrackingRadius", &weapon->tracking_radius},
+                          std::pair{"HeadingArcCenter", &weapon->heading_arc_center},
+                          std::pair{"HeadingArcRange", &weapon->heading_arc_range}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, we);
+                        if (lua_isnumber(L, -1)) *value = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
                     lua_pushstring(L, "MaxHeightDiff");
                     lua_gettable(L, we);
                     if (lua_isnumber(L, -1))
@@ -2714,6 +2724,7 @@ static int l_CreateSlider(lua_State* L) {
 static int l_CreateAimController(lua_State* L) {
     // arg 1 can be either a weapon table or a unit table
     sim::Unit* unit = nullptr;
+    sim::Weapon* weapon = nullptr;
     if (lua_istable(L, 1)) {
         // A weapon table stores its owner in _c_unit (its _c_object is a
         // Weapon*, which must never be treated as an Entity*); a unit table
@@ -2723,6 +2734,12 @@ static int l_CreateAimController(lua_State* L) {
         const bool is_weapon = lua_isuserdata(L, -1);
         if (is_weapon) unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
         lua_pop(L, 1);
+        if (is_weapon) {
+            lua_pushstring(L, "_c_object");
+            lua_rawget(L, 1);
+            if (lua_isuserdata(L, -1)) weapon = static_cast<sim::Weapon*>(lua_touserdata(L, -1));
+            lua_pop(L, 1);
+        }
 
         if (!is_weapon) {
             lua_pushstring(L, "_c_object");
@@ -2738,7 +2755,11 @@ static int l_CreateAimController(lua_State* L) {
 
     auto manip = std::make_unique<sim::AimManipulator>();
 
-    // arg 2 = name (string, ignored for now — just for labeling)
+    // arg 2 = the label: OnStartTracking's argument, SetFireControl's key.
+    // A weapon's controllers aim for it (Weapon::update_aim).
+    if (weapon)
+        manip->set_weapon(weapon->weapon_index,
+                          lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "");
     // arg 3 = yawBone
     if (lua_gettop(L) >= 3) {
         manip->set_yaw_bone(manip_resolve_bone(unit, L, 3));

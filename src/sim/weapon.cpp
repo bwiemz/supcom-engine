@@ -4,6 +4,7 @@
 #include "core/test_status.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -66,6 +67,12 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     // A script callback earlier this tick may have destroyed the target.
     const Entity* target = registry.find(target_entity_id);
     if (!target || target->destroyed()) return false;
+    // Tracked from farther (TrackingRadius), fired at only within MaxRadius,
+    // and only once the fire control is on target.
+    if (!in_firing_range(owner, *target)) return false;
+    if (const AimManipulator* aim = fire_control(owner);
+        aim && !(aim->enabled() && aim->on_target()))
+        return false;
     if (need_compute_bomb_drop) {
         const f32 dx = target->position().x - owner.position().x;
         const f32 dz = target->position().z - owner.position().z;
@@ -74,7 +81,7 @@ bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     return true;
 }
 
-bool Weapon::call_script(lua_State* L, const char* method) const {
+bool Weapon::call_script(lua_State* L, const char* method, const char* arg) const {
     if (!L || lua_table_ref < 0) return true;
     const int top = lua_gettop(L);
     lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref);
@@ -84,7 +91,8 @@ bool Weapon::call_script(lua_State* L, const char* method) const {
     bool result = true;
     if (lua_isfunction(L, -1)) {
         lua_pushvalue(L, self);
-        if (lua_pcall(L, 1, 1, 0) != 0) {
+        if (arg) lua_pushstring(L, arg);
+        if (lua_pcall(L, arg ? 2 : 1, 1, 0) != 0) {
             const char* err = lua_tostring(L, -1);
             const std::string message =
                 "Weapon " + label + " " + method + " error: " + (err ? err : "(unknown)");
@@ -110,6 +118,8 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
 
     const u32 previous_target = target_entity_id;
     update_targeting(owner, registry, visibility_grid, sim);
+    update_aim(owner, registry, L);
+    if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
 
     if (L && fires_through_script()) {
         update_scripted(owner, registry, L, previous_target);
@@ -117,6 +127,11 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
     }
 
     if (target_entity_id == 0 || fire_clock > 0) return;
+    const Entity* target = registry.find(target_entity_id);
+    if (!target || !in_firing_range(owner, *target)) return;
+    if (const AimManipulator* aim = fire_control(owner);
+        aim && !(aim->enabled() && aim->on_target()))
+        return;
     if (try_fire(owner, registry, L, visibility_grid)) fire_clock = fire_period();
 }
 
@@ -165,7 +180,18 @@ bool Weapon::can_target(const Unit& owner, const Entity& target,
     const f32 dx = target.position().x - owner.position().x;
     const f32 dz = target.position().z - owner.position().z;
     const f32 dist2 = dx * dx + dz * dz;
-    if (dist2 > max_range * max_range || dist2 < min_range * min_range) return false;
+    const f32 reach = max_range * std::max(1.0f, tracking_radius);
+    if (dist2 > reach * reach || dist2 < min_range * min_range) return false;
+    if (heading_arc_range < 180.0f) {
+        // Only targets within the arc about the unit's facing.
+        const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+        constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+        f32 off = osc::dmath::atan2(dx, dz) - osc::dmath::atan2(forward.x, forward.z) -
+                  heading_arc_center * kDegToRad;
+        while (off > 3.14159265f) off -= 6.28318531f;
+        while (off < -3.14159265f) off += 6.28318531f;
+        if (std::fabs(off) > heading_arc_range * kDegToRad) return false;
+    }
     if (max_height_diff > 0 &&
         std::fabs(target.position().y - owner.position().y) > max_height_diff)
         return false;
@@ -217,8 +243,8 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     u32 best_id = 0;
     int best_priority = 0;
     f32 best_dist2 = 0;
-    for (const u32 id :
-         registry.collect_in_radius(owner.position().x, owner.position().z, max_range)) {
+    const f32 reach = max_range * std::max(1.0f, tracking_radius);
+    for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
         const Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, visibility_grid, sim)) continue;
         const int priority = priority_of(static_cast<const Unit&>(*e));
@@ -236,6 +262,49 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     // A recheck changes target only for a better priority.
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
     if (best_id != 0) target_entity_id = best_id;
+}
+
+bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {
+    const f32 dx = target.position().x - owner.position().x;
+    const f32 dz = target.position().z - owner.position().z;
+    const f32 dist2 = dx * dx + dz * dz;
+    return dist2 <= max_range * max_range && dist2 >= min_range * min_range;
+}
+
+const AimManipulator* Weapon::fire_control(const Unit& owner) const {
+    const AimManipulator* first = nullptr;
+    for (const auto& m : owner.manipulators()) {
+        const auto* aim = dynamic_cast<const AimManipulator*>(m.get());
+        if (!aim || aim->is_destroyed() || aim->weapon_index() != weapon_index) continue;
+        if (!fire_control_label.empty() && aim->label() == fire_control_label) return aim;
+        if (!first) first = aim;
+    }
+    return first;
+}
+
+void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
+    // Collect first: a tracking callback may add manipulators (the vector
+    // may grow) or destroy them (they stay allocated until the unit's
+    // manipulators tick).
+    std::vector<AimManipulator*> aims;
+    for (const auto& m : owner.manipulators()) {
+        auto* aim = dynamic_cast<AimManipulator*>(m.get());
+        if (aim && !aim->is_destroyed() && aim->weapon_index() == weapon_index) aims.push_back(aim);
+    }
+    if (aims.empty()) return;
+    const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+    const bool scripted = script_class && L;
+    for (AimManipulator* aim : aims) {
+        if (aim->is_destroyed()) continue;
+        const bool was_tracking = aim->has_target();
+        if (target) aim->set_target(target->position(), firing_tolerance * kDegToRad);
+        else aim->clear_target();
+        if (!scripted || was_tracking == (target != nullptr)) continue;
+        const std::string label = aim->label(); // the callback may free the aim
+        call_script(L, target ? "OnStartTracking" : "OnStopTracking", label.c_str());
+        if (owner.destroyed() || owner.is_dying()) return;
+    }
 }
 
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
@@ -260,16 +329,11 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     }
 
     // Resolve muzzle bone position for projectile spawn
+    // From the muzzle as the turret is posed now.
     Vector3 spawn_pos = owner.position();
     if (!muzzle_bone_name.empty() && owner.bone_data()) {
-        i32 bi = owner.bone_data()->find_bone(muzzle_bone_name);
-        if (bi >= 0) {
-            auto& bone = owner.bone_data()->bones[static_cast<size_t>(bi)];
-            auto rotated = quat_rotate(owner.orientation(), bone.world_position);
-            spawn_pos.x += rotated.x;
-            spawn_pos.y += rotated.y;
-            spawn_pos.z += rotated.z;
-        }
+        const i32 bone = owner.bone_data()->find_bone(muzzle_bone_name);
+        if (bone >= 0) spawn_pos = owner.bone_world_position(bone);
     }
 
     const std::string& layer = owner.layer();

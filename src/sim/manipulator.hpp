@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3, Quaternion
+#include "sim/pose.hpp"
 #include "sim/waitable.hpp"
 
 #include <array>
@@ -52,6 +53,10 @@ public:
     /// Whether the manipulator has reached its goal (for WaitFor).
     virtual bool is_at_goal() const = 0;
 
+    /// This manipulator's effect on its bones in the sim pose (see
+    /// Unit::bone_pose). Animators write render matrices instead (M200d-2).
+    virtual void contribute_pose(PoseDeltas& /*deltas*/) const {}
+
     // Waitable interface
     bool is_done() const override { return is_at_goal(); }
     bool is_cancelled() const override { return destroyed_; }
@@ -85,6 +90,7 @@ public:
     f32 current_angle() const { return current_angle_; }
     void set_spin_down(bool sd) { spin_down_ = sd; }
     bool has_goal() const { return has_goal_; }
+    void contribute_pose(PoseDeltas& deltas) const override;
 
 private:
     char axis_ = 'y';
@@ -162,6 +168,7 @@ public:
 
     const Vector3& current() const { return current_; }
     const Vector3& goal() const { return goal_; }
+    void contribute_pose(PoseDeltas& deltas) const override;
 
 private:
     Vector3 current_ = {0, 0, 0};
@@ -176,14 +183,21 @@ private:
 // ---------------------------------------------------------------------------
 class AimManipulator : public Manipulator {
 public:
+    /// Turn heading and pitch toward the target at the arc's slew speeds,
+    /// within its limits; with no target, return to rest after the reset
+    /// time. On target within the tolerance the weapon gave.
     void tick(f32 dt) override;
     bool is_at_goal() const override { return on_target_; }
+    void contribute_pose(PoseDeltas& deltas) const override;
 
+    /// Arc limits in degrees (relative to the bones' rest pose) and slew
+    /// speeds in degrees per second, as SetFiringArc takes them.
     void set_firing_arc(f32 yaw_min, f32 yaw_max, f32 yaw_speed,
                         f32 pitch_min, f32 pitch_max, f32 pitch_speed);
+    /// Snap to a heading and pitch (radians), within the arc.
     void set_heading_pitch(f32 h, f32 p);
-    f32 heading() const { return heading_; }
-    f32 pitch() const { return pitch_; }
+    f32 heading() const { return heading_; } // radians
+    f32 pitch() const { return pitch_; }     // radians
     bool on_target() const { return on_target_; }
     void set_reset_pose_time(f32 t) { reset_pose_time_ = t; }
     void set_aim_heading_offset(f32 o) { aim_heading_offset_ = o; }
@@ -192,16 +206,41 @@ public:
     void set_pitch_bone(i32 b) { pitch_bone_ = b; }
     void set_muzzle_bone(i32 b) { muzzle_bone_ = b; }
 
+    /// The weapon (index within its unit) this controller aims for, and the
+    /// label it was created with (OnStartTracking's argument, SetFireControl's).
+    void set_weapon(i32 weapon_index, std::string label) {
+        weapon_index_ = weapon_index;
+        label_ = std::move(label);
+    }
+    i32 weapon_index() const { return weapon_index_; }
+    const std::string& label() const { return label_; }
+
+    /// The weapon's target (world position) and its FiringTolerance.
+    void set_target(const Vector3& world, f32 tolerance_radians) {
+        target_ = world;
+        tolerance_ = tolerance_radians;
+        has_target_ = true;
+    }
+    void clear_target() { has_target_ = false; }
+    bool has_target() const { return has_target_; }
+
 private:
-    i32 yaw_bone_ = 0;
-    i32 pitch_bone_ = 0;
-    i32 muzzle_bone_ = 0;
-    f32 heading_ = 0;
+    i32 yaw_bone_ = -1;
+    i32 pitch_bone_ = -1;
+    i32 muzzle_bone_ = -1;
+    i32 weapon_index_ = -1;
+    std::string label_;
+    f32 heading_ = 0; // radians, from the rest pose
     f32 pitch_ = 0;
-    f32 yaw_min_ = -180, yaw_max_ = 180, yaw_speed_ = 90;
-    f32 pitch_min_ = -90, pitch_max_ = 90, pitch_speed_ = 90;
+    // Arc in radians; speeds in radians per second.
+    f32 yaw_min_ = -3.14159265f, yaw_max_ = 3.14159265f, yaw_speed_ = 3.14159265f;
+    f32 pitch_min_ = -1.5707963f, pitch_max_ = 1.5707963f, pitch_speed_ = 3.14159265f;
     f32 reset_pose_time_ = 2.0f;
     f32 aim_heading_offset_ = 0;
+    Vector3 target_;
+    f32 tolerance_ = 0;
+    f32 idle_time_ = 0;
+    bool has_target_ = false;
     bool on_target_ = false;
 };
 

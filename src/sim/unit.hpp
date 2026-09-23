@@ -2,6 +2,7 @@
 
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
+#include "sim/pose.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
@@ -503,6 +504,15 @@ public:
     void remove_manipulator(Manipulator* m);
     void tick_manipulators(f32 dt, lua_State* L);
     void destroy_all_manipulators();
+    const std::vector<std::unique_ptr<Manipulator>>& manipulators() const { return manipulators_; }
+
+    /// A bone's model-space transform in the sim pose: the bind pose with
+    /// the manipulators' rotations and slides (aim controllers, rotators,
+    /// sliders; animators aside), recomputed each tick after they move.
+    BonePose bone_pose(i32 bone) const;
+    /// A bone's world position in the sim pose (the unit's position if the
+    /// bone doesn't exist).
+    Vector3 bone_world_position(i32 bone) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     void release_manipulators(lua_State* L);
@@ -631,6 +641,8 @@ private:
     std::unordered_map<std::string, IntelState> intel_states_;
     // Manipulator system
     std::vector<std::unique_ptr<Manipulator>> manipulators_;
+    std::vector<BonePose> pose_; // empty: the bind pose
+    void update_pose();
     // Transport system
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)

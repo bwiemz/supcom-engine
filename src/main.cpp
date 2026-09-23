@@ -372,6 +372,7 @@ static void print_usage() {
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
               << "  --targeting-test   How weapons choose targets (priorities, restrictions, orders)\n"
+              << "  --aim-test         Turrets turn toward targets before firing\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
@@ -1721,6 +1722,7 @@ int main(int argc, char* argv[]) {
     bool projectile_test = parse_flag(argc, argv, "--projectile-test");
     bool weapon_test = parse_flag(argc, argv, "--weapon-test");
     bool targeting_test = parse_flag(argc, argv, "--targeting-test");
+    bool aim_test = parse_flag(argc, argv, "--aim-test");
     bool shadow_test = parse_flag(argc, argv, "--shadow-test");
     bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
     bool spatial_test = parse_flag(argc, argv, "--spatial-test");
@@ -1815,9 +1817,9 @@ int main(int argc, char* argv[]) {
         layercap_test || massstub_test || massstub2_test || massstub3_test || anim_test ||
         teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
         terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
-        targeting_test || shadow_test || massstub4_test || spatial_test || unitsound_test ||
-        medstub_test || lowstub_test || blend_test || ui_test || bitmap_test || text_test ||
-        edit_test || controls_test || uiboot_test || gameui_test || lobby_flow_test ||
+        targeting_test || aim_test || shadow_test || massstub4_test || spatial_test ||
+        unitsound_test || medstub_test || lowstub_test || blend_test || ui_test || bitmap_test ||
+        text_test || edit_test || controls_test || uiboot_test || gameui_test || lobby_flow_test ||
         uirender_test || font_test || scissor_test || border_render_test || edit_render_test ||
         itemlist_render_test || scrollbar_render_test || anim_render_test || tiled_render_test ||
         input_test || onframe_test || cursor_render_test || drag_render_test || emitter_test ||
@@ -3924,6 +3926,7 @@ int main(int argc, char* argv[]) {
     if (projectile_test && !map_path.empty()) osc::test::test_projectile(test_ctx);
     if (weapon_test && !map_path.empty()) osc::test::test_weapon(test_ctx);
     if (targeting_test && !map_path.empty()) osc::test::test_targeting(test_ctx);
+    if (aim_test && !map_path.empty()) osc::test::test_aim(test_ctx);
     if (terrain_tex_test && !map_path.empty()) osc::test::test_terrain_tex(test_ctx);
     if (shadow_test && !map_path.empty()) osc::test::test_shadow(test_ctx);
     if (massstub4_test && !map_path.empty()) osc::test::test_massstub4(test_ctx);
