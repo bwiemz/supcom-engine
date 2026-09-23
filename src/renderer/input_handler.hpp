@@ -31,7 +31,19 @@ public:
     const std::unordered_set<u32>& selected() const { return selected_; }
 
     /// Replace the current selection (called from Lua SelectUnits).
-    void set_selected(const std::unordered_set<u32>& sel) { selected_ = sel; }
+    void set_selected(const std::unordered_set<u32>& sel) {
+        selected_ = sel;
+        selection_event_ = true;
+    }
+
+    /// Whether a selection action happened since the last call (and reset).
+    /// Moho reports every selection action to the UI, unchanged or not:
+    /// retail's OnSelectionChanged checks for an unchanged selection itself.
+    bool take_selection_event() {
+        const bool e = selection_event_;
+        selection_event_ = false;
+        return e;
+    }
 
     /// Whether a drag-selection box is active.
     bool is_dragging() const { return dragging_; }
@@ -53,6 +65,7 @@ public:
 private:
     i32 player_army_ = 0;
     std::unordered_set<u32> selected_;
+    bool selection_event_ = false;
 
     // Left mouse state (selection)
     bool lmb_was_pressed_ = false;

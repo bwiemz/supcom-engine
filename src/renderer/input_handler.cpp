@@ -161,6 +161,7 @@ void InputHandler::handle_left_click(Renderer& renderer,
             selected_.insert(picked);
     }
 
+    selection_event_ = true;
     spdlog::debug("Selection: {} units (click at world {:.0f},{:.0f})",
                   selected_.size(), wx, wz);
 }
@@ -195,6 +196,7 @@ void InputHandler::handle_drag_select(Renderer& renderer,
         selected_.insert(id);
     }
 
+    selection_event_ = true;
     spdlog::debug("Drag select: {} units in rect ({:.0f},{:.0f})-({:.0f},{:.0f})",
                   selected_.size(), wx0, wz0, wx1, wz1);
 }
@@ -339,6 +341,7 @@ void InputHandler::handle_groups_and_bookmarks(Renderer& renderer,
                     }
 
                     selected_ = live;
+                    selection_event_ = true;
                     spdlog::debug("Control group {} recalled: {} units",
                                   i, selected_.size());
                 }

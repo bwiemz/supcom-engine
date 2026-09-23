@@ -8523,7 +8523,9 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     }
 
     // 4. Frames run the UI: CreateUI's control-cluster OnFrame fires
-    //    OnFirstUpdate once and switches itself off.
+    //    OnFirstUpdate once and switches itself off. (Moho updates hidden
+    //    controls too: the cluster is hidden under the loading fade, and
+    //    OnFirstUpdate must create the score UI before InitialAnimations.)
     pump_frames(5);
     lua_ok("Test 4: first frame ran OnFirstUpdate", R"(
         local cluster = import('/lua/ui/game/gamemain.lua').GetControlCluster()
@@ -8533,7 +8535,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
-    //    HideGameUI('off') after ~2.5 s of UI time.
+    //    HideGameUI('off') after ~4 s of UI time.
     pump_frames(60 * 5);
     lua_ok("Test 5: the game UI is shown after the loading fade", R"(
         if import('/lua/ui/game/gamemain.lua').gameUIHidden then
@@ -8626,6 +8628,54 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if bg:GetAlpha() < 0.99 then
             error('unit view alpha ' .. bg:GetAlpha())
         end
+    )");
+    lua_ok("Test 10d: the orders panel has the commander's orders", R"(
+        local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
+        local n = 0
+        for _, col in grid._items do
+            for _, item in col do n = n + 1 end
+        end
+        if n < 5 then error('order grid holds ' .. n .. ' buttons') end
+    )");
+    lua_ok("Test 10g: the commander's build options", R"(
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        local list = EntityCategoryGetUnitList(buildable)
+        local power = false
+        for _, id in list do if id == 'ueb1101' then power = true end end
+        if not power or table.getn(list) < 10 then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power))
+        end
+        local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
+        if table.getn(shown) < 1 then error('construction panel shows no build options') end
+    )");
+    // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
+    // for auto mode, and after a tick the sim's unit has it.
+    lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
+        local acu = GetSelectedUnits()[1]
+        if acu:IsAutoMode() then error('auto mode already on') end
+        acu:ProcessInfo('SetAutoMode', 'true')
+    )");
+    play(1);
+    lua_ok("Test 10i: the sim applied it", R"(
+        if not GetSelectedUnits()[1]:IsAutoMode() then error('auto mode not applied') end
+        GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', 'false')
+    )");
+    play(1);
+    // Re-selecting the same units is still a selection action: Moho reports
+    // it, and retail refreshes the panels (how its own startup race -- the
+    // commander selected before the UI shows -- gets its orders).
+    lua_ok("Test 10e: re-select the commander", R"(
+        import('/lua/ui/game/orders.lua').controls.orderButtonGrid:DestroyAllItems(true)
+        SelectUnits(GetSelectedUnits())
+    )");
+    pump_frames(2);
+    lua_ok("Test 10f: the re-selection rebuilt the orders", R"(
+        local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
+        local n = 0
+        for _, col in grid._items do
+            for _, item in col do n = n + 1 end
+        end
+        if n < 5 then error('order grid holds ' .. n .. ' buttons after re-selection') end
     )");
     if (osc::test_status::failure_count() == failures_before_select)
         spdlog::info("[PASS] Test 10c: selection UI ran without script errors");

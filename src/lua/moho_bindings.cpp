@@ -1081,6 +1081,15 @@ static int entity_SetFractionComplete(lua_State* L) {
     return 0;
 }
 
+/// unit:IsDead() -- UserUnit's engine method (the sim's Unit class defines
+/// its own in Lua, which shadows this). A UI handle whose unit is gone, or
+/// dying, is dead.
+static int unit_IsDead(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, !u || u->destroyed() || u->is_dying());
+    return 1;
+}
+
 static int unit_IsIdleState(lua_State* L) {
     auto* u = check_unit(L);
     bool idle = false;
@@ -3563,6 +3572,192 @@ static int unit_HasValidTeleportDest(lua_State* L) {
     return 1;
 }
 
+// --- UserUnit methods (the game UI's unit objects; resolve by id) ---
+
+static void push_unit_for_ui(lua_State* L, sim::Entity* entity);
+static sim::SimCallbackQueue* get_callback_queue(lua_State* L);
+static bool push_entity_blueprint(lua_State* L, const sim::Entity* e);
+
+static int unit_GetCustomName(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->custom_name().empty()) lua_pushnil(L);
+    else lua_pushstring(L, e->custom_name().c_str());
+    return 1;
+}
+
+/// unit:GetEconData() -> this unit's production and use, per second.
+static int unit_GetEconData(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_newtable(L);
+    if (!u) return 1;
+    const auto& econ = u->economy();
+    auto set = [&](const char* k, f64 v) {
+        lua_pushstring(L, k);
+        lua_pushnumber(L, v);
+        lua_rawset(L, -3);
+    };
+    set("massProduced", econ.production_active ? econ.production_mass : 0.0);
+    set("energyProduced", econ.production_active ? econ.production_energy : 0.0);
+    set("massConsumed", econ.consumption_active ? econ.consumption_mass : 0.0);
+    set("energyConsumed", econ.consumption_active ? econ.consumption_energy : 0.0);
+    set("massRequested", econ.consumption_mass);
+    set("energyRequested", econ.consumption_energy);
+    return 1;
+}
+
+/// unit:GetFocus() -> the unit it is building (or repairing), or nil.
+static int unit_GetFocus(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    sim::Entity* focus = (u && sim && u->build_target_id())
+        ? sim->entity_registry().find(u->build_target_id()) : nullptr;
+    if (focus && focus->is_unit() && !focus->destroyed()) push_unit_for_ui(L, focus);
+    else lua_pushnil(L);
+    return 1;
+}
+
+/// unit:GetGuardedEntity() -> the unit it guards/assists, or nil.
+static int unit_GetGuardedEntity(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    sim::Entity* target = nullptr;
+    if (u && sim && !u->command_queue().empty() &&
+        u->command_queue().front().type == sim::CommandType::Guard)
+        target = sim->entity_registry().find(u->command_queue().front().target_id);
+    if (target && target->is_unit() && !target->destroyed()) push_unit_for_ui(L, target);
+    else lua_pushnil(L);
+    return 1;
+}
+
+static int unit_GetFootPrintSize(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushnumber(L, u ? std::max(u->footprint_size_x(), u->footprint_size_z()) : 1.0f);
+    return 1;
+}
+
+static int unit_HasUnloadCommandQueuedUp(lua_State* L) {
+    auto* u = check_unit(L);
+    bool found = false;
+    if (u)
+        for (const auto& c : u->command_queue())
+            if (c.type == sim::CommandType::TransportUnload) { found = true; break; }
+    lua_pushboolean(L, found);
+    return 1;
+}
+
+static int unit_IsAutoMode(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->auto_mode());
+    return 1;
+}
+
+static int unit_IsRepeatQueue(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->repeat_queue());
+    return 1;
+}
+
+static int unit_SetRepeatQueue(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_repeat_queue(lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+// Not simulated yet: submarines don't auto-surface and nothing stuns.
+static int unit_IsAutoSurfaceMode(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+static int unit_IsStunned(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+
+// Selection sets: named groups a unit belongs to (selection.lua's
+// control-group hotkeys). Per-UI-state bookkeeping keyed by entity id.
+static constexpr const char* kSelectionSetsKey = "__osc_selection_sets";
+
+/// Push this unit's set table (name -> true), creating it if `create`;
+/// pushes nil otherwise when there is none.
+static void push_unit_selection_sets(lua_State* L, u32 id, bool create) {
+    lua_pushstring(L, kSelectionSetsKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, kSelectionSetsKey);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_rawgeti(L, -1, static_cast<int>(id));
+    if (!lua_istable(L, -1) && create) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, -3, static_cast<int>(id));
+    }
+    lua_remove(L, -2);
+}
+
+static int unit_AddSelectionSet(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || lua_type(L, 2) != LUA_TSTRING) return 0;
+    push_unit_selection_sets(L, e->entity_id(), true);
+    lua_pushvalue(L, 2);
+    lua_pushboolean(L, 1);
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int unit_RemoveSelectionSet(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || lua_type(L, 2) != LUA_TSTRING) return 0;
+    push_unit_selection_sets(L, e->entity_id(), false);
+    if (lua_istable(L, -1)) {
+        lua_pushvalue(L, 2);
+        lua_pushnil(L);
+        lua_rawset(L, -3);
+    }
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int unit_HasSelectionSet(lua_State* L) {
+    auto* e = check_entity(L);
+    bool has = false;
+    if (e && lua_type(L, 2) == LUA_TSTRING) {
+        push_unit_selection_sets(L, e->entity_id(), false);
+        if (lua_istable(L, -1)) {
+            lua_pushvalue(L, 2);
+            lua_rawget(L, -2);
+            has = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pushboolean(L, has);
+    return 1;
+}
+
+/// unit:GetSelectionSets() -> array of the set names this unit is in.
+static int unit_GetSelectionSets(lua_State* L) {
+    auto* e = check_entity(L);
+    lua_newtable(L);
+    if (!e) return 1;
+    const int out = lua_gettop(L);
+    push_unit_selection_sets(L, e->entity_id(), false);
+    if (lua_istable(L, -1)) {
+        int n = 1;
+        lua_pushnil(L);
+        while (lua_next(L, -2) != 0) {
+            lua_pop(L, 1); // value
+            if (lua_type(L, -1) == LUA_TSTRING) {
+                lua_pushvalue(L, -1);
+                lua_rawseti(L, out, n++);
+            }
+        }
+    }
+    lua_pop(L, 1);
+    return 1;
+}
+
+static int unit_ProcessInfo(lua_State* L);
+
 static const MethodEntry unit_methods[] = {
     // Real implementations
     {"GetUnitId",           unit_GetUnitId},
@@ -3591,6 +3786,23 @@ static const MethodEntry unit_methods[] = {
     {"SetUnitState",                unit_SetUnitState},
     {"IsIdleState",                 unit_IsIdleState},
     {"IsIdle",                      unit_IsIdleState}, // UserUnit
+    {"IsDead",                      unit_IsDead},      // UserUnit
+    {"GetCustomName",               unit_GetCustomName},       // UserUnit
+    {"GetEconData",                 unit_GetEconData},         // UserUnit
+    {"GetFocus",                    unit_GetFocus},            // UserUnit
+    {"GetGuardedEntity",            unit_GetGuardedEntity},    // UserUnit
+    {"GetFootPrintSize",            unit_GetFootPrintSize},    // UserUnit
+    {"HasUnloadCommandQueuedUp",    unit_HasUnloadCommandQueuedUp}, // UserUnit
+    {"IsAutoMode",                  unit_IsAutoMode},          // UserUnit
+    {"IsAutoSurfaceMode",           unit_IsAutoSurfaceMode},   // UserUnit
+    {"IsRepeatQueue",               unit_IsRepeatQueue},       // UserUnit
+    {"SetRepeatQueue",              unit_SetRepeatQueue},
+    {"IsStunned",                   unit_IsStunned},           // UserUnit
+    {"AddSelectionSet",             unit_AddSelectionSet},     // UserUnit
+    {"RemoveSelectionSet",          unit_RemoveSelectionSet},  // UserUnit
+    {"HasSelectionSet",             unit_HasSelectionSet},     // UserUnit
+    {"GetSelectionSets",            unit_GetSelectionSets},    // UserUnit
+    {"ProcessInfo",                 unit_ProcessInfo},         // UserUnit
     {"GetFireState",                unit_GetFireState},
     {"SetFireState",                unit_SetFireState},
     {"ToggleFireState",             unit_ToggleFireState},
@@ -13728,6 +13940,22 @@ static int l_SimCallback(lua_State* L) {
     return 0;
 }
 
+/// unit:ProcessInfo(action, value) -- UserUnit's request to change unit
+/// settings (SetAutoMode, SetRepeatQueue, ...). Queued with the UI's sim
+/// callbacks, so it reaches the sim through its input like other orders.
+static int unit_ProcessInfo(lua_State* L) {
+    auto* queue = get_callback_queue(L);
+    auto* e = check_entity(L, 1);
+    if (!queue || !e || lua_type(L, 2) != LUA_TSTRING) return 0;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kProcessInfoCallback;
+    entry.args["Action"] = std::string(lua_tostring(L, 2));
+    if (lua_isstring(L, 3)) entry.args["Value"] = std::string(lua_tostring(L, 3));
+    entry.unit_ids.push_back(e->entity_id());
+    queue->push(std::move(entry));
+    return 0;
+}
+
 static int l_GetFocusArmy(lua_State* L) {
     lua_pushstring(L, "__osc_focus_army");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -13811,6 +14039,124 @@ static int l_GetIdleFactories(lua_State* L) {
     return 1;
 }
 
+/// Live units in the Lua array at stack index `idx` (UI unit objects).
+static std::vector<sim::Unit*> ui_unit_list(lua_State* L, int idx) {
+    std::vector<sim::Unit*> units;
+    if (!lua_istable(L, idx)) return units;
+    const int n = luaL_getn(L, idx);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, idx, i);
+        auto* e = check_entity(L, lua_gettop(L));
+        if (e && e->is_unit() && !e->destroyed()) units.push_back(static_cast<sim::Unit*>(e));
+        lua_pop(L, 1);
+    }
+    return units;
+}
+
+/// True when `units` is non-empty and every unit satisfies `pred`.
+template <typename Pred>
+static bool all_units(const std::vector<sim::Unit*>& units, Pred pred) {
+    if (units.empty()) return false;
+    for (auto* u : units)
+        if (!pred(*u)) return false;
+    return true;
+}
+
+// The orders panel's per-selection state queries (UserUnit lists).
+
+/// GetFireState(units) -> the shared fire state (0 return fire, 1 hold
+/// fire, 2 hold ground), -1 when the units differ.
+static int l_GetFireState(lua_State* L) {
+    const auto units = ui_unit_list(L, 1);
+    int state = units.empty() ? 0 : units.front()->fire_state();
+    for (auto* u : units)
+        if (u->fire_state() != state) { state = -1; break; }
+    lua_pushnumber(L, state);
+    return 1;
+}
+
+/// GetScriptBit(units, bit) -> whether every unit has the toggle bit set.
+static int l_GetScriptBit(lua_State* L) {
+    const auto bit = static_cast<i32>(luaL_checknumber(L, 2));
+    lua_pushboolean(L, all_units(ui_unit_list(L, 1), [&](const sim::Unit& u) {
+        return u.get_script_bit(bit);
+    }));
+    return 1;
+}
+
+static int l_GetIsPaused(lua_State* L) {
+    lua_pushboolean(L, all_units(ui_unit_list(L, 1),
+                                 [](const sim::Unit& u) { return u.is_paused(); }));
+    return 1;
+}
+
+static int l_GetIsAutoMode(lua_State* L) {
+    lua_pushboolean(L, all_units(ui_unit_list(L, 1),
+                                 [](const sim::Unit& u) { return u.auto_mode(); }));
+    return 1;
+}
+
+/// GetIsSubmerged(units) -> -1 all submerged, 1 all surfaced, 0 mixed/none.
+static int l_GetIsSubmerged(lua_State* L) {
+    const auto units = ui_unit_list(L, 1);
+    const auto sub = [](const sim::Unit& u) { return u.layer() == "Sub"; };
+    int state = 0;
+    if (all_units(units, sub)) state = -1;
+    else if (all_units(units, [&](const sim::Unit& u) { return !sub(u); })) state = 1;
+    lua_pushnumber(L, state);
+    return 1;
+}
+
+/// GetAssistingUnitsList(units) -> the units guarding/assisting any of them.
+static int l_GetAssistingUnitsList(lua_State* L) {
+    const auto targets = ui_unit_list(L, 1);
+    std::unordered_set<u32> ids;
+    for (auto* u : targets) ids.insert(u->entity_id());
+    push_ui_unit_array(L, focus_army_units(L, [&](const sim::Unit& u) {
+        const auto& q = u.command_queue();
+        return !q.empty() && q.front().type == sim::CommandType::Guard &&
+               ids.count(q.front().target_id) > 0;
+    }), false);
+    return 1;
+}
+
+// The session's extra select list: units the UI highlights besides the
+// selection (construction.lua marks a hovered factory's queue owner). Kept
+// as entity ids in the UI registry; nothing draws them yet.
+static constexpr const char* kExtraSelectKey = "__osc_extra_select";
+
+static void push_extra_select_table(lua_State* L) {
+    lua_pushstring(L, kExtraSelectKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) return;
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushstring(L, kExtraSelectKey);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+static int extra_select_set(lua_State* L, bool add) {
+    auto* e = check_entity(L, 1);
+    if (!e) return 0;
+    push_extra_select_table(L);
+    lua_pushnumber(L, e->entity_id());
+    if (add) lua_pushboolean(L, 1);
+    else lua_pushnil(L);
+    lua_rawset(L, -3);
+    lua_pop(L, 1);
+    return 0;
+}
+
+static int l_AddToSessionExtraSelectList(lua_State* L) { return extra_select_set(L, true); }
+static int l_RemoveFromSessionExtraSelectList(lua_State* L) { return extra_select_set(L, false); }
+static int l_ClearSessionExtraSelectList(lua_State* L) {
+    lua_pushstring(L, kExtraSelectKey);
+    lua_newtable(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 /// SessionGetLocalCommandSource() -> this client's command source (1-based).
 /// Command sources are the players' clients; single player has one.
 static int l_SessionGetLocalCommandSource(lua_State* L) {
@@ -13889,13 +14235,89 @@ static int l_SetFocusArmy(lua_State* L) {
 
 /// GetUnitCommandData(units) → availableOrders, availableToggles, buildableCategories
 /// Returns three tables based on the intersection of command caps across all units.
+/// A unit blueprint's Economy.BuildableCategory strings ("BUILTBYCOMMANDER
+/// UEF", ...), read from the blueprint store.
+static std::vector<std::string> buildable_category_strings(lua_State* L,
+                                                           const sim::Unit* u) {
+    std::vector<std::string> out;
+    if (!push_entity_blueprint(L, u)) return out;
+    lua_pushstring(L, "Economy");
+    lua_rawget(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "BuildableCategory");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            const int n = luaL_getn(L, -1);
+            for (int i = 1; i <= n; ++i) {
+                lua_rawgeti(L, -1, i);
+                if (lua_type(L, -1) == LUA_TSTRING) out.emplace_back(lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1); // BuildableCategory
+    }
+    lua_pop(L, 2); // Economy + blueprint
+    return out;
+}
+
+/// Push the category of what a selection can build: per unit the union of
+/// its BuildableCategory entries (each "A B" meaning A and B), across the
+/// selection the intersection -- the options every selected unit has. A
+/// selection that builds nothing gets a category no unit is in.
+static void push_buildable_category(lua_State* L,
+                                    const std::vector<std::vector<std::string>>& per_unit) {
+    static const char* kCombine =
+        "return function(lists)\n"
+        "  local result\n"
+        "  for i = 1, table.getn(lists) do\n"
+        "    local u\n"
+        "    for j = 1, table.getn(lists[i]) do\n"
+        "      local c = ParseEntityCategory(lists[i][j])\n"
+        "      if u then u = u + c else u = c end\n"
+        "    end\n"
+        "    if not u then return categories.OSC_BUILDS_NOTHING end\n"
+        "    if result then result = result * u else result = u end\n"
+        "  end\n"
+        "  return result or categories.OSC_BUILDS_NOTHING\n"
+        "end\n";
+    lua_pushstring(L, "__osc_buildable_combine");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        if (luaL_loadbuffer(L, kCombine, std::strlen(kCombine), "=buildable") != 0 ||
+            lua_pcall(L, 0, 1, 0) != 0) {
+            spdlog::warn("buildable category helper: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+            lua_newtable(L);
+            return;
+        }
+        lua_pushstring(L, "__osc_buildable_combine");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_newtable(L);
+    for (size_t i = 0; i < per_unit.size(); ++i) {
+        lua_newtable(L);
+        for (size_t j = 0; j < per_unit[i].size(); ++j) {
+            lua_pushstring(L, per_unit[i][j].c_str());
+            lua_rawseti(L, -2, static_cast<int>(j + 1));
+        }
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("buildable category: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_newtable(L);
+    }
+}
+
 static int l_GetUnitCommandData(lua_State* L) {
     auto* sim = get_sim(L);
 
     // Push the three return tables up front so their stack indices are stable.
     lua_newtable(L); // index: top-2  (orders)
     lua_newtable(L); // index: top-1  (toggles)
-    lua_newtable(L); // index: top    (buildable – empty for now)
+    lua_newtable(L); // index: top    (buildable, replaced below)
 
     if (!sim || !lua_istable(L, 1)) return 3;
 
@@ -13910,6 +14332,7 @@ static int l_GetUnitCommandData(lua_State* L) {
 
     bool first_unit = true;
     std::unordered_set<std::string> common_caps;
+    std::vector<std::vector<std::string>> buildable;
 
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
@@ -13920,6 +14343,7 @@ static int l_GetUnitCommandData(lua_State* L) {
             continue;
         }
         auto* unit = static_cast<sim::Unit*>(entity);
+        buildable.push_back(buildable_category_strings(L, unit));
 
         if (first_unit) {
             for (const char** cap = all_caps; *cap; ++cap) {
@@ -13966,6 +14390,11 @@ static int l_GetUnitCommandData(lua_State* L) {
         }
     }
 
+    if (!buildable.empty()) {
+        const int buildable_tbl = lua_gettop(L);
+        push_buildable_category(L, buildable);
+        lua_replace(L, buildable_tbl);
+    }
     return 3;
 }
 
@@ -14333,6 +14762,27 @@ static sim::Entity* extract_ui_entity(lua_State* L, int idx) {
 
 /// ui_L category filter helper. If keep_matches is true, keeps units matching
 /// the category (FilterDown). If false, keeps non-matching (FilterOut).
+/// The categories of a UI list item: a unit object, or a blueprint id
+/// string (the construction panel filters lists of blueprint ids). False
+/// for anything else, or a dead unit.
+static bool ui_item_categories(lua_State* L, int idx,
+                               std::unordered_set<std::string>& cats) {
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        auto* store = lua::LuaState::get_blueprint_store(L);
+        auto* entry = store ? store->find(lua_tostring(L, idx)) : nullptr;
+        if (!entry) return false;
+        store->push_lua_table(*entry, L);
+        sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+        lua_pop(L, 1);
+        return true;
+    }
+    if (!lua_istable(L, idx)) return false;
+    auto* entity = extract_ui_entity(L, idx);
+    if (!entity || !entity->is_unit() || entity->destroyed()) return false;
+    cats = static_cast<sim::Unit*>(entity)->categories();
+    return true;
+}
+
 static int ui_category_filter(lua_State* L, bool keep_matches) {
     lua_newtable(L);
     int result = lua_gettop(L);
@@ -14343,38 +14793,26 @@ static int ui_category_filter(lua_State* L, bool keep_matches) {
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
-        int unit_tbl = lua_gettop(L);
-        auto* entity = extract_ui_entity(L, unit_tbl);
-        bool matches = false;
-        if (entity && entity->is_unit() && !entity->destroyed()) {
-            auto* unit = static_cast<sim::Unit*>(entity);
-            matches = osc::lua::unit_matches_category(L, 1, unit->categories());
-        }
-
+        const int item = lua_gettop(L);
+        std::unordered_set<std::string> cats;
+        if (!ui_item_categories(L, item, cats)) { lua_pop(L, 1); continue; }
+        const bool matches = osc::lua::categories_match(L, 1, cats);
         if (matches == keep_matches) {
             lua_pushnumber(L, out_idx++);
-            lua_pushvalue(L, unit_tbl);
+            lua_pushvalue(L, item);
             lua_rawset(L, result);
         }
-        lua_pop(L, 1); // pop unit table
+        lua_pop(L, 1); // item
     }
     return 1;
 }
 
 /// EntityCategoryContains(category, unit) — check if a single unit matches (ui_L)
 static int l_ui_EntityCategoryContains(lua_State* L) {
-    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* entity = extract_ui_entity(L, 2);
-    bool matches = false;
-    if (entity && entity->is_unit() && !entity->destroyed()) {
-        auto* unit = static_cast<sim::Unit*>(entity);
-        matches = osc::lua::unit_matches_category(L, 1, unit->categories());
-    }
+    std::unordered_set<std::string> cats;
+    const bool matches = lua_istable(L, 1) && ui_item_categories(L, 2, cats) &&
+                         osc::lua::categories_match(L, 1, cats);
     lua_pushboolean(L, matches ? 1 : 0);
     return 1;
 }
@@ -15728,6 +16166,15 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetFocusArmy", l_GetFocusArmy);
     state.register_function("GetArmyAvatars", l_GetArmyAvatars);
     state.register_function("SessionGetLocalCommandSource", l_SessionGetLocalCommandSource);
+    state.register_function("GetFireState", l_GetFireState);
+    state.register_function("AddToSessionExtraSelectList", l_AddToSessionExtraSelectList);
+    state.register_function("RemoveFromSessionExtraSelectList", l_RemoveFromSessionExtraSelectList);
+    state.register_function("ClearSessionExtraSelectList", l_ClearSessionExtraSelectList);
+    state.register_function("GetScriptBit", l_GetScriptBit);
+    state.register_function("GetIsPaused", l_GetIsPaused);
+    state.register_function("GetIsAutoMode", l_GetIsAutoMode);
+    state.register_function("GetIsSubmerged", l_GetIsSubmerged);
+    state.register_function("GetAssistingUnitsList", l_GetAssistingUnitsList);
     state.register_function("SessionGetCommandSourceNames", l_SessionGetCommandSourceNames);
     state.register_function("GetIdleEngineers", l_GetIdleEngineers);
     state.register_function("GetIdleFactories", l_GetIdleFactories);

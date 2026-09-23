@@ -2067,8 +2067,11 @@ void register_prefetch_bindings(LuaState& state) {
     state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);
 }
 
+static int l_ParseEntityCategory(lua_State* L); // defined with the category helpers
+
 void register_category_bindings(LuaState& state) {
     setup_categories(state.raw());
+    state.register_function("ParseEntityCategory", l_ParseEntityCategory);
 }
 
 // ====================================================================
