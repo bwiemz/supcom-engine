@@ -148,3 +148,25 @@ TEST_CASE("C++-side removal severs the Lua table's pointer to the entity",
     CHECK(lua_touserdata(L, -1) == nullptr); // stale handle reads as destroyed
     lua_pop(L, 2);
 }
+
+TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(flat_heightmap(), 0.0f, false));
+    sim.build_pathfinding_grid();
+
+    auto u = std::make_unique<Unit>();
+    u->set_layer("Air");
+    u->set_position({32.0f, 40.0f, 32.0f});
+    u->set_current_altitude(40.0f);
+    u->set_current_airspeed(10.0f);
+    auto* plane = u.get();
+    const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
+    const size_t before = sim.entity_registry().count();
+
+    plane->begin_air_crash(50.0f);
+    for (int t = 0; t < 300 && sim.entity_registry().find(id); ++t) sim.tick();
+
+    CHECK(sim.entity_registry().find(id) == nullptr); // impacted and removed
+    CHECK(sim.entity_registry().count() == before - 1);
+}

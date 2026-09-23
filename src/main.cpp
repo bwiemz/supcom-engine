@@ -1,3 +1,4 @@
+#include "core/fixed_step.hpp"
 #include "core/image.hpp"
 #include "core/test_status.hpp"
 #include "core/front_end_data.hpp"
@@ -2442,12 +2443,12 @@ int main(int argc, char* argv[]) {
                             }
                         }
                     } else {
-                        sim_accumulator += dt * game_state_mgr.speed();
-                        while (sim_accumulator >=
-                               osc::sim::SimState::SECONDS_PER_TICK) {
-                            sim_state->tick();
-                            sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                        }
+                        // At most 8 ticks per frame; a slower-than-real-time
+                        // sim slows the game rather than stalling every frame.
+                        const int ticks = osc::consume_fixed_steps(
+                            sim_accumulator, dt * game_state_mgr.speed(),
+                            osc::sim::SimState::SECONDS_PER_TICK, 8);
+                        for (int t = 0; t < ticks; ++t) sim_state->tick();
                     }
                 }
 

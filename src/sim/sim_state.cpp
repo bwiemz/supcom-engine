@@ -566,7 +566,11 @@ void SimState::tick() {
 
             add_death_event(ce->position().x, ce->position().y,
                             ce->position().z, crash_radius, ce->army());
+            // Remove the wreck of the aircraft: it used to stay registered
+            // (marked destroyed) forever, iterated every tick, with its Lua
+            // table still pointing at it. The unregister hook severs that.
             ce->mark_destroyed();
+            entity_registry_.unregister_entity(crash_id);
         }
     }
 
