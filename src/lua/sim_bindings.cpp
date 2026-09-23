@@ -2018,6 +2018,10 @@ static int l_CreatePrefetchSet(lua_State* L) {
     return 1;
 }
 
+void register_prefetch_bindings(LuaState& state) {
+    state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);
+}
+
 // ====================================================================
 // IEffect creation helpers
 // ====================================================================

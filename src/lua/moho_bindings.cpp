@@ -13078,28 +13078,30 @@ static const MohoClassDef moho_classes[] = {
     {"FootPlantManipulator",    empty_methods,                  "manipulator_methods"},
     {"CollisionManipulator",    collision_manipulator_methods,   "manipulator_methods"},
 
-    // UI classes — M71: control/group/frame are real, rest are stubs
-    // Base class inheritance is nullptr — FA's ClassUI(moho.xxx_methods, Control)
-    // handles inheritance on the Lua side. C++-side base refs would cause
-    // "ambiguous field" errors in ClassUI when both moho and Control have SetAlpha etc.
+    // UI classes. As in Moho, the controls derive from control_methods
+    // ([1] = base, per FAF's engine annotations): globalInit's class
+    // conversion (retail ConvertCClassToLuaClass, FAF's flattening
+    // ConvertCClassToLuaSimplifiedClass) folds the base in, and both class
+    // systems resolve Class(moho.bitmap_methods, Control) through the
+    // hierarchy -- Control's Lua overrides win over the C base's.
     {"control_methods",         ui_control_methods, nullptr},
-    {"group_methods",           ui_group_methods,  nullptr},
-    {"frame_methods",           ui_frame_methods,  nullptr},
-    {"bitmap_methods",          ui_bitmap_methods,  nullptr},
-    {"border_methods",          ui_border_methods,  nullptr},
+    {"group_methods",           ui_group_methods,  "control_methods"},
+    {"frame_methods",           ui_frame_methods,  "control_methods"},
+    {"bitmap_methods",          ui_bitmap_methods,  "control_methods"},
+    {"border_methods",          ui_border_methods,  "control_methods"},
     {"cursor_methods",          ui_cursor_methods,  nullptr},
     {"discovery_service_methods", ui_discovery_methods, nullptr},
     {"dragger_methods",         ui_dragger_methods,  nullptr},
-    {"edit_methods",            ui_edit_methods,  nullptr},
-    {"histogram_methods",       ui_histogram_methods,  nullptr},
-    {"item_list_methods",       ui_item_list_methods,  nullptr},
+    {"edit_methods",            ui_edit_methods,  "control_methods"},
+    {"histogram_methods",       ui_histogram_methods,  "control_methods"},
+    {"item_list_methods",       ui_item_list_methods,  "control_methods"},
     {"lobby_methods",           ui_lobby_methods,  nullptr},
-    {"mesh_methods",            empty_methods,  nullptr},
-    {"movie_methods",           ui_movie_methods,  nullptr},
-    {"ui_map_preview_methods",  ui_map_preview_methods, nullptr},
-    {"scrollbar_methods",       ui_scrollbar_methods,  nullptr},
-    {"text_methods",            ui_text_methods,  nullptr},
-    {"UIWorldView",             ui_worldview_methods,  nullptr},
+    {"mesh_methods",            empty_methods,  "control_methods"},
+    {"movie_methods",           ui_movie_methods,  "control_methods"},
+    {"ui_map_preview_methods",  ui_map_preview_methods, "control_methods"},
+    {"scrollbar_methods",       ui_scrollbar_methods,  "control_methods"},
+    {"text_methods",            ui_text_methods,  "control_methods"},
+    {"UIWorldView",             ui_worldview_methods,  "control_methods"},
     {"camera_methods",          camera_methods,  nullptr},
     {"userDecal_methods",       empty_methods,  nullptr},
     {"WldUIProvider_methods",   ui_wlduiprovider_methods,  nullptr},
@@ -14565,11 +14567,31 @@ static int l_GetSimRate(lua_State* L) {
 }
 
 /// CurrentTime() → number (wall-clock seconds for UI animations)
+// The UI clock: seconds of UI frame time, advanced once per UI frame by
+// advance_ui_clock(). CurrentTime() reads it, so UI scripts' timing (retail
+// userInit's WaitSeconds polls CurrentTime) follows frames: real time in the
+// window, a fixed step in headless pumps, which outrun the wall clock.
+static constexpr const char* kUiClockKey = "__osc_ui_clock";
+
+void advance_ui_clock(lua_State* L, double dt) {
+    lua_pushstring(L, kUiClockKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const double now = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 0.0;
+    lua_pop(L, 1);
+    lua_pushstring(L, kUiClockKey);
+    lua_pushnumber(L, now + dt);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 static int l_CurrentTime(lua_State* L) {
+    lua_pushstring(L, kUiClockKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) return 1;
+    lua_pop(L, 1);
+    // No frames yet: time since start.
     using namespace std::chrono;
-    auto now = high_resolution_clock::now().time_since_epoch();
-    double secs = duration<double>(now).count();
-    lua_pushnumber(L, secs);
+    static const auto start = steady_clock::now();
+    lua_pushnumber(L, duration<double>(steady_clock::now() - start).count());
     return 1;
 }
 
