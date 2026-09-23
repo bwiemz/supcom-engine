@@ -20,6 +20,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 include(cmake/OscCompileOptions.cmake)
 
 # Vendored Lua 5.0
+add_subdirectory(third_party/fdlibm)
 add_subdirectory(third_party/lua-5.0)
 
 # Engine libraries

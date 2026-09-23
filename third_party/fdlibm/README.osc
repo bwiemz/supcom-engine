@@ -1,0 +1,33 @@
+FDLIBM 5.3, subset
+==================
+
+What: Sun's Freely Distributable LIBM, the portable IEEE-754 math library
+that Java's StrictMath is defined by. Its results depend only on IEEE-754
+double arithmetic, so they are the same on every platform -- unlike the
+system libms (glibc, the MSVC CRT), which differ in the last bit. OpenSupCom
+uses it for the sim's transcendental functions (osc::dmath, and the Lua
+math library), which lockstep multiplayer and replays need bit-identical.
+
+From: https://android.googlesource.com/platform/external/fdlibm
+      at 59f7335e4dd8275a7dc2f8aeb4fd00758fde37ac (the revision vcpkg's
+      fdlibm port pins). Android prefixes the public functions ieee_*.
+
+Licence: see NOTICE (Sun: use, copy, modify and distribute freely, keeping
+the notice).
+
+Taken: the files for sin, cos, tan, asin, acos, atan, atan2, exp, log,
+log10, pow, hypot and sqrt, with the kernels and helpers they call. Build
+flags follow Android's (Android.bp): _IEEE_LIBM, __LITTLE_ENDIAN,
+-fno-strict-aliasing, C without FP contraction.
+
+Changed:
+- fdlibm.h includes osc_fdlibm_names.h, which renames the internal
+  __ieee754_* and __kernel_* functions to osc_fdlibm_*, so they can never
+  collide with or interpose on a system libm's internals.
+- osc_fdlibm.h (new) declares the functions for C++ callers.
+- Five exponent adjustments that left-shift a possibly negative int
+  (e_exp.c, e_hypot.c, e_pow.c twice, e_sqrt.c: k<<20 and the like) shift
+  it as unsigned instead: the same bits, without C's undefined behaviour
+  (UBSan reports it; compilers could exploit it).
+- CMakeLists.txt, README.osc (new).
+No algorithm is changed.
