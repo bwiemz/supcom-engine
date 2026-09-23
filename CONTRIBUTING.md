@@ -52,11 +52,14 @@ There are several layers. Use the lowest one that can show the behaviour.
 | Two-process multiplayer | `ctest -L mp` | everywhere, and in CI |
 | Data-backed modes (`opensupcom --<name>-test`) | `src/integration_tests.cpp`, listed in `tests/integration/data_tests.cmake` | machines with FA |
 | Regression gate | `ctest -L gate` | machines with FA; run it before every PR |
+| Cross-OS replay | `tools/cross_os_replay.py` | machines with FA and Wine; run it before merging a change to the sim's arithmetic |
 
 - **Test first.** Write the failing test, watch it fail for the right reason, then fix. A bug fix comes with the test that would have caught it.
 - **Data-backed modes** exit non-zero on a failed check. In test modes, a Lua error in a script thread also counts as a failure, so a mode passes only if the scripts ran clean. Add a new mode to the gate list in `data_tests.cmake` once it passes on retail.
 - **Windowed test modes** must render offscreen. Add them to `offscreen_capture` in `main.cpp`; a shown window can block forever when there is no compositor or the screen is locked.
 - **Goldens.** `--golden <name>` captures a frame on a fixed clock and compares it with `$OSC_GOLDEN_DIR/<name>.png`. These images contain game art, so they live outside the repository. A missing golden is skipped. Updating one (`--golden-update`) is a deliberate act: inspect the diff first.
+- **Replays.** `--record <file>` records a game and `--replay <file>` plays it back headlessly, checking every tick; the first differing tick is reported. Attach a replay to a gameplay bug report. `data.replay_roundtrip` (gate) holds a scripted game to this.
+- **Cross-OS determinism.** `tools/cross_os_replay.py --run-id <CI run> --linux-exe build/linux-debug/opensupcom -- <game args>` fetches that run's Windows build (the `opensupcom-windows` artifact), records a game with the Linux build, and plays it with both. The Windows build runs under Wine on the same game data. The two checksum traces must be identical.
 - **Render refactors.** `--render-dump <file>` renders a scripted scene offscreen and writes everything the renderers generate. Two runs of the same build are byte-identical, so dump before and after a render-path change and compare the files with `cmp`.
 
 ## Engine conventions that aren't obvious
