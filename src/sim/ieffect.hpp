@@ -112,6 +112,8 @@ private:
 };
 
 /// Registry that owns all IEffect instances. Provides creation, lookup, and cleanup.
+/// Scripts refer to effects by id (never by pointer): gc() frees destroyed
+/// effects while trash bags may still Destroy() their handles.
 class IEffectRegistry {
 public:
     /// Create a new IEffect with auto-incremented ID.
@@ -120,15 +122,14 @@ public:
         fx->set_id(next_id_++);
         auto* ptr = fx.get();
         effects_.push_back(std::move(fx));
+        by_id_[ptr->id()] = ptr;
         return ptr;
     }
 
-    /// Find effect by ID (linear scan — effects are transient, count is small).
+    /// The live (not destroyed) effect with this id, or nullptr.
     IEffect* find(u32 id) {
-        for (auto& fx : effects_) {
-            if (fx && fx->id() == id && !fx->destroyed()) return fx.get();
-        }
-        return nullptr;
+        auto it = by_id_.find(id);
+        return it != by_id_.end() && !it->second->destroyed() ? it->second : nullptr;
     }
 
     /// Mark timed effects whose lifetime has expired as destroyed.
@@ -145,6 +146,9 @@ public:
 
     /// Remove destroyed effects (call periodically).
     void gc() {
+        for (const auto& fx : effects_) {
+            if (fx && fx->destroyed()) by_id_.erase(fx->id());
+        }
         effects_.erase(
             std::remove_if(effects_.begin(), effects_.end(),
                            [](const std::unique_ptr<IEffect>& fx) {
@@ -158,6 +162,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<IEffect>> effects_;
+    std::unordered_map<u32, IEffect*> by_id_; ///< lookup only; never iterated
     u32 next_id_ = 1;
 };
 

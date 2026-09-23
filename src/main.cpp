@@ -277,6 +277,7 @@ static void print_usage() {
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
               << "                     not listed in this baseline\n"
               << "  --dump-threads     At exit, list where each sim script thread waits\n"
+              << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
@@ -561,6 +562,37 @@ static bool execute_reload_sequence(
     sim_state->set_anim_cache(
         std::make_unique<osc::sim::AnimCache>(&vfs));
 
+    // The lobby's filled slots decide which of the scenario's armies play.
+    // Moho creates only those, and retail InitializeArmies spawns an ACU for
+    // every army ListArmies() returns -- an army without a brain then runs
+    // its commander's scripts against no brain at all.
+    // Counted the way SessionManager counts them (it creates brains for the
+    // first N armies, N = filled slots), so every army gets a brain.
+    size_t session_slots = 0; // filled slots; 0 = no lobby config
+    {
+        lua_pushstring(uiL, "__osc_front_end_data");
+        lua_rawget(uiL, LUA_REGISTRYINDEX);
+        auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+        if (fed) {
+            const int top = lua_gettop(uiL);
+            fed->get(uiL, "sessionConfig");
+            if (lua_istable(uiL, -1)) {
+                lua_pushstring(uiL, "PlayerOptions");
+                lua_rawget(uiL, -2);
+                if (lua_istable(uiL, -1)) {
+                    const int n = luaL_getn(uiL, lua_gettop(uiL));
+                    for (int slot = 1; slot <= n; ++slot) {
+                        lua_rawgeti(uiL, -1, slot);
+                        if (lua_istable(uiL, -1)) ++session_slots;
+                        lua_pop(uiL, 1);
+                    }
+                }
+            }
+            lua_settop(uiL, top);
+        }
+    }
+
     // 8. Load scenario from selected map
     osc::lua::ScenarioLoader new_scenario_loader;
     auto new_meta_result = new_scenario_loader.load_scenario(
@@ -570,8 +602,11 @@ static bool execute_reload_sequence(
                       new_meta_result.error().message);
     } else {
         scenario_meta = new_meta_result.value();
-        for (const auto& army : scenario_meta.armies) {
-            sim_state->add_army(army, army);
+        const size_t army_limit = session_slots > 0
+            ? std::min(session_slots, scenario_meta.armies.size())
+            : scenario_meta.armies.size();
+        for (size_t i = 0; i < army_limit; ++i) {
+            sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
         }
     }
     if (sim_state->army_count() == 0) {
@@ -1369,6 +1404,11 @@ int main(int argc, char* argv[]) {
     bool instrument = parse_flag(argc, argv, "--instrument");
     bool builder_debug = parse_flag(argc, argv, "--builder-debug");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
+    // --ai-armies <n>: how many of the scenario's armies play (all AI).
+    size_t ai_army_count = 2;
+    if (const auto n = parse_string_arg(argc, argv, "--ai-armies", ""); !n.empty()) {
+        ai_army_count = static_cast<size_t>(std::max(1, std::atoi(n.c_str())));
+    }
 
     // Collect all command-line args for HasCommandLineArg (M147d)
     std::set<std::string> cmdline_args;
@@ -1515,8 +1555,8 @@ int main(int argc, char* argv[]) {
         }
         scenario_meta = meta_result.value();
 
-        // Add armies from scenario (ai_skirmish limits to 2)
-        size_t army_limit = ai_skirmish ? 2 : scenario_meta.armies.size();
+        // Add armies from scenario (ai_skirmish plays --ai-armies of them)
+        size_t army_limit = ai_skirmish ? ai_army_count : scenario_meta.armies.size();
         for (size_t i = 0; i < std::min(army_limit, scenario_meta.armies.size()); i++) {
             sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
         }
@@ -1974,8 +2014,11 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty()) {
         osc::lua::SessionManager session_mgr;
         if (ai_skirmish) {
-            session_mgr.set_ai_armies({0, 1}); // Both armies are AI
-            session_mgr.set_max_armies(2);      // Only create 2 armies
+            const int armies = static_cast<int>(sim_state->army_count());
+            std::vector<int> ai_armies;
+            for (int a = 0; a < armies; ++a) ai_armies.push_back(a); // all AI
+            session_mgr.set_ai_armies(ai_armies);
+            session_mgr.set_max_armies(armies);
             session_mgr.set_ai_personality(ai_personality);
             // Detect cheat variant: personality ending in "cheat"
             if (ai_personality.size() > 5 &&

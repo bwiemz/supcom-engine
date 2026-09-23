@@ -11,9 +11,8 @@
 #   - UI tests look for UI factories (InternalCreateBitmap, GetFrame, ...) in
 #     the sim Lua state; seven *-render/input modes then crash in test code
 #     on an unchecked lua_rawget.
-#   - Retail-only engine API not yet bound, and units are not instances of
-#     their blueprint script classes (roadmap M185), so unit-script behaviour
-#     the sim tests expect is missing.
+#   - Retail-only engine API not yet bound (see the binding-coverage
+#     baseline), and projectiles do not yet run their script classes.
 
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test audio-test beam-test blend-test bone-test build-test

@@ -7,6 +7,7 @@
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
@@ -73,8 +74,17 @@ static sim::SimState* get_sim(lua_State* L) {
     return sim;
 }
 
+/// True for a weapon's Lua table: its _c_object is a Weapon*, not an Entity*.
+static bool is_weapon_table(lua_State* L, int idx) {
+    lua_pushstring(L, "_c_unit");
+    lua_rawget(L, idx);
+    const bool weapon = lua_isuserdata(L, -1);
+    lua_pop(L, 1);
+    return weapon;
+}
+
 static sim::Entity* check_entity(lua_State* L, int idx = 1) {
-    if (!lua_istable(L, idx)) return nullptr;
+    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
 
     // Check sim generation — stale handles from a previous SimState return nullptr
     lua_pushstring(L, "_c_sim_gen");
@@ -224,6 +234,8 @@ static void push_vector3(lua_State* L, const sim::Vector3& v) {
     lua_pushnumber(L, 3);
     lua_pushnumber(L, v.z);
     lua_settable(L, -3);
+    push_vector_metatable(L); // pos.x as well as pos[1], as Moho's vectors
+    lua_setmetatable(L, -2);
 }
 
 // ====================================================================
@@ -713,21 +725,8 @@ static int entity_GetFractionComplete(lua_State* L) {
 
 static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
+    if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
     if (e) {
-        // can_be_killed guard — check both C++ field and Lua field
-        // (FA's SetCanBeKilled sets a Lua field, not the C++ field)
-        if (e->is_unit()) {
-            auto* u = static_cast<sim::Unit*>(e);
-            if (!u->can_be_killed()) return 0;
-            // Also check Lua-side CanBeKilled field
-            lua_pushstring(L, "CanBeKilled");
-            lua_rawget(L, 1);
-            if (lua_isboolean(L, -1) && !lua_toboolean(L, -1)) {
-                lua_pop(L, 1);
-                return 0;
-            }
-            lua_pop(L, 1);
-        }
         // Stop ambient sound before destruction
         if (e->ambient_sound_handle() != 0) {
             auto* mgr = get_sound_mgr(L);
@@ -878,8 +877,9 @@ static int entity_Destroy(lua_State* L) {
 
         // Check if unit should enter dying state (death animation) instead of
         // immediate destruction. Must be a fully-built unit that isn't already
-        // dying or wreckage, with a blueprint AnimationDeath path.
-        if (e->is_unit() && !e->is_wreckage() &&
+        // dying or wreckage, with a blueprint AnimationDeath path -- and whose
+        // death the script isn't already playing out (see entity_Kill).
+        if (e->is_unit() && !e->is_wreckage() && !e->script_owns_death() &&
             e->fraction_complete() >= 1.0f) {
             auto* dying_unit = static_cast<sim::Unit*>(e);
             if (!dying_unit->is_dying()) {
@@ -908,7 +908,7 @@ static int entity_Destroy(lua_State* L) {
         }
 
         // Air units always crash on death, even without AnimationDeath
-        if (e->is_unit()) {
+        if (e->is_unit() && !e->script_owns_death()) {
             auto* air_unit = static_cast<sim::Unit*>(e);
             if (air_unit->is_air_unit() && !air_unit->is_dying() && !air_unit->is_crashing()) {
                 air_unit->begin_air_crash(air_unit->crash_damage());
@@ -926,42 +926,16 @@ static int entity_Destroy(lua_State* L) {
             }
         }
 
+        // Moho calls the script's OnDestroy while the object is still live.
+        if (auto* sim = get_sim(L)) {
+            sim->notify_script_destroy(*e);
+            if (e->destroyed()) return 0; // its OnDestroy finished the job
+        }
+
         e->mark_destroyed();
 
-        // If this is a unit, clean up weapon Lua refs before freeing
-        if (e->is_unit()) {
-            auto* unit = static_cast<sim::Unit*>(e);
-            for (i32 i = 0; i < unit->weapon_count(); ++i) {
-                auto* w = unit->get_weapon(i);
-                if (!w) continue;
-                // Null out _c_object in the weapon's Lua table
-                if (w->lua_table_ref >= 0) {
-                    lua_rawgeti(L, LUA_REGISTRYINDEX, w->lua_table_ref);
-                    lua_pushstring(L, "_c_object");
-                    lua_pushlightuserdata(L, nullptr);
-                    lua_rawset(L, -3);
-                    lua_pop(L, 1);
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->lua_table_ref);
-                    w->lua_table_ref = LUA_NOREF;
-                }
-                // Release weapon blueprint ref
-                if (w->blueprint_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->blueprint_ref);
-                    w->blueprint_ref = LUA_NOREF;
-                }
-                // Release targeting/weapon priorities refs
-                if (w->targeting_priorities_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->targeting_priorities_ref);
-                    w->targeting_priorities_ref = LUA_NOREF;
-                }
-                if (w->weapon_priorities_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, w->weapon_priorities_ref);
-                    w->weapon_priorities_ref = LUA_NOREF;
-                }
-            }
-            // Release on-given callback refs
-            unit->clear_on_given_callbacks(L);
-        }
+        // If this is a unit, detach its weapons' Lua tables before freeing
+        if (e->is_unit()) static_cast<sim::Unit*>(e)->release_weapon_scripts(L);
 
         // Null out _c_object in the Lua table to prevent use-after-free
         lua_pushstring(L, "_c_object");
@@ -977,6 +951,46 @@ static int entity_Destroy(lua_State* L) {
 
         auto* sim = get_sim(L);
         if (sim) sim->entity_registry().unregister_entity(id);
+    }
+    return 0;
+}
+
+// entity:Kill([instigator, damageType, excessDamageRatio]). Moho hands the
+// death to the script's OnKilled, which plays the death sequence (death
+// weapon, animation, wreckage) and calls Destroy() when it ends. Without an
+// OnKilled the entity is destroyed at once. SetCanBeKilled(false) blocks it.
+static int entity_Kill(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->destroyed() || e->script_owns_death()) return 0;
+    if (e->is_unit()) {
+        auto* u = static_cast<sim::Unit*>(e);
+        if (!u->can_be_killed() || u->is_dying()) return 0;
+        lua_pushstring(L, "CanBeKilled"); // SetCanBeKilled sets this Lua field
+        lua_rawget(L, 1);
+        const bool blocked = lua_isboolean(L, -1) && !lua_toboolean(L, -1);
+        lua_pop(L, 1);
+        if (blocked) return 0;
+    }
+    lua_settop(L, 4); // self, instigator, damageType, excessDamageRatio
+    lua_pushstring(L, "OnKilled");
+    lua_gettable(L, 1);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, 1);
+        return entity_Destroy(L);
+    }
+    e->set_script_owns_death();
+    // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
+    lua_insert(L, 1);
+    lua_pushvalue(L, 2);
+    lua_insert(L, 1); // self (kept), OnKilled, self, instigator, type, ratio
+    if (lua_pcall(L, 4, 0, 0) != 0) {
+        // The death sequence broke before it could Destroy() the unit (e.g.
+        // a failing death weapon); finish the job rather than leave it
+        // half-dead forever.
+        spdlog::warn("OnKilled error: {}", lua_tostring(L, -1));
+        lua_settop(L, 1);
+        if (auto* still = check_entity(L); still && !still->destroyed())
+            return entity_Destroy(L);
     }
     return 0;
 }
@@ -1708,7 +1722,7 @@ static int entity_SetParentOffset(lua_State* L) {
 
 /// Helper: extract an Entity* from a Lua table at the given stack index.
 static sim::Entity* check_entity_arg(lua_State* L, int idx) {
-    if (!lua_istable(L, idx)) return nullptr;
+    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return nullptr; }
@@ -2209,41 +2223,69 @@ static int unit_GetWeapon(lua_State* L) {
     lua_pushstring(L, weapon->label.c_str());
     lua_rawset(L, -3);
 
-    // Set metatable — look up or create shared weapon metatable from registry
-    lua_pushstring(L, "__osc_weapon_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L); // mt
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        // Copy methods from moho.weapon_methods
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "weapon_methods");
-            lua_rawget(L, -2);
+    // Class: the unit's weapon class for this label (unit:GetWeaponClass,
+    // i.e. its Weapons table entry or the base /lua/sim/Weapon.lua Weapon),
+    // with `unit` set as Weapon.__init does. Retail scripts call Lua-side
+    // Weapon methods (SetWeaponEnabled, WeaponUsesEnergy). OnCreate and the
+    // firing callbacks stay C++-driven until roadmap M200.
+    const int wtable = lua_gettop(L);
+    bool classed = false;
+    if (unit->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, unit->lua_table_ref());
+        const int utable = lua_gettop(L);
+        lua_pushstring(L, "GetWeaponClass");
+        lua_gettable(L, utable);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, utable);
+            lua_pushstring(L, weapon->label.c_str());
+            if (lua_pcall(L, 2, 1, 0) == 0 && lua_istable(L, -1)) {
+                lua_setmetatable(L, wtable);
+                lua_pushstring(L, "unit");
+                lua_pushvalue(L, utable);
+                lua_rawset(L, wtable);
+                classed = true;
+            }
+        }
+        lua_settop(L, wtable);
+    }
+
+    // Otherwise the shared engine-methods metatable.
+    if (!classed) {
+        lua_pushstring(L, "__osc_weapon_mt");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L); // mt
+            int mt_idx = lua_gettop(L);
+            lua_pushstring(L, "__index");
+            lua_pushvalue(L, mt_idx);
+            lua_rawset(L, mt_idx);
+            // Copy methods from moho.weapon_methods
+            lua_pushstring(L, "moho");
+            lua_rawget(L, LUA_GLOBALSINDEX);
             if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
+                lua_pushstring(L, "weapon_methods");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    int src_idx = lua_gettop(L);
+                    lua_pushnil(L);
+                    while (lua_next(L, src_idx) != 0) {
+                        lua_pushvalue(L, -2);
+                        lua_pushvalue(L, -2);
+                        lua_rawset(L, mt_idx);
+                        lua_pop(L, 1);
+                    }
                 }
+                lua_pop(L, 1);
             }
             lua_pop(L, 1);
+            // Cache in registry
+            lua_pushstring(L, "__osc_weapon_mt");
+            lua_pushvalue(L, mt_idx);
+            lua_rawset(L, LUA_REGISTRYINDEX);
         }
-        lua_pop(L, 1);
-        // Cache in registry
-        lua_pushstring(L, "__osc_weapon_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
+        lua_setmetatable(L, -2);
     }
-    lua_setmetatable(L, -2);
 
     // Store Lua table ref on the weapon
     lua_pushvalue(L, -1);
@@ -3665,7 +3707,7 @@ static const MethodEntry unit_methods[] = {
     {"SetBuildingUnit",             unit_SetBuildingUnit},
     {"GetUnitBeingBuilt",           unit_GetUnitBeingBuilt},
     {"Stop",                        unit_Stop},
-    {"Kill",                        entity_Destroy},
+    {"Kill",                        entity_Kill},
     {"GetFocusUnit",                unit_GetFocusUnit},
     {"RestoreBuildRestrictions",    unit_RestoreBuildRestrictions},
     {"SetCreator",                  unit_SetCreator},
@@ -3747,9 +3789,25 @@ static int proj_GetVelocity(lua_State* L) {
     return 3;
 }
 
+// projectile:SetVelocity(vx, vy, vz) or projectile:SetVelocity(speed); the
+// one-argument form keeps the direction of travel (or, at rest, the facing).
 static int proj_SetVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (!p) { lua_pushvalue(L, 1); return 1; }
+    if (!lua_isnumber(L, 3)) {
+        const f32 speed = static_cast<f32>(luaL_checknumber(L, 2));
+        sim::Vector3 dir = p->velocity;
+        f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len < 1e-6f) {
+            dir = sim::quat_rotate(p->orientation(), {0.0f, 0.0f, 1.0f});
+            len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        }
+        if (len > 1e-6f) {
+            p->velocity = {dir.x / len * speed, dir.y / len * speed, dir.z / len * speed};
+        }
+        lua_pushvalue(L, 1);
+        return 1;
+    }
     p->velocity.x = static_cast<f32>(luaL_checknumber(L, 2));
     p->velocity.y = static_cast<f32>(luaL_checknumber(L, 3));
     p->velocity.z = static_cast<f32>(luaL_checknumber(L, 4));
@@ -3960,13 +4018,15 @@ static int proj_SetCollision(lua_State* L) {
 
 static int proj_SetCollideEntity(lua_State* L) {
     // No-op + chaining (collision system not fully implemented)
-    lua_pushvalue(L, 1); return 1;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int proj_SetCollideSurface(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) p->collide_surface = (lua_toboolean(L, 2) != 0);
-    lua_pushvalue(L, 1); return 1;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int proj_StayUnderwater(lua_State* L) {
@@ -6365,6 +6425,16 @@ static int brain_AssignUnitsToPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         if (e && e->is_unit() && !e->destroyed()) {
+            // A unit is in exactly one platoon (the pool when in no other):
+            // assigning moves it.
+            if (auto* owner = check_brain(L); owner) {
+                for (size_t pi = 0; pi < owner->platoon_count(); ++pi) {
+                    auto* other = owner->platoon_at(pi);
+                    if (other && other != platoon && !other->destroyed() &&
+                        other->has_unit(e->entity_id()))
+                        other->remove_unit(e->entity_id());
+                }
+            }
             platoon->add_unit(e->entity_id());
             platoon->set_unit_squad(e->entity_id(), squad);
 
@@ -6407,11 +6477,26 @@ static int brain_PlatoonExists(lua_State* L) {
     return 1;
 }
 
+// brain:DisbandPlatoon(platoon): destroy the platoon but not its units,
+// which go back to the army pool. The pool itself ("ArmyPool") is the
+// engine's and holds every unit not in another platoon: disbanding it is a
+// no-op. (Retail PlatoonDisband reaches it when an idle engineer's
+// PlatoonHandle is the pool; FAF later added a script guard for the same.)
 static int brain_DisbandPlatoon(lua_State* L) {
     auto* platoon = check_platoon(L, 2);
-    if (!platoon) return 0;
+    if (!platoon || platoon->name() == "ArmyPool") return 0;
 
     auto* sim = get_sim(L);
+
+    // Units return to the pool.
+    if (auto* owner = check_brain(L); owner && sim) {
+        if (auto* pool = owner->find_platoon_by_name("ArmyPool"); pool && pool != platoon) {
+            for (u32 id : platoon->unit_ids()) {
+                auto* e = sim->entity_registry().find(id);
+                if (e && !e->destroyed() && !pool->has_unit(id)) pool->add_unit(id);
+            }
+        }
+    }
 
     // Clear PlatoonHandle on all units
     if (sim) {
@@ -8212,25 +8297,29 @@ static int manip_Destroy(lua_State* L) {
 static int manip_Enable(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(true);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_Disable(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(false);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_SetEnabled(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(lua_toboolean(L, 2) != 0);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_SetPrecedence(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_precedence(static_cast<i32>(lua_tonumber(L, 2)));
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_IsEnabled(lua_State* L) {
@@ -8277,7 +8366,8 @@ static int rotate_SetCurrentAngle(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_current_angle(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_GetCurrentAngle(lua_State* L) {
@@ -8296,7 +8386,8 @@ static int rotate_SetSpinDown(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_spin_down(
             lua_toboolean(L, 2) != 0);
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_SetTargetSpeed(lua_State* L) {
@@ -8305,7 +8396,8 @@ static int rotate_SetTargetSpeed(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_target_speed(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_ClearGoal(lua_State* L) {
@@ -8313,7 +8405,8 @@ static int rotate_ClearGoal(lua_State* L) {
     if (m) {
         static_cast<sim::RotateManipulator*>(m)->clear_goal();
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- AnimationManipulator methods ---
@@ -8348,7 +8441,8 @@ static int anim_SetAnimationFraction(lua_State* L) {
         static_cast<sim::AnimManipulator*>(m)->set_animation_fraction(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int anim_GetAnimationFraction(lua_State* L) {
@@ -8387,7 +8481,8 @@ static int anim_SetAnimationTime(lua_State* L) {
         static_cast<sim::AnimManipulator*>(m)->set_animation_time(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- SlideManipulator methods ---
@@ -8447,7 +8542,8 @@ static int aim_SetFiringArc(lua_State* L) {
             static_cast<f32>(lua_tonumber(L, 6)),
             static_cast<f32>(lua_tonumber(L, 7)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_SetHeadingPitch(lua_State* L) {
@@ -8457,7 +8553,8 @@ static int aim_SetHeadingPitch(lua_State* L) {
             static_cast<f32>(lua_tonumber(L, 2)),
             static_cast<f32>(lua_tonumber(L, 3)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_GetHeadingPitch(lua_State* L) {
@@ -8485,7 +8582,8 @@ static int aim_SetResetPoseTime(lua_State* L) {
         static_cast<sim::AimManipulator*>(m)->set_reset_pose_time(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_SetAimHeadingOffset(lua_State* L) {
@@ -8494,7 +8592,8 @@ static int aim_SetAimHeadingOffset(lua_State* L) {
         static_cast<sim::AimManipulator*>(m)->set_aim_heading_offset(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- Method tables ---
@@ -8524,12 +8623,13 @@ static const MethodEntry aim_manipulator_methods[] = {
 // animator:SetBoneEnabled(boneName, enabled)
 static int anim_SetBoneEnabled(lua_State* L) {
     auto* m = check_manip_base(L);
-    if (!m || !m->owner()) return 0;
+    if (!m || !m->owner()) { lua_pushvalue(L, 1); return 1; }
     auto* anim = static_cast<sim::AnimManipulator*>(m);
     i32 bone_idx = resolve_bone_index(m->owner(), L, 2);
     bool enabled = lua_toboolean(L, 3) != 0;
     anim->set_bone_enabled(bone_idx, enabled);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int anim_SetBlendTime(lua_State* L) {
@@ -8539,7 +8639,8 @@ static int anim_SetBlendTime(lua_State* L) {
         if (seconds < 0.0f) seconds = 0.0f;
         static_cast<sim::AnimManipulator*>(m)->set_blend_time(seconds);
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static const MethodEntry animation_manipulator_methods[] = {
@@ -8609,12 +8710,14 @@ static const MethodEntry builder_arm_methods[] = {
 // IEffect — real methods that update C++ state and return self for chaining.
 // _c_object lightuserdata points to sim::IEffect*.
 
+// Effects are named by id (see push_ieffect_table): nullptr once destroyed.
 static sim::IEffect* check_ieffect(lua_State* L, int idx = 1) {
     if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
+    auto* sim = get_sim(L);
+    lua_pushstring(L, "_c_effect_id");
     lua_rawget(L, idx);
-    auto* fx = lua_isuserdata(L, -1)
-                   ? static_cast<sim::IEffect*>(lua_touserdata(L, -1))
+    auto* fx = sim && lua_isnumber(L, -1)
+                   ? sim->effect_registry().find(static_cast<u32>(lua_tonumber(L, -1)))
                    : nullptr;
     lua_pop(L, 1);
     return fx;

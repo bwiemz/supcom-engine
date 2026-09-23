@@ -22,12 +22,12 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 |---|---|
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`. |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
-| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. The retail AI builds and expands: 2 AIs reach 42 units by 10 game-minutes. |
+| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 287 cases / 5,390 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
+| Unit tests (Catch2) | 289 cases / 5,396 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Data-backed gate on retail (`ctest -L gate`) | 66 modes plus the `data.binding_coverage` ratchet, all passing. |
 | Data-backed modes failing on retail (`-L retail-gap`) | 34 (33 plus `lobby-flow-test`). Mostly UI tests that run against the sim state, and missing unit-script behaviour. The causes are listed in `tests/integration/data_tests.cmake`. |

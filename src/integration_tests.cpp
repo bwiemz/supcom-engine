@@ -4230,8 +4230,9 @@ void test_adjacency(TestContext& ctx) {
             "    LOG('Test OnNotAdjacentTo fired on #' .. self:GetEntityId())\n"
             "end\n"
             "-- Place pgen adjacent (factory center=200, footprint=5, skirt to 204)\n"
-            "-- Pgen at x=204 has skirt from 203.5 to 205.5 — touching factory skirt\n"
-            "local pg1 = CreateUnitHPR('ueb1101', 1, 204, 25, 200, 0, 0, 0)\n"
+            "-- Pgen footprint 1x1 (from SizeX 0.6), skirt 2 at -0.5: at x=205 it\n"
+            "-- spans 204..206, touching the factory skirt\n"
+            "local pg1 = CreateUnitHPR('ueb1101', 1, 205, 25, 200, 0, 0, 0)\n"
             "if not pg1 then error('pgen1 creation failed') end\n"
             "rawset(_G, '__adj_pg1', pg1)\n"
             "-- Install callback on pgen too\n"
@@ -12023,12 +12024,12 @@ void test_decal_splat(TestContext& ctx) {
 
     size_t initial_count = ctx.sim.effect_registry().count();
 
-    // Test 1: CreateDecal returns a CDecalHandle table with _c_object
+    // Test 1: CreateDecal returns a CDecalHandle table with an effect id
     {
         run_lua(R"(
             local pos = {100, 25, 200}
             local decal = CreateDecal(pos, 1.57, 'Crater01_albedo', 'Crater01_normals', 'Albedo', 50, 50, 1200, 0, 1)
-            rawset(_G, '_dstest1', (type(decal) == 'table' and decal._c_object ~= nil) and 'ok' or 'bad')
+            rawset(_G, '_dstest1', (type(decal) == 'table' and decal._c_effect_id ~= nil) and 'ok' or 'bad')
             rawset(_G, '_dstest_decal', decal)
         )");
         auto v = check_result("_dstest1");
@@ -12075,7 +12076,7 @@ void test_decal_splat(TestContext& ctx) {
         run_lua(R"(
             local pos = {200, 25, 300}
             local splat = CreateSplat(pos, 0.5, 'scorch_010_albedo', 11, 11, 250, 120, 1)
-            rawset(_G, '_dstest4', (type(splat) == 'table' and splat._c_object ~= nil) and 'ok' or 'bad')
+            rawset(_G, '_dstest4', (type(splat) == 'table' and splat._c_effect_id ~= nil) and 'ok' or 'bad')
         )");
         auto v = check_result("_dstest4");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 4: CreateSplat returns table"); }
@@ -12105,7 +12106,7 @@ void test_decal_splat(TestContext& ctx) {
             if not unit then rawset(_G, '_dstest6', 'no_unit'); return end
             local offset = {0, 0, 0}
             local splat = CreateSplatOnBone(unit, offset, 0, 'czar_mark01_albedo', 5, 5, 100, 70, 1)
-            rawset(_G, '_dstest6', (type(splat) == 'table' and splat._c_object ~= nil) and 'ok' or 'bad')
+            rawset(_G, '_dstest6', (type(splat) == 'table' and splat._c_effect_id ~= nil) and 'ok' or 'bad')
         )");
         auto v = check_result("_dstest6");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 6: CreateSplatOnBone returns table"); }

@@ -38,6 +38,14 @@ public:
     bool is_destroyed() const { return destroyed_; }
     void mark_destroyed() { destroyed_ = true; }
 
+    /// Registry ref to this manipulator's Lua table (LUA_NOREF if none).
+    /// Whoever frees the manipulator nulls that table's _c_object first
+    /// (Unit::detach_manipulator_tables), so scripts that keep the handle --
+    /// trash bags Destroy() everything again at unit death -- see a dead
+    /// object rather than freed memory.
+    int lua_table_ref() const { return lua_table_ref_; }
+    void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
+
     /// Per-tick update. Called from Unit::tick_manipulators().
     virtual void tick(f32 dt) = 0;
 
@@ -54,6 +62,7 @@ protected:
     i32 precedence_ = 0;
     bool enabled_ = true;
     bool destroyed_ = false;
+    int lua_table_ref_ = -2; // LUA_NOREF
 };
 
 // ---------------------------------------------------------------------------

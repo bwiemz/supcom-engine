@@ -28,16 +28,20 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
 
 void EntityRegistry::unregister_entity(u32 id) {
     auto it = entities_.find(id);
-    if (it != entities_.end()) {
-        if (unregister_hook_) unregister_hook_(*it->second);
-        if (grid_initialized_) {
-            i32 cx = it->second->grid_cell_x();
-            i32 cz = it->second->grid_cell_z();
-            if (cx >= 0) grid_remove(id, cx, cz);
-        }
-        it->second->set_registry(nullptr);
-        entities_.erase(it);
+    if (it == entities_.end()) return;
+    // Take the entity out before the hook: the hook runs scripts (OnDestroy),
+    // which may create or remove entities and so rehash the map.
+    std::unique_ptr<Entity> entity = std::move(it->second);
+    entities_.erase(it);
+    if (grid_initialized_) {
+        i32 cx = entity->grid_cell_x();
+        i32 cz = entity->grid_cell_z();
+        if (cx >= 0) grid_remove(id, cx, cz);
     }
+    entity->set_registry(nullptr);
+    Entity& ref = *entity;
+    graveyard_.push_back(std::move(entity)); // freed by collect_garbage()
+    if (unregister_hook_) unregister_hook_(ref);
 }
 
 Entity* EntityRegistry::find(u32 id) const {

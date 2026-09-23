@@ -460,6 +460,13 @@ public:
     void remove_manipulator(Manipulator* m);
     void tick_manipulators(f32 dt, lua_State* L);
     void destroy_all_manipulators();
+    /// Free every manipulator, first detaching their Lua tables (see
+    /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
+    void release_manipulators(lua_State* L);
+    /// Detach the weapons' Lua tables (null _c_object and _c_unit) and drop
+    /// every Lua ref the weapons and the on-given callbacks hold. Idempotent;
+    /// runs however the unit leaves the sim (entity_Destroy or C++ removal).
+    void release_weapon_scripts(lua_State* L);
 
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;

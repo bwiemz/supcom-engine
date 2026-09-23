@@ -103,11 +103,15 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
     }
 
     u32 bone_offset = reader.read_u32();
-    u32 bone_count = reader.read_u32();
+    const u32 weighted_bone_count = reader.read_u32();
 
-    // Skip remaining header fields (vert_offset through total_bone_count)
-    // We only need bone_offset and bone_count
-    reader.skip(7 * 4); // 7 more u32s to reach byte 48
+    // vert_offset .. info_count, then total_bone_count (the last header u32).
+    // Vertices skin only to the first `weighted` bones; the rest -- muzzles,
+    // attach points, effect bones -- follow them and are what scripts name
+    // (Weapon.SetupTurret validates e.g. Right_Arm_Muzzle). Parse them all.
+    reader.skip(7 * 4);
+    const u32 total_bone_count = reader.read_u32();
+    u32 bone_count = total_bone_count != 0 ? total_bone_count : weighted_bone_count;
 
     if (bone_count == 0) {
         spdlog::debug("SCM: no bones");
@@ -122,13 +126,23 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
     }
 
     // --- Bone names ---
-    // Null-terminated strings between byte 48 and (bone_offset - 4).
-    // The Python parser uses: length = (boneoffset - 4) - scm.tell()
-    // The last 4 bytes before bone data are padding/marker, not names.
-    size_t name_section_start = reader.position(); // should be 48
-    size_t name_section_length = (bone_offset >= name_section_start + 4)
-        ? (bone_offset - 4) - name_section_start
-        : bone_offset - name_section_start;
+    // Sections are padded (0xC5) to 32-byte boundaries and each starts with
+    // a 4-byte tag: after the 48-byte header comes "NAME", then the
+    // null-terminated names, then padding and "SKEL" at bone_offset - 4.
+    // Names begin right after the NAME tag; reading from the header's end
+    // glued padding and tag onto the first name and, when the read started
+    // inside the header, shifted every name by three bones.
+    size_t name_section_start = reader.position(); // 48
+    const size_t names_end = bone_offset >= 4 ? bone_offset - 4 : bone_offset;
+    for (size_t i = name_section_start; i + 4 <= names_end; ++i) {
+        if (std::memcmp(file_data.data() + i, "NAME", 4) == 0) {
+            name_section_start = i + 4;
+            break;
+        }
+    }
+    reader.seek(name_section_start);
+    const size_t name_section_length =
+        names_end > name_section_start ? names_end - name_section_start : 0;
     if (!reader.has_remaining(name_section_length)) {
         spdlog::debug("SCM: name section truncated");
         return std::nullopt;

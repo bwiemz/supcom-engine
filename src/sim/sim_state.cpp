@@ -50,7 +50,29 @@ void SimState::occupy_footprint(Unit& unit) {
     pathfinding_grid_->mark_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
 }
 
+void SimState::notify_script_destroy(Entity& entity) {
+    if (!L_ || entity.script_destroy_notified() || entity.lua_table_ref() < 0) return;
+    entity.set_script_destroy_notified();
+    const int top = lua_gettop(L_);
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, entity.lua_table_ref());
+    if (lua_istable(L_, -1)) {
+        lua_pushstring(L_, "OnDestroy");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, -2);
+            if (lua_pcall(L_, 1, 0, 0) != 0) {
+                spdlog::warn("OnDestroy error: {}", lua_tostring(L_, -1));
+            }
+        }
+    }
+    lua_settop(L_, top);
+}
+
 void SimState::on_entity_unregistered(Entity& entity) {
+    // Removed by the engine (impact, reclaim, crash...) rather than by a
+    // script's Destroy(): the script's OnDestroy still runs, first.
+    notify_script_destroy(entity);
+
     // A dead structure stops blocking paths (it used to block forever).
     if (auto it = occupied_footprints_.find(entity.entity_id());
         it != occupied_footprints_.end()) {
@@ -59,6 +81,13 @@ void SimState::on_entity_unregistered(Entity& entity) {
             pathfinding_grid_->clear_obstacle(fp.x, fp.z, fp.size_x, fp.size_z);
         }
         occupied_footprints_.erase(it);
+    }
+
+    // Its manipulators and weapons go with it; their Lua tables are detached.
+    if (entity.is_unit()) {
+        auto& unit = static_cast<Unit&>(entity);
+        unit.release_manipulators(L_);
+        unit.release_weapon_scripts(L_);
     }
 
     // The Lua table outlives the C++ object: null its _c_object so methods
@@ -609,6 +638,10 @@ void SimState::tick() {
         PROFILE_ZONE("Sim::lua_gc");
         lua_setgcthreshold(L_, 0);
     }
+
+    // Entities unregistered this tick may still have been on the C++ stack
+    // (destroyed from their own callbacks); only now is freeing them safe.
+    entity_registry_.collect_garbage();
 }
 
 void SimState::update_economies() {
