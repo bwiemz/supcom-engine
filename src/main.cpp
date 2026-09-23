@@ -1214,8 +1214,9 @@ static void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
 /// focus changes, OnSync), then the game UI's beat functions.
-static void world_beat(osc::lua::LuaState* sim_lua, lua_State* uiL) {
+static void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
     if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
+    if (sim) osc::lua::notify_focus_army_damage(uiL, *sim);
     osc::core::call_game_beat(uiL);
 }
 
@@ -2901,7 +2902,7 @@ int main(int argc, char* argv[]) {
                         paused_beat_accumulator = 0.0;
                     }
                     for (osc::u32 b = 0; b < beats; ++b)
-                        world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                        world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
                 }
 
                 // Process SimCallbacks from UI (M138a)
@@ -3346,7 +3347,7 @@ int main(int argc, char* argv[]) {
         for (int t = 0; t < 3000; t++) {
             if (sim_state) {
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
             }
             if ((t + 1) % 10 == 0) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
@@ -3526,10 +3527,10 @@ int main(int argc, char* argv[]) {
                         if (u.vet_level() > 0) total_vet++;
                     }
                 });
-                spdlog::info("  Tick {}: {:.1f}s | {} units alive | {} vetted",
+                spdlog::info("  Tick {}: {:.1f}s | {} units alive | {} vetted | {} sounds",
                              ticks_run,
                              ticks_run * osc::sim::SimState::SECONDS_PER_TICK,
-                             total_units, total_vet);
+                             total_units, total_vet, sound.active_count());
             }
 
             // Check for game over
@@ -3764,7 +3765,7 @@ int main(int argc, char* argv[]) {
             for (int t = 0; t < ticks; ++t) {
                 apply_sim_callbacks(test_callbacks, *sim_state, *sim_lua_state);
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
                 pump(6);
             }
         };

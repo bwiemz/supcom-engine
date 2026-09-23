@@ -14011,6 +14011,39 @@ static void push_ui_unit_array(lua_State* L, const std::vector<sim::Entity*>& un
     }
 }
 
+void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
+    // Per sim, told apart by generation: a new SimState can reuse the old
+    // one's address, and its entity ids restart.
+    static u32 last_generation = 0;
+    static std::unordered_map<u32, f32> last_health;
+    if (last_generation != sim::SimState::sim_generation()) {
+        last_generation = sim::SimState::sim_generation();
+        last_health.clear();
+    }
+    lua_pushstring(uiL, "__osc_focus_army");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    const int focus = lua_isnumber(uiL, -1) ? static_cast<int>(lua_tonumber(uiL, -1)) : -1;
+    lua_pop(uiL, 1);
+
+    std::vector<sim::Entity*> damaged;
+    std::unordered_map<u32, f32> health;
+    sim.entity_registry().for_each([&](const sim::Entity& e) {
+        if (focus < 0 || !e.is_unit() || e.destroyed() || e.army() != focus) return;
+        health.emplace(e.entity_id(), e.health());
+        auto it = last_health.find(e.entity_id());
+        if (it != last_health.end() && e.health() < it->second)
+            damaged.push_back(const_cast<sim::Entity*>(&e));
+    });
+    last_health = std::move(health);
+    std::sort(damaged.begin(), damaged.end(), [](const sim::Entity* a, const sim::Entity* b) {
+        return a->entity_id() < b->entity_id();
+    });
+    for (auto* e : damaged) {
+        push_unit_for_ui(uiL, e);
+        core::call_ui_callback(uiL, core::kGameMainModule, "OnFocusArmyUnitDamaged", 1);
+    }
+}
+
 /// Same idle test as unit:IsIdleState().
 static bool unit_is_idle(const sim::Unit& u) {
     return u.command_queue().empty() && !u.is_building() && !u.is_being_built() &&

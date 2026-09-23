@@ -8728,6 +8728,35 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         spdlog::warn("[SKIP] Test 13: no FA sound data");
     }
 
+    // 14. Damage to the player's own units reaches gamemain, which tells
+    //     UserMusic (sustained, it switches to battle music).
+    lua_ok("Test 14a: watch gamemain.OnFocusArmyUnitDamaged", R"(
+        local gm = import('/lua/ui/game/gamemain.lua')
+        __osc_damaged = 0
+        local orig = gm.OnFocusArmyUnitDamaged
+        gm.OnFocusArmyUnitDamaged = function(unit)
+            __osc_damaged = __osc_damaged + 1
+            if orig then orig(unit) end
+        end
+        __osc_test_acu_id = tonumber(GetArmyAvatars()[1]:GetEntityId())
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        auto* acu = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+        play(1); // a beat to record health
+        if (acu) acu->set_health(acu->health() - 50.0f);
+        play(1);
+        play(1); // no more damage: no more calls
+        lua_getglobal(L, "__osc_damaged");
+        const int calls = static_cast<int>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (acu && calls == 1)
+            spdlog::info("[PASS] Test 14b: damage to the commander reached gamemain once");
+        else
+            osc::test_status::fail("[FAIL] Test 14b: OnFocusArmyUnitDamaged calls: {}", calls);
+    }
+
     // 10 (before game over). Selecting the commander, as OnFirstUpdate does
     //    in a real game: gamemain.OnSelectionChanged updates the orders and
     //    construction panels, and the unit view fades in from the rollover
