@@ -19,6 +19,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <ostream>
 #include <cmath>
 #include <cctype>
 #include <cstring>
@@ -701,6 +702,11 @@ void SimState::tick() {
         PROFILE_ZONE("Sim::observer");
         tick_observer_(*this);
     }
+    if (checksum_trace_) {
+        const ChecksumParts parts = checksum_parts();
+        *checksum_trace_ << fmt::format("{} {:08x} {:016x} {:016x} {:016x}\n", tick_count_,
+                                        parts.total(), parts.rng, parts.armies, parts.entities);
+    }
     // Death flashes and camera shakes are shown from the tick's capture;
     // the sim is done with them (events raised between ticks wait for the
     // next one).
@@ -1366,48 +1372,63 @@ void SimState::update_victory() {
     }
 }
 
-u32 SimState::compute_sync_checksum() const {
-    // FNV-1a hash over the authoritative sim state.
+namespace {
+
+/// FNV-1a over 64-bit words.
+struct Fnv {
     u64 h = 1469598103934665603ULL;
-    auto mix = [&](u64 v) {
+    void mix(u64 v) {
         h ^= v;
         h *= 1099511628211ULL;
-    };
-    auto mix_f32 = [&](f32 f) {
+    }
+    void mix_f32(f32 f) {
         u32 bits;
         std::memcpy(&bits, &f, sizeof(bits));
         mix(bits);
-    };
+    }
+};
 
-    mix(tick_count_);
+} // namespace
 
-    // Army state and stored economy.
+u32 SimState::ChecksumParts::total() const {
+    Fnv f;
+    f.mix(rng);
+    f.mix(armies);
+    f.mix(entities);
+    return static_cast<u32>(f.h ^ (f.h >> 32));
+}
+
+SimState::ChecksumParts SimState::checksum_parts() const {
+    ChecksumParts parts;
+    parts.rng = sim_random_.state();
+
+    Fnv armies;
+    armies.mix(tick_count_);
     for (const auto& a : armies_) {
-        mix(static_cast<u64>(a->state()));
-        mix_f32(static_cast<f32>(a->economy().mass.stored));
-        mix_f32(static_cast<f32>(a->economy().energy.stored));
+        armies.mix(static_cast<u64>(a->state()));
+        armies.mix_f32(static_cast<f32>(a->economy().mass.stored));
+        armies.mix_f32(static_cast<f32>(a->economy().energy.stored));
     }
+    parts.armies = armies.h;
 
-    // Entities in a deterministic order (the registry hash-map order is not
-    // stable, so sort by id first).
-    std::vector<u32> ids;
-    ids.reserve(entity_registry_.count());
-    entity_registry_.for_each([&](const Entity& e) { ids.push_back(e.entity_id()); });
-    std::sort(ids.begin(), ids.end());
-    for (u32 id : ids) {
-        const Entity* e = entity_registry_.find(id);
-        if (!e) continue;
-        mix(id);
-        mix(static_cast<u64>(static_cast<u32>(e->army())));
-        mix(e->destroyed() ? 1u : 0u);
-        const auto& p = e->position();
-        mix_f32(p.x);
-        mix_f32(p.y);
-        mix_f32(p.z);
-        mix_f32(e->health());
-    }
+    // The registry walks in id order.
+    Fnv entities;
+    entity_registry_.for_each([&](const Entity& e) {
+        entities.mix(e.entity_id());
+        entities.mix(static_cast<u64>(static_cast<u32>(e.army())));
+        entities.mix(e.destroyed() ? 1u : 0u);
+        const auto& p = e.position();
+        entities.mix_f32(p.x);
+        entities.mix_f32(p.y);
+        entities.mix_f32(p.z);
+        entities.mix_f32(e.health());
+    });
+    parts.entities = entities.h;
+    return parts;
+}
 
-    return static_cast<u32>(h ^ (h >> 32));
+u32 SimState::compute_sync_checksum() const {
+    return checksum_parts().total();
 }
 
 i32 SimState::player_result() const {

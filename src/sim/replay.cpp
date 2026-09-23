@@ -74,6 +74,8 @@ std::vector<u8> Replay::serialize() const {
     put_u32(b, version);
     put_u32(b, final_tick);
     put_u32(b, command_delay);
+    put_u32(b, static_cast<u32>(seed));
+    put_u32(b, static_cast<u32>(seed >> 32));
     put_str(b, victory_condition);
     put_u32(b, static_cast<u32>(commands.size()));
     for (const auto& c : commands) {
@@ -99,12 +101,18 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
     if (r.u8v() != 'O' || r.u8v() != 'S' || r.u8v() != 'C' || r.u8v() != 'R')
         return false;
     out.version = r.u32v();
-    if (!r.ok || out.version != kVersion) {
+    // Version 1 has no seed: it replays with the default one.
+    if (!r.ok || out.version < 1 || out.version > kVersion) {
         out = Replay{};
         return false;
     }
     out.final_tick = r.u32v();
     out.command_delay = r.u32v();
+    if (out.version >= 2) {
+        const u64 lo = r.u32v();
+        const u64 hi = r.u32v();
+        out.seed = lo | (hi << 32);
+    }
     out.victory_condition = r.strv();
     u32 count = r.u32v();
     out.commands.reserve(count);
