@@ -1,4 +1,5 @@
 #include "sim/weapon.hpp"
+#include "sim/projectile_script.hpp"
 #include "core/dmath.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
@@ -163,10 +164,35 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
         }
     }
 
-    // Calculate direction to target
-    f32 dx = target->position().x - spawn_pos.x;
-    f32 dz = target->position().z - spawn_pos.z;
-    f32 dist = std::sqrt(dx * dx + dz * dz);
+    const std::string& layer = owner.layer();
+    const Projectile* fired =
+        launch(owner, spawn_pos, target, registry, L, layer == "Sub" || layer == "Seabed");
+    if (!fired) return false;
+    spdlog::debug("Weapon '{}' fired projectile #{} at entity #{}", label, fired->entity_id(),
+                  target_entity_id);
+    return true;
+}
+
+Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
+                           EntityRegistry& registry, lua_State* L, bool in_water) {
+    // Toward the target, or along the owner's facing with none.
+    f32 dx, dz, dist;
+    if (target) {
+        dx = target->position().x - spawn_pos.x;
+        dz = target->position().z - spawn_pos.z;
+        dist = std::sqrt(dx * dx + dz * dz);
+    } else {
+        const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
+        dx = forward.x;
+        dz = forward.z;
+        dist = std::sqrt(dx * dx + dz * dz);
+        const f32 reach = max_range > 0 ? max_range : 10.0f;
+        if (dist > 0.001f) {
+            dx *= reach / dist;
+            dz *= reach / dist;
+            dist = reach;
+        }
+    }
     if (dist < 0.001f) dist = 0.001f;
 
     f32 inv_dist = 1.0f / dist;
@@ -192,16 +218,17 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     proj->set_position(spawn_pos);
     proj->set_army(owner.army());
     proj->velocity = vel;
-    proj->target_entity_id = need_compute_bomb_drop ? 0 : target_entity_id;
-    proj->target_position = target->position();
+    proj->target_entity_id = (need_compute_bomb_drop || !target) ? 0 : target->entity_id();
+    proj->target_position =
+        target ? target->position() : Vector3{spawn_pos.x + dx, spawn_pos.y, spawn_pos.z + dz};
     proj->launcher_id = owner.entity_id();
     proj->damage_amount = damage * owner.damage_multiplier();
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;
     // Bombs drop from altitude so need more time; normal projectiles use flight time
-    proj->lifetime = need_compute_bomb_drop
-        ? 10.0f  // generous for high-altitude drops
-        : (dist / muzzle_velocity) + 2.0f;
+    proj->lifetime = (need_compute_bomb_drop || muzzle_velocity <= 0)
+                         ? 10.0f // generous for high-altitude drops
+                         : (dist / muzzle_velocity) + 2.0f;
 
     // Set projectile blueprint for rendering
     if (!projectile_bp_id.empty()) {
@@ -287,61 +314,8 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
 
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));
-
-    // Create Lua table for projectile with projectile_methods metatable
-    if (L && proj_ptr) {
-        lua_newtable(L);
-        lua_pushstring(L, "_c_object");
-        lua_pushlightuserdata(L, proj_ptr);
-        lua_rawset(L, -3);
-
-        // Set metatable from moho.projectile_methods (via cached __osc_proj_mt)
-        lua_pushstring(L, "__osc_proj_mt");
-        lua_rawget(L, LUA_REGISTRYINDEX);
-        if (!lua_istable(L, -1)) {
-            lua_pop(L, 1);
-            // Build metatable
-            lua_newtable(L);
-            int mt_idx = lua_gettop(L);
-            lua_pushstring(L, "__index");
-            lua_pushvalue(L, mt_idx);
-            lua_rawset(L, mt_idx);
-
-            // Copy from moho.projectile_methods
-            lua_pushstring(L, "moho");
-            lua_rawget(L, LUA_GLOBALSINDEX);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "projectile_methods");
-                lua_rawget(L, -2);
-                if (lua_istable(L, -1)) {
-                    int src_idx = lua_gettop(L);
-                    lua_pushnil(L);
-                    while (lua_next(L, src_idx) != 0) {
-                        lua_pushvalue(L, -2);
-                        lua_pushvalue(L, -2);
-                        lua_rawset(L, mt_idx);
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // projectile_methods
-            }
-            lua_pop(L, 1); // moho
-
-            // Cache in registry
-            lua_pushstring(L, "__osc_proj_mt");
-            lua_pushvalue(L, mt_idx);
-            lua_rawset(L, LUA_REGISTRYINDEX);
-        }
-        lua_setmetatable(L, -2);
-
-        // Store Lua table ref
-        int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        proj_ptr->set_lua_table_ref(ref);
-    }
-
-    spdlog::debug("Weapon '{}' fired projectile #{} at entity #{}",
-                  label, proj_id, target_entity_id);
-    return true;
+    if (proj_ptr) create_projectile_object(L, *proj_ptr, in_water, false);
+    return proj_ptr;
 }
 
 } // namespace osc::sim

@@ -17,6 +17,7 @@
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/visibility_grid.hpp"
 #include "sim/unit.hpp"
@@ -1438,6 +1439,12 @@ struct MethodEntry {
     lua_CFunction func;
 };
 
+/// Whether a point is under the map's water (a projectile's OnCreate(inWater)).
+static bool under_water(const sim::SimState* sim, const sim::Vector3& p) {
+    const auto* t = sim ? sim->terrain() : nullptr;
+    return t && t->has_water() && p.y < t->water_elevation();
+}
+
 // entity:CreateProjectile(bp, dx, dy, dz) -> projectile Lua table
 // Creates a projectile at entity position with optional velocity direction
 static int entity_CreateProjectile(lua_State* L) {
@@ -1473,48 +1480,8 @@ static int entity_CreateProjectile(lua_State* L) {
     auto* proj_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(proj_id));
 
-    // Create Lua table with projectile metatable (reuse __osc_proj_mt)
-    lua_newtable(L);
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, proj_ptr);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "__osc_proj_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "projectile_methods");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "__osc_proj_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    lua_setmetatable(L, -2);
-
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    proj_ptr->set_lua_table_ref(ref);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    // Its script object, as for every projectile (OnCreate runs).
+    sim::create_projectile_object(L, *proj_ptr, under_water(sim, proj_ptr->position()), true);
     return 1;
 }
 
@@ -1556,47 +1523,8 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     auto* proj_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(proj_id));
 
-    lua_newtable(L);
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, proj_ptr);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "__osc_proj_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "projectile_methods");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "__osc_proj_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    lua_setmetatable(L, -2);
-
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    proj_ptr->set_lua_table_ref(ref);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    // Its script object, as for every projectile (OnCreate runs).
+    sim::create_projectile_object(L, *proj_ptr, under_water(sim, proj_ptr->position()), true);
     return 1;
 }
 
@@ -4022,6 +3950,16 @@ static int proj_GetVelocity(lua_State* L) {
 
 // projectile:SetVelocity(vx, vy, vz) or projectile:SetVelocity(speed); the
 // one-argument form keeps the direction of travel (or, at rest, the facing).
+/// projectile:SetDamage(amount [, radius]) -- a script's own damage for
+/// this projectile (retail's split tactical missiles set theirs in OnCreate).
+static int proj_SetDamage(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (!p) return 0;
+    if (lua_isnumber(L, 2)) p->damage_amount = static_cast<f32>(lua_tonumber(L, 2));
+    if (lua_isnumber(L, 3)) p->damage_radius = static_cast<f32>(lua_tonumber(L, 3));
+    return 0;
+}
+
 static int proj_SetVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (!p) { lua_pushvalue(L, 1); return 1; }
@@ -4290,49 +4228,8 @@ static int proj_CreateChildProjectile(lua_State* L) {
     auto* child_ptr = static_cast<sim::Projectile*>(
         sim->entity_registry().find(child_id));
 
-    // Create Lua table with projectile metatable
-    lua_newtable(L);
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, child_ptr);
-    lua_rawset(L, -3);
-
-    // Set __osc_proj_mt metatable (cached in registry)
-    lua_pushstring(L, "__osc_proj_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "projectile_methods");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "__osc_proj_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    lua_setmetatable(L, -2);
-
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    child_ptr->set_lua_table_ref(ref);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    // Its script object, as for every projectile (OnCreate runs).
+    sim::create_projectile_object(L, *child_ptr, under_water(sim, child_ptr->position()), true);
     return 1;
 }
 
@@ -4341,6 +4238,7 @@ static const MethodEntry projectile_methods[] = {
     {"GetLauncher",                 proj_GetLauncher},
     {"GetCurrentSpeed",             proj_GetCurrentSpeed},
     {"GetVelocity",                 proj_GetVelocity},
+    {"SetDamage",                   proj_SetDamage},
     {"SetVelocity",                 proj_SetVelocity},
     {"SetLifetime",                 proj_SetLifetime},
     {"SetNewTarget",                proj_SetNewTarget},
@@ -4502,92 +4400,26 @@ static int weapon_CreateProjectile(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
-    auto proj = std::make_unique<sim::Projectile>();
-    proj->set_position(unit->position());
-    proj->set_army(unit->army());
-    proj->launcher_id = unit->entity_id();
-    proj->damage_amount = w->damage;
-    proj->damage_radius = w->damage_radius;
-    proj->damage_type = w->damage_type;
-    proj->lifetime = 10.0f;
+    // From the muzzle bone the script names (retail's CreateProjectileAtMuzzle
+    // passes it), else the weapon's own first muzzle, else the unit.
+    i32 bone = -1;
+    if (!lua_isnoneornil(L, 2)) bone = resolve_bone_index(unit, L, 2);
+    else if (!w->muzzle_bone_name.empty() && unit->bone_data())
+        bone = unit->bone_data()->find_bone(w->muzzle_bone_name);
+    const sim::Vector3 spawn = bone >= 0 ? bone_world_position(unit, bone) : unit->position();
 
-    // Set projectile blueprint for rendering
-    if (!w->projectile_bp_id.empty()) {
-        proj->set_blueprint_id(w->projectile_bp_id);
-    }
-
-    // If target exists, aim toward it
+    const sim::Entity* target = nullptr;
     if (w->target_entity_id > 0) {
-        auto* target = sim->entity_registry().find(w->target_entity_id);
-        if (target && !target->destroyed()) {
-            proj->target_entity_id = w->target_entity_id;
-            proj->target_position = target->position();
-            f32 dx = target->position().x - unit->position().x;
-            f32 dz = target->position().z - unit->position().z;
-            f32 dist = std::sqrt(dx * dx + dz * dz);
-            if (dist > 0.001f) {
-                f32 inv = 1.0f / dist;
-                proj->velocity.x = dx * inv * w->muzzle_velocity;
-                proj->velocity.z = dz * inv * w->muzzle_velocity;
-            }
-            proj->lifetime = (dist / w->muzzle_velocity) + 2.0f;
-        }
+        target = sim->entity_registry().find(w->target_entity_id);
+        if (target && target->destroyed()) target = nullptr;
     }
-
-    // Velocity-align: set initial orientation facing fire direction
-    proj->velocity_align = true;
-    if (proj->velocity.x != 0 || proj->velocity.z != 0) {
-        f32 heading = osc::dmath::atan2(proj->velocity.x, proj->velocity.z);
-        proj->set_orientation(sim::euler_to_quat(heading, 0.0f, 0.0f));
+    auto* proj = w->launch(*unit, spawn, target, sim->entity_registry(), L,
+                           under_water(sim, spawn));
+    if (!proj || proj->lua_table_ref() < 0) {
+        lua_pushnil(L);
+        return 1;
     }
-
-    u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
-    auto* proj_ptr = static_cast<sim::Projectile*>(
-        sim->entity_registry().find(proj_id));
-
-    // Create Lua table with projectile metatable
-    lua_newtable(L);
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, proj_ptr);
-    lua_rawset(L, -3);
-
-    // Set __osc_proj_mt metatable
-    lua_pushstring(L, "__osc_proj_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "projectile_methods");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1);
-        lua_pushstring(L, "__osc_proj_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    lua_setmetatable(L, -2);
-
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    proj_ptr->set_lua_table_ref(ref);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, proj->lua_table_ref());
     return 1;
 }
 

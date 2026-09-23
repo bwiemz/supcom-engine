@@ -25,6 +25,8 @@ add_library(osc_sim STATIC
     world_snapshot.cpp
     command_codec.cpp
     game_setup.cpp
+    script_class.cpp
+    projectile_script.cpp
     build_info.cpp
     sim_callbacks.cpp
 )

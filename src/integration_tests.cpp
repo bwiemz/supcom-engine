@@ -6144,6 +6144,58 @@ void test_projectile(TestContext& ctx) {
         }
     }
 
+    // M200a: projectiles are instances of their script classes. A UEF T1
+    // tank's gun makes TDFGauss01 objects: OnCreate has run, retail's
+    // PassDamageData works, and the shot leaves from the muzzle bone.
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    lua_check("Test 5: a weapon's projectile is its script class, from the muzzle", R"(
+        local tank = CreateUnitHPR('uel0201', 'ARMY_1', 240, 25, 240, 0, 0, 0)
+        local w = tank:GetWeapon(1)
+        local proj = w:CreateProjectile('Turret_Muzzle')
+        if not proj then error('CreateProjectile made nothing') end
+        local class = import('/projectiles/tdfgauss01/tdfgauss01_script.lua').TypeClass
+        if getmetatable(proj) ~= class then error('not a TDFGauss01') end
+        if type(proj.DamageData) ~= 'table' then error('OnCreate did not run') end
+        proj:PassDamageData(w:GetDamageTable())
+        if proj.DamageData.DamageAmount ~= 24 then
+            error('PassDamageData gave ' .. tostring(proj.DamageData.DamageAmount))
+        end
+        local m, p = tank:GetPosition('Turret_Muzzle'), proj:GetPosition()
+        local d = math.abs(m[1] - p[1]) + math.abs(m[2] - p[2]) + math.abs(m[3] - p[3])
+        if d > 0.01 then error('spawned ' .. d .. ' from the muzzle') end
+        __osc_test_tank = tank
+    )");
+    lua_check("Test 6: Damage in retail's order hurts", R"(
+        local tank = __osc_test_tank
+        local before = tank:GetHealth()
+        Damage(nil, tank:GetPosition(), tank, 50, 'Normal')
+        if tank:GetHealth() >= before then error('health ' .. tank:GetHealth()) end
+    )");
+    // A commander's death weapon fires a script projectile and passes it its
+    // damage (it errored while projectiles had no class). Its errors would
+    // be script errors, which fail the run.
+    const int failures_before = osc::test_status::failure_count();
+    lua_check("Test 7: a commander dies (its death weapon fires)", R"(
+        ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]:Kill()
+    )");
+    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    if (osc::test_status::failure_count() == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 8: the death weapon ran without script errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8: script errors after the commander died");
+    }
+
     spdlog::info("Projectile test: {}/{} passed", pass, pass + fail);
 }
 

@@ -13,7 +13,6 @@ G BaseManagerReclaimThread
 G ClearQueueGrid
 G ConTextMatches
 G CreateStorageManip
-G CreateTrail
 G ERROR
 G EjectSessionClient
 G EngineStartFrontEndUI
@@ -38,7 +37,6 @@ G IssueEnhance
 G LoadSavedGame
 G MapBorderAdd
 G MapBorderClear
-G MetaImpact
 G RefreshSteamGames
 G RemoveProfileDirectories
 G RenderOverlayEconomy
@@ -72,7 +70,6 @@ M OnApplyBuff
 M PickBestAttackVector
 M RecoilImpulse
 M SetAIResult
-M SetDamage
 M SetDamageRadius
 M SetDirectionalAnim
 M SetStrategicUnderlay

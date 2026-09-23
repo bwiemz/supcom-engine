@@ -12,15 +12,16 @@ namespace osc::sim {
 
 /// Effect type determines creation semantics and future rendering behavior.
 enum class EffectType : u8 {
-    EMITTER_AT_ENTITY,   // CreateEmitterAtEntity / CreateEmitterOnEntity
-    EMITTER_AT_BONE,     // CreateEmitterAtBone
-    ATTACHED_EMITTER,    // CreateAttachedEmitter (persistent, follows entity)
-    BEAM_EMITTER,        // CreateBeamEmitter (unattached beam visual)
-    ATTACHED_BEAM,       // CreateAttachedBeam (fixed-length beam on entity)
+    EMITTER_AT_ENTITY,     // CreateEmitterAtEntity / CreateEmitterOnEntity
+    EMITTER_AT_BONE,       // CreateEmitterAtBone
+    ATTACHED_EMITTER,      // CreateAttachedEmitter (persistent, follows entity)
+    BEAM_EMITTER,          // CreateBeamEmitter (unattached beam visual)
+    ATTACHED_BEAM,         // CreateAttachedBeam (fixed-length beam on entity)
     BEAM_ENTITY_TO_ENTITY, // AttachBeamEntityToEntity / CreateBeamEntityToEntity
-    LIGHT_PARTICLE,      // CreateLightParticle / CreateLightParticleIntel
-    DECAL,               // CreateDecal
-    SPLAT,               // CreateSplat
+    LIGHT_PARTICLE,        // CreateLightParticle / CreateLightParticleIntel
+    DECAL,                 // CreateDecal
+    SPLAT,                 // CreateSplat
+    TRAIL_EMITTER,         // CreateTrail (a projectile's or unit's polytrail, follows it)
 };
 
 /// Lightweight tracked VFX object. Returned by Create*Emitter/Beam/Decal globals.
@@ -141,6 +142,21 @@ public:
             if (lifetime > 0 && (game_time - fx->birth_time()) >= lifetime) {
                 fx->mark_destroyed();
             }
+        }
+    }
+
+    /// Destroy the effects that follow an entity which is gone: its attached
+    /// emitters, trails and beams go with it, as in Moho. (One-shot emitters
+    /// placed at an entity or bone stay: a death explosion outlives the unit.)
+    /// `gone(id)` says whether entity `id` no longer exists.
+    template <typename Gone> void destroy_detached(Gone gone) {
+        for (auto& fx : effects_) {
+            if (!fx || fx->destroyed() || fx->entity_id() == 0) continue;
+            const EffectType t = fx->type();
+            if (t != EffectType::ATTACHED_EMITTER && t != EffectType::TRAIL_EMITTER &&
+                t != EffectType::ATTACHED_BEAM)
+                continue;
+            if (gone(fx->entity_id())) fx->mark_destroyed();
         }
     }
 

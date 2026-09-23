@@ -1,0 +1,23 @@
+#pragma once
+
+#include <string>
+#include <string_view>
+
+struct lua_State;
+
+namespace osc::sim {
+
+/// The script module beside a blueprint file: "<dir>/<id>_unit.bp" ->
+/// "<dir>/<id>_script.lua" when `source` ends in `bp_suffix` ("_unit.bp",
+/// "_proj.bp"); empty otherwise. Lowercased, as the VFS keys paths.
+std::string default_script_module(std::string source, std::string_view bp_suffix);
+
+/// Push the Lua class a blueprint's objects are instances of -- its
+/// ScriptModule/ScriptClass, else the default module beside its .bp and
+/// TypeClass -- or nil when it names none that loads. Resolved once per
+/// blueprint, cached in the registry under `cache_key` (a failure is
+/// logged once, then cached). `kind` names the objects in the log.
+void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
+                                 const char* cache_key, const char* kind);
+
+} // namespace osc::sim
