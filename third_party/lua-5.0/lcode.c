@@ -628,7 +628,7 @@ void luaK_infix (FuncState *fs, BinOpr op, expdesc *v) {
 
 static void codebinop (FuncState *fs, expdesc *res, BinOpr op,
                        int o1, int o2) {
-  if (op <= OPR_POW) {  /* arithmetic operator? */
+  if (op <= OPR_SHR) {  /* arithmetic or bitwise operator? */
     OpCode opc = cast(OpCode, (op - OPR_ADD) + OP_ADD);  /* ORDER OP */
     res->info = luaK_codeABC(fs, opc, 0, o1, o2);
     res->k = VRELOCABLE;

@@ -6,6 +6,7 @@
 
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -352,6 +353,34 @@ void luaV_concat (lua_State *L, int total, int last) {
 }
 
 
+/* LuaPlus bitwise operators on 32-bit unsigned integers (numeric strings
+** convert as in arithmetic; anything else is an arithmetic error). */
+static uint32_t tobits (lua_Number n) {
+  /* out-of-range (and NaN) doubles convert to 0 rather than being UB */
+  if (!(n > -9.0e18 && n < 9.0e18)) return 0;
+  return cast(uint32_t, cast(long long, n));
+}
+
+static void Bitwise (lua_State *L, StkId ra,
+                     const TObject *rb, const TObject *rc, OpCode op) {
+  TObject tempb, tempc;
+  const TObject *b, *c;
+  uint32_t x, y, r;
+  if ((b = luaV_tonumber(rb, &tempb)) == NULL ||
+      (c = luaV_tonumber(rc, &tempc)) == NULL)
+    luaG_aritherror(L, rb, rc);
+  x = tobits(nvalue(b));
+  y = tobits(nvalue(c));
+  switch (op) {
+    case OP_BOR: r = x | y; break;
+    case OP_BAND: r = x & y; break;
+    case OP_SHL: r = (y >= 32) ? 0 : (x << y); break;
+    default: r = (y >= 32) ? 0 : (x >> y); break;  /* OP_SHR */
+  }
+  setnvalue(ra, cast(lua_Number, r));
+}
+
+
 static void Arith (lua_State *L, StkId ra,
                    const TObject *rb, const TObject *rc, TMS op) {
   TObject tempb, tempc;
@@ -567,6 +596,13 @@ StkId luaV_execute (lua_State *L) {
       }
       case OP_POW: {
         Arith(L, ra, RKB(i), RKC(i), TM_POW);
+        break;
+      }
+      case OP_BOR:
+      case OP_BAND:
+      case OP_SHL:
+      case OP_SHR: {
+        Bitwise(L, ra, RKB(i), RKC(i), GET_OPCODE(i));
         break;
       }
       case OP_UNM: {

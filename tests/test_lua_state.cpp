@@ -226,6 +226,64 @@ TEST_CASE("LuaState table size hints (LuaPlus patch)", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("LuaState bitwise operators (LuaPlus patch)", "[lua]") {
+    LuaState state;
+
+    // Retail uses `|` (footprints.lua Caps, worldview SetRenderPass) and
+    // `<<` (commandmode.lua RULEUCC_* flags); & and >> complete the set.
+    // Precedence follows Lua 5.3: | < & < shifts < .. < + -.
+    auto result = state.do_string(R"(
+        LAND, SEABED = 1, 4
+        caps = LAND|SEABED
+        flags = { Move = (1 << 0), Attack = (1 << 2), Big = 1 << 30 }
+        masked = 13 & 6
+        shifted = 256 >> 4
+        prec1 = 1 | 2 & 3          -- 1 | (2 & 3) = 3
+        prec2 = 1 | 1 << 2         -- 1 | 4 = 5
+        prec3 = 1 << 1 + 1         -- 1 << 2 = 4
+        cmp = (1 | 2) == 3
+        wide = 1 << 32             -- shifts of 32 or more give 0
+        neg = -1 & 255             -- two's complement low byte
+        str = "5" | 2              -- numeric strings convert, as in arithmetic
+    )");
+    REQUIRE(result.ok());
+
+    auto num = [&](const char* name) {
+        lua_getglobal(state.raw(), name);
+        double v = lua_tonumber(state.raw(), -1);
+        lua_pop(state.raw(), 1);
+        return v;
+    };
+    CHECK(num("caps") == 5);
+    CHECK(num("masked") == 4);
+    CHECK(num("shifted") == 16);
+    CHECK(num("prec1") == 3);
+    CHECK(num("prec2") == 5);
+    CHECK(num("prec3") == 4);
+    CHECK(num("wide") == 0);
+    CHECK(num("neg") == 255);
+    CHECK(num("str") == 7);
+
+    lua_getglobal(state.raw(), "cmp");
+    CHECK(lua_toboolean(state.raw(), -1));
+    lua_pop(state.raw(), 1);
+
+    lua_getglobal(state.raw(), "flags");
+    lua_pushstring(state.raw(), "Attack");
+    lua_gettable(state.raw(), -2);
+    CHECK(lua_tonumber(state.raw(), -1) == 4);
+    lua_pop(state.raw(), 1);
+    lua_pushstring(state.raw(), "Big");
+    lua_gettable(state.raw(), -2);
+    CHECK(lua_tonumber(state.raw(), -1) == 1073741824.0);
+    lua_pop(state.raw(), 2);
+
+    // A non-number operand is a runtime error, like arithmetic.
+    CHECK_FALSE(state.do_string("x = {} | 1").ok());
+    // Table size hints still parse after '{'.
+    CHECK(state.do_string("t = {&1&1 n = 1 | 2}").ok());
+}
+
 TEST_CASE("LuaState hex literals (LuaPlus patch)", "[lua]") {
     LuaState state;
 

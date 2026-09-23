@@ -497,10 +497,11 @@ static void constructor (LexState *ls, expdesc *t) {
      `{&1&4 n=0}` (retail MultiEvent.lua). They only size the table, so they
      are parsed and discarded; a separator after them is tolerated. */
   if (ls->t.token == '&') {
+    /* Numeric literals only: an expression would now read `1&4` as the
+       bitwise `&`, and emit code for a value nothing uses. */
     while (ls->t.token == '&') {
-      expdesc dummy;
       next(ls);
-      expr(ls, &dummy);
+      check(ls, TK_NUMBER);  /* consumes it */
     }
     if (!testnext(ls, ',')) testnext(ls, ';');
   }
@@ -778,6 +779,10 @@ static BinOpr getbinopr (int op) {
     case '*': return OPR_MULT;
     case '/': return OPR_DIV;
     case '^': return OPR_POW;
+    case '|': return OPR_BOR;   /* LuaPlus bitwise operators */
+    case '&': return OPR_BAND;
+    case TK_SHL: return OPR_SHL;
+    case TK_SHR: return OPR_SHR;
     case TK_CONCAT: return OPR_CONCAT;
     case TK_NE: return OPR_NE;
     case TK_EQ: return OPR_EQ;
@@ -796,14 +801,16 @@ static const struct {
   lu_byte left;  /* left priority for each binary operator */
   lu_byte right; /* right priority */
 } priority[] = {  /* ORDER OPR */
-   {6, 6}, {6, 6}, {7, 7}, {7, 7},  /* arithmetic */
-   {10, 9}, {5, 4},                 /* power and concat (right associative) */
-   {3, 3}, {3, 3},                  /* equality */
-   {3, 3}, {3, 3}, {3, 3}, {3, 3},  /* order */
-   {2, 2}, {1, 1}                   /* logical (and/or) */
+   {9, 9}, {9, 9}, {10, 10}, {10, 10},  /* arithmetic */
+   {13, 12},                            /* power (right associative) */
+   {4, 4}, {5, 5}, {6, 6}, {6, 6},      /* LuaPlus | & << >> (as Lua 5.3) */
+   {8, 7},                              /* concat (right associative) */
+   {3, 3}, {3, 3},                      /* equality */
+   {3, 3}, {3, 3}, {3, 3}, {3, 3},      /* order */
+   {2, 2}, {1, 1}                       /* logical (and/or) */
 };
 
-#define UNARY_PRIORITY	8  /* priority for unary operators */
+#define UNARY_PRIORITY	11  /* priority for unary operators */
 
 
 /*
