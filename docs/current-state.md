@@ -170,11 +170,14 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   (MSVC, run under Wine) and a Linux build play a recorded five-minute
   four-AI game identically at every tick (`tools/cross_os_replay.py`, M199c).
   See roadmap Phases D and G.
-- **Replays:** `--record <file>` records a game (format version 4: its
-  setup, the commands the sim applied and the checksum after every tick).
-  `--replay <file>` plays it headlessly from the file alone and reports the
-  first tick that differs; `data.replay_roundtrip` holds a scripted game to
-  that. Windowed playback and recording every game (LastGame) are M199b.
+- **Replays:** every interactive game records itself (format version 4: its
+  setup, the commands the sim applied and the checksum after every tick) and
+  leaves `LastGame` in the profile's replays. Retail's replay dialog lists
+  and opens them; a replay plays in the game UI as an observer (`--watch
+  <file>` from the command line). `--record <file>` names the file and
+  `--replay <file>` plays one headlessly, reporting the first tick that
+  differs. Two gate tests hold this: `data.replay_roundtrip` and
+  `data.replay_flow`.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
   still read the live sim; they move over with M191's split of the bindings
