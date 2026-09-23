@@ -37,6 +37,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "ui/world_view.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -992,6 +993,26 @@ static void apply_sim_callbacks(osc::sim::SimCallbackQueue& queue,
         lua_pop(sL, 1); // pop module table
     }
     sim_state->set_human_input_active(false);
+}
+
+/// Whether the cursor is over FA's UI rather than the world: the deepest
+/// hit-testable control under it is neither a WorldView (FA's world input
+/// surface) nor the root frame.
+static bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
+    lua_pushstring(uiL, "__osc_root_frame");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    osc::ui::UIControl* root = nullptr;
+    if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "_c_object");
+        lua_rawget(uiL, -2);
+        root = static_cast<osc::ui::UIControl*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1);
+    if (!root) return false;
+    osc::ui::UIDispatch dispatch;
+    auto* hit = dispatch.hit_test(uiL, root, x, y);
+    return hit && hit != root && !dynamic_cast<osc::ui::WorldView*>(hit);
 }
 
 /// A selection action reaches the UI as Moho reports it,
@@ -2791,7 +2812,11 @@ int main(int argc, char* argv[]) {
 
                 // Player input: selection + commands
                 if (sim_state) {
-                input_handler.update(renderer, *sim_state, dt);
+                input_handler.update(renderer, *sim_state, dt, [&] {
+                    osc::f64 mx = 0, my = 0;
+                    renderer.mouse_position(mx, my);
+                    return mouse_over_ui(ui_lua_state.raw(), mx, my);
+                });
                 }
 
                 dispatch_selection_change(ui_lua_state.raw(), prev_selection,

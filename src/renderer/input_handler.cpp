@@ -18,7 +18,7 @@
 namespace osc::renderer {
 
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
-                          f64 /*dt*/) {
+                          f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
@@ -27,8 +27,23 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     // Process control groups and camera bookmarks (number keys)
     handle_groups_and_bookmarks(renderer, sim);
 
-    bool lmb = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
-    bool rmb = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
+    const bool lmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
+    const bool rmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
+
+    // A press belongs to whatever was under the cursor when it began. One
+    // that began over FA's panels is theirs until released: the world sees
+    // the button as up throughout, so neither the press nor its release.
+    const bool lmb_down = lmb_raw && !lmb_raw_prev_;
+    const bool rmb_down = rmb_raw && !rmb_raw_prev_;
+    if (lmb_down || rmb_down) {
+        const bool over_ui = mouse_over_ui && mouse_over_ui();
+        if (lmb_down) lmb_on_ui_ = over_ui;
+        if (rmb_down) rmb_on_ui_ = over_ui;
+    }
+    lmb_raw_prev_ = lmb_raw;
+    rmb_raw_prev_ = rmb_raw;
+    bool lmb = lmb_raw && !lmb_on_ui_;
+    bool rmb = rmb_raw && !rmb_on_ui_;
 
     // --- Check if mouse is over minimap ---
     f32 map_w = 0, map_h = 0;

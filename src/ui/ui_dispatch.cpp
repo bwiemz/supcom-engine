@@ -190,46 +190,51 @@ static f32 read_lazyvar_dispatch(lua_State* L, int tbl_idx, const char* field) {
     return val;
 }
 
+namespace {
+
+/// Walk the visible tree under `ctrl`, keeping the deepest hit-testable
+/// control whose rect contains (x, y). Parents are visited before their
+/// children and siblings in order, so `>=` lets the later one win a tie.
+void collect_hit(lua_State* L, UIControl* ctrl, f32 x, f32 y,
+                 const std::unordered_set<UIControl*>* skip, UIControl*& best,
+                 f32& best_depth) {
+    if (!ctrl || ctrl->hidden() || ctrl->destroyed()) return;
+    if (ctrl->lua_table_ref() < 0) return;
+
+    if (!ctrl->hit_test_disabled() && !(skip && skip->count(ctrl))) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+        const int tbl = lua_gettop(L);
+        const f32 left = read_lazyvar_dispatch(L, tbl, "Left");
+        const f32 top = read_lazyvar_dispatch(L, tbl, "Top");
+        const auto rect = control_rect(left, top, read_lazyvar_dispatch(L, tbl, "Right"),
+                                       read_lazyvar_dispatch(L, tbl, "Bottom"),
+                                       read_lazyvar_dispatch(L, tbl, "Width"),
+                                       read_lazyvar_dispatch(L, tbl, "Height"));
+        const bool inside = x >= rect.x && x < rect.x + rect.w &&
+                            y >= rect.y && y < rect.y + rect.h;
+        const f32 depth = inside ? read_lazyvar_dispatch(L, tbl, "Depth") : 0.0f;
+        lua_pop(L, 1);
+        if (inside && (!best || depth >= best_depth)) {
+            best = ctrl;
+            best_depth = depth;
+        }
+    }
+    for (auto* child : ctrl->children())
+        collect_hit(L, child, x, y, skip, best, best_depth);
+}
+
+} // namespace
+
+// Moho hit-tests by depth: of the visible, hit-testable controls under the
+// point, the deepest wins -- not the last in the tree. Retail relies on it
+// (a panel created early with a raised Depth sits above later siblings).
 UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
                                 const std::unordered_set<UIControl*>* skip) {
-    if (!root || root->hidden() || root->destroyed()) return nullptr;
-    if (root->lua_table_ref() < 0) return nullptr;
-
-    // Walk children front-to-back (last child is topmost)
-    auto& children = root->children();
-    for (i32 i = static_cast<i32>(children.size()) - 1; i >= 0; --i) {
-        auto* hit = hit_test(L, children[i], x, y, skip);
-        if (hit) return hit;
-    }
-
-    // Check this control's bounds
-    if (root->hit_test_disabled()) return nullptr;
-    if (skip && skip->count(root)) return nullptr;
-
-    lua_rawgeti(L, LUA_REGISTRYINDEX, root->lua_table_ref());
-    int tbl = lua_gettop(L);
-    f32 left = read_lazyvar_dispatch(L, tbl, "Left");
-    f32 top = read_lazyvar_dispatch(L, tbl, "Top");
-    f32 right = read_lazyvar_dispatch(L, tbl, "Right");
-    f32 bottom = read_lazyvar_dispatch(L, tbl, "Bottom");
-    f32 w = read_lazyvar_dispatch(L, tbl, "Width");
-    f32 h = read_lazyvar_dispatch(L, tbl, "Height");
-    lua_pop(L, 1);
-
-    // Hit-tested over its edges (see ui::control_rect).
-    {
-        const auto rect = control_rect(left, top, right, bottom, w, h);
-        w = rect.w;
-        h = rect.h;
-    }
-
-    // (diagnostic removed)
-
-    f32 fx = static_cast<f32>(x);
-    f32 fy = static_cast<f32>(y);
-    if (fx >= left && fx < left + w && fy >= top && fy < top + h)
-        return root;
-    return nullptr;
+    UIControl* best = nullptr;
+    f32 best_depth = 0.0f;
+    collect_hit(L, root, static_cast<f32>(x), static_cast<f32>(y), skip, best,
+                best_depth);
+    return best;
 }
 
 bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,

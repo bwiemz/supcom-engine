@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3
 
@@ -25,7 +27,12 @@ public:
     i32 player_army() const { return player_army_; }
 
     /// Process input each frame. Call after poll_events.
-    void update(Renderer& renderer, sim::SimState& sim, f64 dt);
+    /// `mouse_over_ui` says whether the cursor is over FA's UI rather than
+    /// the world (a WorldView or nothing); it is asked only when a button
+    /// goes down. A press that starts over the UI is the UI's and never
+    /// selects, drags or orders in the world.
+    void update(Renderer& renderer, sim::SimState& sim, f64 dt,
+                const std::function<bool()>& mouse_over_ui = {});
 
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
@@ -69,6 +76,8 @@ private:
 
     // Left mouse state (selection)
     bool lmb_was_pressed_ = false;
+    bool lmb_on_ui_ = false;     // current left press began over the UI
+    bool lmb_raw_prev_ = false;  // left button last frame, whoever owned it
     bool dragging_ = false;
     f32 drag_start_x_ = 0, drag_start_y_ = 0;
     f32 drag_end_x_ = 0, drag_end_y_ = 0;
@@ -78,6 +87,8 @@ private:
 
     // Right mouse state (commands)
     bool rmb_was_pressed_ = false;
+    bool rmb_on_ui_ = false;     // current right press began over the UI
+    bool rmb_raw_prev_ = false;
 
     // Control groups (Ctrl+0-9 to assign, 0-9 to recall)
     std::array<std::unordered_set<u32>, NUM_GROUPS> control_groups_;
