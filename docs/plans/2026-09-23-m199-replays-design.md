@@ -56,8 +56,8 @@ Every path turns its inputs into a `GameSetup`, then launches through one
 function:
 
 - **CLI:** the flags. `--ai-skirmish`, `--ai-armies` and `--ai-personality`
-  keep their meaning. New flags: `--faction N` (all armies) and
-  `--option Key=Value` (repeatable).
+  keep their meaning. (`--faction N` and `--option Key=Value` flags wait
+  until a test needs them.)
 - **Lobby:** `sessionConfig` → `GameSetup`. The parsing moves out of
   `execute_reload_sequence`.
 - **LAN:** the host's `GameSetup`. Today that is still the fixed 1v1; sending
@@ -118,8 +118,8 @@ played as a game. Their unit-test use stays.
 2. Queues the command stream.
 3. Runs to the final tick.
 
-The sim takes no player input during playback: a human-routed order is
-dropped with a log line.
+The sim takes no player input during playback: a human-routed order or
+SimCallback is dropped.
 
 - **Headless** (`--replay` with no window, or with `--ticks`): it compares
   each tick's checksum with the trail and reports the first mismatch (tick,
