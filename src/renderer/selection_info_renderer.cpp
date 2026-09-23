@@ -16,28 +16,6 @@
 
 namespace osc::renderer {
 
-static void get_army_color(const sim::Entity& entity,
-                           const sim::SimState& sim,
-                           f32& r, f32& g, f32& b) {
-    i32 army = entity.army();
-    if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-        auto* brain = sim.army_at(static_cast<size_t>(army));
-        if (brain && brain->has_color()) {
-            r = brain->color_r() / 255.0f;
-            g = brain->color_g() / 255.0f;
-            b = brain->color_b() / 255.0f;
-            return;
-        }
-        if (army < 8) {
-            r = ARMY_COLORS[army][0];
-            g = ARMY_COLORS[army][1];
-            b = ARMY_COLORS[army][2];
-            return;
-        }
-    }
-    r = g = b = 0.7f;
-}
-
 static const char* command_name(sim::CommandType type) {
     switch (type) {
         case sim::CommandType::Stop:           return "Stop";

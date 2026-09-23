@@ -238,11 +238,6 @@ static int (*const stub_return_zero)(lua_State*) = lua_stubs::return_zero;
 static int (*const stub_return_one)(lua_State*) = lua_stubs::return_one;
 static int (*const stub_return_empty_table)(lua_State*) = lua_stubs::return_empty_table;
 static int (*const stub_return_self)(lua_State*) = lua_stubs::return_self;
-static int stub_return_empty_string(lua_State* L) {
-    lua_pushstring(L, "");
-    return 1;
-}
-
 // ====================================================================
 // Threat helper
 // ====================================================================
@@ -6988,6 +6983,11 @@ static int platoon_FormPlatoon(lua_State* L) {
                             ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
                             : multiplier;
         lua_pop(L, 1);
+        // Known gap (roadmap M207): FA's FormPlatoon returns nil when a squad
+        // cannot reach its minimum count; this forms a partial platoon. AI
+        // scripts usually gate on CanFormPlatoon (which does check minimums),
+        // so it only matters when they call FormPlatoon directly.
+        static_cast<void>(min_count);
 
         lua_rawgeti(L, sub, 3);
         int max_count = lua_isnumber(L, -1)
@@ -10081,14 +10081,6 @@ static int itemlist_ShowSelection(lua_State* L) {
 static int itemlist_ShowMouseoverItem(lua_State* L) {
     auto* ctrl = check_control(L);
     if (ctrl) ctrl->set_show_mouseover(lua_toboolean(L, 2) != 0);
-    return 0;
-}
-
-/// item_list:SetAlpha(alpha, children) — override to set bg alpha
-static int itemlist_SetAlpha(lua_State* L) {
-    auto* ctrl = check_control(L);
-    if (ctrl && lua_isnumber(L, 2))
-        ctrl->set_alpha(static_cast<f32>(lua_tonumber(L, 2)));
     return 0;
 }
 

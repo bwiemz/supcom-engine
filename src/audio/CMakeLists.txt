@@ -11,3 +11,5 @@ target_link_libraries(osc_audio
     PUBLIC osc::core
     PRIVATE spdlog::spdlog
 )
+
+target_link_libraries(osc_audio PRIVATE osc::warnings)

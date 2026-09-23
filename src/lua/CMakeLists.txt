@@ -23,3 +23,5 @@ target_link_libraries(osc_lua
     PUBLIC osc::core osc::vfs osc::sim osc::map osc::audio osc::ui osc::video lua50
     PRIVATE osc::renderer
 )
+
+target_link_libraries(osc_lua PRIVATE osc::warnings)

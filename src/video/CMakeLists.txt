@@ -10,3 +10,5 @@ target_include_directories(osc_video PUBLIC
 target_link_libraries(osc_video PUBLIC osc_core)
 
 add_library(osc::video ALIAS osc_video)
+
+target_link_libraries(osc_video PRIVATE osc::warnings)

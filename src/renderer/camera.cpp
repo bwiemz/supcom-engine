@@ -218,8 +218,6 @@ bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
     auto view = math::look_at(ex, ey, ez,
                                target_x_, 0.0f, target_z_,
                                0.0f, 1.0f, 0.0f);
-    auto proj = math::perspective(0.785f, aspect, 1.0f, 5000.0f);
-
     // We need to invert VP to go from NDC to world.
     // Instead, construct ray directly from camera parameters:
     // Extract right/up/forward from view matrix (column-major, transposed rotation)

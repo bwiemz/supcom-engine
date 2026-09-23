@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <cstring>
 
 namespace osc::renderer {

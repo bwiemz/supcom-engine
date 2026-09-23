@@ -31,19 +31,6 @@ std::string read_string_field(lua_State* L, int table_idx, const char* key) {
     return result;
 }
 
-/// Read a numeric field from the table at the given stack index.
-f64 read_number_field(lua_State* L, int table_idx, const char* key,
-                      f64 default_val = 0.0) {
-    lua_pushstring(L, key);
-    lua_gettable(L, table_idx);
-    f64 result = default_val;
-    if (lua_isnumber(L, -1)) {
-        result = lua_tonumber(L, -1);
-    }
-    lua_pop(L, 1);
-    return result;
-}
-
 /// Extract army names from ScenarioInfo.Configurations.standard.teams[1].armies
 std::vector<std::string> extract_armies(lua_State* L, int scenario_idx) {
     std::vector<std::string> armies;

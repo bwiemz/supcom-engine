@@ -4,6 +4,7 @@
 #include "map/pathfinder.hpp"
 #include "map/terrain.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <spdlog/spdlog.h>
 

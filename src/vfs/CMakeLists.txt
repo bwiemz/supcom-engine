@@ -11,3 +11,5 @@ target_link_libraries(osc_vfs
     PUBLIC osc::core
     PRIVATE unofficial::minizip::minizip ZLIB::ZLIB
 )
+
+target_link_libraries(osc_vfs PRIVATE osc::warnings)

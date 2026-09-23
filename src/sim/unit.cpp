@@ -2832,7 +2832,7 @@ void Unit::apply_vet_buffs(lua_State* L) {
     lua_gettable(L, -2);
     if (!lua_istable(L, -1)) { lua_pop(L, 3); return; }
 
-    char level_key[8];
+    char level_key[24]; // "Level" + any int + NUL
     snprintf(level_key, sizeof(level_key), "Level%d", vet_level_);
 
     // Regen buff: flat increase

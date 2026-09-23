@@ -12628,7 +12628,6 @@ void test_beams(TestContext& ctx) {
         return;
     }
 
-    u32 src_id = src_unit->entity_id();
     u32 tgt_id = tgt_unit->entity_id();
 
     // Test 1: Build beam state
@@ -13019,7 +13018,6 @@ void test_vet_adj_render(TestContext& ctx) {
         // In overlay renderer: if (adj_id < entity.entity_id()) continue;
         // So unit with lower ID skips drawing to the higher ID's adjacents
         // and unit with higher ID draws. This prevents double-drawing.
-        bool lower_skips = (id_b < id_a); // if b < a, then a skips b
         // The dedup rule is: adj_id < entity_id → skip
         // So entity with id_a iterating adj_id=id_b: skip if id_b < id_a
         // And entity with id_b iterating adj_id=id_a: skip if id_a < id_b
@@ -13754,6 +13752,7 @@ void test_profile(TestContext& ctx) {
             // Busy work to ensure measurable time
             volatile int x = 0;
             for (int i = 0; i < 100000; ++i) x += i;
+            static_cast<void>(x);
         }
         p.end_frame();
 
@@ -13785,6 +13784,7 @@ void test_profile(TestContext& ctx) {
                 PROFILE_ZONE("Inner");
                 volatile int x = 0;
                 for (int i = 0; i < 10000; ++i) x += i;
+                static_cast<void>(x);
             }
         }
         p.end_frame();
@@ -13836,6 +13836,7 @@ void test_profile(TestContext& ctx) {
                 PROFILE_ZONE("AvgTest");
                 volatile int x = 0;
                 for (int j = 0; j < 50000; ++j) x += j;
+                static_cast<void>(x);
             }
             p.end_frame();
         }

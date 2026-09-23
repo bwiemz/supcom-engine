@@ -37,6 +37,7 @@ add_executable(osc_tests
 )
 
 target_link_libraries(osc_tests PRIVATE
+    osc::warnings
     Catch2::Catch2WithMain
     osc::core
     osc::vfs

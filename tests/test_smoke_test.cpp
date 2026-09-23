@@ -463,7 +463,6 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     CHECK(unit.is_dying());
 
     // Simulate crash
-    osc::f32 prev_y = unit.position().y;
     for (int i = 0; i < 100; i++) {
         unit.tick_dying(0.1f, nullptr);
         if (!unit.is_crashing()) break;

@@ -1,6 +1,7 @@
 #include "sim/thread_manager.hpp"
 #include "sim/waitable.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <cstring>
 #include <spdlog/spdlog.h>

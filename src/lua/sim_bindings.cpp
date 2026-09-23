@@ -802,26 +802,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     return id; // Lua table left on stack
 }
 
-/// Helper: call a Lua method on the table at stack_top. Pops nothing extra.
-static void call_lua_method(lua_State* L, int table_idx, const char* method,
-                             int nargs, const char* label) {
-    lua_pushstring(L, method);
-    lua_gettable(L, table_idx);
-    if (lua_isfunction(L, -1)) {
-        // Push self + any args that caller already pushed above the function
-        // Caller must push args AFTER calling this, so we do it inline:
-        // Actually, the caller passes nargs already-pushed values.
-        if (lua_pcall(L, nargs, 0, 0) != 0) {
-            spdlog::warn("{} error: {}", label, lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1); // pop non-function
-        // Also pop the nargs that were pushed for it
-        if (nargs > 0) lua_pop(L, nargs);
-    }
-}
-
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
 static int l_CreateUnit(lua_State* L) {
     auto* sim = get_sim(L);
@@ -1298,7 +1278,7 @@ static int l_ArmyGetHandicap(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnumber(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
     auto* brain = sim->get_army(idx);
     lua_pushnumber(L, brain ? brain->handicap() : 0.0);
     return 1;
@@ -2609,7 +2589,7 @@ static int l_ArmyIsCivilian(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) {
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -2623,7 +2603,7 @@ static int l_ArmyIsOutOfGame(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) {
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
         lua_pushboolean(L, 0);
         return 1;
     }

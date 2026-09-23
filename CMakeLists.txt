@@ -17,6 +17,8 @@ find_package(vk-bootstrap CONFIG REQUIRED)
 find_package(unofficial-shaderc CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+include(cmake/OscCompileOptions.cmake)
+
 # Vendored Lua 5.0
 add_subdirectory(third_party/lua-5.0)
 
@@ -35,6 +37,7 @@ add_subdirectory(src/blueprints)
 # Main executable
 add_executable(opensupcom src/main.cpp src/integration_tests.cpp)
 target_link_libraries(opensupcom PRIVATE
+    osc::warnings
     osc::core
     osc::vfs
     osc::sim

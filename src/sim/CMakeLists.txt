@@ -33,3 +33,5 @@ target_link_libraries(osc_sim
 if(WIN32)
     target_link_libraries(osc_sim PRIVATE ws2_32)
 endif()
+
+target_link_libraries(osc_sim PRIVATE osc::warnings)

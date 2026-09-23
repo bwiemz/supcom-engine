@@ -60,6 +60,7 @@ extern "C" {
 #include <memory>
 #include <set>
 #include <thread>
+#include <variant>
 #include <vector>
 #include <spdlog/spdlog.h>
 
@@ -1730,7 +1731,6 @@ int main(int argc, char* argv[]) {
             auto set_num_fn = [&](const char* name, double val) {
                 if (global_is_defined(name)) return;
                 lua_pushstring(uL, name);
-                double v = val;
                 lua_pushcfunction(uL, [](lua_State* L) -> int {
                     lua_pushnumber(L, 1.0); // default volume
                     return 1;
@@ -1878,7 +1878,6 @@ int main(int argc, char* argv[]) {
         }
         // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
         {
-            lua_State* uL = ui_lua_state.raw();
             auto r = ui_lua_state.do_string(
                 "import('/lua/ui/menus/main.lua').CreateUI()");
             if (r) {
