@@ -180,6 +180,11 @@ public:
     // Layer change with Lua OnLayerChange(new, old) callback
     void set_layer_with_callback(const std::string& new_layer, lua_State* L);
 
+    /// Moho's horizontal motion states, raised to scripts as
+    /// self:OnMotionHorzEventChange(new, old) when they change.
+    enum class MotionHorz : u8 { Stopped, Cruise, TopSpeed, Stopping };
+    MotionHorz motion_horz() const { return motion_horz_; }
+
     // Threat levels (cached from blueprint Defense at creation time)
     f32 surface_threat() const { return surface_threat_; }
     f32 air_threat() const { return air_threat_; }
@@ -597,6 +602,8 @@ private:
     f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
     f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
     bool paused_ = false;
+    MotionHorz motion_horz_ = MotionHorz::Stopped;
+    void update_motion_horz(lua_State* L);
     u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
     bool block_command_queue_ = false;

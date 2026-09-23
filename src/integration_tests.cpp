@@ -6262,6 +6262,23 @@ void test_weapon(TestContext& ctx) {
         __osc_mml = pair('xsl0111', 300, 790, 30)                        -- 6.67 s reload
         __osc_built = pair('uel0201', 220, 730, 10)                      -- under construction
         __osc_built_id = __osc_built:GetEntityId()
+
+        -- A tank driving 30 units, its motion events and its weapon's copies.
+        local y = GetTerrainHeight(300, 940)
+        local mover = CreateUnitHPR('uel0201', 'ARMY_1', 300, y, 940, 0, 0, 0)
+        __osc_motion, __osc_wmotion = {}, {}
+        local on_motion = mover.OnMotionHorzEventChange
+        mover.OnMotionHorzEventChange = function(self, new, old)
+            table.insert(__osc_motion, old .. '>' .. new)
+            return on_motion(self, new, old)
+        end
+        local w = mover:GetWeapon(1)
+        local on_wmotion = w.OnMotionHorzEventChange
+        w.OnMotionHorzEventChange = function(self, new, old)
+            table.insert(__osc_wmotion, old .. '>' .. new)
+            return on_wmotion(self, new, old)
+        end
+        IssueMove({mover}, {330, GetTerrainHeight(330, 940), 940})
     )");
     {
         lua_State* L = ctx.lua_state.raw();
@@ -6348,12 +6365,23 @@ void test_weapon(TestContext& ctx) {
         end
     )");
 
+    lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
+        local seen = table.concat(__osc_motion, ' ')
+        if seen ~= 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped' then
+            error('events: ' .. seen)
+        end
+    )");
+    lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
+        local seen, weapon = table.concat(__osc_motion, ' '), table.concat(__osc_wmotion, ' ')
+        if weapon ~= seen then error('weapon saw: ' .. weapon) end
+    )");
+
     if (osc::test_status::failure_count() == failures_before) {
         pass++;
-        spdlog::info("[PASS] Test 8: the weapon scripts ran without errors");
+        spdlog::info("[PASS] Test 11: the weapon and motion scripts ran without errors");
     } else {
         fail++;
-        osc::test_status::fail("[FAIL] Test 8: script errors while weapons fired");
+        osc::test_status::fail("[FAIL] Test 11: script errors while weapons fired");
     }
     spdlog::info("Weapon test: {}/{} passed", pass, pass + fail);
 }
