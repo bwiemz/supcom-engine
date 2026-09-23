@@ -6228,11 +6228,12 @@ void test_shadow(TestContext& ctx) {
 
     int pass = 0, fail = 0;
 
-    // Test 1: Shadow map size constant
+    // Test 1: Shadow map size constant. The PCF shaders in shader_utils.cpp
+    // hardcode the texel size (1.0 / 4096.0), so the two must change together.
     {
-        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 2048) {
+        if (osc::renderer::Renderer::SHADOW_MAP_SIZE == 4096) {
             pass++;
-            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 2048");
+            spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 4096");
         } else {
             fail++;
             osc::test_status::fail("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",
@@ -6257,7 +6258,9 @@ void test_shadow(TestContext& ctx) {
     // Test 3: Renderer initializes with shadow resources (visual, requires Vulkan)
     {
         osc::renderer::Renderer renderer;
-        if (renderer.init(800, 600, "Shadow Test")) {
+        // Offscreen: a shown window blocks in GLFW until the compositor maps
+        // it, which never happens while the screen is locked.
+        if (renderer.init(800, 600, "Shadow Test", /*offscreen=*/true)) {
             pass++;
             spdlog::info("[PASS] Test 3: Renderer initialized with shadow resources");
 
