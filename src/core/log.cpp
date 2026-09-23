@@ -20,6 +20,9 @@ void init(const std::filesystem::path& log_file) {
         "osc", spdlog::sinks_init_list{console_sink, file_sink});
     logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
     logger->set_level(spdlog::level::debug);
+    // Warnings and errors reach the file immediately, so a crash (whose
+    // handler must not touch the logger) never loses them.
+    logger->flush_on(spdlog::level::warn);
 
     spdlog::set_default_logger(logger);
     spdlog::info("OpenSupCom v0.1.0");

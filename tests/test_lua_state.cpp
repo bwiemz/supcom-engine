@@ -126,6 +126,29 @@ TEST_CASE("C++ exceptions escaping a binding become Lua errors", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("errors after a caught C++ exception reach the right pcall", "[lua]") {
+    // The foreign-exception path must restore the error-handler chain: a
+    // later error in the outer function has to land in the OUTER pcall.
+    LuaState state;
+    state.register_function("throw_std2", [](lua_State*) -> int {
+        throw std::runtime_error("inner");
+    });
+    auto result = state.do_string(R"(
+        outer_ok, outer_msg = pcall(function()
+            local inner_ok, inner_msg = pcall(throw_std2)
+            assert(not inner_ok and inner_msg == 'inner')
+            error('outer', 0)
+        end)
+    )");
+    REQUIRE(result.ok());
+    lua_getglobal(state.raw(), "outer_ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "outer_msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "outer");
+    lua_pop(state.raw(), 1);
+}
+
 TEST_CASE("LuaState != operator (LuaPlus patch)", "[lua]") {
     LuaState state;
 

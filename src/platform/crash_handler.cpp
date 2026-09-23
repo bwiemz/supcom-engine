@@ -17,12 +17,6 @@
 
 namespace osc::platform {
 
-namespace {
-
-std::atomic<CrashFlushHook> g_flush{nullptr};
-
-} // namespace
-
 #ifdef _WIN32
 
 namespace {
@@ -33,14 +27,12 @@ LONG WINAPI unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
                  static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode),
                  ep->ExceptionRecord->ExceptionAddress);
     std::fflush(stderr);
-    if (auto flush = g_flush.load()) flush();
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
 } // namespace
 
-void install_crash_handler(CrashFlushHook flush) {
-    g_flush.store(flush);
+void install_crash_handler() {
     SetUnhandledExceptionFilter(unhandled_exception_filter);
 }
 
@@ -105,8 +97,6 @@ void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
     int count = backtrace(frames, 64);
     backtrace_symbols_fd(frames, count, STDERR_FILENO);
 
-    if (auto flush = g_flush.load()) flush();
-
     // SA_RESETHAND already restored the default action; re-raise so the
     // process still dies by this signal (core dump, correct exit status).
     signal(sig, SIG_DFL);
@@ -115,9 +105,7 @@ void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
 
 } // namespace
 
-void install_crash_handler(CrashFlushHook flush) {
-    g_flush.store(flush);
-
+void install_crash_handler() {
     static std::atomic<bool> installed{false};
     if (installed.exchange(true)) return;
 

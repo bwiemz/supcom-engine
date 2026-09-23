@@ -1161,10 +1161,7 @@ static void lan_launch_session(lua_State* uL, const std::string& scenario) {
 
 int main(int argc, char* argv[]) {
     osc::log::init();
-    osc::platform::install_crash_handler(+[] {
-        // Best-effort: we are inside a signal/SEH handler.
-        if (auto logger = spdlog::default_logger()) logger->flush();
-    });
+    osc::platform::install_crash_handler();
 
     auto config = parse_args(argc, argv);
 

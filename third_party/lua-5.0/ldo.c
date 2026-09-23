@@ -103,30 +103,41 @@ int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   lj.previous = L->errorJmp;  /* chain new error handler */
   L->errorJmp = &lj;
 #ifdef OSC_LUA_CXX_EXCEPTIONS
+  /* A C++ exception escaping an engine binding becomes an ordinary Lua
+     runtime error rather than unwinding through Lua's own frames, which
+     would leave the call stack inconsistent. Only its message is copied
+     inside the handler; it is pushed after this handler is unchained, so a
+     secondary error while pushing (out of memory) propagates to the OUTER
+     protected call instead of escaping a catch block with L->errorJmp
+     still pointing at this frame. */
+  const char *foreign = NULL;
+  char foreign_msg[256];
   try {
     (*f)(L, ud);
   }
   catch (struct lua_longjmp *) {
-    /* a Lua error: status was set by luaD_throw (possibly for an outer
-       handler whose frame this is -- statuses are per-handler, so fine) */
+    /* a Lua error: status was set by luaD_throw */
   }
   catch (const std::exception &e) {
-    /* A C++ exception escaping an engine binding: turn it into an ordinary
-       Lua runtime error rather than unwinding through Lua's own frames,
-       which would leave the call stack inconsistent. */
-    lua_pushstring(L, e.what());
-    lj.status = LUA_ERRRUN;
+    strncpy(foreign_msg, e.what(), sizeof(foreign_msg) - 1);
+    foreign_msg[sizeof(foreign_msg) - 1] = '\0';
+    foreign = foreign_msg;
   }
   catch (...) {
-    lua_pushstring(L, "unknown C++ exception");
+    foreign = "unknown C++ exception";
+  }
+  L->errorJmp = lj.previous;  /* restore old error handler */
+  if (foreign) {
+    lua_pushstring(L, foreign);  /* error object for seterrorobj */
     lj.status = LUA_ERRRUN;
   }
+  return lj.status;
 #else
   if (setjmp(lj.b) == 0)
     (*f)(L, ud);
-#endif
   L->errorJmp = lj.previous;  /* restore old error handler */
   return lj.status;
+#endif
 }
 
 

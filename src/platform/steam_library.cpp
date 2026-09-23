@@ -42,7 +42,7 @@ public:
     std::optional<VdfNode> parse_root() {
         VdfNode root;
         root.is_object = true;
-        if (!parse_members(root, /*top_level=*/true)) return std::nullopt;
+        if (!parse_members(root, /*depth=*/0)) return std::nullopt;
         return root;
     }
 
@@ -99,7 +99,13 @@ private:
         return Tok::String;
     }
 
-    bool parse_members(VdfNode& parent, bool top_level) {
+    /// Real Steam files nest 3-4 levels; the cap turns hostile or corrupt
+    /// input into a parse failure instead of a stack overflow.
+    static constexpr int kMaxDepth = 64;
+
+    bool parse_members(VdfNode& parent, int depth) {
+        if (depth > kMaxDepth) return false;
+        const bool top_level = depth == 0;
         for (;;) {
             Tok t = next();
             if (t == Tok::End) return top_level;
@@ -112,7 +118,7 @@ private:
                 node.value = tok_text_;
             } else if (v == Tok::Open) {
                 node.is_object = true;
-                if (!parse_members(node, /*top_level=*/false)) return false;
+                if (!parse_members(node, depth + 1)) return false;
             } else {
                 return false;
             }

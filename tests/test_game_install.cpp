@@ -104,6 +104,18 @@ TEST_CASE("VDF parser rejects malformed input", "[platform][install]") {
     CHECK_FALSE(parse_vdf("\"unterminated").has_value());
 }
 
+TEST_CASE("VDF parser rejects pathologically deep nesting", "[platform][install]") {
+    // Local but untrusted input: must fail cleanly, not overflow the stack.
+    std::string deep;
+    for (int i = 0; i < 100000; ++i) deep += "\"k\" { ";
+    CHECK_FALSE(parse_vdf(deep).has_value());
+
+    std::string ok_depth;
+    for (int i = 0; i < 16; ++i) ok_depth += "\"k\" { ";
+    for (int i = 0; i < 16; ++i) ok_depth += "} ";
+    CHECK(parse_vdf(ok_depth).has_value());
+}
+
 TEST_CASE("libraryfolders.vdf yields every library path", "[platform][install]") {
     auto libs = parse_library_folders_vdf(
         library_folders_vdf("/home/u/.local/share/Steam", "/mnt/SteamLibrary"));
