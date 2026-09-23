@@ -1845,6 +1845,9 @@ static const MethodEntry entity_methods[] = {
     {"GetFractionComplete", entity_GetFractionComplete},
     {"Destroy",             entity_Destroy},
     {"BeenDestroyed",       entity_BeenDestroyed},
+    // Any entity: retail units loop their ambient sounds on attached
+    // helper entities (Unit.PlayUnitAmbientSound).
+    {"SetAmbientSound",     entity_SetAmbientSound},
     {"GetBoneCount",        entity_GetBoneCount},
     {"GetBoneName",         entity_GetBoneName},
     {"IsValidBone",         entity_IsValidBone},
@@ -3676,7 +3679,6 @@ static const MethodEntry unit_methods[] = {
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
-    {"SetAmbientSound",             entity_SetAmbientSound},
     {"GetRallyPoint",                unit_GetRallyPoint},
     {"SetRallyPoint",                unit_SetRallyPoint},
     {"SetBusy",                      unit_SetBusy},
