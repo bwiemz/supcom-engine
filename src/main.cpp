@@ -1,15 +1,10 @@
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
-
 #include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
 #include "core/types.hpp"
 #include "integration_tests.hpp"
+#include "platform/crash_handler.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/init_loader.hpp"
 #include "lua/session_manager.hpp"
@@ -805,16 +800,6 @@ static void pump_ui_frames_with_controls(
     }
 }
 
-#ifdef _WIN32
-static LONG WINAPI crash_handler(EXCEPTION_POINTERS* ep) {
-    spdlog::critical("CRASH: code={:#x} addr={:#x}",
-        ep->ExceptionRecord->ExceptionCode,
-        reinterpret_cast<uintptr_t>(ep->ExceptionRecord->ExceptionAddress));
-    spdlog::default_logger()->flush();
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-#endif
-
 // ── Headless two-process LAN lockstep verification (multiplayer step 4) ──
 // One process runs `--mp-host`, another `--mp-join <addr>`. They connect over
 // real TCP, build identical minimal sims, and drive a LockstepSession: the host
@@ -1147,9 +1132,10 @@ static void lan_launch_session(lua_State* uL, const std::string& scenario) {
 
 int main(int argc, char* argv[]) {
     osc::log::init();
-#ifdef _WIN32
-    SetUnhandledExceptionFilter(crash_handler);
-#endif
+    osc::platform::install_crash_handler(+[] {
+        // Best-effort: we are inside a signal/SEH handler.
+        if (auto logger = spdlog::default_logger()) logger->flush();
+    });
 
     auto config = parse_args(argc, argv);
 

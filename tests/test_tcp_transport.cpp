@@ -16,7 +16,9 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -134,4 +136,24 @@ TEST_CASE("Lockstep runs over real TCP sockets", "[tcp][lockstep]") {
     // The order issued on the host took effect on the client too.
     auto* uc = static_cast<Unit*>(c.entity_registry().find(idc));
     CHECK(uc->position().x > 0.0f);
+}
+
+TEST_CASE("TCP host survives sending to a vanished peer and drops it", "[tcp]") {
+    auto host = TcpTransport::host(0);
+    REQUIRE(host->ok());
+    auto client = TcpTransport::join("127.0.0.1", host->port());
+    REQUIRE(client->ok());
+    REQUIRE(host->poll_connections() == 1);
+
+    client.reset(); // peer disappears without a goodbye (crash, cable pull)
+
+    // On POSIX the first send after the peer's RST fails with EPIPE, which by
+    // default raises SIGPIPE and kills the whole process. The send path must
+    // neither die nor keep the dead peer around.
+    std::vector<osc::u8> payload(1024, 7);
+    for (int i = 0; i < 500 && host->peer_count() > 0; ++i) {
+        host->broadcast(payload);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(host->peer_count() == 0);
 }

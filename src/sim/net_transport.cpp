@@ -43,10 +43,22 @@ void close_socket(socket_t s) {
 #endif
 }
 
-void set_nodelay(socket_t s) {
+// Writing to a socket whose peer has reset raises SIGPIPE on POSIX, which
+// kills the process by default. Suppress it per call (Linux) or per socket
+// (macOS/BSD) so a vanished peer is just a failed send.
+#ifdef MSG_NOSIGNAL
+constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+constexpr int kSendFlags = 0;
+#endif
+
+void configure_stream(socket_t s) {
     int one = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one),
                sizeof(one));
+#ifdef SO_NOSIGPIPE
+    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
+#endif
 }
 
 // Blocking send of the whole buffer; returns false on error.
@@ -55,7 +67,7 @@ bool send_all(socket_t s, const u8* data, size_t len) {
     while (sent < len) {
         int n = static_cast<int>(
             send(s, reinterpret_cast<const char*>(data + sent),
-                 static_cast<int>(len - sent), 0));
+                 static_cast<int>(len - sent), kSendFlags));
         if (n <= 0) return false;
         sent += static_cast<size_t>(n);
     }
@@ -152,7 +164,7 @@ std::unique_ptr<TcpTransport> TcpTransport::join(const std::string& address,
         close_socket(s);
         return std::unique_ptr<TcpTransport>(new TcpTransport(std::move(impl)));
     }
-    set_nodelay(s);
+    configure_stream(s);
     impl->conns.push_back({s, {}});
     impl->bound_port = port;
     impl->ok = true;
@@ -172,7 +184,7 @@ int TcpTransport::poll_connections() {
         if (r <= 0 || !FD_ISSET(impl_->listen_fd, &fds)) break;
         socket_t c = accept(impl_->listen_fd, nullptr, nullptr);
         if (c == kInvalidSocket) break;
-        set_nodelay(c);
+        configure_stream(c);
         impl_->conns.push_back({c, {}});
     }
     return peer_count();
@@ -182,8 +194,12 @@ void TcpTransport::broadcast(const std::vector<u8>& msg) {
     std::vector<u8> framed;
     frame_message(framed, msg);
     for (auto& c : impl_->conns) {
-        if (c.fd != kInvalidSocket)
-            send_all(c.fd, framed.data(), framed.size());
+        if (c.fd != kInvalidSocket &&
+            !send_all(c.fd, framed.data(), framed.size())) {
+            // Peer is gone; drop it so peer_count() and drop detection see it.
+            close_socket(c.fd);
+            c.fd = kInvalidSocket;
+        }
     }
 }
 
@@ -235,8 +251,12 @@ std::vector<std::vector<u8>> TcpTransport::receive() {
                 std::vector<u8> framed;
                 frame_message(framed, f);
                 for (size_t j = 0; j < impl_->conns.size(); ++j) {
-                    if (j == i || impl_->conns[j].fd == kInvalidSocket) continue;
-                    send_all(impl_->conns[j].fd, framed.data(), framed.size());
+                    auto& peer = impl_->conns[j];
+                    if (j == i || peer.fd == kInvalidSocket) continue;
+                    if (!send_all(peer.fd, framed.data(), framed.size())) {
+                        close_socket(peer.fd);
+                        peer.fd = kInvalidSocket;
+                    }
                 }
             }
             out.push_back(std::move(f));

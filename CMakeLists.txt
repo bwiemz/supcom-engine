@@ -52,6 +52,9 @@ target_link_libraries(opensupcom PRIVATE
     osc::blueprints
 )
 
+# Export symbols from the executable so crash backtraces show function names.
+set_target_properties(opensupcom PROPERTIES ENABLE_EXPORTS ON)
+
 # Tests
 option(OSC_BUILD_TESTS "Build unit tests" ON)
 if(OSC_BUILD_TESTS)
