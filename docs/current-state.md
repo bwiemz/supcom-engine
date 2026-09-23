@@ -29,8 +29,8 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 |---|---|
 | Unit tests (Catch2) | 290 cases / 5,401 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
-| Data-backed gate on retail (`ctest -L gate`) | 93 modes plus the no-map lobby flow and the `data.binding_coverage` ratchet, all passing. The golden capture also matches. |
-| Data-backed modes failing on retail (`-L retail-gap`) | 6 (anim, enhance, jammer, shield, stub, unitsound), with their first failures noted in `tests/integration/data_tests.cmake`. |
+| Data-backed gate on retail (`ctest -L gate`) | All 99 modes plus the no-map lobby flow and the `data.binding_coverage` ratchet, all passing. The golden capture also matches. |
+| Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
 | Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 
 ## Verified Locally

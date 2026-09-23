@@ -346,9 +346,10 @@ in the repo if they contain game assets).
 
 | Phase | State |
 |---|---|
-| A | **Complete on `feat/linux-build`, pending merge (PR #18).** All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
-| A′ | Next. |
-| B–I | Not started. The Phase A baseline sized Phase B: 56 `retail-gap` modes, and about 60 methods plus 95 globals referenced by retail Lua but not yet bound. |
+| A | **Complete and merged** (PR #18). All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
+| A′ | In progress alongside B (M183, the strata fix, landed). |
+| B | **In progress.** M184–M186 are done (PRs #20, #21 and the M186 branch). The retail gate went from 44 to all 99 data modes, and `retail-gap` is empty; `tests/integration/data_tests.cmake` records each step. Next: M187 (FA in-game UI). |
+| C–I | Not started. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)
 - ~~**Fog of war** looks wrong around the focus army's ACU~~ Diagnosed with
