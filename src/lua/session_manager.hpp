@@ -3,6 +3,7 @@
 #include "core/result.hpp"
 #include "core/types.hpp"
 #include "lua/scenario_loader.hpp"
+#include "sim/game_setup.hpp"
 
 #include <algorithm>
 #include <string>
@@ -22,61 +23,20 @@ class SimState;
 
 namespace osc::lua {
 
-struct ArmySlotConfig {
-    bool configured = false;
-    bool human = true;
-    int faction = 1;
-    int team = 1;
-    int start_spot = 0; // 1-based scenario marker index; 0 = default slot
-    int player_color = -1;
-    int army_color = -1;
-    int handicap = 0; // percent income reduction (0 = none)
-    std::string ai_personality;
-};
-
-struct GameOptionValue {
-    enum class Type {
-        String,
-        Number,
-        Boolean,
-    };
-
-    Type type = Type::String;
-    std::string string_value;
-    double number_value = 0.0;
-    bool bool_value = false;
-};
-
-struct GameOptionsConfig {
-    bool configured = false;
-    std::vector<std::pair<std::string, GameOptionValue>> values;
-    std::vector<std::string> restricted_categories;
-
-    void set_string(std::string key, std::string value) {
-        GameOptionValue option;
-        option.type = GameOptionValue::Type::String;
-        option.string_value = std::move(value);
-        values.emplace_back(std::move(key), std::move(option));
-    }
-
-    void set_number(std::string key, double value) {
-        GameOptionValue option;
-        option.type = GameOptionValue::Type::Number;
-        option.number_value = value;
-        values.emplace_back(std::move(key), option);
-    }
-
-    void set_bool(std::string key, bool value) {
-        GameOptionValue option;
-        option.type = GameOptionValue::Type::Boolean;
-        option.bool_value = value;
-        values.emplace_back(std::move(key), option);
-    }
-};
+// The lobby's setup types live with the rest of a game's setup, in the sim
+// (a replay carries them).
+using ArmySlotConfig = sim::ArmySlotConfig;
+using GameOptionValue = sim::GameOptionValue;
+using GameOptionsConfig = sim::GameOptionsConfig;
 
 /// Read a lobby GameOptions table from Lua into a C++ config that can be
 /// applied on the sim Lua state after reload.
 GameOptionsConfig read_game_options(lua_State* L, int table_idx);
+
+/// A lobby's sessionConfig table (GameOptions, PlayerOptions) as a game
+/// setup: which armies play, who plays each, and the options. The scenario
+/// and seed are the caller's.
+sim::GameSetup read_session_config(lua_State* L, int table_idx);
 
 class SessionManager {
 public:
@@ -133,6 +93,10 @@ public:
     }
 
     /// Set cheat multipliers (only used when personality ends with "cheat").
+    /// Configure the session from a game's setup (its slots, options and AI
+    /// armies), as every launch path does.
+    void configure(const sim::GameSetup& setup);
+
     void set_cheat_mult(double m) { cheat_mult_ = m; }
     void set_build_mult(double m) { build_mult_ = m; }
 

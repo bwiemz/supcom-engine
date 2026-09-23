@@ -664,6 +664,41 @@ TEST_CASE("Sandbox victory option suppresses automatic army defeat", "[session][
     CHECK(sim.player_result() == 0);
 }
 
+TEST_CASE("A lobby's sessionConfig becomes the game's setup", "[session][config][replay]") {
+    osc::lua::LuaState lua;
+    auto made = lua.do_string(R"(
+        config = {
+            GameOptions = {Victory = 'domination', UnitCap = 300},
+            PlayerOptions = {
+                [1] = {Human = true, Faction = 2, Team = 2, StartSpot = 3, PlayerColor = 4},
+                [2] = {Human = false, AIPersonality = 'rush', Faction = 3, Handicap = 10},
+            },
+        }
+    )");
+    REQUIRE(made.ok());
+    lua_getglobal(lua.raw(), "config");
+    const auto setup = osc::lua::read_session_config(lua.raw(), lua_gettop(lua.raw()));
+    lua_pop(lua.raw(), 1);
+
+    REQUIRE(setup.slots.size() == 2);
+    CHECK(setup.slots[0].configured);
+    CHECK(setup.slots[0].human);
+    CHECK(setup.slots[0].faction == 2);
+    CHECK(setup.slots[0].team == 2);
+    CHECK(setup.slots[0].start_spot == 3);
+    CHECK(setup.slots[0].player_color == 4);
+    CHECK_FALSE(setup.slots[1].human);
+    CHECK(setup.slots[1].ai_personality == "rush");
+    CHECK(setup.slots[1].team == 2); // defaults to the slot
+    CHECK(setup.slots[1].start_spot == 2);
+    CHECK(setup.slots[1].handicap == 10);
+    CHECK(setup.army_count == 2);
+    CHECK(setup.ai_armies == std::vector<int>{1});
+    CHECK(setup.ai_personality == "rush");
+    CHECK(setup.options.configured);
+    CHECK(setup.options.values.size() == 2);
+}
+
 TEST_CASE("GameOptions parser preserves lobby scalar values and restrictions", "[session][config]") {
     osc::lua::LuaState lua;
     auto setup = lua.do_string(R"(

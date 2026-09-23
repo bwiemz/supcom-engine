@@ -155,6 +155,13 @@ void decrease_build_count(SimState& sim, lua_State* L, const SimCallbackEntry& c
     });
 }
 
+/// A dropped player's army is defeated.
+void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
+    const auto* army = arg<f64>(cb, "Army");
+    if (!army || *army < 0 || *army >= static_cast<f64>(sim.army_count())) return;
+    sim.defeat_army(static_cast<i32>(*army));
+}
+
 /// FA's /lua/SimCallbacks.lua DoCallback(func name, args, units).
 void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!push_callbacks_module(L)) return;
@@ -203,6 +210,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
     else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
+    else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

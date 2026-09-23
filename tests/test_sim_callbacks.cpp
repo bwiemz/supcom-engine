@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/manipulator.hpp"
@@ -437,4 +438,25 @@ TEST_CASE("Cancelling a factory's build under way destroys the unit it was build
     CHECK(w.hooks() == "OnFailedToBuild,Destroy");
     auto* gone = w.sim.entity_registry().find(partial);
     CHECK((gone == nullptr || gone->destroyed()));
+}
+
+TEST_CASE("A dropped player's defeat is a command in the next tick", "[simcallback][drop]") {
+    CallbackSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    w.sim.set_recording(true);
+    SimCallbackEntry defeat;
+    defeat.func_name = osc::sim::kDefeatArmyCallback;
+    defeat.args["Army"] = 1.0;
+    w.sim.schedule_callback(0, defeat);
+    CHECK_FALSE(w.sim.army_at(1)->is_defeated()); // not between ticks
+    w.sim.tick();
+    CHECK(w.sim.army_at(1)->is_defeated());
+    CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+    CHECK(w.sim.recorded_replay().commands.size() == 1); // a replay defeats it too
+
+    defeat.args["Army"] = 7.0; // no such army: nothing happens
+    w.sim.schedule_callback(0, defeat);
+    w.sim.tick();
+    CHECK_FALSE(w.sim.army_at(0)->is_defeated());
 }

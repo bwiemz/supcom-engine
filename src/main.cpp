@@ -47,6 +47,9 @@
 #include "sim/shield.hpp"
 #include "sim/net_transport.hpp"
 #include "sim/lockstep_session.hpp"
+#include "sim/replay.hpp"
+#include "sim/build_info.hpp"
+#include "sim/game_setup.hpp"
 #include "sim/world_snapshot.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
@@ -69,6 +72,7 @@ extern "C" {
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <set>
 #include <thread>
 #include <unordered_set>
@@ -81,8 +85,16 @@ extern "C" {
 
 static int l_FlushEvents(lua_State*) { return 0; }
 
+/// SessionIsReplay() for the UI: whether the game is a replay being played
+/// (retail's UI then hides orders and shows the replay controls). Only UI
+/// scripts ask it; the sim's own answer stays false, so a replay can't
+/// change what the game does.
 static int l_SessionIsReplay(lua_State* L) {
-    lua_pushboolean(L, 0);
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* sim = static_cast<const osc::sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    lua_pushboolean(L, sim && sim->playback() ? 1 : 0);
     return 1;
 }
 
@@ -299,6 +311,11 @@ static void print_usage() {
               << "  --seed <n>         The game's random seed (default: fixed for tests and\n"
               << "                     headless runs, fresh for an interactive game)\n"
               << "  --checksum-trace <f>  Write each tick's sync checksum and its parts\n"
+              << "  --record <file>    Record the game as a replay, written when the run ends\n"
+              << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
+              << "                     checksum against the recording (exit 1 on divergence)\n"
+              << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
+              << "                     orders (moves, pauses, fire states, stops)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
               << "  --move-test        After ticks, move entity #1 and run 200 more ticks\n"
               << "  --fire-test        Teleport entities #1 and #2 close, run 100 combat ticks\n"
@@ -543,6 +560,139 @@ static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
 /// here (see SimState::set_checksum_trace); null when not asked for.
 static std::ofstream* g_checksum_trace = nullptr;
 
+/// --record <file>: each game records (SimState::set_recording), and the
+/// run writes the last one's replay here as it ends. Empty: no recording.
+static std::string g_record_path;
+
+/// Write `sim`'s recording to `path`.
+static bool write_recording(const osc::sim::SimState& sim, const std::string& path) {
+    const auto& replay = sim.recorded_replay();
+    const auto bytes = replay.serialize();
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        spdlog::error("--record: cannot write {}", path);
+        return false;
+    }
+    spdlog::info("Replay: {} commands over {} ticks written to {}", replay.commands.size(),
+                 replay.final_tick, path);
+    return true;
+}
+
+/// A replay file that can start its game, or nothing (the reason logged).
+static std::optional<osc::sim::Replay> load_replay(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        spdlog::error("--replay: cannot read {}", path);
+        return std::nullopt;
+    }
+    const std::vector<osc::u8> bytes((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+    osc::sim::Replay replay;
+    if (!osc::sim::Replay::deserialize(bytes, replay)) {
+        spdlog::error("--replay: {} is not a replay, or is damaged", path);
+        return std::nullopt;
+    }
+    if (!replay.has_setup) {
+        spdlog::error("--replay: {} (format {}) has no game setup to start from", path,
+                      replay.version);
+        return std::nullopt;
+    }
+    if (replay.build != osc::sim::build_id()) {
+        spdlog::warn("--replay: recorded by build {}, playing on {}; a different build may "
+                     "play it differently",
+                     replay.build, osc::sim::build_id());
+    }
+    return replay;
+}
+
+/// --scripted-orders: army 1 also takes a player's orders, routed as a
+/// player's so a recording holds them: moves, now and then a fire state or
+/// a pause (SimCallbacks) and a Stop. Picked from their own random stream,
+/// never the sim's.
+static void issue_scripted_orders(osc::sim::SimState& sim, osc::sim::SimRandom& rng,
+                                  osc::u32 tick) {
+    if (tick % 40 != 20 || !sim.terrain()) return;
+    std::vector<osc::u32> movers, all; // army 1's live units, in id order
+    sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+        if (!e.is_unit() || e.destroyed() || e.army() != 0) return;
+        all.push_back(e.entity_id());
+        if (static_cast<const osc::sim::Unit&>(e).has_command_cap("RULEUCC_Move"))
+            movers.push_back(e.entity_id());
+    });
+    if (all.empty()) return;
+    auto any = [&](const std::vector<osc::u32>& ids) {
+        return ids[static_cast<size_t>(rng.next_int(0, static_cast<osc::i64>(ids.size()) - 1))];
+    };
+    osc::sim::UnitCommand cmd;
+    std::vector<osc::u32> ids;
+    switch ((tick / 40) % 6) {
+    case 3: { // a fire state
+        osc::sim::SimCallbackEntry cb;
+        cb.func_name = osc::sim::kUnitSettingCallback;
+        cb.args["Setting"] = std::string("FireState");
+        cb.args["Value"] = static_cast<osc::f64>(rng.next_int(0, 2));
+        cb.unit_ids = {any(all)};
+        sim.submit_callback(std::move(cb));
+        return;
+    }
+    case 4: { // pause or resume
+        const osc::u32 id = any(all);
+        const auto* u = static_cast<const osc::sim::Unit*>(sim.entity_registry().find(id));
+        osc::sim::SimCallbackEntry cb;
+        cb.func_name = osc::sim::kUnitSettingCallback;
+        cb.args["Setting"] = std::string("Paused");
+        cb.args["Value"] = !u->is_paused();
+        cb.unit_ids = {id};
+        sim.submit_callback(std::move(cb));
+        return;
+    }
+    case 5: // stop
+        cmd.type = osc::sim::CommandType::Stop;
+        ids = {any(all)};
+        break;
+    default: { // move a few units somewhere
+        if (movers.empty()) return;
+        cmd.type = osc::sim::CommandType::Move;
+        const auto w = static_cast<double>(sim.terrain()->map_width());
+        const auto h = static_cast<double>(sim.terrain()->map_height());
+        cmd.target_pos = {static_cast<osc::f32>(rng.next_double() * w), 0.0f,
+                          static_cast<osc::f32>(rng.next_double() * h)};
+        for (int k = 0; k < 3; ++k) ids.push_back(any(movers));
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        break;
+    }
+    }
+    sim.set_human_input_active(true);
+    sim.route_command(ids, cmd, true);
+    sim.set_human_input_active(false);
+}
+
+/// --replay: play the recorded game to its end, checking the checksum after
+/// every tick against the recording's. 0 when they match throughout.
+static int play_replay(osc::sim::SimState& sim, const osc::sim::Replay& replay) {
+    osc::sim::ReplayPlayback playback(replay);
+    playback.start(sim);
+    spdlog::info("Replay: {} commands over {} ticks", replay.commands.size(), replay.final_tick);
+    while (!playback.finished(sim)) {
+        sim.tick();
+        if (!playback.check(sim)) {
+            const osc::u32 tick = playback.diverged_at();
+            spdlog::error("Replay diverged at tick {}: checksum {:08x}, recorded {:08x}", tick,
+                          sim.compute_sync_checksum(),
+                          replay.checksums[tick - replay.checksum_from]);
+            std::printf("REPLAY diverged tick=%u\n", tick);
+            return 1;
+        }
+    }
+    spdlog::info("Replay: matched the recording at every tick");
+    std::printf("REPLAY ok ticks=%u checksum=%08x\n", sim.tick_count(),
+                sim.compute_sync_checksum());
+    return 0;
+}
+
 /// The random seed of a new game: `--seed` when given; else a fixed one when
 /// the run must repeat (tests, headless runs, captures); else a fresh one.
 /// A multiplayer session then replaces it with the seed its peers share.
@@ -652,13 +802,12 @@ static bool execute_reload_sequence(
     sim_state->set_anim_cache(
         std::make_unique<osc::sim::AnimCache>(&vfs));
 
-    // The lobby's filled slots decide which of the scenario's armies play.
-    // Moho creates only those, and retail InitializeArmies spawns an ACU for
-    // every army ListArmies() returns -- an army without a brain then runs
-    // its commander's scripts against no brain at all.
-    // Counted the way SessionManager counts them (it creates brains for the
-    // first N armies, N = filled slots), so every army gets a brain.
-    size_t session_slots = 0; // filled slots; 0 = no lobby config
+    // The game's setup: the lobby's sessionConfig (which of the scenario's
+    // armies play, who plays each, the options), the scenario and the seed.
+    // Moho creates only the filled slots' armies, and retail InitializeArmies
+    // spawns an ACU for every army ListArmies() returns -- an army without a
+    // brain then runs its commander's scripts against no brain at all.
+    osc::sim::GameSetup setup;
     {
         lua_pushstring(uiL, "__osc_front_end_data");
         lua_rawget(uiL, LUA_REGISTRYINDEX);
@@ -667,21 +816,12 @@ static bool execute_reload_sequence(
         if (fed) {
             const int top = lua_gettop(uiL);
             fed->get(uiL, "sessionConfig");
-            if (lua_istable(uiL, -1)) {
-                lua_pushstring(uiL, "PlayerOptions");
-                lua_rawget(uiL, -2);
-                if (lua_istable(uiL, -1)) {
-                    const int n = luaL_getn(uiL, lua_gettop(uiL));
-                    for (int slot = 1; slot <= n; ++slot) {
-                        lua_rawgeti(uiL, -1, slot);
-                        if (lua_istable(uiL, -1)) ++session_slots;
-                        lua_pop(uiL, 1);
-                    }
-                }
-            }
+            if (lua_istable(uiL, -1)) setup = osc::lua::read_session_config(uiL, lua_gettop(uiL));
             lua_settop(uiL, top);
         }
     }
+    setup.scenario = launch_scenario;
+    setup.seed = seed;
 
     // 8. Load scenario from selected map
     osc::lua::ScenarioLoader new_scenario_loader;
@@ -692,9 +832,10 @@ static bool execute_reload_sequence(
                       new_meta_result.error().message);
     } else {
         scenario_meta = new_meta_result.value();
-        const size_t army_limit = session_slots > 0
-            ? std::min(session_slots, scenario_meta.armies.size())
-            : scenario_meta.armies.size();
+        const size_t army_limit =
+            setup.army_count > 0
+                ? std::min(static_cast<size_t>(setup.army_count), scenario_meta.armies.size())
+                : scenario_meta.armies.size();
         for (size_t i = 0; i < army_limit; ++i) {
             sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
         }
@@ -744,134 +885,31 @@ static bool execute_reload_sequence(
         return false;
     }
 
-    // 12. Start session — parse lobby sessionConfig for AI/spawn/team setup
+    // 12. Start the session from the setup
     {
-        osc::lua::SessionManager new_session_mgr;
-
-        // Try to retrieve sessionConfig from FrontEndData (set by lobby)
-        std::vector<int> ai_indices;
-        std::vector<osc::lua::ArmySlotConfig> slot_configs;
-        osc::lua::GameOptionsConfig game_options;
-        std::string ai_personality = "adaptive";
-        int filled_slots = 0;
-
-        lua_pushstring(uiL, "__osc_front_end_data");
-        lua_rawget(uiL, LUA_REGISTRYINDEX);
-        auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
-        lua_pop(uiL, 1);
-
-        if (fed) {
-            fed->get(uiL, "sessionConfig");
-            if (lua_istable(uiL, -1)) {
-                int cfg_idx = lua_gettop(uiL);
-
-                lua_pushstring(uiL, "GameOptions");
-                lua_rawget(uiL, cfg_idx);
-                if (lua_istable(uiL, -1)) {
-                    game_options = osc::lua::read_game_options(uiL, lua_gettop(uiL));
-                }
-                lua_pop(uiL, 1);
-
-                // Walk PlayerOptions table: {[1]={Human=true,...}, [2]={Human=false,AIPersonality='adaptive',...}}
-                lua_pushstring(uiL, "PlayerOptions");
-                lua_rawget(uiL, cfg_idx);
-                if (lua_istable(uiL, -1)) {
-                    int po_idx = lua_gettop(uiL);
-                    int n = luaL_getn(uiL, po_idx);
-                    slot_configs.resize(static_cast<size_t>(n));
-                    for (int slot = 1; slot <= n; slot++) {
-                        lua_rawgeti(uiL, po_idx, slot);
-                        if (!lua_istable(uiL, -1)) { lua_pop(uiL, 1); continue; }
-                        int entry = lua_gettop(uiL);
-                        filled_slots++;
-                        auto& slot_cfg =
-                            slot_configs[static_cast<size_t>(slot - 1)];
-                        slot_cfg.configured = true;
-
-                        // Check Human field
-                        lua_pushstring(uiL, "Human");
-                        lua_rawget(uiL, entry);
-                        bool is_human = lua_toboolean(uiL, -1) != 0;
-                        lua_pop(uiL, 1);
-                        slot_cfg.human = is_human;
-
-                        if (!is_human) {
-                            // AI army — slot is 1-based, army index is 0-based
-                            ai_indices.push_back(slot - 1);
-
-                            // Read AIPersonality
-                            lua_pushstring(uiL, "AIPersonality");
-                            lua_rawget(uiL, entry);
-                            if (lua_type(uiL, -1) == LUA_TSTRING) {
-                                ai_personality = lua_tostring(uiL, -1);
-                                slot_cfg.ai_personality = ai_personality;
-                            }
-                            lua_pop(uiL, 1);
-                        }
-
-                        // Read Faction (1=UEF,2=Aeon,3=Cybran,4=Sera,5=Random)
-                        lua_pushstring(uiL, "Faction");
-                        lua_rawget(uiL, entry);
-                        int faction = lua_isnumber(uiL, -1)
-                            ? static_cast<int>(lua_tonumber(uiL, -1)) : 1;
-                        lua_pop(uiL, 1);
-                        slot_cfg.faction = faction;
-
-                        auto read_int_field = [&](const char* key, int def) {
-                            lua_pushstring(uiL, key);
-                            lua_rawget(uiL, entry);
-                            int value = lua_isnumber(uiL, -1)
-                                ? static_cast<int>(lua_tonumber(uiL, -1))
-                                : def;
-                            lua_pop(uiL, 1);
-                            return value;
-                        };
-                        slot_cfg.team = read_int_field("Team", slot);
-                        slot_cfg.start_spot = read_int_field("StartSpot", slot);
-                        slot_cfg.player_color =
-                            read_int_field("PlayerColor", -1);
-                        slot_cfg.army_color = read_int_field("ArmyColor", -1);
-                        slot_cfg.handicap = read_int_field("Handicap", 0);
-
-                        // Store faction on the army brain (0-based index)
-                        auto* brain = sim_state->get_army(slot - 1);
-                        if (brain) brain->set_faction(faction);
-
-                        lua_pop(uiL, 1); // pop entry table
-                    }
-                }
-                lua_pop(uiL, 1); // pop PlayerOptions
-            }
-            lua_pop(uiL, 1); // pop sessionConfig
-        }
-
-        // Apply parsed config (or fall back to defaults)
-        if (!slot_configs.empty()) {
-            new_session_mgr.set_army_slot_configs(slot_configs);
-        }
-        if (game_options.configured) {
-            new_session_mgr.set_game_options(game_options);
-        }
-        if (!ai_indices.empty()) {
-            new_session_mgr.set_ai_armies(ai_indices);
-            new_session_mgr.set_ai_personality(ai_personality);
-            spdlog::info("Session: {} AI armies (personality={}), {} total slots",
-                         ai_indices.size(), ai_personality, filled_slots);
-        } else if (sim_state->army_count() >= 2) {
-            // Fallback: no sessionConfig → assume ARMY_2 is AI (legacy behavior)
-            new_session_mgr.set_ai_armies({1});
+        if (setup.slots.empty() && sim_state->army_count() >= 2) {
+            // No sessionConfig: ARMY_2 is the AI (legacy behavior).
+            setup.ai_armies = {1};
             spdlog::info("Session: fallback — ARMY_2 as AI (no sessionConfig)");
+        } else if (!setup.ai_armies.empty()) {
+            spdlog::info("Session: {} AI armies (personality={}), {} total slots",
+                         setup.ai_armies.size(), setup.ai_personality, setup.army_count);
         }
-        if (filled_slots > 0) {
-            new_session_mgr.set_max_armies(filled_slots);
+        for (size_t i = 0; i < setup.slots.size(); ++i) {
+            if (!setup.slots[i].configured) continue;
+            if (auto* brain = sim_state->get_army(static_cast<osc::i32>(i)))
+                brain->set_faction(setup.slots[i].faction);
         }
-
+        osc::lua::SessionManager new_session_mgr;
+        new_session_mgr.configure(setup);
         auto sess_result = new_session_mgr.start_session(
             *sim_lua_state, vfs, *sim_state, scenario_meta);
         if (!sess_result) {
             spdlog::warn("Reload session start failed: {}",
                          sess_result.error().message);
         }
+        sim_state->set_game_setup(setup);
+        if (!g_record_path.empty()) sim_state->set_recording(true);
     }
 
     // 13. Update UI state's sim_state registry pointer to new SimState
@@ -1632,6 +1670,15 @@ int main(int argc, char* argv[]) {
 
     auto map_path = parse_map_arg(argc, argv);
     auto tick_count = parse_ticks_arg(argc, argv);
+    // --replay <file>: play a recorded game (its setup names the map).
+    std::optional<osc::sim::Replay> replay_to_play;
+    if (const auto replay_arg = parse_string_arg(argc, argv, "--replay", ""); !replay_arg.empty()) {
+        replay_to_play = load_replay(replay_arg);
+        if (!replay_to_play) return 1;
+        map_path = replay_to_play->setup.scenario;
+    }
+    g_record_path = parse_string_arg(argc, argv, "--record", "");
+    const bool scripted_orders = parse_flag(argc, argv, "--scripted-orders");
     bool damage_test = parse_flag(argc, argv, "--damage-test");
     bool move_test = parse_flag(argc, argv, "--move-test");
     bool fire_test = parse_flag(argc, argv, "--fire-test");
@@ -1802,7 +1849,7 @@ int main(int argc, char* argv[]) {
                     phase3_test || phase4_test || phase5_test ||
                     profile_test || smoke_test || ai_skirmish || draw_test ||
                     stress_test || full_smoke_test || audio_data_test || victory_test;
-    bool headless = (tick_count > 0) || any_test;
+    bool headless = (tick_count > 0) || any_test || replay_to_play.has_value();
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
     if (any_test || interp_test) osc::test_status::set_count_lua_failures(true);
@@ -1894,14 +1941,46 @@ int main(int argc, char* argv[]) {
     std::unique_ptr<osc::sim::SimState> sim_state;
     osc::lua::ScenarioMetadata scenario_meta;
 
+    // The game's setup: a replay's own, or the command line's.
+    osc::sim::GameSetup game_setup;
+    if (replay_to_play) {
+        game_setup = replay_to_play->setup;
+    } else {
+        game_setup.scenario = map_path;
+        game_setup.seed = new_game_seed(seed_arg, reproducible_run);
+        if (ai_skirmish) {
+            // Every army the AI's (--ai-armies of them); listed once they exist.
+            game_setup.army_count = static_cast<int>(ai_army_count);
+            game_setup.ai_personality = ai_personality;
+            // Cheat variants: a personality ending in "cheat"
+            if (ai_personality.size() > 5 &&
+                ai_personality.compare(ai_personality.size() - 5, 5, "cheat") == 0) {
+                game_setup.cheat_mult = 2.0;
+                game_setup.build_mult = 2.0;
+            }
+        } else if (ai_test || platoon_test || threat_test || combat_test) {
+            game_setup.ai_armies = {1}; // ARMY_2 (0-based index 1) is AI
+        }
+    }
+    // --record: the last game's replay is written as the run ends, however
+    // it ends (the normal end writes it before logging shuts down).
+    struct RecordingWriter {
+        std::unique_ptr<osc::sim::SimState>& sim;
+        bool written = false;
+        void write() {
+            if (written) return;
+            written = true;
+            if (!g_record_path.empty() && sim && sim->recording())
+                write_recording(*sim, g_record_path);
+        }
+        ~RecordingWriter() { write(); }
+    } recording_writer{sim_state};
+
     if (!map_path.empty()) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
-    {
-        const osc::u64 seed = new_game_seed(seed_arg, reproducible_run);
-        sim_state->set_seed(seed);
-        sim_state->set_checksum_trace(g_checksum_trace);
-        spdlog::info("Game seed {:#018x}", seed);
-    }
+    sim_state->set_seed(game_setup.seed);
+    sim_state->set_checksum_trace(g_checksum_trace);
+    spdlog::info("Game seed {:#018x}", game_setup.seed);
 
     attach_sound(*sim_lua_state, *sim_state, &sound);
     // Only a drawn world needs its ticks captured.
@@ -1927,10 +2006,16 @@ int main(int argc, char* argv[]) {
         }
         scenario_meta = meta_result.value();
 
-        // Add armies from scenario (ai_skirmish plays --ai-armies of them)
-        size_t army_limit = ai_skirmish ? ai_army_count : scenario_meta.armies.size();
+        // The setup's armies (all of the scenario's when it doesn't say)
+        const size_t army_limit = game_setup.army_count > 0
+                                      ? static_cast<size_t>(game_setup.army_count)
+                                      : scenario_meta.armies.size();
         for (size_t i = 0; i < std::min(army_limit, scenario_meta.armies.size()); i++) {
             sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
+        }
+        if (ai_skirmish && !replay_to_play) {
+            for (size_t a = 0; a < sim_state->army_count(); ++a)
+                game_setup.ai_armies.push_back(static_cast<int>(a));
         }
     }
 
@@ -2323,23 +2408,7 @@ int main(int argc, char* argv[]) {
     // Phase 4: Session lifecycle
     if (!map_path.empty()) {
         osc::lua::SessionManager session_mgr;
-        if (ai_skirmish) {
-            const int armies = static_cast<int>(sim_state->army_count());
-            std::vector<int> ai_armies;
-            ai_armies.reserve(static_cast<size_t>(armies));
-            for (int a = 0; a < armies; ++a) ai_armies.push_back(a); // all AI
-            session_mgr.set_ai_armies(ai_armies);
-            session_mgr.set_max_armies(armies);
-            session_mgr.set_ai_personality(ai_personality);
-            // Detect cheat variant: personality ending in "cheat"
-            if (ai_personality.size() > 5 &&
-                ai_personality.compare(ai_personality.size() - 5, 5, "cheat") == 0) {
-                session_mgr.set_cheat_mult(2.0);
-                session_mgr.set_build_mult(2.0);
-            }
-        } else if (ai_test || platoon_test || threat_test || combat_test) {
-            session_mgr.set_ai_armies({1}); // ARMY_2 (0-based index 1) is AI
-        }
+        session_mgr.configure(game_setup);
         auto session_result = session_mgr.start_session(
             *sim_lua_state, vfs, *sim_state, scenario_meta);
         if (!session_result) {
@@ -2347,6 +2416,9 @@ int main(int argc, char* argv[]) {
                           session_result.error().message);
             return 1;
         }
+        sim_state->set_game_setup(game_setup);
+        if (!g_record_path.empty()) sim_state->set_recording(true);
+        if (replay_to_play) return play_replay(*sim_state, *replay_to_play);
     }
 
     // Binding-coverage report (roadmap M184): runs on the fully booted sim and
@@ -2830,11 +2902,19 @@ int main(int argc, char* argv[]) {
                             session->receive_and_advance();
                             // A timed-out peer is defeated so the match resolves
                             // instead of stalling in "waiting for players".
+                            // The defeat is a command in the next tick, so it
+                            // happens inside a tick and a recording keeps it.
+                            // (Tagged with this peer's source: the dropped
+                            // one's would put it back in the lockstep gate.)
                             for (osc::u32 src : session->take_dropped()) {
                                 spdlog::warn("[mp] peer {} dropped — defeating "
                                              "its army",
                                              src);
-                                sim_state->defeat_army(static_cast<osc::i32>(src));
+                                osc::sim::SimCallbackEntry defeat;
+                                defeat.func_name = osc::sim::kDefeatArmyCallback;
+                                defeat.args["Army"] = static_cast<osc::f64>(src);
+                                sim_state->schedule_callback(osc::lua::mp_net_state().local_source,
+                                                             std::move(defeat));
                             }
                         }
                     } else {
@@ -3500,7 +3580,9 @@ int main(int argc, char* argv[]) {
         osc::i32 result = 0;
         osc::u32 log_interval = 100; // log stats every 10 game seconds
 
+        osc::sim::SimRandom script_rng(0x5C817ED0);
         for (osc::u32 i = 0; i < max_ticks; i++) {
+            if (scripted_orders) issue_scripted_orders(*sim_state, script_rng, i);
             sim_state->tick();
             ticks_run++;
 
@@ -4369,6 +4451,7 @@ int main(int argc, char* argv[]) {
     }
 
     const int exit_code = any_test ? finish_test_run("integration tests") : 0;
+    recording_writer.write();
     osc::log::shutdown();
     return exit_code;
 }
