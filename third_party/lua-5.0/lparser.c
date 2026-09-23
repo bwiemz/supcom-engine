@@ -493,6 +493,17 @@ static void constructor (LexState *ls, expdesc *t) {
   init_exp(&cc.v, VVOID, 0);  /* no value (yet) */
   luaK_exp2nextreg(ls->fs, t);  /* fix it at stack top (for gc) */
   check(ls, '{');
+  /* LuaPlus: optional preallocation hints before the first item, e.g.
+     `{&1&4 n=0}` (retail MultiEvent.lua). They only size the table, so they
+     are parsed and discarded; a separator after them is tolerated. */
+  if (ls->t.token == '&') {
+    while (ls->t.token == '&') {
+      expdesc dummy;
+      next(ls);
+      expr(ls, &dummy);
+    }
+    if (!testnext(ls, ',')) testnext(ls, ';');
+  }
   do {
     lua_assert(cc.v.k == VVOID || cc.tostore > 0);
     testnext(ls, ';');  /* compatibility only */
@@ -510,14 +521,6 @@ static void constructor (LexState *ls, expdesc *t) {
       case '[': {  /* constructor_item -> recfield */
         recfield(ls, &cc);
         break;
-      }
-      case '&': {  /* LuaPlus: table size hints — skip all &expr items */
-        while (ls->t.token == '&') {
-          expdesc dummy;
-          next(ls);
-          expr(ls, &dummy);
-        }
-        continue;  /* skip comma/semicolon requirement */
       }
       default: {  /* constructor_part -> listfield */
         listfield(ls, &cc);

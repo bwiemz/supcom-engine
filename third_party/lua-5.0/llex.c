@@ -346,6 +346,13 @@ int luaX_lex (LexState *LS, SemInfo *seminfo) {
             next(LS);
         continue;
       }
+      case '#': {
+        /* LuaPlus/GPG extension: '#' starts a line comment, anywhere on a
+           line. Retail FA's Lua (repr.lua, import.lua, ...) relies on it. */
+        while (LS->current != '\n' && LS->current != EOZ)
+          next(LS);
+        continue;
+      }
       case '[': {
         next(LS);
         if (LS->current != '[') return '[';

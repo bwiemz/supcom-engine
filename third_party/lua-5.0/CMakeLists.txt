@@ -1,5 +1,6 @@
 # Lua 5.0.3 — patched with LuaPlus extensions for Supreme Commander compatibility
-# Patches: != operator, continue statement, direct table iteration (for k,v in tbl do)
+# Patches: != operator, continue statement, direct table iteration (for k,v in tbl do),
+# '#' line comments
 
 add_library(lua50 STATIC
     lapi.c

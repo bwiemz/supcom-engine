@@ -123,6 +123,28 @@ TEST_CASE("LuaState != operator (LuaPlus patch)", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("LuaState # line comments (LuaPlus patch)", "[lua]") {
+    LuaState state;
+
+    // Retail FA's Lua uses '#' comments both on their own line and trailing
+    // code; '#' inside strings must stay literal.
+    auto result = state.do_string(R"(
+        # full-line comment
+            # indented comment
+        x = 1 # trailing comment
+        s = "a#b" # comment after a string containing '#'
+        y = x + 1#no space before the comment
+    )");
+    REQUIRE(result.ok());
+
+    lua_getglobal(state.raw(), "y");
+    CHECK(lua_tonumber(state.raw(), -1) == 2);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "s");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "a#b");
+    lua_pop(state.raw(), 1);
+}
+
 TEST_CASE("LuaState continue statement (LuaPlus patch)", "[lua]") {
     LuaState state;
 
@@ -138,6 +160,25 @@ TEST_CASE("LuaState continue statement (LuaPlus patch)", "[lua]") {
     lua_getglobal(state.raw(), "sum");
     // Sum of 1..10 minus 5 = 55 - 5 = 50
     CHECK(lua_tonumber(state.raw(), -1) == 50);
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("LuaState table size hints (LuaPlus patch)", "[lua]") {
+    LuaState state;
+
+    // Retail MultiEvent.lua: `{&1&1 n=0}`. Hints are discarded; the items that
+    // follow must still be parsed, with or without a separator.
+    auto result = state.do_string(R"(
+        a = {&1&1 n=0}
+        b = {&1&4 10, 20; x = 3}
+        c = {&2&0}
+        d = {&1&1, 7}
+        total = a.n + b[1] + b[2] + b.x + table.getn(c) + d[1]
+    )");
+    REQUIRE(result.ok());
+
+    lua_getglobal(state.raw(), "total");
+    CHECK(lua_tonumber(state.raw(), -1) == 40);
     lua_pop(state.raw(), 1);
 }
 
