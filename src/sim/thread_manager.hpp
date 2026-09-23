@@ -46,6 +46,11 @@ public:
     /// Number of active (non-dead) threads.
     size_t active_count() const;
 
+    /// One line per live thread: where it was forked, where it is suspended
+    /// now (innermost Lua frames), and when it next runs. A debugging aid
+    /// for "the scripts run without errors but nothing happens".
+    std::vector<std::string> describe_threads() const;
+
     /// Wake a thread that is waiting on a manipulator (WaitFor).
     /// Sets the thread's wait_until_tick to current_tick so it resumes next tick.
     void wake_thread(int lua_ref, u32 current_tick);

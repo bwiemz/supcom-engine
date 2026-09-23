@@ -125,7 +125,7 @@ Scores run from 0 to 5.
 
 Milestone numbers continue from the existing M1–M174 sequence.
 
-### Phase A — Portable, verifiable foundation (M175–M182) · *in progress*
+### Phase A — Portable, verifiable foundation (M175–M182) · *done (PR #18)*
 
 **Goal:** Linux is a first-class development and runtime platform. Retail FA data boots.
 Every test can be run by a machine. CI guards `main`.
@@ -141,7 +141,7 @@ Every test can be run by a machine. CI guards `main`.
 | M181 | CI | GitHub Actions: `linux-gcc`, `linux-clang`, `linux-asan` (unit tests), `windows-msvc`. vcpkg binary cache. | CI is green and required on PRs. |
 | M182 | Offscreen capture | `--screenshot <png> --frames N` via readback of the scene image. Golden-image compare tool with tolerance. Works on lavapipe. | A golden image of the SCMP_009 opening frame matches within tolerance on this machine. |
 
-### Phase A′ — Correctness sweep (M183)
+### Phase A′ — Correctness sweep (M183) · *done (PR #19)*
 
 These are cheap, high-severity bugs from the audit. They should not wait for their "natural"
 phase.
@@ -165,15 +165,15 @@ phase.
 
 **Exit:** each bug has a regression test, and ASan shows the unit plus data smoke runs clean.
 
-### Phase B — Retail parity and API coverage (M184–M189)
+### Phase B — Retail parity and API coverage (M184–M189) · *in progress*
 
 **Goal:** unmodified retail FA goes front end → lobby → skirmish → score using its own
 scripts, windowed, on Linux.
 
 | # | Milestone | Scope |
 |---|---|---|
-| M184 | Binding-coverage report | Tool that statically scans retail and FAF Lua for engine API use (`moho.*_methods`, globals, `_c_*`) and diffs it against registered bindings. Each entry is classed as real, stub, no-op or missing, with a gameplay-impact tag. Output is a CI artifact plus a ratchet (the count can only go down). |
-| M185 | Retail sim boot tail | `CreatePrefetchSet` and the rest of the retail-only globals, until a 4-AI skirmish runs 10 game-minutes error-free. |
+| M184 | Binding-coverage report | Tool that statically scans retail and FAF Lua for engine API use (`moho.*_methods`, globals, `_c_*`) and diffs it against registered bindings. Each entry is classed as real, stub, no-op or missing, with a gameplay-impact tag. Output is a CI artifact plus a ratchet (the count can only go down). ✅ `--binding-coverage`, ratchet test `data.binding_coverage`. Methods are matched by name only, not class. |
+| M185 | Retail sim boot tail | `CreatePrefetchSet` and the rest of the retail-only globals, until a 4-AI skirmish runs 10 game-minutes error-free. **Blueprint script classes:** units (then projectiles) are instances of their `ScriptModule`/`ScriptClass`, which default to `/units/<ID>/<ID>_script.lua` and `TypeClass`, not the generic `Unit`. Until then retail `StructureUnit`/`FactoryUnit` code never runs (first symptom: `HasTarmac` is nil). Weapons stay in C++ until M200; `Unit.GetWeaponClass` is the seam. *Progress:* the retail AI builds and expands (2 AIs, 42 units at 10 min). That took reachability-based `CanPathTo`, Moho's `FindPlaceToBuild`/`CanBuildStructureAt` search, `GetArmyStartPos` returning `x, z`, and an AI API batch. |
 | M186 | Retail UI boot | Retail `uimain`/`SetupUI` entry semantics (module-relative `import`). Front end and lobby on retail Lua. |
 | M187 | FA in-game UI | Call `provider.CreateGameInterface`. Render WorldView controls as UI. Run `gamemain.CreateUI`. Retire the C++ HUD placeholders behind `--legacy-hud`. |
 | M188 | Audio parity | Sound manager in the UI state. Bank lookup through the VFS with XSB-to-XWB mapping. Music and VO. Listener position. |
@@ -210,7 +210,7 @@ In order of how much they change what the player feels:
 | M202 | Shields | Bubble interception, overspill, `OnCollisionCheck`. |
 | M203 | Ground locomotion | Turn rate, acceleration and braking. Motion follows heading. Unit–unit avoidance and pushing. Footprint occupancy. |
 | M204 | Formations | `IssueFormMove` / `IssueFormAttack` / `IssueFormAggressiveMove`, and attack-move semantics. |
-| M205 | Pathfinding | Queued throttling. Hierarchical/cluster A*. Seabed layer for amphibious units. A real `CanPathTo`. |
+| M205 | Pathfinding | Queued throttling. Hierarchical/cluster A*. Seabed layer for amphibious units. `CanPathTo` answers from grid connectivity (done in M185); what remains is making it agree with the hierarchical search. |
 | M206 | Order fidelity | Blueprint ranges for build, reclaim and repair. Teleport timing. Nukes and tactical missiles via silo weapons. Ferry. |
 | M207 | AI query fidelity | Threat maps with visibility, water ratio, blocking terrain, PBM build locations. |
 | M208 | Save/load | Lua state persistence (Pluto supports Lua 5.0) plus C++ sim serialization, wired to FA's save/load UI. |

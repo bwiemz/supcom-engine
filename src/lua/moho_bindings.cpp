@@ -8,6 +8,7 @@
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
@@ -1844,6 +1845,9 @@ static const MethodEntry entity_methods[] = {
     {"GetFractionComplete", entity_GetFractionComplete},
     {"Destroy",             entity_Destroy},
     {"BeenDestroyed",       entity_BeenDestroyed},
+    // Any entity: retail units loop their ambient sounds on attached
+    // helper entities (Unit.PlayUnitAmbientSound).
+    {"SetAmbientSound",     entity_SetAmbientSound},
     {"GetBoneCount",        entity_GetBoneCount},
     {"GetBoneName",         entity_GetBoneName},
     {"IsValidBone",         entity_IsValidBone},
@@ -2844,56 +2848,51 @@ static int unit_ShieldIsOn(lua_State* L) {
     return 1;
 }
 
-// unit:CanPathTo(destPos) -> bool
-// Uses A* pathfinder to check if a path exists from unit to destination.
-static int unit_CanPathTo(lua_State* L) {
+// unit:CanPathTo(destPos) -> reachable, bestPos
+// Whether the unit can get to destPos at all, and where it would end up:
+// destPos when reachable, else the reachable point closest to it (retail AI
+// retargets to bestPos). A connectivity query, not a path search, so a
+// movement-heavy tick can't make it answer "unreachable" -- the AI would
+// then wait for transports that never come.
+static int push_path_reachability(lua_State* L) {
     auto* unit = check_unit(L);
     auto* sim = get_sim(L);
-    if (!unit || !sim || !sim->pathfinder()) {
-        lua_pushboolean(L, 1); // fallback: allow
-        return 1;
-    }
-    f32 dx = 0, dz = 0;
+    sim::Vector3 dest{0, 0, 0};
     if (lua_istable(L, 2)) {
         lua_rawgeti(L, 2, 1);
-        dx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+        dest.x = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 2, 2);
+        dest.y = static_cast<f32>(lua_tonumber(L, -1));
         lua_rawgeti(L, 2, 3);
-        dz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+        dest.z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 3);
     }
-    auto result = sim->pathfinder()->find_path(
-        unit->position().x, unit->position().z,
-        dx, dz, unit->layer());
-    lua_pushboolean(L, result.found ? 1 : 0);
-    return 1;
+    if (!unit || !sim || !sim->pathfinder()) {
+        lua_pushboolean(L, 1); // no pathfinding grid: nothing blocks
+        push_vector3(L, dest);
+        return 2;
+    }
+    const auto& pos = unit->position();
+    const auto reach = sim->pathfinder()->reachability(
+        pos.x, pos.z, dest.x, dest.z, unit->layer(), unit->naval_draft(),
+        unit->is_amphibious() || unit->is_hover());
+    lua_pushboolean(L, reach.reachable ? 1 : 0);
+    if (reach.reachable) {
+        push_vector3(L, dest);
+    } else {
+        const f32 y = sim->terrain()
+            ? sim->terrain()->get_surface_height(reach.best_x, reach.best_z) : pos.y;
+        push_vector3(L, {reach.best_x, y, reach.best_z});
+    }
+    return 2;
 }
 
-// unit:CanPathToCell(destPos) -> bool
-// Similar to CanPathTo but intended to be more lenient (cell-level check).
-// Currently uses the same A* approach.
-static int unit_CanPathToCell(lua_State* L) {
-    auto* unit = check_unit(L);
-    auto* sim = get_sim(L);
-    if (!unit || !sim || !sim->pathfinder()) {
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-    f32 dx = 0, dz = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        dx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        dz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-    auto result = sim->pathfinder()->find_path(
-        unit->position().x, unit->position().z,
-        dx, dz, unit->layer());
-    lua_pushboolean(L, result.found ? 1 : 0);
-    return 1;
-}
+static int unit_CanPathTo(lua_State* L) { return push_path_reachability(L); }
+
+// unit:CanPathToCell(destPos) -> reachable, bestPos
+// Retail's cell-granular variant; the reachability answer is already
+// cell-granular, so it is the same query.
+static int unit_CanPathToCell(lua_State* L) { return push_path_reachability(L); }
 
 // unit:GetArmorMult(damageType) → multiplier
 static int unit_GetArmorMult(lua_State* L) {
@@ -3680,7 +3679,6 @@ static const MethodEntry unit_methods[] = {
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
-    {"SetAmbientSound",             entity_SetAmbientSound},
     {"GetRallyPoint",                unit_GetRallyPoint},
     {"SetRallyPoint",                unit_SetRallyPoint},
     {"SetBusy",                      unit_SetBusy},
@@ -4674,6 +4672,86 @@ static int brain_GetArmyIndex(lua_State* L) {
     return 1;
 }
 
+/// brain:NumCurrentlyBuilding(built_category, builder_category) — how many of
+/// this army's units matching builder_category are building something that
+/// matches built_category (retail build conditions cap parallel builds).
+static int brain_NumCurrentlyBuilding(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim || !lua_istable(L, 2) || !lua_istable(L, 3)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    int count = 0;
+    for (auto* e : brain->get_units(sim->entity_registry())) {
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* builder = static_cast<sim::Unit*>(e);
+        if (!builder->is_building()) continue;
+        auto* target = sim->entity_registry().find(builder->build_target_id());
+        if (!target || target->destroyed() || !target->is_unit()) continue;
+        if (!unit_matches_category(L, 3, builder->categories())) continue;
+        if (!unit_matches_category(L, 2, static_cast<sim::Unit*>(target)->categories()))
+            continue;
+        ++count;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+/// brain:GetAvailableFactories([position, radius]) — this army's finished,
+/// idle factories (nothing building, empty queue), optionally within radius.
+static int brain_GetAvailableFactories(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    const int result = lua_gettop(L);
+    if (!brain || !sim) return 1;
+
+    const bool filter = lua_istable(L, 2);
+    f32 cx = 0, cz = 0, radius_sq = 0;
+    if (filter) {
+        lua_rawgeti(L, 2, 1);
+        cx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 2, 3);
+        cz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        const f32 r = static_cast<f32>(luaL_optnumber(L, 3, 0));
+        radius_sq = r * r;
+    }
+    int idx = 1;
+    for (auto* e : brain->get_units(sim->entity_registry())) {
+        if (!e || e->destroyed() || !e->is_unit() || e->lua_table_ref() < 0) continue;
+        auto* u = static_cast<sim::Unit*>(e);
+        if (!u->has_category("FACTORY") || u->is_being_built() || u->is_building() ||
+            !u->command_queue().empty()) {
+            continue;
+        }
+        if (filter) {
+            const f32 dx = u->position().x - cx;
+            const f32 dz = u->position().z - cz;
+            if (dx * dx + dz * dz > radius_sq) continue;
+        }
+        lua_pushnumber(L, idx++);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_rawset(L, result);
+    }
+    return 1;
+}
+
+/// brain:GetNoRushTicks() — ticks of the NoRush period still to run, 0 once
+/// it is over or when the option is off (retail build conditions gate
+/// transport and attack builders on it).
+static int brain_GetNoRushTicks(lua_State* L) {
+    auto* sim = get_sim(L);
+    double remaining = 0;
+    if (sim && sim->no_rush_active()) {
+        remaining = (sim->no_rush_seconds() - sim->game_time()) /
+                    sim::SimState::SECONDS_PER_TICK;
+    }
+    lua_pushnumber(L, remaining > 0 ? std::ceil(remaining) : 0);
+    return 1;
+}
+
 /// brain:IsOpponentAIRunning() — Moho reports its `ai_RunOpponentAI` debug
 /// toggle, which is on by default. Retail aibrain.lua gates plan evaluation
 /// and execution on it; there is no toggle here, so the AI always runs.
@@ -4688,19 +4766,14 @@ static int brain_GetFactionIndex(lua_State* L) {
     return 1;
 }
 
+// brain:GetArmyStartPos() -> x, z  (two numbers, not a vector: scripts do
+// `local x, z = brain:GetArmyStartPos()`)
 static int brain_GetArmyStartPos(lua_State* L) {
     auto* brain = check_brain(L);
-    if (!brain) {
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        return 3;
-    }
-    const auto& pos = brain->start_position();
+    const sim::Vector3 pos = brain ? brain->start_position() : sim::Vector3{};
     lua_pushnumber(L, pos.x);
-    lua_pushnumber(L, pos.y);
     lua_pushnumber(L, pos.z);
-    return 3;
+    return 2;
 }
 
 static int brain_GetEconomyIncome(lua_State* L) {
@@ -5642,52 +5715,200 @@ static int brain_GetPlatoonsList(lua_State* L) {
     return 1;
 }
 
-// FindPlaceToBuild(type, structureName, buildingTypes, relative, builder,
-//                  optIgnoreAlliance, optOverridePosX, optOverridePosZ, optIgnoreThreatOver)
-// C++ args: self=1, type=2, name=3, tmpl=4, relative=5, builder=6,
-//           ignoreAlliance=7, overrideX=8, overrideZ=9
-// Returns {x, 0, z} (FA 3D vector) or false.  When relative=true the
-// position is relative to the reference point so GetBuildLocation can add
-// engPos.  No real obstruction checking yet — uses a grid offset.
+// Placement rules for a structure blueprint, read from __blueprints.
+static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& bp_id) {
+    sim::PlacementRules r;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, bp_id.c_str());
+        lua_rawget(L, -2);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return r;
+    }
+    const int bp = lua_gettop(L);
+    auto number_field = [L](int table, const char* key, f32& out) {
+        lua_pushstring(L, key);
+        lua_rawget(L, table);
+        if (lua_isnumber(L, -1)) out = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    };
+
+    lua_pushstring(L, "Footprint");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        number_field(lua_gettop(L), "SizeX", r.size_x);
+        number_field(lua_gettop(L), "SizeZ", r.size_z);
+    }
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, bp);
+    if (lua_istable(L, -1)) {
+        const int phys = lua_gettop(L);
+        lua_pushstring(L, "BuildOnLayerCaps"); // absent: land only
+        lua_rawget(L, phys);
+        if (lua_istable(L, -1)) {
+            const int caps = lua_gettop(L);
+            auto cap = [L, caps](const char* layer) {
+                lua_pushstring(L, layer);
+                lua_rawget(L, caps);
+                const bool on = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+                return on;
+            };
+            r.on_land = cap("LAYER_Land");
+            r.on_water = cap("LAYER_Water");
+        }
+        lua_pop(L, 1);
+        lua_pushstring(L, "BuildRestriction");
+        lua_rawget(L, phys);
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            const std::string restriction = lua_tostring(L, -1);
+            if (restriction == "RULEUBR_OnMassDeposit")
+                r.deposit = sim::PlacementRules::Deposit::Mass;
+            else if (restriction == "RULEUBR_OnHydrocarbonDeposit")
+                r.deposit = sim::PlacementRules::Deposit::Hydrocarbon;
+        }
+        lua_pop(L, 1);
+    }
+    lua_settop(L, top);
+    return r;
+}
+
+static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim,
+                                             i32 army) {
+    return sim::StructurePlacement(
+        sim, army, [L](const std::string& bp_id) { return placement_rules_of(L, bp_id); });
+}
+
+// Builder types whose FindPlaceToBuild answer is a deposit, not a template
+// point (AIBuildStructures.IsResource).
+static bool is_resource_builder_type(const std::string& type) {
+    return type == "Resource" || type == "T1Resource" || type == "T2Resource" ||
+           type == "T3Resource" || type == "T1HydroCarbon";
+}
+
+// brain:FindPlaceToBuild(type, structureName, buildingTypes, relative, builder,
+//     optIgnoreAlliance, optOverridePosX, optOverridePosZ, optIgnoreThreatOver)
+//   -> {x, z, 0} or false
+// Moho's semantics (FAF engine notes, engine/Sim/CAiBrain.lua): the start
+// location is the override if given (X alone is ignored), else the army
+// start; the target is the override, else the builder's position.
+// - Resource types: the buildable deposit nearest the start location (mass,
+//   or hydrocarbon for a hydrocarbon structure).
+// - Others: among the template points listed for `type` in buildingTypes
+//   ({{types...}, {x, z, 0}, ...} groups) where the structure fits -- offset
+//   by the start location when `relative` -- the one nearest the target.
+// The answer is relative to the start location when `relative`: callers add
+// their own reference point. Not yet applied: the enemy-threat cutoff
+// (optIgnoreThreatOver) for resource sites.
 static int brain_FindPlaceToBuild(lua_State* L) {
     auto* brain = check_brain(L);
-    if (!brain) { lua_pushboolean(L, 0); return 1; }
+    auto* sim = get_sim(L);
+    if (!brain || !sim || lua_type(L, 2) != LUA_TSTRING || lua_type(L, 3) != LUA_TSTRING) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const std::string type = lua_tostring(L, 2);
+    const std::string structure = lua_tostring(L, 3);
+    const bool relative = lua_toboolean(L, 5) != 0;
 
-    bool relative = lua_toboolean(L, 5) != 0;
-
-    // Reference position: override args 8,9 or fall back to brain start
-    f32 ref_x, ref_z;
-    if (lua_isnumber(L, 8) && lua_isnumber(L, 9)) {
-        ref_x = static_cast<f32>(lua_tonumber(L, 8));
-        ref_z = static_cast<f32>(lua_tonumber(L, 9));
-    } else {
-        ref_x = brain->start_position().x;
-        ref_z = brain->start_position().z;
+    f32 start_x = brain->start_position().x;
+    f32 start_z = brain->start_position().z;
+    f32 target_x = start_x, target_z = start_z;
+    if (lua_isnumber(L, 9)) {
+        start_x = lua_isnumber(L, 8) ? static_cast<f32>(lua_tonumber(L, 8)) : 0.0f;
+        start_z = static_cast<f32>(lua_tonumber(L, 9));
+        target_x = start_x;
+        target_z = start_z;
+    } else if (lua_istable(L, 6)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 6);
+        auto* builder = lua_isuserdata(L, -1)
+                            ? static_cast<sim::Entity*>(lua_touserdata(L, -1)) : nullptr;
+        lua_pop(L, 1);
+        if (builder && !builder->destroyed()) {
+            target_x = builder->position().x;
+            target_z = builder->position().z;
+        }
     }
 
-    // Grid offset: spread structures in a 5-wide grid, 8 ogrids apart
-    i32 idx = brain->next_build_place_index();
-    i32 col = idx % 5;
-    i32 row = idx / 5;
-    f32 abs_x = ref_x + static_cast<f32>(col - 2) * 8.0f;
-    f32 abs_z = ref_z + static_cast<f32>(row + 1) * 8.0f;
+    const auto placement = placement_for(L, *sim, brain->index());
+    bool found = false;
+    f32 best_x = 0, best_z = 0, best_d2 = 0;
+    auto consider = [&](f32 answer_x, f32 answer_z, f32 world_x, f32 world_z,
+                        f32 from_x, f32 from_z) {
+        if (!placement.can_build(structure, world_x, world_z)) return;
+        const f32 d2 = (world_x - from_x) * (world_x - from_x) +
+                       (world_z - from_z) * (world_z - from_z);
+        if (found && d2 >= best_d2) return; // first of equals wins: deterministic
+        found = true;
+        best_d2 = d2;
+        best_x = answer_x;
+        best_z = answer_z;
+    };
 
-    f32 out_x = relative ? (abs_x - ref_x) : abs_x;
-    f32 out_z = relative ? (abs_z - ref_z) : abs_z;
+    if (is_resource_builder_type(type)) {
+        const auto want = placement.rules(structure).deposit ==
+                                  sim::PlacementRules::Deposit::Hydrocarbon
+                              ? sim::ResourceDeposit::Hydrocarbon
+                              : sim::ResourceDeposit::Mass;
+        for (const auto& d : sim->resource_deposits()) {
+            if (d.type != want) continue;
+            consider(relative ? d.x - start_x : d.x, relative ? d.z - start_z : d.z,
+                     d.x, d.z, start_x, start_z);
+        }
+    } else if (lua_istable(L, 4)) {
+        for (int g = 1;; ++g) {
+            lua_rawgeti(L, 4, g);
+            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+            const int group = lua_gettop(L);
+            bool listed = false;
+            if (lua_istable(L, group)) {
+                lua_rawgeti(L, group, 1);
+                if (lua_istable(L, -1)) {
+                    for (int t = 1; !listed; ++t) {
+                        lua_rawgeti(L, -1, t);
+                        if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
+                        listed = lua_type(L, -1) == LUA_TSTRING && type == lua_tostring(L, -1);
+                        lua_pop(L, 1);
+                    }
+                }
+                lua_pop(L, 1);
+            }
+            for (int i = 2; listed; ++i) {
+                lua_rawgeti(L, group, i);
+                if (!lua_istable(L, -1)) { lua_pop(L, 1); break; }
+                lua_rawgeti(L, -1, 1);
+                lua_rawgeti(L, -2, 2);
+                const bool numeric = lua_isnumber(L, -2) && lua_isnumber(L, -1);
+                const f32 px = static_cast<f32>(lua_tonumber(L, -2));
+                const f32 pz = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 3);
+                if (!numeric) continue;
+                const f32 wx = relative ? px + start_x : px;
+                const f32 wz = relative ? pz + start_z : pz;
+                consider(px, pz, wx, wz, target_x, target_z);
+            }
+            lua_settop(L, group - 1);
+        }
+    }
 
-    // Return {x, 0, z} — FA 3D vector format (index 1=x, 2=elevation, 3=z)
-    // GetBuildLocation reads [1] and [3]; BuildStructure receives the
-    // processed {absX, absZ, 0} from GetBuildLocation and reads [1],[2].
+    if (!found) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
     lua_newtable(L);
-    lua_pushnumber(L, 1);
-    lua_pushnumber(L, out_x);
-    lua_rawset(L, -3);
-    lua_pushnumber(L, 2);
-    lua_pushnumber(L, 0); // elevation
-    lua_rawset(L, -3);
-    lua_pushnumber(L, 3);
-    lua_pushnumber(L, out_z);
-    lua_rawset(L, -3);
+    lua_pushnumber(L, best_x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, best_z);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, 0);
+    lua_rawseti(L, -2, 3);
     return 1;
 }
 
@@ -5721,6 +5942,11 @@ static int brain_BuildStructure(lua_State* L) {
         lua_rawgeti(L, 4, 2);
         pos.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
+    }
+
+    if (lua_toboolean(L, 5)) { // buildRelative: an offset from the builder
+        pos.x += unit->position().x;
+        pos.z += unit->position().z;
     }
 
     sim::UnitCommand cmd;
@@ -6274,6 +6500,120 @@ static int platoon_GetPlatoonUnits(lua_State* L) {
         }
     }
     return 1;
+}
+
+/// platoon:GetFactionIndex() — the owning army's faction index, as the
+/// brain reports it (retail platoon.lua AI threads call it).
+static int platoon_GetFactionIndex(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    auto* brain = (platoon && sim) ? sim->get_army(platoon->army_index()) : nullptr;
+    lua_pushnumber(L, brain ? brain->faction() : 1);
+    return 1;
+}
+
+/// Count live platoon units matching the category at stack index 2; with
+/// `around`, only those within radius (index 4) of position (index 3).
+static int platoon_count_matching(lua_State* L, bool around) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim || !lua_istable(L, 2)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    f32 cx = 0, cz = 0, radius_sq = 0;
+    if (around) {
+        if (!lua_istable(L, 3)) { lua_pushnumber(L, 0); return 1; }
+        lua_rawgeti(L, 3, 1);
+        cx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 3, 3);
+        cz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        const f32 r = static_cast<f32>(luaL_optnumber(L, 4, 0));
+        radius_sq = r * r;
+    }
+    int count = 0;
+    for (u32 id : platoon->unit_ids()) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+        if (!unit_matches_category(L, 2, unit->categories())) continue;
+        if (around) {
+            const f32 dx = unit->position().x - cx;
+            const f32 dz = unit->position().z - cz;
+            if (dx * dx + dz * dz > radius_sq) continue;
+        }
+        ++count;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+/// platoon:GetSquadPosition(squad) — mean position of the squad's live units
+/// (nil if it has none).
+static int platoon_GetSquadPosition(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    const std::string squad = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+    sim::Vector3 sum{0, 0, 0};
+    int n = 0;
+    if (platoon && sim) {
+        for (u32 id : platoon->unit_ids()) {
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed()) continue;
+            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            sum.x += e->position().x;
+            sum.y += e->position().y;
+            sum.z += e->position().z;
+            ++n;
+        }
+    }
+    if (n == 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_vector3(L, {sum.x / n, sum.y / n, sum.z / n});
+    return 1;
+}
+
+/// platoon:CanAttackTarget(squad, target) — can any unit of the squad (all
+/// squads if squad is nil) fire on the target's layer?
+static int platoon_CanAttackTarget(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    auto* target = check_entity(L, 3);
+    bool can = false;
+    if (platoon && sim && target && !target->destroyed() && target->is_unit()) {
+        const std::string squad =
+            lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+        const u8 target_bit =
+            sim::layer_to_bit(static_cast<sim::Unit*>(target)->layer());
+        for (u32 id : platoon->unit_ids()) {
+            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            for (const auto& w : static_cast<sim::Unit*>(e)->weapons()) {
+                if (w->enabled && !w->fire_on_death &&
+                    (w->fire_target_layer_caps & target_bit) != 0) {
+                    can = true;
+                    break;
+                }
+            }
+            if (can) break;
+        }
+    }
+    lua_pushboolean(L, can ? 1 : 0);
+    return 1;
+}
+
+/// platoon:PlatoonCategoryCount(category)
+static int platoon_PlatoonCategoryCount(lua_State* L) {
+    return platoon_count_matching(L, /*around=*/false);
+}
+
+/// platoon:PlatoonCategoryCountAroundPosition(category, position, radius)
+static int platoon_PlatoonCategoryCountAroundPosition(lua_State* L) {
+    return platoon_count_matching(L, /*around=*/true);
 }
 
 static int platoon_GetSquadUnits(lua_State* L) {
@@ -7110,79 +7450,21 @@ static int platoon_FormPlatoon(lua_State* L) {
 }
 
 // brain:CanBuildStructureAt(bp_id, position) -> bool
-// Check if footprint fits at position (no impassable/obstacle cells)
+// position is a vector {x, y, z} (scripts pass {loc[1], 0, loc[2]}).
 static int brain_CanBuildStructureAt(lua_State* L) {
+    auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushboolean(L, 1); return 1; }
-
-    auto* grid = sim->pathfinding_grid();
-    if (!grid) { lua_pushboolean(L, 1); return 1; } // no grid → allow
-
-    // arg 2: bp_id string (optional — read footprint from blueprint)
-    f32 size_x = 1.0f, size_z = 1.0f;
-    if (lua_isstring(L, 2)) {
-        const char* bp_id = lua_tostring(L, 2);
-        lua_pushstring(L, "__blueprints");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, bp_id);
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                int bp = lua_gettop(L);
-                lua_pushstring(L, "Footprint");
-                lua_rawget(L, bp);
-                if (lua_istable(L, -1)) {
-                    int fp = lua_gettop(L);
-                    lua_pushstring(L, "SizeX");
-                    lua_rawget(L, fp);
-                    if (lua_isnumber(L, -1)) size_x = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 1);
-                    lua_pushstring(L, "SizeZ");
-                    lua_rawget(L, fp);
-                    if (lua_isnumber(L, -1)) size_z = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 1);
-                }
-                lua_pop(L, 1); // Footprint
-            }
-            lua_pop(L, 1); // bp table
-        }
-        lua_pop(L, 1); // __blueprints
+    if (!brain || !sim || lua_type(L, 2) != LUA_TSTRING || !lua_istable(L, 3)) {
+        lua_pushboolean(L, 0);
+        return 1;
     }
-
-    // arg 3: position table — FindPlaceToBuild returns {[1]=x, [2]=z, [3]=dist}
-    // Standard Vector3 is {[1]=x, [2]=y, [3]=z}. Read [2] as Z to match
-    // FindPlaceToBuild (primary caller); for Vector3 this gets y but building
-    // placement only needs X/Z and y=elevation is irrelevant for grid checks.
-    f32 wx = 0, wz = 0;
-    if (lua_istable(L, 3)) {
-        lua_pushnumber(L, 1);
-        lua_rawget(L, 3);
-        wx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_pushnumber(L, 2);
-        lua_rawget(L, 3);
-        wz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-
-    // Check all cells in footprint area
-    f32 half_x = size_x * 0.5f;
-    f32 half_z = size_z * 0.5f;
-    u32 gx0, gz0, gx1, gz1;
-    grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
-    grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
-
-    for (u32 gz = gz0; gz <= gz1; ++gz) {
-        for (u32 gx = gx0; gx <= gx1; ++gx) {
-            auto cell = grid->get(gx, gz);
-            if (cell == map::CellPassability::Impassable ||
-                cell == map::CellPassability::Obstacle) {
-                lua_pushboolean(L, 0);
-                return 1;
-            }
-        }
-    }
-    lua_pushboolean(L, 1);
+    lua_rawgeti(L, 3, 1);
+    lua_rawgeti(L, 3, 3);
+    const f32 x = static_cast<f32>(lua_tonumber(L, -2));
+    const f32 z = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 2);
+    const auto placement = placement_for(L, *sim, brain->index());
+    lua_pushboolean(L, placement.can_build(lua_tostring(L, 2), x, z) ? 1 : 0);
     return 1;
 }
 
@@ -7306,6 +7588,9 @@ static const MethodEntry aibrain_methods[] = {
     {"GetArmyIndex",                brain_GetArmyIndex},
     {"GetFactionIndex",             brain_GetFactionIndex},
     {"IsOpponentAIRunning",         brain_IsOpponentAIRunning},
+    {"GetNoRushTicks",              brain_GetNoRushTicks},
+    {"NumCurrentlyBuilding",        brain_NumCurrentlyBuilding},
+    {"GetAvailableFactories",       brain_GetAvailableFactories},
     {"GetListOfUnits",              brain_GetListOfUnits},
     {"GetUnitsAroundPoint",         brain_GetUnitsAroundPoint},
     {"GetArmyStartPos",             brain_GetArmyStartPos},
@@ -7835,6 +8120,11 @@ static int platoon_SetPrioritizedTargetList(lua_State* L) {
 static const MethodEntry platoon_methods[] = {
     {"Destroy",                     platoon_Destroy},
     {"GetPlatoonUnits",             platoon_GetPlatoonUnits},
+    {"GetFactionIndex",             platoon_GetFactionIndex},
+    {"GetSquadPosition",            platoon_GetSquadPosition},
+    {"CanAttackTarget",             platoon_CanAttackTarget},
+    {"PlatoonCategoryCount",        platoon_PlatoonCategoryCount},
+    {"PlatoonCategoryCountAroundPosition", platoon_PlatoonCategoryCountAroundPosition},
     {"GetSquadUnits",               platoon_GetSquadUnits},
     {"GetBrain",                    platoon_GetBrain},
     {"UniquelyNamePlatoon",         platoon_UniquelyNamePlatoon},

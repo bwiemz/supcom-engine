@@ -15,6 +15,7 @@
 #include "lua/session_manager.hpp"
 #include "lua/sim_loader.hpp"
 #include "lua/script_loader.hpp"
+#include "lua/binding_coverage.hpp"
 #include "lua/scenario_loader.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -271,6 +272,11 @@ static void print_usage() {
               << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
               << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
               << "  --golden-update    Record the golden image instead of comparing\n"
+              << "  --binding-coverage <file>  Report engine API the scripts call but\n"
+              << "                     the engine lacks (needs --map)\n"
+              << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
+              << "                     not listed in this baseline\n"
+              << "  --dump-threads     At exit, list where each sim script thread waits\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
@@ -1419,7 +1425,9 @@ int main(int argc, char* argv[]) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
                       "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
                       "to see where we looked.");
-        return any_test ? kExitSkippedNoData : 1;
+        const bool data_test_mode =
+            any_test || !parse_string_arg(argc, argv, "--binding-coverage", "").empty();
+        return data_test_mode ? kExitSkippedNoData : 1;
     }
 
     spdlog::info("FA path:   {}", config.fa_path.string());
@@ -1985,6 +1993,20 @@ int main(int argc, char* argv[]) {
                           session_result.error().message);
             return 1;
         }
+    }
+
+    // Binding-coverage report (roadmap M184): runs on the fully booted sim and
+    // UI states, then exits.
+    if (const std::string coverage_out =
+            parse_string_arg(argc, argv, "--binding-coverage", "");
+        !coverage_out.empty()) {
+        if (!sim_lua_state) {
+            spdlog::error("--binding-coverage needs --map <scenario>");
+            return 1;
+        }
+        return osc::lua::coverage::run_coverage_report(
+            sim_lua_state->raw(), ui_lua_state.raw(), vfs, coverage_out,
+            parse_string_arg(argc, argv, "--binding-baseline", ""));
     }
 
     // Enable profiler if requested
@@ -3310,6 +3332,7 @@ int main(int argc, char* argv[]) {
     // ── Integration tests (require --map) ──
     if (sim_state && sim_lua_state) {
     osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
+    osc::test::register_test_helpers(sim_lua_state->raw());
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
     if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
@@ -3923,6 +3946,13 @@ int main(int argc, char* argv[]) {
     }
 
     } // end if (sim_state && sim_lua_state) — integration tests
+
+    // --dump-threads: where every live sim script thread is suspended.
+    if (sim_state && parse_flag(argc, argv, "--dump-threads")) {
+        for (const auto& line : sim_state->thread_manager().describe_threads()) {
+            spdlog::info("[thread] {}", line);
+        }
+    }
 
     // Report final state
     if (sim_state) {

@@ -78,3 +78,16 @@ set_tests_properties(data.golden.scmp009_acu PROPERTIES
     LABELS "data;gate;golden"
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
+
+# ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
+# Fails if the game's scripts call an engine function/method that is neither
+# bound nor listed in the baseline. Baseline is for retail FA 3599; a machine
+# whose discovered install is FAForever will report FAF's own set instead.
+add_test(NAME data.binding_coverage
+         COMMAND opensupcom --map ${OSC_TEST_MAP}
+                 --binding-coverage ${CMAKE_CURRENT_BINARY_DIR}/binding_coverage.txt
+                 --binding-baseline ${CMAKE_CURRENT_SOURCE_DIR}/binding_baseline_retail.txt)
+set_tests_properties(data.binding_coverage PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
