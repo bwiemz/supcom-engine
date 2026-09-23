@@ -39,7 +39,18 @@ target_link_libraries(osc_renderer
     PUBLIC osc::core osc::map osc::sim osc::ui
            Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator
     PRIVATE glfw vk-bootstrap::vk-bootstrap unofficial::shaderc::shaderc
-            spdlog::spdlog osc::vfs osc::blueprints
+            spdlog::spdlog osc::vfs osc::blueprints osc::platform
 )
 
 target_link_libraries(osc_renderer PRIVATE osc::warnings)
+
+# Debug builds point the Vulkan loader at the vcpkg-built validation layer
+# (manifest feature "vulkan-validation"), so validation works without a
+# system-wide SDK. Absent the feature, a system-installed layer is used.
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(_osc_vvl_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/vulkan/explicit_layer.d")
+    if(EXISTS "${_osc_vvl_dir}/VkLayer_khronos_validation.json")
+        target_compile_definitions(osc_renderer PRIVATE
+            OSC_VULKAN_LAYER_PATH="${_osc_vvl_dir}")
+    endif()
+endif()

@@ -2813,6 +2813,12 @@ int main(int argc, char* argv[]) {
             }
 
             renderer.shutdown();
+            if (!screenshot_path.empty() &&
+                osc::renderer::Renderer::validation_error_count() > 0) {
+                spdlog::error("{} Vulkan validation error(s) during the capture run",
+                              osc::renderer::Renderer::validation_error_count());
+                return 1;
+            }
             if (!golden_name.empty() && !golden_update) {
                 if (!screenshot_ok) return 1;
                 auto golden = osc::read_png(golden_path);

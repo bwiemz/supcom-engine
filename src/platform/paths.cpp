@@ -17,6 +17,15 @@ namespace osc::platform {
 
 namespace fs = std::filesystem;
 
+bool set_env_default(const char* name, const std::string& value) {
+    if (std::getenv(name)) return false;
+#ifdef _WIN32
+    return _putenv_s(name, value.c_str()) == 0;
+#else
+    return setenv(name, value.c_str(), /*overwrite=*/0) == 0;
+#endif
+}
+
 EnvLookup system_env() {
     return [](const char* key) -> std::optional<std::string> {
         const char* value = std::getenv(key);

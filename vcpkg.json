@@ -35,5 +35,13 @@
       "version>=": "3.0.1"
     },
     "nlohmann-json"
-  ]
+  ],
+  "features": {
+    "vulkan-validation": {
+      "description": "Khronos Vulkan validation layer for debug builds (loaded via VK_ADD_LAYER_PATH)",
+      "dependencies": [
+        "vulkan-validationlayers"
+      ]
+    }
+  }
 }

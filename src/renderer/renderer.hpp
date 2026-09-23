@@ -25,6 +25,7 @@
 #include "core/types.hpp"
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -121,6 +122,10 @@ public:
     /// swapchain cannot be read back on this driver (no TRANSFER_SRC usage).
     bool request_capture(CaptureCallback on_captured);
 
+    /// Vulkan validation errors reported so far (0 when validation is off).
+    /// Screenshot / golden runs fail if this is non-zero.
+    static u32 validation_error_count() { return validation_errors_.load(); }
+
     /// Advance the renderer's animation clock (UI animations, water, effects)
     /// by a fixed step per frame instead of wall-clock time, so frame N looks
     /// the same on every run. 0 restores wall-clock timing.
@@ -130,6 +135,12 @@ public:
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    static VkBool32 VKAPI_CALL vulkan_debug_callback(
+        VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+        VkDebugUtilsMessageTypeFlagsEXT type,
+        const VkDebugUtilsMessengerCallbackDataEXT* data, void* user);
+    static std::atomic<u32> validation_errors_;
+
     /// Record a copy of swapchain image `image_index` into the readback
     /// buffer (after the final render pass). Returns false if not recorded.
     bool record_capture(VkCommandBuffer cmd, u32 image_index);
@@ -189,7 +200,10 @@ private:
     // Per-frame sync objects
     VkFence render_fence_[FRAMES_IN_FLIGHT] = {};
     VkSemaphore present_semaphore_[FRAMES_IN_FLIGHT] = {};
-    VkSemaphore render_semaphore_[FRAMES_IN_FLIGHT] = {};
+    /// Render-finished semaphores, one per SWAPCHAIN IMAGE (not per frame in
+    /// flight): presentation holds a semaphore until that image is presented
+    /// again, so a per-frame one could be re-signalled while still pending.
+    std::vector<VkSemaphore> render_finished_;
 
     // Pipelines
     VkPipeline terrain_pipeline_ = VK_NULL_HANDLE;

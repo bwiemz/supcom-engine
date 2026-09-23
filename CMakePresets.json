@@ -52,7 +52,8 @@
       "inherits": "linux-base",
       "binaryDir": "${sourceDir}/build/linux-debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_MANIFEST_FEATURES": "vulkan-validation"
       }
     },
     {
@@ -71,7 +72,8 @@
       "binaryDir": "${sourceDir}/build/linux-asan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "OSC_SANITIZE": "address;undefined"
+        "OSC_SANITIZE": "address;undefined",
+        "VCPKG_MANIFEST_FEATURES": "vulkan-validation"
       }
     }
   ],

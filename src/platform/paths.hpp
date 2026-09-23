@@ -14,6 +14,10 @@ using EnvLookup = std::function<std::optional<std::string>(const char*)>;
 /// EnvLookup over the real process environment.
 EnvLookup system_env();
 
+/// Set an environment variable for this process unless it is already set
+/// (so the user's own setting always wins). Returns true if it was set.
+bool set_env_default(const char* name, const std::string& value);
+
 /// Per-user directories. On Windows these are the Known Folders; on POSIX
 /// they follow the XDG Base Directory spec.
 enum class KnownFolder {
