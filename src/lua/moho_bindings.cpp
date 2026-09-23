@@ -15574,64 +15574,127 @@ static int l_HideGameUI(lua_State* L) {
 // Audio globals for UI (M147b)
 // ====================================================================
 
-/// PlaySound(soundTable) → handle
-/// soundTable = {Cue='UI_Menu_Click_01', Bank='Interface'} or string cue name
+/// A sound's bank and cue: a Sound{Bank, Cue} table, or a bare cue name
+/// (the Interface bank).
+static bool sound_arg(lua_State* L, int idx, std::string& bank, std::string& cue) {
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        cue = lua_tostring(L, idx);
+        bank = "Interface";
+        return true;
+    }
+    return extract_sound_table(L, idx, bank, cue);
+}
+
+static void push_sound_handle(lua_State* L, osc::audio::SoundHandle h) {
+    if (h == osc::audio::INVALID_SOUND) lua_pushnil(L);
+    else lua_pushnumber(L, static_cast<lua_Number>(h));
+}
+
+/// PlaySound(sound) -> handle, or nil when nothing plays (unknown cue, or
+/// over its instance limits). UI sounds are 2D.
 static int l_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (!mgr) { lua_pushnumber(L, 0); return 1; }
-
     std::string bank, cue;
-    if (lua_type(L, 1) == LUA_TSTRING) {
-        cue = lua_tostring(L, 1);
-        bank = "Interface"; // default bank for string-only calls
-    } else if (lua_istable(L, 1)) {
-        if (!extract_sound_table(L, 1, bank, cue)) {
-            lua_pushnumber(L, 0);
-            return 1;
-        }
-    } else {
-        lua_pushnumber(L, 0);
+    if (!mgr || !sound_arg(L, 1, bank, cue)) {
+        lua_pushnil(L);
         return 1;
     }
-
-    // Play as non-positional (nullptr pos = 2D)
-    auto handle = mgr->play(bank, cue, nullptr);
-    lua_pushnumber(L, handle);
+    push_sound_handle(L, mgr->play(bank, cue, nullptr));
     return 1;
 }
 
-/// StopSound(handle) — stop a playing sound
+/// StopSound(handle [, immediate]): fade out (the cue's fade or release
+/// curve), or stop at once.
 static int l_StopSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (mgr) {
-        auto handle = static_cast<osc::audio::SoundHandle>(
-            static_cast<osc::u32>(luaL_checknumber(L, 1)));
-        mgr->stop(handle);
+    if (mgr && lua_type(L, 1) == LUA_TNUMBER) {
+        mgr->stop(static_cast<osc::audio::SoundHandle>(lua_tonumber(L, 1)), lua_toboolean(L, 2) != 0);
     }
     return 0;
 }
 
-/// PlayVoice(soundTable) — play a voice cue (delegates to PlaySound)
+/// PlayVoice(sound [, duck]) -> handle. With `duck`, the rest of the mix
+/// dips while it speaks (the Duck variable, read by FA's RPC curves).
 static int l_PlayVoice(lua_State* L) {
-    return l_PlaySound(L);
+    auto* mgr = get_sound_mgr(L);
+    std::string bank, cue;
+    if (!mgr || !sound_arg(L, 1, bank, cue)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto h = mgr->play(bank, cue, nullptr);
+    if (h != osc::audio::INVALID_SOUND && lua_toboolean(L, 2)) {
+        static int ducking = 0; // voices ducking now (one sound engine per process)
+        if (ducking++ == 0) mgr->set_global_variable("Duck", 1.0f);
+        mgr->on_finished(h, [mgr] {
+            if (--ducking == 0) mgr->set_global_variable("Duck", 0.0f);
+        });
+    }
+    push_sound_handle(L, h);
+    return 1;
 }
 
-/// PauseSound(bank, pause) — pause/resume all sounds in a bank
-static int l_PauseSound(lua_State* L) {
-    spdlog::debug("PauseSound: stub");
+/// StopAllSounds()
+static int l_StopAllSounds(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L)) mgr->stop_all();
     return 0;
 }
 
-/// PauseVoice(bank, pause) — pause/resume voice
-static int l_PauseVoice(lua_State* L) {
-    spdlog::debug("PauseVoice: stub");
+/// SetVolume(category, volume 0..1): the player's volume for a category
+/// (retail's options: Global, World, Interface, Music, VO).
+static int l_SetVolume(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (mgr && lua_type(L, 1) == LUA_TSTRING)
+        mgr->set_category_volume(lua_tostring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
-/// EnableWorldSounds(enable) — toggle 3D world audio
+/// GetVolume(category) -> 0..1
+static int l_GetVolume(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    lua_pushnumber(L, mgr && lua_type(L, 1) == LUA_TSTRING ? mgr->category_volume(lua_tostring(L, 1)) : 1.0);
+    return 1;
+}
+
+/// PauseSound(bank, pause) / PauseVoice(bank, pause): no pause yet.
+static int l_PauseSound(lua_State* /*L*/) { return 0; }
+static int l_PauseVoice(lua_State* /*L*/) { return 0; }
+
+/// EnableWorldSounds() / DisableWorldSounds(): the World category on or
+/// off (retail silences it for movies and the score screen).
 static int l_EnableWorldSounds(lua_State* L) {
-    spdlog::debug("EnableWorldSounds: {}", lua_toboolean(L, 1) ? "on" : "off");
+    if (auto* mgr = get_sound_mgr(L)) mgr->set_world_enabled(true);
     return 0;
+}
+static int l_DisableWorldSounds(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L)) mgr->set_world_enabled(false);
+    return 0;
+}
+
+/// What a UI thread waits on in WaitFor(sound): done when the sound ends.
+struct SoundWait : sim::Waitable {
+    bool done = false;
+    bool is_done() const override { return done; }
+    bool is_cancelled() const override { return false; }
+};
+
+/// WaitFor(handle) in the UI state: suspend the calling thread until the
+/// sound ends (retail's music thread waits out a fade this way).
+static int l_ui_WaitFor(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    auto* threads = get_ui_threads(L);
+    if (!mgr || !threads || lua_type(L, 1) != LUA_TNUMBER) return 0;
+    const auto h = static_cast<osc::audio::SoundHandle>(lua_tonumber(L, 1));
+    if (!mgr->is_playing(h)) return 0;
+    // The thread manager reads the waitable only when it parks the thread
+    // (right after this yield); the callback keeps it alive until the wake.
+    auto wait = std::make_shared<SoundWait>();
+    mgr->on_finished(h, [wait, threads] {
+        wait->done = true;
+        if (wait->waiting_thread_ref() != LUA_NOREF) threads->wake_thread(wait->waiting_thread_ref(), 0);
+    });
+    lua_pushlightuserdata(L, static_cast<sim::Waitable*>(wait.get()));
+    return lua_yield(L, 1);
 }
 
 // ====================================================================
@@ -15998,26 +16061,12 @@ void register_front_end_fallback_bindings(LuaState& state) {
         });
         lua_rawset(L, LUA_GLOBALSINDEX);
     };
-    auto set_num_fn = [&](const char* name, double val) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushnumber(L, val);
-        lua_pushcclosure(L, [](lua_State* call_L) -> int {
-            lua_pushvalue(call_L, lua_upvalueindex(1));
-            return 1;
-        }, 1);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
 
     set_stub("AudioSetLanguage");
     set_str("__language", "us");
     set_bool_fn("HasLocalizedVO", false);
-    set_num_fn("GetVolume", 1.0);
-    set_stub("SetVolume");
     set_stub("ConExecute");
     set_stub("ConExecuteSave");
-    set_stub("EnableWorldSounds");
-    set_stub("DisableWorldSounds");
     set_stub("AddInputCapture");
     set_stub("RemoveInputCapture");
     set_bool_fn("AnyInputCapture", false);
@@ -16333,6 +16382,11 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PauseSound", l_PauseSound);
     state.register_function("PauseVoice", l_PauseVoice);
     state.register_function("EnableWorldSounds", l_EnableWorldSounds);
+    state.register_function("DisableWorldSounds", l_DisableWorldSounds);
+    state.register_function("StopAllSounds", l_StopAllSounds);
+    state.register_function("SetVolume", l_SetVolume);
+    state.register_function("GetVolume", l_GetVolume);
+    state.register_function("WaitFor", l_ui_WaitFor);
     state.register_function("AudioSetLanguage", [](lua_State*) -> int { return 0; });
 
     // Prefs table (M149a)

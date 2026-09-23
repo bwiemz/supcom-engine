@@ -2216,21 +2216,8 @@ int main(int argc, char* argv[]) {
             });
             lua_rawset(uL, LUA_GLOBALSINDEX);
         };
-        auto set_num_fn = [&](const char* name, double val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State* L) -> int {
-                lua_pushnumber(L, 1.0); // default volume
-                return 1;
-            });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_num_fn("GetVolume", 1.0);      // usermusic.lua
-        set_stub("SetVolume");             // volume control
         set_stub("ConExecute");            // console commands
         set_stub("ConExecuteSave");        // console commands
-        set_stub("EnableWorldSounds");     // audio
-        set_stub("DisableWorldSounds");    // audio
         set_stub("AddInputCapture");       // input system
         set_stub("RemoveInputCapture");    // input system
         set_bool_fn("AnyInputCapture", false);
@@ -4131,11 +4118,13 @@ int main(int argc, char* argv[]) {
             else { osc::test_status::fail("[FAIL] HasCommandLineArg"); fail++; }
         }
 
-        // Test 3: PlaySound doesn't crash
+        // Test 3: PlaySound gives a handle for a cue that plays, nil otherwise
         {
             auto r = ui_lua_state.do_string(R"(
-                local h = PlaySound('test_click')
-                assert(type(h) == 'number', 'PlaySound should return handle')
+                local h = PlaySound(Sound({Bank = 'Interface', Cue = 'X_Main_Menu_On_Start'}))
+                assert(type(h) == 'number', 'PlaySound should return a handle')
+                assert(PlaySound('test_click') == nil, 'an unknown cue plays nothing')
+                StopSound(nil) -- a nil handle is a no-op
                 print('M147: PlaySound OK (handle=' .. h .. ')')
             )");
             if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }

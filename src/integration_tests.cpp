@@ -8613,6 +8613,49 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     else
         osc::test_status::fail("[FAIL] Test 8: script errors while the game UI ran");
 
+    // 13. Audio through FA's own scripts: gamemain.CreateUI starts
+    //     UserMusic's peace music (a thread that waits 3 s, then plays
+    //     Music/Base_Building). StopSound lets a sound fade: FA's music
+    //     tracks carry a ReleaseTime curve that falls silent over 6.06 s,
+    //     and a UI thread waits it out with WaitFor(handle), as the music
+    //     thread does.
+    if (auto* sound = ctx.sim.sound_manager(); sound && sound->has_data()) {
+        if (sound->is_cue_playing("Music", "Base_Building"))
+            spdlog::info("[PASS] Test 13a: retail's peace music is playing");
+        else
+            osc::test_status::fail("[FAIL] Test 13a: no peace music after the game started");
+        lua_ok("Test 13b: fade a sound out, a thread waiting on it", R"(
+            __osc_music = PlaySound(Sound({Bank = 'Music', Cue = 'Battle'}))
+            if not __osc_music then error('Music/Battle did not play') end
+            __osc_music_waited = false
+            ForkThread(function()
+                StopSound(__osc_music) -- releases over its 6 s curve
+                WaitFor(__osc_music)
+                __osc_music_waited = true
+            end)
+        )");
+        pump_frames(2);
+        play(30); // 3 s
+        lua_ok("Test 13c: the thread waits while it fades", R"(
+            if __osc_music_waited then error('WaitFor returned before the release ended') end
+        )");
+        play(35); // past 6.06 s
+        pump_frames(2);
+        lua_ok("Test 13d: ... and resumes when it has ended", R"(
+            if not __osc_music_waited then error('WaitFor never returned') end
+        )");
+        lua_ok("Test 13e: the player's category volumes", R"(
+            SetVolume('Music', 0.25)
+            if math.abs(GetVolume('Music') - 0.25) > 1e-6 then error('volume ' .. GetVolume('Music')) end
+            SetVolume('Music', 1)
+            if PlaySound(Sound({Bank = 'Interface', Cue = 'No_Such_Cue'})) ~= nil then
+                error('an unknown cue returned a handle')
+            end
+        )");
+    } else {
+        spdlog::warn("[SKIP] Test 13: no FA sound data");
+    }
+
     // 10 (before game over). Selecting the commander, as OnFirstUpdate does
     //    in a real game: gamemain.OnSelectionChanged updates the orders and
     //    construction panels, and the unit view fades in from the rollover
