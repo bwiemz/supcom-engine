@@ -117,7 +117,8 @@ void test_onframe(TestContext& ctx);
 /// if it issued a command).
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
-                 const std::function<bool(f32, f32, bool)>& click);
+                 const std::function<bool(f32, f32, bool)>& click,
+                 const std::function<bool(const char*)>& sim_lua);
 
 /// --victory-test: retail's /lua/victory.lua decides a real game. Every
 /// other army loses its commander; the script defeats them (OnDefeat ->

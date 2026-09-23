@@ -1,102 +1,15 @@
 #include "sim/lockstep_session.hpp"
+#include "sim/command_codec.hpp"
 
 #include "sim/net_transport.hpp"
 #include "sim/sim_state.hpp"
 
 #include <algorithm>
-#include <cstring>
 
 #include <spdlog/spdlog.h>
 
 namespace osc::sim {
 
-namespace {
-
-// --- Little-endian frame (de)serialization ---
-void put_u8(std::vector<u8>& b, u8 v) { b.push_back(v); }
-void put_u32(std::vector<u8>& b, u32 v) {
-    b.push_back(static_cast<u8>(v & 0xFF));
-    b.push_back(static_cast<u8>((v >> 8) & 0xFF));
-    b.push_back(static_cast<u8>((v >> 16) & 0xFF));
-    b.push_back(static_cast<u8>((v >> 24) & 0xFF));
-}
-void put_f32(std::vector<u8>& b, f32 v) {
-    u32 bits;
-    std::memcpy(&bits, &v, sizeof(bits));
-    put_u32(b, bits);
-}
-void put_str(std::vector<u8>& b, const std::string& s) {
-    put_u32(b, static_cast<u32>(s.size()));
-    b.insert(b.end(), s.begin(), s.end());
-}
-
-struct Reader {
-    const std::vector<u8>& b;
-    size_t pos = 0;
-    bool ok = true;
-    bool need(size_t n) {
-        if (pos + n > b.size()) ok = false;
-        return ok;
-    }
-    u8 u8v() { return need(1) ? b[pos++] : 0; }
-    u32 u32v() {
-        if (!need(4)) return 0;
-        u32 v = static_cast<u32>(b[pos]) | (static_cast<u32>(b[pos + 1]) << 8) |
-                (static_cast<u32>(b[pos + 2]) << 16) |
-                (static_cast<u32>(b[pos + 3]) << 24);
-        pos += 4;
-        return v;
-    }
-    f32 f32v() {
-        u32 bits = u32v();
-        f32 v;
-        std::memcpy(&v, &bits, sizeof(v));
-        return v;
-    }
-    std::string strv() {
-        u32 len = u32v();
-        if (!need(len)) return {};
-        std::string s(b.begin() + static_cast<long>(pos),
-                      b.begin() + static_cast<long>(pos + len));
-        pos += len;
-        return s;
-    }
-};
-
-void serialize_command(std::vector<u8>& b, const ScheduledCommand& c) {
-    put_u32(b, c.exec_tick);
-    put_u32(b, c.source);
-    put_u8(b, c.clear_existing ? 1 : 0);
-    put_u8(b, static_cast<u8>(c.command.type));
-    put_f32(b, c.command.target_pos.x);
-    put_f32(b, c.command.target_pos.y);
-    put_f32(b, c.command.target_pos.z);
-    put_u32(b, c.command.target_id);
-    put_u32(b, c.command.command_id);
-    put_str(b, c.command.blueprint_id);
-    put_u32(b, static_cast<u32>(c.unit_ids.size()));
-    for (u32 id : c.unit_ids) put_u32(b, id);
-}
-
-ScheduledCommand read_command(Reader& r) {
-    ScheduledCommand c;
-    c.exec_tick = r.u32v();
-    c.source = r.u32v();
-    c.clear_existing = r.u8v() != 0;
-    c.command.type = static_cast<CommandType>(r.u8v());
-    c.command.target_pos.x = r.f32v();
-    c.command.target_pos.y = r.f32v();
-    c.command.target_pos.z = r.f32v();
-    c.command.target_id = r.u32v();
-    c.command.command_id = r.u32v();
-    c.command.blueprint_id = r.strv();
-    u32 n = r.u32v();
-    c.unit_ids.reserve(n);
-    for (u32 i = 0; i < n && r.ok; ++i) c.unit_ids.push_back(r.u32v());
-    return c;
-}
-
-} // namespace
 
 LockstepSession::LockstepSession(SimState& sim, INetTransport& transport,
                                  u32 local_source,
@@ -119,26 +32,36 @@ void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
     pending_.push_back(std::move(sc));    // and queue for broadcast
 }
 
+void LockstepSession::submit_local_callback(SimCallbackEntry callback) {
+    ScheduledCommand sc;
+    sc.exec_tick = next_frame_;
+    sc.source = local_source_;
+    sc.callback = std::move(callback);
+    sim_.command_scheduler().submit(sc); // apply to local sim
+    pending_.push_back(std::move(sc));   // and queue for broadcast
+}
+
 void LockstepSession::send_frame() {
     std::vector<u8> msg;
-    put_u32(msg, local_source_);
-    put_u32(msg, next_frame_);
+    ByteWriter w(msg);
+    w.u32v(local_source_);
+    w.u32v(next_frame_);
 
     // Attach the most recent executed-tick checksum for desync detection.
     u32 last_tick = sim_.tick_count();
     auto it = my_checksums_.find(last_tick);
     if (last_tick > 0 && it != my_checksums_.end()) {
-        put_u8(msg, 1);
-        put_u32(msg, last_tick);
-        put_u32(msg, it->second);
+        w.u8v(1);
+        w.u32v(last_tick);
+        w.u32v(it->second);
     } else {
-        put_u8(msg, 0);
-        put_u32(msg, 0);
-        put_u32(msg, 0);
+        w.u8v(0);
+        w.u32v(0);
+        w.u32v(0);
     }
 
-    put_u32(msg, static_cast<u32>(pending_.size()));
-    for (const auto& c : pending_) serialize_command(msg, c);
+    w.u32v(static_cast<u32>(pending_.size()));
+    for (const auto& c : pending_) write_command(w, c);
     transport_.broadcast(msg);
 
     sim_.command_scheduler().confirm_frame(local_source_, next_frame_);
@@ -148,7 +71,7 @@ void LockstepSession::send_frame() {
 
 void LockstepSession::receive_and_advance() {
     for (const auto& raw : transport_.receive()) {
-        Reader r{raw};
+        ByteReader r(raw);
         u32 source = r.u32v();
         // Ignore any late/buffered data from a source we already dropped —
         // re-registering it (via submit/confirm_frame) would put it back in the
@@ -159,10 +82,19 @@ void LockstepSession::receive_and_advance() {
         u32 cs_tick = r.u32v();
         u32 cs_val = r.u32v();
         u32 count = r.u32v();
-        for (u32 i = 0; i < count && r.ok; ++i) {
-            sim_.command_scheduler().submit(read_command(r));
+        // Parse the whole frame before applying any of it: a malformed frame
+        // must not leave half its commands scheduled.
+        std::vector<ScheduledCommand> commands;
+        for (u32 i = 0; i < count && r.ok(); ++i) {
+            ScheduledCommand c;
+            // A peer speaks only for itself: a command in its frame that
+            // claims another source is forged or corrupt.
+            if (read_command(r, c) && c.source == source) commands.push_back(std::move(c));
+            else r.fail();
         }
-        if (!r.ok) continue; // malformed frame — ignore
+        // Malformed, or claiming to be this peer: ignore the whole frame.
+        if (!r.ok() || source == local_source_) continue;
+        for (auto& c : commands) sim_.command_scheduler().submit(std::move(c));
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
         if (frame > pc) pc = frame; // arms the drop timer after first contact

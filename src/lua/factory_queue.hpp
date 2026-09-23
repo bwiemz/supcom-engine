@@ -13,7 +13,6 @@ public:
     void set_current(lua_State* L, sim::Unit* factory);
     void peek(lua_State* L, sim::Unit* factory);
     void clear() { current_factory_id_ = 0; }
-    void decrease_count(sim::Unit* factory, int index, int count);
     u32 current_factory_id() const { return current_factory_id_; }
 
 private:

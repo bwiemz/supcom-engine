@@ -1,27 +1,20 @@
 # Retail FA 3599 engine API the game scripts call but OpenSupCom does not
 # provide yet (roadmap M184/M185/M186). Names only -- no game content.
 #
-# Ratchet: data.binding_coverage fails on a gap that is NOT listed here.
-# When you bind something, delete its line (the test logs "closed since
-# baseline"). Adding a line needs a reason in the commit message.
+# Ratchet: data.binding_coverage fails on a gap that is NOT listed here,
+# and on a listed one that has closed. When you bind something, delete its
+# line (the test names it). Adding a line needs a reason in the commit
+# message.
 #
 # Regenerate: opensupcom --map /maps/SCMP_009/SCMP_009_scenario.lua \
 #   --binding-coverage out.txt   (then strip the "# first call site" comments)
 
-G AddConsoleOutputReciever
-G AddInputCapture
-G AddToSessionExtraSelectList
 G BaseManagerReclaimThread
-G ClearFrame
 G ClearQueueGrid
-G ClearSessionExtraSelectList
-G ConExecuteSave
 G ConTextMatches
 G CopyCurrentReplay
 G CreateStorageManip
 G CreateTrail
-G DebugFacilitiesEnabled
-G DisableWorldSounds
 G ERROR
 G EjectSessionClient
 G EngineStartFrontEndUI
@@ -30,25 +23,12 @@ G FlushIntelInRect
 G GameTime
 G GenerateArmyStart
 G GenerateBuildTemplateFromSelection
-G GetAntiAliasingOptions
 G GetArmy
-G GetArmyAvatars
-G GetAssistingUnitsList
-G GetFireState
-G GetIdleEngineers
-G GetIdleFactories
-G GetIsAutoMode
-G GetIsAutoSurfaceMode
-G GetIsPaused
-G GetIsSubmerged
 G GetMovieDuration
-G GetOptions
-G GetScriptBit
 G GetSpecialFileInfo
 G GetSpecialFilePath
 G GetSpecialFiles
 G GetValidAttackingUnits
-G GetVolume
 G IN_ClearKeyMap
 G IncreaseBuildCountInQueue
 G InternalCreateMesh
@@ -64,39 +44,18 @@ G LoadSavedGame
 G MapBorderAdd
 G MapBorderClear
 G MetaImpact
-G PrefetchSession
 G RefreshSteamGames
-G RemoveConsoleOutputReciever
-G RemoveFromSessionExtraSelectList
-G RemoveInputCapture
 G RemoveProfileDirectories
 G RemoveSpecialFile
 G RenderOverlayEconomy
-G RestartSession
-G SavePreferences
-G SessionEndGame
-G SessionGetCommandSourceNames
-G SessionGetLocalCommandSource
-G SessionIsGameOver
-G SessionIsObservingAllowed
 G SessionIsPaused
 G SetAllianceOneWay
-G SetAutoMode
-G SetAutoSurfaceMode
-G SetFireState
-G SetOverlayFilter
-G SetOverlayFilters
-G SetPaused
 G SetQueueGrid
 G SetQueueState
 G SetUIControlsAlpha
-G SetVolume
 G SoundIsPrepared
 G SplitProp
 G StartSound
-G StopAllSounds
-G ToggleFireState
-G ToggleScriptBit
 G UISelectAndZoomTo
 G UnProject
 G ValidateIPAddress
@@ -112,39 +71,25 @@ M EnableTerrainCheck
 M FallDown
 M GetAttackVectors
 M GetCollisionExtents
-M GetMaxZoom
-M GetMinZoom
 M GetRate
-M GetTargetZoom
 M GetUnit
 M GiveUnitOrder
-M IsAutoMode
-M IsIdle
-M IsRepeatQueue
-M MoveToRegion
 M OnApplyBuff
 M PickBestAttackVector
-M ProcessInfo
 M RecoilImpulse
-M RemoveSelectionSet
 M SetAIResult
 M SetDamage
 M SetDamageRadius
 M SetDirectionalAnim
-M SetMaxZoomMult
 M SetStrategicUnderlay
 M SetStunned
-M SetTargetZoom
 M SetThrustingParam
 M SetWeaponDisableByLabel
 M SinkAway
-M SnapTo
 M StopSiloBuild
 M TakeResource
-M TestCommandCaps
 M TransportHasAvailableStorage
 M UnloadAllAtLocation
-M UpdateSteamLobby
 M UseFerryBeacon
 M Whack
 M write

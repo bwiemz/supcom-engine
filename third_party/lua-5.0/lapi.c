@@ -840,7 +840,9 @@ LUA_API void lua_concat (lua_State *L, int n) {
     L->top -= (n-1);
   }
   else if (n == 0) {  /* push empty string */
-    setsvalue2s(L->top, luaS_newlstr(L, NULL, 0));
+    /* OSC: "" not NULL -- newlstr memcpy()s from it, and memcpy from a null
+       pointer is undefined even for 0 bytes (as Lua 5.1 fixed it) */
+    setsvalue2s(L->top, luaS_newlstr(L, "", 0));
     api_incr_top(L);
   }
   /* else n == 1; nothing to do */

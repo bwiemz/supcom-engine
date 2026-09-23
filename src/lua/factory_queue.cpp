@@ -19,22 +19,10 @@ void FactoryQueueDisplay::peek(lua_State* L, sim::Unit* factory) {
     push_queue_table(L, factory);
 }
 
-void FactoryQueueDisplay::decrease_count(sim::Unit* factory, int index, int count) {
-    if (!factory) return;
-    auto& queue = factory->build_queue();
-    if (index >= 1 && index <= static_cast<int>(queue.size())) {
-        auto& entry = queue[static_cast<size_t>(index - 1)];
-        entry.count -= count;
-        if (entry.count <= 0) {
-            queue.erase(queue.begin() + (index - 1));
-        }
-    }
-}
-
 void FactoryQueueDisplay::push_queue_table(lua_State* L, sim::Unit* factory) {
     lua_newtable(L);
     if (!factory) return;
-    const auto& queue = factory->build_queue();
+    const auto queue = factory->factory_queue();
     for (size_t i = 0; i < queue.size(); ++i) {
         lua_newtable(L);
         lua_pushstring(L, "id");

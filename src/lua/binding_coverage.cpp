@@ -423,14 +423,17 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L,
     std::ostringstream text;
     text << bin.rdbuf();
     const auto delta = diff_against_baseline(report, parse_baseline(text.str()));
+    // Both ways: a gap that closed but is still listed would let the binding
+    // go missing again unnoticed.
     for (const auto& gap : delta.closed_gaps) {
-        spdlog::info("Binding coverage: closed since baseline: {} (remove it from "
-                     "the baseline)", gap);
+        spdlog::error("Binding coverage: closed since baseline: {} (remove it from "
+                      "the baseline)",
+                      gap);
     }
     for (const auto& gap : delta.new_gaps) {
         spdlog::error("Binding coverage: NEW gap not in baseline: {}", gap);
     }
-    return delta.new_gaps.empty() ? 0 : 1;
+    return delta.new_gaps.empty() && delta.closed_gaps.empty() ? 0 : 1;
 }
 
 } // namespace osc::lua::coverage

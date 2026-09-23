@@ -131,6 +131,15 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
+    /// Pause or resume the unit's work, as unit:SetPaused does: pausing also
+    /// stops its economy activity (FA's scripts restart it on resume).
+    void pause(bool p) {
+        paused_ = p;
+        if (p) {
+            economy_.production_active = false;
+            economy_.consumption_active = false;
+        }
+    }
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }
@@ -147,6 +156,7 @@ public:
     void set_fire_state(i32 s) { fire_state_ = s; }
 
     // Script bits (9 toggles, bits 0-8)
+    u16 script_bits() const { return script_bits_; }
     bool get_script_bit(i32 bit) const {
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
@@ -181,8 +191,21 @@ public:
     void set_economy_threat(f32 t) { economy_threat_ = t; }
 
     // Build queue (factory production queue)
-    std::vector<BuildQueueEntry>& build_queue() { return build_queue_; }
-    const std::vector<BuildQueueEntry>& build_queue() const { return build_queue_; }
+    /// The factory's queue as FA's construction panel shows it: its
+    /// BuildFactory orders, a run of one blueprint grouped with a count.
+    std::vector<BuildQueueEntry> factory_queue() const;
+    /// Remove up to `count` orders from the `index`-th (1-based) group of
+    /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
+    /// the order in progress cancels it (cancel_factory_build).
+    void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// A factory's build under way is cancelled: the factory hears
+    /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
+    void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// True while a factory order is under way.
+    bool building_factory_order() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::BuildFactory;
+    }
 
     // Command queue
     const std::deque<UnitCommand>& command_queue() const {
@@ -405,6 +428,10 @@ public:
     /// Stored; the factory queue does not repeat yet.
     bool repeat_queue() const { return repeat_queue_; }
     void set_repeat_queue(bool v) { repeat_queue_ = v; }
+    /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
+    /// do not surface by themselves yet.
+    bool auto_surface_mode() const { return auto_surface_mode_; }
+    void set_auto_surface_mode(bool v) { auto_surface_mode_ = v; }
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
@@ -655,6 +682,7 @@ private:
     bool sonar_stealth_ = false;
     bool auto_mode_ = false;
     bool repeat_queue_ = false;
+    bool auto_surface_mode_ = false;
     u32 focus_entity_id_ = 0;
     // Damage/kill flags
     bool can_take_damage_ = true;
@@ -676,7 +704,6 @@ private:
     // OnUnitBuilt callbacks (function + category filter)
     std::vector<UnitBuiltCallback> on_unit_built_callbacks_;
     // Build queue (factory production queue)
-    std::vector<BuildQueueEntry> build_queue_;
 };
 
 } // namespace osc::sim

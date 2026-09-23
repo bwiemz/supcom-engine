@@ -57,6 +57,17 @@ TEST_CASE("LuaState creation and basic execution", "[lua]") {
     REQUIRE(result.ok());
 }
 
+TEST_CASE("Concatenating nothing gives the empty string", "[lua]") {
+    // lua_concat(L, 0) once memcpy()d from a null pointer: undefined, and
+    // fatal under the sanitizer build. table.concat of an empty table and
+    // FA's string building reach it.
+    lua_State* L = lua_open();
+    lua_concat(L, 0);
+    REQUIRE(lua_type(L, -1) == LUA_TSTRING);
+    CHECK(std::string(lua_tostring(L, -1)).empty());
+    lua_close(L);
+}
+
 TEST_CASE("LuaState register and call C function", "[lua]") {
     LuaState state;
 

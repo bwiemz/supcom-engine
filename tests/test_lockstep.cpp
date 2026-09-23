@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/army_brain.hpp"
+#include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/net_transport.hpp"
@@ -181,4 +182,47 @@ TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
     sa.receive_and_advance();
     REQUIRE(a.tick_count() > t2); // A ignored B's late frame and kept advancing
     REQUIRE(sa.has_dropped(1));
+}
+
+TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
+    LuaGuard g;
+    SimState a(g.L, nullptr);
+    const osc::u32 id = spawn_mover(a, 6.0f);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport raw(hub, hub.add_endpoint()); // writes frames by hand
+    LockstepSession sa(a, ta, 0, {0, 1});
+
+    // Frame 1 as `from` would send it, holding one move in `claimed`'s name.
+    auto send = [&](osc::u32 from, osc::u32 claimed) {
+        std::vector<osc::u8> msg;
+        osc::sim::ByteWriter w(msg);
+        w.u32v(from);
+        w.u32v(1); // frame
+        w.u8v(0);  // no checksum
+        w.u32v(0);
+        w.u32v(0);
+        w.u32v(1); // one command
+        osc::sim::ScheduledCommand c;
+        c.exec_tick = 1;
+        c.source = claimed;
+        c.command = move_to(100.0f, 0.0f);
+        c.unit_ids = {id};
+        osc::sim::write_command(w, c);
+        raw.broadcast(msg);
+    };
+    auto* unit = static_cast<Unit*>(a.entity_registry().find(id));
+
+    sa.send_frame();
+    send(1, 0); // peer 1 ordering in peer 0's name
+    sa.receive_and_advance();
+    send(0, 0); // a frame claiming to be this peer's own
+    sa.receive_and_advance();
+    CHECK(a.tick_count() == 0); // neither confirmed peer 1's frame
+    CHECK(unit->command_queue().empty());
+
+    send(1, 1); // peer 1, honestly
+    sa.receive_and_advance();
+    CHECK(a.tick_count() == 1);
+    CHECK(unit->command_queue().size() == 1);
 }
