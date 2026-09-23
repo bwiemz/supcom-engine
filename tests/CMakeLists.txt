@@ -1,5 +1,6 @@
 add_executable(osc_tests
     test_vfs.cpp
+    test_vfs_paths.cpp
     test_lua_state.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp

@@ -2,6 +2,7 @@ add_library(osc_vfs STATIC
     virtual_file_system.cpp
     directory_mount.cpp
     zip_mount.cpp
+    path_utils.cpp
 )
 add_library(osc::vfs ALIAS osc_vfs)
 

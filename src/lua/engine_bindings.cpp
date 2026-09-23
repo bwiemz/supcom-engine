@@ -2,8 +2,11 @@
 #include "lua/lua_state.hpp"
 #include "core/log.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "vfs/path_utils.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <random>
 #include <spdlog/spdlog.h>
@@ -28,63 +31,20 @@ namespace fs = std::filesystem;
 // ============================================================================
 
 /// io.dir(pattern) — returns a table of filenames matching a directory glob.
-/// The pattern is like "C:/path/to/dir/*" or "C:/path/to/dir/*.scd"
+/// The pattern is like "C:/path/to/dir/*" or "C:\\path\\dir\\*.scd". Matching
+/// is case-insensitive and results are sorted, so init scripts written for
+/// Windows mount the same content in the same order on every platform.
 static int l_io_dir(lua_State* L) {
-    const char* pattern = luaL_checkstring(L, 1);
-    std::string pat(pattern);
-
-    // Split into directory and file pattern
-    auto last_sep = pat.find_last_of("/\\");
-    std::string dir_str, file_pat;
-    if (last_sep != std::string::npos) {
-        dir_str = pat.substr(0, last_sep);
-        file_pat = pat.substr(last_sep + 1);
-    } else {
-        dir_str = ".";
-        file_pat = pat;
-    }
-
-    // Determine suffix to match
-    std::string suffix;
-    if (!file_pat.empty() && file_pat[0] == '*') {
-        suffix = file_pat.substr(1);
-    }
-    bool match_all = (file_pat == "*" || file_pat == "*.*");
+    std::string pat = luaL_checkstring(L, 1);
+    std::replace(pat.begin(), pat.end(), '\\', '/');
 
     lua_newtable(L);
     int idx = 1;
-
-    std::error_code ec;
-    fs::path dir_path(dir_str);
-    if (fs::exists(dir_path, ec) && fs::is_directory(dir_path, ec)) {
-        for (auto& entry : fs::directory_iterator(dir_path, ec)) {
-            std::string name = entry.path().filename().string();
-
-            bool match = match_all;
-            if (!match && !suffix.empty()) {
-                std::string name_lower = name;
-                std::transform(name_lower.begin(), name_lower.end(),
-                               name_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-                std::string suffix_lower = suffix;
-                std::transform(suffix_lower.begin(), suffix_lower.end(),
-                               suffix_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-                if (name_lower.size() >= suffix_lower.size()) {
-                    match = name_lower.compare(
-                        name_lower.size() - suffix_lower.size(),
-                        suffix_lower.size(), suffix_lower) == 0;
-                }
-            }
-
-            if (match) {
-                lua_pushnumber(L, idx++);
-                lua_pushstring(L, name.c_str());
-                lua_settable(L, -3);
-            }
-        }
+    for (const auto& entry : vfs::expand_glob(fs::path(pat))) {
+        lua_pushnumber(L, idx++);
+        lua_pushstring(L, entry.filename().string().c_str());
+        lua_settable(L, -3);
     }
-
     return 1;
 }
 

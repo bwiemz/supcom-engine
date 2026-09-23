@@ -6,6 +6,7 @@
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/zip_mount.hpp"
+#include "vfs/path_utils.hpp"
 #include "blueprints/blueprint_store.hpp"
 
 #include <algorithm>
@@ -59,6 +60,34 @@ Result<void> InitLoader::execute_init(LuaState& state,
     return build_vfs_from_path_table(state.raw(), vfs);
 }
 
+namespace {
+
+/// Mount a single resolved path: archives as ZipMount, directories as
+/// DirectoryMount. Returns false (and logs) for anything else.
+bool mount_one(vfs::VirtualFileSystem& vfs, const fs::path& path,
+               const std::string& mountpoint) {
+    std::string ext_lower = path.extension().string();
+    std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+
+    std::error_code ec;
+    if (ext_lower == ".scd" || ext_lower == ".nx2" || ext_lower == ".nx5" ||
+        ext_lower == ".zip") {
+        if (fs::is_regular_file(path, ec)) {
+            vfs.mount(mountpoint, std::make_unique<vfs::ZipMount>(path));
+            return true;
+        }
+    }
+    if (fs::is_directory(path, ec)) {
+        vfs.mount(mountpoint, std::make_unique<vfs::DirectoryMount>(path));
+        return true;
+    }
+    spdlog::warn("Skipping unknown mount type: {}", path.string());
+    return false;
+}
+
+} // namespace
+
 Result<void> InitLoader::build_vfs_from_path_table(
     lua_State* L, vfs::VirtualFileSystem& vfs) {
     lua_getglobal(L, "path");
@@ -94,35 +123,18 @@ Result<void> InitLoader::build_vfs_from_path_table(
 
         if (dir) {
             std::string dir_str(dir);
-            std::string mp_str(mountpoint);
-
-            // Normalize slashes
             std::replace(dir_str.begin(), dir_str.end(), '\\', '/');
 
-            fs::path dir_path(dir_str);
-            std::error_code ec;
-
-            if (fs::exists(dir_path, ec)) {
-                // Determine if it's a ZIP file or directory
-                std::string ext_lower = dir_path.extension().string();
-                std::transform(ext_lower.begin(), ext_lower.end(),
-                               ext_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-
-                if (ext_lower == ".scd" || ext_lower == ".nx2" ||
-                    ext_lower == ".nx5" || ext_lower == ".zip") {
-                    vfs.mount(mp_str,
-                              std::make_unique<vfs::ZipMount>(dir_path));
-                } else if (fs::is_directory(dir_path, ec)) {
-                    vfs.mount(mp_str,
-                              std::make_unique<vfs::DirectoryMount>(dir_path));
-                } else {
-                    spdlog::warn("Skipping unknown mount type: {}", dir_str);
-                }
-                count++;
-            } else {
+            // Entries may be globs (retail SupComDataPath.lua mounts
+            // "<bin>\\..\\gamedata\\*.scd"), and paths written on Windows
+            // may not match on-disk case; expand_glob handles both.
+            auto matches = vfs::expand_glob(fs::path(dir_str));
+            if (matches.empty()) {
                 spdlog::debug("Mount path does not exist, skipping: {}",
                               dir_str);
+            }
+            for (const auto& dir_path : matches) {
+                if (mount_one(vfs, dir_path, mountpoint)) count++;
             }
         }
 
