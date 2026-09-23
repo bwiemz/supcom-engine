@@ -24,6 +24,8 @@ add_library(osc_sim STATIC
     sim_state.cpp
     world_snapshot.cpp
     command_codec.cpp
+    game_setup.cpp
+    build_info.cpp
     sim_callbacks.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
@@ -40,3 +42,18 @@ if(WIN32)
 endif()
 
 target_link_libraries(osc_sim PRIVATE osc::warnings)
+
+# The build's identity, stamped into replays: informational (playback warns
+# when a replay came from another build). Taken at configure time, on the one
+# file that uses it, so a reconfigure rebuilds only that.
+execute_process(
+    COMMAND git describe --always --dirty
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE OSC_GIT_DESCRIBE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT OSC_GIT_DESCRIBE)
+    set(OSC_GIT_DESCRIBE "unknown")
+endif()
+set_source_files_properties(build_info.cpp PROPERTIES
+    COMPILE_DEFINITIONS "OSC_BUILD_ID=\"${PROJECT_VERSION}-${OSC_GIT_DESCRIBE}\"")

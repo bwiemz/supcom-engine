@@ -307,14 +307,18 @@ public:
     // With recording on, every scheduled command is captured into a Replay that
     // (thanks to lockstep determinism) reproduces the match when re-fed into a
     // fresh sim.
-    /// Record the commands from now on, with the game's seed: a replay
-    /// replays the game from its start.
-    void set_recording(bool on) {
-        recording_ = on;
-        if (on) recorded_replay_.seed = seed_;
-    }
+    /// Record from now on: every command the sim applies, on the tick it
+    /// applies it, and the checksum after every tick, with the game's seed
+    /// and setup. A replay replays the game from its start.
+    void set_recording(bool on);
     bool recording() const { return recording_; }
     const Replay& recorded_replay() const { return recorded_replay_; }
+    /// The setup this game started from, for its recording.
+    void set_game_setup(GameSetup setup);
+    /// Playing a replay: player input is dropped, since the replay's
+    /// commands are the game's only input.
+    void set_playback(bool on) { playback_ = on; }
+    bool playback() const { return playback_; }
 
     /// Re-submit a recorded command stream into this sim's scheduler. Commands
     /// carry their original exec ticks, so ticking the sim replays them in
@@ -565,6 +569,7 @@ private:
     bool human_input_active_ = false;        // raised around local human input
     Replay recorded_replay_;
     bool recording_ = false;
+    bool playback_ = false;
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {

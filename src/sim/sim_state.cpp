@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/build_info.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
 #include "audio/sound_manager.hpp"
@@ -483,13 +484,6 @@ u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
     sc.command = command;
     sc.unit_ids = unit_ids;
     sc.clear_existing = clear_existing;
-    if (recording_) {
-        recorded_replay_.commands.push_back(sc);
-        if (exec_tick > recorded_replay_.final_tick)
-            recorded_replay_.final_tick = exec_tick;
-        recorded_replay_.command_delay = command_delay_;
-        recorded_replay_.victory_condition = victory_condition_;
-    }
     command_scheduler_.submit(std::move(sc));
     return exec_tick;
 }
@@ -500,17 +494,12 @@ u32 SimState::schedule_callback(u32 source, SimCallbackEntry callback) {
     sc.source = source;
     sc.callback = std::move(callback);
     const u32 exec_tick = sc.exec_tick;
-    if (recording_) {
-        recorded_replay_.commands.push_back(sc);
-        if (exec_tick > recorded_replay_.final_tick) recorded_replay_.final_tick = exec_tick;
-        recorded_replay_.command_delay = command_delay_;
-        recorded_replay_.victory_condition = victory_condition_;
-    }
     command_scheduler_.submit(std::move(sc));
     return exec_tick;
 }
 
 void SimState::submit_callback(SimCallbackEntry callback) {
+    if (playback_) return; // a replay plays only what it recorded
     if (local_callback_sink_) local_callback_sink_(std::move(callback));
     else schedule_callback(0, std::move(callback));
 }
@@ -522,6 +511,7 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
     // for the same tick; in single-player it is scheduled for the next tick.
     // Either way a replay can record it.
     if (human_input_active_) {
+        if (playback_) return; // a replay plays only what it recorded
         if (local_command_sink_) local_command_sink_(unit_ids, command, clear_existing);
         else schedule_command(0, unit_ids, command, clear_existing);
         return;
@@ -538,6 +528,27 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
         if (command.type == CommandType::Stop) stop_unit(*unit);
         else unit->push_command(command, clear_existing);
     }
+}
+
+void SimState::set_recording(bool on) {
+    recording_ = on;
+    if (!on) return;
+    const bool had_setup = recorded_replay_.has_setup;
+    GameSetup setup = std::move(recorded_replay_.setup);
+    recorded_replay_ = Replay{};
+    recorded_replay_.has_setup = had_setup;
+    recorded_replay_.setup = std::move(setup);
+    recorded_replay_.seed = seed_;
+    recorded_replay_.build = build_id();
+    recorded_replay_.command_delay = command_delay_;
+    recorded_replay_.victory_condition = victory_condition_;
+    recorded_replay_.final_tick = tick_count_;
+    recorded_replay_.checksum_from = tick_count_ + 1;
+}
+
+void SimState::set_game_setup(GameSetup setup) {
+    recorded_replay_.setup = std::move(setup);
+    recorded_replay_.has_setup = true;
 }
 
 void SimState::queue_replay(const Replay& replay) {
@@ -560,6 +571,12 @@ void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& sc) {
+        // A recording keeps what the sim applies, where it applies it: local
+        // and networked commands alike, on the tick they ran.
+        if (recording_) {
+            recorded_replay_.commands.push_back(sc);
+            recorded_replay_.commands.back().exec_tick = tick_count_;
+        }
         if (sc.callback) {
             run_sim_callback(*sc.callback);
             return;
@@ -749,10 +766,16 @@ void SimState::tick() {
         PROFILE_ZONE("Sim::observer");
         tick_observer_(*this);
     }
-    if (checksum_trace_) {
+    if (checksum_trace_ || recording_) {
         const ChecksumParts parts = checksum_parts();
-        *checksum_trace_ << fmt::format("{} {:08x} {:016x} {:016x} {:016x}\n", tick_count_,
-                                        parts.total(), parts.rng, parts.armies, parts.entities);
+        if (checksum_trace_) {
+            *checksum_trace_ << fmt::format("{} {:08x} {:016x} {:016x} {:016x}\n", tick_count_,
+                                            parts.total(), parts.rng, parts.armies, parts.entities);
+        }
+        if (recording_) {
+            recorded_replay_.final_tick = tick_count_;
+            recorded_replay_.checksums.push_back(parts.total());
+        }
     }
     // Death flashes and camera shakes are shown from the tick's capture;
     // the sim is done with them (events raised between ticks wait for the
