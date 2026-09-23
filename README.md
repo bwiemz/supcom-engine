@@ -12,7 +12,7 @@ This is **not** a compatibility layer or wrapper around the original binary. It 
 
 The original Moho engine is closed-source, 32-bit, single-threaded, and increasingly difficult to maintain. A clean reimplementation opens the door to:
 
-- **64-bit and cross-platform support** (Windows first, Linux/macOS later)
+- **64-bit and cross-platform support** (Windows and Linux; macOS later)
 - **Modern C++ performance** (C++17, no legacy COM/DirectX constraints in the sim)
 - **Debuggability** (full source, structured logging, deterministic replay)
 - **Community extension** (open codebase for FAForever and modders)
@@ -183,41 +183,50 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
   - Share conditions on defeat: `ShareUntilDeath` destroys the defeated army's units, `FullShare`/`CivilianDeserter` transfer them to an ally/civilian
   - `FogOfWar=none` reveals the whole map; `explored` keeps normal per-army fog
   - Deterministic sim sync checksum (`compute_sync_checksum`) for desync detection / determinism validation — the first primitive of lockstep multiplayer
-- 96 unit tests (1,543 assertions), 70+ integration test flags
+- 250+ unit test cases and ~100 integration test modes (see [Testing](#testing))
 
 **What's not yet implemented:**
 
-- Networking and multiplayer sync — the deterministic sync engine + a real cross-platform TCP transport are built and tested (sync checksum, lockstep command scheduler, `LockstepSession` running over both loopback and localhost TCP, replays); host/peer lobby lifecycle, routing every order through the scheduler, and a UDP+reliability transport remain (see `docs/plans/2026-07-03-multiplayer-networking-design.md`)
+- Multiplayer beyond LAN basics: LAN lockstep works (lobby handshake, command routing, desync detection, peer drop), but pipelined command delay, slot/faction sync over the wire, LAN discovery, cross-OS determinism and FAF client integration remain (see `docs/ROADMAP.md`, Phases D and G)
+- Retail (non-FAF) FA data boots and simulates, but some retail-only engine API and the retail front end are still missing (`docs/ROADMAP.md`, Phase B)
 - Some lobby options are parsed but not yet enforced in C++: difficulty-tier cheat multipliers (consumed by FA's AI Lua), PrebuiltUnits (NoRush, CommonArmy shared economy, TeamShareOverflow, and per-army handicap are now enforced)
 - Remaining moho binding stubs (mostly cosmetic/polish)
 
 ## Prerequisites
 
-- **Windows 10/11** (primary platform; Linux/macOS not yet tested)
-- **Visual Studio 2022** (v17+) with C++ desktop workload
-- **CMake 3.21+**
-- **vcpkg** (with `VCPKG_ROOT` environment variable set)
-- **Vulkan SDK** (1.0+ for rendering; renderer falls back to headless if unavailable)
-- **Supreme Commander: Forged Alliance** (Steam or retail installation)
-- **FAForever client** (provides patched game data at `C:/ProgramData/FAForever`)
+- **Supreme Commander: Forged Alliance.** The retail game (Steam/GOG) is
+  enough. A FAForever install is used automatically if present.
+- **CMake 3.21+**, **Ninja** (Linux), and **vcpkg** with `VCPKG_ROOT` set. vcpkg
+  installs every C++ dependency from `vcpkg.json`.
+- **A Vulkan 1.2 driver.** Without one the engine still runs headless.
+- **Windows 10/11:** Visual Studio 2022 with the C++ desktop workload.
+- **Linux:** GCC 13+ or Clang 17+, `git curl zip unzip tar pkg-config`, and
+  X11/Wayland development headers for GLFW (on Debian/Ubuntu:
+  `libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+  libxkbcommon-dev libwayland-dev wayland-protocols`).
 
 ## Building
 
 ```bash
-# Clone the repository
 git clone https://github.com/bwiemz/supcom-engine.git
 cd supcom-engine
-
-# Configure (vcpkg dependencies are installed automatically)
-cmake --preset default
-
-# Build
-cmake --build build --config Debug
 ```
 
-This produces:
-- `build/Debug/opensupcom.exe` — the engine executable
-- `build/tests/Debug/osc_tests.exe` — unit test runner
+**Linux**
+
+```bash
+cmake --preset linux-debug          # or linux-release, linux-asan (ASan+UBSan)
+cmake --build build/linux-debug
+# -> build/linux-debug/opensupcom, build/linux-debug/tests/osc_tests
+```
+
+**Windows**
+
+```bash
+cmake --preset default
+cmake --build build --config Debug
+# -> build/Debug/opensupcom.exe, build/tests/Debug/osc_tests.exe
+```
 
 ### Dependencies (managed by vcpkg)
 
@@ -228,7 +237,6 @@ This produces:
 | spdlog | Structured logging |
 | fmt | String formatting |
 | catch2 | Unit test framework |
-| miniaudio | Audio playback (XWB bank streaming, 3D spatial) |
 | glfw3 | Window management (Vulkan surface creation) |
 | vulkan-headers | Vulkan API headers |
 | vulkan-loader | Vulkan runtime loader |
@@ -236,11 +244,34 @@ This produces:
 | vk-bootstrap | Vulkan instance/device/swapchain setup |
 | shaderc | Runtime GLSL to SPIR-V shader compilation |
 
-A vendored **Lua 5.0** (LuaPlus fork with targeted bug fixes) is included in `third_party/lua-5.0/`.
+Vendored under `third_party/`:
+
+- **Lua 5.0** (`third_party/lua-5.0/`): the LuaPlus dialect FA's scripts use,
+  with `!=`, `continue`, `#` comments, table size hints and per-type
+  metatables. It is built as C++ on GCC/Clang so Lua errors unwind C++ frames.
+- **miniaudio** (audio).
+- **pl_mpeg** (movies).
+- **stb** (fonts, images).
 
 ## Running
 
-The engine requires FA game data to run. It auto-detects the Steam installation path and FAForever data directory.
+The engine needs FA game data and finds it on its own. The search order is:
+
+1. `--init` / `--fa-path` / `--faf-data`
+2. The environment variables `OSC_INIT_FILE`, `OSC_FA_PATH` and `OSC_FAF_DATA`
+3. A FAForever data directory (`%ProgramData%/FAForever` or `~/.faforever`)
+4. Steam app 9420, in any Steam library, using the retail
+   `bin/SupComDataPath.lua` init script
+
+To see what it picked and everything it checked, run:
+
+```bash
+./build/linux-debug/opensupcom --print-install
+```
+
+The examples below use the Linux binary path. On Windows use
+`build/Debug/opensupcom.exe`, and when running under Git Bash prefix
+commands with `MSYS_NO_PATHCONV=1` so `/maps/...` isn't rewritten.
 
 ### Windowed Mode (Renderer)
 
@@ -248,16 +279,16 @@ When launched without `--ticks` or test flags, the engine opens a Vulkan window 
 
 ```bash
 # Open a window showing Seton's Clutch with terrain, units, and water
-MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
-  --map "/maps/SCMP_009/SCMP_009_scenario.lua"
+./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua"
 
 # Play a skirmish against a rush AI with cheat difficulty
-MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
-  --map "/maps/SCMP_009/SCMP_009_scenario.lua" \
+./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" \
   --ai-personality rushcheat
 ```
 
-AI personality options: `adaptive`, `rush`, `turtle`, `tech`, `random` (and cheat variants: `adaptivecheat`, `rushcheat`, `turtlecheat`, `techcheat`, `randomcheat`). Cheat personalities get 2x build rate and 2x income multipliers.
+**AI personalities:** `adaptive`, `rush`, `turtle`, `tech`, `random`, and their
+cheat variants `adaptivecheat`, `rushcheat`, `turtlecheat`, `techcheat`,
+`randomcheat`. Cheat personalities get 2x build rate and 2x income.
 
 Camera controls:
 - **WASD** — Pan camera (speed scales with zoom distance)
@@ -273,20 +304,25 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 
 ```bash
 # Run 100 sim ticks on Seton's Clutch (headless)
-MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
-  --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 100
+./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 100
 
 # Run the AI test (ARMY_2 builds a base autonomously, 1200 ticks)
-MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
-  --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
-
-# Run the combat test (AI produces assault bots and attacks, 2000 ticks)
-MSYS_NO_PATHCONV=1 ./build/Debug/opensupcom.exe \
-  --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 2000 --combat-test
-
-# Run unit tests
-./build/tests/Debug/osc_tests.exe
+./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
 ```
+
+## Testing
+
+| Suite | Command | Needs game data |
+|---|---|---|
+| Unit tests (Catch2) | `ctest --preset linux-debug -LE data` or run `osc_tests` directly | No |
+| Two-process multiplayer (lockstep sync, desync detection, LAN lobby, peer drop) | `ctest --preset linux-debug -L mp` | No |
+| Data-backed regression gate | `ctest --preset linux-debug -L gate` | Yes |
+| All data-backed modes, including known retail gaps | `ctest --preset linux-debug -L data` | Yes |
+
+CI (GitHub Actions) builds on GCC, Clang, ASan+UBSan and MSVC and runs every
+data-free test. The `--<name>-test` integration modes exit non-zero when a
+check fails and with 77 (skipped) when no game data is available. Their
+`gate` / `retail-gap` membership lives in `tests/integration/data_tests.cmake`.
 
 ### Integration Test Flags
 

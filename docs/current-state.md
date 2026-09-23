@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-07-04
+Last reviewed: 2026-09-22 (Linux port + retail data; see `docs/ROADMAP.md` for the plan)
 
 ## What This Codebase Is
 
@@ -15,6 +15,23 @@ OpenSupCom is a C++20/CMake reimplementation of the Supreme Commander: Forged Al
 - `tests`: Catch2 unit coverage for core systems plus focused renderer/sim/parser behaviors.
 
 The code runs against real FA/FAF data via the VFS and currently boots Seton's Clutch far enough to load blueprints, parse the map, start FA AI code, spawn armies, build structures, and execute sim ticks.
+
+## Platforms, Data Targets and Measured Status (2026-09-22)
+
+| | Status |
+|---|---|
+| Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`. |
+| Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
+| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. |
+| FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
+
+| Metric | Value |
+|---|---|
+| Unit tests (Catch2) | 249 cases / 5,211 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
+| Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
+| Data-backed gate on retail (`ctest -L gate`) | 44/44 |
+| Data-backed modes failing on retail (`-L retail-gap`) | 56: 49 fail and 7 crash inside test code. The causes are listed in `tests/integration/data_tests.cmake`. |
+| Retail-only engine API still unbound | About 60 methods and 95 globals. This is a prototype static scan, many are UI-only, and it will be formalised in roadmap M184. |
 
 ## Verified Locally
 
@@ -118,17 +135,18 @@ Not yet modeled: FA's 15s allied-victory-request sustain, and `TransferToKiller`
 
 ## Known Gaps And Risks
 
-- **Multiplayer networking: sync engine done, real transport pending.** Working and
-  tested headless: `compute_sync_checksum()` (desync/determinism primitive), the
-  tick-keyed `CommandScheduler` (deterministic, lockstep-ready dispatch with a
-  per-source confirm gate), serializable `Replay` record/playback, and the
-  `LockstepSession` + `INetTransport` that keep sims bit-for-bit in sync, stall on
-  a missing frame, and detect desync via exchanged checksums — over both a loopback
-  transport and a **real cross-platform `TcpTransport`** (a full lockstep session is
-  tested over localhost TCP). Still to build (needs the Vulkan/`osc::lua` build to
-  validate): host/join lobby lifecycle + launch barrier, routing every
-  `Issue*`/player-input order through `schedule_command`, pipelined command delay,
-  and player-drop handling — see `docs/plans/2026-07-03-multiplayer-networking-design.md`.
+- **Multiplayer:** the lockstep session, lobby handshake, command routing,
+  desync detection and peer drop all work across two processes. They are
+  exercised on every CI run (`ctest -L mp`). Still missing: pipelined command
+  delay, slot and faction sync, LAN discovery, and routing every sim mutation
+  (SimCallbacks) through the command stream. Cross-OS determinism is
+  unproven: entity iteration order comes from `unordered_map`, and the sim
+  RNG and libm differ between platforms. See roadmap Phases D and G.
+- **Retail parity:** retail AI threads die on unbound retail-only methods, and
+  the retail front end does not yet reach a hosted lobby. See roadmap Phase B.
+- **Victory:** the C++ `SimState::update_victory` and retail's `victory.lua`
+  (now running through the `/schook` hook) both run. Reconciling them is
+  roadmap M189.
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
@@ -142,6 +160,5 @@ Not yet modeled: FA's 15s allied-victory-request sustain, and `TransferToKiller`
 
 ## Recommended Work Order
 
-1. Keep docs and ignores accurate so local tooling noise does not obscure engine changes.
-2. Continue classifying stubs by gameplay impact so harmless UI/multiplayer no-ops do not mask skirmish blockers.
-3. Revisit score/lobby polish in the real windowed UI once the remaining gameplay-impacting stubs are classified.
+See `docs/ROADMAP.md` (the phases, exit criteria and Definition of Done) and the
+tactical plan for the active phase in `docs/superpowers/plans/`.

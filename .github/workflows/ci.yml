@@ -1,0 +1,119 @@
+# Build + data-free test suite on every push and PR.
+#
+# Forged Alliance game data is proprietary and never available here, so CI
+# runs only tests that need no game data (`ctest -LE data`). Data-backed
+# integration tests (label `data`) run on developer machines that own FA.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-archives
+  # Pinned to the manifest's builtin-baseline; bumping the baseline in
+  # vcpkg.json should bump this too.
+  VCPKG_COMMIT: 78b7c910015e9c9d61c47d054cab5d41934e4e28
+
+jobs:
+  linux:
+    name: linux-${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            cc: gcc-14
+            cxx: g++-14
+            preset: linux-debug
+          - name: clang
+            cc: clang-18
+            cxx: clang++-18
+            preset: linux-debug
+          - name: asan
+            cc: gcc-14
+            cxx: g++-14
+            preset: linux-asan
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          # ninja + vcpkg prerequisites; X11/Wayland headers for glfw3 and
+          # the Vulkan loader built by vcpkg.
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build pkg-config curl zip unzip tar \
+            autoconf autoconf-archive automake libtool \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libxext-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libgl1-mesa-dev g++-14 clang-18
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-linux-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}-${{ env.VCPKG_COMMIT }}
+          restore-keys: vcpkg-linux-${{ matrix.cxx }}-
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test (data-free)
+        env:
+          # Leaks are real failures (Lua errors unwind as C++ exceptions, so
+          # binding objects must be freed on error paths too).
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset ${{ matrix.preset }} -LE data --output-on-failure
+
+  windows:
+    name: windows-msvc
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}-${{ env.VCPKG_COMMIT }}
+          restore-keys: vcpkg-windows-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          git clone https://github.com/microsoft/vcpkg $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT checkout $env:VCPKG_COMMIT
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset default
+
+      - name: Build
+        run: cmake --build --preset default
+
+      - name: Test (data-free)
+        run: ctest --test-dir build -C Debug -LE data --output-on-failure
