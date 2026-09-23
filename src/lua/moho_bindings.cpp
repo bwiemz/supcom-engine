@@ -6425,6 +6425,16 @@ static int brain_AssignUnitsToPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         if (e && e->is_unit() && !e->destroyed()) {
+            // A unit is in exactly one platoon (the pool when in no other):
+            // assigning moves it.
+            if (auto* owner = check_brain(L); owner) {
+                for (size_t pi = 0; pi < owner->platoon_count(); ++pi) {
+                    auto* other = owner->platoon_at(pi);
+                    if (other && other != platoon && !other->destroyed() &&
+                        other->has_unit(e->entity_id()))
+                        other->remove_unit(e->entity_id());
+                }
+            }
             platoon->add_unit(e->entity_id());
             platoon->set_unit_squad(e->entity_id(), squad);
 
@@ -6467,11 +6477,26 @@ static int brain_PlatoonExists(lua_State* L) {
     return 1;
 }
 
+// brain:DisbandPlatoon(platoon): destroy the platoon but not its units,
+// which go back to the army pool. The pool itself ("ArmyPool") is the
+// engine's and holds every unit not in another platoon: disbanding it is a
+// no-op. (Retail PlatoonDisband reaches it when an idle engineer's
+// PlatoonHandle is the pool; FAF later added a script guard for the same.)
 static int brain_DisbandPlatoon(lua_State* L) {
     auto* platoon = check_platoon(L, 2);
-    if (!platoon) return 0;
+    if (!platoon || platoon->name() == "ArmyPool") return 0;
 
     auto* sim = get_sim(L);
+
+    // Units return to the pool.
+    if (auto* owner = check_brain(L); owner && sim) {
+        if (auto* pool = owner->find_platoon_by_name("ArmyPool"); pool && pool != platoon) {
+            for (u32 id : platoon->unit_ids()) {
+                auto* e = sim->entity_registry().find(id);
+                if (e && !e->destroyed() && !pool->has_unit(id)) pool->add_unit(id);
+            }
+        }
+    }
 
     // Clear PlatoonHandle on all units
     if (sim) {
