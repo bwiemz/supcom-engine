@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-09-22 (Linux port + retail data; see `docs/ROADMAP.md` for the plan)
+Last reviewed: 2026-09-23 (retail AI, binding coverage; see `docs/ROADMAP.md` for the plan)
 
 ## What This Codebase Is
 
@@ -16,22 +16,22 @@ OpenSupCom is a C++20/CMake reimplementation of the Supreme Commander: Forged Al
 
 The code runs against real FA/FAF data via the VFS and currently boots Seton's Clutch far enough to load blueprints, parse the map, start FA AI code, spawn armies, build structures, and execute sim ticks.
 
-## Platforms, Data Targets and Measured Status (2026-09-22)
+## Platforms, Data Targets and Measured Status (2026-09-23)
 
 | | Status |
 |---|---|
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`. |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
-| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. |
+| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. The retail AI builds and expands: 2 AIs reach 42 units by 10 game-minutes. |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 249 cases / 5,211 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
+| Unit tests (Catch2) | 286 cases / 5,387 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
-| Data-backed gate on retail (`ctest -L gate`) | 44/44 |
-| Data-backed modes failing on retail (`-L retail-gap`) | 56: 49 fail and 7 crash inside test code. The causes are listed in `tests/integration/data_tests.cmake`. |
-| Retail-only engine API still unbound | About 60 methods and 95 globals. This is a prototype static scan, many are UI-only, and it will be formalised in roadmap M184. |
+| Data-backed gate on retail (`ctest -L gate`) | 66 modes plus the `data.binding_coverage` ratchet, all passing. |
+| Data-backed modes failing on retail (`-L retail-gap`) | 34 (33 plus `lobby-flow-test`). Mostly UI tests that run against the sim state, and missing unit-script behaviour. The causes are listed in `tests/integration/data_tests.cmake`. |
+| Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 
 ## Verified Locally
 
