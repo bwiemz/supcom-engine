@@ -93,6 +93,22 @@ public:
 
     /// Per-tick economy update: sum unit production/consumption, update stored.
     void update_economy(const EntityRegistry& registry, f64 dt);
+
+    /// aibrain:GiveStorage — permanent storage on top of what the army's
+    /// units provide. Kept apart because update_economy recounts the unit
+    /// part every tick; applied to max_storage at once too, so a GiveResource
+    /// in the same script call can fill it. Non-positive amounts are ignored
+    /// (storage only grows).
+    void give_storage(f64 mass, f64 energy) {
+        if (mass > 0.0) {
+            bonus_storage_mass_ += mass;
+            economy_.mass.max_storage += mass;
+        }
+        if (energy > 0.0) {
+            bonus_storage_energy_ += energy;
+            economy_.energy.max_storage += energy;
+        }
+    }
     f64 mass_efficiency() const { return mass_efficiency_; }
     f64 energy_efficiency() const { return energy_efficiency_; }
 
@@ -195,6 +211,8 @@ private:
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;
     f64 handicap_ = 0.0;
+    f64 bonus_storage_mass_ = 0.0;   // from GiveStorage
+    f64 bonus_storage_energy_ = 0.0;
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;

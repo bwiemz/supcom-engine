@@ -63,6 +63,34 @@ TEST_CASE("Cloak intel drives cloak flag", "[cloak][economy]") {
     REQUIRE_FALSE(unit.is_cloaked());
 }
 
+TEST_CASE("GiveStorage survives the per-tick storage recount", "[army][economy]") {
+    osc::sim::EntityRegistry registry;
+    osc::sim::ArmyBrain brain;
+    brain.set_index(0);
+
+    auto unit = std::make_unique<osc::sim::Unit>();
+    unit->set_army(0);
+    unit->economy().storage_energy = 4000.0;
+    registry.register_entity(std::move(unit));
+
+    brain.update_economy(registry, 0.1);
+    const double base = brain.economy().energy.max_storage;
+    REQUIRE(base == 4200.0); // 200 army base + the unit's storage
+
+    brain.give_storage(0.0, 10000.0);
+    // Usable at once: storage can be filled before the next economy tick.
+    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
+    brain.update_economy(registry, 0.1);
+    brain.update_economy(registry, 0.1);
+    REQUIRE(brain.economy().energy.max_storage == base + 10000.0);
+    REQUIRE(brain.economy().mass.max_storage == 200.0);
+
+    // Negative or zero amounts never shrink storage.
+    brain.give_storage(-500.0, 0.0);
+    brain.update_economy(registry, 0.1);
+    REQUIRE(brain.economy().mass.max_storage == 200.0);
+}
+
 TEST_CASE("Energy stall disables cloak maintenance", "[cloak][economy]") {
     osc::sim::EntityRegistry registry;
     osc::sim::ArmyBrain brain;

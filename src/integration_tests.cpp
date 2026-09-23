@@ -1875,10 +1875,14 @@ void test_toggle(TestContext& ctx) {
 void test_enhance(TestContext& ctx) {
     spdlog::info("=== Enhancement Test ===");
 
-    // Give ARMY_1 enough resources for the enhancement
+    // Give ARMY_1 enough resources for the enhancement. GiveResource clamps
+    // to storage (as in Moho), so raise storage first: the upgrade drains
+    // far more than a starting ACU produces or stores.
     ctx.lua_state.do_string(R"(
         local brain = GetArmyBrain('ARMY_1')
         if brain then
+            brain:GiveStorage('MASS', 50000)
+            brain:GiveStorage('ENERGY', 500000)
             brain:GiveResource('MASS', 50000)
             brain:GiveResource('ENERGY', 500000)
         end

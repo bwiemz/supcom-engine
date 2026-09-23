@@ -7609,11 +7609,10 @@ static int brain_GiveStorage(lua_State* L) {
     if (lua_type(L, 2) != LUA_TSTRING) return 0;
     std::string type = lua_tostring(L, 2);
     f64 amount = lua_tonumber(L, 3);
-    if (amount <= 0) return 0; // guard: storage can only increase via GiveStorage
     if (type == "MASS" || type == "Mass")
-        brain->economy().mass.max_storage += amount;
+        brain->give_storage(amount, 0.0);
     else if (type == "ENERGY" || type == "Energy")
-        brain->economy().energy.max_storage += amount;
+        brain->give_storage(0.0, amount);
     return 0;
 }
 
