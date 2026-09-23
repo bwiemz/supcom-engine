@@ -4912,11 +4912,16 @@ void test_massstub2(TestContext& ctx) {
     {
         auto r = ctx.lua_state.do_string(
             "local u = GetEntityById(__osc_test_acu_id(1))\n"
-            "u:AddCommandCap('RULEUCC_Attack')\n"
-            "u:AddCommandCap('RULEUCC_Guard')\n"
-            "u:RemoveCommandCap('RULEUCC_Attack')\n"
-            // RestoreCommandCaps should bring back the snapshot (empty baseline)
+            // The commander starts with its blueprint's order caps;
+            // RestoreCommandCaps returns to them.
+            "if not u:TestCommandCaps('RULEUCC_Move') then error('no blueprint Move cap') end\n"
+            "if u:TestCommandCaps('RULEUCC_Nuke') then error('Nuke cap not in blueprint') end\n"
+            "u:AddCommandCap('RULEUCC_Nuke')\n"
+            "u:RemoveCommandCap('RULEUCC_Move')\n"
+            "if u:TestCommandCaps('RULEUCC_Move') then error('RemoveCommandCap failed') end\n"
             "u:RestoreCommandCaps()\n"
+            "if not u:TestCommandCaps('RULEUCC_Move') then error('Move not restored') end\n"
+            "if u:TestCommandCaps('RULEUCC_Nuke') then error('added cap survived restore') end\n"
             // Build restrictions
             "u:AddBuildRestriction('uel0201')\n"
             "u:RemoveBuildRestriction('uel0201')\n"

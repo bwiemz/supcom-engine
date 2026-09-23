@@ -811,6 +811,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 }
             }
             lua_pop(L, 2); // General (or nil) + bp table
+            unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
         }
 
         // Read General.CrashDamage for air units

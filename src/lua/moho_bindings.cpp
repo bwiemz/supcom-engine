@@ -2553,6 +2553,14 @@ static int unit_RemoveToggleCap(lua_State* L) {
 }
 
 // TestToggleCaps(self, capName)
+/// TestCommandCaps(cap) -> whether the unit has that order cap now.
+static int unit_TestCommandCaps(lua_State* L) {
+    auto* u = check_unit(L);
+    const char* cap = luaL_checkstring(L, 2);
+    lua_pushboolean(L, u && u->has_command_cap(cap) ? 1 : 0);
+    return 1;
+}
+
 static int unit_TestToggleCaps(lua_State* L) {
     auto* u = check_unit(L);
     if (!u || lua_type(L, 2) != LUA_TSTRING) {
@@ -3932,6 +3940,7 @@ static const MethodEntry unit_methods[] = {
     {"ResetSpeedAndAccel",          unit_ResetSpeedAndAccel},
     {"AddToggleCap",                unit_AddToggleCap},
     {"RemoveToggleCap",             unit_RemoveToggleCap},
+    {"TestCommandCaps",             unit_TestCommandCaps},
     {"TestToggleCaps",              unit_TestToggleCaps},
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
