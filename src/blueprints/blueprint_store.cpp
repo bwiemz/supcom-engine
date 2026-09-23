@@ -80,30 +80,37 @@ void apply_unit_defaults(lua_State* L, int bp) {
     default_min_max(L, intel, "SpoofRadius");
     lua_pop(L, 1);
 
+    // A footprint the .bp leaves unsized, whole or per axis, takes the unit's
+    // own size, rounded and at least 1, as Moho's does (FAF's loader
+    // emulates the same rule). Retail's GetSkirtRect and GetFootPrintSize
+    // read Footprint.SizeX/SizeZ unguarded; 205 retail units omit them, some
+    // with a Footprint table that holds only MinWaterDepth (the UEF TMD).
     lua_pushstring(L, "Footprint");
     lua_rawget(L, bp);
-    const bool has_footprint = lua_istable(L, -1);
-    lua_pop(L, 1);
-    if (has_footprint) return;
-
-    auto footprint_size = [L, bp](const char* key) {
-        lua_pushstring(L, key);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Footprint");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Footprint");
         lua_rawget(L, bp);
+    }
+    const int footprint = lua_gettop(L);
+    for (const char* axis : {"SizeX", "SizeZ"}) {
+        lua_pushstring(L, axis);
+        lua_rawget(L, footprint);
+        const bool sized = lua_isnumber(L, -1) != 0;
+        lua_pop(L, 1);
+        if (sized) continue;
+        lua_pushstring(L, axis);
+        lua_rawget(L, bp); // the unit's own SizeX / SizeZ
         const double size = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 1.0;
         lua_pop(L, 1);
-        return std::max(1.0, std::floor(size + 0.5));
-    };
-    const double size_x = footprint_size("SizeX");
-    const double size_z = footprint_size("SizeZ");
-    lua_pushstring(L, "Footprint");
-    lua_newtable(L);
-    lua_pushstring(L, "SizeX");
-    lua_pushnumber(L, size_x);
-    lua_rawset(L, -3);
-    lua_pushstring(L, "SizeZ");
-    lua_pushnumber(L, size_z);
-    lua_rawset(L, -3);
-    lua_rawset(L, bp);
+        lua_pushstring(L, axis);
+        lua_pushnumber(L, std::max(1.0, std::floor(size + 0.5)));
+        lua_rawset(L, footprint);
+    }
+    lua_pop(L, 1); // Footprint
 }
 
 } // namespace
