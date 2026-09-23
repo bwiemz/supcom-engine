@@ -40,11 +40,12 @@
 
 
 /*
-** OpenSupCom: when this file is compiled as C++ (GCC/Clang builds), errors
-** are raised as C++ exceptions instead of longjmp, as Lua 5.1+ does with
-** LUAI_THROW. longjmp skips the destructors of C++ objects in the binding
-** frames it crosses (leaked strings, locks never released); an exception
-** runs them. MSVC keeps longjmp: its x64 longjmp already unwinds C++ frames.
+** OpenSupCom: Lua is compiled as C++ on every platform, so errors are raised
+** as C++ exceptions instead of longjmp, as Lua 5.1+ does with LUAI_THROW.
+** longjmp skips the destructors of C++ objects in the binding frames it
+** crosses (leaked strings, locks never released); an exception runs them.
+** (MSVC needs /EHs so extern "C" Lua API calls are allowed to throw.)
+** Define OSC_LUA_USE_LONGJMP to get the original behaviour back.
 */
 #if defined(__cplusplus) && !defined(OSC_LUA_USE_LONGJMP)
 #define OSC_LUA_CXX_EXCEPTIONS 1

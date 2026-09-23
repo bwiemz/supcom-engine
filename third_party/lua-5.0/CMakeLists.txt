@@ -32,16 +32,13 @@ add_library(lua50 STATIC
     lzio.c
 )
 
-# GCC/Clang: compile Lua as C++ so lua_error unwinds C++ binding frames with
-# exceptions (destructors run). MSVC keeps C: its x64 longjmp already runs
-# destructors, and /EHsc assumes extern "C" functions never throw. See ldo.c.
-if(MSVC)
-    set_target_properties(lua50 PROPERTIES LINKER_LANGUAGE C)
-else()
-    get_target_property(_lua50_sources lua50 SOURCES)
-    set_source_files_properties(${_lua50_sources} PROPERTIES LANGUAGE CXX)
-    set_target_properties(lua50 PROPERTIES LINKER_LANGUAGE CXX)
-endif()
+# Compile Lua as C++ so lua_error unwinds C++ binding frames with exceptions
+# (destructors run) instead of longjmp, which skips them. See ldo.c. On MSVC
+# this also needs /EHs (set in cmake/OscCompileOptions.cmake): the default
+# /EHsc assumes extern "C" functions -- the whole Lua API -- never throw.
+get_target_property(_lua50_sources lua50 SOURCES)
+set_source_files_properties(${_lua50_sources} PROPERTIES LANGUAGE CXX)
+set_target_properties(lua50 PROPERTIES LINKER_LANGUAGE CXX)
 
 # Public include directory so consumers can #include <lua.h>
 target_include_directories(lua50 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

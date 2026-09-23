@@ -69,7 +69,10 @@ TEST_CASE("resolve_case_insensitive finds real on-disk casing", "[vfs][paths]") 
     auto resolved = resolve_case_insensitive(tmp.path / "maps" / "scmp_009" /
                                              "scmp_009_SCENARIO.lua");
     REQUIRE(resolved.has_value());
-    CHECK(*resolved == tmp.path / "Maps" / "SCMP_009" / "SCMP_009_scenario.lua");
+    // On case-sensitive filesystems the on-disk spelling comes back; on
+    // Windows the lowercase path already exists and is returned as given.
+    CHECK(fs::equivalent(*resolved,
+                         tmp.path / "Maps" / "SCMP_009" / "SCMP_009_scenario.lua"));
 
     // Exact paths resolve to themselves.
     auto exact = resolve_case_insensitive(tmp.path / "Maps");

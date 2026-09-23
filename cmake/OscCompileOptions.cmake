@@ -4,6 +4,17 @@
 # vendored code keeps its own settings. Sanitizers apply to every target so
 # ASan/UBSan see the whole process, vendored Lua included.
 
+# MSVC: /EHs instead of the default /EHsc. Lua is built as C++ and raises
+# errors as C++ exceptions through its extern "C" API; /EHsc lets the
+# compiler assume extern "C" functions never throw and drop the unwind
+# (destructor) code around every Lua call.
+if(MSVC)
+    string(REPLACE "/EHsc" "/EHs" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    if(NOT CMAKE_CXX_FLAGS MATCHES "/EHs")
+        string(APPEND CMAKE_CXX_FLAGS " /EHs")
+    endif()
+endif()
+
 add_library(osc_warnings INTERFACE)
 add_library(osc::warnings ALIAS osc_warnings)
 if(MSVC)
