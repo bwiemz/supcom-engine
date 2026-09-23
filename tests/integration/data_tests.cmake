@@ -10,35 +10,41 @@
 #     against the UI Lua state, which boots through retail userInit.lua; the
 #     front end reaches a hosted skirmish lobby.
 #
+#   Then 93 gate: the sim modes stopped assuming FAF entity ids and FAF data,
+#     and teleports / economy events follow Moho.
+#
 # Why the remaining retail-gap modes fail (first failure per mode):
-#   - Build/target helpers: capture/repair/upgrade cannot find the structure
-#     they just built; layercap/massstub/massstub2 find no enemy unit.
-#   - Engine gaps: anim-test (animated bone matrices), unitsound-test, and the
-#     armor/cmd/enhance/jammer/shield/stub modes (not yet triaged).
+#   - anim-test: animated bone matrices stay identity.
+#   - enhance-test: HasEnhancement false after enhancing (retail enhancement
+#     bookkeeping lives in the unit script's CreateEnhancement).
+#   - jammer-test: no blip for the jammer unit.
+#   - shield-test: shield entity table lacks Army/ShieldType fields.
+#   - stub-test: "invalid key for next" in a script thread.
+#   - unitsound-test: the test's audio injection finds no Blueprint field.
 
 set(OSC_DATA_TESTS_GATE
-    adjacency-test ai-test anim-render-test audio-test beam-test bitmap-test
-    blend-test bone-test border-render-test build-test canpath-test chain-test
-    collision-test combat-test construction-test controls-test
-    cursor-render-test damage-test decal-test decalsplat-test deposit-test
-    drag-render-test draw-test dualstate-test economy-test edit-render-test
-    edit-test emitter-test enhance-wreck-test fire-test flags-test font-test
-    fow-test full-smoke-test input-test intel-overlay-test intel-test
-    itemlist-render-test los-test lowstub-test manip-test massstub3-test
+    adjacency-test ai-test anim-render-test armor-test audio-test beam-test
+    bitmap-test blend-test bone-test border-render-test build-test canpath-test
+    capture-test chain-test cmd-test collision-test combat-test
+    construction-test controls-test cursor-render-test damage-test decal-test
+    decalsplat-test deposit-test drag-render-test draw-test dualstate-test
+    economy-test edit-render-test edit-test emitter-test enhance-wreck-test
+    fire-test flags-test font-test fow-test full-smoke-test input-test
+    intel-overlay-test intel-test itemlist-render-test layercap-test los-test
+    lowstub-test manip-test massstub-test massstub2-test massstub3-test
     massstub4-test medstub-test move-test normal-test onframe-test path-test
     phase2-test phase3-test phase4-test phase5-test platoon-test profile-test
-    projectile-test prop-test reclaim-test scale-test scissor-test
+    projectile-test prop-test reclaim-test repair-test scale-test scissor-test
     scrollbar-render-test shadow-test shield-render-test silo-test smoke-test
     spatial-test specular-test stall-test stats-test stress-test teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test tiled-render-test
     toggle-test transport-silo-test transport-test ui-test uiboot-test
-    uirender-test vet-adj-render-test vet-test vfx-render-test wreck-test
+    uirender-test upgrade-test vet-adj-render-test vet-test vfx-render-test
+    wreck-test
 )
 
 set(OSC_DATA_TESTS_RETAIL_GAP
-    anim-test armor-test capture-test cmd-test enhance-test jammer-test
-    layercap-test massstub-test massstub2-test repair-test shield-test stub-test
-    unitsound-test upgrade-test
+    anim-test enhance-test jammer-test shield-test stub-test unitsound-test
 )
 
 # Front-end flows that must boot without --map.
