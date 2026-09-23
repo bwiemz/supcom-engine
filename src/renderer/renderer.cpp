@@ -1449,6 +1449,7 @@ void Renderer::create_bloom_pipelines() {
 
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
+    minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
 
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
@@ -2811,6 +2812,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
     // (debug removed)
+    minimap_renderer_.begin_frame(); // no world, so no minimap this frame
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 

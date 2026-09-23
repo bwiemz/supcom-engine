@@ -59,47 +59,37 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.width(), renderer.height(),
                                                   map_w, map_h, mm_wx, mm_wz);
 
-    // --- Left mouse: selection or minimap click-to-jump ---
+    // --- Left mouse: selection, or the minimap ---
+    // A press that begins on the minimap is the minimap's until released: it
+    // moves the camera while over the map and never selects or drags a box.
     if (lmb && !lmb_was_pressed_) {
-        if (on_minimap && map_w > 0) {
-            // Minimap click — jump camera to that world position
-            auto& cam = renderer.camera();
-            cam.set_target(mm_wx, mm_wz);
-            lmb_was_pressed_ = lmb;
-            rmb_was_pressed_ = rmb;
-            return; // consume the click
-        }
-        // Normal click — start potential drag
+        lmb_on_minimap_ = on_minimap && map_w > 0;
         drag_start_x_ = mx;
         drag_start_y_ = my;
         dragging_ = false;
     }
 
-    if (lmb && lmb_was_pressed_) {
-        if (on_minimap && map_w > 0) {
-            // Dragging on minimap — continuously move camera
-            auto& cam = renderer.camera();
-            cam.set_target(mm_wx, mm_wz);
-        } else {
-            // Held down — check for drag
-            f32 dx = mx - drag_start_x_;
-            f32 dy = my - drag_start_y_;
-            if (!dragging_ && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
-                dragging_ = true;
-            }
-            if (dragging_) {
-                drag_end_x_ = mx;
-                drag_end_y_ = my;
+    if (lmb && lmb_on_minimap_) {
+        if (on_minimap) renderer.camera().set_target(mm_wx, mm_wz);
+    } else if (lmb && lmb_was_pressed_) {
+        // Held down — check for drag
+        f32 dx = mx - drag_start_x_;
+        f32 dy = my - drag_start_y_;
+        if (!dragging_ && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+            dragging_ = true;
+        }
+        if (dragging_) {
+            drag_end_x_ = mx;
+            drag_end_y_ = my;
 
-                // Update world-space drag rect
-                const auto& cam = renderer.camera();
-                f32 w = static_cast<f32>(renderer.width());
-                f32 h = static_cast<f32>(renderer.height());
-                cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0,
-                                    drag_world_x0_, drag_world_z0_);
-                cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0,
-                                    drag_world_x1_, drag_world_z1_);
-            }
+            // Update world-space drag rect
+            const auto& cam = renderer.camera();
+            f32 w = static_cast<f32>(renderer.width());
+            f32 h = static_cast<f32>(renderer.height());
+            cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0,
+                                drag_world_x0_, drag_world_z0_);
+            cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0,
+                                drag_world_x1_, drag_world_z1_);
         }
     }
 
@@ -110,7 +100,9 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
 
     if (!lmb && lmb_was_pressed_) {
         // Left button just released
-        if (dragging_) {
+        if (lmb_on_minimap_) {
+            lmb_on_minimap_ = false; // the minimap's press: nothing more to do
+        } else if (dragging_) {
             handle_drag_select(renderer, sim);
             dragging_ = false;
         } else if (!on_minimap && mode_active) {

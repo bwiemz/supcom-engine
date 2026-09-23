@@ -119,6 +119,7 @@ private:
     bool lmb_was_pressed_ = false;
     bool lmb_on_ui_ = false;     // current left press began over the UI
     bool lmb_raw_prev_ = false;  // left button last frame, whoever owned it
+    bool lmb_on_minimap_ = false; // current left press began on the minimap
     bool dragging_ = false;
     f32 drag_start_x_ = 0, drag_start_y_ = 0;
     f32 drag_end_x_ = 0, drag_end_y_ = 0;
