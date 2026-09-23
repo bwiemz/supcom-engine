@@ -6,6 +6,7 @@ extern "C" {
 #include <lua.h>
 }
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -149,6 +150,7 @@ TEST_CASE("Preferences save as Lua and load back", "[preferences]") {
         )");
         s.set_from_global(prefs, "profile", "data");
         prefs.set_int("zoom", 120);
+        prefs.set_float("negzero", -0.0f);
         REQUIRE(prefs.save(file));
     }
     const std::string text = read_file(file);
@@ -167,6 +169,7 @@ TEST_CASE("Preferences save as Lua and load back", "[preferences]") {
     CHECK(loaded.get_bool("profile.flags.legacy", true) == false);
     CHECK(loaded.get_string("profile.7", "") == "seven");
     CHECK(loaded.get_int("zoom", 0) == 120);
+    CHECK(std::signbit(loaded.get_float("negzero", 1.0f))); // -0 keeps its sign
 
     // Stable output: saving what was loaded writes the same text
     const fs::path again = temp_prefs("osc_test_game2.prefs");

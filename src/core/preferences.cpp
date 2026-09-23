@@ -133,6 +133,10 @@ private:
             out += "0/0";
         } else if (std::isinf(v)) {
             out += v > 0 ? "1/0" : "-1/0";
+        } else if (v == 0 && std::signbit(v)) {
+            // Neither an integer cast nor a "-0" literal keeps the sign: Lua
+            // folds -0 into its constant table, which dedupes it with 0.
+            out += "1/(-1/0)";
         } else if (v == std::floor(v) && std::fabs(v) < 9007199254740992.0) {
             std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(v));
             out += buf;
