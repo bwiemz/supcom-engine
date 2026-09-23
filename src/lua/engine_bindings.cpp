@@ -3,6 +3,7 @@
 #include "core/log.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/path_utils.hpp"
+#include "platform/paths.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -10,11 +11,6 @@
 #include <filesystem>
 #include <random>
 #include <spdlog/spdlog.h>
-
-#ifdef _WIN32
-#include <ShlObj.h>
-#pragma comment(lib, "shell32.lib")
-#endif
 
 extern "C" {
 #include <lua.h>
@@ -48,42 +44,19 @@ static int l_io_dir(lua_State* L) {
     return 1;
 }
 
-/// SHGetFolderPath(name) — returns Windows special folder paths.
+/// SHGetFolderPath(name) — FA's per-user folders, with a trailing '/'.
+/// 'PERSONAL' is the Documents folder ("My Games/..." maps and mods live
+/// under it); 'LOCAL_APPDATA' holds preferences and caches. Unknown names
+/// return "" like the original engine's failed lookup.
 static int l_SHGetFolderPath(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     std::string result;
-
-#ifdef _WIN32
-    wchar_t path[MAX_PATH];
-    if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
-        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr,
-                                        0, path))) {
-            int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, path, -1, result.data(), len, nullptr, nullptr);
-            result += "/";
-        }
-    } else if (std::strcmp(name, "PERSONAL") == 0) {
-        if (SUCCEEDED(
-                SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, 0, path))) {
-            int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, path, -1, result.data(), len, nullptr, nullptr);
-            result += "/";
-        }
+    if (std::strcmp(name, "PERSONAL") == 0) {
+        result = platform::known_folder(platform::KnownFolder::Documents).generic_string();
+    } else if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
+        result = platform::known_folder(platform::KnownFolder::LocalAppData).generic_string();
     }
-#else
-    const char* home = std::getenv("HOME");
-    if (!home) home = "/tmp";
-    if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
-        result = std::string(home) + "/.local/share/";
-    } else if (std::strcmp(name, "PERSONAL") == 0) {
-        result = std::string(home) + "/Documents/";
-    }
-#endif
-
-    // Normalize to forward slashes
-    std::replace(result.begin(), result.end(), '\\', '/');
+    if (!result.empty() && result.back() != '/') result += '/';
     lua_pushstring(L, result.c_str());
     return 1;
 }

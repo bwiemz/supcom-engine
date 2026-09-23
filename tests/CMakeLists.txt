@@ -1,6 +1,7 @@
 add_executable(osc_tests
     test_vfs.cpp
     test_vfs_paths.cpp
+    test_platform_paths.cpp
     test_lua_state.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp
@@ -38,6 +39,7 @@ add_executable(osc_tests
 
 target_link_libraries(osc_tests PRIVATE
     osc::warnings
+    osc::platform
     Catch2::Catch2WithMain
     osc::core
     osc::vfs

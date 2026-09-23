@@ -23,6 +23,7 @@ include(cmake/OscCompileOptions.cmake)
 add_subdirectory(third_party/lua-5.0)
 
 # Engine libraries
+add_subdirectory(src/platform)
 add_subdirectory(src/core)
 add_subdirectory(src/vfs)
 add_subdirectory(src/map)
@@ -38,6 +39,7 @@ add_subdirectory(src/blueprints)
 add_executable(opensupcom src/main.cpp src/integration_tests.cpp)
 target_link_libraries(opensupcom PRIVATE
     osc::warnings
+    osc::platform
     osc::core
     osc::vfs
     osc::sim
