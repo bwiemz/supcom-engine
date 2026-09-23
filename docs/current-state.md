@@ -27,7 +27,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 286 cases / 5,387 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
+| Unit tests (Catch2) | 287 cases / 5,390 assertions. Clean on GCC, Clang and ASan+UBSan+LSan. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Data-backed gate on retail (`ctest -L gate`) | 66 modes plus the `data.binding_coverage` ratchet, all passing. |
 | Data-backed modes failing on retail (`-L retail-gap`) | 34 (33 plus `lobby-flow-test`). Mostly UI tests that run against the sim state, and missing unit-script behaviour. The causes are listed in `tests/integration/data_tests.cmake`. |
