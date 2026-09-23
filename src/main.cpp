@@ -5,6 +5,7 @@
 #include "core/types.hpp"
 #include "integration_tests.hpp"
 #include "platform/crash_handler.hpp"
+#include "platform/game_install.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/init_loader.hpp"
 #include "lua/session_manager.hpp"
@@ -259,6 +260,7 @@ static void print_usage() {
               << "  --init <path>      Path to init.lua / init_faf.lua\n"
               << "  --fa-path <path>   Path to FA installation directory\n"
               << "  --faf-data <path>  Path to FAF data directory\n"
+              << "  --print-install    Show which FA install would be used and exit\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
@@ -353,64 +355,58 @@ static void print_usage() {
 }
 
 static osc::lua::InitConfig parse_args(int argc, char* argv[]) {
-    osc::lua::InitConfig config;
+    osc::platform::GameInstallHints hints;
+    bool print_install = false;
 
     for (int i = 1; i < argc; i++) {
+        auto take_path = [&](std::optional<osc::fs::path>& out) {
+            const char* value = argv[++i];
+            if (*value) out = value; // "" means "not given"
+        };
         if (std::strcmp(argv[i], "--init") == 0 && i + 1 < argc) {
-            config.init_file = argv[++i];
+            take_path(hints.init_file);
         } else if (std::strcmp(argv[i], "--fa-path") == 0 && i + 1 < argc) {
-            config.fa_path = argv[++i];
+            take_path(hints.fa_path);
         } else if (std::strcmp(argv[i], "--faf-data") == 0 && i + 1 < argc) {
-            config.faf_data_path = argv[++i];
+            take_path(hints.faf_data_path);
+        } else if (std::strcmp(argv[i], "--print-install") == 0) {
+            print_install = true;
         } else if (std::strcmp(argv[i], "--help") == 0) {
             print_usage();
             std::exit(0);
         }
     }
 
-    // Defaults for FAForever installation
-    if (config.init_file.empty()) {
-        config.init_file = "C:/ProgramData/FAForever/bin/init_faf.lua";
-    }
-    if (config.faf_data_path.empty()) {
-        config.faf_data_path = "C:/ProgramData/FAForever";
+    auto search = osc::platform::locate_game_install(
+        hints, osc::platform::system_env());
+
+    if (print_install) {
+        if (search.install) {
+            std::cout << "source="    << search.install->source << "\n"
+                      << "fa_path="   << search.install->fa_path.string() << "\n"
+                      << "init_file=" << search.install->init_file.string() << "\n"
+                      << "faf_data="  << search.install->faf_data_path.string() << "\n";
+        } else {
+            std::cout << "No Supreme Commander: Forged Alliance installation found.\n";
+        }
+        for (const auto& where : search.searched) {
+            std::cout << "searched " << where << "\n";
+        }
+        std::exit(search.install ? 0 : 1);
     }
 
-    // Try to read fa_path from FAForever's fa_path.lua if not specified
-    if (config.fa_path.empty()) {
-        osc::fs::path fa_path_file = config.faf_data_path / "fa_path.lua";
-        if (osc::fs::exists(fa_path_file)) {
-            std::ifstream f(fa_path_file);
-            std::string line;
-            while (std::getline(f, line)) {
-                // Look for: fa_path = "C:\\..."
-                auto pos = line.find("fa_path");
-                if (pos != std::string::npos) {
-                    auto quote1 = line.find('"', pos);
-                    auto quote2 = line.find('"', quote1 + 1);
-                    if (quote1 != std::string::npos &&
-                        quote2 != std::string::npos) {
-                        auto path = line.substr(quote1 + 1, quote2 - quote1 - 1);
-                        // Unescape backslashes
-                        std::string clean;
-                        for (size_t j = 0; j < path.size(); j++) {
-                            if (path[j] == '\\' && j + 1 < path.size() &&
-                                path[j + 1] == '\\') {
-                                clean += '/';
-                                j++;
-                            } else if (path[j] == '\\') {
-                                clean += '/';
-                            } else {
-                                clean += path[j];
-                            }
-                        }
-                        config.fa_path = clean;
-                    }
-                }
-            }
+    osc::lua::InitConfig config;
+    if (search.install) {
+        config.fa_path = search.install->fa_path;
+        config.init_file = search.install->init_file;
+        config.faf_data_path = search.install->faf_data_path;
+        spdlog::info("Game install ({}): {}", search.install->source,
+                     config.fa_path.string());
+    } else {
+        for (const auto& where : search.searched) {
+            spdlog::info("Searched for FA: {}", where);
         }
     }
-
     return config;
 }
 
@@ -1387,9 +1383,10 @@ int main(int argc, char* argv[]) {
                     stress_test || full_smoke_test;
     bool headless = (tick_count > 0) || any_test;
 
-    if (config.fa_path.empty()) {
-        spdlog::error("FA installation path not found. Use --fa-path or "
-                       "ensure C:/ProgramData/FAForever/fa_path.lua exists.");
+    if (config.fa_path.empty() || config.init_file.empty()) {
+        spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
+                      "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
+                      "to see where we looked.");
         return 1;
     }
 
