@@ -22,6 +22,10 @@ inline constexpr const char* kUnitSettingCallback = "__osc_UnitSetting";
 /// unit_ids = the factory). Handled by the engine.
 inline constexpr const char* kDecreaseBuildCountCallback = "__osc_DecreaseBuildCount";
 
+/// Func name of a dropped player's defeat (Args Army, 0-based), which the
+/// game loop decides between ticks and the sim applies in the next one.
+inline constexpr const char* kDefeatArmyCallback = "__osc_DefeatArmy";
+
 /// A SimCallback argument: FA's callbacks carry strings, numbers and bools.
 using SimCallbackArg = std::variant<std::string, f64, bool>;
 

@@ -129,6 +129,80 @@ void push_game_option(lua_State* L, int table_idx, const std::string& key,
 
 } // anonymous namespace
 
+sim::GameSetup read_session_config(lua_State* L, int table_idx) {
+    sim::GameSetup setup;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "GameOptions");
+    lua_rawget(L, table_idx);
+    if (lua_istable(L, -1)) setup.options = read_game_options(L, lua_gettop(L));
+    lua_settop(L, top);
+
+    // PlayerOptions: {[1] = {Human = true, ...}, [2] = {Human = false,
+    // AIPersonality = 'adaptive', ...}}; the filled slots are the armies
+    // that play, in the scenario's order.
+    lua_pushstring(L, "PlayerOptions");
+    lua_rawget(L, table_idx);
+    if (lua_istable(L, -1)) {
+        const int options = lua_gettop(L);
+        const int n = luaL_getn(L, options);
+        setup.slots.resize(static_cast<size_t>(std::max(n, 0)));
+        for (int slot = 1; slot <= n; ++slot) {
+            lua_rawgeti(L, options, slot);
+            if (!lua_istable(L, -1)) {
+                lua_pop(L, 1);
+                continue;
+            }
+            const int entry = lua_gettop(L);
+            ++setup.army_count;
+            auto& cfg = setup.slots[static_cast<size_t>(slot - 1)];
+            cfg.configured = true;
+            auto read_int = [&](const char* key, int def) {
+                lua_pushstring(L, key);
+                lua_rawget(L, entry);
+                const int v = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : def;
+                lua_pop(L, 1);
+                return v;
+            };
+            lua_pushstring(L, "Human");
+            lua_rawget(L, entry);
+            cfg.human = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            if (!cfg.human) {
+                setup.ai_armies.push_back(slot - 1);
+                lua_pushstring(L, "AIPersonality");
+                lua_rawget(L, entry);
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    cfg.ai_personality = lua_tostring(L, -1);
+                    setup.ai_personality = cfg.ai_personality;
+                }
+                lua_pop(L, 1);
+            }
+            cfg.faction = read_int("Faction", 1); // 1 UEF, 2 Aeon, 3 Cybran, 4 Seraphim
+            cfg.team = read_int("Team", slot);
+            cfg.start_spot = read_int("StartSpot", slot);
+            cfg.player_color = read_int("PlayerColor", -1);
+            cfg.army_color = read_int("ArmyColor", -1);
+            cfg.handicap = read_int("Handicap", 0);
+            lua_pop(L, 1); // entry
+        }
+    }
+    lua_settop(L, top);
+    return setup;
+}
+
+void SessionManager::configure(const sim::GameSetup& setup) {
+    if (!setup.slots.empty()) set_army_slot_configs(setup.slots);
+    if (setup.options.configured) set_game_options(setup.options);
+    if (!setup.ai_armies.empty()) {
+        set_ai_armies(setup.ai_armies);
+        set_ai_personality(setup.ai_personality);
+    }
+    if (setup.army_count > 0) set_max_armies(setup.army_count);
+    // After the options, which may carry their own multipliers.
+    if (setup.cheat_mult != 1.0) set_cheat_mult(setup.cheat_mult);
+    if (setup.build_mult != 1.0) set_build_mult(setup.build_mult);
+}
+
 GameOptionsConfig read_game_options(lua_State* L, int table_idx) {
     GameOptionsConfig options;
     if (!lua_istable(L, table_idx)) return options;

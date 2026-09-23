@@ -167,7 +167,12 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   transcendental math is FDLIBM; contraction is off; Lua formats numbers
   with `std::to_chars`. CI shows it for a synthetic game: MSVC, GCC and
   Clang reach the same pinned checksum. A data-backed Windows-vs-Linux
-  lockstep game is M199. See roadmap Phases D and G.
+  lockstep game is M199c. See roadmap Phases D and G.
+- **Replays:** `--record <file>` records a game (format version 4: its
+  setup, the commands the sim applied and the checksum after every tick).
+  `--replay <file>` plays it headlessly from the file alone and reports the
+  first tick that differs; `data.replay_roundtrip` holds a scripted game to
+  that. Windowed playback and recording every game (LastGame) are M199b.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
   still read the live sim; they move over with M191's split of the bindings

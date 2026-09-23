@@ -83,6 +83,18 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+
+    # M199: a recorded game -- AI armies, and a player's orders and unit
+    # settings -- plays back identically from the replay file alone.
+    add_test(NAME data.replay_roundtrip
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/replay_roundtrip.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders)
+    set_tests_properties(data.replay_roundtrip PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────

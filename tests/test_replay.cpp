@@ -4,7 +4,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/army_brain.hpp"
+#include "sim/command_codec.hpp"
 #include "sim/command_scheduler.hpp"
+#include "sim/lockstep_session.hpp"
+#include "sim/net_transport.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/shield.hpp"
@@ -118,7 +121,7 @@ TEST_CASE("Replay deserialize rejects bad data", "[replay]") {
     CHECK(out.commands.empty());
 }
 
-TEST_CASE("Recording captures the scheduled command stream", "[replay]") {
+TEST_CASE("Recording keeps what the sim applies, and a checksum each tick", "[replay]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     auto ids = setup(sim);
@@ -127,13 +130,164 @@ TEST_CASE("Recording captures the scheduled command stream", "[replay]") {
     sim.schedule_command(0, {ids[0]}, move_to(50.0f, 0.0f), true); // exec 1
     sim.tick();
     sim.tick();
-    sim.schedule_command(1, {ids[1]}, move_to(0.0f, 50.0f), true); // exec 3
+    sim.schedule_command(1, {ids[1]}, move_to(0.0f, 50.0f), true); // exec 3, not run
 
     const Replay& r = sim.recorded_replay();
-    REQUIRE(r.commands.size() == 2);
+    REQUIRE(r.commands.size() == 1); // only what ran
     CHECK(r.commands[0].exec_tick == 1);
-    CHECK(r.commands[1].exec_tick == 3);
-    CHECK(r.final_tick == 3);
+    CHECK(r.final_tick == 2);
+    CHECK(r.checksum_from == 1);
+    REQUIRE(r.checksums.size() == 2);
+    CHECK(r.checksums[1] == sim.compute_sync_checksum());
+    CHECK_FALSE(r.build.empty());
+
+    sim.tick();
+    CHECK(sim.recorded_replay().commands.size() == 2);
+    CHECK(sim.recorded_replay().commands[1].exec_tick == 3);
+}
+
+TEST_CASE("A lockstep peer's recording holds the other peers' commands", "[replay][lockstep]") {
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    auto ids = setup(a);
+    setup(b);
+    b.set_recording(true);
+    osc::sim::LoopbackHub hub;
+    osc::sim::LoopbackTransport ta(hub, hub.add_endpoint());
+    osc::sim::LoopbackTransport tb(hub, hub.add_endpoint());
+    osc::sim::LockstepSession sa(a, ta, 0, {0, 1});
+    osc::sim::LockstepSession sb(b, tb, 1, {0, 1});
+    a.set_local_command_sink([&](const std::vector<osc::u32>& u, const UnitCommand& c, bool clear) {
+        sa.submit_local(u, c, clear);
+    });
+    for (int round = 0; round < 6; ++round) {
+        if (round == 1) {
+            a.set_human_input_active(true); // A's player orders a move
+            a.route_command({ids[0]}, move_to(80.0f, 0.0f), true);
+            a.set_human_input_active(false);
+        }
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+    REQUIRE(b.recorded_replay().commands.size() == 1);
+    CHECK(b.recorded_replay().commands[0].source == 0);
+}
+
+TEST_CASE("Playback checks every tick against the recording", "[replay][sync]") {
+    Replay recorded;
+    std::vector<osc::u32> ids;
+    {
+        LuaGuard g;
+        SimState a(g.L, nullptr);
+        a.set_seed(99);
+        ids = setup(a);
+        a.set_recording(true);
+        a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
+        for (int i = 0; i < 10; ++i) a.tick();
+        a.set_human_input_active(true);
+        a.route_command({ids[1]}, move_to(0.0f, 300.0f), true);
+        a.set_human_input_active(false);
+        for (int i = 0; i < 20; ++i) a.tick();
+        REQUIRE(Replay::deserialize(a.recorded_replay().serialize(), recorded));
+    }
+    auto play = [&](const Replay& replay) {
+        LuaGuard g;
+        SimState b(g.L, nullptr);
+        b.set_seed(replay.seed);
+        setup(b);
+        osc::sim::ReplayPlayback playback(replay);
+        playback.start(b);
+        // A player's order during playback is not part of the game.
+        b.set_human_input_active(true);
+        b.route_command({ids[2]}, move_to(-300.0f, 0.0f), true);
+        b.set_human_input_active(false);
+        while (!playback.finished(b)) {
+            b.tick();
+            if (!playback.check(b)) break;
+        }
+        return playback.diverged_at();
+    };
+    CHECK(play(recorded) == 0);
+
+    // A replay whose order differs diverges when the order runs.
+    Replay tampered = recorded;
+    REQUIRE(tampered.commands.size() == 2);
+    tampered.commands[1].command.target_pos.x = 50.0f;
+    CHECK(play(tampered) == tampered.commands[1].exec_tick);
+}
+
+TEST_CASE("A replay carries the game's setup", "[replay]") {
+    Replay r;
+    r.has_setup = true;
+    r.setup.scenario = "/maps/SCMP_009/SCMP_009_scenario.lua";
+    r.setup.seed = 4242;
+    r.setup.army_count = 2;
+    osc::sim::ArmySlotConfig human;
+    human.configured = true;
+    human.faction = 3;
+    human.team = 2;
+    human.start_spot = 2;
+    human.player_color = -1;
+    osc::sim::ArmySlotConfig ai = human;
+    ai.human = false;
+    ai.ai_personality = "rush";
+    r.setup.slots = {human, ai};
+    r.setup.options.configured = true;
+    r.setup.options.set_string("Victory", "demoralization");
+    r.setup.options.set_number("UnitCap", 500);
+    r.setup.options.set_bool("CheatsEnabled", false);
+    r.setup.options.restricted_categories = {"NUKE"};
+    r.setup.ai_armies = {1};
+    r.setup.cheat_mult = 2.0;
+    r.checksum_from = 1;
+    r.checksums = {0xdeadbeef, 0x12345678};
+
+    Replay out;
+    REQUIRE(Replay::deserialize(r.serialize(), out));
+    REQUIRE(out.has_setup);
+    CHECK(out.setup.scenario == r.setup.scenario);
+    CHECK(out.setup.seed == 4242);
+    CHECK(out.setup.army_count == 2);
+    REQUIRE(out.setup.slots.size() == 2);
+    CHECK(out.setup.slots[0].faction == 3);
+    CHECK(out.setup.slots[0].player_color == -1);
+    CHECK_FALSE(out.setup.slots[1].human);
+    CHECK(out.setup.slots[1].ai_personality == "rush");
+    REQUIRE(out.setup.options.values.size() == 3);
+    CHECK(out.setup.options.values[1].first == "UnitCap");
+    CHECK(out.setup.options.values[1].second.number_value == 500);
+    CHECK(out.setup.options.values[2].second.type == osc::sim::GameOptionValue::Type::Boolean);
+    CHECK(out.setup.options.restricted_categories == std::vector<std::string>{"NUKE"});
+    CHECK(out.setup.ai_armies == std::vector<int>{1});
+    CHECK(out.setup.cheat_mult == 2.0);
+    CHECK(out.checksums == r.checksums);
+
+    // Cut short anywhere, it is refused whole.
+    auto bytes = r.serialize();
+    for (size_t cut : {bytes.size() - 1, bytes.size() / 2, size_t{20}}) {
+        std::vector<osc::u8> part(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(cut));
+        CHECK_FALSE(Replay::deserialize(part, out));
+    }
+}
+
+TEST_CASE("A version 3 replay still loads, without a setup", "[replay]") {
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char c : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<osc::u8>(c));
+    w.u32v(3);  // version
+    w.u32v(12); // final tick
+    w.u32v(0);  // command delay
+    w.u64v(77); // seed
+    w.str("domination");
+    w.u32v(0); // commands
+    Replay out;
+    REQUIRE(Replay::deserialize(bytes, out));
+    CHECK(out.version == 3);
+    CHECK(out.seed == 77);
+    CHECK_FALSE(out.has_setup);
+    CHECK(out.checksums.empty());
 }
 
 TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
