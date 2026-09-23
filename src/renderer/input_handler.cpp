@@ -366,7 +366,8 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         if (!spec) return std::nullopt;
         cmd.type = spec->type;
         out.type = spec->fa_type;
-        cmd.target_id = pick_any_unit(sim, wx, wz, 5.0f);
+        cmd.target_id = pick_any_unit(sim, wx, wz, 5.0f,
+                                      spec->type == sim::CommandType::Reclaim);
         if (spec->targets_unit && cmd.target_id == 0) return std::nullopt;
         live_selected([&](const sim::Unit& u) {
             return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
@@ -388,12 +389,14 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
 }
 
 u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
-                                f32 radius) const {
+                                f32 radius, bool reclaim) const {
     u32 best_id = 0;
     f32 best_dist2 = radius * radius;
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        if (!e || e->destroyed()) continue;
+        if (reclaim ? !((e->is_unit() || e->is_prop()) && e->reclaimable()) : !e->is_unit())
+            continue;
         const f32 dx = e->position().x - wx;
         const f32 dz = e->position().z - wz;
         const f32 d2 = dx * dx + dz * dz;

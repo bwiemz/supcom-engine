@@ -153,7 +153,10 @@ private:
     /// Find the nearest player-owned unit to a world XZ point within radius.
     u32 pick_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
     /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
-    u32 pick_any_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
+    /// With `reclaim`, the nearest thing a Reclaim order takes: a unit or a
+    /// prop (tree, rock, wreck) that is reclaimable.
+    u32 pick_any_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius,
+                      bool reclaim = false) const;
     CommandModeHooks mode_hooks_;
 };
 

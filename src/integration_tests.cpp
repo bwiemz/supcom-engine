@@ -8713,7 +8713,44 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not q[1] or q[1].commandType ~= 2 then
             error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
         end
+        __osc_test_acu_id = tonumber(GetSelectedUnits()[1]:GetEntityId())
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {name = 'RULEUCC_Reclaim'})
     )");
+    // Reclaim takes whatever reclaimable thing is under the click: the map's
+    // trees and rocks are props, not units.
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        const auto acu_id = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto& reg = ctx.sim.entity_registry();
+        const auto* acu = reg.find(acu_id);
+        const osc::sim::Entity* prop = nullptr;
+        f32 best = 1e30f;
+        if (acu) {
+            reg.for_each([&](const osc::sim::Entity& e) {
+                if (!e.is_prop() || e.destroyed() || !e.reclaimable()) return;
+                const f32 dx = e.position().x - acu->position().x;
+                const f32 dz = e.position().z - acu->position().z;
+                if (dx * dx + dz * dz < best) {
+                    best = dx * dx + dz * dz;
+                    prop = &e;
+                }
+            });
+        }
+        if (!acu || !prop) {
+            osc::test_status::fail("[FAIL] Test 11f: no commander or no prop on the map");
+        } else if (!click(prop->position().x + 0.3f, prop->position().z, false)) {
+            osc::test_status::fail("[FAIL] Test 11f: the reclaim click on a prop issued nothing");
+        } else {
+            const auto& q = static_cast<const osc::sim::Unit*>(acu)->command_queue();
+            const auto* target = q.empty() ? nullptr : reg.find(q.front().target_id);
+            if (!q.empty() && q.front().type == osc::sim::CommandType::Reclaim && target &&
+                target->is_prop())
+                spdlog::info("[PASS] Test 11f: a reclaim click on a prop orders its reclaim");
+            else
+                osc::test_status::fail("[FAIL] Test 11f: the commander has no reclaim order on a prop");
+        }
+    }
     play(1);
 
     // Re-selecting the same units is still a selection action: Moho reports
