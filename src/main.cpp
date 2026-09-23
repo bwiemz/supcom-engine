@@ -3363,6 +3363,9 @@ int main(int argc, char* argv[]) {
     // ── Integration tests (require --map) ──
     if (sim_state && sim_lua_state) {
     osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
+    // UI tests run against the UI Lua state, where the UI factories live
+    // (the sim and UI states have been separate since M135c).
+    osc::test::TestContext ui_test_ctx{*sim_state, ui_lua_state, ui_lua_state.raw(), vfs, store};
     osc::test::register_test_helpers(sim_lua_state->raw());
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
@@ -3422,25 +3425,25 @@ int main(int argc, char* argv[]) {
     if (medstub_test && !map_path.empty()) osc::test::test_medstub(test_ctx);
     if (lowstub_test && !map_path.empty()) osc::test::test_lowstub(test_ctx);
     if (blend_test && !map_path.empty()) osc::test::test_blend(test_ctx);
-    if (ui_test && !map_path.empty()) osc::test::test_ui(test_ctx);
-    if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(test_ctx);
-    if (text_test && !map_path.empty()) osc::test::test_text(test_ctx);
-    if (edit_test && !map_path.empty()) osc::test::test_edit(test_ctx);
-    if (controls_test && !map_path.empty()) osc::test::test_controls(test_ctx);
-    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(test_ctx);
-    if (uirender_test && !map_path.empty()) osc::test::test_uirender(test_ctx);
-    if (font_test && !map_path.empty()) osc::test::test_font(test_ctx);
-    if (scissor_test && !map_path.empty()) osc::test::test_scissor(test_ctx);
-    if (border_render_test && !map_path.empty()) osc::test::test_border_render(test_ctx);
-    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(test_ctx);
-    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(test_ctx);
-    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(test_ctx);
-    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(test_ctx);
-    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(test_ctx);
-    if (input_test && !map_path.empty()) osc::test::test_input(test_ctx);
-    if (onframe_test && !map_path.empty()) osc::test::test_onframe(test_ctx);
-    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(test_ctx);
-    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(test_ctx);
+    if (ui_test && !map_path.empty()) osc::test::test_ui(ui_test_ctx);
+    if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(ui_test_ctx);
+    if (text_test && !map_path.empty()) osc::test::test_text(ui_test_ctx);
+    if (edit_test && !map_path.empty()) osc::test::test_edit(ui_test_ctx);
+    if (controls_test && !map_path.empty()) osc::test::test_controls(ui_test_ctx);
+    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(ui_test_ctx);
+    if (uirender_test && !map_path.empty()) osc::test::test_uirender(ui_test_ctx);
+    if (font_test && !map_path.empty()) osc::test::test_font(ui_test_ctx);
+    if (scissor_test && !map_path.empty()) osc::test::test_scissor(ui_test_ctx);
+    if (border_render_test && !map_path.empty()) osc::test::test_border_render(ui_test_ctx);
+    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(ui_test_ctx);
+    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(ui_test_ctx);
+    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(ui_test_ctx);
+    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(ui_test_ctx);
+    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(ui_test_ctx);
+    if (input_test && !map_path.empty()) osc::test::test_input(ui_test_ctx);
+    if (onframe_test && !map_path.empty()) osc::test::test_onframe(ui_test_ctx);
+    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(ui_test_ctx);
+    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(ui_test_ctx);
     if (emitter_test && !map_path.empty()) osc::test::test_emitter(test_ctx);
     if (collision_test && !map_path.empty()) osc::test::test_collision_beam(test_ctx);
     if (decalsplat_test && !map_path.empty()) osc::test::test_decal_splat(test_ctx);

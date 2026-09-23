@@ -8254,7 +8254,7 @@ void test_controls(TestContext& ctx) {
             "local m = {}\n"
             "setmetatable(m, {__index = moho.movie_methods})\n"
             "InternalCreateMovie(m, test_frame)\n"
-            "local ok1 = m:InternalSet('/movies/intro.sfd')\n"
+            "local ok1 = m:InternalSet('/movies/fmv_scx_intro.sfd') -- ships with FA (retail and FAF)\n"
             "m:Play()\n"
             "m:Stop()\n"
             "return ok1 == true\n");
