@@ -6672,6 +6672,78 @@ void test_unitsound(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: StopUnitAmbientSound when idle — {}", r.error().message); }
     }
 
+    // Test 8 (M188c): named ambient loops, with retail cues. Retail's
+    // Unit.PlayUnitAmbientSound(name) makes a child Entity{} attached to the
+    // unit and calls SetAmbientSound on it (ConstructLoop and ActiveLoop
+    // play side by side); StopUnitAmbientSound destroys the child, and the
+    // unit's trash destroys them all with it. The engine's part: an
+    // entity's ambient loop plays, follows the entity (and its parent), and
+    // ends with it.
+    auto* sound = ctx.sim.sound_manager();
+    if (!sound || !sound->has_data()) {
+        spdlog::warn("[SKIP] Test 8: no FA sound data");
+        return;
+    }
+    auto loop_of = [&](const char* name) -> osc::u32 {
+        auto r = lua(std::string("local c = e.AmbientSounds and e.AmbientSounds.") + name +
+                     "\n__osc_loop_entity = c and c:GetEntityId() or 0");
+        if (!r) return 0;
+        lua_State* sL = ctx.lua_state.raw();
+        lua_pushstring(sL, "__osc_loop_entity");
+        lua_rawget(sL, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        lua_pop(sL, 1);
+        auto* child = reg.find(id);
+        return child ? child->ambient_sound("__ambient") : 0;
+    };
+    auto r8 = lua("local bp = e:GetBlueprint()\n"
+                  "bp.Audio.OscMoveLoop = { Bank = 'UEL', Cue = 'UEL0101_Move_Loop' }\n"
+                  "bp.Audio.OscActiveLoop = { Bank = 'UEB', Cue = 'UEB1103_Active' }\n"
+                  "e:PlayUnitAmbientSound('OscMoveLoop')\n"
+                  "e:PlayUnitAmbientSound('OscActiveLoop')\n");
+    const osc::u32 move = loop_of("OscMoveLoop");
+    const osc::u32 active = loop_of("OscActiveLoop");
+    if (r8 && move && active && move != active && sound->is_playing(move) && sound->is_playing(active)) {
+        pass++;
+        spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})", r8 ? "not playing" : r8.error().message);
+    }
+    lua("e:StopUnitAmbientSound('OscActiveLoop')");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
+    if (!sound->is_playing(active) && sound->is_playing(move)) {
+        pass++;
+        spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+    }
+    {
+        osc::sim::Vector3 p = e1->position();
+        p.x += 40.0f;
+        e1->set_position(p);
+        ctx.sim.tick();
+        ctx.sim.tick();
+        osc::sim::Vector3 heard{};
+        if (sound->position(move, heard) && std::abs(heard.x - p.x) < 1.0f) {
+            pass++;
+            spdlog::info("[PASS] Test 8c: the loop follows the unit");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8c: the loop stayed at x={} (unit at {})", heard.x, p.x);
+        }
+    }
+    lua("e:Destroy()");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // releases and fades run out
+    if (!sound->is_playing(move)) {
+        pass++;
+        spdlog::info("[PASS] Test 8d: the loops end with the unit");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8d: a destroyed unit's loop plays on");
+    }
+
     spdlog::info("Unit sound test: {}/{} passed", pass, pass + fail);
 }
 

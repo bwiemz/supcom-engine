@@ -72,6 +72,9 @@ void SimState::on_entity_unregistered(Entity& entity) {
     // Removed by the engine (impact, reclaim, crash...) rather than by a
     // script's Destroy(): the script's OnDestroy still runs, first.
     notify_script_destroy(entity);
+    // Its ambient loops end with it (the sound engine outlives the sim).
+    for (const auto& a : entity.take_ambient_sounds())
+        if (sound_manager_) sound_manager_->stop(a.handle, false);
 
     // A dead structure stops blocking paths (it used to block forever).
     if (auto it = occupied_footprints_.find(entity.entity_id());
@@ -110,12 +113,47 @@ void SimState::on_entity_unregistered(Entity& entity) {
 }
 
 SimState::~SimState() {
+    // The sound engine outlives the sim: the sim's loops stop with it.
+    if (sound_manager_) {
+        entity_registry_.for_each([&](const Entity& e) {
+            for (const auto& a : e.ambient_sounds()) sound_manager_->stop(a.handle);
+        });
+    }
     // The sim Lua state may outlive this sim; it must not keep reaching the
     // sound engine through it.
     if (L_ && sound_manager_) {
         lua_pushstring(L_, "osc_sound_manager");
         lua_pushnil(L_);
         lua_rawset(L_, LUA_REGISTRYINDEX);
+    }
+}
+
+void SimState::follow_attachments() {
+    // The parent's pose is read during the walk and applied after it: a
+    // chain (A on B on C) then lags one tick per link whatever the
+    // registry's iteration order, as lockstep needs.
+    struct Move {
+        Entity* child;
+        Vector3 pos;
+        Quaternion orient;
+    };
+    std::vector<Move> moves;
+    entity_registry_.for_each([&](const Entity& e) {
+        if (e.parent_entity_id() == 0 || e.destroyed()) return;
+        const Entity* parent = entity_registry_.find(e.parent_entity_id());
+        if (!parent || parent->destroyed()) return;
+        const Vector3& p = parent->position();
+        const Quaternion& q = parent->orientation();
+        const Vector3& c = e.position();
+        const Quaternion& o = e.orientation();
+        if (c.x != p.x || c.y != p.y || c.z != p.z || o.x != q.x || o.y != q.y || o.z != q.z ||
+            o.w != q.w)
+            moves.push_back({const_cast<Entity*>(&e), p, q});
+    });
+    // Applied after the walk: set_position updates the spatial grid.
+    for (const auto& m : moves) {
+        m.child->set_position(m.pos);
+        m.child->set_orientation(m.orient);
     }
 }
 
@@ -610,10 +648,16 @@ void SimState::tick() {
     // --- Victory-condition enforcement (mode + team aware) ---
     update_victory();
 
-    // Audio: a headless run has no frames, so the sim tick is its clock.
-    if (sound_manager_ && sound_manager_->sim_clocked()) {
+    follow_attachments();
+
+    if (sound_manager_) {
         PROFILE_ZONE("Sim::audio");
-        sound_manager_->update(0.1f);
+        // Ambient loops follow their entities.
+        entity_registry_.for_each([&](const Entity& e) {
+            for (const auto& a : e.ambient_sounds()) sound_manager_->set_position(a.handle, e.position());
+        });
+        // A headless run has no frames, so the sim tick is its clock.
+        if (sound_manager_->sim_clocked()) sound_manager_->update(0.1f);
     }
 
     // Economy events: tick drains, wake waiting threads on completion

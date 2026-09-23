@@ -221,8 +221,17 @@ static osc::FrontEndData* get_front_end_data(lua_State* L) {
 /// Extract Bank and Cue strings from a sound table at the given stack index.
 /// Returns false if the table is missing or lacks Bank/Cue keys.
 static bool extract_sound_table(lua_State* L, int idx,
-                                std::string& bank, std::string& cue) {
+                                std::string& bank, std::string& cue,
+                                std::string* lod_cutoff = nullptr) {
     if (!lua_istable(L, idx)) return false;
+    if (lod_cutoff) {
+        // Sound{..., LodCutoff = 'Weapon_LodCutoff'}: the variable whose value
+        // is how far away the sound is still heard.
+        lua_pushstring(L, "LodCutoff");
+        lua_rawget(L, idx);
+        lod_cutoff->assign(lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
+        lua_pop(L, 1);
+    }
 
     lua_pushstring(L, "Bank");
     lua_rawget(L, idx);
@@ -319,7 +328,20 @@ static f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type) {
 // Sound methods
 // ====================================================================
 
-/// entity:PlaySound(soundTable) — play one-shot at entity position
+/// Stop the ambient loop `name` of `e` (every one when `name` is null).
+static void stop_ambient(audio::SoundManager* mgr, sim::Entity* e, const char* name) {
+    if (!name) {
+        for (const auto& a : e->take_ambient_sounds())
+            if (mgr) mgr->stop(a.handle, false);
+        return;
+    }
+    if (const u32 h = e->ambient_sound(name)) {
+        if (mgr) mgr->stop(h, false);
+        e->set_ambient_sound(name, 0);
+    }
+}
+
+/// entity:PlaySound(sound) -- a one-shot at the entity
 static int entity_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) return 0;
@@ -327,41 +349,33 @@ static int entity_PlaySound(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
 
-    std::string bank, cue;
-    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+    std::string bank, cue, lod;
+    if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
 
     auto pos = e->position();
-    mgr->play(bank, cue, &pos);
+    mgr->play(bank, cue, &pos, lod);
     return 0;
 }
 
-/// entity:SetAmbientSound(soundTable, nil) — start/stop looping ambient
-/// SetAmbientSound(nil, nil) stops the current ambient sound.
+/// entity:SetAmbientSound(detail, rumble) -- the entity's two ambient loop
+/// slots; nil stops a slot.
 static int entity_SetAmbientSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (!mgr) return 0;
-
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
-
-    // Stop any existing ambient loop
-    if (e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
+    const char* slots[2] = {"__ambient", "__rumble"};
+    for (int i = 0; i < 2; ++i) {
+        stop_ambient(mgr, e, slots[i]);
+        std::string bank, cue;
+        if (mgr && extract_sound_table(L, 2 + i, bank, cue)) {
+            auto pos = e->position();
+            e->set_ambient_sound(slots[i], mgr->play_loop(bank, cue, &pos));
+        }
     }
-
-    // If arg 2 is a sound table, start a new loop
-    std::string bank, cue;
-    if (extract_sound_table(L, 2, bank, cue)) {
-        auto pos = e->position();
-        auto handle = mgr->play_loop(bank, cue, &pos);
-        e->set_ambient_sound_handle(handle);
-    }
-
     return 0;
 }
 
-/// weapon:PlaySound(soundTable) — play one-shot at owning unit position
+/// weapon:PlaySound(sound) -- a one-shot at the weapon's unit
 static int weapon_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) return 0;
@@ -369,11 +383,11 @@ static int weapon_PlaySound(lua_State* L) {
     auto* unit = check_weapon_unit(L);
     if (!unit || unit->destroyed()) return 0;
 
-    std::string bank, cue;
-    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+    std::string bank, cue, lod;
+    if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
 
     auto pos = unit->position();
-    mgr->play(bank, cue, &pos);
+    mgr->play(bank, cue, &pos, lod);
     return 0;
 }
 
@@ -409,7 +423,8 @@ static bool lookup_blueprint_audio(lua_State* L, const sim::Entity* e,
     return true;
 }
 
-/// unit:PlayUnitSound(soundName) — look up Blueprint.Audio[soundName], play one-shot
+/// unit:PlayUnitSound(name) -- the one-shot Blueprint.Audio[name], at the
+/// unit; true if the blueprint has it.
 static int unit_PlayUnitSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
@@ -417,59 +432,50 @@ static int unit_PlayUnitSound(lua_State* L) {
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
-    std::string bank, cue;
-    int audio_idx = lua_gettop(L);
-    if (!extract_sound_table(L, audio_idx, bank, cue)) {
-        lua_pop(L, 3);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
+    std::string bank, cue, lod;
+    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue, &lod);
     lua_pop(L, 3);
-
-    auto pos = e->position();
-    mgr->play(bank, cue, &pos);
-    lua_pushboolean(L, 1);
+    if (ok) {
+        auto pos = e->position();
+        mgr->play(bank, cue, &pos, lod);
+    }
+    lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
-/// unit:PlayUnitAmbientSound(soundName) — look up Blueprint.Audio[soundName], start loop
+/// unit:PlayUnitAmbientSound(name) -- loop Blueprint.Audio[name] on the
+/// unit under that name; already playing, it carries on. A fallback: retail's
+/// (and FAF's) Unit class defines its own in Lua, which loops the sound on an
+/// attached child entity through SetAmbientSound.
 static int unit_PlayUnitAmbientSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    const std::string name = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+    if (!name.empty() && mgr->is_playing(e->ambient_sound(name))) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
-    int audio_idx = lua_gettop(L);
-    if (!extract_sound_table(L, audio_idx, bank, cue)) {
-        lua_pop(L, 3);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
+    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue);
     lua_pop(L, 3);
-
-    // Stop existing ambient
-    if (e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
+    if (ok) {
+        auto pos = e->position();
+        e->set_ambient_sound(name, mgr->play_loop(bank, cue, &pos));
     }
-    auto pos = e->position();
-    auto handle = mgr->play_loop(bank, cue, &pos);
-    e->set_ambient_sound_handle(handle);
-    lua_pushboolean(L, 1);
+    lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
-/// unit:StopUnitAmbientSound() — stop current ambient loop
+/// unit:StopUnitAmbientSound([name]) -- stop that ambient loop (all of
+/// them without a name)
 static int unit_StopUnitAmbientSound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
     auto* e = check_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 1); return 1; }
-    if (mgr && e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
-    }
+    if (e && !e->destroyed())
+        stop_ambient(get_sound_mgr(L), e, lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -741,12 +747,8 @@ static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
     if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
     if (e) {
-        // Stop ambient sound before destruction
-        if (e->ambient_sound_handle() != 0) {
-            auto* mgr = get_sound_mgr(L);
-            if (mgr) mgr->stop(e->ambient_sound_handle());
-            e->set_ambient_sound_handle(0);
-        }
+        // Its ambient loops end with it.
+        stop_ambient(get_sound_mgr(L), e, nullptr);
 
         // Fire OnNotAdjacentTo for adjacent structures before destruction
         if (e->is_unit()) {

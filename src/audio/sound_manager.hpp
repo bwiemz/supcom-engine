@@ -86,6 +86,8 @@ public:
 
     /// Move a positional sound (an entity's ambient loop follows it).
     void set_position(SoundHandle handle, const sim::Vector3& pos);
+    /// Where a playing positional sound is; false for a 2D or ended one.
+    bool position(SoundHandle handle, sim::Vector3& out) const;
 
     /// The listener: the camera.
     void set_listener(const sim::Vector3& pos, const sim::Vector3& forward);

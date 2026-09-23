@@ -645,6 +645,13 @@ void SoundManager::set_position(SoundHandle handle, const sim::Vector3& pos) {
     it->second->pos = pos;
 }
 
+bool SoundManager::position(SoundHandle handle, sim::Vector3& out) const {
+    auto it = instances_.find(handle);
+    if (it == instances_.end() || it->second->ended || !it->second->positional) return false;
+    out = it->second->pos;
+    return true;
+}
+
 void SoundManager::set_listener(const sim::Vector3& pos, const sim::Vector3& forward) {
     listener_ = pos;
     listener_forward_ = forward;
