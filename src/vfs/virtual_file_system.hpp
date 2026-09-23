@@ -15,7 +15,7 @@ namespace osc::vfs {
 class VirtualFileSystem {
 public:
     /// Add a mount. Earlier mounts have higher priority.
-    void mount(std::string mountpoint, std::unique_ptr<MountPoint> source);
+    void mount(const std::string& mountpoint, std::unique_ptr<MountPoint> source);
 
     /// Read a file from the VFS.
     std::optional<std::vector<char>> read_file(std::string_view path) const;
@@ -40,7 +40,7 @@ public:
     /// both use {'/schook'}). When a script /a/b.lua is run through doscript,
     /// each <hook>/a/b.lua that exists runs afterwards in the same
     /// environment. Stored normalised, in init-script order.
-    void set_hook_dirs(std::vector<std::string> dirs);
+    void set_hook_dirs(const std::vector<std::string>& dirs);
     const std::vector<std::string>& hook_dirs() const { return hook_dirs_; }
 
     /// Normalize a virtual path: lowercase, forward slashes, collapse .. and .

@@ -443,7 +443,13 @@ third_party/
   lua-5.0/     # Vendored Lua 5.0 (LuaPlus fork)
   stb/         # stb_truetype for font rendering
 tests/         # Catch2 unit tests
+tools/         # Formatting check and clang-tidy ratchet (see CONTRIBUTING.md)
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, the formatting and
+clang-tidy checks, the test layers and the engine's less obvious conventions.
 
 ## License
 

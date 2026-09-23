@@ -1,0 +1,39 @@
+# Checks that find real bugs or real waste, not style. Existing findings are
+# a baseline (tools/clang_tidy_baseline.txt) that may only go down: see
+# tools/clang_tidy_ratchet.py and CONTRIBUTING.md.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-branch-clone,
+  -bugprone-exception-escape,
+  -bugprone-switch-missing-default-case,
+  -bugprone-unchecked-optional-access,
+  -bugprone-invalid-enum-default-initialization,
+  performance-*,
+  -performance-enum-size,
+  -performance-avoid-endl,
+  modernize-use-nullptr,
+  modernize-use-override,
+  modernize-use-equals-default,
+  modernize-redundant-void-arg,
+  readability-container-size-empty,
+  readability-misleading-indentation,
+  readability-redundant-string-cstr,
+  readability-redundant-smartptr-get,
+  readability-inconsistent-declaration-parameter-name,
+  misc-redundant-expression,
+  misc-unused-using-decls,
+  misc-misplaced-const,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*
+# Only the project's own headers; not third_party or vcpkg. (The Vulkan
+# create-info structs are zero-initialized by design, hence no
+# invalid-enum-default-initialization above.)
+HeaderFilterRegex: '.*/(src|tests)/.*'
+ExcludeHeaderFilterRegex: '.*/third_party/.*'
+WarningsAsErrors: ''
+FormatStyle: file

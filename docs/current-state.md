@@ -27,8 +27,9 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 364 cases / 6,025 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 365 cases / 6,028 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
+| Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 35 triaged findings. Changed lines follow `.clang-format`. |
 | Data-backed gate on retail (`ctest -L gate`) | All 107 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
 | Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |

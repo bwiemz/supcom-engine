@@ -22,7 +22,9 @@ void TerrainQuadtree::build(const f32* heights, u32 width, u32 height,
     if (width == 0 || height == 0 || !heights) return;
 
     // ~4/3 * (cells / leaf_area) nodes; generous 2x for non-square maps
-    nodes_.reserve(static_cast<size_t>((width / 4 + 1) * (height / 4 + 1) * 2));
+    const size_t leaves_x = static_cast<size_t>(width) / 4 + 1;
+    const size_t leaves_z = static_cast<size_t>(height) / 4 + 1;
+    nodes_.reserve(leaves_x * leaves_z * 2);
 
     nodes_.push_back(Node{});
     build_recursive(0, heights, width, height, cell_size,

@@ -2414,6 +2414,7 @@ int main(int argc, char* argv[]) {
         if (ai_skirmish) {
             const int armies = static_cast<int>(sim_state->army_count());
             std::vector<int> ai_armies;
+            ai_armies.reserve(static_cast<size_t>(armies));
             for (int a = 0; a < armies; ++a) ai_armies.push_back(a); // all AI
             session_mgr.set_ai_armies(ai_armies);
             session_mgr.set_max_armies(armies);

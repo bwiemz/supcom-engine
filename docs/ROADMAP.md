@@ -187,7 +187,7 @@ scripts, windowed, on Linux.
 | M191 | Split `moho_bindings.cpp` | Split by moho class into `src/lua/bindings/{sim,ui}/`. Break the library cycle: lua↔renderer, core→lua/vfs, sim→blueprints. |
 | M192 | Slim `main.cpp` | Move it to `src/app/` (cli, game loop, reload). Move test modes to `tests/integration/`. |
 | M193 | Unit command state machine | Turn `Unit::update` into per-command handlers. |
-| M194 | Style and tooling | `.clang-format` and `.clang-tidy` (baseline plus ratchet), and a contributor guide. |
+| M194 | Style and tooling | `.clang-format` and `.clang-tidy` (baseline plus ratchet), and a contributor guide. **✅** `.clang-format` records the existing style and is enforced on changed lines only (`tools/check_format.sh`). `.clang-tidy` checks for bugs and waste, and `tools/clang_tidy_ratchet.py` holds its per-file findings to a triaged baseline (35) that may only go down. CI's clang job runs both, pinned to LLVM 22. The first run found a null dereference when creating a unit from an unknown blueprint, now fixed. `CONTRIBUTING.md` covers the workflow, the checks, the test layers and the engine's less obvious conventions. |
 
 ### Phase D — Determinism (M195–M199)
 
@@ -349,7 +349,7 @@ in the repo if they contain game assets).
 | A | **Complete and merged** (PR #18). All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
 | A′ | In progress alongside B (M183, the strata fix, landed). |
 | B | **Done.** M184–M189 are done (PRs #20–#27). The retail gate went from 44 to all 99 data modes, and `retail-gap` is empty; `tests/integration/data_tests.cmake` records each step. Phase B is complete; next is Phase C (architecture seams). |
-| C | In progress: M190 (sim/user boundary: interpolation, and a renderer that reads only snapshots) is done; M191 is next. |
+| C | In progress: M190 (the sim/user boundary: interpolation, and a renderer that reads only snapshots) and M194 (the style and static-analysis ratchets, a contributor guide) are done. M191 (the binding split) and M192 (slimming `main.cpp`) move code that the open PRs change, so they wait for those PRs to merge. |
 | D–I | Not started. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)

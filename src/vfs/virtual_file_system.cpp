@@ -85,8 +85,7 @@ std::optional<std::string> VirtualFileSystem::strip_mountpoint(
     return std::nullopt;
 }
 
-void VirtualFileSystem::mount(std::string mountpoint,
-                               std::unique_ptr<MountPoint> source) {
+void VirtualFileSystem::mount(const std::string& mountpoint, std::unique_ptr<MountPoint> source) {
     auto mp = normalize(mountpoint);
     spdlog::debug("VFS: mounting at '{}'", mp);
     mounts_.push_back({std::move(mp), std::move(source)});
@@ -172,7 +171,7 @@ void VirtualFileSystem::clear() {
     mounts_.clear();
 }
 
-void VirtualFileSystem::set_hook_dirs(std::vector<std::string> dirs) {
+void VirtualFileSystem::set_hook_dirs(const std::vector<std::string>& dirs) {
     hook_dirs_.clear();
     for (auto& dir : dirs) {
         auto norm = normalize(dir);

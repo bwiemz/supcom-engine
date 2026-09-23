@@ -175,7 +175,8 @@ TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {
 TEST_CASE("Sound engine: replace-lowest-priority stops the lowest priority", "[audio][engine]") {
     // Music holds two and replaces its lowest priority; Click (priority 3)
     // and Shot (7) both play in it.
-    Sounds s(/*music_limit=*/2, /*ReplaceLowestPriority=*/4, /*click_category=*/1,
+    Sounds s(/*music_limit=*/2, /*music_behavior=*/4 /* ReplaceLowestPriority */,
+             /*click_category=*/1,
              /*click_priority=*/3);
     SoundManager sm(s.dir, false);
     const auto shot = sm.play("Test", "Shot");

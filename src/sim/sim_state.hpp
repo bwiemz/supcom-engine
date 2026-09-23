@@ -313,7 +313,7 @@ public:
     const std::string& share_condition() const { return share_condition_; }
     void set_share_condition(std::string mode);
     ShareMode share_mode() const { return share_mode_; }
-    void set_fog_of_war(std::string mode);
+    void set_fog_of_war(const std::string& mode);
     FogMode fog_mode() const { return fog_mode_; }
 
     /// Common Army: allied (same-team) armies pool their mass/energy each tick,

@@ -1,0 +1,2 @@
+# Python tooling (tools/, tests/integration/): the same 100 columns as the C++.
+line-length = 100

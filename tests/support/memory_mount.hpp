@@ -16,12 +16,12 @@ namespace osc::test {
 
 class MemoryMount final : public osc::vfs::MountPoint {
 public:
-    void add(std::string path, std::vector<char> data) {
+    void add(const std::string& path, std::vector<char> data) {
         files_[osc::vfs::VirtualFileSystem::normalize(path)] = std::move(data);
     }
 
-    void add(std::string path, std::string_view text) {
-        add(std::move(path), std::vector<char>(text.begin(), text.end()));
+    void add(const std::string& path, std::string_view text) {
+        add(path, std::vector<char>(text.begin(), text.end()));
     }
 
     std::optional<std::vector<char>> read_file(
