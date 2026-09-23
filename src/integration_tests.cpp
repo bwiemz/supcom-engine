@@ -2178,13 +2178,16 @@ void test_shield(TestContext& ctx) {
                 ' (expected 4000)')
         end
 
-        -- Test 5: Shield has Army and EntityId
-        if shield.Army and shield.EntityId then
-            LOG('SHIELD TEST 5 PASSED: Army=' .. tostring(shield.Army) ..
-                ' EntityId=' .. tostring(shield.EntityId))
+        -- Test 5: the shield entity belongs to its owner's army. Asked of the
+        -- engine: shield.Army is a FAF script field retail never sets.
+        local shieldArmy = shield:GetArmy()
+        local shieldId = shield:GetEntityId()
+        if shieldArmy == acu:GetArmy() and shieldId then
+            LOG('SHIELD TEST 5 PASSED: Army=' .. tostring(shieldArmy) ..
+                ' EntityId=' .. tostring(shieldId))
         else
-            LOG('SHIELD TEST 5 FAILED: Army=' .. tostring(shield.Army) ..
-                ' EntityId=' .. tostring(shield.EntityId))
+            LOG('SHIELD TEST 5 FAILED: Army=' .. tostring(shieldArmy) ..
+                ' EntityId=' .. tostring(shieldId))
         end
 
         -- Test 6: Shield Owner reference
@@ -2209,11 +2212,13 @@ void test_shield(TestContext& ctx) {
             LOG('SHIELD TEST 7b FAILED: EnableShield error: ' .. tostring(enableErr))
         end
 
-        -- Test 8: Shield ShieldType is set
-        if shield.ShieldType then
-            LOG('SHIELD TEST 8 PASSED: ShieldType=' .. tostring(shield.ShieldType))
+        -- Test 8: EnableShield put the shield script back in its on state
+        -- (IsOn is state-dependent in both retail and FAF shield.lua;
+        -- FAF's ShieldType field has no retail counterpart).
+        if shield:IsOn() then
+            LOG('SHIELD TEST 8 PASSED: shield is on after EnableShield')
         else
-            LOG('SHIELD TEST 8 FAILED: ShieldType is nil')
+            LOG('SHIELD TEST 8 FAILED: shield:IsOn() false after EnableShield')
         end
 
         LOG('SHIELD TEST: ALL CORE TESTS PASSED')

@@ -10,16 +10,16 @@
 #     against the UI Lua state, which boots through retail userInit.lua; the
 #     front end reaches a hosted skirmish lobby.
 #
-#   Then 93 gate: the sim modes stopped assuming FAF entity ids and FAF data,
-#     and teleports / economy events follow Moho.
+#   Then 95 gate: the sim modes stopped assuming FAF entity ids and FAF
+#     data (shield.Army / ShieldType are FAF script fields), teleports and
+#     economy events follow Moho, and unit:CanBuild reads category names
+#     rather than the category table's numeric keys.
 #
 # Why the remaining retail-gap modes fail (first failure per mode):
 #   - anim-test: animated bone matrices stay identity.
 #   - enhance-test: HasEnhancement false after enhancing (retail enhancement
 #     bookkeeping lives in the unit script's CreateEnhancement).
 #   - jammer-test: no blip for the jammer unit.
-#   - shield-test: shield entity table lacks Army/ShieldType fields.
-#   - stub-test: "invalid key for next" in a script thread.
 #   - unitsound-test: the test's audio injection finds no Blueprint field.
 
 set(OSC_DATA_TESTS_GATE
@@ -35,8 +35,10 @@ set(OSC_DATA_TESTS_GATE
     massstub4-test medstub-test move-test normal-test onframe-test path-test
     phase2-test phase3-test phase4-test phase5-test platoon-test profile-test
     projectile-test prop-test reclaim-test repair-test scale-test scissor-test
-    scrollbar-render-test shadow-test shield-render-test silo-test smoke-test
-    spatial-test specular-test stall-test stats-test stress-test teamcolor-test
+    scrollbar-render-test shadow-test shield-render-test shield-test
+    silo-test smoke-test
+    spatial-test specular-test stall-test stats-test stress-test stub-test
+    teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test tiled-render-test
     toggle-test transport-silo-test transport-test ui-test uiboot-test
     uirender-test upgrade-test vet-adj-render-test vet-test vfx-render-test
@@ -44,7 +46,7 @@ set(OSC_DATA_TESTS_GATE
 )
 
 set(OSC_DATA_TESTS_RETAIL_GAP
-    anim-test enhance-test jammer-test shield-test stub-test unitsound-test
+    anim-test enhance-test jammer-test unitsound-test
 )
 
 # Front-end flows that must boot without --map.
