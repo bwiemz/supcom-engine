@@ -20,7 +20,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim);
 void register_prefetch_bindings(LuaState& state);
 
 /// Register the `categories` global (lazily created category objects with
-/// + - * set operators) on a state without sim bindings. Moho gives the UI
+/// + - * set operators) and ParseEntityCategory on a state without sim
+/// bindings. Moho gives the UI
 /// state one too: the game UI's range overlays, selection helpers and
 /// construction tabs build category expressions.
 void register_category_bindings(LuaState& state);

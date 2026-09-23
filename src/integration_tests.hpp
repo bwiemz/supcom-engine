@@ -110,8 +110,11 @@ void test_onframe(TestContext& ctx);
 /// provider's StartLoadingDialog -> CreateGameInterface -> StopLoadingDialog.
 /// `pump_frames(n)` advances n UI frames (threads, OnFrame); `play(n)` plays
 /// n sim ticks as the game loop does (tick, sim beat to the UI, UI frames).
+/// `click(x, z, shift)` is a world left-click under FA's command mode (true
+/// if it issued a command).
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
-                 const std::function<void(int)>& play);
+                 const std::function<void(int)>& play,
+                 const std::function<bool(f32, f32, bool)>& click);
 void test_cursor_render(TestContext& ctx);
 void test_drag_render(TestContext& ctx);
 void test_emitter(TestContext& ctx);

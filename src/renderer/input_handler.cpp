@@ -1,4 +1,5 @@
 #include "renderer/input_handler.hpp"
+#include "sim/build_placement.hpp"
 #include "renderer/renderer.hpp"
 
 #include "sim/sim_state.hpp"
@@ -18,7 +19,7 @@
 namespace osc::renderer {
 
 void InputHandler::update(Renderer& renderer, sim::SimState& sim,
-                          f64 /*dt*/) {
+                          f64 /*dt*/, const std::function<bool()>& mouse_over_ui) {
     f64 mx_d, my_d;
     renderer.mouse_position(mx_d, my_d);
     f32 mx = static_cast<f32>(mx_d);
@@ -27,8 +28,23 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     // Process control groups and camera bookmarks (number keys)
     handle_groups_and_bookmarks(renderer, sim);
 
-    bool lmb = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
-    bool rmb = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
+    const bool lmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
+    const bool rmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
+
+    // A press belongs to whatever was under the cursor when it began. One
+    // that began over FA's panels is theirs until released: the world sees
+    // the button as up throughout, so neither the press nor its release.
+    const bool lmb_down = lmb_raw && !lmb_raw_prev_;
+    const bool rmb_down = rmb_raw && !rmb_raw_prev_;
+    if (lmb_down || rmb_down) {
+        const bool over_ui = mouse_over_ui && mouse_over_ui();
+        if (lmb_down) lmb_on_ui_ = over_ui;
+        if (rmb_down) rmb_on_ui_ = over_ui;
+    }
+    lmb_raw_prev_ = lmb_raw;
+    rmb_raw_prev_ = rmb_raw;
+    bool lmb = lmb_raw && !lmb_on_ui_;
+    bool rmb = rmb_raw && !rmb_on_ui_;
 
     // --- Check if mouse is over minimap ---
     f32 map_w = 0, map_h = 0;
@@ -37,60 +53,69 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         map_h = static_cast<f32>(sim.terrain()->map_height());
     }
 
-    f32 mm_wx, mm_wz;
-    bool on_minimap = renderer.minimap().hit_test(
-        mx, my, renderer.width(), renderer.height(),
-        map_w, map_h, mm_wx, mm_wz);
+    // The minimap takes clicks where it was drawn: the C++ HUD's corner, or
+    // FA's minimap window while that is shown.
+    f32 mm_wx = 0, mm_wz = 0;
+    bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.width(), renderer.height(),
+                                                  map_w, map_h, mm_wx, mm_wz);
 
-    // --- Left mouse: selection or minimap click-to-jump ---
+    // --- Left mouse: selection, or the minimap ---
+    // A press that begins on the minimap is the minimap's until released: it
+    // moves the camera while over the map and never selects or drags a box.
     if (lmb && !lmb_was_pressed_) {
-        if (on_minimap && map_w > 0) {
-            // Minimap click — jump camera to that world position
-            auto& cam = renderer.camera();
-            cam.set_target(mm_wx, mm_wz);
-            lmb_was_pressed_ = lmb;
-            rmb_was_pressed_ = rmb;
-            return; // consume the click
-        }
-        // Normal click — start potential drag
+        lmb_on_minimap_ = on_minimap && map_w > 0;
         drag_start_x_ = mx;
         drag_start_y_ = my;
         dragging_ = false;
     }
 
-    if (lmb && lmb_was_pressed_) {
-        if (on_minimap && map_w > 0) {
-            // Dragging on minimap — continuously move camera
-            auto& cam = renderer.camera();
-            cam.set_target(mm_wx, mm_wz);
-        } else {
-            // Held down — check for drag
-            f32 dx = mx - drag_start_x_;
-            f32 dy = my - drag_start_y_;
-            if (!dragging_ && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
-                dragging_ = true;
-            }
-            if (dragging_) {
-                drag_end_x_ = mx;
-                drag_end_y_ = my;
+    if (lmb && lmb_on_minimap_) {
+        if (on_minimap) renderer.camera().set_target(mm_wx, mm_wz);
+    } else if (lmb && lmb_was_pressed_) {
+        // Held down — check for drag
+        f32 dx = mx - drag_start_x_;
+        f32 dy = my - drag_start_y_;
+        if (!dragging_ && (dx * dx + dy * dy) > DRAG_THRESHOLD * DRAG_THRESHOLD) {
+            dragging_ = true;
+        }
+        if (dragging_) {
+            drag_end_x_ = mx;
+            drag_end_y_ = my;
 
-                // Update world-space drag rect
-                const auto& cam = renderer.camera();
-                f32 w = static_cast<f32>(renderer.width());
-                f32 h = static_cast<f32>(renderer.height());
-                cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0,
-                                    drag_world_x0_, drag_world_z0_);
-                cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0,
-                                    drag_world_x1_, drag_world_z1_);
-            }
+            // Update world-space drag rect
+            const auto& cam = renderer.camera();
+            f32 w = static_cast<f32>(renderer.width());
+            f32 h = static_cast<f32>(renderer.height());
+            cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0,
+                                drag_world_x0_, drag_world_z0_);
+            cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0,
+                                drag_world_x1_, drag_world_z1_);
         }
     }
 
+    // FA's command mode (a build icon or order button picked in the UI)
+    // turns a world click into that command.
+    const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
+    const bool mode_active = mode.mode == "build" || mode.mode == "order";
+
     if (!lmb && lmb_was_pressed_) {
         // Left button just released
-        if (dragging_) {
+        if (lmb_on_minimap_) {
+            lmb_on_minimap_ = false; // the minimap's press: nothing more to do
+        } else if (dragging_) {
             handle_drag_select(renderer, sim);
             dragging_ = false;
+        } else if (!on_minimap && mode_active) {
+            f32 wx, wz;
+            const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                               renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+            if (renderer.camera().screen_to_world(
+                    mx, my, static_cast<f32>(renderer.width()),
+                    static_cast<f32>(renderer.height()), 0, wx, wz)) {
+                if (auto issued = click_in_command_mode(sim, mode, wx, wz, shift);
+                    issued && mode_hooks_.issued)
+                    mode_hooks_.issued(*issued);
+            }
         } else if (!on_minimap) {
             handle_left_click(renderer, sim, mx, my);
         }
@@ -125,6 +150,9 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             sim.set_human_input_active(false);
             spdlog::debug("Minimap move: {} units to ({:.0f},{:.0f})",
                           selected_.size(), mm_wx, mm_wz);
+        } else if (mode_active) {
+            // Right-click leaves the command mode, as in FA.
+            if (mode_hooks_.cancel) mode_hooks_.cancel();
         } else {
             handle_right_click(renderer, sim, mx, my);
         }
@@ -159,6 +187,7 @@ void InputHandler::handle_left_click(Renderer& renderer,
             selected_.insert(picked);
     }
 
+    selection_event_ = true;
     spdlog::debug("Selection: {} units (click at world {:.0f},{:.0f})",
                   selected_.size(), wx, wz);
 }
@@ -193,6 +222,7 @@ void InputHandler::handle_drag_select(Renderer& renderer,
         selected_.insert(id);
     }
 
+    selection_event_ = true;
     spdlog::debug("Drag select: {} units in rect ({:.0f},{:.0f})-({:.0f},{:.0f})",
                   selected_.size(), wx0, wz0, wx1, wz1);
 }
@@ -258,6 +288,115 @@ void InputHandler::handle_right_click(Renderer& renderer,
     spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
                   enemy_id ? "Attack" : "Move",
                   selected_.size(), wx, wz);
+}
+
+namespace {
+
+/// An FA order cap and the sim command it issues. `targets_unit`: the order
+/// needs a unit (or, for reclaim, any entity) under the click.
+struct OrderSpec {
+    const char* cap;
+    sim::CommandType type;
+    const char* fa_type; // CommandType as FA's OnCommandIssued sees it
+    bool targets_unit;
+};
+
+constexpr OrderSpec kOrders[] = {
+    {"RULEUCC_Move", sim::CommandType::Move, "Move", false},
+    {"RULEUCC_Attack", sim::CommandType::Attack, "Attack", false},
+    {"RULEUCC_Patrol", sim::CommandType::Patrol, "Patrol", false},
+    {"RULEUCC_Guard", sim::CommandType::Guard, "Guard", true},
+    {"RULEUCC_Reclaim", sim::CommandType::Reclaim, "Reclaim", true},
+    {"RULEUCC_Repair", sim::CommandType::Repair, "Repair", true},
+    {"RULEUCC_Capture", sim::CommandType::Capture, "Capture", true},
+    {"RULEUCC_Transport", sim::CommandType::TransportUnload, "TransportUnloadUnits", false},
+    {"RULEUCC_Ferry", sim::CommandType::Ferry, "Ferry", false},
+    {"RULEUCC_Teleport", sim::CommandType::Teleport, "Teleport", false},
+    {"RULEUCC_Nuke", sim::CommandType::Nuke, "Nuke", false},
+    {"RULEUCC_Tactical", sim::CommandType::Tactical, "Tactical", false},
+    {"RULEUCC_Overcharge", sim::CommandType::Overcharge, "Overcharge", true},
+    {"RULEUCC_Sacrifice", sim::CommandType::Sacrifice, "Sacrifice", true},
+};
+
+} // namespace
+
+std::optional<IssuedCommand> InputHandler::click_in_command_mode(
+    sim::SimState& sim, const CommandMode& mode, f32 wx, f32 wz, bool shift) {
+    IssuedCommand out;
+    out.clear = !shift;
+    sim::UnitCommand cmd;
+    std::vector<u32> ids;
+
+    auto live_selected = [&](auto keep) {
+        for (u32 uid : selected_) {
+            auto* e = sim.entity_registry().find(uid);
+            if (!e || !e->is_unit() || e->destroyed()) continue;
+            if (keep(static_cast<const sim::Unit&>(*e))) ids.push_back(uid);
+        }
+        std::sort(ids.begin(), ids.end());
+    };
+    auto surface_y = [&](f32 x, f32 z) {
+        return sim.terrain() ? sim.terrain()->get_surface_height(x, z) : 0.0f;
+    };
+
+    if (mode.mode == "build") {
+        if (mode.name.empty()) return std::nullopt;
+        sim::snap_structure_center(wx, wz, mode.footprint_x, mode.footprint_z);
+        // Mobile builders take the order; factories build through their queue.
+        live_selected([](const sim::Unit& u) {
+            return u.build_rate() > 0 && !u.has_category("STRUCTURE");
+        });
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.blueprint_id = mode.name;
+        out.type = "BuildMobile";
+        out.blueprint = mode.name;
+    } else if (mode.mode == "order") {
+        const OrderSpec* spec = nullptr;
+        for (const auto& o : kOrders)
+            if (mode.name == o.cap) { spec = &o; break; }
+        if (!spec) return std::nullopt;
+        cmd.type = spec->type;
+        out.type = spec->fa_type;
+        cmd.target_id = pick_any_unit(sim, wx, wz, 5.0f,
+                                      spec->type == sim::CommandType::Reclaim);
+        if (spec->targets_unit && cmd.target_id == 0) return std::nullopt;
+        live_selected([&](const sim::Unit& u) {
+            return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
+        });
+    } else {
+        return std::nullopt; // no mode, or one without a world click (ping)
+    }
+    if (ids.empty()) return std::nullopt;
+
+    cmd.target_pos = {wx, surface_y(wx, wz), wz};
+    cmd.command_id = sim.next_command_id();
+    out.position = cmd.target_pos;
+    out.target_id = cmd.target_id;
+    // Player-issued order: routed so a networked match broadcasts it.
+    sim.set_human_input_active(true);
+    sim.route_command(ids, cmd, !shift);
+    sim.set_human_input_active(false);
+    return out;
+}
+
+u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
+                                f32 radius, bool reclaim) const {
+    u32 best_id = 0;
+    f32 best_dist2 = radius * radius;
+    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
+        auto* e = sim.entity_registry().find(id);
+        if (!e || e->destroyed()) continue;
+        if (reclaim ? !((e->is_unit() || e->is_prop()) && e->reclaimable()) : !e->is_unit())
+            continue;
+        const f32 dx = e->position().x - wx;
+        const f32 dz = e->position().z - wz;
+        const f32 d2 = dx * dx + dz * dz;
+        if (d2 <= best_dist2) {
+            best_dist2 = d2;
+            best_id = id;
+        }
+    }
+    return best_id;
 }
 
 u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
@@ -337,6 +476,7 @@ void InputHandler::handle_groups_and_bookmarks(Renderer& renderer,
                     }
 
                     selected_ = live;
+                    selection_event_ = true;
                     spdlog::debug("Control group {} recalled: {} units",
                                   i, selected_.size());
                 }

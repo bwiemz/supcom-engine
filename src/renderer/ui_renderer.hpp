@@ -5,9 +5,11 @@
 #include "renderer/font_cache.hpp"
 #include "core/types.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/ui_layout.hpp"
 
 #include <vulkan/vulkan.h>
 
+#include <functional>
 #include <vector>
 
 struct lua_State;
@@ -37,6 +39,15 @@ struct UIInstance {
     f32 color[4];  // r, g, b, a
 };
 
+/// A UI quad with its texture: what a world view draws into the UI.
+struct UIQuad {
+    UIInstance inst{};
+    VkDescriptorSet texture_ds = VK_NULL_HANDLE;
+};
+
+/// Draws a world view's content into its rect, appending quads.
+using WorldViewPainter = std::function<void(const ui::ControlRect&, std::vector<UIQuad>&)>;
+
 /// A batch of UI quads sharing the same texture descriptor and clip rect.
 struct UIDrawGroup {
     VkDescriptorSet texture_ds = VK_NULL_HANDLE;
@@ -51,10 +62,12 @@ public:
     void init(VkDevice device, VmaAllocator allocator);
 
     /// Walk all controls, read LazyVar positions from Lua, build quad list.
+    /// A shown minimap WorldView is filled by `minimap` (if given).
     void update(lua_State* L, const ui::UIControlRegistry& registry,
                 TextureCache& tex_cache, FontCache& font_cache,
                 u32 viewport_w, u32 viewport_h,
-                f32 mouse_x = 0, f32 mouse_y = 0);
+                f32 mouse_x = 0, f32 mouse_y = 0,
+                const WorldViewPainter& minimap = {});
 
     /// Advance playing bitmap animations by delta_time seconds.
     void advance_animations(lua_State* L, const ui::UIControlRegistry& registry,
@@ -70,7 +83,7 @@ public:
 
     u32 quad_count() const { return quad_count_; }
 
-    static constexpr u32 MAX_UI_QUADS = 2048;
+    static constexpr u32 MAX_UI_QUADS = 8192;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// Read a LazyVar float from a control's Lua table.
@@ -85,6 +98,9 @@ public:
     }
 
 private:
+    /// Record the visible main world views (occluders) under `ctrl`.
+    void collect_world_views(lua_State* L, ui::UIControl* ctrl);
+
     /// Collect quads by walking a control and its children recursively.
     void collect_control(lua_State* L, ui::UIControl* ctrl,
                          TextureCache& tex_cache, FontCache& font_cache,
@@ -126,8 +142,12 @@ private:
         VkDescriptorSet texture_ds = VK_NULL_HANDLE;
         ClipRect clip{};
         f32 depth = 0.0f;
+        ui::DrawBand band = ui::DrawBand::Overlay;
     };
     std::vector<QuadEntry> quads_;
+    const WorldViewPainter* minimap_painter_ = nullptr; // during update()
+    std::vector<UIQuad> painted_; // scratch for world view content
+    std::vector<ui::WorldOccluder> world_views_; // this frame's main world views
     std::vector<UIDrawGroup> groups_;
     u32 quad_count_ = 0;
     f32 mouse_x_ = 0;

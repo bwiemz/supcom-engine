@@ -114,6 +114,13 @@ public:
     bool bloom_enabled() const { return bloom_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
+
+    /// --legacy-hud: keep drawing the engine's C++ HUD placeholders (economy
+    /// bars, minimap, selection panel, game-over banner) while FA's own game
+    /// interface is up. Without it they only stand in when there is none.
+    void set_legacy_hud(bool enabled) { legacy_hud_ = enabled; }
+    /// Whether this frame draws the C++ HUD placeholders.
+    bool legacy_hud_active() const { return legacy_hud_active_; }
     u32 width() const { return window_width_; }
     u32 height() const { return window_height_; }
 
@@ -323,6 +330,8 @@ private:
 
     // Bloom post-processing
     bool bloom_enabled_ = true;
+    bool legacy_hud_ = false;        // --legacy-hud
+    bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
     f32 bloom_threshold_ = 0.8f;
     f32 bloom_intensity_ = 1.2f;
     f32 bloom_strength_ = 0.3f;

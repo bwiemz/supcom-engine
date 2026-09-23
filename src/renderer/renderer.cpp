@@ -1,5 +1,12 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "core/ui_registry_keys.hpp"
+#include "sim/build_placement.hpp"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 #include "renderer/dds_parser.hpp"
 #include "platform/paths.hpp"
 #include "core/profiler.hpp"
@@ -1442,6 +1449,7 @@ void Renderer::create_bloom_pipelines() {
 
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
+    minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
 
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
@@ -1895,6 +1903,40 @@ void Renderer::build_scene(const sim::SimState& sim,
 void Renderer::render(sim::SimState& sim, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
+    // FA's own game interface replaces the C++ HUD placeholders.
+    {
+        bool world_ui = false;
+        if (L) {
+            lua_pushstring(L, core::kWorldUiActiveKey);
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            world_ui = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
+        legacy_hud_active_ = legacy_hud_ || !world_ui;
+
+        // Intel range rings: all with the C++ HUD; with FA's UI, only the
+        // intel types its range-overlay filters enable (SetOverlayFilters).
+        std::unordered_set<std::string> rings;
+        if (legacy_hud_active_) {
+            rings = kAllIntelRingTypes;
+        } else if (L) {
+            std::vector<std::string> filters;
+            lua_pushstring(L, core::kOverlayFiltersKey);
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (lua_istable(L, -1)) {
+                const int n = luaL_getn(L, lua_gettop(L));
+                for (int i = 1; i <= n; ++i) {
+                    lua_rawgeti(L, -1, i);
+                    if (lua_type(L, -1) == LUA_TSTRING) filters.emplace_back(lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+            rings = intel_ring_types_for_filters(filters);
+        }
+        overlay_renderer_.set_intel_ring_types(std::move(rings));
+    }
+
     PROFILE_ZONE("Render::frame");
     // Select current frame's sync objects
     u32 fi = frame_index_;
@@ -1927,6 +1969,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     ui_renderer_.set_frame_index(fi);
     overlay_renderer_.set_frame_index(fi);
     minimap_renderer_.set_frame_index(fi);
+    minimap_renderer_.begin_frame();
     strategic_icon_renderer_.set_frame_index(fi);
     hud_renderer_.set_frame_index(fi);
     selection_info_renderer_.set_frame_index(fi);
@@ -1981,15 +2024,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             f32 size_x = sim.build_ghost_foot_x();
             f32 size_z = sim.build_ghost_foot_z();
 
-            // Snap to grid (structures align to 1-unit grid in FA)
-            wx = std::floor(wx) + 0.5f;
-            wz = std::floor(wz) + 0.5f;
-
-            // Re-snap to footprint grid (center on even/odd footprint)
-            if (static_cast<int>(size_x) % 2 == 0)
-                wx = std::floor(wx);
-            if (static_cast<int>(size_z) % 2 == 0)
-                wz = std::floor(wz);
+            // Where a build order at the cursor would place it
+            sim::snap_structure_center(wx, wz, size_x, size_z);
 
             f32 wy = sim.terrain()->get_terrain_height(wx, wz);
 
@@ -2040,10 +2076,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
         }
         ui_dispatch_.dispatch_events(L, *ui_registry);
+        // FA's minimap WorldView shows the minimap, drawn with the UI.
+        WorldViewPainter minimap_painter;
+        if (!legacy_hud_active_) {
+            minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
+                minimap_renderer_.paint(sim, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                                        window_width_, window_height_, out);
+            };
+        }
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
                             window_width_, window_height_,
                             static_cast<f32>(ui_dispatch_.mouse_x()),
-                            static_cast<f32>(ui_dispatch_.mouse_y()));
+                            static_cast<f32>(ui_dispatch_.mouse_y()),
+                            minimap_painter);
     }
 
     // Stage fog of war data from visibility grid (CPU side)
@@ -2056,7 +2101,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         PROFILE_ZONE("Render::overlay_update");
         overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_,
-                                 sim.player_result(), frame_dt_, &frustum);
+                                 legacy_hud_active_ ? sim.player_result() : 0,
+                                 frame_dt_, &frustum);
     }
 
     // Update particle system (sync effects, step physics, build GPU data)
@@ -2072,22 +2118,25 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     particle_renderer_.update(particle_instances, particle_system_, texture_cache_, fi);
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
-    minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
-                              window_width_, window_height_);
+    if (legacy_hud_active_)
+        minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
+                                  window_width_, window_height_);
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(sim, camera_, vp, selected_ids,
                                      texture_cache_,
                                      window_width_, window_height_);
 
-    // Update economy HUD
-    hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
-                          window_width_, window_height_);
+    if (legacy_hud_active_) {
+        // Update economy HUD
+        hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
+                              window_width_, window_height_);
 
-    // Update selection info panel
-    selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
-                                    strategic_icon_renderer_.atlas_descriptor(),
-                                    window_width_, window_height_);
+        // Update selection info panel
+        selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
+                                        strategic_icon_renderer_.atlas_descriptor(),
+                                        window_width_, window_height_);
+    }
 
     // Update profile overlay
     profile_overlay_.update(font_cache_, texture_cache_,
@@ -2681,7 +2730,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 8. Draw minimap (terrain bg + unit dots + camera box)
-    if (ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -2689,7 +2738,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 9. Draw economy HUD (resource bars + text at top of screen)
-    if (ui_pipeline_ && hud_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         hud_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -2697,7 +2746,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 10. Draw selection info panel (bottom-center unit details)
-    if (ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -2763,6 +2812,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
     // (debug removed)
+    minimap_renderer_.begin_frame(); // no world, so no minimap this frame
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 

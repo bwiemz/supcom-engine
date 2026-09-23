@@ -6,6 +6,7 @@
 #include "core/types.hpp"
 
 #include <array>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -17,6 +18,17 @@ namespace osc::renderer {
 
 class Camera;
 class TextureCache;
+
+/// Every intel type a selected unit can show a range ring for.
+inline const std::unordered_set<std::string> kAllIntelRingTypes{"Radar", "Sonar", "Omni",
+                                                                 "Vision"};
+
+/// Intel types to show rings for, given FA's active range-overlay filters:
+/// the RangeOverlayParams names multifunction.lua passes to
+/// SetOverlayFilters ("Radar", "Sonar", "Omni", or "AllIntel" for all
+/// three). Military and counter-intel filters have no ring here.
+std::unordered_set<std::string> intel_ring_types_for_filters(
+    const std::vector<std::string>& filters);
 
 /// Renders game overlays: health bars, selection rings, command lines.
 /// Uses the same UI pipeline (UIInstance quads, pixel coords, fallback white texture).
@@ -42,12 +54,20 @@ public:
 
     void set_frame_index(u32 fi) { fi_ = fi; }
 
+    /// Intel types whose range rings selected units show ("Radar", "Sonar",
+    /// "Omni", "Vision"). FA shows them per its range-overlay filters; the
+    /// C++ HUD (no FA game UI, or --legacy-hud) shows them all.
+    void set_intel_ring_types(std::unordered_set<std::string> types) {
+        intel_ring_types_ = std::move(types);
+    }
+
     u32 quad_count() const { return quad_count_; }
 
     static constexpr u32 MAX_OVERLAY_QUADS = 8192;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    std::unordered_set<std::string> intel_ring_types_ = kAllIntelRingTypes;
     /// Project world position to screen pixel coordinates.
     /// Returns false if behind camera.
     static bool world_to_screen(f32 wx, f32 wy, f32 wz,

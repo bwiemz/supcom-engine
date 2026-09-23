@@ -151,3 +151,22 @@ TEST_CASE("placement: extractors need a free deposit", "[placement]") {
     StructurePlacement after(sim, 0, rules_for);
     CHECK_FALSE(after.can_build("mex", 30.0f, 40.0f)); // deposit taken
 }
+
+TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
+    // Odd footprints center on a cell, even ones on a cell corner, so the
+    // footprint covers whole cells -- the ghost and the order agree.
+    float x = 10.3f, z = 20.8f;
+    osc::sim::snap_structure_center(x, z, 1.0f, 1.0f);
+    CHECK(x == 10.5f);
+    CHECK(z == 20.5f);
+
+    x = 10.3f; z = 20.8f;
+    osc::sim::snap_structure_center(x, z, 2.0f, 4.0f);
+    CHECK(x == 10.0f);
+    CHECK(z == 20.0f);
+
+    x = 10.9f; z = 20.1f;
+    osc::sim::snap_structure_center(x, z, 3.0f, 2.0f);
+    CHECK(x == 10.5f);
+    CHECK(z == 20.0f);
+}

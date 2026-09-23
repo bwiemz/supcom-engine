@@ -8,6 +8,10 @@
 
 namespace osc::sim {
 
+/// Func name of a UserUnit:ProcessInfo(action, value) request (Args Action,
+/// Value; unit_ids = the unit). Handled by the engine, not SimCallbacks.lua.
+inline constexpr const char* kProcessInfoCallback = "__osc_ProcessInfo";
+
 struct SimCallbackEntry {
     std::string func_name;
     // Args: simple key→value map. Values can be string, number, or bool.

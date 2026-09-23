@@ -65,6 +65,10 @@ public:
 
     // --- Destroyed flag ---
     bool destroyed() const { return destroyed_; }
+    /// Its Destroy has begun (children and OnDestroy still running): a
+    /// Destroy from those scripts must not start it again.
+    bool destroying() const { return destroying_; }
+    void set_destroying() { destroying_ = true; }
     void mark_destroyed() { destroyed_ = true; }
 
     // --- Type flags ---
@@ -300,6 +304,7 @@ private:
     int lua_table_ref_ = -2; // LUA_NOREF
     UIControl* parent_ = nullptr;
     std::vector<UIControl*> children_;
+    bool destroying_ = false;
     bool hidden_ = false;
     f32 alpha_ = 1.0f;
     bool hit_test_disabled_ = false;

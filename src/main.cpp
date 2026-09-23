@@ -37,6 +37,7 @@
 #include "ui/wld_ui_provider.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/input_handler.hpp"
+#include "ui/world_view.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -276,6 +277,7 @@ static void print_usage() {
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
+              << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
               << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
               << "  --golden-update    Record the golden image instead of comparing\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
@@ -851,13 +853,296 @@ static bool execute_reload_sequence(
     return true;
 }
 
-/// A changed selection reaches the UI as Moho reports it,
+/// Apply the UI's queued SimCallbacks to the sim, as their tick does:
+/// retail /lua/SimCallbacks.lua DoCallback(name, args, units). ProcessInfo
+/// requests (UserUnit:ProcessInfo -- auto mode, repeat queue) travel the
+/// same queue. Like the UI's other unit-setting toggles (pause, fire state,
+/// script bits), they change this client's sim directly: lockstep
+/// multiplayer does not broadcast unit settings yet (roadmap Phase G);
+/// only orders issued through route_command are.
+static void apply_sim_callbacks(osc::sim::SimCallbackQueue& queue,
+                                osc::sim::SimState& sim,
+                                osc::lua::LuaState& sim_lua) {
+    if (queue.empty()) return;
+    auto callbacks = queue.drain();
+    lua_State* sL = sim_lua.raw();
+    auto* sim_state = &sim;
+
+    // ProcessInfo(action, value): the unit's own method of that name, with
+    // the value as a boolean -- for the settings the UI sends this way only
+    // (retail: auto mode, repeat build; FAF's construction panel also pauses
+    // factories), never an arbitrary method a UI script names.
+    static const std::unordered_set<std::string> kProcessInfoActions = {
+        "SetAutoMode", "SetRepeatQueue", "SetPaused"};
+    auto process_info = [&](const osc::sim::SimCallbackEntry& cb) {
+        auto get = [&](const char* key) -> std::string {
+            auto it = cb.args.find(key);
+            if (it == cb.args.end()) return {};
+            if (auto* str = std::get_if<std::string>(&it->second)) return *str;
+            return {};
+        };
+        const std::string action = get("Action");
+        const bool value = get("Value") == "true";
+        if (!kProcessInfoActions.count(action)) {
+            spdlog::warn("ProcessInfo: unsupported action '{}'", action);
+            return;
+        }
+        for (osc::u32 eid : cb.unit_ids) {
+            auto* e = sim.entity_registry().find(eid);
+            if (!e || !e->is_unit() || e->destroyed() || e->lua_table_ref() < 0) continue;
+            lua_rawgeti(sL, LUA_REGISTRYINDEX, e->lua_table_ref());
+            const int unit = lua_gettop(sL);
+            lua_pushstring(sL, action.c_str());
+            lua_gettable(sL, unit);
+            if (lua_isfunction(sL, -1)) {
+                lua_pushvalue(sL, unit);
+                lua_pushboolean(sL, value ? 1 : 0);
+                if (lua_pcall(sL, 2, 0, 0) != 0) {
+                    spdlog::warn("ProcessInfo {} error: {}", action, lua_tostring(sL, -1));
+                    lua_pop(sL, 1);
+                }
+            } else {
+                lua_pop(sL, 1);
+            }
+            lua_pop(sL, 1); // unit table
+        }
+    };
+
+    // These callbacks carry the local player's UI-panel orders,
+    // so mark human input active: in multiplayer route_command
+    // then forwards them to the lockstep session for broadcast
+    // (single-player applies them directly, unaffected).
+    sim_state->set_human_input_active(true);
+
+    // Import SimCallbacks module once for the batch
+    lua_pushstring(sL, "import");
+    lua_rawget(sL, LUA_GLOBALSINDEX);
+    bool have_module = false;
+    if (lua_isfunction(sL, -1)) {
+        lua_pushstring(sL, "/lua/SimCallbacks.lua");
+        if (lua_pcall(sL, 1, 1, 0) == 0 && lua_istable(sL, -1)) {
+            have_module = true;
+        } else {
+            if (lua_isstring(sL, -1))
+                spdlog::warn("SimCallback import error: {}", lua_tostring(sL, -1));
+            lua_pop(sL, 1);
+        }
+    } else {
+        lua_pop(sL, 1);
+    }
+
+    if (have_module) {
+        int mod = lua_gettop(sL);
+        for (const auto& cb : callbacks) {
+            if (cb.func_name == osc::sim::kProcessInfoCallback) {
+                process_info(cb);
+                continue;
+            }
+            // Get DoCallback function (re-fetch each time since pcall may error)
+            lua_pushstring(sL, "DoCallback");
+            lua_rawget(sL, mod);
+            if (!lua_isfunction(sL, -1)) {
+                lua_pop(sL, 1);
+                continue;
+            }
+
+            // Arg 1: func name
+            lua_pushstring(sL, cb.func_name.c_str());
+
+            // Arg 2: args table
+            lua_newtable(sL);
+            for (const auto& [key, val] : cb.args) {
+                lua_pushstring(sL, key.c_str());
+                std::visit([&](const auto& v) {
+                    using T = std::decay_t<decltype(v)>;
+                    if constexpr (std::is_same_v<T, std::string>) {
+                        lua_pushstring(sL, v.c_str());
+                    } else if constexpr (std::is_same_v<T, osc::f64>) {
+                        lua_pushnumber(sL, static_cast<lua_Number>(v));
+                    } else if constexpr (std::is_same_v<T, bool>) {
+                        lua_pushboolean(sL, v ? 1 : 0);
+                    }
+                }, val);
+                lua_rawset(sL, -3);
+            }
+
+            // Arg 3: units table (array of unit entity tables), or nil
+            if (!cb.unit_ids.empty()) {
+                lua_newtable(sL);
+                int units_tbl = lua_gettop(sL);
+                int idx = 1;
+                for (osc::u32 eid : cb.unit_ids) {
+                    auto* entity = sim_state->entity_registry().find(eid);
+                    if (entity && entity->is_unit() && !entity->destroyed()) {
+                        if (entity->lua_table_ref() >= 0) {
+                            lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
+                            lua_rawseti(sL, units_tbl, idx++);
+                        }
+                    }
+                }
+            } else {
+                lua_pushnil(sL); // no units
+            }
+
+            // Call DoCallback(name, args, units)
+            if (lua_pcall(sL, 3, 0, 0) != 0) {
+                const char* err = lua_tostring(sL, -1);
+                spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
+                lua_pop(sL, 1);
+            }
+        }
+        lua_pop(sL, 1); // pop module table
+    }
+    sim_state->set_human_input_active(false);
+}
+
+/// Whether the cursor is over FA's UI rather than the world: the deepest
+/// hit-testable control under it is neither a WorldView (FA's world input
+/// surface) nor the root frame.
+static bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
+    lua_pushstring(uiL, "__osc_root_frame");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    osc::ui::UIControl* root = nullptr;
+    if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "_c_object");
+        lua_rawget(uiL, -2);
+        root = static_cast<osc::ui::UIControl*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1);
+    if (!root) return false;
+    osc::ui::UIDispatch dispatch;
+    auto* hit = dispatch.hit_test(uiL, root, x, y);
+    return hit && hit != root && !dynamic_cast<osc::ui::WorldView*>(hit);
+}
+
+// ── FA's command mode (/lua/ui/game/commandmode.lua) ──
+static constexpr const char* kCommandModeModule = "/lua/ui/game/commandmode.lua";
+
+/// A unit blueprint's footprint from the UI state's blueprint store.
+static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f32& sx,
+                                osc::f32& sz) {
+    auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (!entry) return;
+    store->push_lua_table(*entry, uiL);
+    lua_pushstring(uiL, "Footprint");
+    lua_rawget(uiL, -2);
+    if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "SizeX");
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) sx = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        lua_pop(uiL, 1);
+        lua_pushstring(uiL, "SizeZ");
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) sz = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 2); // Footprint + blueprint
+}
+
+/// FA's current command mode: GetCommandMode() -> {mode, data}, once the
+/// game UI has loaded the module. Build mode carries the footprint (for
+/// the ghost and the snap).
+static osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
+    osc::renderer::CommandMode m;
+    osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
+    if (!lua_isfunction(uiL, -1)) {
+        lua_pop(uiL, 1);
+        return m;
+    }
+    if (lua_pcall(uiL, 0, 1, 0) != 0) {
+        spdlog::warn("GetCommandMode error: {}", lua_tostring(uiL, -1));
+        lua_pop(uiL, 1);
+        return m;
+    }
+    if (lua_istable(uiL, -1)) {
+        lua_rawgeti(uiL, -1, 1);
+        if (lua_type(uiL, -1) == LUA_TSTRING) m.mode = lua_tostring(uiL, -1);
+        lua_pop(uiL, 1);
+        lua_rawgeti(uiL, -1, 2);
+        if (lua_istable(uiL, -1)) {
+            lua_pushstring(uiL, "name");
+            lua_rawget(uiL, -2);
+            if (lua_type(uiL, -1) == LUA_TSTRING) m.name = lua_tostring(uiL, -1);
+            lua_pop(uiL, 1);
+        }
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1);
+    if (m.mode == "build" && !m.name.empty())
+        blueprint_footprint(uiL, m.name, m.footprint_x, m.footprint_z);
+    return m;
+}
+
+/// Report an issued command to commandmode.OnCommandIssued, as Moho does:
+/// a non-Shift command ends the mode, and FA draws its feedback blip.
+static void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c) {
+    lua_newtable(uiL);
+    lua_pushstring(uiL, "CommandType");
+    lua_pushstring(uiL, c.type.c_str());
+    lua_rawset(uiL, -3);
+    lua_pushstring(uiL, "Clear");
+    lua_pushboolean(uiL, c.clear ? 1 : 0);
+    lua_rawset(uiL, -3);
+    if (!c.blueprint.empty()) {
+        lua_pushstring(uiL, "Blueprint");
+        lua_pushstring(uiL, c.blueprint.c_str());
+        lua_rawset(uiL, -3);
+    }
+    lua_pushstring(uiL, "Target");
+    lua_newtable(uiL);
+    lua_pushstring(uiL, "Type");
+    lua_pushstring(uiL, c.target_id ? "Entity" : "Position");
+    lua_rawset(uiL, -3);
+    if (c.target_id) {
+        lua_pushstring(uiL, "EntityId");
+        lua_pushnumber(uiL, c.target_id);
+        lua_rawset(uiL, -3);
+    }
+    lua_pushstring(uiL, "Position");
+    lua_newtable(uiL);
+    lua_pushnumber(uiL, c.position.x);
+    lua_rawseti(uiL, -2, 1);
+    lua_pushnumber(uiL, c.position.y);
+    lua_rawseti(uiL, -2, 2);
+    lua_pushnumber(uiL, c.position.z);
+    lua_rawseti(uiL, -2, 3);
+    lua_rawset(uiL, -3); // Target.Position
+    lua_rawset(uiL, -3); // command.Target
+    osc::core::call_ui_callback(uiL, kCommandModeModule, "OnCommandIssued", 1);
+}
+
+/// Leave FA's command mode, cancelled (a right-click).
+static void cancel_command_mode(lua_State* uiL) {
+    lua_pushboolean(uiL, 1);
+    osc::core::call_ui_callback(uiL, kCommandModeModule, "EndCommandMode", 1);
+}
+
+/// Show the build ghost while FA is in build mode. The ghost is cleared
+/// only if this set it (other code may place ghosts too).
+static void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::CommandMode& m,
+                             bool& ghost_from_mode) {
+    if (m.mode == "build" && !m.name.empty()) {
+        sim.set_build_ghost(m.name, m.footprint_x, m.footprint_z);
+        ghost_from_mode = true;
+    } else if (ghost_from_mode) {
+        sim.clear_build_ghost();
+        ghost_from_mode = false;
+    }
+}
+
+/// A selection action reaches the UI as Moho reports it,
 /// gamemain.OnSelectionChanged(old, new, added, removed), and then the
-/// engine's own AddOnSelectionChangedCallback callbacks. `prev` becomes `cur`.
+/// engine's own AddOnSelectionChangedCallback callbacks. Moho reports every
+/// action (`action`), even one that leaves the selection unchanged -- retail
+/// refreshes the orders and construction panels on those -- as well as any
+/// change. `prev` becomes `cur`.
 static void dispatch_selection_change(lua_State* uL,
                                       std::unordered_set<osc::u32>& prev,
-                                      const std::unordered_set<osc::u32>& cur) {
-    if (cur == prev) return;
+                                      const std::unordered_set<osc::u32>& cur,
+                                      bool action) {
+    if (cur == prev && !action) return;
     std::vector<osc::u32> old_ids(prev.begin(), prev.end());
     std::vector<osc::u32> new_ids(cur.begin(), cur.end());
     std::sort(old_ids.begin(), old_ids.end());
@@ -1483,6 +1768,7 @@ int main(int argc, char* argv[]) {
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
     bool dualstate_test = parse_flag(argc, argv, "--dualstate-test");
     bool no_fog = parse_flag(argc, argv, "--no-fog");
+    bool legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
     bool profile_test = parse_flag(argc, argv, "--profile-test");
@@ -2389,9 +2675,20 @@ int main(int argc, char* argv[]) {
 
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
+            if (legacy_hud) renderer.set_legacy_hud(true);
 
             double sim_accumulator = 0.0;
             double paused_beat_accumulator = 0.0;
+
+            // FA's command mode drives world clicks (read once per frame).
+            osc::renderer::CommandMode current_command_mode;
+            bool ghost_from_mode = false;
+            input_handler.set_command_mode_hooks(
+                {[&] { return current_command_mode; },
+                 [&](const osc::renderer::IssuedCommand& c) {
+                     report_command_issued(ui_lua_state.raw(), c);
+                 },
+                 [&] { cancel_command_mode(ui_lua_state.raw()); }});
             auto prev_time = std::chrono::high_resolution_clock::now();
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
@@ -2617,93 +2914,8 @@ int main(int argc, char* argv[]) {
                 }
 
                 // Process SimCallbacks from UI (M138a)
-                if (!sim_callback_queue.empty() && sim_state && sim_lua_state) {
-                    auto callbacks = sim_callback_queue.drain();
-                    lua_State* sL = sim_lua_state->raw();
-
-                    // These callbacks carry the local player's UI-panel orders,
-                    // so mark human input active: in multiplayer route_command
-                    // then forwards them to the lockstep session for broadcast
-                    // (single-player applies them directly, unaffected).
-                    sim_state->set_human_input_active(true);
-
-                    // Import SimCallbacks module once for the batch
-                    lua_pushstring(sL, "import");
-                    lua_rawget(sL, LUA_GLOBALSINDEX);
-                    bool have_module = false;
-                    if (lua_isfunction(sL, -1)) {
-                        lua_pushstring(sL, "/lua/SimCallbacks.lua");
-                        if (lua_pcall(sL, 1, 1, 0) == 0 && lua_istable(sL, -1)) {
-                            have_module = true;
-                        } else {
-                            if (lua_isstring(sL, -1))
-                                spdlog::warn("SimCallback import error: {}", lua_tostring(sL, -1));
-                            lua_pop(sL, 1);
-                        }
-                    } else {
-                        lua_pop(sL, 1);
-                    }
-
-                    if (have_module) {
-                        int mod = lua_gettop(sL);
-                        for (const auto& cb : callbacks) {
-                            // Get DoCallback function (re-fetch each time since pcall may error)
-                            lua_pushstring(sL, "DoCallback");
-                            lua_rawget(sL, mod);
-                            if (!lua_isfunction(sL, -1)) {
-                                lua_pop(sL, 1);
-                                continue;
-                            }
-
-                            // Arg 1: func name
-                            lua_pushstring(sL, cb.func_name.c_str());
-
-                            // Arg 2: args table
-                            lua_newtable(sL);
-                            for (const auto& [key, val] : cb.args) {
-                                lua_pushstring(sL, key.c_str());
-                                std::visit([&](const auto& v) {
-                                    using T = std::decay_t<decltype(v)>;
-                                    if constexpr (std::is_same_v<T, std::string>) {
-                                        lua_pushstring(sL, v.c_str());
-                                    } else if constexpr (std::is_same_v<T, osc::f64>) {
-                                        lua_pushnumber(sL, static_cast<lua_Number>(v));
-                                    } else if constexpr (std::is_same_v<T, bool>) {
-                                        lua_pushboolean(sL, v ? 1 : 0);
-                                    }
-                                }, val);
-                                lua_rawset(sL, -3);
-                            }
-
-                            // Arg 3: units table (array of unit entity tables), or nil
-                            if (!cb.unit_ids.empty()) {
-                                lua_newtable(sL);
-                                int units_tbl = lua_gettop(sL);
-                                int idx = 1;
-                                for (osc::u32 eid : cb.unit_ids) {
-                                    auto* entity = sim_state->entity_registry().find(eid);
-                                    if (entity && entity->is_unit() && !entity->destroyed()) {
-                                        if (entity->lua_table_ref() >= 0) {
-                                            lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
-                                            lua_rawseti(sL, units_tbl, idx++);
-                                        }
-                                    }
-                                }
-                            } else {
-                                lua_pushnil(sL); // no units
-                            }
-
-                            // Call DoCallback(name, args, units)
-                            if (lua_pcall(sL, 3, 0, 0) != 0) {
-                                const char* err = lua_tostring(sL, -1);
-                                spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
-                                lua_pop(sL, 1);
-                            }
-                        }
-                        lua_pop(sL, 1); // pop module table
-                    }
-                    sim_state->set_human_input_active(false);
-                }
+                if (sim_state && sim_lua_state)
+                    apply_sim_callbacks(sim_callback_queue, *sim_state, *sim_lua_state);
 
                 // OnFirstUpdate — fire once after first sim tick
                 static bool first_update_fired = false;
@@ -2727,11 +2939,18 @@ int main(int argc, char* argv[]) {
 
                 // Player input: selection + commands
                 if (sim_state) {
-                input_handler.update(renderer, *sim_state, dt);
+                current_command_mode = read_command_mode(ui_lua_state.raw());
+                sync_build_ghost(*sim_state, current_command_mode, ghost_from_mode);
+                input_handler.update(renderer, *sim_state, dt, [&] {
+                    osc::f64 mx = 0, my = 0;
+                    renderer.mouse_position(mx, my);
+                    return mouse_over_ui(ui_lua_state.raw(), mx, my);
+                });
                 }
 
                 dispatch_selection_change(ui_lua_state.raw(), prev_selection,
-                                          input_handler.selected());
+                                          input_handler.selected(),
+                                          input_handler.take_selection_event());
 
                 const auto& sel = input_handler.selected();
                 if (!screenshot_path.empty() &&
@@ -3536,24 +3755,40 @@ int main(int argc, char* argv[]) {
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushlightuserdata(uL, &headless_input);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        osc::sim::SimCallbackQueue test_callbacks; // SimCallback / ProcessInfo
+        lua_pushstring(uL, "__osc_sim_callback_queue");
+        lua_pushlightuserdata(uL, &test_callbacks);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
         osc::u32 frames = 0;
         auto pump = [&](int n) {
             for (int i = 0; i < n; ++i) {
                 pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager,
                                              beat_registry, ui_registry, 1, frames);
-                dispatch_selection_change(uL, prev_sel, headless_input.selected());
+                dispatch_selection_change(uL, prev_sel, headless_input.selected(),
+                                          headless_input.take_selection_event());
             }
         };
         // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
         auto play = [&](int ticks) {
             for (int t = 0; t < ticks; ++t) {
+                apply_sim_callbacks(test_callbacks, *sim_state, *sim_lua_state);
                 sim_state->tick();
                 world_beat(sim_lua_state.get(), ui_lua_state.raw());
                 pump(6);
             }
         };
-        osc::test::test_gameui(ui_test_ctx, pump, play);
+        // A world click as the input handler makes it under FA's command mode.
+        auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
+            const auto mode = read_command_mode(uL);
+            auto issued = headless_input.click_in_command_mode(*sim_state, mode, x, z, shift);
+            if (issued) report_command_issued(uL, *issued);
+            return issued.has_value();
+        };
+        osc::test::test_gameui(ui_test_ctx, pump, play, click);
         lua_pushstring(uL, "__osc_input_handler");
+        lua_pushnil(uL);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+        lua_pushstring(uL, "__osc_sim_callback_queue");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }

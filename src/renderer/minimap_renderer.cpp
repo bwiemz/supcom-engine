@@ -138,24 +138,34 @@ void MinimapRenderer::build_terrain_texture(
     }
 }
 
+MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h) {
+    if (w <= 0 || h <= 0 || map_w <= 0 || map_h <= 0) return {};
+    const f32 scale = std::min(w / map_w, h / map_h);
+    const f32 aw = map_w * scale;
+    const f32 ah = map_h * scale;
+    return {x + (w - aw) * 0.5f, y + (h - ah) * 0.5f, aw, ah};
+}
+
+bool minimap_to_world(const MapArea& view, const MapArea& area, f32 mx, f32 my,
+                      f32 map_w, f32 map_h, f32& out_wx, f32& out_wz) {
+    if (view.w <= 0 || view.h <= 0 || area.w <= 0 || area.h <= 0) return false;
+    if (mx < view.x || mx > view.x + view.w || my < view.y || my > view.y + view.h)
+        return false;
+    out_wx = std::clamp((mx - area.x) / area.w, 0.0f, 1.0f) * map_w;
+    out_wz = std::clamp((my - area.y) / area.h, 0.0f, 1.0f) * map_h;
+    return true;
+}
+
 void MinimapRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
                                  f32 r, f32 g, f32 b, f32 a,
                                  VkDescriptorSet ds) {
-    if (quad_count_ >= MAX_MINIMAP_QUADS) return;
-    UIInstance inst{};
-    inst.rect[0] = x; inst.rect[1] = y; inst.rect[2] = w; inst.rect[3] = h;
-    inst.uv[0] = 0; inst.uv[1] = 0; inst.uv[2] = 1; inst.uv[3] = 1;
-    inst.color[0] = r; inst.color[1] = g; inst.color[2] = b; inst.color[3] = a;
-
-    // Track draw groups by descriptor set
-    if (draw_groups_.empty() || draw_groups_.back().ds != ds) {
-        draw_groups_.push_back({ds, quad_count_, 1});
-    } else {
-        draw_groups_.back().count++;
-    }
-
-    quads_.push_back(inst);
-    quad_count_++;
+    if (quads_.size() >= MAX_MINIMAP_QUADS) return;
+    UIQuad q{};
+    q.inst.rect[0] = x; q.inst.rect[1] = y; q.inst.rect[2] = w; q.inst.rect[3] = h;
+    q.inst.uv[0] = 0; q.inst.uv[1] = 0; q.inst.uv[2] = 1; q.inst.uv[3] = 1;
+    q.inst.color[0] = r; q.inst.color[1] = g; q.inst.color[2] = b; q.inst.color[3] = a;
+    q.texture_ds = ds;
+    quads_.push_back(q);
 }
 
 void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
@@ -163,27 +173,59 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
                               const std::unordered_set<u32>* /*selected_ids*/,
                               u32 viewport_w, u32 viewport_h) {
     quads_.clear();
-    quad_count_ = 0;
     draw_groups_.clear();
-    white_ds_ = tex_cache.fallback_descriptor();
-
+    quad_count_ = 0;
     if (map_w_ <= 0 || map_h_ <= 0) return;
 
-    f32 sw = static_cast<f32>(viewport_w);
-    f32 sh = static_cast<f32>(viewport_h);
+    // Bottom-left corner
+    const f32 size = static_cast<f32>(MINIMAP_SIZE);
+    const f32 margin = static_cast<f32>(MINIMAP_MARGIN);
+    view_ = {margin, static_cast<f32>(viewport_h) - size - margin, size, size};
+    area_ = fit_map_area(view_.x, view_.y, view_.w, view_.h, map_w_, map_h_);
+    build(sim, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
 
-    // Minimap position: bottom-left corner
-    mm_size_ = static_cast<f32>(MINIMAP_SIZE);
-    mm_x_ = static_cast<f32>(MINIMAP_MARGIN);
-    mm_y_ = sh - mm_size_ - static_cast<f32>(MINIMAP_MARGIN);
+    // Batch consecutive quads by texture and upload
+    for (u32 i = 0; i < quads_.size(); ++i) {
+        if (draw_groups_.empty() || draw_groups_.back().ds != quads_[i].texture_ds)
+            draw_groups_.push_back({quads_[i].texture_ds, i, 1});
+        else
+            draw_groups_.back().count++;
+    }
+    quad_count_ = static_cast<u32>(quads_.size());
+    if (quad_count_ > 0 && instance_mapped_[fi_]) {
+        auto* dst = static_cast<UIInstance*>(instance_mapped_[fi_]);
+        for (u32 i = 0; i < quad_count_; ++i) dst[i] = quads_[i].inst;
+    }
+}
 
-    // --- Background border ---
-    emit_quad(mm_x_ - 2, mm_y_ - 2, mm_size_ + 4, mm_size_ + 4,
-              0.3f, 0.3f, 0.35f, 0.9f, white_ds_);
+void MinimapRenderer::paint(const sim::SimState& sim, const Camera& camera,
+                             TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
+                             u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out) {
+    quads_.clear();
+    if (map_w_ <= 0 || map_h_ <= 0) return;
+    view_ = {x, y, w, h};
+    area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
+    if (area_.w <= 0 || area_.h <= 0) return;
+    build(sim, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
+    out.insert(out.end(), quads_.begin(), quads_.end());
+}
+
+void MinimapRenderer::build(const sim::SimState& sim, const Camera& camera,
+                             TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
+                             bool framed) {
+    white_ds_ = tex_cache.fallback_descriptor();
+    const f32 sw = static_cast<f32>(viewport_w);
+    const f32 sh = static_cast<f32>(viewport_h);
+    const auto [ax, ay, aw, ah] = area_;
+
+    // --- Background border (the C++ HUD's own frame, round the whole view) ---
+    if (framed)
+        emit_quad(view_.x - 2, view_.y - 2, view_.w + 4, view_.h + 4, 0.3f, 0.3f, 0.35f, 0.9f,
+                  white_ds_);
 
     // --- Terrain background texture ---
     VkDescriptorSet bg_ds = terrain_ds_ ? terrain_ds_ : white_ds_;
-    emit_quad(mm_x_, mm_y_, mm_size_, mm_size_, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
+    emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
 
     // --- Unit dots ---
     auto& registry = sim.entity_registry();
@@ -197,8 +239,8 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
         f32 nz = pos.z / map_h_;
         if (nx < 0 || nx > 1 || nz < 0 || nz > 1) return;
 
-        f32 dot_x = mm_x_ + nx * mm_size_;
-        f32 dot_y = mm_y_ + nz * mm_size_;
+        f32 dot_x = ax + nx * aw;
+        f32 dot_y = ay + nz * ah;
 
         f32 r, g, b;
         get_army_color_simple(entity, sim, r, g, b);
@@ -234,10 +276,10 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
         for (int i = 0; i < 4; i++) {
             int j = (i + 1) % 4;
 
-            f32 x0 = mm_x_ + std::clamp(corners_x[i] / map_w_, 0.0f, 1.0f) * mm_size_;
-            f32 y0 = mm_y_ + std::clamp(corners_z[i] / map_h_, 0.0f, 1.0f) * mm_size_;
-            f32 x1 = mm_x_ + std::clamp(corners_x[j] / map_w_, 0.0f, 1.0f) * mm_size_;
-            f32 y1 = mm_y_ + std::clamp(corners_z[j] / map_h_, 0.0f, 1.0f) * mm_size_;
+            f32 x0 = ax + std::clamp(corners_x[i] / map_w_, 0.0f, 1.0f) * aw;
+            f32 y0 = ay + std::clamp(corners_z[i] / map_h_, 0.0f, 1.0f) * ah;
+            f32 x1 = ax + std::clamp(corners_x[j] / map_w_, 0.0f, 1.0f) * aw;
+            f32 y1 = ay + std::clamp(corners_z[j] / map_h_, 0.0f, 1.0f) * ah;
 
             // AABB of the line segment
             f32 min_x = std::min(x0, x1) - LINE_THICK * 0.5f;
@@ -252,13 +294,6 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
             emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
                       1.0f, 1.0f, 1.0f, 0.8f, white_ds_);
         }
-    }
-
-    // Upload to GPU
-    if (!quads_.empty() && instance_mapped_[fi_]) {
-        u32 count = std::min(quad_count_, MAX_MINIMAP_QUADS);
-        std::memcpy(instance_mapped_[fi_], quads_.data(),
-                    count * sizeof(UIInstance));
     }
 }
 
@@ -283,10 +318,10 @@ void MinimapRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 
         // Set scissor to minimap area (with small border margin, clamped to >= 0)
         VkRect2D scissor{};
-        scissor.offset.x = std::max(0, static_cast<i32>(mm_x_) - 2);
-        scissor.offset.y = std::max(0, static_cast<i32>(mm_y_) - 2);
-        scissor.extent.width = static_cast<u32>(mm_size_) + 4;
-        scissor.extent.height = static_cast<u32>(mm_size_) + 4;
+        scissor.offset.x = std::max(0, static_cast<i32>(view_.x) - 2);
+        scissor.offset.y = std::max(0, static_cast<i32>(view_.y) - 2);
+        scissor.extent.width = static_cast<u32>(view_.w) + 4;
+        scissor.extent.height = static_cast<u32>(view_.h) + 4;
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -304,18 +339,7 @@ void MinimapRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
 bool MinimapRenderer::hit_test(f32 mx, f32 my, u32 /*viewport_w*/, u32 /*viewport_h*/,
                                 f32 map_w, f32 map_h,
                                 f32& out_wx, f32& out_wz) const {
-    if (mm_size_ <= 0) return false;
-
-    // Check if click is within minimap bounds
-    if (mx < mm_x_ || mx > mm_x_ + mm_size_) return false;
-    if (my < mm_y_ || my > mm_y_ + mm_size_) return false;
-
-    // Convert minimap pixel to world coordinates
-    f32 nx = (mx - mm_x_) / mm_size_; // [0, 1]
-    f32 nz = (my - mm_y_) / mm_size_;
-    out_wx = nx * map_w;
-    out_wz = nz * map_h;
-    return true;
+    return minimap_to_world(view_, area_, mx, my, map_w, map_h, out_wx, out_wz);
 }
 
 } // namespace osc::renderer

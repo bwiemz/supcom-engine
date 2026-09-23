@@ -398,6 +398,10 @@ public:
     void set_sonar_stealth(bool v) { sonar_stealth_ = v; }
     bool auto_mode() const { return auto_mode_; }
     void set_auto_mode(bool v) { auto_mode_ = v; }
+    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue).
+    /// Stored; the factory queue does not repeat yet.
+    bool repeat_queue() const { return repeat_queue_; }
+    void set_repeat_queue(bool v) { repeat_queue_ = v; }
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
@@ -646,6 +650,7 @@ private:
     bool radar_stealth_ = false;
     bool sonar_stealth_ = false;
     bool auto_mode_ = false;
+    bool repeat_queue_ = false;
     u32 focus_entity_id_ = 0;
     // Damage/kill flags
     bool can_take_damage_ = true;

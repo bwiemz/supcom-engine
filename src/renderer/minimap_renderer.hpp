@@ -21,8 +21,26 @@ namespace osc::renderer {
 class Camera;
 class TextureCache;
 
-/// Renders a minimap in the bottom-left corner showing terrain, unit dots,
-/// and camera frustum. Supports click-to-jump via hit_test().
+/// Screen rect of the drawn map, in pixels.
+struct MapArea {
+    f32 x = 0, y = 0, w = 0, h = 0;
+};
+
+/// The largest rect with the map's aspect ratio centred in (x, y, w, h):
+/// where a minimap view shows a map_w x map_h map.
+MapArea fit_map_area(f32 x, f32 y, f32 w, f32 h, f32 map_w, f32 map_h);
+
+/// The world point under screen point (mx, my) on a minimap view `view`
+/// showing the map at `area`: false outside the view. A point in the
+/// view's letterbox margin is still the minimap's (it must not click
+/// through to the world); it maps to the nearest map edge.
+bool minimap_to_world(const MapArea& view, const MapArea& area, f32 mx, f32 my,
+                      f32 map_w, f32 map_h, f32& out_wx, f32& out_wz);
+
+/// Renders the minimap: terrain, unit dots and the camera's view. The C++
+/// HUD shows it in the bottom-left corner (update + render); FA's game UI
+/// shows it in its minimap WorldView, drawn with the UI (paint). Clicks
+/// land on it where it was drawn last (hit_test).
 class MinimapRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
@@ -32,11 +50,27 @@ public:
     void build_terrain_texture(const map::Terrain& terrain,
                                TextureCache& tex_cache);
 
-    /// Build minimap quads each frame.
+    /// Start a frame: until it is drawn again the minimap is off screen, so
+    /// no click lands on it.
+    void begin_frame() {
+        view_ = {};
+        area_ = {};
+        quads_.clear();
+        draw_groups_.clear();
+        quad_count_ = 0;
+    }
+
+    /// Build the C++ HUD's corner minimap and upload it for render().
     void update(const sim::SimState& sim, const Camera& camera,
                 TextureCache& tex_cache,
                 const std::unordered_set<u32>* selected_ids,
                 u32 viewport_w, u32 viewport_h);
+
+    /// Draw the minimap into the view rect (x, y, w, h): its quads are
+    /// appended to `out`, for the UI renderer to draw at the view's depth.
+    void paint(const sim::SimState& sim, const Camera& camera,
+               TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
+               u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out);
 
     /// Issue draw calls. Caller must have the UI pipeline bound.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -48,8 +82,8 @@ public:
 
     u32 quad_count() const { return quad_count_; }
 
-    /// Test if screen-space point (mx, my) is inside the minimap.
-    /// If true, writes world coordinates to out_wx, out_wz.
+    /// Test if screen-space point (mx, my) is on the minimap drawn this
+    /// frame. If true, writes world coordinates to out_wx, out_wz.
     bool hit_test(f32 mx, f32 my, u32 viewport_w, u32 viewport_h,
                   f32 map_w, f32 map_h,
                   f32& out_wx, f32& out_wz) const;
@@ -61,6 +95,11 @@ public:
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    /// Build the map's quads into quads_ for the map drawn at area_.
+    void build(const sim::SimState& sim, const Camera& camera,
+               TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
+               bool framed);
+
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 r, f32 g, f32 b, f32 a,
                    VkDescriptorSet ds = VK_NULL_HANDLE);
@@ -69,8 +108,8 @@ private:
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
     u32 fi_ = 0;
 
-    std::vector<UIInstance> quads_;
-    u32 quad_count_ = 0;
+    std::vector<UIQuad> quads_;
+    u32 quad_count_ = 0; // quads uploaded for render()
 
     // Terrain background texture descriptor
     VkDescriptorSet terrain_ds_ = VK_NULL_HANDLE;
@@ -80,9 +119,8 @@ private:
     f32 map_w_ = 0;
     f32 map_h_ = 0;
 
-    // Minimap screen rect (computed in update)
-    f32 mm_x_ = 0, mm_y_ = 0; // top-left of minimap in screen coords
-    f32 mm_size_ = 0; // actual rendered size (square)
+    MapArea view_; // the minimap's screen rect this frame (empty: not drawn)
+    MapArea area_; // where in view_ the map was drawn
 
     struct DrawGroup {
         VkDescriptorSet ds = VK_NULL_HANDLE;

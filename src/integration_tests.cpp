@@ -4912,11 +4912,16 @@ void test_massstub2(TestContext& ctx) {
     {
         auto r = ctx.lua_state.do_string(
             "local u = GetEntityById(__osc_test_acu_id(1))\n"
-            "u:AddCommandCap('RULEUCC_Attack')\n"
-            "u:AddCommandCap('RULEUCC_Guard')\n"
-            "u:RemoveCommandCap('RULEUCC_Attack')\n"
-            // RestoreCommandCaps should bring back the snapshot (empty baseline)
+            // The commander starts with its blueprint's order caps;
+            // RestoreCommandCaps returns to them.
+            "if not u:TestCommandCaps('RULEUCC_Move') then error('no blueprint Move cap') end\n"
+            "if u:TestCommandCaps('RULEUCC_Nuke') then error('Nuke cap not in blueprint') end\n"
+            "u:AddCommandCap('RULEUCC_Nuke')\n"
+            "u:RemoveCommandCap('RULEUCC_Move')\n"
+            "if u:TestCommandCaps('RULEUCC_Move') then error('RemoveCommandCap failed') end\n"
             "u:RestoreCommandCaps()\n"
+            "if not u:TestCommandCaps('RULEUCC_Move') then error('Move not restored') end\n"
+            "if u:TestCommandCaps('RULEUCC_Nuke') then error('added cap survived restore') end\n"
             // Build restrictions
             "u:AddBuildRestriction('uel0201')\n"
             "u:RemoveBuildRestriction('uel0201')\n"
@@ -8460,7 +8465,8 @@ static int count_descendants(const osc::ui::UIControl* root) {
 }
 
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
-                 const std::function<void(int)>& play) {
+                 const std::function<void(int)>& play,
+                 const std::function<bool(f32, f32, bool)>& click) {
     spdlog::info("=== GAME UI TEST (M187) ===");
     lua_State* L = ctx.L;
     auto lua_ok = [&](const char* what, const char* code) {
@@ -8523,7 +8529,9 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     }
 
     // 4. Frames run the UI: CreateUI's control-cluster OnFrame fires
-    //    OnFirstUpdate once and switches itself off.
+    //    OnFirstUpdate once and switches itself off. (Moho updates hidden
+    //    controls too: the cluster is hidden under the loading fade, and
+    //    OnFirstUpdate must create the score UI before InitialAnimations.)
     pump_frames(5);
     lua_ok("Test 4: first frame ran OnFirstUpdate", R"(
         local cluster = import('/lua/ui/game/gamemain.lua').GetControlCluster()
@@ -8533,7 +8541,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
-    //    HideGameUI('off') after ~2.5 s of UI time.
+    //    HideGameUI('off') after ~4 s of UI time.
     pump_frames(60 * 5);
     lua_ok("Test 5: the game UI is shown after the loading fade", R"(
         if import('/lua/ui/game/gamemain.lua').gameUIHidden then
@@ -8626,6 +8634,154 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if bg:GetAlpha() < 0.99 then
             error('unit view alpha ' .. bg:GetAlpha())
         end
+    )");
+    lua_ok("Test 10d: the orders panel has the commander's orders", R"(
+        local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
+        local n = 0
+        for _, col in grid._items do
+            for _, item in col do n = n + 1 end
+        end
+        if n < 5 then error('order grid holds ' .. n .. ' buttons') end
+    )");
+    lua_ok("Test 10g: the commander's build options", R"(
+        local _, _, buildable = GetUnitCommandData(GetSelectedUnits())
+        local list = EntityCategoryGetUnitList(buildable)
+        local power = false
+        for _, id in list do if id == 'ueb1101' then power = true end end
+        if not power or table.getn(list) < 10 then
+            error('buildable: ' .. table.getn(list) .. ' blueprints, T1 power ' .. tostring(power))
+        end
+        local shown = import('/lua/ui/game/construction.lua').controls.choices.DisplayData
+        if table.getn(shown) < 1 then error('construction panel shows no build options') end
+    )");
+    // UserUnit:ProcessInfo reaches the sim through its input: the UI asks
+    // for auto mode, and after a tick the sim's unit has it.
+    lua_ok("Test 10h: ProcessInfo requests auto mode", R"(
+        local acu = GetSelectedUnits()[1]
+        if acu:IsAutoMode() then error('auto mode already on') end
+        acu:ProcessInfo('SetAutoMode', 'true')
+    )");
+    play(1);
+    lua_ok("Test 10i: the sim applied it", R"(
+        if not GetSelectedUnits()[1]:IsAutoMode() then error('auto mode not applied') end
+        GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', 'false')
+        -- FAF's construction panel pauses a factory this way
+        __osc_test_acu_id = tonumber(GetSelectedUnits()[1]:GetEntityId())
+        GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'true')
+    )");
+    play(1);
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        const auto* e = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+        if (e && e->is_unit() && static_cast<const osc::sim::Unit*>(e)->is_paused())
+            spdlog::info("[PASS] Test 10j: ProcessInfo SetPaused paused the unit");
+        else
+            osc::test_status::fail("[FAIL] Test 10j: ProcessInfo SetPaused did not pause");
+    }
+    lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
+    play(1);
+    // Command modes: a build icon or order button puts FA in a command
+    // mode, and the next world click issues it (then OnCommandIssued ends
+    // the mode).
+    lua_ok("Test 11a: pick the T1 power generator from the build panel", R"(
+        __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) + 12.3f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1)) + 7.8f;
+        lua_pop(L, 3);
+        if (click(x, z, false))
+            spdlog::info("[PASS] Test 11b: the world click issued the build");
+        else
+            osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
+    }
+    lua_ok("Test 11c: the commander builds it; the mode ended", R"(
+        local q = GetSelectedUnits()[1]:GetCommandQueue()
+        if not q[1] or q[1].commandType ~= 20 then
+            error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
+        end
+        if import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then
+            error('command mode still active after a non-Shift click')
+        end
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {name = 'RULEUCC_Move'})
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) - 20.0f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 3);
+        if (click(x, z, false))
+            spdlog::info("[PASS] Test 11d: the move order click issued");
+        else
+            osc::test_status::fail("[FAIL] Test 11d: move click issued nothing");
+    }
+    lua_ok("Test 11e: the commander moves", R"(
+        local q = GetSelectedUnits()[1]:GetCommandQueue()
+        if not q[1] or q[1].commandType ~= 2 then
+            error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
+        end
+        __osc_test_acu_id = tonumber(GetSelectedUnits()[1]:GetEntityId())
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {name = 'RULEUCC_Reclaim'})
+    )");
+    // Reclaim takes whatever reclaimable thing is under the click: the map's
+    // trees and rocks are props, not units.
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        const auto acu_id = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto& reg = ctx.sim.entity_registry();
+        const auto* acu = reg.find(acu_id);
+        const osc::sim::Entity* prop = nullptr;
+        f32 best = 1e30f;
+        if (acu) {
+            reg.for_each([&](const osc::sim::Entity& e) {
+                if (!e.is_prop() || e.destroyed() || !e.reclaimable()) return;
+                const f32 dx = e.position().x - acu->position().x;
+                const f32 dz = e.position().z - acu->position().z;
+                if (dx * dx + dz * dz < best) {
+                    best = dx * dx + dz * dz;
+                    prop = &e;
+                }
+            });
+        }
+        if (!acu || !prop) {
+            osc::test_status::fail("[FAIL] Test 11f: no commander or no prop on the map");
+        } else if (!click(prop->position().x + 0.3f, prop->position().z, false)) {
+            osc::test_status::fail("[FAIL] Test 11f: the reclaim click on a prop issued nothing");
+        } else {
+            const auto& q = static_cast<const osc::sim::Unit*>(acu)->command_queue();
+            const auto* target = q.empty() ? nullptr : reg.find(q.front().target_id);
+            if (!q.empty() && q.front().type == osc::sim::CommandType::Reclaim && target &&
+                target->is_prop())
+                spdlog::info("[PASS] Test 11f: a reclaim click on a prop orders its reclaim");
+            else
+                osc::test_status::fail("[FAIL] Test 11f: the commander has no reclaim order on a prop");
+        }
+    }
+    play(1);
+
+    // Re-selecting the same units is still a selection action: Moho reports
+    // it, and retail refreshes the panels (how its own startup race -- the
+    // commander selected before the UI shows -- gets its orders).
+    lua_ok("Test 10e: re-select the commander", R"(
+        import('/lua/ui/game/orders.lua').controls.orderButtonGrid:DestroyAllItems(true)
+        SelectUnits(GetSelectedUnits())
+    )");
+    pump_frames(2);
+    lua_ok("Test 10f: the re-selection rebuilt the orders", R"(
+        local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
+        local n = 0
+        for _, col in grid._items do
+            for _, item in col do n = n + 1 end
+        end
+        if n < 5 then error('order grid holds ' .. n .. ' buttons after re-selection') end
     )");
     if (osc::test_status::failure_count() == failures_before_select)
         spdlog::info("[PASS] Test 10c: selection UI ran without script errors");
