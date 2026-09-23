@@ -76,10 +76,11 @@ endforeach()
 # record one with: opensupcom <same args> --golden <name> --golden-update
 # Frame 600 is after retail's loading fade: the capture holds the 3D scene
 # and FA's game interface (economy, score, avatars, unit view). The camera is
-# retail's own opening zoom to the commander.
+# retail's own opening zoom to the commander. Run-to-run noise is ~0.015% of
+# pixels; 0.1% still catches a UI text change (a word-spacing fix: 0.12%).
 add_test(NAME data.golden.scmp009_game_ui
          COMMAND opensupcom --map ${OSC_TEST_MAP} --golden scmp009_game_ui
-                 --screenshot-frame 600 --camera 672,346,60)
+                 --screenshot-frame 600 --camera 672,346,60 --golden-tolerance 0.001)
 set_tests_properties(data.golden.scmp009_game_ui PROPERTIES
     LABELS "data;gate;golden"
     SKIP_RETURN_CODE 77
