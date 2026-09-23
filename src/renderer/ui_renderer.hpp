@@ -5,6 +5,7 @@
 #include "renderer/font_cache.hpp"
 #include "core/types.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/ui_layout.hpp"
 
 #include <vulkan/vulkan.h>
 
@@ -85,6 +86,9 @@ public:
     }
 
 private:
+    /// Record the visible main world views (occluders) under `ctrl`.
+    void collect_world_views(lua_State* L, ui::UIControl* ctrl);
+
     /// Collect quads by walking a control and its children recursively.
     void collect_control(lua_State* L, ui::UIControl* ctrl,
                          TextureCache& tex_cache, FontCache& font_cache,
@@ -128,6 +132,7 @@ private:
         f32 depth = 0.0f;
     };
     std::vector<QuadEntry> quads_;
+    std::vector<ui::WorldOccluder> world_views_; // this frame's main world views
     std::vector<UIDrawGroup> groups_;
     u32 quad_count_ = 0;
     f32 mouse_x_ = 0;

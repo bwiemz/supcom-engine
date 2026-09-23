@@ -1,4 +1,6 @@
 #include "renderer/ui_renderer.hpp"
+#include "ui/ui_layout.hpp"
+#include "ui/world_view.hpp"
 
 #include <spdlog/spdlog.h>
 #include <vk_mem_alloc.h>
@@ -463,28 +465,29 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     f32 height = read_lazyvar(L, tbl_idx, "Height");
     f32 depth = read_lazyvar(L, tbl_idx, "Depth");
 
-    // FA's LayoutHelpers sets Left/Right/Top/Bottom but not Width/Height.
-    // Derive Width/Height from edges when they're zero but edges are valid.
-    if (width <= 0 && right > left) width = right - left;
-    if (height <= 0 && bottom > top) height = bottom - top;
+    // Drawn over its edges (see ui::control_rect).
+    {
+        const auto rect = ui::control_rect(left, top, right, bottom, width, height);
+        width = rect.w;
+        height = rect.h;
+    }
 
-    // Compute this control's clip rect: intersect its bounds with parent's clip
+    // Moho does not clip a control to its parent: `parent_clip` is the
+    // viewport, and children are walked even when this control is empty or
+    // off screen (a container that is never laid out -- retail's
+    // borderGroup -- has no rect but holds the whole control cluster).
+    // Only an edit, list or scrollbar clips its own content to itself.
     ClipRect self_clip = ClipRect::intersect(
         parent_clip,
         {static_cast<i32>(left), static_cast<i32>(top),
          static_cast<i32>(width), static_cast<i32>(height)});
-
-    // Skip entirely if clipped away
-    if (self_clip.w <= 0 || self_clip.h <= 0) {
-        lua_pop(L, 1);
-        return;
-    }
+    const bool on_screen = self_clip.w > 0 && self_clip.h > 0;
 
     // Only render controls with valid dimensions
     bool has_visual = false;
     QuadEntry entry{};
 
-    if (width > 0 && height > 0) {
+    if (on_screen && width > 0 && height > 0) {
         // Determine what to render
         if (!ctrl->texture_path().empty()) {
             // Textured bitmap — select frame texture for animations
@@ -599,17 +602,17 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
         // Edit control: background + text + caret
         if (ctrl->control_type() == ui::UIControl::ControlType::Edit) {
             emit_edit_quads(ctrl, tex_cache, font_cache, left, top, width,
-                            height, depth, parent_clip);
+                            height, depth, self_clip);
         }
         // ItemList control: multi-row text + selection highlight
         else if (ctrl->control_type() == ui::UIControl::ControlType::ItemList) {
             emit_itemlist_quads(ctrl, tex_cache, font_cache, left, top, width,
-                                height, depth, parent_clip);
+                                height, depth, self_clip);
         }
         // Scrollbar control: background + thumb
         else if (ctrl->control_type() == ui::UIControl::ControlType::Scrollbar) {
             emit_scrollbar_quads(L, ctrl, tex_cache, left, top, width, height,
-                                  depth, parent_clip);
+                                  depth, self_clip);
         }
         // Regular text quads (for non-edit controls with text content)
         else if (!ctrl->text_content().empty()) {
@@ -621,11 +624,28 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
 
     lua_pop(L, 1); // pop Lua table
 
-    // Recurse into children — children are clipped to this control's bounds
+    // Recurse into children, clipped to the viewport only (see above)
     for (auto* child : ctrl->children()) {
         collect_control(L, child, tex_cache, font_cache, vp_w, vp_h,
-                        self_clip);
+                        parent_clip);
     }
+}
+
+void UIRenderer::collect_world_views(lua_State* L, ui::UIControl* ctrl) {
+    if (!ctrl || ctrl->destroyed() || ctrl->hidden()) return;
+    auto* wv = dynamic_cast<ui::WorldView*>(ctrl);
+    if (wv && !wv->is_minimap() && ctrl->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+        const int t = lua_gettop(L);
+        const auto rect = ui::control_rect(
+            read_lazyvar(L, t, "Left"), read_lazyvar(L, t, "Top"),
+            read_lazyvar(L, t, "Right"), read_lazyvar(L, t, "Bottom"),
+            read_lazyvar(L, t, "Width"), read_lazyvar(L, t, "Height"));
+        const f32 depth = read_lazyvar(L, t, "Depth");
+        lua_pop(L, 1);
+        if (rect.w > 0 && rect.h > 0) world_views_.push_back({rect, depth});
+    }
+    for (auto* child : ctrl->children()) collect_world_views(L, child);
 }
 
 void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
@@ -661,6 +681,18 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                            static_cast<i32>(viewport_h)};
     collect_control(L, root, tex_cache, font_cache, viewport_w, viewport_h,
                     viewport_clip);
+
+    // UI below a main world view is hidden where the view covers it: FA
+    // draws the 3D world into the view (here: the scene underneath all UI).
+    world_views_.clear();
+    collect_world_views(L, root);
+    if (!world_views_.empty()) {
+        std::erase_if(quads_, [&](const QuadEntry& q) {
+            return ui::hidden_by_world(
+                {q.inst.rect[0], q.inst.rect[1], q.inst.rect[2], q.inst.rect[3]},
+                q.depth, world_views_);
+        });
+    }
 
     // Emit cursor quad at mouse position (topmost depth)
     emit_cursor_quad(L, tex_cache, viewport_w, viewport_h, viewport_clip);

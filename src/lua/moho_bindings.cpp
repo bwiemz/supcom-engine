@@ -9083,44 +9083,63 @@ static renderer::Renderer* get_renderer(lua_State* L) {
     return r;
 }
 
-static int control_Destroy(lua_State* L) {
-    auto* ctrl = check_control(L);
-    if (!ctrl) return 0;
-    auto* reg = get_ui_registry(L);
-    if (!reg) return 0;
+/// Destroy `ctrl` as Moho's Control:Destroy does: its children first, then
+/// itself. Each runs its OnDestroy (a class method, so looked up through
+/// the class), loses its _c_object, leaves the tree and is marked destroyed.
+static void destroy_control_tree(lua_State* L, ui::UIControlRegistry* reg,
+                                 ui::UIControl* ctrl) {
+    const std::vector<ui::UIControl*> children = ctrl->children();
+    for (auto* child : children)
+        if (child && !child->destroyed()) destroy_control_tree(L, reg, child);
 
-    // Call OnDestroy callback on Lua side
-    lua_pushstring(L, "OnDestroy");
-    lua_rawget(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("OnDestroy error: {}", lua_tostring(L, -1));
+    const int ref = ctrl->lua_table_ref();
+    if (ref >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        const int tbl = lua_gettop(L);
+        lua_pushstring(L, "OnDestroy");
+        lua_gettable(L, tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, tbl);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("OnDestroy error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
             lua_pop(L, 1);
         }
-    } else {
+        // Null out _c_object to prevent use-after-destroy
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, nullptr);
+        lua_rawset(L, tbl);
         lua_pop(L, 1);
     }
 
-    // Null out _c_object to prevent use-after-destroy
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, nullptr);
-    lua_rawset(L, 1);
+    // The main world view is published for GetMouseWorldPos / GetCamera.
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool was_world_view = lua_touserdata(L, -1) == ctrl;
+    lua_pop(L, 1);
+    if (was_world_view) {
+        lua_pushstring(L, "__osc_world_view");
+        lua_pushnil(L);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
 
-    // Detach from parent
     ctrl->set_parent(nullptr);
-    // Detach all children
     ctrl->clear_children();
-
-    // Release Lua registry ref before marking destroyed
-    int ref = ctrl->lua_table_ref();
     if (ref >= 0) {
         ctrl->set_lua_table_ref(LUA_NOREF);
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
     }
-
-    // Mark destroyed
     reg->destroy(ctrl->control_id());
+}
+
+static int control_Destroy(lua_State* L) {
+    auto* ctrl = check_control(L);
+    if (!ctrl || ctrl->destroyed()) return 0;
+    auto* reg = get_ui_registry(L);
+    if (!reg) return 0;
+    destroy_control_tree(L, reg, ctrl);
     return 0;
 }
 
@@ -11882,6 +11901,28 @@ static int l_InternalCreateWldUIProvider(lua_State* L) {
 // --- UIWorldView methods (M76) ---
 
 /// __init(self, parentControl, cameraName, depth, isMiniMap, trackCamera)
+/// Bind a WorldView to the renderer's camera, viewport and the terrain (for
+/// raycasts). A main (non-minimap) view becomes the one GetMouseWorldPos and
+/// GetCamera use. Done at construction: retail's WorldView class overrides
+/// Register in Lua without calling the engine's.
+static void bind_world_view(lua_State* L, ui::WorldView* wv) {
+    auto* r = get_renderer(L);
+    if (r) {
+        wv->set_renderer(r);
+        wv->register_camera("WorldCamera", &r->camera());
+        wv->set_viewport(r->width(), r->height());
+    }
+    auto* sim = get_sim(L);
+    if (sim && sim->terrain()) wv->set_terrain(sim->terrain());
+    if (!wv->is_minimap()) {
+        lua_pushstring(L, "__osc_world_view");
+        lua_pushlightuserdata(L, wv);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    spdlog::debug("WorldView bound: camera='{}', viewport={}x{}", wv->camera_name(),
+                  wv->viewport_width(), wv->viewport_height());
+}
+
 static int worldview_init(lua_State* L) {
     auto* reg = get_ui_registry(L);
     if (!reg) return luaL_error(L, "UIWorldView.__init: no UIControlRegistry");
@@ -11928,6 +11969,20 @@ static int worldview_init(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
+    // Control.OnInit: MAUI's default layout, and Depth = parent's + 1.
+    lua_pushstring(L, "OnInit");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("UIWorldView.__init: OnInit error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+
+    bind_world_view(L, wv_ptr);
     spdlog::debug("UIWorldView.__init: WorldView control #{}, camera='{}'",
                   id, cam_name);
     return 0;
@@ -12081,28 +12136,7 @@ static int worldview_ZoomScale(lua_State* L) {
 /// worldview:Register(cameraName, terrain, ...) — associate with renderer camera/terrain
 static int worldview_Register(lua_State* L) {
     auto* wv = check_world_view(L);
-    if (!wv) return 0;
-
-    auto* r = get_renderer(L);
-    if (r) {
-        wv->set_renderer(r);
-        wv->register_camera("WorldCamera", &r->camera());
-        wv->set_viewport(r->width(), r->height());
-    }
-
-    // Set terrain from sim state for raycasting
-    auto* sim = get_sim(L);
-    if (sim && sim->terrain()) {
-        wv->set_terrain(sim->terrain());
-    }
-
-    // Store this WorldView in registry for GetMouseWorldPos / GetCamera access
-    lua_pushstring(L, "__osc_world_view");
-    lua_pushlightuserdata(L, wv);
-    lua_rawset(L, LUA_REGISTRYINDEX);
-
-    spdlog::debug("WorldView::Register: camera='{}', viewport={}x{}",
-                  wv->camera_name(), wv->viewport_width(), wv->viewport_height());
+    if (wv) bind_world_view(L, wv);
     return 0;
 }
 

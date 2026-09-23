@@ -1,6 +1,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/keymap.hpp"
+#include "ui/ui_layout.hpp"
 #include "core/test_status.hpp"
 
 #include <GLFW/glfw3.h>
@@ -215,9 +216,12 @@ UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
     f32 h = read_lazyvar_dispatch(L, tbl, "Height");
     lua_pop(L, 1);
 
-    // Derive Width/Height from edges if not set directly
-    if (w <= 0 && right > left) w = right - left;
-    if (h <= 0 && bottom > top) h = bottom - top;
+    // Hit-tested over its edges (see ui::control_rect).
+    {
+        const auto rect = control_rect(left, top, right, bottom, w, h);
+        w = rect.w;
+        h = rect.h;
+    }
 
     // (diagnostic removed)
 
