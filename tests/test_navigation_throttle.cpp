@@ -10,6 +10,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
+#include "sim/navigator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -164,4 +165,57 @@ TEST_CASE("a unit ordered across a cliff stops at it instead of clipping through
     CHECK(u->position().x < 60.0f);  // never entered or crossed the wall
     CHECK(u->position().x > 50.0f);  // but got as close as it could
     CHECK(u->command_queue().empty()); // and the order finished
+}
+
+TEST_CASE("repeated requests for an unreachable goal do not re-run A* every tick",
+          "[nav][m183]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim);
+    const auto* pf = sim.pathfinder();
+
+    // A unit already standing at the closest reachable point to a goal behind
+    // the wall (the end of a partial path): nothing better exists, so the
+    // request fails.
+    const osc::sim::Vector3 goal{100.0f, 0.0f, 64.0f};
+    pf->reset_request_count();
+    auto partial = pf->find_path(20.0f, 64.0f, goal.x, goal.z, "Land");
+    REQUIRE(partial.partial);
+    const osc::sim::Vector3 here = partial.waypoints.back();
+
+    osc::sim::Navigator nav;
+    pf->reset_request_count();
+    nav.set_goal(goal, pf, here, "Land");
+    REQUIRE_FALSE(nav.busy());
+    REQUIRE(pf->requests_this_tick() == 1);
+
+    // Chase-style handlers re-request whenever !is_moving(), i.e. every tick.
+    for (int i = 0; i < 10; ++i) nav.set_goal(goal, pf, here, "Land");
+    CHECK(pf->requests_this_tick() == 1); // no new searches
+
+    // A different goal, or a changed position, is a new question.
+    nav.set_goal({20.0f, 0.0f, 64.0f}, pf, here, "Land");
+    CHECK(pf->requests_this_tick() == 2);
+}
+
+TEST_CASE("a failed request is retried eventually (terrain can open up)",
+          "[nav][m183]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim);
+    const auto* pf = sim.pathfinder();
+    const osc::sim::Vector3 goal{100.0f, 0.0f, 64.0f};
+    pf->reset_request_count();
+    const osc::sim::Vector3 here =
+        pf->find_path(20.0f, 64.0f, goal.x, goal.z, "Land").waypoints.back();
+
+    osc::sim::Navigator nav;
+    pf->reset_request_count();
+    nav.set_goal(goal, pf, here, "Land");
+    REQUIRE_FALSE(nav.busy());
+    for (int i = 0; i < osc::sim::Navigator::FAILED_PATH_RETRY_CALLS; ++i) {
+        pf->reset_request_count();
+        nav.set_goal(goal, pf, here, "Land");
+    }
+    CHECK(pf->requests_this_tick() == 1); // the retry happened
 }

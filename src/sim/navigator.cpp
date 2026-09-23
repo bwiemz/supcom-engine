@@ -25,6 +25,20 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
         return;
     }
 
+    // Same unreachable question as last time? Answer from the memo.
+    auto near = [](const Vector3& a, const Vector3& b) {
+        const f32 dx = a.x - b.x, dz = a.z - b.z;
+        return dx * dx + dz * dz < 1.0f;
+    };
+    if (has_failed_request_ && near(pos, failed_goal_) &&
+        near(current_pos, failed_from_) &&
+        ++suppressed_requests_ < FAILED_PATH_RETRY_CALLS) {
+        status_ = Status::Idle;
+        return;
+    }
+    has_failed_request_ = false;
+    suppressed_requests_ = 0;
+
     auto result = pathfinder->find_path(
         current_pos.x, current_pos.z, pos.x, pos.z, layer, draft, amphibious);
 
@@ -44,6 +58,9 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
         // goal). Stay put: the old straight-line fallback drove units
         // through cliffs and buildings.
         spdlog::debug("Navigator: no reachable destination, not moving");
+        has_failed_request_ = true;
+        failed_goal_ = pos;
+        failed_from_ = current_pos;
         status_ = Status::Idle;
         return;
     }

@@ -34,6 +34,7 @@ public:
     bool can_pathfind() const { return requests_this_tick_ < MAX_REQUESTS_PER_TICK; }
     void increment_request_count() const { ++requests_this_tick_; }
     void reset_request_count() const { requests_this_tick_ = 0; }
+    int requests_this_tick() const { return requests_this_tick_; }
     static constexpr int MAX_REQUESTS_PER_TICK = 8;
 
 private:

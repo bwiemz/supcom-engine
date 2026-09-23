@@ -57,6 +57,15 @@ public:
 
     void set_sim_state(const SimState* sim) { sim_ = sim; }
 
+    /// After a path request fails outright (nothing reachable is closer to
+    /// the goal), identical requests -- same goal, unit still where it was --
+    /// return without searching, except every Nth call, since a blocking
+    /// structure may have died meanwhile. Chase-style command handlers
+    /// re-request every tick while not moving; without this a unit parked at
+    /// the closest point to an unreachable target ran a full A* each tick and
+    /// could starve the shared per-tick path budget.
+    static constexpr int FAILED_PATH_RETRY_CALLS = 50;
+
 private:
     const SimState* sim_ = nullptr;
     Vector3 goal_;
@@ -64,6 +73,12 @@ private:
     bool speed_through_goal_ = false;
     std::vector<Vector3> waypoints_;
     size_t waypoint_index_ = 0;
+
+    // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
+    bool has_failed_request_ = false;
+    Vector3 failed_goal_;
+    Vector3 failed_from_;
+    int suppressed_requests_ = 0;
     static constexpr f32 ARRIVAL_TOLERANCE = 0.5f;
     static constexpr f32 WAYPOINT_TOLERANCE = 1.5f;
 };
