@@ -2091,8 +2091,10 @@ int main(int argc, char* argv[]) {
         lua_pushlightuserdata(uL, &game_state_mgr);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
+    // SetupUI already ran during the UI state's boot above; the initial
+    // transitions pass nullptr so it does not run a second time.
     if (!map_path.empty()) {
-        game_state_mgr.transition_to(osc::GameState::GAME, ui_lua_state.raw());
+        game_state_mgr.transition_to(osc::GameState::GAME, nullptr);
         if (sim_lua_state) {
             lua_State* sL = sim_lua_state->raw();
             lua_pushstring(sL, "__osc_game_state_mgr");
@@ -2101,7 +2103,7 @@ int main(int argc, char* argv[]) {
         }
     } else {
         // No map: start in FRONT_END state (main menu)
-        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
+        game_state_mgr.transition_to(osc::GameState::FRONT_END, nullptr);
     }
 
     if (lobby_flow_test) {

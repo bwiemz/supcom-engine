@@ -12118,11 +12118,6 @@ static int worldview_ZoomScale(lua_State* L) {
 }
 
 /// worldview:HitTest(x, y) — always returns true (the world view covers its area)
-static int worldview_HitTest(lua_State* L) {
-    lua_pushboolean(L, 1);
-    return 1;
-}
-
 /// worldview:Register(cameraName, terrain, ...) — associate with renderer camera/terrain
 static int worldview_Register(lua_State* L) {
     auto* wv = check_world_view(L);
@@ -12207,7 +12202,6 @@ static const MethodEntry ui_worldview_methods[] = {
     {"GetScreenPos",               worldview_GetScreenPos},
     {"GetsGlobalCameraCommands",   worldview_GetsGlobalCameraCommands},
     {"HasHighlightCommand",        worldview_HasHighlightCommand},
-    {"HitTest",                    worldview_HitTest},
     {"IsCartographic",             worldview_IsCartographic},
     {"IsInputLocked",              worldview_IsInputLocked},
     {"IsResourceRenderingEnabled", worldview_IsResourceRenderingEnabled},
