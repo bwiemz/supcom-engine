@@ -8665,7 +8665,21 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     lua_ok("Test 10i: the sim applied it", R"(
         if not GetSelectedUnits()[1]:IsAutoMode() then error('auto mode not applied') end
         GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', 'false')
+        -- FAF's construction panel pauses a factory this way
+        __osc_test_acu_id = tonumber(GetSelectedUnits()[1]:GetEntityId())
+        GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'true')
     )");
+    play(1);
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        const auto* e = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+        if (e && e->is_unit() && static_cast<const osc::sim::Unit*>(e)->is_paused())
+            spdlog::info("[PASS] Test 10j: ProcessInfo SetPaused paused the unit");
+        else
+            osc::test_status::fail("[FAIL] Test 10j: ProcessInfo SetPaused did not pause");
+    }
+    lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
     play(1);
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends

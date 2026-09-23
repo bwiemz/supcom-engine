@@ -869,10 +869,11 @@ static void apply_sim_callbacks(osc::sim::SimCallbackQueue& queue,
     auto* sim_state = &sim;
 
     // ProcessInfo(action, value): the unit's own method of that name, with
-    // the value as a boolean -- for the settings retail sends this way only,
-    // never an arbitrary method a UI script names.
+    // the value as a boolean -- for the settings the UI sends this way only
+    // (retail: auto mode, repeat build; FAF's construction panel also pauses
+    // factories), never an arbitrary method a UI script names.
     static const std::unordered_set<std::string> kProcessInfoActions = {
-        "SetAutoMode", "SetRepeatQueue"};
+        "SetAutoMode", "SetRepeatQueue", "SetPaused"};
     auto process_info = [&](const osc::sim::SimCallbackEntry& cb) {
         auto get = [&](const char* key) -> std::string {
             auto it = cb.args.find(key);
