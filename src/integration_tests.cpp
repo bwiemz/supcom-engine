@@ -21,6 +21,7 @@
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/world_snapshot.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
@@ -6289,7 +6290,7 @@ void test_shadow(TestContext& ctx) {
             bool render_ok = true;
             for (int f = 0; f < 3; f++) {
                 try {
-                    renderer.render(ctx.sim, ctx.L);
+                    renderer.render(ctx.sim, osc::sim::FrameView{}, ctx.L);
                     renderer.poll_events(0.016);
                 } catch (...) {
                     render_ok = false;
@@ -14563,6 +14564,100 @@ void test_profile(TestContext& ctx) {
     osc::Profiler::instance().set_enabled(false);
 
     spdlog::info("Profile test: {}/{} passed", pass, pass + fail);
+}
+
+// ── --interp-test ────────────────────────────────────────────────────────────
+
+namespace {
+constexpr u32 kInterpOrderTick = 60;  // the ACU has warped in by now
+constexpr int kInterpFrames = 240;    // 60 ticks of walking at 4 frames/tick
+constexpr int kInterpMinMoving = 80;  // it must really walk for most of them
+constexpr float kInterpMinChanged = 0.9f;
+} // namespace
+
+void InterpProbe::on_frame(sim::SimState& sim, const sim::FrameView& view,
+                           const std::function<bool(const char*)>& sim_lua) {
+    if (done_) return;
+    if (acu_ == 0) {
+        if (sim.tick_count() < kInterpOrderTick) return;
+        acu_ = army_acu_id(sim, 0);
+        const sim::Entity* acu = acu_ ? sim.entity_registry().find(acu_) : nullptr;
+        if (!acu || acu->destroyed()) {
+            test_status::fail("[FAIL] interp: army 1 has no commander at tick {}",
+                              sim.tick_count());
+            done_ = true;
+            return;
+        }
+        // Walk 40 units toward the middle of the map.
+        const auto* terrain = sim.terrain();
+        const f32 cx = terrain ? static_cast<f32>(terrain->map_width()) * 0.5f : 0.0f;
+        const f32 cz = terrain ? static_cast<f32>(terrain->map_height()) * 0.5f : 0.0f;
+        const auto p = acu->position();
+        const f32 dx = cx - p.x;
+        const f32 dz = cz - p.z;
+        const f32 len = std::max(std::sqrt(dx * dx + dz * dz), 1.0f);
+        const std::string order = fmt::format(
+            "IssueMove({{GetEntityById({})}}, {{{}, {}, {}}})", acu_, p.x + 40.0f * dx / len,
+            p.y, p.z + 40.0f * dz / len);
+        if (!sim_lua(order.c_str())) {
+            test_status::fail("[FAIL] interp: could not order the commander to move");
+            done_ = true;
+        }
+        return;
+    }
+
+    const sim::Entity* acu = sim.entity_registry().find(acu_);
+    const auto* from = view.prev() ? view.prev()->find(acu_) : nullptr;
+    const auto* to = view.cur() ? view.cur()->find(acu_) : nullptr;
+    if (!acu || !from || !to) {
+        test_status::fail("[FAIL] interp: the commander left the snapshots");
+        done_ = true;
+        return;
+    }
+    const sim::Vector3 drawn = view.position(*acu);
+    const f32 step = std::abs(to->position.x - from->position.x) +
+                     std::abs(to->position.z - from->position.z);
+    if (step > 1e-4f) {
+        ++moving_frames_;
+        if (have_last_ && (drawn.x != last_[0] || drawn.z != last_[2])) ++changed_frames_;
+        constexpr f32 eps = 1e-3f;
+        auto inside = [&](f32 v, f32 a, f32 b) {
+            return v >= std::min(a, b) - eps && v <= std::max(a, b) + eps;
+        };
+        if (!inside(drawn.x, from->position.x, to->position.x) ||
+            !inside(drawn.y, from->position.y, to->position.y) ||
+            !inside(drawn.z, from->position.z, to->position.z))
+            ++off_segment_;
+    }
+    last_[0] = drawn.x;
+    last_[1] = drawn.y;
+    last_[2] = drawn.z;
+    have_last_ = true;
+    if (++frames_ >= kInterpFrames) finish();
+}
+
+void InterpProbe::finish() {
+    done_ = true;
+    const float changed = moving_frames_ > 0
+        ? static_cast<float>(changed_frames_) / static_cast<float>(moving_frames_)
+        : 0.0f;
+    spdlog::info("interp: {} walking frames, drawn position changed on {} ({:.0f}%), "
+                 "{} off the tick segment",
+                 moving_frames_, changed_frames_, changed * 100.0f, off_segment_);
+    if (moving_frames_ < kInterpMinMoving)
+        test_status::fail("[FAIL] interp: the commander walked on only {} of {} frames",
+                          moving_frames_, kInterpFrames);
+    else if (changed < kInterpMinChanged)
+        test_status::fail("[FAIL] interp: drawn position changed on {:.0f}% of walking "
+                          "frames (stepping with the ticks gives 25%)",
+                          changed * 100.0f);
+    else
+        spdlog::info("[PASS] interp: the commander is drawn moving between ticks");
+    if (off_segment_ > 0)
+        test_status::fail("[FAIL] interp: drawn {} times outside its last two tick positions",
+                          off_segment_);
+    else if (moving_frames_ > 0)
+        spdlog::info("[PASS] interp: always drawn between its last two tick positions");
 }
 
 } // namespace osc::test

@@ -24,6 +24,8 @@
 #   M188: audio-data-test -- every retail cue resolves through the XACT
 #     data (sound banks, wave banks by internal name, global settings).
 #   M189: victory-test -- retail's victory.lua decides a game end to end.
+#   M190: interp-test -- the world is drawn between sim ticks (offscreen
+#     renderer, four frames per tick: a walking ACU moves every frame).
 
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test anim-render-test anim-test armor-test audio-test
@@ -34,7 +36,8 @@ set(OSC_DATA_TESTS_GATE
     economy-test edit-render-test edit-test emitter-test enhance-test
     gameui-test
     enhance-wreck-test fire-test flags-test font-test fow-test full-smoke-test
-    input-test intel-overlay-test intel-test itemlist-render-test jammer-test
+    input-test intel-overlay-test intel-test interp-test itemlist-render-test
+    jammer-test
     layercap-test los-test lowstub-test manip-test massstub-test massstub2-test
     massstub3-test massstub4-test medstub-test move-test normal-test
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test

@@ -77,6 +77,8 @@ public:
         : prev_(prev), cur_(cur), alpha_(alpha) {}
 
     f32 alpha() const { return alpha_; }
+    const WorldSnapshot* prev() const { return prev_; }
+    const WorldSnapshot* cur() const { return cur_; }
 
     Vector3 position(const Entity& e) const;
     Quaternion orientation(const Entity& e) const;

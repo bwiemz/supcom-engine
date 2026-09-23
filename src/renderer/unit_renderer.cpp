@@ -7,6 +7,7 @@
 #include "sim/unit.hpp"
 #include "sim/entity.hpp"
 #include "sim/prop.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -193,8 +194,8 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
                  bp_ids.size(), loaded, failed);
 }
 
-void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
-                           lua_State* L, TextureCache* tex_cache,
+void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
+                           MeshCache& mesh_cache, lua_State* L, TextureCache* tex_cache,
                            const Camera* camera,
                            const std::unordered_set<u32>* selected_ids,
                            const Frustum* frustum) {
@@ -230,6 +231,8 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         if (cube_count + mesh_count >= MAX_INSTANCES)
             return;
 
+        const sim::Vector3 pos = view.position(entity);
+
         // Frustum cull all entities (units, props, projectiles)
         if (frustum) {
             f32 bound_radius = 5.0f; // default for projectiles
@@ -240,7 +243,6 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             } else if (entity.is_prop()) {
                 bound_radius = std::max(entity.scale_x() * 2.0f, 2.0f);
             }
-            const auto& pos = entity.position();
             if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, bound_radius)) {
                 return;
             }
@@ -254,9 +256,9 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         if (camera) {
             f32 ex, ey, ez;
             camera->eye_position(ex, ey, ez);
-            f32 dx = entity.position().x - ex;
-            f32 dy = entity.position().y - ey;
-            f32 dz = entity.position().z - ez;
+            f32 dx = pos.x - ex;
+            f32 dy = pos.y - ey;
+            f32 dz = pos.z - ez;
             cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
 
@@ -273,8 +275,7 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
             f32 sx = entity.scale_x() * gpu->uniform_scale;
             f32 sy = entity.scale_y() * gpu->uniform_scale;
             f32 sz = entity.scale_z() * gpu->uniform_scale;
-            build_model_matrix(inst.model, entity.position(),
-                               entity.orientation(), sx, sy, sz);
+            build_model_matrix(inst.model, pos, view.orientation(entity), sx, sy, sz);
             // Wreckage: desaturate + darken to distinguish from live units
             if (entity.is_wreckage()) {
                 f32 lum = 0.299f * r + 0.587f * g + 0.114f * b;
@@ -308,9 +309,9 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
         } else {
             if (cube_count >= MAX_INSTANCES) return;
             auto& inst = cube_instances[cube_count];
-            inst.x = entity.position().x;
-            inst.y = entity.position().y;
-            inst.z = entity.position().z;
+            inst.x = pos.x;
+            inst.y = pos.y;
+            inst.z = pos.z;
             inst.scale = 2.0f;
             // Use muted green for props (trees/rocks) to avoid white cube sea
             if (entity.is_prop()) {
@@ -330,6 +331,7 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
     static constexpr f32 IDENTITY[16] = {
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     u32 max_bone_entries = MAX_INSTANCES * MAX_BONES_PER_UNIT;
+    std::vector<sim::BoneMatrix> blended; // this frame's pose, between ticks
 
     mesh_groups_.clear();
     for (auto& [gpu, gd] : mesh_groups) {
@@ -366,7 +368,9 @@ void UnitRenderer::update(const sim::SimState& sim, MeshCache& mesh_cache,
                 auto* unit = gd.bones[i].unit;
                 u32 bc = 0;
                 if (unit) {
-                    auto& mats = unit->animated_bone_matrices();
+                    const auto& mats = view.bones(unit->entity_id(), blended)
+                                           ? blended
+                                           : unit->animated_bone_matrices();
                     bc = static_cast<u32>(mats.size());
                     if (bc > group_bones) bc = group_bones;
 

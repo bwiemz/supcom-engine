@@ -240,16 +240,19 @@ void InputHandler::handle_right_click(Renderer& renderer,
     if (!cam.screen_to_world(mx, my, w, h, 0, wx, wz))
         return;
 
-    // Check if clicking on an enemy unit — if so, attack
-    // Search for any unit near the click point
+    // Clicking on an enemy unit attacks it: the one drawn nearest the click.
     auto nearby = sim.entity_registry().collect_in_radius(wx, wz, 5.0f);
     u32 enemy_id = 0;
+    f32 best_d2 = std::numeric_limits<f32>::max();
     for (u32 id : nearby) {
         auto* e = sim.entity_registry().find(id);
         if (!e || !e->is_unit() || e->destroyed()) continue;
-        if (e->army() != player_army_ && e->army() >= 0) {
+        if (e->army() == player_army_ || e->army() < 0) continue;
+        const sim::Vector3 pos = view_.position(*e);
+        const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
+        if (d2 < best_d2) {
+            best_d2 = d2;
             enemy_id = id;
-            break;
         }
     }
 
@@ -388,8 +391,9 @@ u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
         if (!e || e->destroyed()) continue;
         if (reclaim ? !((e->is_unit() || e->is_prop()) && e->reclaimable()) : !e->is_unit())
             continue;
-        const f32 dx = e->position().x - wx;
-        const f32 dz = e->position().z - wz;
+        const sim::Vector3 pos = view_.position(*e);
+        const f32 dx = pos.x - wx;
+        const f32 dz = pos.z - wz;
         const f32 d2 = dx * dx + dz * dz;
         if (d2 <= best_dist2) {
             best_dist2 = d2;
@@ -411,8 +415,9 @@ u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
         if (!e || !e->is_unit() || e->destroyed()) continue;
         if (e->army() != player_army_) continue;
 
-        f32 dx = e->position().x - wx;
-        f32 dz = e->position().z - wz;
+        const sim::Vector3 pos = view_.position(*e);
+        f32 dx = pos.x - wx;
+        f32 dz = pos.z - wz;
         f32 d2 = dx * dx + dz * dz;
         if (d2 < best_dist2) {
             best_dist2 = d2;

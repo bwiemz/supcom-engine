@@ -6,7 +6,7 @@
 
 struct lua_State;
 
-namespace osc::sim { class SimState; }
+namespace osc::sim { class FrameView; class SimState; }
 namespace osc::lua { class LuaState; }
 namespace osc::vfs { class VirtualFileSystem; }
 namespace osc::blueprints { class BlueprintStore; }
@@ -124,6 +124,32 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
 void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_frames,
                        const std::function<void(int)>& play,
                        const std::function<bool(const char*)>& sim_lua);
+
+/// --interp-test: army 1's ACU walks while the windowed loop runs four
+/// frames per sim tick. Drawn between ticks, its position must change on
+/// (nearly) every frame -- stepping with the ticks would change it on one
+/// frame in four -- and always lie between its positions at the last two
+/// ticks.
+class InterpProbe {
+public:
+    /// Once per frame, after the frame's ticks, with the view it draws.
+    void on_frame(sim::SimState& sim, const sim::FrameView& view,
+                  const std::function<bool(const char*)>& sim_lua);
+    bool done() const { return done_; }
+
+private:
+    void finish();
+
+    u32 acu_ = 0;
+    int frames_ = 0;         // since the move order
+    bool have_last_ = false;
+    f32 last_[3] = {};
+    int moving_frames_ = 0;  // the ACU moved between the last two ticks
+    int changed_frames_ = 0; // ...and its drawn position changed this frame
+    int off_segment_ = 0;    // drawn outside the two ticks' positions
+    bool done_ = false;
+};
+
 void test_cursor_render(TestContext& ctx);
 void test_drag_render(TestContext& ctx);
 void test_emitter(TestContext& ctx);

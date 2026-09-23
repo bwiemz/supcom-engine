@@ -4,6 +4,7 @@
 #include "sim/entity.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@ namespace osc::renderer {
 // sync_effects -- mirror IEffectRegistry into emitter state
 // ---------------------------------------------------------------------------
 
-void ParticleSystem::sync_effects(const sim::SimState& sim,
+void ParticleSystem::sync_effects(const sim::SimState& sim, const sim::FrameView& view,
                                   EmitterBlueprintCache& bp_cache,
                                   lua_State* L) {
     const auto& effects = sim.effect_registry().all();
@@ -45,9 +46,10 @@ void ParticleSystem::sync_effects(const sim::SimState& sim,
             if (fx->entity_id() > 0) {
                 auto* ent = sim.entity_registry().find(fx->entity_id());
                 if (ent) {
-                    es.origin_x = ent->position().x + fx->offset_x();
-                    es.origin_y = ent->position().y + fx->offset_y();
-                    es.origin_z = ent->position().z + fx->offset_z();
+                    const sim::Vector3 pos = view.position(*ent);
+                    es.origin_x = pos.x + fx->offset_x();
+                    es.origin_y = pos.y + fx->offset_y();
+                    es.origin_z = pos.z + fx->offset_z();
                 }
             }
         }

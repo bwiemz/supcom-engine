@@ -6,6 +6,7 @@
 #include "map/heightmap.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -168,7 +169,8 @@ void MinimapRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quads_.push_back(q);
 }
 
-void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
+void MinimapRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
+                             const Camera& camera,
                               TextureCache& tex_cache,
                               const std::unordered_set<u32>* /*selected_ids*/,
                               u32 viewport_w, u32 viewport_h) {
@@ -182,7 +184,7 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
     const f32 margin = static_cast<f32>(MINIMAP_MARGIN);
     view_ = {margin, static_cast<f32>(viewport_h) - size - margin, size, size};
     area_ = fit_map_area(view_.x, view_.y, view_.w, view_.h, map_w_, map_h_);
-    build(sim, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
+    build(sim, view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
 
     // Batch consecutive quads by texture and upload
     for (u32 i = 0; i < quads_.size(); ++i) {
@@ -198,7 +200,8 @@ void MinimapRenderer::update(const sim::SimState& sim, const Camera& camera,
     }
 }
 
-void MinimapRenderer::paint(const sim::SimState& sim, const Camera& camera,
+void MinimapRenderer::paint(const sim::SimState& sim, const sim::FrameView& view,
+                            const Camera& camera,
                              TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
                              u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out) {
     quads_.clear();
@@ -206,11 +209,12 @@ void MinimapRenderer::paint(const sim::SimState& sim, const Camera& camera,
     view_ = {x, y, w, h};
     area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
     if (area_.w <= 0 || area_.h <= 0) return;
-    build(sim, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
+    build(sim, view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
     out.insert(out.end(), quads_.begin(), quads_.end());
 }
 
-void MinimapRenderer::build(const sim::SimState& sim, const Camera& camera,
+void MinimapRenderer::build(const sim::SimState& sim, const sim::FrameView& view,
+                            const Camera& camera,
                              TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
                              bool framed) {
     white_ds_ = tex_cache.fallback_descriptor();
@@ -233,7 +237,7 @@ void MinimapRenderer::build(const sim::SimState& sim, const Camera& camera,
         if (entity.destroyed()) return;
         if (!entity.is_unit()) return;
 
-        auto pos = entity.position();
+        auto pos = view.position(entity);
         // Map world position to minimap pixel position
         f32 nx = pos.x / map_w_; // normalized [0,1]
         f32 nz = pos.z / map_h_;

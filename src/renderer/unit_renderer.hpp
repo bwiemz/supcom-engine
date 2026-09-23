@@ -13,6 +13,7 @@
 struct lua_State;
 
 namespace osc::sim {
+class FrameView;
 class SimState;
 }
 
@@ -57,9 +58,10 @@ public:
     void preload_meshes(const sim::SimState& sim, MeshCache& mesh_cache,
                         lua_State* L);
 
-    /// Update per-frame instance data from sim state.
+    /// Update per-frame instance data from sim state, posed as `view` draws
+    /// it (between the last two ticks).
     /// If selected_ids is non-null, those units get a selection highlight.
-    void update(const sim::SimState& sim, MeshCache& mesh_cache,
+    void update(const sim::SimState& sim, const sim::FrameView& view, MeshCache& mesh_cache,
                 lua_State* L, TextureCache* tex_cache = nullptr,
                 const Camera* camera = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr,

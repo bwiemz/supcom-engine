@@ -4,6 +4,7 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp" // Vector3
+#include "sim/world_snapshot.hpp"
 
 #include <array>
 #include <optional>
@@ -67,6 +68,11 @@ public:
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
 
+    /// Where this frame draws the world: clicks pick the unit the player
+    /// sees under the cursor, not its position at the last tick. Without
+    /// one (headless clicks) the live sim is used.
+    void set_frame_view(const sim::FrameView& view) { view_ = view; }
+
     void set_command_mode_hooks(CommandModeHooks hooks) { mode_hooks_ = std::move(hooks); }
 
     /// A left-click at world (wx, wz) under command mode `mode`: route its
@@ -112,6 +118,7 @@ public:
 
 private:
     i32 player_army_ = 0;
+    sim::FrameView view_;
     std::unordered_set<u32> selected_;
     bool selection_event_ = false;
 
