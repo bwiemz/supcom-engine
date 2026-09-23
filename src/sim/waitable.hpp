@@ -16,13 +16,21 @@ public:
     /// Whether the waitable has been destroyed/cancelled.
     virtual bool is_cancelled() const = 0;
 
-    // WaitFor support: store coroutine registry ref waiting on this object.
-    // LUA_NOREF = -2 means no one is waiting.
+    // WaitFor support: the thread parked on this object, as its registry
+    // ref and ThreadManager serial. A killed thread's ref returns to Lua's
+    // free list and can name a new thread, so a wake must match both.
+    bool has_waiting_thread() const { return waiting_thread_ref_ >= 0; }
     int waiting_thread_ref() const { return waiting_thread_ref_; }
-    void set_waiting_thread_ref(int ref) { waiting_thread_ref_ = ref; }
+    u64 waiting_thread_serial() const { return waiting_thread_serial_; }
+    void set_waiting_thread(int ref, u64 serial) {
+        waiting_thread_ref_ = ref;
+        waiting_thread_serial_ = serial;
+    }
+    void clear_waiting_thread() { set_waiting_thread(-2, 0); }
 
 protected:
-    int waiting_thread_ref_ = -2; // LUA_NOREF
+    int waiting_thread_ref_ = -2; // LUA_NOREF: no one is waiting
+    u64 waiting_thread_serial_ = 0;
 };
 
 } // namespace osc::sim

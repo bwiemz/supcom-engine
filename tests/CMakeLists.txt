@@ -26,6 +26,7 @@ add_executable(osc_tests
     test_minimap_area.cpp
     test_xact.cpp
     test_sound_engine.cpp
+    test_thread_wait.cpp
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp

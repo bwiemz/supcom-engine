@@ -750,10 +750,8 @@ void SimState::tick_economy_events() {
     economy_events_.tick(SECONDS_PER_TICK);
     // Wake threads waiting on completed/cancelled events
     economy_events_.for_each([&](EconomyEvent& evt) {
-        if ((evt.is_done() || evt.is_cancelled()) && evt.waiting_thread_ref() >= 0) {
-            thread_manager_.wake_thread(evt.waiting_thread_ref(), tick_count_);
-            evt.set_waiting_thread_ref(-2);
-        }
+        if ((evt.is_done() || evt.is_cancelled()) && evt.has_waiting_thread())
+            thread_manager_.wake(evt, tick_count_);
         // gc() frees finished events now; detach the script's handle first.
         if ((evt.is_done() || evt.is_cancelled()) && evt.lua_table_ref() >= 0) {
             lua_rawgeti(L_, LUA_REGISTRYINDEX, evt.lua_table_ref());

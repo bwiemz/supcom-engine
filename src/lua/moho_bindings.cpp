@@ -8489,11 +8489,9 @@ static int manip_Destroy(lua_State* L) {
     if (m) {
         // If a thread is WaitFor-ing on this manipulator, wake it so it
         // doesn't sleep forever at INT32_MAX.
-        int waiter = m->waiting_thread_ref();
-        m->set_waiting_thread_ref(-2);
         m->mark_destroyed();
 
-        if (waiter >= 0) {
+        if (m->has_waiting_thread()) {
             lua_pushstring(L, "osc_thread_mgr");
             lua_rawget(L, LUA_REGISTRYINDEX);
             auto* mgr = lua_isuserdata(L, -1)
@@ -8508,8 +8506,9 @@ static int manip_Destroy(lua_State* L) {
                     : nullptr;
                 lua_pop(L, 1);
                 u32 tick = ss ? ss->tick_count() : 0;
-                mgr->wake_thread(waiter, tick);
+                mgr->wake(*m, tick);
             }
+            m->clear_waiting_thread();
         }
     }
     return 0;
@@ -15691,7 +15690,7 @@ static int l_ui_WaitFor(lua_State* L) {
     auto wait = std::make_shared<SoundWait>();
     mgr->on_finished(h, [wait, threads] {
         wait->done = true;
-        if (wait->waiting_thread_ref() != LUA_NOREF) threads->wake_thread(wait->waiting_thread_ref(), 0);
+        threads->wake(*wait, 0); // only the thread that waited, if it still lives
     });
     lua_pushlightuserdata(L, static_cast<sim::Waitable*>(wait.get()));
     return lua_yield(L, 1);

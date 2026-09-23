@@ -109,6 +109,7 @@ int ThreadManager::fork_thread(lua_State* L) {
     ThreadEntry entry;
     entry.coroutine = co;
     entry.lua_ref = ref;
+    entry.serial = next_serial_++;
     entry.wait_until_tick = 0; // resume immediately on next tick
     entry.dead = false;
     entry.source = std::move(source_info);
@@ -211,7 +212,7 @@ void ThreadManager::resume_all(u32 current_tick) {
                         // waitable, sleep until it completes
                         auto* waitable = static_cast<Waitable*>(
                             lua_touserdata(t.coroutine, -1));
-                        waitable->set_waiting_thread_ref(t.lua_ref);
+                        waitable->set_waiting_thread(t.lua_ref, t.serial);
                         lua_settop(t.coroutine, 0);
                         t.wait_until_tick = INT32_MAX;
                         continue;
@@ -278,17 +279,17 @@ size_t ThreadManager::active_count() const {
     return count;
 }
 
-void ThreadManager::wake_thread(int lua_ref, u32 current_tick) {
-    for (auto& t : threads_) {
-        if (t.lua_ref == lua_ref && !t.dead) {
-            t.wait_until_tick = static_cast<i32>(current_tick);
-            return;
-        }
-    }
-    for (auto& t : pending_threads_) {
-        if (t.lua_ref == lua_ref && !t.dead) {
-            t.wait_until_tick = static_cast<i32>(current_tick);
-            return;
+void ThreadManager::wake(Waitable& w, u32 current_tick) {
+    const int ref = w.waiting_thread_ref();
+    const u64 serial = w.waiting_thread_serial();
+    w.clear_waiting_thread();
+    if (ref < 0) return;
+    for (auto* list : {&threads_, &pending_threads_}) {
+        for (auto& t : *list) {
+            if (t.lua_ref == ref && t.serial == serial && !t.dead) {
+                t.wait_until_tick = static_cast<i32>(current_tick);
+                return;
+            }
         }
     }
 }
