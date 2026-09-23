@@ -1822,6 +1822,21 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     vkResetFences(device_, 1, &render_fence_[fi]);
 
+    // Publish this frame's index to every sub-renderer BEFORE any of them
+    // writes its per-frame buffers: fence[fi] was just waited on, so only
+    // slot fi is free. (Setting it after the updates made them write into
+    // the other slot while the GPU could still be reading it, and the draws
+    // then showed data one frame old.)
+    unit_renderer_.set_frame_index(fi);
+    ui_renderer_.set_frame_index(fi);
+    overlay_renderer_.set_frame_index(fi);
+    minimap_renderer_.set_frame_index(fi);
+    strategic_icon_renderer_.set_frame_index(fi);
+    hud_renderer_.set_frame_index(fi);
+    selection_info_renderer_.set_frame_index(fi);
+    fog_renderer_.set_frame_index(fi);
+    profile_overlay_.set_frame_index(fi);
+
     // Process camera shake events from sim
     {
         auto shakes = sim.camera_shake_events(); // copy before clear
@@ -1977,17 +1992,6 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
                                     strategic_icon_renderer_.atlas_descriptor(),
                                     window_width_, window_height_);
-
-    // Set frame index on all sub-renderers for correct double-buffering
-    unit_renderer_.set_frame_index(fi);
-    ui_renderer_.set_frame_index(fi);
-    overlay_renderer_.set_frame_index(fi);
-    minimap_renderer_.set_frame_index(fi);
-    strategic_icon_renderer_.set_frame_index(fi);
-    hud_renderer_.set_frame_index(fi);
-    selection_info_renderer_.set_frame_index(fi);
-    fog_renderer_.set_frame_index(fi);
-    profile_overlay_.set_frame_index(fi);
 
     // Update profile overlay
     profile_overlay_.update(font_cache_, texture_cache_,
