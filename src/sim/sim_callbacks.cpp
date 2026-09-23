@@ -144,6 +144,17 @@ bool push_callbacks_module(lua_State* L) {
     return false;
 }
 
+/// DecreaseBuildCountInQueue: fewer of one of a factory's queued blueprints.
+void decrease_build_count(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* index = arg<f64>(cb, "Index");
+    const auto* count = arg<f64>(cb, "Count");
+    if (!index || !count || *index < 1 || *index > 1e6 || *count < 1 || *count > 1e6) return;
+    for_each_unit(sim, cb, [&](Unit& u) {
+        u.decrease_build_count(static_cast<int>(*index), static_cast<int>(*count),
+                               sim.entity_registry(), L);
+    });
+}
+
 /// FA's /lua/SimCallbacks.lua DoCallback(func name, args, units).
 void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!push_callbacks_module(L)) return;
@@ -191,6 +202,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     const NotHumanInput not_human(*this);
     if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
     else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
+    else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
 }

@@ -55,6 +55,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <string_view>
 #include <vector>
 #include <spdlog/spdlog.h>
 
@@ -14592,146 +14593,114 @@ static int l_GetUnitCommandFromCommandCap(lua_State* L) {
     return 1;
 }
 
-/// IssueUnitCommand(units, commandString)
-/// Routes a command for specific units through SimCallbackQueue.
+// The UI's orders. Each is the local player's order, routed as human input
+// like the input handler's clicks: a command on the sim's input that it
+// applies inside its next tick, and that a networked match broadcasts.
+
+/// Route `cmd` for `ids` as the local player's order.
+static void issue_player_order(lua_State* L, const std::vector<u32>& ids,
+                               const sim::UnitCommand& cmd, bool clear) {
+    auto* sim = get_sim(L);
+    if (!sim || ids.empty()) return;
+    sim->set_human_input_active(true);
+    sim->route_command(ids, cmd, clear);
+    sim->set_human_input_active(false);
+}
+
+static std::vector<u32> ui_unit_ids(lua_State* L, int idx) {
+    std::vector<u32> ids;
+    for (auto* u : ui_unit_list(L, idx)) ids.push_back(u->entity_id());
+    return ids;
+}
+
+/// The selection's unit ids, in id order.
+static std::vector<u32> selected_unit_ids(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    if (!ih) return {};
+    std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+/// "UNITCOMMAND_Stop" or "Stop" -> "Stop".
+static std::string ui_command_name(const char* name) {
+    static constexpr std::string_view kPrefix = "UNITCOMMAND_";
+    std::string_view n(name);
+    if (n.substr(0, kPrefix.size()) == kPrefix) n.remove_prefix(kPrefix.size());
+    return std::string(n);
+}
+
+/// An order with no target: Stop, Dive, or a Script order whose task is an
+/// enhancement (the construction panel's). `data` is the order's table.
+static void issue_targetless_order(lua_State* L, const std::vector<u32>& ids,
+                                   const std::string& name, int data, bool clear) {
+    sim::UnitCommand cmd;
+    if (name == "Stop") {
+        cmd.type = sim::CommandType::Stop;
+    } else if (name == "Dive") {
+        cmd.type = sim::CommandType::Dive;
+    } else if (name == "Script" && lua_istable(L, data)) {
+        lua_pushstring(L, "TaskName");
+        lua_gettable(L, data);
+        const bool enhance = lua_type(L, -1) == LUA_TSTRING &&
+                             std::string_view(lua_tostring(L, -1)) == "EnhanceTask";
+        lua_pop(L, 1);
+        lua_pushstring(L, "Enhancement");
+        lua_gettable(L, data);
+        if (enhance && lua_type(L, -1) == LUA_TSTRING) {
+            cmd.type = sim::CommandType::Enhance;
+            cmd.blueprint_id = lua_tostring(L, -1);
+        }
+        lua_pop(L, 1);
+        if (cmd.type != sim::CommandType::Enhance) {
+            spdlog::warn("IssueCommand: unsupported Script order");
+            return;
+        }
+    } else {
+        spdlog::warn("IssueCommand: unsupported order '{}'", name);
+        return;
+    }
+    issue_player_order(L, ids, cmd, clear);
+}
+
+/// IssueUnitCommand(units, command)
 static int l_IssueUnitCommand(lua_State* L) {
-    auto* queue = get_callback_queue(L);
-    if (!queue || !lua_istable(L, 1)) return 0;
-    const char* cmd_raw = luaL_checkstring(L, 2);
-    std::string cmd(cmd_raw); // copy before stack ops
-
-    sim::SimCallbackEntry entry;
-    entry.func_name = std::string("UnitCommand_") + cmd;
-
-    int n = luaL_getn(L, 1);
-    for (int i = 1; i <= n; i++) {
-        lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "EntityId");
-            lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) {
-                entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
-            }
-            lua_pop(L, 1); // EntityId
-        }
-        lua_pop(L, 1); // unit table
-    }
-
-    queue->push(std::move(entry));
+    const std::string name = ui_command_name(luaL_checkstring(L, 2));
+    issue_targetless_order(L, ui_unit_ids(L, 1), name, 3, true);
     return 0;
 }
 
-/// IssueUnitCommandToUnit(unit, commandString) — single-unit variant
+/// IssueUnitCommandToUnit(unit, command)
 static int l_IssueUnitCommandToUnit(lua_State* L) {
-    auto* queue = get_callback_queue(L);
-    if (!queue || !lua_istable(L, 1)) return 0;
-    const char* cmd_raw = luaL_checkstring(L, 2);
-    std::string cmd(cmd_raw);
-
-    sim::SimCallbackEntry entry;
-    entry.func_name = std::string("UnitCommand_") + cmd;
-
-    lua_pushstring(L, "EntityId");
-    lua_rawget(L, 1);
-    if (lua_isnumber(L, -1)) {
-        entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
-    }
-    lua_pop(L, 1);
-
-    queue->push(std::move(entry));
+    const std::string name = ui_command_name(luaL_checkstring(L, 2));
+    auto* e = check_entity(L, 1);
+    if (!e || !e->is_unit() || e->destroyed()) return 0;
+    issue_targetless_order(L, {e->entity_id()}, name, 3, true);
     return 0;
 }
 
-/// IssueCommand(commandString [, argsTable])
-/// Issues a command to the currently selected units.
+/// IssueCommand(command [, data [, clear]]) -- for the selection: the orders
+/// panel's Stop and Dive, the construction panel's enhancements.
 static int l_IssueCommand(lua_State* L) {
-    auto* ih    = get_input_handler(L);
-    auto* queue = get_callback_queue(L);
-    if (!ih || !queue) return 0;
-
-    const char* cmd_raw = luaL_checkstring(L, 1);
-    std::string cmd(cmd_raw);
-
-    sim::SimCallbackEntry entry;
-    entry.func_name = std::string("UnitCommand_") + cmd;
-
-    const auto& selected = ih->selected();
-    entry.unit_ids.reserve(selected.size());
-    for (u32 eid : selected) {
-        entry.unit_ids.push_back(eid);
-    }
-
-    // Optional second arg: table of extra args (e.g. target position)
-    if (lua_istable(L, 2)) {
-        int args_tbl = 2;
-        lua_pushnil(L);
-        while (lua_next(L, args_tbl) != 0) {
-            if (lua_type(L, -2) == LUA_TSTRING) {
-                const char* key = lua_tostring(L, -2);
-                std::string key_str(key);
-                int vtype = lua_type(L, -1);
-                if (vtype == LUA_TSTRING) {
-                    entry.args[key_str] = std::string(lua_tostring(L, -1));
-                } else if (vtype == LUA_TNUMBER) {
-                    entry.args[key_str] = static_cast<f64>(lua_tonumber(L, -1));
-                } else if (vtype == LUA_TBOOLEAN) {
-                    entry.args[key_str] = lua_toboolean(L, -1) != 0;
-                }
-            }
-            lua_pop(L, 1); // pop value, keep key
-        }
-    }
-
-    queue->push(std::move(entry));
+    const std::string name = ui_command_name(luaL_checkstring(L, 1));
+    const bool clear = lua_isboolean(L, 3) ? lua_toboolean(L, 3) != 0 : true;
+    issue_targetless_order(L, selected_unit_ids(L), name, 2, clear);
     return 0;
 }
 
-/// IssueBuildMobile(units, position, bpId)
-/// Queues a BuildMobile SimCallback with unit IDs, position {x,y,z}, and blueprint ID.
+/// IssueBuildMobile(units, position, blueprint)
 static int l_IssueBuildMobile(lua_State* L) {
-    auto* queue = get_callback_queue(L);
-    if (!queue) return 0;
-
-    sim::SimCallbackEntry entry;
-    entry.func_name = "BuildMobile";
-
-    // Arg 1: units table
-    if (lua_istable(L, 1)) {
-        int n = luaL_getn(L, 1);
-        for (int i = 1; i <= n; i++) {
-            lua_rawgeti(L, 1, i);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "EntityId");
-                lua_rawget(L, -2);
-                if (lua_isnumber(L, -1)) {
-                    entry.unit_ids.push_back(static_cast<u32>(lua_tonumber(L, -1)));
-                }
-                lua_pop(L, 1); // EntityId
-            }
-            lua_pop(L, 1); // unit table
-        }
-    }
-
-    // Arg 2: position table — try array {x,y,z} then named fields
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        if (lua_isnumber(L, -1)) entry.args["x"] = static_cast<f64>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 2);
-        if (lua_isnumber(L, -1)) entry.args["y"] = static_cast<f64>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        if (lua_isnumber(L, -1)) entry.args["z"] = static_cast<f64>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-
-    // Arg 3: blueprint ID string
-    if (lua_type(L, 3) == LUA_TSTRING) {
-        const char* bp = lua_tostring(L, 3);
-        entry.args["blueprint"] = std::string(bp);
-    }
-
-    queue->push(std::move(entry));
+    if (!lua_istable(L, 2)) return 0;
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::BuildMobile;
+    lua_rawgeti(L, 2, 1);
+    lua_rawgeti(L, 2, 2);
+    lua_rawgeti(L, 2, 3);
+    cmd.target_pos = {static_cast<f32>(lua_tonumber(L, -3)), static_cast<f32>(lua_tonumber(L, -2)),
+                      static_cast<f32>(lua_tonumber(L, -1))};
+    lua_pop(L, 3);
+    cmd.blueprint_id = luaL_checkstring(L, 3);
+    issue_player_order(L, ui_unit_ids(L, 1), cmd, false);
     return 0;
 }
 
@@ -14743,30 +14712,25 @@ static void push_unit_for_ui(lua_State* L, sim::Entity* entity);
 // Construction panel globals
 // ====================================================================
 
-/// IssueBlueprintCommand(commandString, blueprintId, count [, clear])
-/// Issues build/upgrade commands to the currently selected units via SimCallback.
+/// IssueBlueprintCommand(command, blueprint [, count [, clear]]) -- for the
+/// selection: the construction panel's factory builds and upgrades.
 static int l_IssueBlueprintCommand(lua_State* L) {
-    auto* ih    = get_input_handler(L);
-    auto* queue = get_callback_queue(L);
-    if (!ih || !queue) return 0;
-
-    const char* cmd_raw = luaL_checkstring(L, 1);
-    const char* bp_id   = luaL_checkstring(L, 2);
-    int count = lua_isnumber(L, 3) ? static_cast<int>(lua_tonumber(L, 3)) : 1;
-    bool clear = lua_isboolean(L, 4) ? (lua_toboolean(L, 4) != 0) : false;
-
-    sim::SimCallbackEntry entry;
-    entry.func_name = "BlueprintCommand";
-    entry.args["command"]   = std::string(cmd_raw);
-    entry.args["blueprint"] = std::string(bp_id);
-    entry.args["count"]     = static_cast<f64>(count);
-    entry.args["clear"]     = clear;
-
-    for (u32 eid : ih->selected()) {
-        entry.unit_ids.push_back(eid);
+    const std::string name = ui_command_name(luaL_checkstring(L, 1));
+    sim::UnitCommand cmd;
+    cmd.blueprint_id = luaL_checkstring(L, 2);
+    const int count = lua_isnumber(L, 3) ? static_cast<int>(lua_tonumber(L, 3)) : 1;
+    const bool clear = lua_isboolean(L, 4) && lua_toboolean(L, 4) != 0;
+    const auto ids = selected_unit_ids(L);
+    if (name == "BuildFactory") {
+        cmd.type = sim::CommandType::BuildFactory;
+        for (int i = 0; i < std::min(count, 1000); ++i)
+            issue_player_order(L, ids, cmd, clear && i == 0);
+    } else if (name == "Upgrade") {
+        cmd.type = sim::CommandType::Upgrade;
+        issue_player_order(L, ids, cmd, clear);
+    } else {
+        spdlog::warn("IssueBlueprintCommand: unsupported order '{}'", name);
     }
-
-    queue->push(std::move(entry));
     return 0;
 }
 
@@ -14802,17 +14766,9 @@ static int l_GetAttachedUnitsList(lua_State* L) {
 
 /// ClearCommands(units) — clear command queues for all units in the table.
 static int l_ClearCommands(lua_State* L) {
-    if (!lua_istable(L, 1)) return 0;
-
-    int n = luaL_getn(L, 1);
-    for (int i = 1; i <= n; i++) {
-        lua_rawgeti(L, 1, i);
-        auto* entity = extract_ui_entity(L, lua_gettop(L));
-        lua_pop(L, 1);
-        if (entity && entity->is_unit() && !entity->destroyed()) {
-            static_cast<sim::Unit*>(entity)->clear_commands();
-        }
-    }
+    sim::UnitCommand stop;
+    stop.type = sim::CommandType::Stop;
+    issue_player_order(L, ui_unit_ids(L, 1), stop, true);
     return 0;
 }
 
@@ -15066,21 +15022,18 @@ static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
     return 0;
 }
 
+/// DecreaseBuildCountInQueue(index, count) -- for the factory the queue
+/// display shows. A request the sim applies in its next tick.
 static int l_DecreaseBuildCountInQueue(lua_State* L) {
     auto* fq = get_factory_queue(L);
-    auto* sim = get_sim(L);
-    if (!fq || !sim) return 0;
-
-    int index = static_cast<int>(luaL_checknumber(L, 1));
-    int count = static_cast<int>(luaL_optnumber(L, 2, 1));
-
-    u32 fid = fq->current_factory_id();
-    if (fid > 0) {
-        auto* entity = sim->entity_registry().find(fid);
-        if (entity && entity->is_unit()) {
-            fq->decrease_count(static_cast<sim::Unit*>(entity), index, count);
-        }
-    }
+    auto* queue = get_callback_queue(L);
+    if (!fq || !queue || fq->current_factory_id() == 0) return 0;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kDecreaseBuildCountCallback;
+    entry.args["Index"] = static_cast<f64>(luaL_checknumber(L, 1));
+    entry.args["Count"] = static_cast<f64>(luaL_optnumber(L, 2, 1));
+    entry.unit_ids.push_back(fq->current_factory_id());
+    queue->push(std::move(entry));
     return 0;
 }
 

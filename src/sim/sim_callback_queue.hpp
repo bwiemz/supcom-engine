@@ -18,6 +18,10 @@ inline constexpr const char* kProcessInfoCallback = "__osc_ProcessInfo";
 /// to the value it sets). Handled by the engine.
 inline constexpr const char* kUnitSettingCallback = "__osc_UnitSetting";
 
+/// Func name of DecreaseBuildCountInQueue(index, count) (Args Index, Count;
+/// unit_ids = the factory). Handled by the engine.
+inline constexpr const char* kDecreaseBuildCountCallback = "__osc_DecreaseBuildCount";
+
 /// A SimCallback argument: FA's callbacks carry strings, numbers and bools.
 using SimCallbackArg = std::variant<std::string, f64, bool>;
 

@@ -3744,6 +3744,10 @@ int main(int argc, char* argv[]) {
         lua_pushstring(uL, "__osc_sim_callback_queue");
         lua_pushlightuserdata(uL, &test_callbacks);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        osc::lua::FactoryQueueDisplay test_factory_queue; // the construction panel's
+        lua_pushstring(uL, "__osc_factory_queue");
+        lua_pushlightuserdata(uL, &test_factory_queue);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
         osc::u32 frames = 0;
         auto pump = [&](int n) {
             for (int i = 0; i < n; ++i) {
@@ -3770,19 +3774,22 @@ int main(int argc, char* argv[]) {
             if (issued) report_command_issued(uL, *issued);
             return issued.has_value();
         };
-        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click);
+        auto sim_lua = [&](const char* code) {
+            auto r = sim_lua_state->do_string(code);
+            if (!r) spdlog::error("sim Lua: {}", r.error().message);
+            return static_cast<bool>(r);
+        };
+        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click, sim_lua);
         if (victory_test) {
-            auto sim_lua = [&](const char* code) {
-                auto r = sim_lua_state->do_string(code);
-                if (!r) spdlog::error("sim Lua: {}", r.error().message);
-                return static_cast<bool>(r);
-            };
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
         lua_pushstring(uL, "__osc_sim_callback_queue");
+        lua_pushnil(uL);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+        lua_pushstring(uL, "__osc_factory_queue");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }

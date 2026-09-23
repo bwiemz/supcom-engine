@@ -105,6 +105,41 @@ void Unit::clear_commands(const char*) {
     navigator_.abort_move();
 }
 
+std::vector<BuildQueueEntry> Unit::factory_queue() const {
+    std::vector<BuildQueueEntry> groups;
+    for (const auto& c : command_queue_) {
+        if (c.type != CommandType::BuildFactory) continue;
+        if (!groups.empty() && groups.back().blueprint_id == c.blueprint_id) ++groups.back().count;
+        else groups.push_back({c.blueprint_id, 1});
+    }
+    return groups;
+}
+
+void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L) {
+    if (index < 1 || count < 1) return;
+    // Where the group's orders sit in the command queue, as factory_queue()
+    // groups them.
+    std::vector<size_t> group;
+    int g = 0;
+    const std::string* run = nullptr;
+    for (size_t i = 0; i < command_queue_.size(); ++i) {
+        const auto& c = command_queue_[i];
+        if (c.type != CommandType::BuildFactory) continue;
+        if (!run || *run != c.blueprint_id) {
+            if (++g > index) break;
+            run = &c.blueprint_id;
+        }
+        if (g == index) group.push_back(i);
+    }
+    // Newest first, so earlier positions stay valid.
+    bool cancel = false;
+    for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it, --count) {
+        if (*it == 0 && build_target_id_ != 0) cancel = true;
+        command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
+    }
+    if (cancel) finish_build(registry, L, false);
+}
+
 // --- Adjacency helpers ---
 
 namespace {

@@ -1,6 +1,7 @@
-// Tests for SimState::route_command — the seam that keeps single-player orders
-// direct while sending a networked client's local human orders to the lockstep
-// sink. This is the decision the Issue* bindings and player-input path rely on.
+// Tests for SimState::route_command — the seam that schedules a player's
+// orders (single-player) or sends them to the lockstep sink (multiplayer),
+// while AI and script orders, issued inside a tick, apply directly. This is
+// the decision the Issue* bindings and player-input path rely on.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -31,6 +32,7 @@ struct LuaGuard {
 osc::u32 spawn_unit(SimState& sim) {
     auto u = std::make_unique<Unit>();
     u->set_army(0);
+    u->set_max_speed(6.0f); // so a Move lasts past the tick it starts in
     return sim.entity_registry().register_entity(std::move(u));
 }
 
@@ -47,7 +49,7 @@ Unit* unit_of(SimState& sim, osc::u32 id) {
 
 } // namespace
 
-TEST_CASE("route_command applies directly in single-player", "[routing]") {
+TEST_CASE("route_command applies an AI or script order directly in single-player", "[routing]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
     auto id = spawn_unit(sim);
@@ -55,9 +57,30 @@ TEST_CASE("route_command applies directly in single-player", "[routing]") {
     REQUIRE_FALSE(sim.multiplayer());
     sim.route_command({id}, move_to(100.0f, 0.0f), true);
 
-    // No sink installed: the order lands on the unit immediately.
+    // Issued inside a tick (not human input): it lands on the unit at once.
     CHECK(unit_of(sim, id)->command_queue().size() == 1);
     CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
+}
+
+TEST_CASE("A single-player player's order applies in the next tick, and is recorded",
+          "[routing][replay]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto id = spawn_unit(sim);
+    sim.set_recording(true);
+
+    sim.set_human_input_active(true);
+    sim.route_command({id}, move_to(100.0f, 0.0f), true);
+    sim.set_human_input_active(false);
+
+    // Not between ticks: Moho applies orders in the sim, as commands.
+    CHECK(unit_of(sim, id)->command_queue().empty());
+    sim.tick();
+    REQUIRE(unit_of(sim, id)->command_queue().size() == 1);
+    CHECK(unit_of(sim, id)->command_queue().front().type == CommandType::Move);
+    CHECK(unit_of(sim, id)->command_queue().front().command_id != 0); // numbered in-tick
+    REQUIRE(sim.recorded_replay().commands.size() == 1);
+    CHECK(sim.recorded_replay().commands[0].exec_tick == 1);
 }
 
 TEST_CASE("route_command sends local human orders to the sink in multiplayer",
@@ -171,5 +194,7 @@ TEST_CASE("clear_local_command_sink returns to single-player behavior",
     sim.clear_local_command_sink();
     CHECK_FALSE(sim.multiplayer());
     sim.route_command({id}, move_to(400.0f, 0.0f), true);
-    CHECK(unit_of(sim, id)->command_queue().size() == 1); // direct again
+    CHECK(unit_of(sim, id)->command_queue().empty()); // scheduled, not sent
+    sim.tick();
+    CHECK(unit_of(sim, id)->command_queue().size() == 1);
 }

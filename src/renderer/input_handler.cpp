@@ -137,15 +137,14 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             sim::UnitCommand cmd;
             cmd.type = sim::CommandType::Move;
             cmd.target_pos = {mm_wx, wy, mm_wz};
-            cmd.command_id = sim.next_command_id();
             std::vector<u32> ids;
             for (u32 uid : selected_) {
                 auto* e = sim.entity_registry().find(uid);
                 if (!e || !e->is_unit() || e->destroyed()) continue;
                 ids.push_back(uid);
             }
-            // Player-issued order: route through the sim so a networked match
-            // broadcasts + schedules it (single-player applies it directly).
+            // Player-issued order: routed so it applies inside a tick (and a
+            // networked match broadcasts it).
             sim.set_human_input_active(true);
             sim.route_command(ids, cmd, !shift); // shift-click queues, no clear
             sim.set_human_input_active(false);
@@ -276,15 +275,14 @@ void InputHandler::handle_right_click(Renderer& renderer,
         cmd.type = sim::CommandType::Move;
         cmd.target_pos = {wx, wy, wz};
     }
-    cmd.command_id = sim.next_command_id();
     std::vector<u32> ids;
     for (u32 uid : selected_) {
         auto* e = sim.entity_registry().find(uid);
         if (!e || !e->is_unit() || e->destroyed()) continue;
         ids.push_back(uid);
     }
-    // Player-issued order: route through the sim so a networked match
-    // broadcasts + schedules it (single-player applies it directly).
+    // Player-issued order: routed so it applies inside a tick (and a
+    // networked match broadcasts it).
     sim.set_human_input_active(true);
     sim.route_command(ids, cmd, !shift); // shift-click queues without clearing
     sim.set_human_input_active(false);
@@ -373,7 +371,6 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     if (ids.empty()) return std::nullopt;
 
     cmd.target_pos = {wx, surface_y(wx, wz), wz};
-    cmd.command_id = sim.next_command_id();
     out.position = cmd.target_pos;
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.

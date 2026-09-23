@@ -12,6 +12,7 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -350,4 +351,53 @@ TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
     a.unit(ua).set_paused(false);
     a.unit(ua).set_script_bit(5, true);
     CHECK(a.sim.compute_sync_checksum() != b.sim.compute_sync_checksum());
+}
+
+TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    Unit& f = w.unit(id);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    auto queue = [&](const char* bp, int n) {
+        build.blueprint_id = bp;
+        for (int i = 0; i < n; ++i) f.push_command(build, false);
+    };
+    queue("a", 3);
+    queue("b", 2);
+    queue("a", 1);
+    auto q = f.factory_queue();
+    REQUIRE(q.size() == 3);
+    CHECK((q[0].blueprint_id == "a" && q[0].count == 3));
+    CHECK((q[1].blueprint_id == "b" && q[1].count == 2));
+    CHECK((q[2].blueprint_id == "a" && q[2].count == 1));
+
+    // DecreaseBuildCountInQueue(2, 1), as the sim runs it (straight away
+    // here: a tick would also start the factory's first build).
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kDecreaseBuildCountCallback;
+    cb.args["Index"] = 2.0;
+    cb.args["Count"] = 1.0;
+    cb.unit_ids = {id};
+    w.sim.run_sim_callback(cb);
+    q = f.factory_queue();
+    REQUIRE(q.size() == 3);
+    CHECK(q[1].count == 1);
+
+    // Out of range, or nonsense: nothing changes.
+    cb.args["Index"] = 7.0;
+    w.sim.run_sim_callback(cb);
+    cb.args["Index"] = 0.0;
+    w.sim.run_sim_callback(cb);
+    cb.args["Index"] = std::string("2");
+    w.sim.run_sim_callback(cb);
+    CHECK(f.factory_queue().size() == 3);
+
+    // More than the group holds: it goes, and the runs either side join.
+    cb.args["Index"] = 2.0;
+    cb.args["Count"] = 5.0;
+    w.sim.run_sim_callback(cb);
+    q = f.factory_queue();
+    REQUIRE(q.size() == 1);
+    CHECK((q[0].blueprint_id == "a" && q[0].count == 4));
 }

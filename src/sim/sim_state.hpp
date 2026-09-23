@@ -498,6 +498,8 @@ private:
     void update_entities();
     void update_visibility();
     void dispatch_due_commands();
+    /// A Stop order: the unit drops its orders, and an enhancement under way.
+    void stop_unit(Unit& unit);
     void enforce_no_rush();
     /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
     /// active. Returns the (possibly clamped) position.

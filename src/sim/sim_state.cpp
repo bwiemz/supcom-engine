@@ -517,22 +517,25 @@ void SimState::submit_callback(SimCallbackEntry callback) {
 
 void SimState::route_command(const std::vector<u32>& unit_ids,
                              const UnitCommand& command, bool clear_existing) {
-    // Local human order under an active network session → broadcast + schedule
-    // so every peer runs it on the same tick.
-    if (local_command_sink_ && human_input_active_) {
-        local_command_sink_(unit_ids, command, clear_existing);
+    // A player's order is a command, applied inside a tick as Moho applies
+    // it: under a network session it is broadcast and every peer schedules it
+    // for the same tick; in single-player it is scheduled for the next tick.
+    // Either way a replay can record it.
+    if (human_input_active_) {
+        if (local_command_sink_) local_command_sink_(unit_ids, command, clear_existing);
+        else schedule_command(0, unit_ids, command, clear_existing);
         return;
     }
-    // Single-player, or a deterministic AI/sim order in multiplayer: apply now.
-    // (AI runs identically on every client, so its orders stay in sync without
-    // being sent over the wire.)
+    // An AI or script order, issued inside a tick: apply now. (AI runs
+    // identically on every client, so its orders stay in sync without being
+    // sent over the wire.)
     for (u32 uid : unit_ids) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
         // Stop clears the queue outright (rather than queueing a Stop order), so
         // it matches the old IssueStop's immediate clear_commands() semantics.
-        if (command.type == CommandType::Stop) unit->clear_commands();
+        if (command.type == CommandType::Stop) stop_unit(*unit);
         else unit->push_command(command, clear_existing);
     }
 }
@@ -544,6 +547,12 @@ void SimState::queue_replay(const Replay& replay) {
     for (const auto& c : replay.commands) command_scheduler_.submit(c);
 }
 
+void SimState::stop_unit(Unit& unit) {
+    unit.clear_commands();
+    // The order it was working on goes too: an enhancement under way stops.
+    if (unit.is_enhancing()) unit.cancel_enhance(L_);
+}
+
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
@@ -552,6 +561,11 @@ void SimState::dispatch_due_commands() {
             run_sim_callback(*sc.callback);
             return;
         }
+        // Command ids come from the sim's counter here, inside the tick, so
+        // every peer (and a replay) numbers an order the same way; the id it
+        // arrived with was the issuer's.
+        UnitCommand base = sc.command;
+        base.command_id = next_command_id();
         for (u32 uid : sc.unit_ids) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
@@ -559,10 +573,15 @@ void SimState::dispatch_due_commands() {
             // A scheduled Stop clears the queue (mirrors route_command's direct
             // branch), so a networked player's Stop lands identically on peers.
             if (sc.command.type == CommandType::Stop) {
-                unit->clear_commands();
+                stop_unit(*unit);
                 continue;
             }
-            UnitCommand cmd = sc.command;
+            UnitCommand cmd = base;
+            // A new enhancement replaces one under way, as IssueEnhancement does.
+            if (cmd.type == CommandType::Enhance && unit->is_enhancing()) {
+                unit->cancel_enhance(L_);
+                if (unit->destroyed()) continue;
+            }
             // During No Rush, clamp movement/attack goals into the unit's zone
             // so scheduler-routed orders stop cleanly at the line.
             if (no_rush && (cmd.type == CommandType::Move ||

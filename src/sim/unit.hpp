@@ -191,8 +191,13 @@ public:
     void set_economy_threat(f32 t) { economy_threat_ = t; }
 
     // Build queue (factory production queue)
-    std::vector<BuildQueueEntry>& build_queue() { return build_queue_; }
-    const std::vector<BuildQueueEntry>& build_queue() const { return build_queue_; }
+    /// The factory's queue as FA's construction panel shows it: its
+    /// BuildFactory orders, a run of one blueprint grouped with a count.
+    std::vector<BuildQueueEntry> factory_queue() const;
+    /// Remove up to `count` orders from the `index`-th (1-based) group of
+    /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
+    /// the order in progress cancels its build, as a failed one.
+    void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
 
     // Command queue
     const std::deque<UnitCommand>& command_queue() const {
@@ -691,7 +696,6 @@ private:
     // OnUnitBuilt callbacks (function + category filter)
     std::vector<UnitBuiltCallback> on_unit_built_callbacks_;
     // Build queue (factory production queue)
-    std::vector<BuildQueueEntry> build_queue_;
 };
 
 } // namespace osc::sim

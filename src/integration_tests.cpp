@@ -8544,7 +8544,8 @@ static int count_descendants(const osc::ui::UIControl* root) {
 
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                  const std::function<void(int)>& play,
-                 const std::function<bool(f32, f32, bool)>& click) {
+                 const std::function<bool(f32, f32, bool)>& click,
+                 const std::function<bool(const char*)>& sim_lua) {
     spdlog::info("=== GAME UI TEST (M187) ===");
     lua_State* L = ctx.L;
     auto lua_ok = [&](const char* what, const char* code) {
@@ -8866,6 +8867,78 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if GetScriptBit(sel, 6) then error('script bit 6 still set') end
         if GetFireState(sel) ~= 0 then error('fire state ' .. GetFireState(sel)) end
     )");
+    // The construction panel's orders reach the sim as commands: a factory's
+    // builds (IssueBlueprintCommand), the queue display read from its
+    // orders, DecreaseBuildCountInQueue and the Stop button, each applied in
+    // the sim's next tick. (They were SimCallbacks retail's scripts have no
+    // handler for.)
+    sim_lua(R"(
+        local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        CreateUnitHPR('ueb0101', 'ARMY_1', p[1] + 20, p[2], p[3] + 20, 0, 0, 0)
+    )");
+    // Army 1's live unit of a blueprint.
+    auto army1_unit = [&](const char* bp) {
+        const osc::sim::Unit* found = nullptr;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (e.is_unit() && !e.destroyed() && e.army() == 0 &&
+                static_cast<const osc::sim::Unit&>(e).blueprint_id() == bp)
+                found = static_cast<const osc::sim::Unit*>(&e);
+        });
+        return found;
+    };
+    {
+        const auto* factory = army1_unit("ueb0101");
+        lua_pushstring(L, "__osc_test_factory_id");
+        lua_pushnumber(L, factory ? factory->entity_id() : 0);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
+    lua_ok("Test 10q: queue three engineers at a factory", R"(
+        local f = GetUnitById(__osc_test_factory_id)
+        if not f then error('no factory') end
+        SelectUnits({f})
+        IssueBlueprintCommand('UNITCOMMAND_BuildFactory', 'uel0105', 3)
+        if table.getn(SetCurrentFactoryForQueueDisplay(f)) ~= 0 then
+            error('queued before the sim ran')
+        end
+    )");
+    play(1);
+    lua_ok("Test 10r: the queue display shows them; take one off", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
+        if table.getn(q) ~= 1 or q[1].id ~= 'uel0105' or q[1].count ~= 3 then
+            error('queue: ' .. table.getn(q) .. ' entries, ' .. tostring(q[1] and q[1].count))
+        end
+        DecreaseBuildCountInQueue(1, 1)
+    )");
+    play(1);
+    lua_ok("Test 10s: two left; the Stop button", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
+        if not q[1] or q[1].count ~= 2 then error('count ' .. tostring(q[1] and q[1].count)) end
+        IssueCommand(GetUnitCommandFromCommandCap('RULEUCC_Stop'))
+    )");
+    play(1);
+    lua_ok("Test 10t: stopped; an enhancement for the commander", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
+        if table.getn(q) ~= 0 then error(table.getn(q) .. ' entries after Stop') end
+        SelectUnits(GetArmyAvatars())
+        IssueCommand('UNITCOMMAND_Script', {TaskName = 'EnhanceTask', Enhancement = 'AdvancedEngineering'}, true)
+    )");
+    play(1);
+    {
+        const auto* acu = army1_unit("uel0001");
+        if (acu && acu->is_enhancing()) spdlog::info("[PASS] Test 10u: the commander is enhancing");
+        else osc::test_status::fail("[FAIL] Test 10u: the enhancement order did nothing");
+    }
+    lua_ok("Test 10v: Stop", "IssueCommand('UNITCOMMAND_Stop')");
+    play(1);
+    {
+        const auto* acu = army1_unit("uel0001");
+        if (acu && !acu->is_enhancing() && acu->command_queue().empty())
+            spdlog::info("[PASS] Test 10w: Stop cancelled the enhancement");
+        else
+            osc::test_status::fail("[FAIL] Test 10w: after Stop the commander is {}",
+                                   acu && acu->is_enhancing() ? "still enhancing" : "not idle");
+    }
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
@@ -8885,6 +8958,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
     }
+    play(1); // the order applies in the sim's next tick
     lua_ok("Test 11c: the commander builds it; the mode ended", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         if not q[1] or q[1].commandType ~= 20 then
@@ -8907,6 +8981,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         else
             osc::test_status::fail("[FAIL] Test 11d: move click issued nothing");
     }
+    play(1);
     lua_ok("Test 11e: the commander moves", R"(
         local q = GetSelectedUnits()[1]:GetCommandQueue()
         if not q[1] or q[1].commandType ~= 2 then
@@ -8941,6 +9016,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         } else if (!click(prop->position().x + 0.3f, prop->position().z, false)) {
             osc::test_status::fail("[FAIL] Test 11f: the reclaim click on a prop issued nothing");
         } else {
+            play(1);
             const auto& q = static_cast<const osc::sim::Unit*>(acu)->command_queue();
             const auto* target = q.empty() ? nullptr : reg.find(q.front().target_id);
             if (!q.empty() && q.front().type == osc::sim::CommandType::Reclaim && target &&
