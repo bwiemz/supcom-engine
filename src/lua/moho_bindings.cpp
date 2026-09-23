@@ -2759,25 +2759,17 @@ static int unit_CanBuild(lua_State* L) {
     const char* target_bp = luaL_checkstring(L, 2);
     if (!target_bp) { lua_pushboolean(L, 0); return 1; }
 
-    // Collect target blueprint's categories
-    std::set<std::string> target_cats;
+    // Collect target blueprint's categories (retail list or FAF hash). The
+    // old loop lua_tostring'd the list's numeric keys in place, which broke
+    // lua_next ("invalid key for `next'") and collected indices, not names.
+    std::unordered_set<std::string> target_cats;
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
         lua_pushstring(L, target_bp);
         lua_rawget(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Categories");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushnil(L);
-                while (lua_next(L, -2) != 0) {
-                    lua_pop(L, 1); // pop value
-                    if (lua_isstring(L, -1))
-                        target_cats.insert(lua_tostring(L, -1));
-                }
-            }
-            lua_pop(L, 1); // Categories
+            sim::collect_blueprint_categories(L, lua_gettop(L), target_cats);
         }
         lua_pop(L, 1); // target bp table
     }

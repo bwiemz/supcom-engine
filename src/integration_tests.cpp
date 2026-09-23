@@ -3204,14 +3204,15 @@ void test_stub(TestContext& ctx) {
                 LOG('STUB TEST 7 FAILED: ShieldIsOn=true for unit without shield')
             end
 
-            -- Test 8: CanBuild — true for ACU (COMMAND), false for assault bot
-            local canBuild1 = acu:CanBuild('uel0001')
+            -- Test 8: CanBuild — a T1 power generator (BUILTBYCOMMANDER UEF) is
+            -- buildable by the ACU, not by an assault bot
+            local canBuild1 = acu:CanBuild('ueb1101')
             local bot = CreateUnit('uel0201', 1,
                 acu:GetPosition()[1] + 10, acu:GetPosition()[2],
                 acu:GetPosition()[3], 0, 0, 0)
             local canBuild2 = false
             if bot then
-                canBuild2 = bot:CanBuild('uel0001')
+                canBuild2 = bot:CanBuild('ueb1101')
             end
             if canBuild1 and not canBuild2 then
                 LOG('STUB TEST 8 PASSED: CanBuild ACU=true, assault bot=false')

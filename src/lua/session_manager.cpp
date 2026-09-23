@@ -516,7 +516,9 @@ void SessionManager::extract_start_positions(lua_State* L,
     lua_pushnil(L);
     while (lua_next(L, markers_idx) != 0) {
         // key at -2, value at -1
-        if (lua_isstring(L, -2) && lua_istable(L, -1)) {
+        // lua_type, not lua_isstring: tostring on a numeric key converts it
+        // in place and breaks lua_next.
+        if (lua_type(L, -2) == LUA_TSTRING && lua_istable(L, -1)) {
             const char* marker_name = lua_tostring(L, -2);
             int marker_idx = lua_gettop(L);
 
