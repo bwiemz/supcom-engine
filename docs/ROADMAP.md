@@ -346,5 +346,16 @@ in the repo if they contain game assets).
 
 | Phase | State |
 |---|---|
-| A | **In progress.** M175 is done and M178 partly done on `feat/linux-build`. Tactical plan: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md` |
-| A′ – I | Not started |
+| A | **Complete on `feat/linux-build`, pending merge (PR #18).** All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
+| A′ | Next. |
+| B–I | Not started. The Phase A baseline sized Phase B: 56 `retail-gap` modes, and about 60 methods plus 95 globals referenced by retail Lua but not yet bound. |
+
+### Findings from the first Linux captures (feed Phases A′ and F)
+- **Fog of war:** the area around the focus army's own ACU renders dark while
+  distant patches are lit. This suggests the fog texture is mis-mapped
+  (transposed or mirrored) or tracks the wrong army. Belongs to M215; investigate
+  during A′ because it is cheap to check with `--golden`.
+- **The initial camera starts at the map centre.** FA starts on the focus army's
+  start position (M217).
+- **Close-range terrain is blurry.** The per-stratum UV scales need checking
+  (M212).

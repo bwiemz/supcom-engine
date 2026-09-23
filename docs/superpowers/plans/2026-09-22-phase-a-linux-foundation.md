@@ -63,6 +63,8 @@ Clang 22 on Linux, MSVC on Windows, Catch2 v3, GitHub Actions.
 
 ### Task 4: Build hardening — warnings, sanitizers, missing includes (M175)
 
+**Status:** ✅ DONE `b953107` — 19 warnings fixed (two real: snprintf truncation, FormPlatoon min count → M207); ASan+UBSan+LSan clean after `eb602a4`
+
 **Files:**
 - Create: `cmake/OscCompileOptions.cmake`
 - Modify: `CMakeLists.txt` (include the module), every `src/*/CMakeLists.txt` (link `osc::warnings`)
@@ -110,6 +112,8 @@ endif()
 - [ ] **Step 6: Commit** `build: warning flags, OSC_SANITIZE, missing standard includes`.
 
 ### Task 5: Platform library — paths (M176)
+
+**Status:** ✅ DONE `c40e04c`
 
 **Files:**
 - Create: `src/platform/CMakeLists.txt`, `src/platform/paths.hpp`, `src/platform/paths.cpp`
@@ -175,6 +179,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 
 ### Task 6: Platform library — crash handler and SIGPIPE (M176)
 
+**Status:** ✅ DONE `40fa1c6`, review follow-up `ffe832d` (no logger calls in the signal handler)
+
 **Files:**
 - Create: `src/platform/crash_handler.hpp`, `src/platform/crash_handler.cpp`
 - Modify: `src/main.cpp:1-5,807-815,1149-1151` (remove the Windows-only handler and call
@@ -202,6 +208,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 - [ ] **Step 5: Commit** `platform: crash handler + SIGPIPE-safe sockets`.
 
 ### Task 7: Game data discovery (M177)
+
+**Status:** ✅ DONE `06fe880`, VDF depth cap `ffe832d`
 
 **Files:**
 - Create: `src/platform/steam_library.hpp`, `src/platform/steam_library.cpp` (VDF parsing, Steam
@@ -253,6 +261,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 
 ### Task 8: Hook directories and retail sim boot (M178)
 
+**Status:** ✅ DONE `4264518` (hooks live on the VFS, not LuaState — every Lua state sharing the VFS gets them), `fead351` (retail categories + first retail APIs); exit criterion met: retail SCMP_009 100 ticks, 0 Lua errors
+
 **Files:**
 - Modify: `src/lua/init_loader.{hpp,cpp}` (read the `hook` table into
   `InitConfig`/`LuaState` state), `src/lua/engine_bindings.cpp:l_doscript` (run hooks), and the
@@ -290,6 +300,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 
 ### Task 9: Lua errors unwind C++ frames (M179)
 
+**Status:** ✅ DONE `78d4893`, review follow-up `ffe832d`
+
 **Files:**
 - Modify: `third_party/lua-5.0/CMakeLists.txt` (compile the `.c` files as C++ with
   `set_source_files_properties(... LANGUAGE CXX)`), `third_party/lua-5.0/ldo.c`
@@ -315,6 +327,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 - [ ] **Step 5: Commit** `lua: build Lua 5.0 as C++ so errors unwind C++ frames`.
 
 ### Task 10: Asserting integration harness (M180)
+
+**Status:** ✅ DONE `5d06ab3`, `2987108` — retail baseline: 44 gate / 56 retail-gap / 5 mp
 
 **Files:**
 - Modify: `src/integration_tests.{hpp,cpp}`: add `int g_failures` and `void osc::test::fail(std::string_view)`,
@@ -353,6 +367,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 
 ### Task 11: CI (M181)
 
+**Status:** ✅ Workflow landed `2987108`; first green run pending on PR #18
+
 **Files:**
 - Create: `.github/workflows/ci.yml`
 
@@ -371,6 +387,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 - [ ] **Step 4: Commit** `ci: GitHub Actions for Linux GCC/Clang/ASan and Windows MSVC`.
 
 ### Task 12: Offscreen capture and golden images (M182)
+
+**Status:** ✅ DONE `7318880` (Linux WSI loader — the renderer had never run on Linux), `0590440` (capture, `--screenshot`, `--golden`; bit-exact run to run), `46b04ad` (spawn-height bug found by the first capture)
 
 **Files:**
 - Modify: `src/renderer/renderer.{hpp,cpp}`: add `TRANSFER_SRC` to the scene color image, and add
@@ -391,6 +409,8 @@ TEST_CASE("known_folder ignores relative XDG values", "[platform]") {
 - [ ] **Step 4: Commit** `renderer: offscreen scene capture + golden image compare`.
 
 ### Task 13: Documentation and status
+
+**Status:** ✅ DONE `2987108` + this update
 
 **Files:**
 - Modify: `README.md` (Linux build section; the status numbers must match reality),
