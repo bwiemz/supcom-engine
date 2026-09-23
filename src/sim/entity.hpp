@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -168,8 +170,27 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 
-    u32 ambient_sound_handle() const { return ambient_sound_handle_; }
-    void set_ambient_sound_handle(u32 h) { ambient_sound_handle_ = h; }
+    /// Looping sounds on this entity, by name: a unit's blueprint Audio
+    /// entry (ConstructLoop and ActiveLoop can both play), or SetAmbientSound's
+    /// slots. They follow the entity and stop when it goes.
+    struct AmbientSound {
+        std::string name;
+        u32 handle = 0; ///< audio::SoundHandle
+    };
+    const std::vector<AmbientSound>& ambient_sounds() const { return ambient_sounds_; }
+    /// The handle playing under `name`, or 0.
+    u32 ambient_sound(std::string_view name) const {
+        for (const auto& a : ambient_sounds_)
+            if (a.name == name) return a.handle;
+        return 0;
+    }
+    /// Set (0: forget) the handle under `name`.
+    void set_ambient_sound(std::string_view name, u32 handle) {
+        std::erase_if(ambient_sounds_, [&](const AmbientSound& a) { return a.name == name; });
+        if (handle != 0) ambient_sounds_.push_back({std::string(name), handle});
+    }
+    /// Take every ambient handle (to stop them), leaving none.
+    std::vector<AmbientSound> take_ambient_sounds() { return std::exchange(ambient_sounds_, {}); }
 
     const BoneData* bone_data() const { return bone_data_; }
     void set_bone_data(const BoneData* bd) { bone_data_ = bd; }
@@ -276,7 +297,7 @@ private:
     bool destroyed_ = false;
     std::string blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF
-    u32 ambient_sound_handle_ = 0; ///< Active ambient loop (SoundHandle)
+    std::vector<AmbientSound> ambient_sounds_;
     const BoneData* bone_data_ = nullptr; // shared per-blueprint, not owned
     bool do_not_target_ = false;
     bool reclaimable_ = true;

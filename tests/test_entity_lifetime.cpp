@@ -221,3 +221,41 @@ TEST_CASE("an unregistered entity stays allocated until the tick's garbage colle
     registry.collect_garbage();
     CHECK(registry.count() == 0);
 }
+
+TEST_CASE("attached entities take their parent's pose, in any order", "[sim][attach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto spawn = [&](osc::f32 x) {
+        auto u = std::make_unique<Unit>();
+        u->set_position({x, 0.0f, 0.0f});
+        auto* p = u.get();
+        sim.entity_registry().register_entity(std::move(u));
+        return p;
+    };
+    // A chain: a on b on c.
+    Unit* c = spawn(100.0f);
+    Unit* b = spawn(50.0f);
+    Unit* a = spawn(10.0f);
+    b->set_parent(c->entity_id(), -1);
+    a->set_parent(b->entity_id(), -1);
+    sim.follow_attachments();
+    CHECK(b->position().x == 100.0f);
+    CHECK(a->position().x == 50.0f); // b's pose before the step: one tick per link
+    sim.follow_attachments();
+    CHECK(a->position().x == 100.0f);
+
+    // A parent that only turns: its children turn with it.
+    const osc::sim::Quaternion turned{0.0f, 0.7071f, 0.0f, 0.7071f};
+    c->set_orientation(turned);
+    sim.follow_attachments();
+    CHECK(b->orientation().y == turned.y);
+
+    // A cycle swaps poses rather than depending on which goes first.
+    Unit* d = spawn(1.0f);
+    Unit* e = spawn(2.0f);
+    d->set_parent(e->entity_id(), -1);
+    e->set_parent(d->entity_id(), -1);
+    sim.follow_attachments();
+    CHECK(d->position().x == 2.0f);
+    CHECK(e->position().x == 1.0f);
+}

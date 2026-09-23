@@ -221,8 +221,17 @@ static osc::FrontEndData* get_front_end_data(lua_State* L) {
 /// Extract Bank and Cue strings from a sound table at the given stack index.
 /// Returns false if the table is missing or lacks Bank/Cue keys.
 static bool extract_sound_table(lua_State* L, int idx,
-                                std::string& bank, std::string& cue) {
+                                std::string& bank, std::string& cue,
+                                std::string* lod_cutoff = nullptr) {
     if (!lua_istable(L, idx)) return false;
+    if (lod_cutoff) {
+        // Sound{..., LodCutoff = 'Weapon_LodCutoff'}: the variable whose value
+        // is how far away the sound is still heard.
+        lua_pushstring(L, "LodCutoff");
+        lua_rawget(L, idx);
+        lod_cutoff->assign(lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "");
+        lua_pop(L, 1);
+    }
 
     lua_pushstring(L, "Bank");
     lua_rawget(L, idx);
@@ -319,7 +328,20 @@ static f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type) {
 // Sound methods
 // ====================================================================
 
-/// entity:PlaySound(soundTable) — play one-shot at entity position
+/// Stop the ambient loop `name` of `e` (every one when `name` is null).
+static void stop_ambient(audio::SoundManager* mgr, sim::Entity* e, const char* name) {
+    if (!name) {
+        for (const auto& a : e->take_ambient_sounds())
+            if (mgr) mgr->stop(a.handle, false);
+        return;
+    }
+    if (const u32 h = e->ambient_sound(name)) {
+        if (mgr) mgr->stop(h, false);
+        e->set_ambient_sound(name, 0);
+    }
+}
+
+/// entity:PlaySound(sound) -- a one-shot at the entity
 static int entity_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) return 0;
@@ -327,41 +349,33 @@ static int entity_PlaySound(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
 
-    std::string bank, cue;
-    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+    std::string bank, cue, lod;
+    if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
 
     auto pos = e->position();
-    mgr->play(bank, cue, &pos);
+    mgr->play(bank, cue, &pos, lod);
     return 0;
 }
 
-/// entity:SetAmbientSound(soundTable, nil) — start/stop looping ambient
-/// SetAmbientSound(nil, nil) stops the current ambient sound.
+/// entity:SetAmbientSound(detail, rumble) -- the entity's two ambient loop
+/// slots; nil stops a slot.
 static int entity_SetAmbientSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (!mgr) return 0;
-
     auto* e = check_entity(L);
     if (!e || e->destroyed()) return 0;
-
-    // Stop any existing ambient loop
-    if (e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
+    const char* slots[2] = {"__ambient", "__rumble"};
+    for (int i = 0; i < 2; ++i) {
+        stop_ambient(mgr, e, slots[i]);
+        std::string bank, cue;
+        if (mgr && extract_sound_table(L, 2 + i, bank, cue)) {
+            auto pos = e->position();
+            e->set_ambient_sound(slots[i], mgr->play_loop(bank, cue, &pos));
+        }
     }
-
-    // If arg 2 is a sound table, start a new loop
-    std::string bank, cue;
-    if (extract_sound_table(L, 2, bank, cue)) {
-        auto pos = e->position();
-        auto handle = mgr->play_loop(bank, cue, &pos);
-        e->set_ambient_sound_handle(handle);
-    }
-
     return 0;
 }
 
-/// weapon:PlaySound(soundTable) — play one-shot at owning unit position
+/// weapon:PlaySound(sound) -- a one-shot at the weapon's unit
 static int weapon_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) return 0;
@@ -369,11 +383,11 @@ static int weapon_PlaySound(lua_State* L) {
     auto* unit = check_weapon_unit(L);
     if (!unit || unit->destroyed()) return 0;
 
-    std::string bank, cue;
-    if (!extract_sound_table(L, 2, bank, cue)) return 0;
+    std::string bank, cue, lod;
+    if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
 
     auto pos = unit->position();
-    mgr->play(bank, cue, &pos);
+    mgr->play(bank, cue, &pos, lod);
     return 0;
 }
 
@@ -409,7 +423,8 @@ static bool lookup_blueprint_audio(lua_State* L, const sim::Entity* e,
     return true;
 }
 
-/// unit:PlayUnitSound(soundName) — look up Blueprint.Audio[soundName], play one-shot
+/// unit:PlayUnitSound(name) -- the one-shot Blueprint.Audio[name], at the
+/// unit; true if the blueprint has it.
 static int unit_PlayUnitSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
@@ -417,59 +432,50 @@ static int unit_PlayUnitSound(lua_State* L) {
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
-    std::string bank, cue;
-    int audio_idx = lua_gettop(L);
-    if (!extract_sound_table(L, audio_idx, bank, cue)) {
-        lua_pop(L, 3);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
+    std::string bank, cue, lod;
+    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue, &lod);
     lua_pop(L, 3);
-
-    auto pos = e->position();
-    mgr->play(bank, cue, &pos);
-    lua_pushboolean(L, 1);
+    if (ok) {
+        auto pos = e->position();
+        mgr->play(bank, cue, &pos, lod);
+    }
+    lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
-/// unit:PlayUnitAmbientSound(soundName) — look up Blueprint.Audio[soundName], start loop
+/// unit:PlayUnitAmbientSound(name) -- loop Blueprint.Audio[name] on the
+/// unit under that name; already playing, it carries on. A fallback: retail's
+/// (and FAF's) Unit class defines its own in Lua, which loops the sound on an
+/// attached child entity through SetAmbientSound.
 static int unit_PlayUnitAmbientSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
+    const std::string name = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+    if (!name.empty() && mgr->is_playing(e->ambient_sound(name))) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
     if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
-    int audio_idx = lua_gettop(L);
-    if (!extract_sound_table(L, audio_idx, bank, cue)) {
-        lua_pop(L, 3);
-        lua_pushboolean(L, 0);
-        return 1;
-    }
+    const bool ok = extract_sound_table(L, lua_gettop(L), bank, cue);
     lua_pop(L, 3);
-
-    // Stop existing ambient
-    if (e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
+    if (ok) {
+        auto pos = e->position();
+        e->set_ambient_sound(name, mgr->play_loop(bank, cue, &pos));
     }
-    auto pos = e->position();
-    auto handle = mgr->play_loop(bank, cue, &pos);
-    e->set_ambient_sound_handle(handle);
-    lua_pushboolean(L, 1);
+    lua_pushboolean(L, ok ? 1 : 0);
     return 1;
 }
 
-/// unit:StopUnitAmbientSound() — stop current ambient loop
+/// unit:StopUnitAmbientSound([name]) -- stop that ambient loop (all of
+/// them without a name)
 static int unit_StopUnitAmbientSound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
     auto* e = check_entity(L);
-    if (!e || e->destroyed()) { lua_pushboolean(L, 1); return 1; }
-    if (mgr && e->ambient_sound_handle() != 0) {
-        mgr->stop(e->ambient_sound_handle());
-        e->set_ambient_sound_handle(0);
-    }
+    if (e && !e->destroyed())
+        stop_ambient(get_sound_mgr(L), e, lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -741,12 +747,8 @@ static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
     if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
     if (e) {
-        // Stop ambient sound before destruction
-        if (e->ambient_sound_handle() != 0) {
-            auto* mgr = get_sound_mgr(L);
-            if (mgr) mgr->stop(e->ambient_sound_handle());
-            e->set_ambient_sound_handle(0);
-        }
+        // Its ambient loops end with it.
+        stop_ambient(get_sound_mgr(L), e, nullptr);
 
         // Fire OnNotAdjacentTo for adjacent structures before destruction
         if (e->is_unit()) {
@@ -8489,11 +8491,9 @@ static int manip_Destroy(lua_State* L) {
     if (m) {
         // If a thread is WaitFor-ing on this manipulator, wake it so it
         // doesn't sleep forever at INT32_MAX.
-        int waiter = m->waiting_thread_ref();
-        m->set_waiting_thread_ref(-2);
         m->mark_destroyed();
 
-        if (waiter >= 0) {
+        if (m->has_waiting_thread()) {
             lua_pushstring(L, "osc_thread_mgr");
             lua_rawget(L, LUA_REGISTRYINDEX);
             auto* mgr = lua_isuserdata(L, -1)
@@ -8508,8 +8508,9 @@ static int manip_Destroy(lua_State* L) {
                     : nullptr;
                 lua_pop(L, 1);
                 u32 tick = ss ? ss->tick_count() : 0;
-                mgr->wake_thread(waiter, tick);
+                mgr->wake(*m, tick);
             }
+            m->clear_waiting_thread();
         }
     }
     return 0;
@@ -14010,6 +14011,39 @@ static void push_ui_unit_array(lua_State* L, const std::vector<sim::Entity*>& un
     }
 }
 
+void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
+    // Per sim, told apart by generation: a new SimState can reuse the old
+    // one's address, and its entity ids restart.
+    static u32 last_generation = 0;
+    static std::unordered_map<u32, f32> last_health;
+    if (last_generation != sim::SimState::sim_generation()) {
+        last_generation = sim::SimState::sim_generation();
+        last_health.clear();
+    }
+    lua_pushstring(uiL, "__osc_focus_army");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    const int focus = lua_isnumber(uiL, -1) ? static_cast<int>(lua_tonumber(uiL, -1)) : -1;
+    lua_pop(uiL, 1);
+
+    std::vector<sim::Entity*> damaged;
+    std::unordered_map<u32, f32> health;
+    sim.entity_registry().for_each([&](const sim::Entity& e) {
+        if (focus < 0 || !e.is_unit() || e.destroyed() || e.army() != focus) return;
+        health.emplace(e.entity_id(), e.health());
+        auto it = last_health.find(e.entity_id());
+        if (it != last_health.end() && e.health() < it->second)
+            damaged.push_back(const_cast<sim::Entity*>(&e));
+    });
+    last_health = std::move(health);
+    std::sort(damaged.begin(), damaged.end(), [](const sim::Entity* a, const sim::Entity* b) {
+        return a->entity_id() < b->entity_id();
+    });
+    for (auto* e : damaged) {
+        push_unit_for_ui(uiL, e);
+        core::call_ui_callback(uiL, core::kGameMainModule, "OnFocusArmyUnitDamaged", 1);
+    }
+}
+
 /// Same idle test as unit:IsIdleState().
 static bool unit_is_idle(const sim::Unit& u) {
     return u.command_queue().empty() && !u.is_building() && !u.is_being_built() &&
@@ -15574,64 +15608,127 @@ static int l_HideGameUI(lua_State* L) {
 // Audio globals for UI (M147b)
 // ====================================================================
 
-/// PlaySound(soundTable) → handle
-/// soundTable = {Cue='UI_Menu_Click_01', Bank='Interface'} or string cue name
+/// A sound's bank and cue: a Sound{Bank, Cue} table, or a bare cue name
+/// (the Interface bank).
+static bool sound_arg(lua_State* L, int idx, std::string& bank, std::string& cue) {
+    if (lua_type(L, idx) == LUA_TSTRING) {
+        cue = lua_tostring(L, idx);
+        bank = "Interface";
+        return true;
+    }
+    return extract_sound_table(L, idx, bank, cue);
+}
+
+static void push_sound_handle(lua_State* L, osc::audio::SoundHandle h) {
+    if (h == osc::audio::INVALID_SOUND) lua_pushnil(L);
+    else lua_pushnumber(L, static_cast<lua_Number>(h));
+}
+
+/// PlaySound(sound) -> handle, or nil when nothing plays (unknown cue, or
+/// over its instance limits). UI sounds are 2D.
 static int l_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (!mgr) { lua_pushnumber(L, 0); return 1; }
-
     std::string bank, cue;
-    if (lua_type(L, 1) == LUA_TSTRING) {
-        cue = lua_tostring(L, 1);
-        bank = "Interface"; // default bank for string-only calls
-    } else if (lua_istable(L, 1)) {
-        if (!extract_sound_table(L, 1, bank, cue)) {
-            lua_pushnumber(L, 0);
-            return 1;
-        }
-    } else {
-        lua_pushnumber(L, 0);
+    if (!mgr || !sound_arg(L, 1, bank, cue)) {
+        lua_pushnil(L);
         return 1;
     }
-
-    // Play as non-positional (nullptr pos = 2D)
-    auto handle = mgr->play(bank, cue, nullptr);
-    lua_pushnumber(L, handle);
+    push_sound_handle(L, mgr->play(bank, cue, nullptr));
     return 1;
 }
 
-/// StopSound(handle) — stop a playing sound
+/// StopSound(handle [, immediate]): fade out (the cue's fade or release
+/// curve), or stop at once.
 static int l_StopSound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
-    if (mgr) {
-        auto handle = static_cast<osc::audio::SoundHandle>(
-            static_cast<osc::u32>(luaL_checknumber(L, 1)));
-        mgr->stop(handle);
+    if (mgr && lua_type(L, 1) == LUA_TNUMBER) {
+        mgr->stop(static_cast<osc::audio::SoundHandle>(lua_tonumber(L, 1)), lua_toboolean(L, 2) != 0);
     }
     return 0;
 }
 
-/// PlayVoice(soundTable) — play a voice cue (delegates to PlaySound)
+/// PlayVoice(sound [, duck]) -> handle. With `duck`, the rest of the mix
+/// dips while it speaks (the Duck variable, read by FA's RPC curves).
 static int l_PlayVoice(lua_State* L) {
-    return l_PlaySound(L);
+    auto* mgr = get_sound_mgr(L);
+    std::string bank, cue;
+    if (!mgr || !sound_arg(L, 1, bank, cue)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const auto h = mgr->play(bank, cue, nullptr);
+    if (h != osc::audio::INVALID_SOUND && lua_toboolean(L, 2)) {
+        static int ducking = 0; // voices ducking now (one sound engine per process)
+        if (ducking++ == 0) mgr->set_global_variable("Duck", 1.0f);
+        mgr->on_finished(h, [mgr] {
+            if (--ducking == 0) mgr->set_global_variable("Duck", 0.0f);
+        });
+    }
+    push_sound_handle(L, h);
+    return 1;
 }
 
-/// PauseSound(bank, pause) — pause/resume all sounds in a bank
-static int l_PauseSound(lua_State* L) {
-    spdlog::debug("PauseSound: stub");
+/// StopAllSounds()
+static int l_StopAllSounds(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L)) mgr->stop_all();
     return 0;
 }
 
-/// PauseVoice(bank, pause) — pause/resume voice
-static int l_PauseVoice(lua_State* L) {
-    spdlog::debug("PauseVoice: stub");
+/// SetVolume(category, volume 0..1): the player's volume for a category
+/// (retail's options: Global, World, Interface, Music, VO).
+static int l_SetVolume(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (mgr && lua_type(L, 1) == LUA_TSTRING)
+        mgr->set_category_volume(lua_tostring(L, 1), static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
-/// EnableWorldSounds(enable) — toggle 3D world audio
+/// GetVolume(category) -> 0..1
+static int l_GetVolume(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    lua_pushnumber(L, mgr && lua_type(L, 1) == LUA_TSTRING ? mgr->category_volume(lua_tostring(L, 1)) : 1.0);
+    return 1;
+}
+
+/// PauseSound(bank, pause) / PauseVoice(bank, pause): no pause yet.
+static int l_PauseSound(lua_State* /*L*/) { return 0; }
+static int l_PauseVoice(lua_State* /*L*/) { return 0; }
+
+/// EnableWorldSounds() / DisableWorldSounds(): the World category on or
+/// off (retail silences it for movies and the score screen).
 static int l_EnableWorldSounds(lua_State* L) {
-    spdlog::debug("EnableWorldSounds: {}", lua_toboolean(L, 1) ? "on" : "off");
+    if (auto* mgr = get_sound_mgr(L)) mgr->set_world_enabled(true);
     return 0;
+}
+static int l_DisableWorldSounds(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L)) mgr->set_world_enabled(false);
+    return 0;
+}
+
+/// What a UI thread waits on in WaitFor(sound): done when the sound ends.
+struct SoundWait : sim::Waitable {
+    bool done = false;
+    bool is_done() const override { return done; }
+    bool is_cancelled() const override { return false; }
+};
+
+/// WaitFor(handle) in the UI state: suspend the calling thread until the
+/// sound ends (retail's music thread waits out a fade this way).
+static int l_ui_WaitFor(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    auto* threads = get_ui_threads(L);
+    if (!mgr || !threads || lua_type(L, 1) != LUA_TNUMBER) return 0;
+    const auto h = static_cast<osc::audio::SoundHandle>(lua_tonumber(L, 1));
+    if (!mgr->is_playing(h)) return 0;
+    // The thread manager reads the waitable only when it parks the thread
+    // (right after this yield); the callback keeps it alive until the wake.
+    auto wait = std::make_shared<SoundWait>();
+    mgr->on_finished(h, [wait, threads] {
+        wait->done = true;
+        threads->wake(*wait, 0); // only the thread that waited, if it still lives
+    });
+    lua_pushlightuserdata(L, static_cast<sim::Waitable*>(wait.get()));
+    return lua_yield(L, 1);
 }
 
 // ====================================================================
@@ -15998,26 +16095,12 @@ void register_front_end_fallback_bindings(LuaState& state) {
         });
         lua_rawset(L, LUA_GLOBALSINDEX);
     };
-    auto set_num_fn = [&](const char* name, double val) {
-        if (global_is_defined(L, name)) return;
-        lua_pushstring(L, name);
-        lua_pushnumber(L, val);
-        lua_pushcclosure(L, [](lua_State* call_L) -> int {
-            lua_pushvalue(call_L, lua_upvalueindex(1));
-            return 1;
-        }, 1);
-        lua_rawset(L, LUA_GLOBALSINDEX);
-    };
 
     set_stub("AudioSetLanguage");
     set_str("__language", "us");
     set_bool_fn("HasLocalizedVO", false);
-    set_num_fn("GetVolume", 1.0);
-    set_stub("SetVolume");
     set_stub("ConExecute");
     set_stub("ConExecuteSave");
-    set_stub("EnableWorldSounds");
-    set_stub("DisableWorldSounds");
     set_stub("AddInputCapture");
     set_stub("RemoveInputCapture");
     set_bool_fn("AnyInputCapture", false);
@@ -16333,6 +16416,11 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PauseSound", l_PauseSound);
     state.register_function("PauseVoice", l_PauseVoice);
     state.register_function("EnableWorldSounds", l_EnableWorldSounds);
+    state.register_function("DisableWorldSounds", l_DisableWorldSounds);
+    state.register_function("StopAllSounds", l_StopAllSounds);
+    state.register_function("SetVolume", l_SetVolume);
+    state.register_function("GetVolume", l_GetVolume);
+    state.register_function("WaitFor", l_ui_WaitFor);
     state.register_function("AudioSetLanguage", [](lua_State*) -> int { return 0; });
 
     // Prefs table (M149a)

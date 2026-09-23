@@ -16,6 +16,7 @@
 #include "lua/sim_loader.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/binding_coverage.hpp"
+#include "audio_data_test.hpp"
 #include "lua/scenario_loader.hpp"
 #include "lua/sim_bindings.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -352,6 +353,7 @@ static void print_usage() {
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
               << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
+              << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -514,6 +516,17 @@ static void detach_ui_from_sim(lua_State* uiL) {
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
 //    reloads blueprints/scenario, boots sim, rebuilds renderer scene. ──
 // Returns true on success, false on critical failure.
+/// Give a sim (and its Lua state) the application's sound engine.
+static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
+                         osc::audio::SoundManager* sound) {
+    lua_State* L = sim_lua.raw();
+    lua_pushstring(L, "osc_sound_manager");
+    if (sound) lua_pushlightuserdata(L, sound);
+    else lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    sim.set_sound_manager(sound);
+}
+
 static bool execute_reload_sequence(
     std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     std::unique_ptr<osc::sim::SimState>& sim_state,
@@ -567,15 +580,14 @@ static bool execute_reload_sequence(
     // 6. Create fresh SimState
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
-    // 7. Audio, bone cache, anim cache
+    // 7. Audio (the application's engine, kept in the UI state), bone
+    // cache, anim cache
     {
-        auto new_sound = std::make_unique<osc::audio::SoundManager>(
-            config.fa_path / "sounds");
-        lua_State* sL = sim_lua_state->raw();
-        lua_pushstring(sL, "osc_sound_manager");
-        lua_pushlightuserdata(sL, new_sound.get());
-        lua_rawset(sL, LUA_REGISTRYINDEX);
-        sim_state->set_sound_manager(std::move(new_sound));
+        lua_pushstring(uiL, "osc_sound_manager");
+        lua_rawget(uiL, LUA_REGISTRYINDEX);
+        auto* sound = static_cast<osc::audio::SoundManager*>(lua_touserdata(uiL, -1));
+        lua_pop(uiL, 1);
+        attach_sound(*sim_lua_state, *sim_state, sound);
     }
     sim_state->set_bone_cache(
         std::make_unique<osc::sim::BoneCache>(&vfs, &store));
@@ -1202,8 +1214,9 @@ static void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
 /// focus changes, OnSync), then the game UI's beat functions.
-static void world_beat(osc::lua::LuaState* sim_lua, lua_State* uiL) {
+static void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
     if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
+    if (sim) osc::lua::notify_focus_army_damage(uiL, *sim);
     osc::core::call_game_beat(uiL);
 }
 
@@ -1742,6 +1755,7 @@ int main(int argc, char* argv[]) {
     bool controls_test = parse_flag(argc, argv, "--controls-test");
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
     bool gameui_test = parse_flag(argc, argv, "--gameui-test");
+    bool audio_data_test = parse_flag(argc, argv, "--audio-data-test");
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1840,7 +1854,7 @@ int main(int argc, char* argv[]) {
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
                     profile_test || smoke_test || ai_skirmish || draw_test ||
-                    stress_test || full_smoke_test;
+                    stress_test || full_smoke_test || audio_data_test;
     bool headless = (tick_count > 0) || any_test;
     if (any_test) osc::test_status::set_count_lua_failures(true);
 
@@ -1856,6 +1870,11 @@ int main(int argc, char* argv[]) {
     spdlog::info("FA path:   {}", config.fa_path.string());
     spdlog::info("Init file: {}", config.init_file.string());
     spdlog::info("FAF data:  {}", config.faf_data_path.string());
+
+    if (audio_data_test) {
+        osc::test::run_audio_data_test(config.fa_path / "sounds");
+        return finish_test_run("audio-data-test");
+    }
 
     if (!osc::fs::exists(config.init_file)) {
         spdlog::error("Init file not found: {}", config.init_file.string());
@@ -1900,6 +1919,14 @@ int main(int argc, char* argv[]) {
 
     spdlog::info("OpenSupCom initialization complete.");
 
+    // Audio: FA's sounds for the whole run (front end, lobby, games). Tests
+    // and captures run it without an output device; headless runs have no
+    // frames, so their sim tick is its clock.
+    const bool silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                                !parse_string_arg(argc, argv, "--golden", "").empty();
+    osc::audio::SoundManager sound(config.fa_path / "sounds", !headless && !silent_capture);
+    sound.set_sim_clocked(headless);
+
     // Phase 3: Map + Sim boot (only when --map provided)
     std::unique_ptr<osc::sim::SimState> sim_state;
     osc::lua::ScenarioMetadata scenario_meta;
@@ -1907,16 +1934,7 @@ int main(int argc, char* argv[]) {
     if (!map_path.empty()) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
-    // Audio system
-    auto sound_mgr = std::make_unique<osc::audio::SoundManager>(
-        config.fa_path / "sounds");
-    {
-        lua_State* L = sim_lua_state->raw();
-        lua_pushstring(L, "osc_sound_manager");
-        lua_pushlightuserdata(L, sound_mgr.get());
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    sim_state->set_sound_manager(std::move(sound_mgr));
+    attach_sound(*sim_lua_state, *sim_state, &sound);
 
     // Bone cache (lazy-loaded per-blueprint SCM bone data)
     auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
@@ -1991,6 +2009,12 @@ int main(int argc, char* argv[]) {
     osc::lua::LuaState ui_lua_state;
     ui_lua_state.set_vfs(&vfs);
     ui_lua_state.set_blueprint_store(&store);
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "osc_sound_manager");
+        lua_pushlightuserdata(uL, &sound);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
 
     // Run init sequence on UI state (polyfills, config, class system, import)
     auto ui_init_result = loader.execute_init(ui_lua_state, config, vfs);
@@ -2193,21 +2217,8 @@ int main(int argc, char* argv[]) {
             });
             lua_rawset(uL, LUA_GLOBALSINDEX);
         };
-        auto set_num_fn = [&](const char* name, double val) {
-            if (global_is_defined(name)) return;
-            lua_pushstring(uL, name);
-            lua_pushcfunction(uL, [](lua_State* L) -> int {
-                lua_pushnumber(L, 1.0); // default volume
-                return 1;
-            });
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-        };
-        set_num_fn("GetVolume", 1.0);      // usermusic.lua
-        set_stub("SetVolume");             // volume control
         set_stub("ConExecute");            // console commands
         set_stub("ConExecuteSave");        // console commands
-        set_stub("EnableWorldSounds");     // audio
-        set_stub("DisableWorldSounds");    // audio
         set_stub("AddInputCapture");       // input system
         set_stub("RemoveInputCapture");    // input system
         set_bool_fn("AnyInputCapture", false);
@@ -2741,6 +2752,25 @@ int main(int argc, char* argv[]) {
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
 
+                // Audio: the camera is the listener, and FA's zoom and angle
+                // curves read its distance and pitch.
+                {
+                    const auto& cam = renderer.camera();
+                    osc::f32 ex = 0, ey = 0, ez = 0;
+                    cam.eye_position(ex, ey, ez);
+                    const osc::f32 fx = cam.target_x() - ex;
+                    const osc::f32 fy = -ey;
+                    const osc::f32 fz = cam.target_z() - ez;
+                    const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
+                    sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});
+                    sound.set_global_variable("CameraDistance", cam.distance());
+                    const osc::f32 zoom_span = std::max(1.0f, cam.max_zoom() - cam.min_zoom());
+                    sound.set_global_variable(
+                        "ZoomPercent", 100.0f * (cam.distance() - cam.min_zoom()) / zoom_span);
+                    sound.set_global_variable("Angle", cam.pitch() * 57.29578f);
+                    sound.update(static_cast<osc::f32>(dt));
+                }
+
                 // FPS tracking
                 fps_accum += dt;
                 fps_frames++;
@@ -2872,7 +2902,7 @@ int main(int argc, char* argv[]) {
                         paused_beat_accumulator = 0.0;
                     }
                     for (osc::u32 b = 0; b < beats; ++b)
-                        world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                        world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
                 }
 
                 // Process SimCallbacks from UI (M138a)
@@ -3317,7 +3347,7 @@ int main(int argc, char* argv[]) {
         for (int t = 0; t < 3000; t++) {
             if (sim_state) {
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
             }
             if ((t + 1) % 10 == 0) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
@@ -3497,10 +3527,10 @@ int main(int argc, char* argv[]) {
                         if (u.vet_level() > 0) total_vet++;
                     }
                 });
-                spdlog::info("  Tick {}: {:.1f}s | {} units alive | {} vetted",
+                spdlog::info("  Tick {}: {:.1f}s | {} units alive | {} vetted | {} sounds",
                              ticks_run,
                              ticks_run * osc::sim::SimState::SECONDS_PER_TICK,
-                             total_units, total_vet);
+                             total_units, total_vet, sound.active_count());
             }
 
             // Check for game over
@@ -3735,7 +3765,7 @@ int main(int argc, char* argv[]) {
             for (int t = 0; t < ticks; ++t) {
                 apply_sim_callbacks(test_callbacks, *sim_state, *sim_lua_state);
                 sim_state->tick();
-                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
                 pump(6);
             }
         };
@@ -4089,11 +4119,13 @@ int main(int argc, char* argv[]) {
             else { osc::test_status::fail("[FAIL] HasCommandLineArg"); fail++; }
         }
 
-        // Test 3: PlaySound doesn't crash
+        // Test 3: PlaySound gives a handle for a cue that plays, nil otherwise
         {
             auto r = ui_lua_state.do_string(R"(
-                local h = PlaySound('test_click')
-                assert(type(h) == 'number', 'PlaySound should return handle')
+                local h = PlaySound(Sound({Bank = 'Interface', Cue = 'X_Main_Menu_On_Start'}))
+                assert(type(h) == 'number', 'PlaySound should return a handle')
+                assert(PlaySound('test_click') == nil, 'an unknown cue plays nothing')
+                StopSound(nil) -- a nil handle is a no-op
                 print('M147: PlaySound OK (handle=' .. h .. ')')
             )");
             if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }

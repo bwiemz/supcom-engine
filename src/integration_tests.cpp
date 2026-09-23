@@ -6672,6 +6672,78 @@ void test_unitsound(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: StopUnitAmbientSound when idle — {}", r.error().message); }
     }
 
+    // Test 8 (M188c): named ambient loops, with retail cues. Retail's
+    // Unit.PlayUnitAmbientSound(name) makes a child Entity{} attached to the
+    // unit and calls SetAmbientSound on it (ConstructLoop and ActiveLoop
+    // play side by side); StopUnitAmbientSound destroys the child, and the
+    // unit's trash destroys them all with it. The engine's part: an
+    // entity's ambient loop plays, follows the entity (and its parent), and
+    // ends with it.
+    auto* sound = ctx.sim.sound_manager();
+    if (!sound || !sound->has_data()) {
+        spdlog::warn("[SKIP] Test 8: no FA sound data");
+        return;
+    }
+    auto loop_of = [&](const char* name) -> osc::u32 {
+        auto r = lua(std::string("local c = e.AmbientSounds and e.AmbientSounds.") + name +
+                     "\n__osc_loop_entity = c and c:GetEntityId() or 0");
+        if (!r) return 0;
+        lua_State* sL = ctx.lua_state.raw();
+        lua_pushstring(sL, "__osc_loop_entity");
+        lua_rawget(sL, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(sL, -1));
+        lua_pop(sL, 1);
+        auto* child = reg.find(id);
+        return child ? child->ambient_sound("__ambient") : 0;
+    };
+    auto r8 = lua("local bp = e:GetBlueprint()\n"
+                  "bp.Audio.OscMoveLoop = { Bank = 'UEL', Cue = 'UEL0101_Move_Loop' }\n"
+                  "bp.Audio.OscActiveLoop = { Bank = 'UEB', Cue = 'UEB1103_Active' }\n"
+                  "e:PlayUnitAmbientSound('OscMoveLoop')\n"
+                  "e:PlayUnitAmbientSound('OscActiveLoop')\n");
+    const osc::u32 move = loop_of("OscMoveLoop");
+    const osc::u32 active = loop_of("OscActiveLoop");
+    if (r8 && move && active && move != active && sound->is_playing(move) && sound->is_playing(active)) {
+        pass++;
+        spdlog::info("[PASS] Test 8a: two named ambient loops play side by side");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8a: named ambient loops ({})", r8 ? "not playing" : r8.error().message);
+    }
+    lua("e:StopUnitAmbientSound('OscActiveLoop')");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // its release runs out
+    if (!sound->is_playing(active) && sound->is_playing(move)) {
+        pass++;
+        spdlog::info("[PASS] Test 8b: stopping one loop by name leaves the other");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8b: StopUnitAmbientSound(name)");
+    }
+    {
+        osc::sim::Vector3 p = e1->position();
+        p.x += 40.0f;
+        e1->set_position(p);
+        ctx.sim.tick();
+        ctx.sim.tick();
+        osc::sim::Vector3 heard{};
+        if (sound->position(move, heard) && std::abs(heard.x - p.x) < 1.0f) {
+            pass++;
+            spdlog::info("[PASS] Test 8c: the loop follows the unit");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8c: the loop stayed at x={} (unit at {})", heard.x, p.x);
+        }
+    }
+    lua("e:Destroy()");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // releases and fades run out
+    if (!sound->is_playing(move)) {
+        pass++;
+        spdlog::info("[PASS] Test 8d: the loops end with the unit");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8d: a destroyed unit's loop plays on");
+    }
+
     spdlog::info("Unit sound test: {}/{} passed", pass, pass + fail);
 }
 
@@ -8612,6 +8684,78 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         spdlog::info("[PASS] Test 8: 30 game-seconds with the game UI, no script errors");
     else
         osc::test_status::fail("[FAIL] Test 8: script errors while the game UI ran");
+
+    // 13. Audio through FA's own scripts: gamemain.CreateUI starts
+    //     UserMusic's peace music (a thread that waits 3 s, then plays
+    //     Music/Base_Building). StopSound lets a sound fade: FA's music
+    //     tracks carry a ReleaseTime curve that falls silent over 6.06 s,
+    //     and a UI thread waits it out with WaitFor(handle), as the music
+    //     thread does.
+    if (auto* sound = ctx.sim.sound_manager(); sound && sound->has_data()) {
+        if (sound->is_cue_playing("Music", "Base_Building"))
+            spdlog::info("[PASS] Test 13a: retail's peace music is playing");
+        else
+            osc::test_status::fail("[FAIL] Test 13a: no peace music after the game started");
+        lua_ok("Test 13b: fade a sound out, a thread waiting on it", R"(
+            __osc_music = PlaySound(Sound({Bank = 'Music', Cue = 'Battle'}))
+            if not __osc_music then error('Music/Battle did not play') end
+            __osc_music_waited = false
+            ForkThread(function()
+                StopSound(__osc_music) -- releases over its 6 s curve
+                WaitFor(__osc_music)
+                __osc_music_waited = true
+            end)
+        )");
+        pump_frames(2);
+        play(30); // 3 s
+        lua_ok("Test 13c: the thread waits while it fades", R"(
+            if __osc_music_waited then error('WaitFor returned before the release ended') end
+        )");
+        play(35); // past 6.06 s
+        pump_frames(2);
+        lua_ok("Test 13d: ... and resumes when it has ended", R"(
+            if not __osc_music_waited then error('WaitFor never returned') end
+        )");
+        lua_ok("Test 13e: the player's category volumes", R"(
+            SetVolume('Music', 0.25)
+            if math.abs(GetVolume('Music') - 0.25) > 1e-6 then error('volume ' .. GetVolume('Music')) end
+            SetVolume('Music', 1)
+            if PlaySound(Sound({Bank = 'Interface', Cue = 'No_Such_Cue'})) ~= nil then
+                error('an unknown cue returned a handle')
+            end
+        )");
+    } else {
+        spdlog::warn("[SKIP] Test 13: no FA sound data");
+    }
+
+    // 14. Damage to the player's own units reaches gamemain, which tells
+    //     UserMusic (sustained, it switches to battle music).
+    lua_ok("Test 14a: watch gamemain.OnFocusArmyUnitDamaged", R"(
+        local gm = import('/lua/ui/game/gamemain.lua')
+        __osc_damaged = 0
+        local orig = gm.OnFocusArmyUnitDamaged
+        gm.OnFocusArmyUnitDamaged = function(unit)
+            __osc_damaged = __osc_damaged + 1
+            if orig then orig(unit) end
+        end
+        __osc_test_acu_id = tonumber(GetArmyAvatars()[1]:GetEntityId())
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_id");
+        auto* acu = ctx.sim.entity_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+        lua_pop(L, 1);
+        play(1); // a beat to record health
+        if (acu) acu->set_health(acu->health() - 50.0f);
+        play(1);
+        play(1); // no more damage: no more calls
+        lua_getglobal(L, "__osc_damaged");
+        const int calls = static_cast<int>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        if (acu && calls == 1)
+            spdlog::info("[PASS] Test 14b: damage to the commander reached gamemain once");
+        else
+            osc::test_status::fail("[FAIL] Test 14b: OnFocusArmyUnitDamaged calls: {}", calls);
+    }
 
     // 10 (before game over). Selecting the commander, as OnFirstUpdate does
     //    in a real game: gamemain.OnSelectionChanged updates the orders and

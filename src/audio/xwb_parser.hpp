@@ -18,6 +18,8 @@ struct WaveInfo {
     u32 data_offset = 0;    ///< Absolute file offset of wave data
     u32 data_length = 0;    ///< Byte count of wave data
     u32 duration_samples = 0;
+    u32 loop_start = 0;     ///< Loop region, in samples (0 length: none)
+    u32 loop_length = 0;
 };
 
 /// Parses XACT3 .xwb (Xbox Wave Bank) files.

@@ -172,8 +172,10 @@ public:
     }
 
     // Audio
-    void set_sound_manager(std::unique_ptr<audio::SoundManager> mgr);
-    audio::SoundManager* sound_manager() { return sound_manager_.get(); }
+    /// The application's sound engine (not owned: it outlives the sim, and
+    /// the front end plays sound too).
+    void set_sound_manager(audio::SoundManager* mgr);
+    audio::SoundManager* sound_manager() { return sound_manager_; }
 
     // Bones
     void set_bone_cache(std::unique_ptr<BoneCache> cache);
@@ -354,6 +356,12 @@ public:
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.
+    /// One tick's step: attached entities (AttachTo, AttachBoneTo) take
+    /// their parent's pose (its origin: bone offsets need the sim's bone
+    /// world transforms). Each reads its parent's pose from before the step,
+    /// so the result is the same in any iteration order (lockstep).
+    void follow_attachments();
+
     static u32 sim_generation() { return s_sim_generation_; }
     static void increment_sim_generation() { ++s_sim_generation_; }
 
@@ -467,7 +475,7 @@ private:
 
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
-    std::unique_ptr<audio::SoundManager> sound_manager_;
+    audio::SoundManager* sound_manager_ = nullptr;
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;

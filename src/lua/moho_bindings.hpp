@@ -49,4 +49,11 @@ void push_selected_units_for_ui(lua_State* L);
 /// unknown ids are skipped), in the given order.
 void push_units_for_ui(lua_State* L, const std::vector<osc::u32>& ids);
 
+/// Once per sim beat: gamemain.OnFocusArmyUnitDamaged(unit) for each of the
+/// focus army's units whose health dropped since the last call. Moho reports
+/// damage to the player's own units this way; retail's music turns to
+/// battle music on it (UserMusic.NotifyBattle). The previous health is kept
+/// per sim, so a new game starts fresh.
+void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim);
+
 } // namespace osc::lua

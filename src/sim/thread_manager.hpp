@@ -16,7 +16,10 @@ struct ThreadEntry {
     i32 wait_until_tick = 0; // Tick at which to resume (0 = resume next tick)
     bool dead = false;
     std::string source;     // Debug: where this thread was forked from
+    u64 serial = 0;         // unique per thread (refs are reused)
 };
+
+class Waitable;
 
 class ThreadManager {
 public:
@@ -51,9 +54,9 @@ public:
     /// for "the scripts run without errors but nothing happens".
     std::vector<std::string> describe_threads() const;
 
-    /// Wake a thread that is waiting on a manipulator (WaitFor).
-    /// Sets the thread's wait_until_tick to current_tick so it resumes next tick.
-    void wake_thread(int lua_ref, u32 current_tick);
+    /// Wake the thread parked on `w` by WaitFor, if it still lives (it runs
+    /// again at `current_tick`), and clear the waiter.
+    void wake(Waitable& w, u32 current_tick);
 
     /// Set the maximum number of Lua VM instructions per coroutine resume.
     /// Set to 0 to disable the instruction limit.
@@ -64,6 +67,7 @@ private:
     std::vector<ThreadEntry> threads_;
     std::vector<ThreadEntry> pending_threads_; // buffered during resume_all
     bool resuming_ = false; // true while inside resume_all loop
+    u64 next_serial_ = 1;
     i32 instruction_budget_ = DEFAULT_INSTRUCTION_BUDGET;
 
     void cleanup_dead_threads();

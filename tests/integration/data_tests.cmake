@@ -21,6 +21,8 @@
 #   M187: gameui-test -- the engine drives retail's in-game UI
 #     (uimain.StartGameUI, the provider's CreateGameInterface ->
 #     gamemain.CreateUI) and the sim -> UI sync channel.
+#   M188: audio-data-test -- every retail cue resolves through the XACT
+#     data (sound banks, wave banks by internal name, global settings).
 
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test anim-render-test anim-test armor-test audio-test
@@ -50,7 +52,7 @@ set(OSC_DATA_TESTS_RETAIL_GAP
 
 # Front-end flows that must boot without --map.
 set(OSC_DATA_TESTS_NO_MAP_GATE
-    lobby-flow-test
+    audio-data-test lobby-flow-test
 )
 set(OSC_DATA_TESTS_NO_MAP_RETAIL_GAP
 )

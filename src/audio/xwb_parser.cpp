@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 
@@ -95,7 +96,7 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
 
     // Read BANKDATA segment (96 bytes for non-compact)
     auto& bd_seg = segments[SEG_BANKDATA];
-    if (bd_seg.length < 24) { // minimum: flags + count + partial name
+    if (bd_seg.length < 72) { // flags + entry count + 64-byte bank name
         return Error("BANKDATA segment too small");
     }
 
@@ -141,6 +142,12 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
         return Error("Failed to read entry metadata");
     }
 
+    // The entry count comes from the file: bound it by the table that holds
+    // the entries, or a damaged count would allocate without limit.
+    const u32 stride = is_compact ? 4u : std::max<u32>(entry_meta_size, 24u);
+    if (entry_count > em_seg.length / stride) {
+        return Error("XWB " + bank_name_ + ": more entries than its entry table holds");
+    }
     entries_.resize(entry_count);
 
     if (is_compact) {
@@ -186,6 +193,8 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
             entries_[i].data_offset = wd_seg.offset + play_offset;
             entries_[i].data_length = play_length;
             entries_[i].duration_samples = flags_dur >> 4;
+            entries_[i].loop_start = read_u32(p + 16);
+            entries_[i].loop_length = read_u32(p + 20);
         }
     }
 

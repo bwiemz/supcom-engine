@@ -2807,7 +2807,7 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
         bool was_at_goal = m->is_at_goal();
         m->tick(dt);
         // If just reached goal and someone is waiting, wake the thread
-        if (!was_at_goal && m->is_at_goal() && m->waiting_thread_ref() >= 0) {
+        if (!was_at_goal && m->is_at_goal() && m->has_waiting_thread()) {
             // Look up ThreadManager from Lua registry
             lua_pushstring(L, "osc_thread_mgr");
             lua_rawget(L, LUA_REGISTRYINDEX);
@@ -2819,12 +2819,9 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
                 lua_rawget(L, LUA_REGISTRYINDEX);
                 auto* sim = static_cast<SimState*>(lua_touserdata(L, -1));
                 lua_pop(L, 1);
-                if (sim) {
-                    tmgr->wake_thread(m->waiting_thread_ref(),
-                                       sim->tick_count());
-                }
+                if (sim) tmgr->wake(*m, sim->tick_count());
             }
-            m->set_waiting_thread_ref(-2); // LUA_NOREF
+            m->clear_waiting_thread();
         }
     }
     // Free destroyed manipulators, detaching their Lua tables first.
