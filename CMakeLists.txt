@@ -63,3 +63,16 @@ if(OSC_BUILD_TESTS)
     add_subdirectory(tests)
     add_subdirectory(tests/integration)
 endif()
+
+# Static analysis (label `lint`, off by default: it needs clang-tidy, the
+# version the baseline was taken with). `ctest -L lint` runs the ratchet in
+# tools/clang_tidy_ratchet.py over this build's compile_commands.json.
+option(OSC_LINT "Register the clang-tidy ratchet as a test (label lint)" OFF)
+if(OSC_LINT AND OSC_BUILD_TESTS)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME lint.clang_tidy
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/clang_tidy_ratchet.py
+                     -p ${CMAKE_BINARY_DIR}
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+    set_tests_properties(lint.clang_tidy PROPERTIES LABELS "lint" TIMEOUT 1800)
+endif()
