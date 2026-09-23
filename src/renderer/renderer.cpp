@@ -302,14 +302,24 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
 }
 
 bool Renderer::create_swapchain(u32 width, u32 height) {
+    // Frame capture (screenshots, golden images) copies out of the swapchain
+    // image, which needs TRANSFER_SRC usage -- only request it if supported.
+    VkSurfaceCapabilitiesKHR caps{};
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device_, surface_, &caps);
+    capture_supported_ =
+        (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+
     vkb::SwapchainBuilder builder(physical_device_, device_, surface_);
-    auto sc_ret = builder
+    builder
         .set_desired_format({VK_FORMAT_B8G8R8A8_UNORM,
                              VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
         .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(width, height)
-        .set_old_swapchain(swapchain_)
-        .build();
+        .set_old_swapchain(swapchain_);
+    if (capture_supported_) {
+        builder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    }
+    auto sc_ret = builder.build();
 
     if (!sc_ret) {
         spdlog::error("Failed to create swapchain: {}",
@@ -1911,6 +1921,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         f64 now = glfwGetTime();
         f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
         last_frame_time_ = now;
+        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
         total_time_ += dt;
         frame_dt_ = dt;
         if (dt > 0.0f && dt < 1.0f) {
@@ -2610,6 +2621,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     vkCmdEndRenderPass(cmd_buf_[fi]);
+    const bool capturing = record_capture(cmd_buf_[fi], image_index);
     vkEndCommandBuffer(cmd_buf_[fi]);
 
     // Submit
@@ -2636,6 +2648,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
     VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
+    if (capturing) deliver_capture();
 
     if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
         pres_result == VK_SUBOPTIMAL_KHR) {
@@ -2739,6 +2752,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     }
 
     vkCmdEndRenderPass(cmd_buf_[fi]);
+    const bool capturing = record_capture(cmd_buf_[fi], image_index);
     vkEndCommandBuffer(cmd_buf_[fi]);
 
     // Submit
@@ -2763,6 +2777,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &image_index;
     VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
+    if (capturing) deliver_capture();
 
     if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
         pres_result == VK_SUBOPTIMAL_KHR) {
@@ -2826,6 +2841,107 @@ void Renderer::poll_events(f64 dt) {
     b_key_was_pressed_ = b_pressed;
 
     camera_.update(window_, dt);
+}
+
+// --- Frame capture (screenshots / golden images) ---
+
+bool Renderer::request_capture(CaptureCallback on_captured) {
+    if (!capture_supported_) return false;
+    pending_capture_ = std::move(on_captured);
+    return true;
+}
+
+bool Renderer::record_capture(VkCommandBuffer cmd, u32 image_index) {
+    if (!pending_capture_ || !capture_supported_ ||
+        image_index >= swapchain_images_.size()) {
+        return false;
+    }
+
+    const VkDeviceSize size =
+        static_cast<VkDeviceSize>(window_width_) * window_height_ * 4;
+    if (capture_buf_size_ != size) {
+        if (capture_buf_.buffer) {
+            vmaDestroyBuffer(allocator_, capture_buf_.buffer, capture_buf_.allocation);
+            capture_buf_ = {};
+        }
+        VkBufferCreateInfo buf_ci{};
+        buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buf_ci.size = size;
+        buf_ci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+        if (vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci, &capture_buf_.buffer,
+                            &capture_buf_.allocation, nullptr) != VK_SUCCESS) {
+            spdlog::error("Frame capture: failed to create readback buffer");
+            capture_buf_ = {};
+            capture_buf_size_ = 0;
+            pending_capture_ = nullptr;
+            return false;
+        }
+        capture_buf_size_ = size;
+    }
+
+    VkImage image = swapchain_images_[image_index];
+    VkImageMemoryBarrier to_transfer{};
+    to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_transfer.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_transfer.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // final pass layout
+    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_transfer.image = image;
+    to_transfer.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &to_transfer);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {window_width_, window_height_, 1};
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           capture_buf_.buffer, 1, &region);
+
+    VkImageMemoryBarrier to_present = to_transfer;
+    to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_present.dstAccessMask = 0;
+    to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                         nullptr, 1, &to_present);
+    return true;
+}
+
+void Renderer::deliver_capture() {
+    // Capture is a test/debug path; stalling the queue keeps it simple.
+    vkQueueWaitIdle(graphics_queue_);
+
+    ImageRGBA8 image;
+    image.width = window_width_;
+    image.height = window_height_;
+    image.pixels.resize(static_cast<size_t>(capture_buf_size_));
+
+    void* mapped = nullptr;
+    if (vmaMapMemory(allocator_, capture_buf_.allocation, &mapped) != VK_SUCCESS) {
+        spdlog::error("Frame capture: failed to map readback buffer");
+        pending_capture_ = nullptr;
+        return;
+    }
+    vmaInvalidateAllocation(allocator_, capture_buf_.allocation, 0, VK_WHOLE_SIZE);
+    std::memcpy(image.pixels.data(), mapped, image.pixels.size());
+    vmaUnmapMemory(allocator_, capture_buf_.allocation);
+
+    const bool bgra = swapchain_format_ == VK_FORMAT_B8G8R8A8_UNORM ||
+                      swapchain_format_ == VK_FORMAT_B8G8R8A8_SRGB;
+    for (size_t i = 0; i < image.pixels.size(); i += 4) {
+        if (bgra) std::swap(image.pixels[i], image.pixels[i + 2]);
+        image.pixels[i + 3] = 255; // swapchain alpha is meaningless
+    }
+
+    auto callback = std::move(pending_capture_);
+    pending_capture_ = nullptr;
+    callback(std::move(image));
 }
 
 void Renderer::recreate_swapchain() {
@@ -2994,6 +3110,11 @@ void Renderer::shutdown() {
 
     // Swapchain
     vkDestroySwapchainKHR(device_, swapchain_, nullptr);
+
+    if (capture_buf_.buffer) {
+        vmaDestroyBuffer(allocator_, capture_buf_.buffer, capture_buf_.allocation);
+        capture_buf_ = {};
+    }
 
     // VMA
     vmaDestroyAllocator(allocator_);

@@ -1,3 +1,4 @@
+#include "core/image.hpp"
 #include "core/test_status.hpp"
 #include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
@@ -7,6 +8,7 @@
 #include "integration_tests.hpp"
 #include "platform/crash_handler.hpp"
 #include "platform/game_install.hpp"
+#include "platform/paths.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/init_loader.hpp"
 #include "lua/session_manager.hpp"
@@ -263,6 +265,11 @@ static void print_usage() {
               << "  --fa-path <path>   Path to FA installation directory\n"
               << "  --faf-data <path>  Path to FAF data directory\n"
               << "  --print-install    Show which FA install would be used and exit\n"
+              << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
+              << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
+              << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
+              << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
+              << "  --golden-update    Record the golden image instead of comparing\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
@@ -2257,11 +2264,66 @@ int main(int argc, char* argv[]) {
                 if (!lwj.empty()) osc::lua::mp_begin_join(lwj, lport);
             }
 
-            while (!renderer.should_close()) {
+            // --screenshot <png> [--screenshot-frame N]: render N frames on a
+            // fixed 60 Hz clock (so frame N is identical run to run), capture
+            // the presented image, write it, and exit. Used for golden-image
+            // tests and documentation shots.
+            // --golden <name> [--golden-update]: capture like --screenshot and
+            // compare against <golden dir>/<name>.png (OSC_GOLDEN_DIR, else the
+            // user state dir). Goldens contain game art, so they live outside
+            // the repository; a missing golden exits 77 (CTest "skipped").
+            const std::string golden_name = parse_string_arg(argc, argv, "--golden", "");
+            const bool golden_update = parse_flag(argc, argv, "--golden-update");
+            osc::fs::path golden_path;
+            if (!golden_name.empty()) {
+                auto env_dir = osc::platform::system_env()("OSC_GOLDEN_DIR");
+                osc::fs::path dir = env_dir && !env_dir->empty()
+                    ? osc::fs::path(*env_dir)
+                    : osc::platform::known_folder(osc::platform::KnownFolder::State) /
+                          "opensupcom" / "golden";
+                std::error_code ec;
+                osc::fs::create_directories(dir, ec);
+                golden_path = dir / (golden_name + ".png");
+            }
+            const std::string screenshot_path = !golden_name.empty()
+                ? (golden_update ? golden_path.string()
+                                 : (golden_path.parent_path() /
+                                    (golden_name + ".actual.png")).string())
+                : parse_string_arg(argc, argv, "--screenshot", "");
+            const osc::u32 screenshot_frame = static_cast<osc::u32>(std::strtoul(
+                parse_string_arg(argc, argv, "--screenshot-frame", "120").c_str(),
+                nullptr, 10));
+            constexpr double kScreenshotFrameDt = 1.0 / 60.0;
+            osc::u32 frames_rendered = 0;
+            bool screenshot_done = false;
+            bool screenshot_ok = false;
+            if (!screenshot_path.empty()) {
+                renderer.set_fixed_frame_dt(static_cast<osc::f32>(kScreenshotFrameDt));
+                // Golden images must not depend on where the mouse happens to be.
+                renderer.camera().set_input_enabled(false);
+            }
+            // --camera <x>,<z>,<distance>: initial camera placement (world units).
+            {
+                const std::string cam = parse_string_arg(argc, argv, "--camera", "");
+                float cx = 0, cz = 0, dist = 0;
+                if (!cam.empty()) {
+                    if (std::sscanf(cam.c_str(), "%f,%f,%f", &cx, &cz, &dist) == 3 &&
+                        dist > 0) {
+                        renderer.camera().set_target(cx, cz);
+                        renderer.camera().set_distance(dist);
+                    } else {
+                        spdlog::error("--camera expects <x>,<z>,<distance>, got '{}'", cam);
+                        return 1;
+                    }
+                }
+            }
+
+            while (!renderer.should_close() && !screenshot_done) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
                 prev_time = now;
+                if (!screenshot_path.empty()) dt = kScreenshotFrameDt;
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
 
@@ -2534,6 +2596,21 @@ int main(int argc, char* argv[]) {
                 }
 
                 const auto& sel = input_handler.selected();
+                if (!screenshot_path.empty() &&
+                    ++frames_rendered == std::max<osc::u32>(screenshot_frame, 1)) {
+                    const bool requested = renderer.request_capture(
+                        [&](osc::ImageRGBA8 image) {
+                            screenshot_ok = osc::write_png(screenshot_path, image);
+                            screenshot_done = true;
+                            spdlog::info("Screenshot {}x{} -> {} ({})", image.width,
+                                         image.height, screenshot_path,
+                                         screenshot_ok ? "written" : "WRITE FAILED");
+                        });
+                    if (!requested) {
+                        spdlog::error("Screenshot: swapchain readback unsupported");
+                        screenshot_done = true;
+                    }
+                }
                 if (sim_state) {
                     renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
                                     sel.empty() ? nullptr : &sel);
@@ -2739,7 +2816,43 @@ int main(int argc, char* argv[]) {
             }
 
             renderer.shutdown();
+            if (!golden_name.empty() && !golden_update) {
+                if (!screenshot_ok) return 1;
+                auto golden = osc::read_png(golden_path);
+                if (!golden) {
+                    spdlog::warn("No golden image at {} -- record one with "
+                                 "--golden {} --golden-update", golden_path.string(),
+                                 golden_name);
+                    return kExitSkippedNoData;
+                }
+                auto actual = osc::read_png(screenshot_path);
+                const double tolerance = std::strtod(
+                    parse_string_arg(argc, argv, "--golden-tolerance", "0.01").c_str(),
+                    nullptr);
+                auto diff = osc::compare_images(*actual, *golden, 16);
+                const bool pass = diff.same_size &&
+                                  diff.fraction_over_threshold <= tolerance;
+                spdlog::info("Golden '{}': {:.3f}% of pixels differ (tolerance "
+                             "{:.3f}%), mean abs error {:.2f} -> {}",
+                             golden_name, diff.fraction_over_threshold * 100.0,
+                             tolerance * 100.0, diff.mean_abs_error,
+                             pass ? "PASS" : "FAIL");
+                if (!diff.same_size) {
+                    spdlog::error("Golden '{}': size {}x{} != golden {}x{}", golden_name,
+                                  actual->width, actual->height, golden->width,
+                                  golden->height);
+                }
+                return pass ? 0 : 1;
+            }
+            if (!screenshot_path.empty()) return screenshot_ok ? 0 : 1;
         } else {
+            if (parse_flag(argc, argv, "--screenshot") ||
+                !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                !parse_string_arg(argc, argv, "--golden", "").empty()) {
+                spdlog::error("Screenshot requested but the renderer failed to "
+                              "initialize");
+                return 1;
+            }
             spdlog::warn("Vulkan init failed — falling back to headless "
                          "(100 ticks)");
             if (sim_state) {

@@ -1,4 +1,5 @@
 add_library(osc_core STATIC
+    image.cpp
     log.cpp
     test_status.cpp
     preferences.cpp
@@ -14,3 +15,6 @@ target_link_libraries(osc_core
 )
 
 target_link_libraries(osc_core PRIVATE osc::warnings)
+
+# stb single-header libraries (PNG I/O for screenshots / golden images)
+target_include_directories(osc_core PRIVATE ${CMAKE_SOURCE_DIR}/third_party)

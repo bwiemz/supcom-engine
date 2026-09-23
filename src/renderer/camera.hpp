@@ -30,6 +30,9 @@ public:
     void set_distance(f32 d) { distance_ = d; }
     void set_target(f32 x, f32 z) { target_x_ = x; target_z_ = z; }
 
+    /// When false, update() ignores keyboard and mouse (scripted captures).
+    void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
+
     /// Unproject screen pixel to world XZ plane (y = ground_y).
     /// Returns true if intersection found, writes world x/z.
     bool screen_to_world(f32 screen_x, f32 screen_y,
@@ -46,6 +49,9 @@ public:
     void apply_shake(f32 intensity);
 
 private:
+    void decay_shake();
+
+    bool input_enabled_ = true;
     // Look-at target on XZ ground plane
     f32 target_x_ = 0;
     f32 target_z_ = 0;

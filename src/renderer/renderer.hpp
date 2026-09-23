@@ -21,9 +21,11 @@
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
+#include "core/image.hpp"
 #include "core/types.hpp"
 
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -110,10 +112,37 @@ public:
     /// Check if a mouse button is currently pressed.
     bool is_mouse_pressed(int glfw_button) const;
 
+    /// Receives a captured frame (RGBA8, rows top to bottom).
+    using CaptureCallback = std::function<void(ImageRGBA8)>;
+
+    /// Capture the next frame exactly as presented: after bloom, HUD and UI,
+    /// from either render() or render_ui_only(). The callback runs on this
+    /// thread once the GPU has finished that frame. Returns false if the
+    /// swapchain cannot be read back on this driver (no TRANSFER_SRC usage).
+    bool request_capture(CaptureCallback on_captured);
+
+    /// Advance the renderer's animation clock (UI animations, water, effects)
+    /// by a fixed step per frame instead of wall-clock time, so frame N looks
+    /// the same on every run. 0 restores wall-clock timing.
+    void set_fixed_frame_dt(f32 dt) { fixed_frame_dt_ = dt; }
+
     static constexpr u32 SHADOW_MAP_SIZE = 4096;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
+    /// Record a copy of swapchain image `image_index` into the readback
+    /// buffer (after the final render pass). Returns false if not recorded.
+    bool record_capture(VkCommandBuffer cmd, u32 image_index);
+    /// Wait for the GPU, convert the readback buffer to RGBA8, and hand it to
+    /// the pending callback.
+    void deliver_capture();
+
+    CaptureCallback pending_capture_;
+    f32 fixed_frame_dt_ = 0.0f;
+    bool capture_supported_ = false;
+    AllocatedBuffer capture_buf_{};
+    VkDeviceSize capture_buf_size_ = 0;
+
     bool create_swapchain(u32 width, u32 height);
     void create_depth_image();
     void create_render_pass();

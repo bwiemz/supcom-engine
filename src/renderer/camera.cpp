@@ -17,6 +17,10 @@ void Camera::init(f32 map_width, f32 map_height) {
 
 void Camera::update(GLFWwindow* window, f64 dt) {
     auto fdt = static_cast<f32>(dt);
+    if (!input_enabled_) {
+        decay_shake();
+        return;
+    }
 
     // Pan speed scales with zoom distance
     f32 pan_speed = distance_ * 0.8f * fdt;
@@ -36,7 +40,11 @@ void Camera::update(GLFWwindow* window, f64 dt) {
     glfwGetWindowSize(window, &win_w, &win_h);
     f64 mx, my;
     glfwGetCursorPos(window, &mx, &my);
-    if (glfwGetWindowAttrib(window, GLFW_FOCUSED)) {
+    // Only while the pointer is actually over the window: a focused window
+    // whose cursor is elsewhere reports a stale position (often 0,0), which
+    // would otherwise scroll the camera into a corner.
+    if (glfwGetWindowAttrib(window, GLFW_FOCUSED) &&
+        glfwGetWindowAttrib(window, GLFW_HOVERED)) {
         constexpr f64 EDGE_MARGIN = 3.0;
         if (mx <= EDGE_MARGIN)             left  = true;
         if (mx >= win_w - EDGE_MARGIN - 1) right = true;
@@ -81,7 +89,10 @@ void Camera::update(GLFWwindow* window, f64 dt) {
         orbiting_ = false;
     }
 
-    // Decay camera shake
+    decay_shake();
+}
+
+void Camera::decay_shake() {
     if (shake_intensity_ > 0.01f)
         shake_intensity_ *= 0.9f;
     else

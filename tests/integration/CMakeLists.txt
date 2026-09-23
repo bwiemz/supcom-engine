@@ -7,6 +7,7 @@
 #               library). Exit code 77 = no data = skipped.
 #   gate        data tests that pass on retail FA 3599 today: the regression
 #               gate to run before merging (`ctest -L gate`)
+#   golden      render a fixed frame and compare with a recorded golden image
 #   retail-gap  data tests that currently fail on retail data because of known
 #               gaps (roadmap Phase B, M185/M186). They move to `gate` as the
 #               gaps close; `ctest -L data` runs both groups.
@@ -65,3 +66,15 @@ endforeach()
 foreach(mode IN LISTS OSC_DATA_TESTS_NO_MAP_RETAIL_GAP)
     osc_add_data_test(${mode} retail-gap NO_MAP)
 endforeach()
+
+# ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
+# The golden PNGs contain game art, so they live outside the repository, in
+# $OSC_GOLDEN_DIR (else the user state dir). A missing golden is "skipped";
+# record one with: opensupcom <same args> --golden <name> --golden-update
+add_test(NAME data.golden.scmp009_acu
+         COMMAND opensupcom --map ${OSC_TEST_MAP} --golden scmp009_acu
+                 --screenshot-frame 120 --camera 672,346,60)
+set_tests_properties(data.golden.scmp009_acu PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
