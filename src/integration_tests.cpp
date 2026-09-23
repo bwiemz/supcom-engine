@@ -6578,17 +6578,20 @@ void test_unitsound(TestContext& ctx) {
     }
     spdlog::info("Using entity #{} for unit sound tests", test_id);
 
-    // Inject test audio entries into the unit's Blueprint.Audio
+    // Inject test audio entries into the unit's blueprint Audio table. The
+    // engine reads the blueprint from the store (GetBlueprint); e.Blueprint
+    // is a FAF script field retail units don't have.
     std::string id_str = std::to_string(test_id);
     auto inject = ctx.lua_state.do_string(
         "local e = GetEntityById(" + id_str + ")\n"
         "if not e then error('inject: entity not found') end\n"
-        "if not e.Blueprint then error('inject: no Blueprint') end\n"
-        "if not e.Blueprint.Audio then e.Blueprint.Audio = {} end\n"
-        "e.Blueprint.Audio['TestOneShot'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['TestAmbient'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['Ambient1']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
-        "e.Blueprint.Audio['Ambient2']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n");
+        "local bp = e:GetBlueprint()\n"
+        "if not bp then error('inject: no blueprint') end\n"
+        "if not bp.Audio then bp.Audio = {} end\n"
+        "bp.Audio['TestOneShot'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['TestAmbient'] = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['Ambient1']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
+        "bp.Audio['Ambient2']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n");
     if (!inject) {
         osc::test_status::fail("[FAIL] Audio inject: {}", inject.error().message);
         return;

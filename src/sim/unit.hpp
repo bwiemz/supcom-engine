@@ -14,6 +14,7 @@
 #include <vector>
 
 namespace osc::sim { class Manipulator; }
+namespace osc::blueprints { class BlueprintStore; }
 
 struct lua_State;
 
@@ -253,7 +254,10 @@ public:
     const std::unordered_map<std::string, std::string>& enhancements() const { return enhancements_; }
     bool is_enhancing() const { return enhancing_; }
     const std::string& enhance_name() const { return enhance_name_; }
-    bool start_enhance(const UnitCommand& cmd, lua_State* L);
+    /// Reads the enhancement from the unit's own blueprint in `store` (not
+    /// self.Blueprint, which only FAF's unit script sets).
+    bool start_enhance(const UnitCommand& cmd, lua_State* L,
+                       const blueprints::BlueprintStore* store);
     bool progress_enhance(f64 dt, lua_State* L, f32 efficiency = 1.0f);
     void finish_enhance(lua_State* L);
     void cancel_enhance(lua_State* L);
@@ -568,6 +572,7 @@ private:
     bool enhancing_ = false;
     f64 enhance_build_time_ = 0;
     std::string enhance_name_;
+    std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)

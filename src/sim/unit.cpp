@@ -1,4 +1,5 @@
 #include "sim/unit.hpp"
+#include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
@@ -898,7 +899,8 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
         case CommandType::Enhance: {
             if (!enhancing_) {
-                if (!start_enhance(cmd, L)) {
+                auto* store = ctx.sim ? ctx.sim->blueprint_store() : nullptr;
+                if (!start_enhance(cmd, L, store)) {
                     command_queue_.pop_front();
                     continue;
                 }
@@ -2239,18 +2241,18 @@ void Unit::remove_enhancement(const std::string& enh) {
     }
 }
 
-bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
+bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L,
+                         const blueprints::BlueprintStore* store) {
     enhance_name_ = cmd.blueprint_id;
+    enhance_slot_.clear();
 
-    // Read enhancement BP from self.Blueprint.Enhancements[name]
+    // Read the enhancement from Blueprint.Enhancements[name]
     f64 enh_build_time = 0, enh_cost_mass = 0, enh_cost_energy = 0;
 
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int self_tbl = lua_gettop(L);
-
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
+    const blueprints::BlueprintEntry* entry =
+        store ? store->find(blueprint_id()) : nullptr;
+    if (entry) {
+        store->push_lua_table(*entry, L);
         if (lua_istable(L, -1)) {
             lua_pushstring(L, "Enhancements");
             lua_gettable(L, -2);
@@ -2272,13 +2274,18 @@ bool Unit::start_enhance(const UnitCommand& cmd, lua_State* L) {
                     lua_gettable(L, -2);
                     if (lua_isnumber(L, -1)) enh_cost_energy = lua_tonumber(L, -1);
                     lua_pop(L, 1);
+
+                    lua_pushstring(L, "Slot");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING)
+                        enhance_slot_ = lua_tostring(L, -1);
+                    lua_pop(L, 1);
                 }
                 lua_pop(L, 1); // enh entry
             }
             lua_pop(L, 1); // Enhancements
         }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
+        lua_pop(L, 1); // blueprint
     }
 
     if (enh_build_time <= 0 || build_rate_ <= 0) {
@@ -2386,34 +2393,8 @@ void Unit::finish_enhance(lua_State* L) {
         lua_pop(L, 1); // self_tbl
     }
 
-    // Also add to C++ enhancement map by reading Slot from blueprint
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int self_tbl = lua_gettop(L);
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Enhancements");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, enhance_name_.c_str());
-                lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Slot");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string slot = lua_tostring(L, -1);
-                        enhancements_[slot] = enhance_name_;
-                    }
-                    lua_pop(L, 1); // Slot
-                }
-                lua_pop(L, 1); // enh entry
-            }
-            lua_pop(L, 1); // Enhancements
-        }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
-    }
+    // Also add to the C++ enhancement map (slot read in start_enhance)
+    if (!enhance_slot_.empty()) enhancements_[enhance_slot_] = enhance_name_;
 
     spdlog::info("finish_enhance: entity #{} completed enhancement '{}'",
                  entity_id(), enhance_name_);

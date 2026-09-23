@@ -360,14 +360,29 @@ static int weapon_PlaySound(lua_State* L) {
     return 0;
 }
 
-/// Look up Blueprint.Audio[soundName] from unit table at stack index self_idx.
+/// Push the entity's blueprint table from the blueprint store (what
+/// GetBlueprint returns). Engine code reads blueprints this way, never through
+/// self.Blueprint: that is a field FAF's scripts set and retail's do not.
+/// Pushes nothing and returns false when the entity has no blueprint.
+static bool push_entity_blueprint(lua_State* L, const sim::Entity* e) {
+    if (!e || e->blueprint_id().empty()) return false;
+    auto* store = LuaState::get_blueprint_store(L);
+    if (!store) return false;
+    auto* entry = store->find(e->blueprint_id());
+    if (!entry) return false;
+    store->push_lua_table(*entry, L);
+    if (lua_istable(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
+/// Look up Blueprint.Audio[soundName] for entity e.
 /// On success pushes 3 values (Blueprint, Audio, audioEntry) and returns true.
 /// On failure pops any partial pushes and returns false.
-static bool lookup_blueprint_audio(lua_State* L, int self_idx, int sound_arg) {
+static bool lookup_blueprint_audio(lua_State* L, const sim::Entity* e,
+                                   int sound_arg) {
     if (lua_type(L, sound_arg) != LUA_TSTRING) return false;
-    lua_pushstring(L, "Blueprint");
-    lua_rawget(L, self_idx);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return false; }
+    if (!push_entity_blueprint(L, e)) return false;
     lua_pushstring(L, "Audio");
     lua_rawget(L, -2);
     if (!lua_istable(L, -1)) { lua_pop(L, 2); return false; }
@@ -383,7 +398,7 @@ static int unit_PlayUnitSound(lua_State* L) {
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
     int audio_idx = lua_gettop(L);
@@ -406,7 +421,7 @@ static int unit_PlayUnitAmbientSound(lua_State* L) {
     if (!mgr) { lua_pushboolean(L, 0); return 1; }
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushboolean(L, 0); return 1; }
-    if (!lookup_blueprint_audio(L, 1, 2)) { lua_pushboolean(L, 0); return 1; }
+    if (!lookup_blueprint_audio(L, e, 2)) { lua_pushboolean(L, 0); return 1; }
 
     std::string bank, cue;
     int audio_idx = lua_gettop(L);
@@ -695,25 +710,7 @@ static int entity_GetArmy(lua_State* L) {
 }
 
 static int entity_GetBlueprint(lua_State* L) {
-    auto* e = check_entity(L);
-    if (!e || e->blueprint_id().empty()) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    auto* store = LuaState::get_blueprint_store(L);
-    if (!store) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    auto* entry = store->find(e->blueprint_id());
-    if (!entry) {
-        lua_pushnil(L);
-        return 1;
-    }
-
-    store->push_lua_table(*entry, L);
+    if (!push_entity_blueprint(L, check_entity(L))) lua_pushnil(L);
     return 1;
 }
 
@@ -2563,33 +2560,26 @@ static int unit_CreateEnhancement(lua_State* L) {
     if (!u) return 0;
     const char* name = luaL_checkstring(L, 2);
 
-    // Read Slot from self.Blueprint.Enhancements[name]
-    if (u->lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, u->lua_table_ref());
-        int self_tbl = lua_gettop(L);
-        lua_pushstring(L, "Blueprint");
-        lua_rawget(L, self_tbl);
+    // Read Slot from Blueprint.Enhancements[name]
+    if (push_entity_blueprint(L, u)) {
+        lua_pushstring(L, "Enhancements");
+        lua_gettable(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Enhancements");
+            lua_pushstring(L, name);
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
-                lua_pushstring(L, name);
+                lua_pushstring(L, "Slot");
                 lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "Slot");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        std::string slot = lua_tostring(L, -1);
-                        u->add_enhancement(slot, name);
-                    }
-                    lua_pop(L, 1); // Slot
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    std::string slot = lua_tostring(L, -1);
+                    u->add_enhancement(slot, name);
                 }
-                lua_pop(L, 1); // enh entry
+                lua_pop(L, 1); // Slot
             }
-            lua_pop(L, 1); // Enhancements
+            lua_pop(L, 1); // enh entry
         }
-        lua_pop(L, 1); // Blueprint
-        lua_pop(L, 1); // self_tbl
+        lua_pop(L, 1); // Enhancements
+        lua_pop(L, 1); // blueprint
     }
     return 0;
 }
