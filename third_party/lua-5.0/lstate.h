@@ -181,8 +181,8 @@ union GCObject {
 #define gcotoh(o)	check_exp((o)->gch.tt == LUA_TTABLE, &((o)->h))
 #define gcotop(o)	check_exp((o)->gch.tt == LUA_TPROTO, &((o)->p))
 #define gcotouv(o)	check_exp((o)->gch.tt == LUA_TUPVAL, &((o)->uv))
-#define ngcotouv(o) \
-	check_exp((o) == NULL || (o)->gch.tt == LUA_TUPVAL, &((o)->uv))
+/* OpenSupCom: branch instead of taking &NULL->uv, which is UB (UBSan). */
+#define ngcotouv(o) ((o) == NULL ? cast(UpVal *, NULL) : gcotouv(o))
 #define gcototh(o)	check_exp((o)->gch.tt == LUA_TTHREAD, &((o)->th))
 
 /* macro to convert any value into a GCObject */

@@ -113,6 +113,7 @@ static void f_luaopen (lua_State *L, void *ud) {
   stack_init(L, L);  /* init stack */
   /* create default meta table with a dummy table, and then close the loop */
   defaultmeta(L)->tt = LUA_TTABLE;
+  defaultmeta(L)->value.gc = NULL;  /* OpenSupCom: read by luaH_new below */
   sethvalue(defaultmeta(L), luaH_new(L, 0, 0));
   hvalue(defaultmeta(L))->metatable = hvalue(defaultmeta(L));
   sethvalue(gt(L), luaH_new(L, 0, 4));  /* table of globals */
