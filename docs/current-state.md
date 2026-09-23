@@ -158,8 +158,9 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   exercised on every CI run (`ctest -L mp`). Every player input reaches the
   sim as a command applied inside a tick, on every peer on the same tick
   (M198): orders, SimCallbacks, and the orders panel's unit settings. Still missing:
-  pipelined command delay, slot and faction sync, LAN discovery, and peers
-  agreeing on a dropped player's last tick (M198b). Cross-OS determinism
+  pipelined command delay, slot and faction sync, and LAN discovery. A
+  dropped player is decided by the survivors' agreement (M198b); two players
+  dropping at once can still leave them disagreeing. Cross-OS determinism
   is checked by hand, not in CI (CI has no game data). The sim walks entities in id order (M195) and draws all its
   randomness from one seeded stream (M196). Two processes play the same
   four-AI game identically (`data.determinism`), so object addresses don't
