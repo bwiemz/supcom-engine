@@ -3472,7 +3472,10 @@ static int l_SetArmyStart(lua_State* L) {
     f32 z = static_cast<f32>(luaL_checknumber(L, 3));
     if (sim) {
         auto* brain = sim->get_army(army);
-        if (brain) brain->set_start_position({x, 0, z});
+        // SetArmyStart carries no height; the start point is on the surface.
+        // (With y = 0 the initial ACU spawned inside the terrain.)
+        const f32 y = sim->terrain() ? sim->terrain()->get_surface_height(x, z) : 0.0f;
+        if (brain) brain->set_start_position({x, y, z});
     }
     return 0;
 }
