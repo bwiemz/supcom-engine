@@ -144,3 +144,19 @@ jobs:
 
       - name: Test (data-free)
         run: ctest --test-dir build -C Debug -LE data --output-on-failure
+
+      # For the cross-OS check (tools/cross_os_replay.py): the same replay,
+      # played by this build under Wine and by a Linux build, on the same
+      # game data. Release, since Wine has no debug C runtime.
+      - name: Build Release for the cross-OS check
+        run: cmake --build build --config Release --target opensupcom
+
+      - name: Upload the Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: opensupcom-windows
+          path: |
+            build/Release/opensupcom.exe
+            build/Release/*.dll
+          retention-days: 14
+          if-no-files-found: error
