@@ -5,6 +5,7 @@
 #include "audio/xact/byte_reader.hpp"
 #include "audio/xact/global_settings.hpp"
 #include "audio/xact/sound_bank.hpp"
+#include "audio/xwb_parser.hpp"
 #include "xact_fixtures.hpp"
 
 #include <cstring>
@@ -165,4 +166,36 @@ TEST_CASE("XACT: wave banks resolve by their internal name", "[audio][xact]") {
     missing.wave = 9; // past the wave bank's 4 entries
     CHECK_FALSE(reg.resolve(*sb, missing));
     fs::remove_all(dir);
+}
+
+TEST_CASE("XACT: a damaged wave bank fails to load", "[audio][xact]") {
+    namespace fs = std::filesystem;
+    const fs::path file = fs::temp_directory_path() / "osc_xact_bad.xwb";
+    const auto good = make_xwb("TestWaves", 4);
+    {
+        write(file, good);
+        osc::audio::XwbParser p;
+        REQUIRE(p.parse(file).ok());
+        CHECK(p.entry_count() == 4);
+    }
+    {
+        // Bank data too short to hold the 64-byte name
+        auto bytes = good;
+        bytes[12 + 4] = 30; // segment 0 length
+        bytes[12 + 5] = bytes[12 + 6] = bytes[12 + 7] = 0;
+        write(file, bytes);
+        osc::audio::XwbParser p;
+        CHECK_FALSE(p.parse(file).ok());
+    }
+    {
+        // An entry count far past the entry table
+        auto bytes = good;
+        const size_t count_at = 52 + 4; // bank data follows the 52-byte header
+        bytes[count_at] = bytes[count_at + 1] = bytes[count_at + 2] = 0xFF;
+        bytes[count_at + 3] = 0x0F;
+        write(file, bytes);
+        osc::audio::XwbParser p;
+        CHECK_FALSE(p.parse(file).ok());
+    }
+    fs::remove(file);
 }
