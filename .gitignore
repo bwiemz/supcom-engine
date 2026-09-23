@@ -5,3 +5,6 @@
 /build-release/
 /.claude/worktrees/
 *.log
+
+# Run artifacts written by the smoke / lobby-flow test modes
+smoke_report.txt

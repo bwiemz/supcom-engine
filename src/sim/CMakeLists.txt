@@ -1,6 +1,7 @@
 add_library(osc_sim STATIC
     anim_cache.cpp
     armor_definition.cpp
+    blueprint_categories.cpp
     army_brain.cpp
     bone_cache.cpp
     bone_data.cpp
@@ -33,3 +34,5 @@ target_link_libraries(osc_sim
 if(WIN32)
     target_link_libraries(osc_sim PRIVATE ws2_32)
 endif()
+
+target_link_libraries(osc_sim PRIVATE osc::warnings)

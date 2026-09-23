@@ -2,6 +2,7 @@ add_library(osc_vfs STATIC
     virtual_file_system.cpp
     directory_mount.cpp
     zip_mount.cpp
+    path_utils.cpp
 )
 add_library(osc::vfs ALIAS osc_vfs)
 
@@ -10,3 +11,5 @@ target_link_libraries(osc_vfs
     PUBLIC osc::core
     PRIVATE unofficial::minizip::minizip ZLIB::ZLIB
 )
+
+target_link_libraries(osc_vfs PRIVATE osc::warnings)

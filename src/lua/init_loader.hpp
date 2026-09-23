@@ -44,6 +44,9 @@ private:
     /// Parse the path table from Lua state into VFS mounts.
     Result<void> build_vfs_from_path_table(lua_State* L,
                                             vfs::VirtualFileSystem& vfs);
+
+    /// Record the init script's `hook` table (hook directories) on the VFS.
+    void read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs);
 };
 
 } // namespace osc::lua

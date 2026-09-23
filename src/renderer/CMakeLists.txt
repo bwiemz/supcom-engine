@@ -41,3 +41,5 @@ target_link_libraries(osc_renderer
     PRIVATE glfw vk-bootstrap::vk-bootstrap unofficial::shaderc::shaderc
             spdlog::spdlog osc::vfs osc::blueprints
 )
+
+target_link_libraries(osc_renderer PRIVATE osc::warnings)

@@ -13,7 +13,7 @@ namespace osc::lua {
 bool unit_matches_category(lua_State* L, int cat_idx,
                            const std::unordered_set<std::string>& unit_cats);
 
-/// Check whether a set of category strings (from a blueprint's CategoriesHash)
+/// Check whether a set of category strings (see sim::collect_blueprint_categories)
 /// matches a Lua category table.  Same logic as above but takes a raw set.
 /// This overload is for blueprint-level queries where no C++ Unit exists.
 bool categories_match(lua_State* L, int cat_idx,

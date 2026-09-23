@@ -7,7 +7,7 @@
 * called from Lua  as loadlib(lib,init), where lib is the  full name of the
 * library to be  loaded (including the complete path) and  init is the name
 * of a function  to be called after the library  is loaded. Typically, this
-* function will register other functions,  thus making the complete library
+* function will other functions,  thus making the complete library
 * available  to Lua.  The init  function is  *not* automatically  called by
 * loadlib. Instead,  loadlib returns  the init function  as a  Lua function
 * that the client  can call when it  thinks is appropriate. In  the case of

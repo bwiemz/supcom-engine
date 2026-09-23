@@ -69,7 +69,8 @@ typedef unsigned char lu_byte;
 ** this is for hashing only; there is no problem if the integer
 ** cannot hold the whole pointer value
 */
-#define IntPoint(p)  ((lu_hash)(p))
+/* OpenSupCom: via size_t so the (intended) truncation also compiles as C++ */
+#define IntPoint(p)  ((lu_hash)(size_t)(p))
 
 
 

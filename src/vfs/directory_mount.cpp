@@ -1,4 +1,5 @@
 #include "vfs/directory_mount.hpp"
+#include "vfs/path_utils.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -6,16 +7,51 @@
 
 namespace osc::vfs {
 
+namespace {
+
+std::string lowercase(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return s;
+}
+
+/// "/Maps\\SCMP_009/" -> "maps/scmp_009"
+std::string index_key(std::string_view relative_path) {
+    std::string key = lowercase(std::string(relative_path));
+    std::replace(key.begin(), key.end(), '\\', '/');
+    while (!key.empty() && key.front() == '/') key.erase(0, 1);
+    while (!key.empty() && key.back() == '/') key.pop_back();
+    return key;
+}
+
+} // namespace
+
 DirectoryMount::DirectoryMount(std::filesystem::path root)
     : root_(std::move(root)) {}
 
+void DirectoryMount::build_index() const {
+    std::error_code ec;
+    size_t count = 0;
+    for (std::filesystem::recursive_directory_iterator it(root_, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        auto rel = it->path().lexically_relative(root_);
+        // First spelling wins if two entries differ only by case.
+        index_.try_emplace(lowercase(rel.generic_string()), rel);
+        ++count;
+    }
+    spdlog::debug("DirectoryMount {}: indexed {} entries", root_.string(), count);
+}
+
 std::filesystem::path DirectoryMount::resolve(
     std::string_view relative_path) const {
-    // Strip leading slash if present
-    if (!relative_path.empty() && relative_path[0] == '/') {
-        relative_path.remove_prefix(1);
+    const std::string key = index_key(relative_path);
+    if (key.empty()) return root_;
+
+    std::call_once(index_once_, [this] { build_index(); });
+    if (auto it = index_.find(key); it != index_.end()) {
+        return root_ / it->second;
     }
-    return root_ / std::filesystem::path(relative_path);
+    return root_ / std::filesystem::path(key);
 }
 
 std::optional<std::vector<char>> DirectoryMount::read_file(
@@ -48,54 +84,24 @@ std::vector<std::string> DirectoryMount::find_files(
     auto dir_path = resolve(directory);
     std::vector<std::string> results;
 
-    if (!std::filesystem::exists(dir_path) ||
-        !std::filesystem::is_directory(dir_path)) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir_path, ec)) {
         return results;
     }
 
-    // Convert pattern to a simple suffix match (handles "*.bp", "*_unit.bp")
-    std::string pat(pattern);
-    std::transform(pat.begin(), pat.end(), pat.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-
-    // Extract the suffix after '*'
-    std::string suffix;
-    if (!pat.empty() && pat[0] == '*') {
-        suffix = pat.substr(1);
-    }
-
-    std::error_code ec;
-    for (auto& entry :
-         std::filesystem::recursive_directory_iterator(dir_path, ec)) {
-        if (entry.is_regular_file()) {
-            std::string filename = entry.path().filename().string();
-            std::string filename_lower = filename;
-            std::transform(filename_lower.begin(), filename_lower.end(),
-                           filename_lower.begin(),
-                           [](unsigned char c) { return std::tolower(c); });
-
-            bool match = false;
-            if (suffix.empty()) {
-                match = true; // "*" matches everything
-            } else if (filename_lower.size() >= suffix.size()) {
-                match = filename_lower.compare(filename_lower.size() - suffix.size(),
-                                                suffix.size(), suffix) == 0;
-            }
-
-            if (match) {
-                // Build the virtual path relative to the mount root
-                auto rel = std::filesystem::relative(entry.path(), root_, ec);
-                if (!ec) {
-                    std::string virtual_path = "/" + rel.generic_string();
-                    std::transform(virtual_path.begin(), virtual_path.end(),
-                                   virtual_path.begin(),
-                                   [](unsigned char c) { return std::tolower(c); });
-                    results.push_back(std::move(virtual_path));
-                }
-            }
+    for (std::filesystem::recursive_directory_iterator it(dir_path, ec), end;
+         !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) ||
+            !wildcard_match(pattern, it->path().filename().string())) {
+            continue;
         }
+        // Virtual path relative to the mount root, lowercased like every
+        // other VFS path.
+        results.push_back(
+            "/" + lowercase(it->path().lexically_relative(root_).generic_string()));
     }
 
+    std::sort(results.begin(), results.end());
     return results;
 }
 

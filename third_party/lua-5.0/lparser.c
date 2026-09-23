@@ -276,7 +276,7 @@ static void code_params (LexState *ls, int nparams, int dots) {
   fs->f->is_vararg = cast(lu_byte, dots);
   if (dots)
     create_local(ls, "arg");
-  luaK_reserveregs(fs, fs->nactvar);  /* reserve register for parameters */
+  luaK_reserveregs(fs, fs->nactvar);  /* reserve for parameters */
 }
 
 
@@ -493,6 +493,17 @@ static void constructor (LexState *ls, expdesc *t) {
   init_exp(&cc.v, VVOID, 0);  /* no value (yet) */
   luaK_exp2nextreg(ls->fs, t);  /* fix it at stack top (for gc) */
   check(ls, '{');
+  /* LuaPlus: optional preallocation hints before the first item, e.g.
+     `{&1&4 n=0}` (retail MultiEvent.lua). They only size the table, so they
+     are parsed and discarded; a separator after them is tolerated. */
+  if (ls->t.token == '&') {
+    while (ls->t.token == '&') {
+      expdesc dummy;
+      next(ls);
+      expr(ls, &dummy);
+    }
+    if (!testnext(ls, ',')) testnext(ls, ';');
+  }
   do {
     lua_assert(cc.v.k == VVOID || cc.tostore > 0);
     testnext(ls, ';');  /* compatibility only */
@@ -510,14 +521,6 @@ static void constructor (LexState *ls, expdesc *t) {
       case '[': {  /* constructor_item -> recfield */
         recfield(ls, &cc);
         break;
-      }
-      case '&': {  /* LuaPlus: table size hints — skip all &expr items */
-        while (ls->t.token == '&') {
-          expdesc dummy;
-          next(ls);
-          expr(ls, &dummy);
-        }
-        continue;  /* skip comma/semicolon requirement */
       }
       default: {  /* constructor_part -> listfield */
         listfield(ls, &cc);
@@ -616,7 +619,7 @@ static void funcargs (LexState *ls, expdesc *f) {
     }
   }
   lua_assert(f->k == VNONRELOC);
-  base = f->info;  /* base register for call */
+  base = f->info;  /* base for call */
   if (args.k == VCALL)
     nparams = LUA_MULTRET;  /* open call */
   else {

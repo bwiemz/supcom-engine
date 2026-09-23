@@ -91,7 +91,8 @@ public:
         return weapons_;
     }
 
-    // Categories (cached from blueprint CategoriesHash at creation time)
+    // Categories (cached from the blueprint at creation time; see
+    // collect_blueprint_categories)
     const std::unordered_set<std::string>& categories() const {
         return categories_;
     }

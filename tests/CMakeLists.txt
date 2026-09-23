@@ -1,5 +1,12 @@
 add_executable(osc_tests
     test_vfs.cpp
+    test_vfs_paths.cpp
+    test_platform_paths.cpp
+    test_platform_crash.cpp
+    test_game_install.cpp
+    test_script_hooks.cpp
+    test_blueprint_categories.cpp
+    test_image.cpp
     test_lua_state.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp
@@ -36,6 +43,8 @@ add_executable(osc_tests
 )
 
 target_link_libraries(osc_tests PRIVATE
+    osc::warnings
+    osc::platform
     Catch2::Catch2WithMain
     osc::core
     osc::vfs
@@ -46,6 +55,8 @@ target_link_libraries(osc_tests PRIVATE
     osc::renderer
     osc::video
 )
+
+target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 include(Catch)
 catch_discover_tests(osc_tests)

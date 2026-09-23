@@ -13,3 +13,5 @@ target_include_directories(osc_map PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_map
     PUBLIC osc::core
 )
+
+target_link_libraries(osc_map PRIVATE osc::warnings)

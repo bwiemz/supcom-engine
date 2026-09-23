@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/waitable.hpp"
 
+#include <algorithm>
 #include <vector>
 #include <memory>
 

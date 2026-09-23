@@ -1,4 +1,5 @@
 #include "vfs/zip_mount.hpp"
+#include "vfs/path_utils.hpp"
 
 #include <algorithm>
 #include <spdlog/spdlog.h>
@@ -108,35 +109,22 @@ std::vector<std::string> ZipMount::find_files(
         dir_key += '/';
     }
 
-    // Convert pattern to suffix match
-    std::string pat(pattern);
-    std::transform(pat.begin(), pat.end(), pat.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    std::string suffix;
-    if (!pat.empty() && pat[0] == '*') {
-        suffix = pat.substr(1);
-    }
-
     for (const auto& [key, entry] : entries_) {
-        // Check directory prefix
         if (!dir_key.empty() && key.compare(0, dir_key.size(), dir_key) != 0) {
             continue;
         }
-
-        // Check pattern suffix
-        bool match = false;
-        if (suffix.empty()) {
-            match = true;
-        } else if (key.size() >= suffix.size()) {
-            match = key.compare(key.size() - suffix.size(),
-                                suffix.size(), suffix) == 0;
-        }
-
-        if (match) {
+        const auto slash = key.rfind('/');
+        const std::string_view filename =
+            slash == std::string::npos ? std::string_view(key)
+                                       : std::string_view(key).substr(slash + 1);
+        if (wildcard_match(pattern, filename)) {
             results.push_back("/" + key);
         }
     }
 
+    // entries_ is unordered; sort so results (and therefore blueprint load
+    // order) are identical on every platform and standard library.
+    std::sort(results.begin(), results.end());
     return results;
 }
 

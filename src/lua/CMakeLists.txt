@@ -8,6 +8,7 @@ add_library(osc_lua STATIC
     lan_lobby.cpp
     sim_bindings.cpp
     sim_loader.cpp
+    script_loader.cpp
     scenario_loader.cpp
     session_manager.cpp
     category_utils.cpp
@@ -21,5 +22,8 @@ add_library(osc::lua ALIAS osc_lua)
 target_include_directories(osc_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_lua
     PUBLIC osc::core osc::vfs osc::sim osc::map osc::audio osc::ui osc::video lua50
+           osc::platform
     PRIVATE osc::renderer
 )
+
+target_link_libraries(osc_lua PRIVATE osc::warnings)

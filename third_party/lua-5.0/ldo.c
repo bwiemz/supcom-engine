@@ -39,10 +39,25 @@
 */
 
 
+/*
+** OpenSupCom: Lua is compiled as C++ on every platform, so errors are raised
+** as C++ exceptions instead of longjmp, as Lua 5.1+ does with LUAI_THROW.
+** longjmp skips the destructors of C++ objects in the binding frames it
+** crosses (leaked strings, locks never released); an exception runs them.
+** (MSVC needs /EHs so extern "C" Lua API calls are allowed to throw.)
+** Define OSC_LUA_USE_LONGJMP to get the original behaviour back.
+*/
+#if defined(__cplusplus) && !defined(OSC_LUA_USE_LONGJMP)
+#define OSC_LUA_CXX_EXCEPTIONS 1
+#include <exception>
+#endif
+
 /* chain list of long jump buffers */
 struct lua_longjmp {
   struct lua_longjmp *previous;
+#ifndef OSC_LUA_CXX_EXCEPTIONS
   jmp_buf b;
+#endif
   volatile int status;  /* error code */
 };
 
@@ -70,7 +85,11 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
 void luaD_throw (lua_State *L, int errcode) {
   if (L->errorJmp) {
     L->errorJmp->status = errcode;
+#ifdef OSC_LUA_CXX_EXCEPTIONS
+    throw L->errorJmp;
+#else
     longjmp(L->errorJmp->b, 1);
+#endif
   }
   else {
     G(L)->panic(L);
@@ -84,10 +103,42 @@ int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   lj.status = 0;
   lj.previous = L->errorJmp;  /* chain new error handler */
   L->errorJmp = &lj;
+#ifdef OSC_LUA_CXX_EXCEPTIONS
+  /* A C++ exception escaping an engine binding becomes an ordinary Lua
+     runtime error rather than unwinding through Lua's own frames, which
+     would leave the call stack inconsistent. Only its message is copied
+     inside the handler; it is pushed after this handler is unchained, so a
+     secondary error while pushing (out of memory) propagates to the OUTER
+     protected call instead of escaping a catch block with L->errorJmp
+     still pointing at this frame. */
+  const char *foreign = NULL;
+  char foreign_msg[256];
+  try {
+    (*f)(L, ud);
+  }
+  catch (struct lua_longjmp *) {
+    /* a Lua error: status was set by luaD_throw */
+  }
+  catch (const std::exception &e) {
+    strncpy(foreign_msg, e.what(), sizeof(foreign_msg) - 1);
+    foreign_msg[sizeof(foreign_msg) - 1] = '\0';
+    foreign = foreign_msg;
+  }
+  catch (...) {
+    foreign = "unknown C++ exception";
+  }
+  L->errorJmp = lj.previous;  /* restore old error handler */
+  if (foreign) {
+    lua_pushstring(L, foreign);  /* error object for seterrorobj */
+    lj.status = LUA_ERRRUN;
+  }
+  return lj.status;
+#else
   if (setjmp(lj.b) == 0)
     (*f)(L, ud);
   L->errorJmp = lj.previous;  /* restore old error handler */
   return lj.status;
+#endif
 }
 
 

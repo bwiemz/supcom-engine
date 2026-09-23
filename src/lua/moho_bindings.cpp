@@ -1,4 +1,5 @@
 #include "lua/moho_bindings.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "video/video_decoder.hpp"
 #include "map/scmap_parser.hpp"
@@ -238,11 +239,6 @@ static int (*const stub_return_zero)(lua_State*) = lua_stubs::return_zero;
 static int (*const stub_return_one)(lua_State*) = lua_stubs::return_one;
 static int (*const stub_return_empty_table)(lua_State*) = lua_stubs::return_empty_table;
 static int (*const stub_return_self)(lua_State*) = lua_stubs::return_self;
-static int stub_return_empty_string(lua_State* L) {
-    lua_pushstring(L, "");
-    return 1;
-}
-
 // ====================================================================
 // Threat helper
 // ====================================================================
@@ -4676,6 +4672,14 @@ static int brain_GetArmyIndex(lua_State* L) {
     return 1;
 }
 
+/// brain:IsOpponentAIRunning() — Moho reports its `ai_RunOpponentAI` debug
+/// toggle, which is on by default. Retail aibrain.lua gates plan evaluation
+/// and execution on it; there is no toggle here, so the AI always runs.
+static int brain_IsOpponentAIRunning(lua_State* L) {
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 static int brain_GetFactionIndex(lua_State* L) {
     auto* brain = check_brain(L);
     lua_pushnumber(L, brain ? brain->faction() : 1);
@@ -5774,26 +5778,14 @@ static int brain_CanBuildPlatoon(lua_State* L) {
         std::string bp_id = lua_tostring(L, -1);
         lua_pop(L, 1);
 
-        // Look up blueprint's CategoriesHash
+        // Look up the blueprint's categories
         std::unordered_set<std::string> bp_cats;
         lua_pushstring(L, "__blueprints");
         lua_rawget(L, LUA_GLOBALSINDEX);
         if (lua_istable(L, -1)) {
             lua_pushstring(L, bp_id.c_str());
             lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "CategoriesHash");
-                lua_rawget(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushnil(L);
-                    while (lua_next(L, -2) != 0) {
-                        if (lua_type(L, -2) == LUA_TSTRING)
-                            bp_cats.insert(lua_tostring(L, -2));
-                        lua_pop(L, 1); // pop value, keep key
-                    }
-                }
-                lua_pop(L, 1); // CategoriesHash or nil
-            }
+            sim::collect_blueprint_categories(L, lua_gettop(L), bp_cats);
             lua_pop(L, 1); // bp table or nil
         }
         lua_pop(L, 1); // __blueprints
@@ -6988,6 +6980,11 @@ static int platoon_FormPlatoon(lua_State* L) {
                             ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
                             : multiplier;
         lua_pop(L, 1);
+        // Known gap (roadmap M207): FA's FormPlatoon returns nil when a squad
+        // cannot reach its minimum count; this forms a partial platoon. AI
+        // scripts usually gate on CanFormPlatoon (which does check minimums),
+        // so it only matters when they call FormPlatoon directly.
+        static_cast<void>(min_count);
 
         lua_rawgeti(L, sub, 3);
         int max_count = lua_isnumber(L, -1)
@@ -7306,6 +7303,7 @@ static const MethodEntry aibrain_methods[] = {
     // Real implementations
     {"GetArmyIndex",                brain_GetArmyIndex},
     {"GetFactionIndex",             brain_GetFactionIndex},
+    {"IsOpponentAIRunning",         brain_IsOpponentAIRunning},
     {"GetListOfUnits",              brain_GetListOfUnits},
     {"GetUnitsAroundPoint",         brain_GetUnitsAroundPoint},
     {"GetArmyStartPos",             brain_GetArmyStartPos},
@@ -10081,14 +10079,6 @@ static int itemlist_ShowSelection(lua_State* L) {
 static int itemlist_ShowMouseoverItem(lua_State* L) {
     auto* ctrl = check_control(L);
     if (ctrl) ctrl->set_show_mouseover(lua_toboolean(L, 2) != 0);
-    return 0;
-}
-
-/// item_list:SetAlpha(alpha, children) — override to set bg alpha
-static int itemlist_SetAlpha(lua_State* L) {
-    auto* ctrl = check_control(L);
-    if (ctrl && lua_isnumber(L, 2))
-        ctrl->set_alpha(static_cast<f32>(lua_tonumber(L, 2)));
     return 0;
 }
 
@@ -13007,7 +12997,7 @@ static int l_GetSelectedUnits(lua_State* L) {
     return 1;
 }
 
-void osc::lua::push_selected_units_for_ui(lua_State* L) {
+void push_selected_units_for_ui(lua_State* L) {
     l_GetSelectedUnits(L);
     // l_GetSelectedUnits pushes 1 table; nothing else to do
 }
@@ -13637,7 +13627,7 @@ static int l_IN_RemoveKeyMapTable(lua_State* L) {
 }
 
 /// EntityCategoryGetUnitList(category) — ui_L version (M140a)
-/// Returns an array of blueprint IDs whose CategoriesHash matches the given category expression.
+/// Returns an array of blueprint IDs whose categories match the given category expression.
 static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
     lua_newtable(L);
     int result = lua_gettop(L);
@@ -13651,25 +13641,14 @@ static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
         store->push_lua_table(*entry, L);
         int bp_tbl = lua_gettop(L);
 
-        lua_pushstring(L, "CategoriesHash");
-        lua_gettable(L, bp_tbl);
-        if (lua_istable(L, -1)) {
-            std::unordered_set<std::string> bp_cats;
-            int hash_tbl = lua_gettop(L);
-            lua_pushnil(L);
-            while (lua_next(L, hash_tbl) != 0) {
-                if (lua_type(L, -2) == LUA_TSTRING)
-                    bp_cats.insert(lua_tostring(L, -2));
-                lua_pop(L, 1);
-            }
-
-            if (osc::lua::categories_match(L, 1, bp_cats)) {
-                lua_pushnumber(L, out_idx++);
-                lua_pushstring(L, entry->id.c_str());
-                lua_rawset(L, result);
-            }
+        std::unordered_set<std::string> bp_cats;
+        sim::collect_blueprint_categories(L, bp_tbl, bp_cats);
+        if (!bp_cats.empty() && osc::lua::categories_match(L, 1, bp_cats)) {
+            lua_pushnumber(L, out_idx++);
+            lua_pushstring(L, entry->id.c_str());
+            lua_rawset(L, result);
         }
-        lua_pop(L, 2); // CategoriesHash + bp_table
+        lua_pop(L, 1); // bp_table
     }
     return 1;
 }

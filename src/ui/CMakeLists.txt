@@ -16,3 +16,5 @@ target_link_libraries(osc_ui
     PUBLIC osc::core
     PRIVATE glfw lua50 spdlog::spdlog osc::vfs osc::map osc::video
 )
+
+target_link_libraries(osc_ui PRIVATE osc::warnings)

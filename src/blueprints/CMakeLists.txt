@@ -8,3 +8,5 @@ target_include_directories(osc_blueprints PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_blueprints
     PUBLIC osc::core osc::lua
 )
+
+target_link_libraries(osc_blueprints PRIVATE osc::warnings)

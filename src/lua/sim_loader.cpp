@@ -1,4 +1,5 @@
 #include "lua/sim_loader.hpp"
+#include "lua/script_loader.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
@@ -30,13 +31,11 @@ Result<void> SimLoader::boot_sim(LuaState& state,
     //   - loads system modules (config, import, utils, repr, debug, class, etc.)
     //   - iterates moho table and calls ConvertCClassToLuaSimplifiedClass
     // Then it loads GlobalPlatoon/Builder templates, SimHooks, SimSync.
-    auto data = vfs.read_file("/lua/simInit.lua");
-    if (!data) {
+    if (!vfs.file_exists("/lua/simInit.lua")) {
         return Error("simInit.lua not found in VFS");
     }
 
-    auto result =
-        state.do_buffer(data->data(), data->size(), "@/lua/simInit.lua");
+    auto result = run_vfs_script(state.raw(), "/lua/simInit.lua");
     if (!result) {
         spdlog::error("simInit.lua failed: {}", result.error().message);
         return Error("simInit.lua failed: " + result.error().message);
@@ -45,10 +44,10 @@ Result<void> SimLoader::boot_sim(LuaState& state,
 
     // Step 3a: Load armor definitions
     {
-        auto armor_data = vfs.read_file("/lua/armordefinition.lua");
-        if (armor_data) {
-            state.do_buffer(armor_data->data(), armor_data->size(),
-                            "@/lua/armordefinition.lua");
+        if (vfs.file_exists("/lua/armordefinition.lua")) {
+            if (auto r = run_vfs_script(state.raw(), "/lua/armordefinition.lua"); !r) {
+                spdlog::warn("armordefinition.lua failed: {}", r.error().message);
+            }
             lua_pushstring(state.raw(), "armordefinition");
             lua_rawget(state.raw(), LUA_GLOBALSINDEX);
             if (lua_istable(state.raw(), -1)) {
@@ -184,17 +183,20 @@ Result<void> SimLoader::boot_sim(LuaState& state,
     // silently skip all mass marker pathing checks.
     // Override: always return true — actual pathfinding happens when move/build
     // commands are issued via our Navigator A* implementation.
-    state.do_string(
-        "do\n"
-        "    local ok, mod = pcall(import, '/lua/sim/navutils.lua')\n"
-        "    if ok and type(mod) == 'table' then\n"
-        "        mod.CanPathTo = function(layer, origin, destination)\n"
-        "            return true\n"
-        "        end\n"
-        "        LOG('NavUtils.CanPathTo overridden (NavGenerator not available)')\n"
-        "    end\n"
-        "end\n");
-    spdlog::info("  NavUtils.CanPathTo overridden (NavGenerator bypass)");
+    // navutils.lua is FAF-only; retail FA has no NavGenerator to bypass.
+    if (vfs.file_exists("/lua/sim/navutils.lua")) {
+        state.do_string(
+            "do\n"
+            "    local ok, mod = pcall(import, '/lua/sim/navutils.lua')\n"
+            "    if ok and type(mod) == 'table' then\n"
+            "        mod.CanPathTo = function(layer, origin, destination)\n"
+            "            return true\n"
+            "        end\n"
+            "        LOG('NavUtils.CanPathTo overridden (NavGenerator not available)')\n"
+            "    end\n"
+            "end\n");
+        spdlog::info("  NavUtils.CanPathTo overridden (NavGenerator bypass)");
+    }
 
     spdlog::info("Sim environment ready.");
     return {};

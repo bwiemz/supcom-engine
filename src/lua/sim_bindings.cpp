@@ -1,4 +1,5 @@
 #include "lua/sim_bindings.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/lua_state.hpp"
 #include "core/game_state.hpp"
@@ -343,20 +344,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         // Categories
         {
             store->push_lua_table(*entry, L);
-            lua_pushstring(L, "CategoriesHash");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                int hash_tbl = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, hash_tbl) != 0) {
-                    if (lua_isstring(L, -2)) {
-                        std::string key = lua_tostring(L, -2);
-                        unit->add_category(key);
-                    }
-                    lua_pop(L, 1);
-                }
-            }
-            lua_pop(L, 2);
+            std::unordered_set<std::string> cats;
+            sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+            for (const auto& cat : cats) unit->add_category(cat);
+            lua_pop(L, 1);
         }
 
         // Read BuildRate from blueprint Economy.BuildRate
@@ -800,26 +791,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     spdlog::debug("Created unit {} (entity #{}) at ({}, {}, {})",
                   bp_id, id, x, y, z);
     return id; // Lua table left on stack
-}
-
-/// Helper: call a Lua method on the table at stack_top. Pops nothing extra.
-static void call_lua_method(lua_State* L, int table_idx, const char* method,
-                             int nargs, const char* label) {
-    lua_pushstring(L, method);
-    lua_gettable(L, table_idx);
-    if (lua_isfunction(L, -1)) {
-        // Push self + any args that caller already pushed above the function
-        // Caller must push args AFTER calling this, so we do it inline:
-        // Actually, the caller passes nargs already-pushed values.
-        if (lua_pcall(L, nargs, 0, 0) != 0) {
-            spdlog::warn("{} error: {}", label, lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1); // pop non-function
-        // Also pop the nargs that were pushed for it
-        if (nargs > 0) lua_pop(L, nargs);
-    }
 }
 
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
@@ -1298,7 +1269,7 @@ static int l_ArmyGetHandicap(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnumber(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) { lua_pushnumber(L, 0); return 1; }
     auto* brain = sim->get_army(idx);
     lua_pushnumber(L, brain ? brain->handicap() : 0.0);
     return 1;
@@ -1767,6 +1738,39 @@ static int stub_dummy_object(lua_State* L) {
 
         // Store in registry for reuse
         lua_pushstring(L, "__dummy_object_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+// ====================================================================
+// Asset prefetch sets (retail simInit.lua: Prefetcher = CreatePrefetchSet())
+// ====================================================================
+// In Moho a prefetch set asks the resource streamer to preload models,
+// animations and textures. It is a loading hint with no sim-visible effect,
+// so the object accepts requests and does nothing; the renderer's own async
+// texture cache covers the latency. Methods: Update(set), Reset().
+
+static int prefetch_accept(lua_State* /*L*/) { return 0; }
+
+static int l_CreatePrefetchSet(lua_State* L) {
+    lua_newtable(L);
+    lua_pushstring(L, "__osc_prefetch_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L); // metatable; also serves as the method table
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -3);
+        for (const char* method : {"Update", "Reset"}) {
+            lua_pushstring(L, method);
+            lua_pushcfunction(L, prefetch_accept);
+            lua_rawset(L, -3);
+        }
+        lua_pushstring(L, "__osc_prefetch_mt");
         lua_pushvalue(L, -2);
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
@@ -2609,7 +2613,7 @@ static int l_ArmyIsCivilian(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) {
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -2623,7 +2627,7 @@ static int l_ArmyIsOutOfGame(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushboolean(L, 0); return 1; }
     i32 idx = resolve_army(L, 1, sim);
-    if (idx < 0 || idx >= sim->army_count()) {
+    if (idx < 0 || static_cast<size_t>(idx) >= sim->army_count()) {
         lua_pushboolean(L, 0);
         return 1;
     }
@@ -2751,27 +2755,14 @@ static int l_EntityCategoryGetUnitList(lua_State* L) {
         store->push_lua_table(*entry, L);
         int bp_tbl = lua_gettop(L);
 
-        // Read CategoriesHash from this blueprint
-        lua_pushstring(L, "CategoriesHash");
-        lua_gettable(L, bp_tbl);
-        if (lua_istable(L, -1)) {
-            // Collect category strings into a set
-            std::unordered_set<std::string> bp_cats;
-            int hash_tbl = lua_gettop(L);
-            lua_pushnil(L);
-            while (lua_next(L, hash_tbl) != 0) {
-                if (lua_isstring(L, -2))
-                    bp_cats.insert(lua_tostring(L, -2));
-                lua_pop(L, 1);
-            }
-
-            if (osc::lua::categories_match(L, 1, bp_cats)) {
-                lua_pushnumber(L, out_idx++);
-                lua_pushstring(L, entry->id.c_str());
-                lua_rawset(L, result);
-            }
+        std::unordered_set<std::string> bp_cats;
+        sim::collect_blueprint_categories(L, bp_tbl, bp_cats);
+        if (!bp_cats.empty() && osc::lua::categories_match(L, 1, bp_cats)) {
+            lua_pushnumber(L, out_idx++);
+            lua_pushstring(L, entry->id.c_str());
+            lua_rawset(L, result);
         }
-        lua_pop(L, 2); // CategoriesHash + bp_table
+        lua_pop(L, 1); // bp_table
     }
     return 1;
 }
@@ -3481,7 +3472,10 @@ static int l_SetArmyStart(lua_State* L) {
     f32 z = static_cast<f32>(luaL_checknumber(L, 3));
     if (sim) {
         auto* brain = sim->get_army(army);
-        if (brain) brain->set_start_position({x, 0, z});
+        // SetArmyStart carries no height; the start point is on the surface.
+        // (With y = 0 the initial ACU spawned inside the terrain.)
+        const f32 y = sim->terrain() ? sim->terrain()->get_surface_height(x, z) : 0.0f;
+        if (brain) brain->set_start_position({x, y, z});
     }
     return 0;
 }
@@ -4431,6 +4425,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CurrentThread", l_CurrentThread);
     state.register_function("SuspendCurrentThread", l_SuspendCurrentThread);
     state.register_function("ResumeThread", l_ResumeThread);
+
+    // Loading hints
+    state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);
 
     // Game state
     state.register_function("GetGameTimeSeconds", l_GetGameTimeSeconds);

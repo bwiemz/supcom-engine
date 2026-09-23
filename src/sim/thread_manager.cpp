@@ -1,6 +1,8 @@
 #include "sim/thread_manager.hpp"
+#include "core/test_status.hpp"
 #include "sim/waitable.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <cstring>
 #include <spdlog/spdlog.h>
@@ -225,6 +227,13 @@ void ThreadManager::resume_all(u32 current_tick) {
             spdlog::warn("Thread error: {} [forked at {}]",
                          err ? err : "(unknown)",
                          t.source.empty() ? "?" : t.source);
+            // In test modes a dying script thread is a failed run (the Lua
+            // error budget), even if the test's own checks passed.
+            if (test_status::count_lua_failures()) {
+                test_status::record_failure(fmt::format(
+                    "Lua thread error: {} [forked at {}]", err ? err : "(unknown)",
+                    t.source.empty() ? "?" : t.source));
+            }
             t.dead = true;
         }
     }

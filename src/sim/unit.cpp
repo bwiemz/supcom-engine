@@ -1,4 +1,5 @@
 #include "sim/unit.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
@@ -35,21 +36,7 @@ std::unordered_set<std::string> read_blueprint_categories(lua_State* L,
 
     lua_pushstring(L, bp_id.c_str());
     lua_gettable(L, -2);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, "CategoriesHash");
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            int cat_tbl = lua_gettop(L);
-            lua_pushnil(L);
-            while (lua_next(L, cat_tbl) != 0) {
-                if (lua_isstring(L, -2)) {
-                    categories.insert(lua_tostring(L, -2));
-                }
-                lua_pop(L, 1);
-            }
-        }
-        lua_pop(L, 1); // CategoriesHash
-    }
+    collect_blueprint_categories(L, lua_gettop(L), categories);
     lua_pop(L, 2); // blueprint entry + __blueprints
     return categories;
 }
@@ -2832,7 +2819,7 @@ void Unit::apply_vet_buffs(lua_State* L) {
     lua_gettable(L, -2);
     if (!lua_istable(L, -1)) { lua_pop(L, 3); return; }
 
-    char level_key[8];
+    char level_key[24]; // "Level" + any int + NUL
     snprintf(level_key, sizeof(level_key), "Level%d", vet_level_);
 
     // Regen buff: flat increase

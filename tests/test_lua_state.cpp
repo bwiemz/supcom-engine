@@ -6,6 +6,7 @@
 #include "ui/ui_control.hpp"
 #include "vfs/mount_point.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/memory_mount.hpp"
 
 #include <string>
 #include <string_view>
@@ -13,50 +14,17 @@
 #include <vector>
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
+
+#include <stdexcept>
 
 using namespace osc::lua;
 
 namespace {
 
-class MemoryMount final : public osc::vfs::MountPoint {
-public:
-    void add(std::string path, std::vector<char> data) {
-        files_[osc::vfs::VirtualFileSystem::normalize(path)] = std::move(data);
-    }
-
-    std::optional<std::vector<char>> read_file(
-        std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        auto it = files_.find(path);
-        if (it == files_.end()) return std::nullopt;
-        return it->second;
-    }
-
-    bool file_exists(std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        return files_.find(path) != files_.end();
-    }
-
-    std::vector<std::string> find_files(
-        std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    std::optional<osc::vfs::FileInfo> get_file_info(
-        std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        auto it = files_.find(path);
-        if (it == files_.end()) return std::nullopt;
-        osc::vfs::FileInfo info;
-        info.size_bytes = static_cast<osc::u64>(it->second.size());
-        return info;
-    }
-
-private:
-    std::unordered_map<std::string, std::vector<char>> files_;
-};
+using osc::test::MemoryMount;
 
 bool global_bool(lua_State* L, const char* name) {
     lua_getglobal(L, name);
@@ -105,6 +73,82 @@ TEST_CASE("LuaState register and call C function", "[lua]") {
     CHECK(called == 1);
 }
 
+namespace {
+int g_probes_destroyed = 0;
+struct Probe {
+    std::string payload = "heap allocated so a skipped destructor leaks";
+    ~Probe() { ++g_probes_destroyed; }
+};
+} // namespace
+
+TEST_CASE("lua_error runs destructors of C++ objects it unwinds", "[lua]") {
+    // Bindings routinely hold std::string / RAII locks when they raise a Lua
+    // error. With longjmp (GCC/Clang, Lua built as C) those destructors are
+    // skipped; Lua built as C++ throws an exception instead.
+    LuaState state;
+    state.register_function("raise_with_probe", [](lua_State* L) -> int {
+        Probe probe;
+        return luaL_error(L, "boom from %s", "binding");
+    });
+    g_probes_destroyed = 0;
+    auto result = state.do_string(R"(
+        ok, msg = pcall(raise_with_probe)
+    )");
+    REQUIRE(result.ok());
+    CHECK(g_probes_destroyed == 1);
+    lua_getglobal(state.raw(), "ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)).find("boom from binding") !=
+          std::string::npos);
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("C++ exceptions escaping a binding become Lua errors", "[lua]") {
+    LuaState state;
+    state.register_function("throw_std", [](lua_State*) -> int {
+        throw std::runtime_error("binding blew up");
+    });
+    auto result = state.do_string(R"(
+        ok, msg = pcall(throw_std)
+        after = 1  -- the state is still usable
+    )");
+    REQUIRE(result.ok());
+    lua_getglobal(state.raw(), "ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "binding blew up");
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "after");
+    CHECK(lua_tonumber(state.raw(), -1) == 1);
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("errors after a caught C++ exception reach the right pcall", "[lua]") {
+    // The foreign-exception path must restore the error-handler chain: a
+    // later error in the outer function has to land in the OUTER pcall.
+    LuaState state;
+    state.register_function("throw_std2", [](lua_State*) -> int {
+        throw std::runtime_error("inner");
+    });
+    auto result = state.do_string(R"(
+        outer_ok, outer_msg = pcall(function()
+            local inner_ok, inner_msg = pcall(throw_std2)
+            assert(not inner_ok and inner_msg == 'inner')
+            error('outer', 0)
+        end)
+    )");
+    REQUIRE(result.ok());
+    lua_getglobal(state.raw(), "outer_ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "outer_msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "outer");
+    lua_pop(state.raw(), 1);
+}
+
 TEST_CASE("LuaState != operator (LuaPlus patch)", "[lua]") {
     LuaState state;
 
@@ -123,6 +167,28 @@ TEST_CASE("LuaState != operator (LuaPlus patch)", "[lua]") {
     lua_pop(state.raw(), 1);
 }
 
+TEST_CASE("LuaState # line comments (LuaPlus patch)", "[lua]") {
+    LuaState state;
+
+    // Retail FA's Lua uses '#' comments both on their own line and trailing
+    // code; '#' inside strings must stay literal.
+    auto result = state.do_string(R"(
+        # full-line comment
+            # indented comment
+        x = 1 # trailing comment
+        s = "a#b" # comment after a string containing '#'
+        y = x + 1#no space before the comment
+    )");
+    REQUIRE(result.ok());
+
+    lua_getglobal(state.raw(), "y");
+    CHECK(lua_tonumber(state.raw(), -1) == 2);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "s");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "a#b");
+    lua_pop(state.raw(), 1);
+}
+
 TEST_CASE("LuaState continue statement (LuaPlus patch)", "[lua]") {
     LuaState state;
 
@@ -138,6 +204,25 @@ TEST_CASE("LuaState continue statement (LuaPlus patch)", "[lua]") {
     lua_getglobal(state.raw(), "sum");
     // Sum of 1..10 minus 5 = 55 - 5 = 50
     CHECK(lua_tonumber(state.raw(), -1) == 50);
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("LuaState table size hints (LuaPlus patch)", "[lua]") {
+    LuaState state;
+
+    // Retail MultiEvent.lua: `{&1&1 n=0}`. Hints are discarded; the items that
+    // follow must still be parsed, with or without a separator.
+    auto result = state.do_string(R"(
+        a = {&1&1 n=0}
+        b = {&1&4 10, 20; x = 3}
+        c = {&2&0}
+        d = {&1&1, 7}
+        total = a.n + b[1] + b[2] + b.x + table.getn(c) + d[1]
+    )");
+    REQUIRE(result.ok());
+
+    lua_getglobal(state.raw(), "total");
+    CHECK(lua_tonumber(state.raw(), -1) == 40);
     lua_pop(state.raw(), 1);
 }
 

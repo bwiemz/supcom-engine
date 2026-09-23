@@ -1,17 +1,17 @@
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/script_loader.hpp"
 #include "core/log.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "vfs/path_utils.hpp"
+#include "platform/paths.hpp"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <random>
 #include <spdlog/spdlog.h>
-
-#ifdef _WIN32
-#include <ShlObj.h>
-#pragma comment(lib, "shell32.lib")
-#endif
 
 extern "C" {
 #include <lua.h>
@@ -28,102 +28,36 @@ namespace fs = std::filesystem;
 // ============================================================================
 
 /// io.dir(pattern) — returns a table of filenames matching a directory glob.
-/// The pattern is like "C:/path/to/dir/*" or "C:/path/to/dir/*.scd"
+/// The pattern is like "C:/path/to/dir/*" or "C:\\path\\dir\\*.scd". Matching
+/// is case-insensitive and results are sorted, so init scripts written for
+/// Windows mount the same content in the same order on every platform.
 static int l_io_dir(lua_State* L) {
-    const char* pattern = luaL_checkstring(L, 1);
-    std::string pat(pattern);
-
-    // Split into directory and file pattern
-    auto last_sep = pat.find_last_of("/\\");
-    std::string dir_str, file_pat;
-    if (last_sep != std::string::npos) {
-        dir_str = pat.substr(0, last_sep);
-        file_pat = pat.substr(last_sep + 1);
-    } else {
-        dir_str = ".";
-        file_pat = pat;
-    }
-
-    // Determine suffix to match
-    std::string suffix;
-    if (!file_pat.empty() && file_pat[0] == '*') {
-        suffix = file_pat.substr(1);
-    }
-    bool match_all = (file_pat == "*" || file_pat == "*.*");
+    std::string pat = luaL_checkstring(L, 1);
+    std::replace(pat.begin(), pat.end(), '\\', '/');
 
     lua_newtable(L);
     int idx = 1;
-
-    std::error_code ec;
-    fs::path dir_path(dir_str);
-    if (fs::exists(dir_path, ec) && fs::is_directory(dir_path, ec)) {
-        for (auto& entry : fs::directory_iterator(dir_path, ec)) {
-            std::string name = entry.path().filename().string();
-
-            bool match = match_all;
-            if (!match && !suffix.empty()) {
-                std::string name_lower = name;
-                std::transform(name_lower.begin(), name_lower.end(),
-                               name_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-                std::string suffix_lower = suffix;
-                std::transform(suffix_lower.begin(), suffix_lower.end(),
-                               suffix_lower.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-                if (name_lower.size() >= suffix_lower.size()) {
-                    match = name_lower.compare(
-                        name_lower.size() - suffix_lower.size(),
-                        suffix_lower.size(), suffix_lower) == 0;
-                }
-            }
-
-            if (match) {
-                lua_pushnumber(L, idx++);
-                lua_pushstring(L, name.c_str());
-                lua_settable(L, -3);
-            }
-        }
+    for (const auto& entry : vfs::expand_glob(fs::path(pat))) {
+        lua_pushnumber(L, idx++);
+        lua_pushstring(L, entry.filename().string().c_str());
+        lua_settable(L, -3);
     }
-
     return 1;
 }
 
-/// SHGetFolderPath(name) — returns Windows special folder paths.
+/// SHGetFolderPath(name) — FA's per-user folders, with a trailing '/'.
+/// 'PERSONAL' is the Documents folder ("My Games/..." maps and mods live
+/// under it); 'LOCAL_APPDATA' holds preferences and caches. Unknown names
+/// return "" like the original engine's failed lookup.
 static int l_SHGetFolderPath(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
     std::string result;
-
-#ifdef _WIN32
-    wchar_t path[MAX_PATH];
-    if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
-        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr,
-                                        0, path))) {
-            int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, path, -1, result.data(), len, nullptr, nullptr);
-            result += "/";
-        }
-    } else if (std::strcmp(name, "PERSONAL") == 0) {
-        if (SUCCEEDED(
-                SHGetFolderPathW(nullptr, CSIDL_PERSONAL, nullptr, 0, path))) {
-            int len = WideCharToMultiByte(CP_UTF8, 0, path, -1, nullptr, 0, nullptr, nullptr);
-            result.resize(len - 1);
-            WideCharToMultiByte(CP_UTF8, 0, path, -1, result.data(), len, nullptr, nullptr);
-            result += "/";
-        }
+    if (std::strcmp(name, "PERSONAL") == 0) {
+        result = platform::known_folder(platform::KnownFolder::Documents).generic_string();
+    } else if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
+        result = platform::known_folder(platform::KnownFolder::LocalAppData).generic_string();
     }
-#else
-    const char* home = std::getenv("HOME");
-    if (!home) home = "/tmp";
-    if (std::strcmp(name, "LOCAL_APPDATA") == 0) {
-        result = std::string(home) + "/.local/share/";
-    } else if (std::strcmp(name, "PERSONAL") == 0) {
-        result = std::string(home) + "/Documents/";
-    }
-#endif
-
-    // Normalize to forward slashes
-    std::replace(result.begin(), result.end(), '\\', '/');
+    if (!result.empty() && result.back() != '/') result += '/';
     lua_pushstring(L, result.c_str());
     return 1;
 }
@@ -152,49 +86,16 @@ static int l_SetProcessAffinityMask(lua_State* L) {
 // Blueprint context bindings (VFS active)
 // ============================================================================
 
-/// doscript(path, env?) — load a file from VFS and execute it.
+/// doscript(path, env?) — run a VFS script (and its init hooks), optionally
+/// inside the given environment table.
 static int l_doscript(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
-
-    auto* vfs = LuaState::get_vfs(L);
-    if (!vfs) {
-        return luaL_error(L, "doscript: VFS not initialized");
-    }
-
-    auto data = vfs->read_file(path);
-    if (!data) {
-        return luaL_error(L, "doscript: file not found: %s", path);
-    }
-
-    // Strip UTF-8 BOM if present (e.g. loc/us/strings_db.lua)
-    const char* buf = data->data();
-    size_t len = data->size();
-    if (len >= 3 && static_cast<unsigned char>(buf[0]) == 0xEF &&
-        static_cast<unsigned char>(buf[1]) == 0xBB &&
-        static_cast<unsigned char>(buf[2]) == 0xBF) {
-        buf += 3;
-        len -= 3;
-    }
-
-    // Load the chunk with the virtual path as chunk name
-    std::string chunk_name = std::string("@") + path;
-    int status = luaL_loadbuffer(L, buf, len, chunk_name.c_str());
-    if (status != 0) {
+    const int env_index = lua_istable(L, 2) ? 2 : 0;
+    auto result = run_vfs_script(L, path, env_index);
+    if (!result) {
+        lua_pushstring(L, result.error().message.c_str());
         return lua_error(L);
     }
-
-    // If env table provided as second argument, use it as the function env
-    if (lua_istable(L, 2)) {
-        lua_pushvalue(L, 2);
-        lua_setfenv(L, -2);
-    }
-
-    // Execute
-    status = lua_pcall(L, 0, 0, 0);
-    if (status != 0) {
-        return lua_error(L);
-    }
-
     return 0;
 }
 

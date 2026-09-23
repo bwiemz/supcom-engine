@@ -17,10 +17,13 @@ find_package(vk-bootstrap CONFIG REQUIRED)
 find_package(unofficial-shaderc CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+include(cmake/OscCompileOptions.cmake)
+
 # Vendored Lua 5.0
 add_subdirectory(third_party/lua-5.0)
 
 # Engine libraries
+add_subdirectory(src/platform)
 add_subdirectory(src/core)
 add_subdirectory(src/vfs)
 add_subdirectory(src/map)
@@ -35,6 +38,8 @@ add_subdirectory(src/blueprints)
 # Main executable
 add_executable(opensupcom src/main.cpp src/integration_tests.cpp)
 target_link_libraries(opensupcom PRIVATE
+    osc::warnings
+    osc::platform
     osc::core
     osc::vfs
     osc::sim
@@ -47,10 +52,14 @@ target_link_libraries(opensupcom PRIVATE
     osc::blueprints
 )
 
+# Export symbols from the executable so crash backtraces show function names.
+set_target_properties(opensupcom PROPERTIES ENABLE_EXPORTS ON)
+
 # Tests
 option(OSC_BUILD_TESTS "Build unit tests" ON)
 if(OSC_BUILD_TESTS)
     find_package(Catch2 3 CONFIG REQUIRED)
     enable_testing()
     add_subdirectory(tests)
+    add_subdirectory(tests/integration)
 endif()

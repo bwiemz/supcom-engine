@@ -1,3 +1,7 @@
+// pl_mpeg.h uses size_t but only includes <stdint.h>; MSVC gets <stddef.h>
+// transitively, GCC/Clang do not.
+#include <cstddef>
+
 // Disable FILE*-based functions (not needed, avoids MSVC warnings)
 #define PLM_NO_STDIO
 #define PL_MPEG_IMPLEMENTATION
