@@ -33,8 +33,15 @@ public:
     /// Number of active mounts.
     size_t mount_count() const { return mounts_.size(); }
 
-    /// Clear all mounts.
+    /// Clear all mounts (hook directories are kept).
     void clear();
+
+    /// Hook directories from the init script's `hook` table (retail and FAF
+    /// both use {'/schook'}). When a script /a/b.lua is run through doscript,
+    /// each <hook>/a/b.lua that exists runs afterwards in the same
+    /// environment. Stored normalised, in init-script order.
+    void set_hook_dirs(std::vector<std::string> dirs);
+    const std::vector<std::string>& hook_dirs() const { return hook_dirs_; }
 
     /// Normalize a virtual path: lowercase, forward slashes, collapse .. and .
     static std::string normalize(std::string_view path);
@@ -46,6 +53,7 @@ private:
     };
 
     std::vector<MountEntry> mounts_;
+    std::vector<std::string> hook_dirs_;
 
     /// Try to strip the mountpoint prefix from a path.
     /// Returns the remainder if path starts with mountpoint, nullopt otherwise.

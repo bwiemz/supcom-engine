@@ -1,5 +1,6 @@
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/script_loader.hpp"
 #include "core/log.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/path_utils.hpp"
@@ -85,49 +86,16 @@ static int l_SetProcessAffinityMask(lua_State* L) {
 // Blueprint context bindings (VFS active)
 // ============================================================================
 
-/// doscript(path, env?) — load a file from VFS and execute it.
+/// doscript(path, env?) — run a VFS script (and its init hooks), optionally
+/// inside the given environment table.
 static int l_doscript(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
-
-    auto* vfs = LuaState::get_vfs(L);
-    if (!vfs) {
-        return luaL_error(L, "doscript: VFS not initialized");
-    }
-
-    auto data = vfs->read_file(path);
-    if (!data) {
-        return luaL_error(L, "doscript: file not found: %s", path);
-    }
-
-    // Strip UTF-8 BOM if present (e.g. loc/us/strings_db.lua)
-    const char* buf = data->data();
-    size_t len = data->size();
-    if (len >= 3 && static_cast<unsigned char>(buf[0]) == 0xEF &&
-        static_cast<unsigned char>(buf[1]) == 0xBB &&
-        static_cast<unsigned char>(buf[2]) == 0xBF) {
-        buf += 3;
-        len -= 3;
-    }
-
-    // Load the chunk with the virtual path as chunk name
-    std::string chunk_name = std::string("@") + path;
-    int status = luaL_loadbuffer(L, buf, len, chunk_name.c_str());
-    if (status != 0) {
+    const int env_index = lua_istable(L, 2) ? 2 : 0;
+    auto result = run_vfs_script(L, path, env_index);
+    if (!result) {
+        lua_pushstring(L, result.error().message.c_str());
         return lua_error(L);
     }
-
-    // If env table provided as second argument, use it as the function env
-    if (lua_istable(L, 2)) {
-        lua_pushvalue(L, 2);
-        lua_setfenv(L, -2);
-    }
-
-    // Execute
-    status = lua_pcall(L, 0, 0, 0);
-    if (status != 0) {
-        return lua_error(L);
-    }
-
     return 0;
 }
 

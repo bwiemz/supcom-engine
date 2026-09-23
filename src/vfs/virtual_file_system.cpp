@@ -172,4 +172,12 @@ void VirtualFileSystem::clear() {
     mounts_.clear();
 }
 
+void VirtualFileSystem::set_hook_dirs(std::vector<std::string> dirs) {
+    hook_dirs_.clear();
+    for (auto& dir : dirs) {
+        auto norm = normalize(dir);
+        if (norm != "/") hook_dirs_.push_back(std::move(norm));
+    }
+}
+
 } // namespace osc::vfs

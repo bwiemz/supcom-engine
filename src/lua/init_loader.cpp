@@ -1,5 +1,6 @@
 #include "lua/init_loader.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/script_loader.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "core/log.hpp"
@@ -57,7 +58,9 @@ Result<void> InitLoader::execute_init(LuaState& state,
     }
 
     // Build VFS from the path table
-    return build_vfs_from_path_table(state.raw(), vfs);
+    if (auto r = build_vfs_from_path_table(state.raw(), vfs); !r) return r;
+    read_hook_table(state.raw(), vfs);
+    return {};
 }
 
 namespace {
@@ -87,6 +90,27 @@ bool mount_one(vfs::VirtualFileSystem& vfs, const fs::path& path,
 }
 
 } // namespace
+
+void InitLoader::read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs) {
+    std::vector<std::string> dirs;
+    lua_getglobal(L, "hook");
+    if (lua_istable(L, -1)) {
+        for (int i = 1;; ++i) {
+            lua_rawgeti(L, -1, i);
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            if (lua_type(L, -1) == LUA_TSTRING) dirs.emplace_back(lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    vfs.set_hook_dirs(std::move(dirs));
+    for (const auto& dir : vfs.hook_dirs()) {
+        spdlog::info("VFS hook directory: {}", dir);
+    }
+}
 
 Result<void> InitLoader::build_vfs_from_path_table(
     lua_State* L, vfs::VirtualFileSystem& vfs) {
@@ -191,15 +215,12 @@ Result<void> InitLoader::load_blueprints(
     };
 
     for (const char* file : system_files) {
-        auto data = vfs.read_file(file);
-        if (!data) {
+        if (!vfs.file_exists(file)) {
             spdlog::warn("System file not found in VFS: {}", file);
             continue;
         }
 
-        std::string chunk_name = std::string("@") + file;
-        auto result =
-            state.do_buffer(data->data(), data->size(), chunk_name.c_str());
+        auto result = run_vfs_script(state.raw(), file);
         if (!result) {
             spdlog::error("Failed to load {}: {}", file,
                           result.error().message);

@@ -8,6 +8,7 @@ add_library(osc_lua STATIC
     lan_lobby.cpp
     sim_bindings.cpp
     sim_loader.cpp
+    script_loader.cpp
     scenario_loader.cpp
     session_manager.cpp
     category_utils.cpp

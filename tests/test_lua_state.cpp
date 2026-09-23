@@ -6,6 +6,7 @@
 #include "ui/ui_control.hpp"
 #include "vfs/mount_point.hpp"
 #include "vfs/virtual_file_system.hpp"
+#include "support/memory_mount.hpp"
 
 #include <string>
 #include <string_view>
@@ -20,43 +21,7 @@ using namespace osc::lua;
 
 namespace {
 
-class MemoryMount final : public osc::vfs::MountPoint {
-public:
-    void add(std::string path, std::vector<char> data) {
-        files_[osc::vfs::VirtualFileSystem::normalize(path)] = std::move(data);
-    }
-
-    std::optional<std::vector<char>> read_file(
-        std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        auto it = files_.find(path);
-        if (it == files_.end()) return std::nullopt;
-        return it->second;
-    }
-
-    bool file_exists(std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        return files_.find(path) != files_.end();
-    }
-
-    std::vector<std::string> find_files(
-        std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    std::optional<osc::vfs::FileInfo> get_file_info(
-        std::string_view relative_path) const override {
-        auto path = osc::vfs::VirtualFileSystem::normalize(relative_path);
-        auto it = files_.find(path);
-        if (it == files_.end()) return std::nullopt;
-        osc::vfs::FileInfo info;
-        info.size_bytes = static_cast<osc::u64>(it->second.size());
-        return info;
-    }
-
-private:
-    std::unordered_map<std::string, std::vector<char>> files_;
-};
+using osc::test::MemoryMount;
 
 bool global_bool(lua_State* L, const char* name) {
     lua_getglobal(L, name);

@@ -10,6 +10,7 @@
 #include "lua/init_loader.hpp"
 #include "lua/session_manager.hpp"
 #include "lua/sim_loader.hpp"
+#include "lua/script_loader.hpp"
 #include "lua/scenario_loader.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -1769,10 +1770,9 @@ int main(int argc, char* argv[]) {
             }
         }
         {
-            auto gi_data = vfs.read_file("/lua/globalInit.lua");
-            if (gi_data) {
-                auto r = ui_lua_state.do_buffer(gi_data->data(), gi_data->size(),
-                                                 "@/lua/globalInit.lua");
+            if (vfs.file_exists("/lua/globalInit.lua")) {
+                auto r = osc::lua::run_vfs_script(ui_lua_state.raw(),
+                                                  "/lua/globalInit.lua");
                 if (r) {
                     spdlog::info("Loaded /lua/globalInit.lua on ui_L");
                 } else {
@@ -1783,11 +1783,9 @@ int main(int argc, char* argv[]) {
         // (debug dump removed)
         // 2. Load uimain.lua to define global SetupUI()
         {
-            auto uimain_data = vfs.read_file("/lua/ui/uimain.lua");
-            if (uimain_data) {
-                auto r = ui_lua_state.do_buffer(uimain_data->data(),
-                                                 uimain_data->size(),
-                                                 "@/lua/ui/uimain.lua");
+            if (vfs.file_exists("/lua/ui/uimain.lua")) {
+                auto r = osc::lua::run_vfs_script(ui_lua_state.raw(),
+                                                  "/lua/ui/uimain.lua");
                 if (r) {
                     spdlog::info("Loaded /lua/ui/uimain.lua");
                 } else {
