@@ -110,3 +110,58 @@ TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
         CHECK(units[i]->position().x > 11.0f); // started at x = 10
     }
 }
+
+namespace {
+
+/// 128x128 map split in two by a cliff wall along x = 60..64.
+void make_walled_world(SimState& sim) {
+    std::vector<osc::u16> heights((kMapSize + 1) * (kMapSize + 1), 1000);
+    for (osc::u32 z = 0; z <= kMapSize; ++z) {
+        for (osc::u32 x = 60; x <= 64; ++x) {
+            heights[z * (kMapSize + 1) + x] = 60000; // ~470 units tall
+        }
+    }
+    osc::map::Heightmap hm(kMapSize, kMapSize, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    sim.build_pathfinding_grid();
+}
+
+} // namespace
+
+TEST_CASE("an unreachable goal yields a partial path to the closest point",
+          "[nav][m183]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim);
+    const auto* pf = sim.pathfinder();
+    REQUIRE(pf != nullptr);
+    pf->reset_request_count();
+
+    auto result = pf->find_path(20.0f, 64.0f, 100.0f, 64.0f, "Land");
+    REQUIRE(result.found);
+    CHECK(result.partial);
+    REQUIRE_FALSE(result.waypoints.empty());
+    // The path stops on the near side of the wall, as close to it as it gets.
+    for (const auto& wp : result.waypoints) CHECK(wp.x < 60.0f);
+    CHECK(result.waypoints.back().x > 50.0f);
+
+    // A reachable goal is not partial.
+    auto ok = pf->find_path(20.0f, 64.0f, 40.0f, 30.0f, "Land");
+    REQUIRE(ok.found);
+    CHECK_FALSE(ok.partial);
+}
+
+TEST_CASE("a unit ordered across a cliff stops at it instead of clipping through",
+          "[nav][m183]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim);
+
+    auto* u = spawn_land_unit(sim, 40.0f, 64.0f);
+    u->push_command(order(CommandType::Move, 100.0f, 64.0f), true);
+    for (int t = 0; t < 200; ++t) sim.tick();
+
+    CHECK(u->position().x < 60.0f);  // never entered or crossed the wall
+    CHECK(u->position().x > 50.0f);  // but got as close as it could
+    CHECK(u->command_queue().empty()); // and the order finished
+}

@@ -74,14 +74,15 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
 
     // Run A*
     auto grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious);
-    if (grid_path.empty()) {
+    if (grid_path.cells.empty()) {
         spdlog::debug("Pathfinder: A* found no path from ({},{}) to ({},{})",
                        sx, sz, gx, gz);
         return result; // found = false
     }
+    result.partial = !grid_path.reached_goal;
 
     // Smooth path
-    auto smoothed = smooth_path(grid_path, layer, draft, amphibious);
+    auto smoothed = smooth_path(grid_path.cells, layer, draft, amphibious);
 
     // Convert to world coordinates
     result.found = true;
@@ -91,8 +92,9 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
         result.waypoints.push_back({wx, 0, wz});
     }
 
-    // Replace last waypoint with exact goal position
-    if (!result.waypoints.empty()) {
+    // Replace last waypoint with exact goal position (a partial path ends at
+    // the reachable cell, not at the unreachable goal)
+    if (!result.waypoints.empty() && !result.partial) {
         result.waypoints.back().x = goal_x;
         result.waypoints.back().z = goal_z;
     }
@@ -100,7 +102,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     return result;
 }
 
-std::vector<std::pair<u32, u32>> Pathfinder::astar(
+Pathfinder::GridPath Pathfinder::astar(
     u32 sx, u32 sz, u32 gx, u32 gz,
     const std::string& layer, f32 draft, bool amphibious) const {
 
@@ -145,6 +147,10 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
 
     u32 nodes_explored = 0;
     u32 goal_idx = idx(gx, gz);
+    // Closest explored cell to the goal (by heuristic, then by path cost),
+    // the fallback destination when the goal cannot be reached.
+    u32 best_idx = start_idx;
+    f32 best_h = heuristic(sx, sz);
 
     while (!open.empty()) {
         auto [f, cur_idx] = open.top();
@@ -155,9 +161,18 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
         if (closed[cur_idx]) continue;
         closed[cur_idx] = true;
 
+        {
+            const f32 h_cur = heuristic(cur_idx % w, cur_idx / w);
+            if (h_cur < best_h ||
+                (h_cur == best_h && g_cost[cur_idx] < g_cost[best_idx])) {
+                best_h = h_cur;
+                best_idx = cur_idx;
+            }
+        }
+
         if (++nodes_explored > MAX_NODES_EXPLORED) {
             spdlog::debug("Pathfinder: A* hit search limit ({} nodes)", MAX_NODES_EXPLORED);
-            return {}; // give up
+            break; // fall through to the closest cell found so far
         }
 
         u32 cx = cur_idx % w;
@@ -204,17 +219,19 @@ std::vector<std::pair<u32, u32>> Pathfinder::astar(
         }
     }
 
-    // Reconstruct path
-    if (g_cost[goal_idx] == FLT_MAX) return {}; // no path
+    // Reconstruct the path to the goal, or else to the closest cell reached.
+    GridPath result;
+    result.reached_goal = g_cost[goal_idx] != FLT_MAX;
+    const u32 end_idx = result.reached_goal ? goal_idx : best_idx;
+    if (end_idx == start_idx) return result; // nowhere to go
 
-    std::vector<std::pair<u32, u32>> path;
-    u32 cur = goal_idx;
+    u32 cur = end_idx;
     while (cur != UINT32_MAX) {
-        path.push_back({cur % w, cur / w});
+        result.cells.push_back({cur % w, cur / w});
         cur = parent[cur];
     }
-    std::reverse(path.begin(), path.end());
-    return path;
+    std::reverse(result.cells.begin(), result.cells.end());
+    return result;
 }
 
 std::vector<std::pair<u32, u32>> Pathfinder::smooth_path(

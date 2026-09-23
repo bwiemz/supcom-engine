@@ -40,9 +40,12 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
         status_ = Status::WaitingForPath;
         return;
     } else {
-        // Genuinely no path — fall back to straight line
-        waypoints_.push_back(pos);
-        spdlog::debug("Navigator: no path found, falling back to straight line");
+        // Nowhere reachable to go (enclosed, or no passable cell near the
+        // goal). Stay put: the old straight-line fallback drove units
+        // through cliffs and buildings.
+        spdlog::debug("Navigator: no reachable destination, not moving");
+        status_ = Status::Idle;
+        return;
     }
 
     status_ = Status::Moving;
