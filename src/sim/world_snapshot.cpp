@@ -6,6 +6,7 @@
 #include "sim/unit.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 
 namespace osc::sim {
@@ -146,9 +147,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
             r.shield_size = s.size;
         }
     });
-    // The registry is a hash map; the snapshot is ordered for lookup.
-    std::sort(out.entities.begin(), out.entities.end(),
-              [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; });
+    // The registry walks in id order, which find()'s binary search relies on.
+    assert(
+        std::is_sorted(out.entities.begin(), out.entities.end(),
+                       [](const EntityRecord& a, const EntityRecord& b) { return a.id < b.id; }));
 
     for (const auto& fx : sim.effect_registry().all()) {
         if (!fx || fx->destroyed()) continue;
