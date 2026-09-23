@@ -12311,19 +12311,19 @@ void test_commands(TestContext& ctx) {
         ctx.sim.tick();
     }
 
-    // Test 5: IssueTeleport moves unit
+    // Test 5: IssueTeleport moves unit. The script charges the teleport
+    // (an energy drain sized from the unit's cost) and warps at the end, so
+    // use a cheap unit and give it a few ticks.
     {
         auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "if not u then error('no entity') end\n"
-            "local p = u:GetPosition()\n"
-            "rawset(_G, '_cmd5_oldx', p[1])\n"
-            "rawset(_G, '_cmd5_oldz', p[3])\n"
-            "IssueTeleport({u}, {200, 25, 300})\n").c_str());
+            "local u = CreateUnitHPR('uel0105', 1, 150, 25, 150, 0, 0, 0)\n"
+            "if not u then error('no engineer') end\n"
+            "rawset(_G, '_cmd5_unit', u)\n"
+            "IssueTeleport({u}, {200, 25, 300})\n");
         if (r) {
-            ctx.sim.tick();
+            for (int t = 0; t < 40; ++t) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                ("local u = GetEntityById(" + u1 + ")\n"
+                std::string("local u = rawget(_G, '_cmd5_unit')\n"
                 "local p = u:GetPosition()\n"
                 "if math.abs(p[1] - 200) < 1 and math.abs(p[3] - 300) < 1 then\n"
                 "    LOG('cmd test 5: PASS')\n"

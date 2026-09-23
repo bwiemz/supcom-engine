@@ -1123,11 +1123,15 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
 
         case CommandType::Teleport: {
-            // Teleport: instant move to target position
-            // FA handles energy drain via economy events in Lua; we just move
-            set_position(cmd.target_pos);
-            call_lua_method(L, "OnTeleportUnit");
+            // Moho hands the teleport to the script: OnTeleportUnit(teleporter,
+            // location, orientation) charges it (an economy event sized from
+            // the blueprint's cost) and Warp()s the unit when it completes.
+            // Only a unit without the handler moves at once.
+            if (!call_on_teleport_unit(L, cmd.target_pos)) {
+                set_position(cmd.target_pos);
+            }
             command_queue_.pop_front();
+            if (destroyed() || !in_registry()) return;
             continue;
         }
 
@@ -2633,6 +2637,43 @@ void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
 // ---------------------------------------------------------------------------
 // Lua callback helpers
 // ---------------------------------------------------------------------------
+
+bool Unit::call_on_teleport_unit(lua_State* L, const Vector3& location) {
+    if (lua_table_ref() < 0) return false;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnTeleportUnit");
+    lua_gettable(L, tbl);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return false;
+    }
+    lua_pushvalue(L, tbl); // self
+    lua_pushvalue(L, tbl); // teleporter: the unit teleports itself
+    lua_newtable(L);       // location
+    lua_pushnumber(L, location.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, location.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, location.z);
+    lua_rawseti(L, -2, 3);
+    lua_newtable(L);       // orientation: keep the current one
+    const auto& q = orientation();
+    lua_pushnumber(L, q.x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, q.y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, q.z);
+    lua_rawseti(L, -2, 3);
+    lua_pushnumber(L, q.w);
+    lua_rawseti(L, -2, 4);
+    if (lua_pcall(L, 4, 0, 0) != 0) {
+        spdlog::warn("OnTeleportUnit error: {}", lua_tostring(L, -1));
+    }
+    lua_settop(L, top);
+    return true;
+}
 
 void Unit::call_lua_method(lua_State* L, const char* method_name) {
     if (lua_table_ref() < 0) return;

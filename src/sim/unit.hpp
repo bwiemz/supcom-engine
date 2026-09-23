@@ -467,6 +467,9 @@ public:
     /// every Lua ref the weapons and the on-given callbacks hold. Idempotent;
     /// runs however the unit leaves the sim (entity_Destroy or C++ removal).
     void release_weapon_scripts(lua_State* L);
+    /// Hand a teleport to the script (OnTeleportUnit(self, location,
+    /// orientation)); false if the unit's class has no handler.
+    bool call_on_teleport_unit(lua_State* L, const Vector3& location);
 
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
