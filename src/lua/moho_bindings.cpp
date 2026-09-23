@@ -13577,51 +13577,41 @@ static osc::core::Preferences* get_prefs(lua_State* L) {
     return p;
 }
 
+/// GetPreference(key [, default]) -> a copy of the preference at the dotted
+/// key (any Lua value: retail keeps whole profile tables), else `default`.
 static int l_GetPreference(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-    auto* prefs = get_prefs(L);
-    if (!prefs) {
-        if (lua_gettop(L) >= 2) lua_pushvalue(L, 2);
-        else lua_pushnil(L);
-        return 1;
-    }
-
-    if (lua_gettop(L) >= 2) {
-        int t = lua_type(L, 2);
-        if (t == LUA_TSTRING) {
-            auto val = prefs->get_string(key, lua_tostring(L, 2));
-            lua_pushstring(L, val.c_str());
-        } else if (t == LUA_TBOOLEAN) {
-            bool val = prefs->get_bool(key, lua_toboolean(L, 2) != 0);
-            lua_pushboolean(L, val ? 1 : 0);
-        } else if (t == LUA_TNUMBER) {
-            float val = prefs->get_float(key,
-                static_cast<float>(lua_tonumber(L, 2)));
-            lua_pushnumber(L, val);
-        } else {
-            lua_pushvalue(L, 2);
-        }
-    } else {
-        auto val = prefs->get_string(key, "");
-        if (val.empty()) lua_pushnil(L);
-        else lua_pushstring(L, val.c_str());
+    if (auto* prefs = get_prefs(L)) prefs->push(key, L);
+    else lua_pushnil(L);
+    if (lua_isnil(L, -1) && lua_gettop(L) >= 3) {
+        lua_pop(L, 1);
+        lua_pushvalue(L, 2);
     }
     return 1;
 }
 
+/// SetPreference(key, value) -- stores a copy; nil removes the key.
 static int l_SetPreference(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-    auto* prefs = get_prefs(L);
-    if (!prefs) return 0;
-
-    int t = lua_type(L, 2);
-    if (t == LUA_TSTRING)
-        prefs->set_string(key, lua_tostring(L, 2));
-    else if (t == LUA_TBOOLEAN)
-        prefs->set_bool(key, lua_toboolean(L, 2) != 0);
-    else if (t == LUA_TNUMBER)
-        prefs->set_float(key, static_cast<float>(lua_tonumber(L, 2)));
+    lua_settop(L, 2);
+    if (auto* prefs = get_prefs(L)) prefs->set(key, L, 2);
     return 0;
+}
+
+/// SavePreferences() -- write Game.prefs (a no-op when preferences are kept
+/// in memory, as in tests).
+static int l_SavePreferences(lua_State* L) {
+    if (auto* prefs = get_prefs(L)) prefs->save();
+    return 0;
+}
+
+/// GetOptions(key) -> the current profile's option, or nil (retail's
+/// Prefs.GetOption falls back to the option's default).
+static int l_GetOptions(lua_State* L) {
+    const char* key = lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : "";
+    if (auto* prefs = get_prefs(L)) prefs->push_option(key, L);
+    else lua_pushnil(L);
+    return 1;
 }
 
 // ====================================================================
@@ -15687,46 +15677,28 @@ static int l_HasCommandLineArg(lua_State* L) {
 // Profile system — Prefs table (M149a)
 // ====================================================================
 
-/// Prefs.GetFromCurrentProfile(key [, default]) -> value
+/// Prefs.GetFromCurrentProfile(key [, default]) -> the current profile's
+/// field (retail keeps these in /lua/user/prefs.lua; this global mirrors it).
 static int l_GetFromCurrentProfile(lua_State* L) {
-    int nargs = lua_gettop(L);
     const char* key = luaL_checkstring(L, 1);
-    std::string full_key = std::string("profile.") + key;
-
-    lua_pushstring(L, "GetPreference");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        lua_pushstring(L, full_key.c_str());
-        if (nargs >= 2) {
-            lua_pushvalue(L, 2);
-        } else {
-            lua_pushnil(L);
-        }
-        if (lua_pcall(L, 2, 1, 0) == 0) return 1;
+    auto* prefs = get_prefs(L);
+    const std::string profile = prefs ? prefs->current_profile_path() : std::string{};
+    if (profile.empty()) lua_pushnil(L);
+    else prefs->push(profile + "." + key, L);
+    if (lua_isnil(L, -1) && lua_gettop(L) >= 3) {
         lua_pop(L, 1);
-    } else {
-        lua_pop(L, 1);
+        lua_pushvalue(L, 2);
     }
-    lua_pushnil(L);
     return 1;
 }
 
 /// Prefs.SetToCurrentProfile(key, val)
 static int l_SetToCurrentProfile(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
-    std::string full_key = std::string("profile.") + key;
-
-    lua_pushstring(L, "SetPreference");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        lua_pushstring(L, full_key.c_str());
-        lua_pushvalue(L, 2);
-        if (lua_pcall(L, 2, 0, 0) != 0) {
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    lua_settop(L, 2);
+    auto* prefs = get_prefs(L);
+    const std::string profile = prefs ? prefs->current_profile_path() : std::string{};
+    if (!profile.empty()) prefs->set(profile + "." + key, L, 2);
     return 0;
 }
 
@@ -16040,7 +16012,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_stub("AudioSetLanguage");
     set_str("__language", "us");
     set_bool_fn("HasLocalizedVO", false);
-    set_nil_fn("GetOptions");
     set_num_fn("GetVolume", 1.0);
     set_stub("SetVolume");
     set_stub("ConExecute");
@@ -16189,6 +16160,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Preference globals
     state.register_function("GetPreference", l_GetPreference);
     state.register_function("SetPreference", l_SetPreference);
+    state.register_function("SavePreferences", l_SavePreferences);
+    state.register_function("GetOptions", l_GetOptions);
 
     // UI thread/coroutine globals
     state.register_function("ForkThread", l_ui_ForkThread);

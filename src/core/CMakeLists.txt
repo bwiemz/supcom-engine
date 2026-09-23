@@ -3,6 +3,7 @@ add_library(osc_core STATIC
     log.cpp
     test_status.cpp
     preferences.cpp
+    lua_copy.cpp
     localization.cpp
     game_state.cpp
     front_end_data.cpp

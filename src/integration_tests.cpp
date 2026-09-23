@@ -8792,6 +8792,30 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     //    focus; the next beat applies it through the sync channel, and
     //    UserSync's OnSync hook tells the avatars (which stop updating)
     //    before gamemain's beat functions run with no focus army.
+    // Retail keeps per-profile settings in preferences (tables, not just
+    // scalars): the minimap window's visibility, the overlay filters, window
+    // positions, the options.
+    lua_ok("Test 12a: retail's profile preferences", R"(
+        local Prefs = import('/lua/user/prefs.lua')
+        if not Prefs.GetCurrentProfile() then error('no current profile') end
+        if Prefs.GetFromCurrentProfile('stratview') then error('stratview set by default') end
+        if not import('/lua/ui/game/minimap.lua').controls.displayGroup:IsHidden() then
+            error('minimap window shown without stratview')
+        end
+        Prefs.SetToCurrentProfile('stratview', true)
+        Prefs.SetToCurrentProfile('mini_ui_minimap', {top = 1, left = 2, right = 3, bottom = 4})
+        if Prefs.GetFromCurrentProfile('stratview') ~= true then error('stratview not stored') end
+        local pos = Prefs.GetFromCurrentProfile('mini_ui_minimap')
+        if not pos or pos.right ~= 3 then error('window position table not stored') end
+        -- a copy: changing it changes nothing until it is set again
+        pos.right = 99
+        if Prefs.GetFromCurrentProfile('mini_ui_minimap').right ~= 3 then error('not a copy') end
+        if GetOptions('no_such_option') ~= nil then error('GetOptions invented a value') end
+        SavePreferences() -- in memory during tests: must not fail
+        Prefs.SetToCurrentProfile('stratview', nil)
+        Prefs.SetToCurrentProfile('mini_ui_minimap', nil)
+    )");
+
     lua_ok("Test 9a: NoteGameOver requests observer focus", R"(
         import('/lua/ui/uimain.lua').NoteGameOver()
         if GetFocusArmy() == -1 then error('focus changed before the beat') end

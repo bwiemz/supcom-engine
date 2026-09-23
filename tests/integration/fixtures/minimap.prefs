@@ -1,0 +1,11 @@
+-- A player profile that shows the minimap window (retail's `stratview`).
+profile = {
+    current = 1,
+    profiles = {
+        [1] = {
+            Name = "Player",
+            MenuTutorialPrompt = true,
+            stratview = true,
+        },
+    },
+}
