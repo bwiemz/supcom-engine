@@ -2460,8 +2460,14 @@ void Unit::init_intel(const std::string& type, f32 radius) {
     }
 }
 
+void Unit::add_intel(const std::string& type, f32 radius) {
+    intel_states_.try_emplace(type, IntelState{radius, false});
+}
+
 void Unit::enable_intel(const std::string& type) {
-    intel_states_[type].enabled = true;
+    auto it = intel_states_.find(type);
+    if (it == intel_states_.end()) return;
+    it->second.enabled = true;
     if (type == "Cloak") {
         set_cloaked(true);
     } else if (type == "RadarStealth") {

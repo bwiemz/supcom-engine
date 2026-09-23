@@ -478,7 +478,12 @@ public:
     // Intel system (per-type enabled/disabled + radius)
     bool is_intel_enabled(const std::string& type) const;
     f32 get_intel_radius(const std::string& type) const;
+    /// InitIntel: give the unit this intel, switched on.
     void init_intel(const std::string& type, f32 radius);
+    /// Register intel the unit has (from its blueprint), switched off until
+    /// the script enables it. Leaves intel the unit already has untouched.
+    void add_intel(const std::string& type, f32 radius);
+    /// EnableIntel: a no-op for intel the unit doesn't have, as in Moho.
     void enable_intel(const std::string& type);
     void disable_intel(const std::string& type);
     void set_intel_radius(const std::string& type, f32 radius);

@@ -3458,9 +3458,18 @@ static int unit_GetXPValue(lua_State* L) {
 
 // --- Cloak / Stealth / AutoMode / DeathWeapon bindings ---
 
+// EnableCloak/EnableStealth/EnableSonarStealth are not Moho methods (the
+// retail binary has no such names); scripts calling them mean "make this
+// unit stealthy", so they grant the intel rather than following
+// EnableIntel's has-it-already rule.
+static void grant_intel(sim::Unit* u, const char* type) {
+    if (!u) return;
+    u->add_intel(type, 0.0f);
+    u->enable_intel(type);
+}
+
 static int unit_EnableCloak(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("Cloak");
+    grant_intel(check_unit(L), "Cloak");
     return 0;
 }
 static int unit_DisableCloak(lua_State* L) {
@@ -3474,8 +3483,7 @@ static int unit_IsUnitCloaked(lua_State* L) {
     return 1;
 }
 static int unit_EnableStealth(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("RadarStealth");
+    grant_intel(check_unit(L), "RadarStealth");
     return 0;
 }
 static int unit_DisableStealth(lua_State* L) {
@@ -3484,8 +3492,7 @@ static int unit_DisableStealth(lua_State* L) {
     return 0;
 }
 static int unit_EnableSonarStealth(lua_State* L) {
-    auto* u = check_unit(L);
-    if (u) u->enable_intel("SonarStealth");
+    grant_intel(check_unit(L), "SonarStealth");
     return 0;
 }
 static int unit_DisableSonarStealth(lua_State* L) {

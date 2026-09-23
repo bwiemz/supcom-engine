@@ -637,6 +637,51 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     }
                     lua_pop(L, 1);
                 }
+
+                // Intel the unit has but that starts off: the unit script
+                // switches it on (retail SetupIntel -> EnableUnitIntel), and
+                // EnableIntel only works on intel the unit has.
+                static const char* const flags[] = {
+                    "Cloak", "RadarStealth", "SonarStealth"};
+                for (const char* f : flags) {
+                    lua_pushstring(L, f);
+                    lua_rawget(L, -2);
+                    if (lua_toboolean(L, -1)) unit->add_intel(f, 0.0f);
+                    lua_pop(L, 1);
+                }
+                static const IntelField field_radii[] = {
+                    {"CloakFieldRadius", "CloakField"},
+                    {"RadarStealthFieldRadius", "RadarStealthField"},
+                    {"SonarStealthFieldRadius", "SonarStealthField"},
+                };
+                for (auto& f : field_radii) {
+                    lua_pushstring(L, f.bp_field);
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1)) {
+                        f32 r = static_cast<f32>(lua_tonumber(L, -1));
+                        if (r > 0.0f) unit->add_intel(f.intel_type, r);
+                    }
+                    lua_pop(L, 1);
+                }
+                // {Min, Max} ranges; blueprint defaults are {0, 0}.
+                static const IntelField ranges[] = {
+                    {"JamRadius", "Jammer"},
+                    {"SpoofRadius", "Spoof"},
+                };
+                for (auto& f : ranges) {
+                    lua_pushstring(L, f.bp_field);
+                    lua_rawget(L, -2);
+                    if (lua_istable(L, -1)) {
+                        lua_pushstring(L, "Max");
+                        lua_rawget(L, -2);
+                        if (lua_isnumber(L, -1)) {
+                            f32 r = static_cast<f32>(lua_tonumber(L, -1));
+                            if (r > 0.0f) unit->add_intel(f.intel_type, r);
+                        }
+                        lua_pop(L, 1);
+                    }
+                    lua_pop(L, 1);
+                }
             }
             lua_pop(L, 2); // pop Intel (or nil) + bp table
         }
