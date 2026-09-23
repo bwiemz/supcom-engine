@@ -728,3 +728,21 @@ TEST_CASE("GetTerrainTypeOffset is a height offset, not a terrain type", "[sim][
     CHECK(std::string(lua_tostring(state.raw(), -1)) == "Default");
     lua_pop(state.raw(), 1);
 }
+
+TEST_CASE("CreateUnitHPR with an unknown blueprint creates nothing", "[sim][units]") {
+    // The creation code read the blueprint's Economy and Categories even
+    // when the store didn't know it: a null dereference.
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store(state.raw());
+    osc::sim::SimState sim(state.raw(), &store);
+    sim.add_army("ARMY_1", "ARMY_1");
+    osc::lua::register_sim_bindings(state, sim);
+    osc::lua::register_moho_bindings(state, sim);
+
+    auto result = state.do_string("return CreateUnitHPR('xxx9999', 'ARMY_1', 5, 0, 5, 0, 0, 0)");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    CHECK(lua_isnil(state.raw(), -1));
+    lua_pop(state.raw(), 1);
+    CHECK(sim.entity_registry().count() == 0);
+}

@@ -223,6 +223,13 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     if (!sim) return 0;
 
     auto* store = sim->blueprint_store();
+    // A blueprint the store doesn't know makes no unit (the reads below
+    // all assume one).
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (store && !entry) {
+        spdlog::warn("CreateUnit: unknown unit blueprint '{}'", bp_id);
+        return 0;
+    }
 
     auto unit = std::make_unique<sim::Unit>();
     unit->set_blueprint_id(bp_id);
@@ -239,7 +246,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
     // Read blueprint data
     if (store) {
-        auto* entry = store->find(bp_id);
         if (entry) {
             // Health — try top-level MaxHealth, fall back to Defense.MaxHealth
             auto hp = store->get_number_field(*entry, "MaxHealth", L);
