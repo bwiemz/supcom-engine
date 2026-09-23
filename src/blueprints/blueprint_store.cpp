@@ -1,6 +1,7 @@
 #include "blueprints/blueprint_store.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -36,6 +37,76 @@ BlueprintStore::~BlueprintStore() {
         }
     }
 }
+
+namespace {
+
+/// Moho fills in blueprint fields that scripts read unconditionally. A unit
+/// without a Footprint uses its SizeX/SizeZ, rounded, at least 1 (FAF engine
+/// notes, EntityBlueprint.lua). 165 retail units have none, and StructureUnit
+/// reads bp.Footprint.SizeX when it flattens its skirt.
+/// t[key] = {Min = 0, Max = 0} unless t already has it.
+void default_min_max(lua_State* L, int t, const char* key) {
+    lua_pushstring(L, key);
+    lua_rawget(L, t);
+    const bool present = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    if (present) return;
+    lua_pushstring(L, key);
+    lua_newtable(L);
+    lua_pushstring(L, "Min");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "Max");
+    lua_pushnumber(L, 0);
+    lua_rawset(L, -3);
+    lua_rawset(L, t);
+}
+
+void apply_unit_defaults(lua_State* L, int bp) {
+    // Intel always exists, with its range pairs: Unit.IntelWatchThread
+    // iterates Intel.JamRadius / SpoofRadius on every intel-powered unit.
+    lua_pushstring(L, "Intel");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Intel");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Intel");
+        lua_rawget(L, bp);
+    }
+    const int intel = lua_gettop(L);
+    default_min_max(L, intel, "JamRadius");
+    default_min_max(L, intel, "SpoofRadius");
+    lua_pop(L, 1);
+
+    lua_pushstring(L, "Footprint");
+    lua_rawget(L, bp);
+    const bool has_footprint = lua_istable(L, -1);
+    lua_pop(L, 1);
+    if (has_footprint) return;
+
+    auto footprint_size = [L, bp](const char* key) {
+        lua_pushstring(L, key);
+        lua_rawget(L, bp);
+        const double size = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 1.0;
+        lua_pop(L, 1);
+        return std::max(1.0, std::floor(size + 0.5));
+    };
+    const double size_x = footprint_size("SizeX");
+    const double size_z = footprint_size("SizeZ");
+    lua_pushstring(L, "Footprint");
+    lua_newtable(L);
+    lua_pushstring(L, "SizeX");
+    lua_pushnumber(L, size_x);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "SizeZ");
+    lua_pushnumber(L, size_z);
+    lua_rawset(L, -3);
+    lua_rawset(L, bp);
+}
+
+} // namespace
 
 void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
                                           int stack_index) {
@@ -75,6 +146,11 @@ void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
     lua_pop(L, 1);
     std::transform(id.begin(), id.end(), id.begin(),
                    [](unsigned char c) { return std::tolower(c); });
+
+    if (type == BlueprintType::Unit) {
+        const int bp = stack_index > 0 ? stack_index : lua_gettop(L) + stack_index + 1;
+        apply_unit_defaults(L, bp);
+    }
 
     // Create a Lua registry reference for the table
     lua_pushvalue(L, stack_index);
