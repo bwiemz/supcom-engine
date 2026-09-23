@@ -263,3 +263,25 @@ TEST_CASE("reachability follows obstacles that open and close", "[nav][reach]") 
     grid->clear_obstacle(64.0f, 64.0f, 4.0f, 130.0f);
     CHECK(pf->reachable(10.0f, 64.0f, 110.0f, 64.0f, "Land"));
 }
+
+TEST_CASE("an unreachable goal far from reachable ground falls back to the start",
+          "[nav][reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    // 512x512 map with a cliff-walled plateau across the middle (x = 100..400).
+    // A goal on the plateau is unreachable from the lowland, and the nearest
+    // lowland cell is 75 cells away: past the search bound.
+    constexpr osc::u32 size = 512;
+    std::vector<osc::u16> heights((size + 1) * (size + 1), 1000);
+    for (osc::u32 z = 0; z <= size; ++z)
+        for (osc::u32 x = 100; x <= 400; ++x)
+            heights[z * (size + 1) + x] = 60000;
+    osc::map::Heightmap hm(size, size, 1.0f / 128.0f, std::move(heights));
+    sim.set_terrain(std::make_unique<osc::map::Terrain>(std::move(hm), 0.0f, false));
+    sim.build_pathfinding_grid();
+
+    const auto r = sim.pathfinder()->reachability(20.0f, 256.0f, 250.0f, 256.0f, "Land");
+    REQUIRE_FALSE(r.reachable);
+    CHECK(r.best_x == 20.0f);
+    CHECK(r.best_z == 256.0f);
+}

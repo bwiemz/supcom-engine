@@ -340,7 +340,8 @@ constexpr i32 NEAREST_PASSABLE_RADIUS = 20;
 const Pathfinder::ComponentLabels& Pathfinder::labels_for(
     const std::string& layer, f32 draft, bool amphibious) const {
     const bool naval = !amphibious && is_naval_layer(layer);
-    const f32 key_draft = naval && draft > 0 ? draft : 0.0f;
+    const f32 key_draft =
+        naval && draft > 0 ? std::ceil(draft / DRAFT_KEY_STEP) * DRAFT_KEY_STEP : 0.0f;
 
     ComponentLabels* set = nullptr;
     for (auto& s : label_cache_) {
@@ -464,9 +465,9 @@ Reachability Pathfinder::reachability(f32 start_x, f32 start_z,
         }
     }
 
-    // Unreachable: the closest cell the unit can get to instead.
-    const i32 max_radius = static_cast<i32>(std::max(w, h));
-    for (i32 radius = 1; radius <= max_radius; ++radius) {
+    // Unreachable: the closest cell the unit can get to instead, if one is
+    // near the goal; else the start.
+    for (i32 radius = 1; radius <= BEST_POINT_SEARCH_RADIUS; ++radius) {
         f32 best_d2 = FLT_MAX;
         for_ring(static_cast<i32>(gx), static_cast<i32>(gz), radius, w, h,
                  [&](u32 x, u32 z) {

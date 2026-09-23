@@ -24,7 +24,8 @@ struct PathResult {
 struct Reachability {
     bool reachable = false;
     /// The goal when reachable; otherwise the reachable point closest to it,
-    /// or the start when nothing is reachable from there.
+    /// searched out to BEST_POINT_SEARCH_RADIUS cells from the goal, else
+    /// the start (as retail's own graph fallback does).
     f32 best_x = 0;
     f32 best_z = 0;
 };
@@ -64,6 +65,11 @@ public:
                             amphibious).reachable;
     }
 
+    /// How far (in cells) reachability() looks around an unreachable goal
+    /// for the closest point the unit can reach. Bounded so a query across
+    /// open water stays cheap.
+    static constexpr i32 BEST_POINT_SEARCH_RADIUS = 64;
+
 private:
     /// Connected components of one passability class; 0 = impassable cell.
     /// Movement is 8-way without corner cutting, which connects exactly what
@@ -82,7 +88,14 @@ private:
 
     mutable std::vector<ComponentLabels> label_cache_;
     mutable u64 label_uses_ = 0;
-    static constexpr size_t MAX_LABEL_SETS = 6;
+    /// Land, amphibious and one per naval draft bucket. Retail uses five
+    /// drafts (0, 1.5, 2, 3.6, 5), so 7 sets are live at once; fewer slots
+    /// would evict and relabel (a full flood fill) on every query.
+    static constexpr size_t MAX_LABEL_SETS = 10;
+    /// Draft keys are rounded up to this step so modded drafts share sets.
+    /// Rounding up keeps the answer conservative: never "reachable" where
+    /// the unit's own draft can't pass.
+    static constexpr f32 DRAFT_KEY_STEP = 0.5f;
 
     struct GridPath {
         std::vector<std::pair<u32, u32>> cells; ///< start -> end, inclusive
