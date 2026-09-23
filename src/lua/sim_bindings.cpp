@@ -1749,6 +1749,80 @@ static int stub_dummy_object(lua_State* L) {
 }
 
 // ====================================================================
+// Retail-only globals (binding-coverage report, roadmap M185)
+// ====================================================================
+
+/// The C++ entity behind a Lua entity table, or nullptr.
+static sim::Entity* entity_of_table(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* e = lua_isuserdata(L, -1) ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
+                                    : nullptr;
+    lua_pop(L, 1);
+    return e;
+}
+
+static int l_IsProp(lua_State* L) {
+    auto* e = entity_of_table(L, 1);
+    lua_pushboolean(L, e && e->is_prop() ? 1 : 0);
+    return 1;
+}
+
+static int l_IsProjectile(lua_State* L) {
+    auto* e = entity_of_table(L, 1);
+    lua_pushboolean(L, e && e->is_projectile() ? 1 : 0);
+    return 1;
+}
+
+static int l_IsCollisionBeam(lua_State* L) {
+    auto* e = entity_of_table(L, 1);
+    lua_pushboolean(L, e && e->is_collision_beam() ? 1 : 0);
+    return 1;
+}
+
+/// OkayToMessWithArmy(army): may the current command source act for this
+/// army (give resources, self-destruct, ...)? Without a network command
+/// source every script-side request comes from the local player, which the
+/// engine already allows for every army it controls; lockstep multiplayer
+/// validates the issuing source before a SimCallback runs.
+static int l_OkayToMessWithArmy(lua_State* L) {
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// GetCueBank(sound) -> cue, bank of a Sound{Cue=, Bank=} descriptor.
+static int l_GetCueBank(lua_State* L) {
+    if (!lua_istable(L, 1)) {
+        lua_pushnil(L);
+        lua_pushnil(L);
+        return 2;
+    }
+    lua_pushstring(L, "Cue");
+    lua_rawget(L, 1);
+    lua_pushstring(L, "Bank");
+    lua_rawget(L, 1);
+    return 2;
+}
+
+/// SetIgnoreArmyCap(brain, bool): the AI's cheat exemption from the unit
+/// cap. The cap is not enforced yet (ArmyBrain::unit_cap is informational),
+/// so there is nothing to exempt. stub: no-op until unit caps are enforced.
+static int l_SetIgnoreArmyCap(lua_State* /*L*/) { return 0; }
+
+/// TryCopyPose(unit, prop, bool): copy the dying unit's animation pose onto
+/// its wreckage mesh. stub: cosmetic (wrecks render in the bind pose).
+static int l_TryCopyPose(lua_State* /*L*/) { return 0; }
+
+/// NotifyUpgrade(from, to): tells the user layer that `from` is becoming
+/// `to` so selection and avatars follow the upgrade. stub: cosmetic until
+/// the FA in-game UI runs (roadmap M187).
+static int l_NotifyUpgrade(lua_State* /*L*/) { return 0; }
+
+/// IssueFactoryAssist(units, factory): assist a factory == guard it.
+static int l_IssueFactoryAssist(lua_State* L);
+
+// ====================================================================
 // Asset prefetch sets (retail simInit.lua: Prefetcher = CreatePrefetchSet())
 // ====================================================================
 // In Moho a prefetch set asks the resource streamer to preload models,
@@ -3703,6 +3777,8 @@ static int l_IssueGuard(lua_State* L) {
     return 0;
 }
 
+static int l_IssueFactoryAssist(lua_State* L) { return l_IssueGuard(L); }
+
 // IssueRepair(units_table, target_entity)
 static int l_IssueRepair(lua_State* L) {
     auto* sim = get_sim(L);
@@ -4431,6 +4507,30 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
 
     // Loading hints
     state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);
+
+    // Retail-only globals (binding-coverage report)
+    state.register_function("IsProp", l_IsProp);
+    state.register_function("IsProjectile", l_IsProjectile);
+    state.register_function("IsCollisionBeam", l_IsCollisionBeam);
+    state.register_function("OkayToMessWithArmy", l_OkayToMessWithArmy);
+    state.register_function("GetCueBank", l_GetCueBank);
+    state.register_function("SetIgnoreArmyCap", l_SetIgnoreArmyCap);
+    state.register_function("TryCopyPose", l_TryCopyPose);
+    state.register_function("NotifyUpgrade", l_NotifyUpgrade);
+    state.register_function("IssueFactoryAssist", l_IssueFactoryAssist);
+    // Retail spells it OverCharge; FAF-era code here used Overcharge.
+    state.register_function("IssueOverCharge", l_IssueOvercharge);
+    // Formation orders: the formation shape itself is roadmap M204; until
+    // then units receive the plain order instead of silently nothing.
+    state.register_function("IssueFormMove", l_IssueMove);
+    state.register_function("IssueFormAggressiveMove", l_IssueAggressiveMove);
+    state.register_function("IssueFormPatrol", l_IssuePatrol);
+    state.register_function("IssueFormAttack", l_IssueAttack);
+
+    // SubmitXMLArmyStats(): uploads end-of-game stats to the online service
+    // (GPGNet). Offline there is nowhere to send them, so this is faithfully
+    // a no-op; retail victory.lua calls it on every defeat.
+    state.register_function("SubmitXMLArmyStats", stub_noop);
 
     // Game state
     state.register_function("GetGameTimeSeconds", l_GetGameTimeSeconds);

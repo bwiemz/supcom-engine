@@ -38,11 +38,62 @@ extern "C" {
 
 namespace osc::test {
 
+u32 army_acu_id(sim::SimState& sim, i32 army) {
+    u32 best = 0;
+    sim.entity_registry().for_each([&](sim::Entity& e) {
+        if (!e.is_unit() || e.army() != army) return;
+        if (!static_cast<sim::Unit&>(e).has_category("COMMAND")) return;
+        if (best == 0 || e.entity_id() < best) best = e.entity_id();
+    });
+    return best;
+}
+
+static int l_test_acu_id(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    const u32 id = sim ? army_acu_id(*sim, static_cast<i32>(luaL_checknumber(L, 1)) - 1)
+                       : 0;
+    if (id == 0) {
+        lua_pushnil(L);
+    } else {
+        lua_pushnumber(L, static_cast<lua_Number>(id));
+    }
+    return 1;
+}
+
+void register_test_helpers(lua_State* L) {
+    lua_pushstring(L, "__osc_test_acu_id");
+    lua_pushcfunction(L, l_test_acu_id);
+    lua_rawset(L, LUA_GLOBALSINDEX); // rawset: config.lua locks globals
+
+    // __osc_test_find_place(brain, bp, near) -> {x, z, 0} or false: the free
+    // site for `bp` nearest `near`, via FindPlaceToBuild over a 2-unit grid
+    // template around it (the AI supplies real base templates; tests have none).
+    static const char* kFindPlace =
+        "rawset(_G, '__osc_test_find_place', function(brain, bp, near)\n"
+        "    local p = near:GetPosition()\n"
+        "    local group = {{'OscTestSite'}}\n"
+        "    for dz = -40, 40, 2 do\n"
+        "        for dx = -40, 40, 2 do\n"
+        "            table.insert(group, {p[1] + dx, p[3] + dz, 0})\n"
+        "        end\n"
+        "    end\n"
+        "    return brain:FindPlaceToBuild('OscTestSite', bp, {group}, false, near)\n"
+        "end)\n";
+    if (luaL_loadbuffer(L, kFindPlace, std::strlen(kFindPlace), "=test_helpers") != 0 ||
+        lua_pcall(L, 0, 0, 0) != 0) {
+        spdlog::warn("test helper setup failed: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 // Damage test: deal lethal damage to entity #1 and run more ticks
 void test_damage(TestContext& ctx) {
     spdlog::info("=== DAMAGE TEST: Killing entity #1 ===");
     auto damage_result = ctx.lua_state.do_string(
-        "local e = GetEntityById(1)\n"
+        "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
         "    LOG('Damage test: dealing 99999 to entity #1, '  ..\n"
         "        'health=' .. tostring(e:GetHealth()) .. '/' ..\n"
@@ -69,7 +120,7 @@ void test_damage(TestContext& ctx) {
 void test_move(TestContext& ctx) {
     spdlog::info("=== MOVE TEST: Moving entity #1 ===");
     auto move_result = ctx.lua_state.do_string(
-        "local e = GetEntityById(1)\n"
+        "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
         "    local pos = e:GetPosition()\n"
         "    LOG('Move test: entity #1 at (' ..\n"
@@ -91,7 +142,7 @@ void test_move(TestContext& ctx) {
 
     // Report final position
     auto pos_result = ctx.lua_state.do_string(
-        "local e = GetEntityById(1)\n"
+        "local e = GetEntityById(__osc_test_acu_id(1))\n"
         "if e then\n"
         "    local pos = e:GetPosition()\n"
         "    LOG('Move test: entity #1 now at (' ..\n"
@@ -108,8 +159,8 @@ void test_move(TestContext& ctx) {
 void test_fire(TestContext& ctx) {
     spdlog::info("=== FIRE TEST: Weapon combat ===");
 
-    auto* e1 = ctx.sim.entity_registry().find(1);
-    auto* e2 = ctx.sim.entity_registry().find(2);
+    auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
+    auto* e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
     if (e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
         e1->is_unit() && e2->is_unit()) {
         e1->set_position({256, 25, 256});
@@ -146,8 +197,8 @@ void test_fire(TestContext& ctx) {
         }
 
         spdlog::info("After 100 combat ticks:");
-        e1 = ctx.sim.entity_registry().find(1);
-        e2 = ctx.sim.entity_registry().find(2);
+        e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
+        e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
         if (e1 && !e1->destroyed())
             spdlog::info("  Entity #1 health: {}/{}",
                          e1->health(), e1->max_health());
@@ -207,7 +258,7 @@ void test_economy(TestContext& ctx) {
 void test_build(TestContext& ctx) {
     spdlog::info("=== BUILD TEST: Entity #1 builds T1 Power Generator ===");
 
-    auto* e1 = ctx.sim.entity_registry().find(1);
+    auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
     if (e1 && !e1->destroyed() && e1->is_unit()) {
         auto* u1 = static_cast<osc::sim::Unit*>(e1);
         spdlog::info("Builder: entity #1 ({}), army={}, build_rate={:.1f}, "
@@ -217,7 +268,7 @@ void test_build(TestContext& ctx) {
 
         // Issue build command via Lua (same way AI brain would)
         auto build_result = ctx.lua_state.do_string(
-            "local builder = GetEntityById(1)\n"
+            "local builder = GetEntityById(__osc_test_acu_id(1))\n"
             "if builder then\n"
             "    local pos = builder:GetPosition()\n"
             "    local build_pos = {pos[1] + 10, pos[2], pos[3]}\n"
@@ -288,7 +339,7 @@ void test_build(TestContext& ctx) {
 void test_chain(TestContext& ctx) {
     spdlog::info("=== CHAIN TEST: ACU -> Factory -> Engineer -> PGen ===");
 
-    auto* e1 = ctx.sim.entity_registry().find(1);
+    auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
     if (!e1 || e1->destroyed() || !e1->is_unit()) {
         spdlog::error("Chain test: entity #1 not available");
     } else {
@@ -296,7 +347,7 @@ void test_chain(TestContext& ctx) {
         // Economy.BuildTime=300, ACU BuildRate=10 → 30s = 300 ticks + margin
         spdlog::info("--- Phase 1: ACU builds T1 Land Factory (ueb0101) ---");
         auto r1 = ctx.lua_state.do_string(
-            "local builder = GetEntityById(1)\n"
+            "local builder = GetEntityById(__osc_test_acu_id(1))\n"
             "if builder then\n"
             "    local pos = builder:GetPosition()\n"
             "    local bp = 'ueb0101'\n"
@@ -460,8 +511,7 @@ void test_ai(TestContext& ctx) {
 
             -- Phase 1: Build 2 power generators (unassisted)
             for i = 1, 2 do
-                local pos = brain:FindPlaceToBuild(
-                    'T1EnergyProduction', 'ueb1101', nil, false, acu)
+                local pos = __osc_test_find_place(brain, 'ueb1101', acu)
                 if pos then
                     brain:BuildStructure(acu, 'ueb1101', pos, false)
                     LOG('AI thread: building pgen #' .. i)
@@ -470,8 +520,7 @@ void test_ai(TestContext& ctx) {
             end
 
             -- Phase 2: Build T1 land factory
-            local pos = brain:FindPlaceToBuild(
-                'T1LandFactory', 'ueb0101', nil, false, acu)
+            local pos = __osc_test_find_place(brain, 'ueb0101', acu)
             if pos then
                 brain:BuildStructure(acu, 'ueb0101', pos, false)
                 LOG('AI thread: building factory')
@@ -503,8 +552,7 @@ void test_ai(TestContext& ctx) {
 
             -- Phase 5: ACU builds 2 more pgens (engineer assists -> faster)
             for i = 1, 2 do
-                local pos = brain:FindPlaceToBuild(
-                    'T1EnergyProduction', 'ueb1101', nil, false, acu)
+                local pos = __osc_test_find_place(brain, 'ueb1101', acu)
                 if pos then
                     brain:BuildStructure(acu, 'ueb1101', pos, false)
                     LOG('AI thread: building assisted pgen #' .. i)
@@ -564,7 +612,7 @@ void test_reclaim(TestContext& ctx) {
 
     auto reclaim_result = ctx.lua_state.do_string(R"(
         -- Find ARMY_1's ACU
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu then
             LOG('Reclaim test: no entity #1')
             return
@@ -806,14 +854,14 @@ void test_combat(TestContext& ctx) {
 
             -- Build 2 pgens
             for i = 1, 2 do
-                local pos = brain:FindPlaceToBuild('T1EnergyProduction', 'ueb1101', nil, false, acu)
+                local pos = __osc_test_find_place(brain, 'ueb1101', acu)
                 if pos then brain:BuildStructure(acu, 'ueb1101', pos, false) end
                 while not acu:IsIdleState() do WaitTicks(10) end
             end
             LOG('Combat test: 2 pgens built')
 
             -- Build factory
-            local pos = brain:FindPlaceToBuild('T1LandFactory', 'ueb0101', nil, false, acu)
+            local pos = __osc_test_find_place(brain, 'ueb0101', acu)
             if pos then brain:BuildStructure(acu, 'ueb0101', pos, false) end
             while not acu:IsIdleState() do WaitTicks(10) end
             LOG('Combat test: factory built')
@@ -1159,7 +1207,7 @@ void test_repair(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('REPAIR TEST FAILED: no entity #1')
                 return
@@ -1269,7 +1317,7 @@ void test_upgrade(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('UPGRADE TEST FAILED: no entity #1')
                 return
@@ -1392,7 +1440,7 @@ void test_capture(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('CAPTURE TEST FAILED: no entity #1')
                 return
@@ -1551,7 +1599,7 @@ void test_path(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then
                 LOG('PATH TEST FAILED: no entity #1')
                 return
@@ -1640,7 +1688,7 @@ void test_path(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(5)
 
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu or IsDestroyed(acu) then
                 LOG('PATH TEST phase 2: ACU gone')
                 return
@@ -1727,7 +1775,7 @@ void test_toggle(TestContext& ctx) {
     // Inject Lua test via ForkThread
     auto result = ctx.lua_state.do_string(R"(
         ForkThread(function()
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then
                 LOG('TOGGLE TEST FAILED: no entity #1')
                 return
@@ -1844,7 +1892,7 @@ void test_enhance(TestContext& ctx) {
     // Set up test: get ACU, verify enhancements table exists, issue enhance
     auto result = ctx.lua_state.do_string(R"(
         -- Find ACU (entity #1, uel0001)
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu then
             LOG('ENHANCE TEST FAILED: no entity #1')
             return
@@ -1888,7 +1936,7 @@ void test_enhance(TestContext& ctx) {
         ctx.sim.tick();
         // Log progress every 50 ticks
         if ((i + 1) % 50 == 0) {
-            auto* acu = ctx.sim.entity_registry().find(1);
+            auto* acu = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
             if (acu && acu->is_unit()) {
                 auto* unit = static_cast<osc::sim::Unit*>(acu);
                 spdlog::debug("  Tick {}: work_progress={:.2f} enhancing={}",
@@ -1900,7 +1948,7 @@ void test_enhance(TestContext& ctx) {
 
     // Verify enhancement completed
     result = ctx.lua_state.do_string(R"(
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu then
             LOG('ENHANCE TEST FAILED: ACU gone after ticks')
             return
@@ -1962,7 +2010,7 @@ void test_intel(TestContext& ctx) {
     spdlog::info("=== Intel Test ===");
 
     auto result = ctx.lua_state.do_string(R"(
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu then
             LOG('INTEL TEST FAILED: no entity #1')
             return
@@ -2076,7 +2124,7 @@ void test_shield(TestContext& ctx) {
     }
 
     auto result = ctx.lua_state.do_string(R"(
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu then
             LOG('SHIELD TEST FAILED: no entity #1')
             return
@@ -2187,7 +2235,7 @@ void test_shield(TestContext& ctx) {
 
     // Check if shield regenerated
     auto result2 = ctx.lua_state.do_string(R"(
-        local acu = GetEntityById(1)
+        local acu = GetEntityById(__osc_test_acu_id(1))
         if not acu or not acu.MyShield then return end
         local EntityGetHealth = _G.moho.entity_methods.GetHealth
         local EntityGetMaxHealth = _G.moho.entity_methods.GetMaxHealth
@@ -2218,7 +2266,7 @@ void test_transport(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('TRANSPORT TEST FAILED: no entity #1')
                 return
@@ -2402,7 +2450,7 @@ void test_fow(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('FOW TEST FAILED: no entity #1')
                 return
@@ -2575,7 +2623,7 @@ void test_los(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then
                 LOG('LOS TEST FAILED: no entity #1')
                 return
@@ -2858,7 +2906,7 @@ void test_jammer(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('JAMMER TEST FAILED: no entity #1')
                 return
@@ -3080,7 +3128,7 @@ void test_stub(TestContext& ctx) {
         ForkThread(function()
             WaitTicks(10)
 
-            local acu = GetEntityById(1) -- ARMY_1 ACU
+            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
             if not acu then
                 LOG('STUB TEST FAILED: no entity #1')
                 return
@@ -3261,7 +3309,7 @@ void test_audio(TestContext& ctx) {
         // Test 4: Lua entity:PlaySound via do_string
         {
             auto lua_r = ctx.lua_state.do_string(R"(
-                local e = GetEntityById(1)
+                local e = GetEntityById(__osc_test_acu_id(1))
                 if e then
                     e:PlaySound(Sound({Bank='UEL', Cue='UEL0001_Move_Start'}))
                     LOG('Audio test 4: PlaySound called on entity #1')
@@ -3282,7 +3330,7 @@ void test_audio(TestContext& ctx) {
         // Test 5: Lua SetAmbientSound start + stop
         {
             auto lua_r = ctx.lua_state.do_string(R"(
-                local e = GetEntityById(1)
+                local e = GetEntityById(__osc_test_acu_id(1))
                 if e then
                     e:SetAmbientSound(Sound({Bank='UEL', Cue='UEL0101_Move_Loop'}), nil)
                     LOG('Audio test 5: ambient started')
@@ -3338,7 +3386,7 @@ void test_bone(TestContext& ctx) {
     // Test 1: GetBoneCount > 1 for ACU (UEF ACU has ~40 bones)
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 1: entity #1 not found'); return end
             local count = e:GetBoneCount()
             if count > 1 then
@@ -3347,7 +3395,7 @@ void test_bone(TestContext& ctx) {
                 WARN('Bone test 1: FAIL - GetBoneCount = ' .. tostring(count) .. ' (expected > 1)')
             end
         )");
-        auto* e1 = ctx.sim.entity_registry().find(1);
+        auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
         if (e1 && e1->bone_data() && e1->bone_data()->bone_count() > 1) {
             spdlog::info("[PASS] Test 1: GetBoneCount={} for {}",
                          e1->bone_data()->bone_count(),
@@ -3362,7 +3410,7 @@ void test_bone(TestContext& ctx) {
     // Test 2: GetBoneName(0) returns non-empty string
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 2: entity #1 not found'); return end
             local name = e:GetBoneName(0)
             if name and name ~= '' then
@@ -3371,7 +3419,7 @@ void test_bone(TestContext& ctx) {
                 WARN('Bone test 2: FAIL - GetBoneName(0) returned empty')
             end
         )");
-        auto* e1 = ctx.sim.entity_registry().find(1);
+        auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
         if (e1 && e1->bone_data() && !e1->bone_data()->bones.empty()) {
             spdlog::info("[PASS] Test 2: bone[0] = '{}'",
                          e1->bone_data()->bones[0].name);
@@ -3385,7 +3433,7 @@ void test_bone(TestContext& ctx) {
     // Test 3: IsValidBone returns true for first bone name
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 3: entity #1 not found'); return end
             local name = e:GetBoneName(0)
             local valid = e:IsValidBone(name)
@@ -3402,7 +3450,7 @@ void test_bone(TestContext& ctx) {
     // Test 4: IsValidBone returns false for nonexistent bone
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 4: entity #1 not found'); return end
             local valid = e:IsValidBone('nonexistent_xyz_12345')
             if not valid then
@@ -3418,7 +3466,7 @@ void test_bone(TestContext& ctx) {
     // Test 5: GetPosition(bone) differs from entity center for non-root bones
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 5: entity #1 not found'); return end
             local center = e:GetPosition()
             local count = e:GetBoneCount()
@@ -3448,7 +3496,7 @@ void test_bone(TestContext& ctx) {
     // Test 6: ShowBone/HideBone don't crash
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 6: entity #1 not found'); return end
             e:HideBone(0, true)
             e:ShowBone(0, true)
@@ -3461,7 +3509,7 @@ void test_bone(TestContext& ctx) {
     // Test 7: GetBoneDirection returns a vector
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 7: entity #1 not found'); return end
             local dir = e:GetBoneDirection(0)
             if dir and dir[1] and dir[2] and dir[3] then
@@ -3478,7 +3526,7 @@ void test_bone(TestContext& ctx) {
     // Test 8: Enumerate all bones, verify count matches
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Bone test 8: entity #1 not found'); return end
             local count = e:GetBoneCount()
             local valid = 0
@@ -3519,7 +3567,7 @@ void test_manip(TestContext& ctx) {
     // Test 1: RotateManipulator with goal + WaitFor
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Manip test 1: entity #1 not found'); return end
             local rot = CreateRotator(e, 0, 'y', 90, 360)
             if rot and rot.SetGoal then
@@ -3535,7 +3583,7 @@ void test_manip(TestContext& ctx) {
     // Test 2: RotateManipulator GetCurrentAngle updates after ticks
     {
         ctx.lua_state.do_string(R"(
-            __test_rot = CreateRotator(GetEntityById(1), 0, 'y', 90, 360)
+            __test_rot = CreateRotator(GetEntityById(__osc_test_acu_id(1)), 0, 'y', 90, 360)
         )");
         // Run a few ticks to let the rotator advance
         for (osc::u32 i = 0; i < 10; i++) {
@@ -3556,7 +3604,7 @@ void test_manip(TestContext& ctx) {
     // Test 3: RotateManipulator continuous (SetTargetSpeed)
     {
         ctx.lua_state.do_string(R"(
-            __test_cont = CreateRotator(GetEntityById(1), 0, 'y')
+            __test_cont = CreateRotator(GetEntityById(__osc_test_acu_id(1)), 0, 'y')
             __test_cont:SetTargetSpeed(180)
             __test_cont:SetAccel(360)
         )");
@@ -3578,7 +3626,7 @@ void test_manip(TestContext& ctx) {
     // Test 4: AnimManipulator with PlayAnim/SetRate/GetAnimationFraction
     {
         ctx.lua_state.do_string(R"(
-            __test_anim = CreateAnimator(GetEntityById(1))
+            __test_anim = CreateAnimator(GetEntityById(__osc_test_acu_id(1)))
             __test_anim:PlayAnim('/test.sca'):SetRate(2)
         )");
         for (osc::u32 i = 0; i < 20; i++) {
@@ -3600,7 +3648,7 @@ void test_manip(TestContext& ctx) {
     {
         ctx.lua_state.do_string(R"(
             __waitfor_done = false
-            local rot = CreateRotator(GetEntityById(1), 0, 'y', 45, 360)
+            local rot = CreateRotator(GetEntityById(__osc_test_acu_id(1)), 0, 'y', 45, 360)
             ForkThread(function()
                 WaitFor(rot)
                 __waitfor_done = true
@@ -3624,7 +3672,7 @@ void test_manip(TestContext& ctx) {
     // Test 6: AimManipulator SetHeadingPitch / GetHeadingPitch
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Manip test 6: entity #1 not found'); return end
             local aim = CreateAimController(e, 'Default', 0)
             aim:SetFiringArc(-180, 180, 90, -45, 45, 45)
@@ -3643,7 +3691,7 @@ void test_manip(TestContext& ctx) {
     // Test 7: Manipulator Destroy is safe
     {
         auto r = ctx.lua_state.do_string(R"(
-            local e = GetEntityById(1)
+            local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Manip test 7: entity #1 not found'); return end
             local rot = CreateRotator(e, 0, 'y', 90, 360)
             local enabled = rot:IsEnabled()
@@ -3681,7 +3729,7 @@ void test_canpath(TestContext& ctx) {
     // Test 1: CanPathTo nearby reachable position (same land mass)
     {
         auto r = ctx.lua_state.do_string(R"(
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then WARN('Canpath test 1: FAIL - no entity #1'); return end
             local pos = acu:GetPosition()
             -- Nearby position on same land
@@ -3701,7 +3749,7 @@ void test_canpath(TestContext& ctx) {
     // Verify the result is a proper boolean, not the old stub_return_true
     {
         auto r = ctx.lua_state.do_string(R"(
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then WARN('Canpath test 2: FAIL - no entity #1'); return end
             local pos = acu:GetPosition()
             -- Nearby position should be true
@@ -3721,7 +3769,7 @@ void test_canpath(TestContext& ctx) {
     // Test 3: CanPathToCell works the same as CanPathTo
     {
         auto r = ctx.lua_state.do_string(R"(
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then WARN('Canpath test 3: FAIL - no entity #1'); return end
             local pos = acu:GetPosition()
             local dest = {pos[1] + 10, 0, pos[3] + 10}
@@ -3758,7 +3806,7 @@ void test_canpath(TestContext& ctx) {
     {
         auto r = ctx.lua_state.do_string(R"(
             -- Entity #2 is ARMY_2 ACU (an enemy of ARMY_1)
-            local enemy = GetEntityById(2)
+            local enemy = GetEntityById(__osc_test_acu_id(2))
             local brain = GetArmyBrain('ARMY_1')
             if not enemy or not brain then
                 WARN('Canpath test 5: FAIL - no enemy or brain')
@@ -3798,7 +3846,7 @@ void test_armor(TestContext& ctx) {
     // Test 1: Normal damage passes through at 1.0x for Normal armor
     {
         auto r = ctx.lua_state.do_string(R"(
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then WARN('Armor test 1: FAIL - no entity'); return end
             local hp_before = acu:GetHealth()
             -- Deal 100 Normal damage directly via Damage()
@@ -3842,7 +3890,7 @@ void test_armor(TestContext& ctx) {
     // Test 3: Unknown damage type passes through at 1.0x
     {
         auto r = ctx.lua_state.do_string(R"(
-            local acu = GetEntityById(1)
+            local acu = GetEntityById(__osc_test_acu_id(1))
             if not acu then WARN('Armor test 3: FAIL - no entity'); return end
             acu:SetHealth(acu, acu:GetMaxHealth())
             local hp_before = acu:GetHealth()
@@ -3915,7 +3963,7 @@ void test_vet(TestContext& ctx) {
     // Test 1: SetRegenRate + per-tick regen heals
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "if not acu then WARN('no entity 1'); return end\n"
             "local max = acu:GetMaxHealth()\n"
             "acu:SetHealth(acu, max - 500)\n"
@@ -3925,7 +3973,7 @@ void test_vet(TestContext& ctx) {
         else {
             for (int t = 0; t < 5; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                "local acu = GetEntityById(1)\n"
+                "local acu = GetEntityById(__osc_test_acu_id(1))\n"
                 "local hp = acu:GetHealth()\n"
                 "local before = rawget(_G, '__vet_hp_before')\n"
                 "local healed = hp - before\n"
@@ -3944,14 +3992,14 @@ void test_vet(TestContext& ctx) {
     // Test 2: Regen caps at max health (no overheal)
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "acu:SetHealth(acu, acu:GetMaxHealth() - 5)\n"
             "acu:SetRegenRate(1000) -- massive regen\n");
         if (!r) { fail++; osc::test_status::fail("[FAIL] Test 2 setup: {}", r.error().message); }
         else {
             ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                "local acu = GetEntityById(1)\n"
+                "local acu = GetEntityById(__osc_test_acu_id(1))\n"
                 "local hp = acu:GetHealth()\n"
                 "local max = acu:GetMaxHealth()\n"
                 "if math.abs(hp - max) < 0.01 then\n"
@@ -3968,7 +4016,7 @@ void test_vet(TestContext& ctx) {
     // Test 3: Blueprint base regen loaded at creation
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "local bp = acu:GetBlueprint()\n"
             "local bp_regen = 0\n"
             "if bp and bp.Defense and bp.Defense.RegenRate then\n"
@@ -3983,7 +4031,7 @@ void test_vet(TestContext& ctx) {
         else {
             for (int t = 0; t < 10; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                "local acu = GetEntityById(1)\n"
+                "local acu = GetEntityById(__osc_test_acu_id(1))\n"
                 "local hp = acu:GetHealth()\n"
                 "local before = rawget(_G, '__vet_hp3')\n"
                 "local bp_regen = rawget(_G, '__vet_bp_regen')\n"
@@ -4004,7 +4052,7 @@ void test_vet(TestContext& ctx) {
     // Test 4: RevertRegenRate resets to blueprint value
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "acu:SetRegenRate(999)\n"
             "acu:RevertRegenRate()\n"
             "-- Now test: damage and measure heal to verify rate matches bp\n"
@@ -4020,7 +4068,7 @@ void test_vet(TestContext& ctx) {
         else {
             for (int t = 0; t < 10; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                "local acu = GetEntityById(1)\n"
+                "local acu = GetEntityById(__osc_test_acu_id(1))\n"
                 "local hp = acu:GetHealth()\n"
                 "local before = rawget(_G, '__vet_hp4')\n"
                 "local bp_regen = rawget(_G, '__vet_bp4')\n"
@@ -4056,7 +4104,7 @@ void test_wreck(TestContext& ctx) {
     // Test 1: SetMaxReclaimValues sets fields on prop table
     {
         auto r = ctx.lua_state.do_string(
-            "local pos = GetEntityById(1):GetPosition()\n"
+            "local pos = GetEntityById(__osc_test_acu_id(1)):GetPosition()\n"
             "local prop = CreatePropHPR('/env/common/props/TreeGroup01_prop.bp',\n"
             "    pos[1]+30, pos[2], pos[3]+30, 0, 0, 0)\n"
             "if not prop then error('CreatePropHPR failed') end\n"
@@ -4080,7 +4128,7 @@ void test_wreck(TestContext& ctx) {
     // Test 2: GetHeading returns correct yaw from quaternion
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "if not acu then error('no entity 1') end\n"
             "-- Set orientation to 90-degree Y rotation\n"
             "-- q = {sin(pi/4)*axis, cos(pi/4)} for axis=(0,1,0)\n"
@@ -4104,7 +4152,7 @@ void test_wreck(TestContext& ctx) {
     // Test 3: GetHeading on prop (prop_methods includes GetHeading)
     {
         auto r = ctx.lua_state.do_string(
-            "local pos = GetEntityById(1):GetPosition()\n"
+            "local pos = GetEntityById(__osc_test_acu_id(1)):GetPosition()\n"
             "local prop = CreatePropHPR('/env/common/props/TreeGroup01_prop.bp',\n"
             "    pos[1]+40, pos[2], pos[3]+40, 0, 0, 0)\n"
             "if not prop then error('CreatePropHPR failed') end\n"
@@ -4228,7 +4276,7 @@ void test_adjacency(TestContext& ctx) {
     // Test 4: SetFiringRandomness / GetFiringRandomness
     {
         auto r = ctx.lua_state.do_string(
-            "local acu = GetEntityById(1)\n"
+            "local acu = GetEntityById(__osc_test_acu_id(1))\n"
             "if not acu then error('no entity 1') end\n"
             "local w = acu:GetWeapon(1)\n"
             "if not w then error('no weapon') end\n"
@@ -4262,7 +4310,7 @@ void test_stats(TestContext& ctx) {
     // Test 1: cUnit.SetStat returns true for new stat, false for existing
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- Access C++ SetStat directly via moho.unit_methods\n"
             "local cUnit = moho.unit_methods\n"
@@ -4280,7 +4328,7 @@ void test_stats(TestContext& ctx) {
     // Test 2: GetStat returns {Value=N} after SetStat
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "local stat = u:GetStat('KILLS')\n"
             "if stat and stat.Value == 10 then\n"
@@ -4296,7 +4344,7 @@ void test_stats(TestContext& ctx) {
     // Test 3: GetStat default value for nonexistent stat
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "local stat = u:GetStat('NONEXISTENT', 42)\n"
             "if stat and stat.Value == 42 then\n"
@@ -4312,7 +4360,7 @@ void test_stats(TestContext& ctx) {
     // Test 4: UpdateStat + GetStat roundtrip
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "u:UpdateStat('VetLevel', 3)\n"
             "local s1 = u:GetStat('VetLevel')\n"
@@ -4345,7 +4393,7 @@ void test_silo(TestContext& ctx) {
     // Test 1: GiveNukeSiloAmmo + GetNukeSiloAmmoCount
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "u:GiveNukeSiloAmmo(3)\n"
             "local c1 = u:GetNukeSiloAmmoCount()\n"
@@ -4363,7 +4411,7 @@ void test_silo(TestContext& ctx) {
     // Test 2: RemoveNukeSiloAmmo + underflow clamp (self-contained)
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- Reset: drain any leftover, then give exactly 5\n"
             "u:RemoveNukeSiloAmmo(u:GetNukeSiloAmmoCount())\n"
@@ -4384,7 +4432,7 @@ void test_silo(TestContext& ctx) {
     // Test 3: Tactical silo ammo (independent of nuke)
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "u:GiveTacticalSiloAmmo(4)\n"
             "local tac = u:GetTacticalSiloAmmoCount()\n"
@@ -4403,7 +4451,7 @@ void test_silo(TestContext& ctx) {
     // Test 4: Fire-gate pattern (mirrors DefaultProjectileWeapon.lua check)
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "u:GiveNukeSiloAmmo(1)\n"
             "local gate1 = u:GetNukeSiloAmmoCount() > 0\n"
@@ -4436,7 +4484,7 @@ void test_flags(TestContext& ctx) {
     // Test 1: SetDoNotTarget prevents weapon auto-targeting
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- Default: not do-not-target\n"
             "u:SetDoNotTarget(true)\n"
@@ -4454,7 +4502,7 @@ void test_flags(TestContext& ctx) {
     // Test 2: IsValidTarget / SetIsValidTarget roundtrip
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- Currently do_not_target=true from test 1\n"
             "local v1 = u:IsValidTarget()\n"
@@ -4481,7 +4529,7 @@ void test_flags(TestContext& ctx) {
             "prop:SetReclaimable(false)\n"
             "rawset(_G, '__flags_test_prop_id', prop:GetEntityId())\n"
             "-- Try reclaiming with entity #1\n"
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "IssueReclaim({u}, prop)\n");
         if (r) {
@@ -4509,7 +4557,7 @@ void test_flags(TestContext& ctx) {
             "-- Default reclaimable=true, verify via Lua side check\n"
             "-- Just verify the C++ flag is accessible and defaults to true by checking\n"
             "-- that IsValidTarget is also true by default on a fresh unit\n"
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "u:SetDoNotTarget(false)\n"
             "local valid = u:IsValidTarget()\n"
@@ -4539,7 +4587,7 @@ void test_layercap(TestContext& ctx) {
 
     // Setup: get weapon and enemy, extend range to reach across map
     auto r_setup = ctx.lua_state.do_string(
-        "local u = GetEntityById(1)\n"
+        "local u = GetEntityById(__osc_test_acu_id(1))\n"
         "if not u then error('no entity 1') end\n"
         "local w = u:GetWeapon(1)\n"
         "if not w then error('entity 1 has no weapon') end\n"
@@ -4642,7 +4690,7 @@ void test_massstub(TestContext& ctx) {
     // Test 1: Weapon Change* methods
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "local w = u:GetWeapon(1)\n"
             "if not w then error('entity 1 has no weapon') end\n"
@@ -4660,7 +4708,7 @@ void test_massstub(TestContext& ctx) {
     // Test 2: Movement multipliers + ResetSpeedAndAccel
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "u:SetAccMult(2.0)\n"
             "u:SetTurnMult(0.5)\n"
             "u:SetBreakOffDistanceMult(1.5)\n"
@@ -4675,7 +4723,7 @@ void test_massstub(TestContext& ctx) {
     // Test 3: Fuel system round-trip
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "u:SetFuelRatio(0.5)\n"
             "local ratio = u:GetFuelRatio()\n"
             "if math.abs(ratio - 0.5) > 0.01 then\n"
@@ -4695,7 +4743,7 @@ void test_massstub(TestContext& ctx) {
     {
         // Fire a projectile and check target position
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local w = u:GetWeapon(1)\n"
             "w:SetOnTransport(false)\n"  // re-enable weapon
             "w:SetFireTargetLayerCaps('Land|Water|Air|Sub|Seabed')\n"
@@ -4734,7 +4782,7 @@ void test_massstub(TestContext& ctx) {
                 "    -- Projectile may have impacted; test the binding functions\n"
                 "    -- exist without error by calling on any entity that has them.\n"
                 "    -- Create a fresh projectile via CreateProjectile\n"
-                "    local u = GetEntityById(1)\n"
+                "    local u = GetEntityById(__osc_test_acu_id(1))\n"
                 "    proj = u:CreateProjectile('/projectiles/test', 0, 0, 0, 0, 0, 0)\n"
                 "end\n"
                 "if not proj then error('no projectile found') end\n"
@@ -4758,7 +4806,7 @@ void test_massstub(TestContext& ctx) {
     // Test 5: Misc flags + ToggleFireState
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "u:SetAutoOvercharge(true)\n"
             "local oc = u:GetAutoOvercharge()\n"
             "if oc ~= true then error('GetAutoOvercharge expected true, got ' .. tostring(oc)) end\n"
@@ -4799,7 +4847,7 @@ void test_massstub2(TestContext& ctx) {
     // Test 1: Damage flags — SetCanTakeDamage(false) blocks Damage(), GetAttacker tracks instigator
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local hp_before = u:GetHealth()\n"
             // First, damage while can_take_damage is true to verify GetAttacker
             "local enemy = nil\n"
@@ -4832,7 +4880,7 @@ void test_massstub2(TestContext& ctx) {
     // Test 2: Kill flag — SetCanBeKilled(false) blocks Destroy()
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local hp_before = u:GetHealth()\n"
             "u:SetCanBeKilled(false)\n"
             "u:Destroy()\n"  // should be blocked by can_be_killed guard
@@ -4848,7 +4896,7 @@ void test_massstub2(TestContext& ctx) {
     // Test 3: Command caps round-trip
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "u:AddCommandCap('RULEUCC_Attack')\n"
             "u:AddCommandCap('RULEUCC_Guard')\n"
             "u:RemoveCommandCap('RULEUCC_Attack')\n"
@@ -4866,7 +4914,7 @@ void test_massstub2(TestContext& ctx) {
     // Test 4: Weapon targeting — GetProjectileBlueprint, SetTargetGround, SetFireControl/IsFireControl, TransferTarget
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local w = u:GetWeapon(1)\n"
             "if not w then error('no weapon') end\n"
             "local bp = w:GetProjectileBlueprint()\n"
@@ -4894,7 +4942,7 @@ void test_massstub2(TestContext& ctx) {
     {
         // Fire a projectile first, then test flags
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "local proj = u:CreateProjectile('/projectiles/test', 0, 1, 0, 0, 1, 0)\n"
             "if not proj then error('CreateProjectile returned nil') end\n"
             "proj:SetDestroyOnWater(true)\n"
@@ -4912,7 +4960,7 @@ void test_massstub2(TestContext& ctx) {
     // Test 6: Elevation + rotation + SetCustomName + SetBuildingUnit + SetSpeedThroughGoal
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             // Elevation
             "u:SetElevation(50)\n"
             "u:RevertElevation()\n"
@@ -4975,7 +5023,7 @@ void test_massstub3(TestContext& ctx) {
     // Test 3: Projectile collision flags — SetCollision, SetCollideSurface, StayUnderwater
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- CreateProjectile returns a projectile table\n"
             "local proj = u:CreateProjectile('/projectiles/CDFProton01/CDFProton01_proj.bp',\n"
@@ -4994,7 +5042,7 @@ void test_massstub3(TestContext& ctx) {
     // Test 4: CreateChildProjectile
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "local parent = u:CreateProjectile('/projectiles/CDFProton01/CDFProton01_proj.bp',\n"
             "    0, 0, 0, 0, 0, 0)\n"
@@ -5011,7 +5059,7 @@ void test_massstub3(TestContext& ctx) {
     // Test 5: Weapon — BeenDestroyed, SetValidTargetsForCurrentLayer
     {
         auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(1)\n"
+            "local u = GetEntityById(__osc_test_acu_id(1))\n"
             "if not u then error('no entity 1') end\n"
             "-- Get first weapon via GetWeapon\n"
             "local w = u:GetWeapon(1)\n"
@@ -5085,7 +5133,7 @@ void test_anim(TestContext& ctx) {
     // Test 2: AnimManipulator with real SCA — PlayAnim loads SCA, rate advances fraction
     {
         ctx.lua_state.do_string(R"(
-            __anim_unit = GetEntityById(1)
+            __anim_unit = GetEntityById(__osc_test_acu_id(1))
             __anim_manip = CreateAnimator(__anim_unit)
             __anim_manip:PlayAnim('/units/uel0001/uel0001_a001.sca')
             __anim_manip:SetRate(1.0)
@@ -5113,7 +5161,7 @@ void test_anim(TestContext& ctx) {
     // Test 3: Bone matrices updated (non-identity after animation plays)
     {
         // Find entity 1 and check its animated_bone_matrices
-        auto* ent = ctx.sim.entity_registry().find(1);
+        auto* ent = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
         auto* unit = ent ? dynamic_cast<osc::sim::Unit*>(ent) : nullptr;
         if (!unit) {
             fail++; osc::test_status::fail("[FAIL] Test 3: entity #1 not found or not a unit");
@@ -5973,8 +6021,8 @@ void test_projectile(TestContext& ctx) {
 
     // Position two enemy units close together so weapons fire
     // Entity 1 = ARMY_1 ACU, Entity 2 = ARMY_2 ACU (different armies, will target each other)
-    auto* e1 = ctx.sim.entity_registry().find(1);
-    auto* e2 = ctx.sim.entity_registry().find(2);
+    auto* e1 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 0));
+    auto* e2 = ctx.sim.entity_registry().find(army_acu_id(ctx.sim, 1));
     bool can_fire = e1 && e2 && !e1->destroyed() && !e2->destroyed() &&
                     e1->is_unit() && e2->is_unit();
     if (can_fire) {
@@ -6715,7 +6763,7 @@ void test_medstub(TestContext& ctx) {
         auto r = ctx.lua_state.do_string(
             "local fn = moho.prop_methods.AddBoundedProp\n"
             "if not fn then error('moho.prop_methods.AddBoundedProp is nil') end\n"
-            "local e = GetEntityById(1)\n"  // entity #1 is a prop
+            "local e = GetEntityById(__osc_test_acu_id(1))\n"  // entity #1 is a prop
             "local result = fn(e)\n"
             "if result ~= nil then error('expected nil, got ' .. tostring(result)) end\n");
         bool ok = !!r;

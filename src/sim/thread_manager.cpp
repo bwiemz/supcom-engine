@@ -250,6 +250,25 @@ void ThreadManager::resume_all(u32 current_tick) {
     cleanup_dead_threads();
 }
 
+std::vector<std::string> ThreadManager::describe_threads() const {
+    std::vector<std::string> out;
+    for (const auto& t : threads_) {
+        if (t.dead) continue;
+        std::string where;
+        lua_Debug ar;
+        for (int level = 0; level < 4 && lua_getstack(t.coroutine, level, &ar); ++level) {
+            lua_getinfo(t.coroutine, "Sln", &ar);
+            if (!where.empty()) where += " <- ";
+            where += std::string(ar.short_src) + ":" + std::to_string(ar.currentline);
+            if (ar.name) where += std::string(" (") + ar.name + ")";
+        }
+        out.push_back("next tick " + std::to_string(t.wait_until_tick) + " | at " +
+                      (where.empty() ? std::string("?") : where) + " | forked at " +
+                      (t.source.empty() ? std::string("?") : t.source));
+    }
+    return out;
+}
+
 size_t ThreadManager::active_count() const {
     size_t count = 0;
     for (const auto& t : threads_) {

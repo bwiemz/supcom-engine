@@ -276,6 +276,7 @@ static void print_usage() {
               << "                     the engine lacks (needs --map)\n"
               << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
               << "                     not listed in this baseline\n"
+              << "  --dump-threads     At exit, list where each sim script thread waits\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
@@ -3331,6 +3332,7 @@ int main(int argc, char* argv[]) {
     // ── Integration tests (require --map) ──
     if (sim_state && sim_lua_state) {
     osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
+    osc::test::register_test_helpers(sim_lua_state->raw());
 
     if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
     if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
@@ -3944,6 +3946,13 @@ int main(int argc, char* argv[]) {
     }
 
     } // end if (sim_state && sim_lua_state) — integration tests
+
+    // --dump-threads: where every live sim script thread is suspended.
+    if (sim_state && parse_flag(argc, argv, "--dump-threads")) {
+        for (const auto& line : sim_state->thread_manager().describe_threads()) {
+            spdlog::info("[thread] {}", line);
+        }
+    }
 
     // Report final state
     if (sim_state) {

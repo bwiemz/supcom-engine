@@ -4,12 +4,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 
 #include <spdlog/spdlog.h>
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
 
@@ -372,6 +374,20 @@ int run_coverage_report(lua_State* sim_L, lua_State* ui_L,
             scan_lua_source(std::string_view(data->data(), data->size()), path, refs);
             ++files;
         }
+    }
+
+    // Some engine objects are built on first use (e.g. the AI personality
+    // from brain:GetPersonality()); create them so their methods count.
+    if (sim_L) {
+        const int top = lua_gettop(sim_L);
+        const char* materialize =
+            "local b = rawget(_G, 'ArmyBrains') and ArmyBrains[1]\n"
+            "if b and b.GetPersonality then pcall(b.GetPersonality, b) end\n";
+        if (luaL_loadbuffer(sim_L, materialize, std::strlen(materialize),
+                            "=coverage") == 0) {
+            lua_pcall(sim_L, 0, 0, 0);
+        }
+        lua_settop(sim_L, top);
     }
 
     std::set<std::string> globals;

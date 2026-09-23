@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/types.hpp"
+
 struct lua_State;
 
 namespace osc::sim { class SimState; }
@@ -8,6 +10,16 @@ namespace osc::vfs { class VirtualFileSystem; }
 namespace osc::blueprints { class BlueprintStore; }
 
 namespace osc::test {
+
+/// Entity id of an army's commander (0-based army; lowest-id registered unit
+/// with the COMMAND category, destroyed or not), or 0 if it has none. Tests
+/// used to hardcode entity #1/#2, which only held when the ACUs happened to be
+/// created before any prop (FAF); retail creates props and deposits first.
+u32 army_acu_id(sim::SimState& sim, i32 army);
+
+/// Lua helpers for the embedded test scripts, e.g. __osc_test_acu_id(army)
+/// (1-based army, mirroring the Lua convention) -> entity id or nil.
+void register_test_helpers(lua_State* L);
 
 /// Dependencies shared across all integration tests.
 struct TestContext {

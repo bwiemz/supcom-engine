@@ -4674,6 +4674,86 @@ static int brain_GetArmyIndex(lua_State* L) {
     return 1;
 }
 
+/// brain:NumCurrentlyBuilding(built_category, builder_category) — how many of
+/// this army's units matching builder_category are building something that
+/// matches built_category (retail build conditions cap parallel builds).
+static int brain_NumCurrentlyBuilding(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim || !lua_istable(L, 2) || !lua_istable(L, 3)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    int count = 0;
+    for (auto* e : brain->get_units(sim->entity_registry())) {
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* builder = static_cast<sim::Unit*>(e);
+        if (!builder->is_building()) continue;
+        auto* target = sim->entity_registry().find(builder->build_target_id());
+        if (!target || target->destroyed() || !target->is_unit()) continue;
+        if (!unit_matches_category(L, 3, builder->categories())) continue;
+        if (!unit_matches_category(L, 2, static_cast<sim::Unit*>(target)->categories()))
+            continue;
+        ++count;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+/// brain:GetAvailableFactories([position, radius]) — this army's finished,
+/// idle factories (nothing building, empty queue), optionally within radius.
+static int brain_GetAvailableFactories(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    const int result = lua_gettop(L);
+    if (!brain || !sim) return 1;
+
+    const bool filter = lua_istable(L, 2);
+    f32 cx = 0, cz = 0, radius_sq = 0;
+    if (filter) {
+        lua_rawgeti(L, 2, 1);
+        cx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 2, 3);
+        cz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        const f32 r = static_cast<f32>(luaL_optnumber(L, 3, 0));
+        radius_sq = r * r;
+    }
+    int idx = 1;
+    for (auto* e : brain->get_units(sim->entity_registry())) {
+        if (!e || e->destroyed() || !e->is_unit() || e->lua_table_ref() < 0) continue;
+        auto* u = static_cast<sim::Unit*>(e);
+        if (!u->has_category("FACTORY") || u->is_being_built() || u->is_building() ||
+            !u->command_queue().empty()) {
+            continue;
+        }
+        if (filter) {
+            const f32 dx = u->position().x - cx;
+            const f32 dz = u->position().z - cz;
+            if (dx * dx + dz * dz > radius_sq) continue;
+        }
+        lua_pushnumber(L, idx++);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
+        lua_rawset(L, result);
+    }
+    return 1;
+}
+
+/// brain:GetNoRushTicks() — ticks of the NoRush period still to run, 0 once
+/// it is over or when the option is off (retail build conditions gate
+/// transport and attack builders on it).
+static int brain_GetNoRushTicks(lua_State* L) {
+    auto* sim = get_sim(L);
+    double remaining = 0;
+    if (sim && sim->no_rush_active()) {
+        remaining = (sim->no_rush_seconds() - sim->game_time()) /
+                    sim::SimState::SECONDS_PER_TICK;
+    }
+    lua_pushnumber(L, remaining > 0 ? std::ceil(remaining) : 0);
+    return 1;
+}
+
 /// brain:IsOpponentAIRunning() — Moho reports its `ai_RunOpponentAI` debug
 /// toggle, which is on by default. Retail aibrain.lua gates plan evaluation
 /// and execution on it; there is no toggle here, so the AI always runs.
@@ -6276,6 +6356,120 @@ static int platoon_GetPlatoonUnits(lua_State* L) {
     return 1;
 }
 
+/// platoon:GetFactionIndex() — the owning army's faction index, as the
+/// brain reports it (retail platoon.lua AI threads call it).
+static int platoon_GetFactionIndex(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    auto* brain = (platoon && sim) ? sim->get_army(platoon->army_index()) : nullptr;
+    lua_pushnumber(L, brain ? brain->faction() : 1);
+    return 1;
+}
+
+/// Count live platoon units matching the category at stack index 2; with
+/// `around`, only those within radius (index 4) of position (index 3).
+static int platoon_count_matching(lua_State* L, bool around) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    if (!platoon || !sim || !lua_istable(L, 2)) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    f32 cx = 0, cz = 0, radius_sq = 0;
+    if (around) {
+        if (!lua_istable(L, 3)) { lua_pushnumber(L, 0); return 1; }
+        lua_rawgeti(L, 3, 1);
+        cx = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 3, 3);
+        cz = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 2);
+        const f32 r = static_cast<f32>(luaL_optnumber(L, 4, 0));
+        radius_sq = r * r;
+    }
+    int count = 0;
+    for (u32 id : platoon->unit_ids()) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+        if (!unit_matches_category(L, 2, unit->categories())) continue;
+        if (around) {
+            const f32 dx = unit->position().x - cx;
+            const f32 dz = unit->position().z - cz;
+            if (dx * dx + dz * dz > radius_sq) continue;
+        }
+        ++count;
+    }
+    lua_pushnumber(L, count);
+    return 1;
+}
+
+/// platoon:GetSquadPosition(squad) — mean position of the squad's live units
+/// (nil if it has none).
+static int platoon_GetSquadPosition(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    const std::string squad = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+    sim::Vector3 sum{0, 0, 0};
+    int n = 0;
+    if (platoon && sim) {
+        for (u32 id : platoon->unit_ids()) {
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed()) continue;
+            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            sum.x += e->position().x;
+            sum.y += e->position().y;
+            sum.z += e->position().z;
+            ++n;
+        }
+    }
+    if (n == 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_vector3(L, {sum.x / n, sum.y / n, sum.z / n});
+    return 1;
+}
+
+/// platoon:CanAttackTarget(squad, target) — can any unit of the squad (all
+/// squads if squad is nil) fire on the target's layer?
+static int platoon_CanAttackTarget(lua_State* L) {
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    auto* target = check_entity(L, 3);
+    bool can = false;
+    if (platoon && sim && target && !target->destroyed() && target->is_unit()) {
+        const std::string squad =
+            lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
+        const u8 target_bit =
+            sim::layer_to_bit(static_cast<sim::Unit*>(target)->layer());
+        for (u32 id : platoon->unit_ids()) {
+            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            auto* e = sim->entity_registry().find(id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            for (const auto& w : static_cast<sim::Unit*>(e)->weapons()) {
+                if (w->enabled && !w->fire_on_death &&
+                    (w->fire_target_layer_caps & target_bit) != 0) {
+                    can = true;
+                    break;
+                }
+            }
+            if (can) break;
+        }
+    }
+    lua_pushboolean(L, can ? 1 : 0);
+    return 1;
+}
+
+/// platoon:PlatoonCategoryCount(category)
+static int platoon_PlatoonCategoryCount(lua_State* L) {
+    return platoon_count_matching(L, /*around=*/false);
+}
+
+/// platoon:PlatoonCategoryCountAroundPosition(category, position, radius)
+static int platoon_PlatoonCategoryCountAroundPosition(lua_State* L) {
+    return platoon_count_matching(L, /*around=*/true);
+}
+
 static int platoon_GetSquadUnits(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
@@ -7306,6 +7500,9 @@ static const MethodEntry aibrain_methods[] = {
     {"GetArmyIndex",                brain_GetArmyIndex},
     {"GetFactionIndex",             brain_GetFactionIndex},
     {"IsOpponentAIRunning",         brain_IsOpponentAIRunning},
+    {"GetNoRushTicks",              brain_GetNoRushTicks},
+    {"NumCurrentlyBuilding",        brain_NumCurrentlyBuilding},
+    {"GetAvailableFactories",       brain_GetAvailableFactories},
     {"GetListOfUnits",              brain_GetListOfUnits},
     {"GetUnitsAroundPoint",         brain_GetUnitsAroundPoint},
     {"GetArmyStartPos",             brain_GetArmyStartPos},
@@ -7835,6 +8032,11 @@ static int platoon_SetPrioritizedTargetList(lua_State* L) {
 static const MethodEntry platoon_methods[] = {
     {"Destroy",                     platoon_Destroy},
     {"GetPlatoonUnits",             platoon_GetPlatoonUnits},
+    {"GetFactionIndex",             platoon_GetFactionIndex},
+    {"GetSquadPosition",            platoon_GetSquadPosition},
+    {"CanAttackTarget",             platoon_CanAttackTarget},
+    {"PlatoonCategoryCount",        platoon_PlatoonCategoryCount},
+    {"PlatoonCategoryCountAroundPosition", platoon_PlatoonCategoryCountAroundPosition},
     {"GetSquadUnits",               platoon_GetSquadUnits},
     {"GetBrain",                    platoon_GetBrain},
     {"UniquelyNamePlatoon",         platoon_UniquelyNamePlatoon},
