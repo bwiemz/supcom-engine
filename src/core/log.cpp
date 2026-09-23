@@ -1,4 +1,5 @@
 #include "core/log.hpp"
+#include "core/test_status.hpp"
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -57,13 +58,26 @@ static bool is_builder_deepcopy_diagnostic(const std::string& message) {
                         "`SetupBuilderConditions'") != std::string::npos;
 }
 
+/// In test modes, a Lua LOG/WARN line containing the uppercase token "FAIL"
+/// ("X TEST FAILED: ...", "Bone test 1: FAIL - ...") is the embedded Lua
+/// tests' way of reporting a failed check. FA's own scripts never log it.
+static void note_lua_test_failure(const std::string& message) {
+    if (test_status::count_lua_failures() &&
+        message.find("FAIL") != std::string::npos) {
+        test_status::record_failure(message);
+    }
+}
+
 int l_LOG(lua_State* L) {
-    spdlog::info("{}", lua_concat_args(L));
+    auto message = lua_concat_args(L);
+    spdlog::info("{}", message);
+    note_lua_test_failure(message);
     return 0;
 }
 
 int l_WARN(lua_State* L) {
     auto message = lua_concat_args(L);
+    note_lua_test_failure(message);
     if (is_builder_deepcopy_diagnostic(message)) {
         spdlog::trace("{}", message);
     } else {

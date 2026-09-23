@@ -1,5 +1,6 @@
 add_library(osc_core STATIC
     log.cpp
+    test_status.cpp
     preferences.cpp
     localization.cpp
     game_state.cpp

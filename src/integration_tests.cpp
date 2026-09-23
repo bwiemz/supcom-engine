@@ -1,3 +1,4 @@
+#include "core/test_status.hpp"
 #include "integration_tests.hpp"
 
 #include "audio/sound_manager.hpp"
@@ -1524,7 +1525,7 @@ void test_path(TestContext& ctx) {
     // 1) Log pathfinding grid stats
     auto* grid = ctx.sim.pathfinding_grid();
     if (!grid) {
-        spdlog::error("PATH TEST FAILED: no pathfinding grid");
+        osc::test_status::fail("PATH TEST FAILED: no pathfinding grid");
     } else {
         // Count cell types
         osc::u32 passable = 0, impassable = 0, water = 0, obstacle = 0;
@@ -3220,7 +3221,7 @@ void test_audio(TestContext& ctx) {
                 pass++;
                 if (handle != 0) mgr->stop(handle);
             } else {
-                spdlog::error("[FAIL] Test 1: Play one-shot returned "
+                osc::test_status::fail("[FAIL] Test 1: Play one-shot returned "
                               "INVALID_SOUND");
                 fail++;
             }
@@ -3235,7 +3236,7 @@ void test_audio(TestContext& ctx) {
                              handle);
                 pass++;
             } else {
-                spdlog::error("[FAIL] Test 2: Loop returned "
+                osc::test_status::fail("[FAIL] Test 2: Loop returned "
                               "INVALID_SOUND");
                 fail++;
             }
@@ -3272,7 +3273,7 @@ void test_audio(TestContext& ctx) {
                 spdlog::info("[PASS] Test 4: Lua entity:PlaySound");
                 pass++;
             } else {
-                spdlog::error("[FAIL] Test 4: Lua PlaySound error: {}",
+                osc::test_status::fail("[FAIL] Test 4: Lua PlaySound error: {}",
                               lua_r.error().message);
                 fail++;
             }
@@ -3296,7 +3297,7 @@ void test_audio(TestContext& ctx) {
                              "start+stop");
                 pass++;
             } else {
-                spdlog::error("[FAIL] Test 5: SetAmbientSound error: {}",
+                osc::test_status::fail("[FAIL] Test 5: SetAmbientSound error: {}",
                               lua_r.error().message);
                 fail++;
             }
@@ -3353,7 +3354,7 @@ void test_bone(TestContext& ctx) {
                          e1->blueprint_id());
             pass++;
         } else {
-            spdlog::error("[FAIL] Test 1: GetBoneCount <= 1");
+            osc::test_status::fail("[FAIL] Test 1: GetBoneCount <= 1");
             fail++;
         }
     }
@@ -3376,7 +3377,7 @@ void test_bone(TestContext& ctx) {
                          e1->bone_data()->bones[0].name);
             pass++;
         } else {
-            spdlog::error("[FAIL] Test 2: bone[0] name empty/missing");
+            osc::test_status::fail("[FAIL] Test 2: bone[0] name empty/missing");
             fail++;
         }
     }
@@ -3395,7 +3396,7 @@ void test_bone(TestContext& ctx) {
             end
         )");
         if (r) { spdlog::info("[PASS] Test 3: IsValidBone(name) = true"); pass++; }
-        else { spdlog::error("[FAIL] Test 3: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); fail++; }
     }
 
     // Test 4: IsValidBone returns false for nonexistent bone
@@ -3411,7 +3412,7 @@ void test_bone(TestContext& ctx) {
             end
         )");
         if (r) { spdlog::info("[PASS] Test 4: IsValidBone(nonexistent) = false"); pass++; }
-        else { spdlog::error("[FAIL] Test 4: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); fail++; }
     }
 
     // Test 5: GetPosition(bone) differs from entity center for non-root bones
@@ -3441,7 +3442,7 @@ void test_bone(TestContext& ctx) {
             end
         )");
         if (r) { spdlog::info("[PASS] Test 5: Bone position differs from center"); pass++; }
-        else { spdlog::error("[FAIL] Test 5: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); fail++; }
     }
 
     // Test 6: ShowBone/HideBone don't crash
@@ -3454,7 +3455,7 @@ void test_bone(TestContext& ctx) {
             LOG('Bone test 6: PASS - ShowBone/HideBone no crash')
         )");
         if (r) { spdlog::info("[PASS] Test 6: ShowBone/HideBone no crash"); pass++; }
-        else { spdlog::error("[FAIL] Test 6: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); fail++; }
     }
 
     // Test 7: GetBoneDirection returns a vector
@@ -3471,7 +3472,7 @@ void test_bone(TestContext& ctx) {
             end
         )");
         if (r) { spdlog::info("[PASS] Test 7: GetBoneDirection returns vector"); pass++; }
-        else { spdlog::error("[FAIL] Test 7: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); fail++; }
     }
 
     // Test 8: Enumerate all bones, verify count matches
@@ -3495,7 +3496,7 @@ void test_bone(TestContext& ctx) {
             end
         )");
         if (r) { spdlog::info("[PASS] Test 8: All bones enumerated"); pass++; }
-        else { spdlog::error("[FAIL] Test 8: {}", r.error().message); fail++; }
+        else { osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); fail++; }
     }
 
     spdlog::info("Bone test: {}/{} passed", pass, pass + fail);
@@ -3528,7 +3529,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 1: CreateRotator returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: RotateManipulator GetCurrentAngle updates after ticks
@@ -3549,7 +3550,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 2: RotateManipulator angle advances"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: RotateManipulator continuous (SetTargetSpeed)
@@ -3571,7 +3572,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Continuous rotation works"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: AnimManipulator with PlayAnim/SetRate/GetAnimationFraction
@@ -3592,7 +3593,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 4: AnimManipulator fraction advances"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: WaitFor(rotator) — thread completes when goal is reached
@@ -3617,7 +3618,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 5: WaitFor(rotator) works"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     // Test 6: AimManipulator SetHeadingPitch / GetHeadingPitch
@@ -3636,7 +3637,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 6: AimManipulator heading/pitch"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); }
     }
 
     // Test 7: Manipulator Destroy is safe
@@ -3657,7 +3658,7 @@ void test_manip(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 7: Destroy is safe"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
     spdlog::info("Manip test: {}/{} passed", pass, pass + fail);
@@ -3693,7 +3694,7 @@ void test_canpath(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 1: CanPathTo nearby reachable"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: CanPathTo returns bool (not always true)
@@ -3714,7 +3715,7 @@ void test_canpath(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 2: CanPathTo returns proper booleans"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: CanPathToCell works the same as CanPathTo
@@ -3732,7 +3733,7 @@ void test_canpath(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 3: CanPathToCell nearby reachable"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: GetThreatBetweenPositions returns 0 with no enemies nearby
@@ -3750,7 +3751,7 @@ void test_canpath(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 4: GetThreatBetweenPositions = 0 (no enemies)"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: GetThreatBetweenPositions detects enemy unit along line
@@ -3775,7 +3776,7 @@ void test_canpath(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 5: GetThreatBetweenPositions detects enemy"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     spdlog::info("Canpath test: {}/{} passed", pass, pass + fail);
@@ -3811,7 +3812,7 @@ void test_armor(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 1: Normal damage at 1.0x"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: Structure takes 0.25x Overcharge damage
@@ -3835,7 +3836,7 @@ void test_armor(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 2: Structure takes 0.25x Overcharge"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Unknown damage type passes through at 1.0x
@@ -3855,7 +3856,7 @@ void test_armor(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Unknown damage type at 1.0x"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: Experimental armor blocks ExperimentalFootfall (0.0x)
@@ -3876,7 +3877,7 @@ void test_armor(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Experimental immune to ExperimentalFootfall"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: GetArmorMult returns correct multiplier
@@ -3893,7 +3894,7 @@ void test_armor(TestContext& ctx) {
             end
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 5: GetArmorMult returns correct multiplier"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     spdlog::info("Armor test: {}/{} passed", pass, pass + fail);
@@ -3920,7 +3921,7 @@ void test_vet(TestContext& ctx) {
             "acu:SetHealth(acu, max - 500)\n"
             "acu:SetRegenRate(100) -- 100 HP/sec = 10 HP/tick\n"
             "rawset(_G, '__vet_hp_before', acu:GetHealth())\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 1 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 1 setup: {}", r.error().message); }
         else {
             for (int t = 0; t < 5; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
@@ -3936,7 +3937,7 @@ void test_vet(TestContext& ctx) {
                 "acu:SetRegenRate(0)\n"
                 "acu:SetHealth(acu, acu:GetMaxHealth())\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 1: SetRegenRate + per-tick regen"); }
-            else { fail++; spdlog::error("[FAIL] Test 1: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r2.error().message); }
         }
     }
 
@@ -3946,7 +3947,7 @@ void test_vet(TestContext& ctx) {
             "local acu = GetEntityById(1)\n"
             "acu:SetHealth(acu, acu:GetMaxHealth() - 5)\n"
             "acu:SetRegenRate(1000) -- massive regen\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 2 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 2 setup: {}", r.error().message); }
         else {
             ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
@@ -3960,7 +3961,7 @@ void test_vet(TestContext& ctx) {
                 "end\n"
                 "acu:SetRegenRate(0)\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 2: Regen caps at max health"); }
-            else { fail++; spdlog::error("[FAIL] Test 2: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r2.error().message); }
         }
     }
 
@@ -3978,7 +3979,7 @@ void test_vet(TestContext& ctx) {
             "acu:SetHealth(acu, acu:GetMaxHealth() - 200)\n"
             "rawset(_G, '__vet_bp_regen', bp_regen)\n"
             "rawset(_G, '__vet_hp3', acu:GetHealth())\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 3 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
         else {
             for (int t = 0; t < 10; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
@@ -3996,7 +3997,7 @@ void test_vet(TestContext& ctx) {
                 "acu:SetHealth(acu, acu:GetMaxHealth())\n"
                 "acu:SetRegenRate(0)\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 3: Blueprint base regen loaded"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
         }
     }
 
@@ -4015,7 +4016,7 @@ void test_vet(TestContext& ctx) {
             "acu:SetHealth(acu, acu:GetMaxHealth() - 100)\n"
             "rawset(_G, '__vet_hp4', acu:GetHealth())\n"
             "rawset(_G, '__vet_bp4', bp_regen)\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 4 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 4 setup: {}", r.error().message); }
         else {
             for (int t = 0; t < 10; t++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
@@ -4033,7 +4034,7 @@ void test_vet(TestContext& ctx) {
                 "acu:SetHealth(acu, acu:GetMaxHealth())\n"
                 "acu:SetRegenRate(0)\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 4: RevertRegenRate resets to blueprint"); }
-            else { fail++; spdlog::error("[FAIL] Test 4: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r2.error().message); }
         }
     }
 
@@ -4073,7 +4074,7 @@ void test_wreck(TestContext& ctx) {
             "         .. ' left=' .. tostring(prop.ReclaimLeft))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: SetMaxReclaimValues"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: GetHeading returns correct yaw from quaternion
@@ -4097,7 +4098,7 @@ void test_wreck(TestContext& ctx) {
             "-- Restore orientation\n"
             "acu:SetOrientation({0, 0, 0, 1}, true)\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: GetHeading"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: GetHeading on prop (prop_methods includes GetHeading)
@@ -4117,7 +4118,7 @@ void test_wreck(TestContext& ctx) {
             "    error('Wreck test 3: FAIL - prop GetHeading=' .. h .. ' expected ~pi')\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: GetHeading on prop"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     spdlog::info("Wreck test: {}/{} passed", pass, pass + fail);
@@ -4150,7 +4151,7 @@ void test_adjacency(TestContext& ctx) {
             "    error('Adj test 1: FAIL - SkirtSizeX=' .. ssx)\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: Skirt data loaded"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Run a tick so factory is fully initialized
@@ -4188,7 +4189,7 @@ void test_adjacency(TestContext& ctx) {
             "-- Install callback on pgen too\n"
             "pg1.OnAdjacentTo = fac.OnAdjacentTo\n"
             "pg1.OnNotAdjacentTo = fac.OnNotAdjacentTo\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 2 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 2 setup: {}", r.error().message); }
         else {
             auto r2 = ctx.lua_state.do_string(
                 "local count = rawget(_G, '__adj_count') or 0\n"
@@ -4198,7 +4199,7 @@ void test_adjacency(TestContext& ctx) {
                 "    error('Adj test 2: FAIL - OnAdjacentTo fired ' .. count .. ' times')\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 2: OnAdjacentTo fires"); }
-            else { fail++; spdlog::error("[FAIL] Test 2: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r2.error().message); }
         }
     }
 
@@ -4210,7 +4211,7 @@ void test_adjacency(TestContext& ctx) {
             "rawset(_G, '__not_adj_count', 0)\n"
             "-- Kill the pgen\n"
             "pg1:Destroy()\n");
-        if (!r) { fail++; spdlog::error("[FAIL] Test 3 setup: {}", r.error().message); }
+        if (!r) { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
         else {
             auto r2 = ctx.lua_state.do_string(
                 "local count = rawget(_G, '__not_adj_count') or 0\n"
@@ -4220,7 +4221,7 @@ void test_adjacency(TestContext& ctx) {
                 "    error('Adj test 3: FAIL - OnNotAdjacentTo fired ' .. count .. ' times')\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 3: OnNotAdjacentTo on destruction"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
         }
     }
 
@@ -4240,7 +4241,7 @@ void test_adjacency(TestContext& ctx) {
             "end\n"
             "w:SetFiringRandomness(0)\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: SetFiringRandomness/GetFiringRandomness"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     spdlog::info("Adjacency test: {}/{} passed", pass, pass + fail);
@@ -4273,7 +4274,7 @@ void test_stats(TestContext& ctx) {
             "    error('Stats test 1: FAIL - new=' .. tostring(new1) .. ' existing=' .. tostring(new2))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: SetStat returns correct boolean"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: GetStat returns {Value=N} after SetStat
@@ -4289,7 +4290,7 @@ void test_stats(TestContext& ctx) {
             "    error('Stats test 2: FAIL - Value=' .. tostring(v))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: GetStat returns correct value"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: GetStat default value for nonexistent stat
@@ -4305,7 +4306,7 @@ void test_stats(TestContext& ctx) {
             "    error('Stats test 3: FAIL - Value=' .. tostring(v) .. ' expected 42')\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: GetStat returns default for missing stat"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: UpdateStat + GetStat roundtrip
@@ -4323,7 +4324,7 @@ void test_stats(TestContext& ctx) {
             "    error('Stats test 4: FAIL - s1=' .. s1.Value .. ' s2=' .. s2.Value)\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: UpdateStat + GetStat roundtrip"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     spdlog::info("Stats test: {}/{} passed", pass, pass + fail);
@@ -4356,7 +4357,7 @@ void test_silo(TestContext& ctx) {
             "    error('Silo test 1: FAIL - c1=' .. tostring(c1) .. ' c2=' .. tostring(c2))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: GiveNukeSiloAmmo + GetNukeSiloAmmoCount"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: RemoveNukeSiloAmmo + underflow clamp (self-contained)
@@ -4377,7 +4378,7 @@ void test_silo(TestContext& ctx) {
             "    error('Silo test 2: FAIL - c1=' .. tostring(c1) .. ' c2=' .. tostring(c2))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: RemoveNukeSiloAmmo + underflow clamp"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Tactical silo ammo (independent of nuke)
@@ -4396,7 +4397,7 @@ void test_silo(TestContext& ctx) {
             "    error('Silo test 3: FAIL - tac=' .. tostring(tac) .. ' nuke=' .. tostring(nuke) .. ' tac2=' .. tostring(tac2))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Tactical silo ammo independent of nuke"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: Fire-gate pattern (mirrors DefaultProjectileWeapon.lua check)
@@ -4414,7 +4415,7 @@ void test_silo(TestContext& ctx) {
             "    error('Silo test 4: FAIL - gate1=' .. tostring(gate1) .. ' gate2=' .. tostring(gate2))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Fire-gate pattern"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     spdlog::info("Silo test: {}/{} passed", pass, pass + fail);
@@ -4447,7 +4448,7 @@ void test_flags(TestContext& ctx) {
             "    error('Flags test 1: FAIL - IsValidTarget=' .. tostring(valid) .. ' expected false')\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: SetDoNotTarget makes IsValidTarget false"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: IsValidTarget / SetIsValidTarget roundtrip
@@ -4468,7 +4469,7 @@ void test_flags(TestContext& ctx) {
             "    error('Flags test 2: FAIL - v1=' .. tostring(v1) .. ' v2=' .. tostring(v2) .. ' v3=' .. tostring(v3))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: IsValidTarget / SetIsValidTarget roundtrip"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: SetReclaimable(false) blocks reclaim
@@ -4496,8 +4497,8 @@ void test_flags(TestContext& ctx) {
                 "    error('Flags test 3: FAIL - reclaim proceeded, fraction=' .. tostring(frac))\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 3: SetReclaimable(false) blocks reclaim"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: Default reclaimable=true (props are reclaimable by default)
@@ -4518,7 +4519,7 @@ void test_flags(TestContext& ctx) {
             "    error('Flags test 4: FAIL - IsValidTarget=' .. tostring(valid))\n"
             "end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Default flags (IsValidTarget=true, reclaimable=true)"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     spdlog::info("Flags test: {}/{} passed", pass, pass + fail);
@@ -4555,7 +4556,7 @@ void test_layercap(TestContext& ctx) {
         "rawset(_G, '__lc_weapon_ref', w)\n"
         "rawset(_G, '__lc_enemy_ref', enemy)\n");
     if (!r_setup) {
-        spdlog::error("[FAIL] LayerCap setup: {}", r_setup.error().message);
+        osc::test_status::fail("[FAIL] LayerCap setup: {}", r_setup.error().message);
         fail += 3;
     } else {
 
@@ -4576,8 +4577,8 @@ void test_layercap(TestContext& ctx) {
                 "    error('LayerCap test 1: FAIL - weapon kept Land target with Sub caps')\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 1: Sub caps drops Land target"); }
-            else { fail++; spdlog::error("[FAIL] Test 1: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 1 setup: {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 1 setup: {}", r.error().message); }
     }
 
     // Test 2: None caps drops forced target
@@ -4597,8 +4598,8 @@ void test_layercap(TestContext& ctx) {
                 "    error('LayerCap test 2: FAIL - weapon kept target with None caps')\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 2: None caps drops target"); }
-            else { fail++; spdlog::error("[FAIL] Test 2: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 2 setup: {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 2 setup: {}", r.error().message); }
     }
 
     // Test 3: Land caps retains forced Land target
@@ -4618,8 +4619,8 @@ void test_layercap(TestContext& ctx) {
                 "    error('LayerCap test 3: FAIL - weapon dropped Land target with Land caps')\n"
                 "end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 3: Land caps retains Land target"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 3 setup: {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 3 setup: {}", r.error().message); }
     }
 
     } // end setup success block
@@ -4653,7 +4654,7 @@ void test_massstub(TestContext& ctx) {
             "w:SetOnTransport(true)\n"
             "LOG('MassStub test 1: weapon Change* methods OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: Weapon Change* methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: Movement multipliers + ResetSpeedAndAccel
@@ -4668,7 +4669,7 @@ void test_massstub(TestContext& ctx) {
             "u:ResetSpeedAndAccel()\n"
             "LOG('MassStub test 2: movement mults + reset OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: Movement multipliers + reset"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Fuel system round-trip
@@ -4687,7 +4688,7 @@ void test_massstub(TestContext& ctx) {
             "end\n"
             "LOG('MassStub test 3: fuel round-trip OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Fuel system round-trip"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: Projectile target position + zigzag
@@ -4711,7 +4712,7 @@ void test_massstub(TestContext& ctx) {
             "if not enemy then error('no enemy found') end\n"
             "w:SetTargetEntity(enemy)\n");
         if (!r) {
-            fail++; spdlog::error("[FAIL] Test 4 setup: {}", r.error().message);
+            fail++; osc::test_status::fail("[FAIL] Test 4 setup: {}", r.error().message);
         } else {
             // Don't tick — test the projectile binding functions directly
             // by creating a projectile via CreateProjectileAtBone or
@@ -4750,7 +4751,7 @@ void test_massstub(TestContext& ctx) {
                 "proj:TrackTarget(true)\n"
                 "LOG('MassStub test 4: projectile target+guidance OK')\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 4: Projectile target + guidance"); }
-            else { fail++; spdlog::error("[FAIL] Test 4: {}", r2.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r2.error().message); }
         }
     }
 
@@ -4782,7 +4783,7 @@ void test_massstub(TestContext& ctx) {
             "u:ClearFocusEntity()\n"
             "LOG('MassStub test 5: misc flags + ToggleFireState OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 5: Misc flags + ToggleFireState"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     spdlog::info("MassStub test: {}/{} passed", pass, pass + fail);
@@ -4825,7 +4826,7 @@ void test_massstub2(TestContext& ctx) {
             "u:SetHealth(u, hp_before)\n"  // restore HP
             "LOG('MassStub2 test 1: damage flags OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: Damage flags + GetAttacker"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: Kill flag — SetCanBeKilled(false) blocks Destroy()
@@ -4841,7 +4842,7 @@ void test_massstub2(TestContext& ctx) {
             "u:SetCanBeKilled(true)\n"  // restore
             "LOG('MassStub2 test 2: kill flag OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: Kill flag (SetCanBeKilled)"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Command caps round-trip
@@ -4859,7 +4860,7 @@ void test_massstub2(TestContext& ctx) {
             "u:RestoreBuildRestrictions()\n"
             "LOG('MassStub2 test 3: command caps + build restrictions OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Command caps + build restrictions"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: Weapon targeting — GetProjectileBlueprint, SetTargetGround, SetFireControl/IsFireControl, TransferTarget
@@ -4886,7 +4887,7 @@ void test_massstub2(TestContext& ctx) {
             "w:SetWeaponPriorities({categories.ALLUNITS})\n"
             "LOG('MassStub2 test 4: weapon targeting OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Weapon targeting + control"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: Projectile physics flags
@@ -4905,7 +4906,7 @@ void test_massstub2(TestContext& ctx) {
             "if not ret2 then error('SetLocalAngularVelocity should return self') end\n"
             "LOG('MassStub2 test 5: projectile physics flags OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 5: Projectile physics flags"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     // Test 6: Elevation + rotation + SetCustomName + SetBuildingUnit + SetSpeedThroughGoal
@@ -4929,7 +4930,7 @@ void test_massstub2(TestContext& ctx) {
             "end\n"
             "LOG('MassStub2 test 6: elevation + rotation + misc OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 6: Elevation + rotation + misc"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); }
     }
 
     spdlog::info("MassStub2 test: {}/{} passed", pass, pass + fail);
@@ -4954,7 +4955,7 @@ void test_massstub3(TestContext& ctx) {
             "if not ok then error('brain should be defeated after OnDefeat') end\n"
             "LOG('MassStub3 test 1: brain events OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 1: Brain events"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
     }
 
     // Test 2: Brain utility — GiveStorage, SetResourceSharing, GetArmySkinName
@@ -4968,7 +4969,7 @@ void test_massstub3(TestContext& ctx) {
             "if type(skin) ~= 'string' then error('GetArmySkinName should return string') end\n"
             "LOG('MassStub3 test 2: brain utility OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 2: Brain utility"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Projectile collision flags — SetCollision, SetCollideSurface, StayUnderwater
@@ -4987,7 +4988,7 @@ void test_massstub3(TestContext& ctx) {
             "proj:StayUnderwater(true)\n"
             "LOG('MassStub3 test 3: projectile collision flags OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 3: Projectile collision flags"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: CreateChildProjectile
@@ -5004,7 +5005,7 @@ void test_massstub3(TestContext& ctx) {
             "if not child._c_object then error('child has no _c_object') end\n"
             "LOG('MassStub3 test 4: CreateChildProjectile OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: CreateChildProjectile"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: Weapon — BeenDestroyed, SetValidTargetsForCurrentLayer
@@ -5022,7 +5023,7 @@ void test_massstub3(TestContext& ctx) {
             "w:SetValidTargetsForCurrentLayer('Land')\n"
             "LOG('MassStub3 test 5: weapon fire/control OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 5: Weapon fire/control"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     // Test 6: Platoon — SetPlatoonFormationOverride, IsOpponentAIRunning, SetPrioritizedTargetList
@@ -5039,7 +5040,7 @@ void test_massstub3(TestContext& ctx) {
             "platoon:SetPrioritizedTargetList('Attack', {categories.ALLUNITS})\n"
             "LOG('MassStub3 test 6: platoon stubs OK')\n");
         if (r) { pass++; spdlog::info("[PASS] Test 6: Platoon stubs"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); }
     }
 
     spdlog::info("MassStub3 test: {}/{} passed", pass, pass + fail);
@@ -5062,17 +5063,17 @@ void test_anim(TestContext& ctx) {
     {
         auto* cache = ctx.sim.anim_cache();
         if (!cache) {
-            fail++; spdlog::error("[FAIL] Test 1: AnimCache is null");
+            fail++; osc::test_status::fail("[FAIL] Test 1: AnimCache is null");
         } else {
             auto* sca = cache->get("/units/uel0001/uel0001_a001.sca");
             if (!sca) {
-                fail++; spdlog::error("[FAIL] Test 1: SCA parse returned null");
+                fail++; osc::test_status::fail("[FAIL] Test 1: SCA parse returned null");
             } else if (sca->num_frames < 2) {
-                fail++; spdlog::error("[FAIL] Test 1: SCA has {} frames (expected >= 2)", sca->num_frames);
+                fail++; osc::test_status::fail("[FAIL] Test 1: SCA has {} frames (expected >= 2)", sca->num_frames);
             } else if (sca->num_bones < 2) {
-                fail++; spdlog::error("[FAIL] Test 1: SCA has {} bones (expected >= 2)", sca->num_bones);
+                fail++; osc::test_status::fail("[FAIL] Test 1: SCA has {} bones (expected >= 2)", sca->num_bones);
             } else if (sca->duration <= 0.0f) {
-                fail++; spdlog::error("[FAIL] Test 1: SCA duration = {:.3f} (expected > 0)", sca->duration);
+                fail++; osc::test_status::fail("[FAIL] Test 1: SCA duration = {:.3f} (expected > 0)", sca->duration);
             } else {
                 pass++;
                 spdlog::info("[PASS] Test 1: SCA parsed — {} frames, {} bones, {:.3f}s",
@@ -5106,7 +5107,7 @@ void test_anim(TestContext& ctx) {
                 .. ' dur=' .. string.format('%.3f', dur))
         )");
         if (r) { pass++; spdlog::info("[PASS] Test 2: AnimManipulator with real SCA"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r.error().message); }
     }
 
     // Test 3: Bone matrices updated (non-identity after animation plays)
@@ -5115,9 +5116,9 @@ void test_anim(TestContext& ctx) {
         auto* ent = ctx.sim.entity_registry().find(1);
         auto* unit = ent ? dynamic_cast<osc::sim::Unit*>(ent) : nullptr;
         if (!unit) {
-            fail++; spdlog::error("[FAIL] Test 3: entity #1 not found or not a unit");
+            fail++; osc::test_status::fail("[FAIL] Test 3: entity #1 not found or not a unit");
         } else if (unit->animated_bone_count() == 0) {
-            fail++; spdlog::error("[FAIL] Test 3: unit has no animated bone matrices");
+            fail++; osc::test_status::fail("[FAIL] Test 3: unit has no animated bone matrices");
         } else {
             // Check that at least one bone matrix differs from identity
             bool any_non_identity = false;
@@ -5138,7 +5139,7 @@ void test_anim(TestContext& ctx) {
                              unit->animated_bone_count());
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 3: All bone matrices are still identity");
+                osc::test_status::fail("[FAIL] Test 3: All bone matrices are still identity");
             }
         }
     }
@@ -5151,7 +5152,7 @@ void test_anim(TestContext& ctx) {
         if (sca1 && sca2 && sca1 == sca2) {
             pass++; spdlog::info("[PASS] Test 4: AnimCache returns cached pointer");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: AnimCache pointers differ");
+            fail++; osc::test_status::fail("[FAIL] Test 4: AnimCache pointers differ");
         }
     }
 
@@ -5165,7 +5166,7 @@ void test_anim(TestContext& ctx) {
                          sca->bone_names.size(), sca->bone_names[0]);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 5: SCA bone names empty or null");
+            osc::test_status::fail("[FAIL] Test 5: SCA bone names empty or null");
         }
     }
 
@@ -5230,7 +5231,7 @@ void test_teamcolor(TestContext& ctx) {
             spdlog::info("[PASS] Test 1: UEF ACU SpecTeam path: '{}'", specteam_path);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: UEF ACU has no SpecularName");
+            osc::test_status::fail("[FAIL] Test 1: UEF ACU has no SpecularName");
         }
     }
 
@@ -5244,11 +5245,11 @@ void test_teamcolor(TestContext& ctx) {
                              specteam_path, file_data->size());
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 2: VFS read failed for '{}'", specteam_path);
+                osc::test_status::fail("[FAIL] Test 2: VFS read failed for '{}'", specteam_path);
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: skipped (no path from test 1)");
+            osc::test_status::fail("[FAIL] Test 2: skipped (no path from test 1)");
         }
     }
 
@@ -5264,7 +5265,7 @@ void test_teamcolor(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: {}/4 ACU factions have SpecTeam textures", count);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: No factions have SpecTeam textures");
+            osc::test_status::fail("[FAIL] Test 3: No factions have SpecTeam textures");
         }
     }
 
@@ -5279,15 +5280,15 @@ void test_teamcolor(TestContext& ctx) {
                     spdlog::info("[PASS] Test 4: SpecTeam file has valid DDS magic");
                 } else {
                     fail++;
-                    spdlog::error("[FAIL] Test 4: SpecTeam file has wrong magic");
+                    osc::test_status::fail("[FAIL] Test 4: SpecTeam file has wrong magic");
                 }
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 4: Failed to read specteam file");
+                osc::test_status::fail("[FAIL] Test 4: Failed to read specteam file");
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: skipped (no path)");
+            osc::test_status::fail("[FAIL] Test 4: skipped (no path)");
         }
     }
 
@@ -5352,7 +5353,7 @@ void test_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 1: UEF ACU normal map path: '{}'", normal_path);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: UEF ACU has no normal map");
+            osc::test_status::fail("[FAIL] Test 1: UEF ACU has no normal map");
         }
     }
 
@@ -5366,11 +5367,11 @@ void test_normal(TestContext& ctx) {
                              normal_path, file_data->size());
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 2: VFS read failed for '{}'", normal_path);
+                osc::test_status::fail("[FAIL] Test 2: VFS read failed for '{}'", normal_path);
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: skipped (no path from test 1)");
+            osc::test_status::fail("[FAIL] Test 2: skipped (no path from test 1)");
         }
     }
 
@@ -5386,7 +5387,7 @@ void test_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: {}/4 ACU factions have normal maps", count);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: No factions have normal maps");
+            osc::test_status::fail("[FAIL] Test 3: No factions have normal maps");
         }
     }
 
@@ -5401,15 +5402,15 @@ void test_normal(TestContext& ctx) {
                     spdlog::info("[PASS] Test 4: Normal map file has valid DDS magic");
                 } else {
                     fail++;
-                    spdlog::error("[FAIL] Test 4: Normal map file has wrong magic");
+                    osc::test_status::fail("[FAIL] Test 4: Normal map file has wrong magic");
                 }
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 4: Failed to read normal map file");
+                osc::test_status::fail("[FAIL] Test 4: Failed to read normal map file");
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: skipped (no path)");
+            osc::test_status::fail("[FAIL] Test 4: skipped (no path)");
         }
     }
 
@@ -5432,15 +5433,15 @@ void test_normal(TestContext& ctx) {
                     spdlog::info("[PASS] Test 5: SCM mesh has non-zero tangent data");
                 } else {
                     fail++;
-                    spdlog::error("[FAIL] Test 5: SCM mesh tangent data is all zeros");
+                    osc::test_status::fail("[FAIL] Test 5: SCM mesh tangent data is all zeros");
                 }
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 5: Failed to parse SCM mesh");
+                osc::test_status::fail("[FAIL] Test 5: Failed to parse SCM mesh");
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 5: Failed to read UEF ACU SCM file");
+            osc::test_status::fail("[FAIL] Test 5: Failed to read UEF ACU SCM file");
         }
     }
 
@@ -5477,7 +5478,7 @@ void test_prop(TestContext& ctx) {
                      prop_count, unit_count);
     } else {
         fail++;
-        spdlog::error("[FAIL] Test 1: no props found in entity registry");
+        osc::test_status::fail("[FAIL] Test 1: no props found in entity registry");
     }
 
     // Test 2: At least one prop has blueprint starting with /env/
@@ -5494,7 +5495,7 @@ void test_prop(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: found prop with /env/ blueprint path");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: no prop with /env/ blueprint path");
+            osc::test_status::fail("[FAIL] Test 2: no prop with /env/ blueprint path");
         }
     }
 
@@ -5517,7 +5518,7 @@ void test_prop(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: prop positions within map bounds");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: no prop within map bounds");
+            osc::test_status::fail("[FAIL] Test 3: no prop within map bounds");
         }
     }
 
@@ -5562,7 +5563,7 @@ void test_prop(TestContext& ctx) {
             spdlog::info("[PASS] Test 4: prop '{}' has SCM mesh in VFS", found_bp);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: no prop has a resolvable SCM mesh");
+            osc::test_status::fail("[FAIL] Test 4: no prop has a resolvable SCM mesh");
         }
     }
 
@@ -5584,7 +5585,7 @@ void test_prop(TestContext& ctx) {
             spdlog::info("[PASS] Test 5: some props have non-identity orientation");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 5: all props have identity orientation");
+            osc::test_status::fail("[FAIL] Test 5: all props have identity orientation");
         }
     }
 
@@ -5619,7 +5620,7 @@ void test_scale(TestContext& ctx) {
                      total);
     } else {
         fail++;
-        spdlog::error("[FAIL] Test 1: only {} total entities (expected >2048)",
+        osc::test_status::fail("[FAIL] Test 1: only {} total entities (expected >2048)",
                       total);
     }
 
@@ -5635,7 +5636,7 @@ void test_scale(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: set_scale/scale_x/y/z round-trip OK");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: scale set/get round-trip failed");
+            osc::test_status::fail("[FAIL] Test 2: scale set/get round-trip failed");
         }
     }
 
@@ -5655,7 +5656,7 @@ void test_scale(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: all units have default scale (1,1,1)");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: some units have non-default scale");
+            osc::test_status::fail("[FAIL] Test 3: some units have non-default scale");
         }
     }
 
@@ -5702,7 +5703,7 @@ void test_specular(TestContext& ctx) {
             spdlog::info("[PASS] Test 1: MeshPushConstants is 84 bytes");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: MeshPushConstants is {} bytes (expected 84)",
+            osc::test_status::fail("[FAIL] Test 1: MeshPushConstants is {} bytes (expected 84)",
                           sizeof(MeshPC));
         }
     }
@@ -5723,12 +5724,12 @@ void test_specular(TestContext& ctx) {
                              ex, ey, ez);
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 2: camera eye invalid ({:.1f}, {:.1f}, {:.1f})",
+                osc::test_status::fail("[FAIL] Test 2: camera eye invalid ({:.1f}, {:.1f}, {:.1f})",
                               ex, ey, ez);
             }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: no terrain loaded");
+            osc::test_status::fail("[FAIL] Test 2: no terrain loaded");
         }
     }
 
@@ -5772,7 +5773,7 @@ void test_specular(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: '{}' has SpecTeam texture", found_bp);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: no entity has a SpecTeam texture");
+            osc::test_status::fail("[FAIL] Test 3: no entity has a SpecTeam texture");
         }
     }
 
@@ -5806,7 +5807,7 @@ void test_terrain_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 1: found stratum with normal_path");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: no strata have normal_path");
+            osc::test_status::fail("[FAIL] Test 1: no strata have normal_path");
         }
     }
 
@@ -5828,7 +5829,7 @@ void test_terrain_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: all normal scales are positive");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: some normal scales are non-positive");
+            osc::test_status::fail("[FAIL] Test 2: some normal scales are non-positive");
         }
     }
 
@@ -5848,7 +5849,7 @@ void test_terrain_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: normal path contains 'normals'");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: no normal path contains 'normals'");
+            osc::test_status::fail("[FAIL] Test 3: no normal path contains 'normals'");
         }
     }
 
@@ -5862,7 +5863,7 @@ void test_terrain_normal(TestContext& ctx) {
             spdlog::info("[PASS] Test 4: StratumInfo has normal_path/normal_scale");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: no strata to inspect");
+            osc::test_status::fail("[FAIL] Test 4: no strata to inspect");
         }
     }
 
@@ -5888,7 +5889,7 @@ void test_decal(TestContext& ctx) {
                          terrain->decals().size());
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: no decals on terrain");
+            osc::test_status::fail("[FAIL] Test 1: no decals on terrain");
         }
     }
 
@@ -5910,7 +5911,7 @@ void test_decal(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: all decals have non-empty texture path");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: some decals have empty texture path");
+            osc::test_status::fail("[FAIL] Test 2: some decals have empty texture path");
         }
     }
 
@@ -5937,7 +5938,7 @@ void test_decal(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: all decal positions within map bounds");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: decal position out of map bounds");
+            osc::test_status::fail("[FAIL] Test 3: decal position out of map bounds");
         }
     }
 
@@ -5957,7 +5958,7 @@ void test_decal(TestContext& ctx) {
                          valid, total);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: only {}/{} decals have positive XZ scales",
+            osc::test_status::fail("[FAIL] Test 4: only {}/{} decals have positive XZ scales",
                           valid, total);
         }
     }
@@ -6018,7 +6019,7 @@ void test_projectile(TestContext& ctx) {
                          total_entities);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: no projectiles detected");
+            osc::test_status::fail("[FAIL] Test 1: no projectiles detected");
         }
     }
 
@@ -6030,7 +6031,7 @@ void test_projectile(TestContext& ctx) {
                          proj_with_bp, proj_count);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: no projectiles have blueprint_id");
+            osc::test_status::fail("[FAIL] Test 2: no projectiles have blueprint_id");
         }
     } else {
         pass++; // skip if no live projectiles (already validated in test 1)
@@ -6045,7 +6046,7 @@ void test_projectile(TestContext& ctx) {
                          proj_with_vel, proj_count);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: no projectiles have velocity");
+            osc::test_status::fail("[FAIL] Test 3: no projectiles have velocity");
         }
     } else {
         pass++;
@@ -6069,7 +6070,7 @@ void test_projectile(TestContext& ctx) {
             spdlog::info("[PASS] Test 4: weapons have projectile_bp_id parsed from blueprint");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: no weapons have projectile_bp_id");
+            osc::test_status::fail("[FAIL] Test 4: no weapons have projectile_bp_id");
         }
     }
 
@@ -6095,7 +6096,7 @@ void test_terrain_tex(TestContext& ctx) {
                          terrain->strata().size());
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: no strata on terrain");
+            osc::test_status::fail("[FAIL] Test 1: no strata on terrain");
         }
     }
 
@@ -6107,7 +6108,7 @@ void test_terrain_tex(TestContext& ctx) {
                          terrain->blend_dds_0().size());
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: blend_dds_0 is empty");
+            osc::test_status::fail("[FAIL] Test 2: blend_dds_0 is empty");
         }
     }
 
@@ -6119,7 +6120,7 @@ void test_terrain_tex(TestContext& ctx) {
                          terrain->blend_dds_1().size());
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: blend_dds_1 is empty");
+            osc::test_status::fail("[FAIL] Test 3: blend_dds_1 is empty");
         }
     }
 
@@ -6132,7 +6133,7 @@ void test_terrain_tex(TestContext& ctx) {
                          terrain->strata()[0].albedo_path);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: stratum 0 has no albedo path");
+            osc::test_status::fail("[FAIL] Test 4: stratum 0 has no albedo path");
         }
     }
 
@@ -6154,7 +6155,7 @@ void test_terrain_tex(TestContext& ctx) {
             spdlog::info("[PASS] Test 5: all strata scales are positive");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 5: some strata scales are non-positive");
+            osc::test_status::fail("[FAIL] Test 5: some strata scales are non-positive");
         }
     }
 
@@ -6166,7 +6167,7 @@ void test_terrain_tex(TestContext& ctx) {
             spdlog::info("[PASS] Test 6: TerrainPC is 108 bytes");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 6: TerrainPC is {} bytes (expected 108)",
+            osc::test_status::fail("[FAIL] Test 6: TerrainPC is {} bytes (expected 108)",
                           sizeof(TerrainPC));
         }
     }
@@ -6186,7 +6187,7 @@ void test_shadow(TestContext& ctx) {
             spdlog::info("[PASS] Test 1: SHADOW_MAP_SIZE == 2048");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",
+            osc::test_status::fail("[FAIL] Test 1: SHADOW_MAP_SIZE == {}",
                           osc::renderer::Renderer::SHADOW_MAP_SIZE);
         }
     }
@@ -6201,7 +6202,7 @@ void test_shadow(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: ortho() produces valid matrix");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: ortho() produced invalid matrix");
+            osc::test_status::fail("[FAIL] Test 2: ortho() produced invalid matrix");
         }
     }
 
@@ -6229,7 +6230,7 @@ void test_shadow(TestContext& ctx) {
                 spdlog::info("[PASS] Test 4: 3 frames rendered with shadow pass");
             } else {
                 fail++;
-                spdlog::error("[FAIL] Test 4: rendering crashed");
+                osc::test_status::fail("[FAIL] Test 4: rendering crashed");
             }
 
             renderer.shutdown();
@@ -6271,8 +6272,8 @@ void test_massstub4(TestContext& ctx) {
                       e->viz_focus_player() == osc::sim::VizMode::INTEL &&
                       e->viz_neutrals() == osc::sim::VizMode::ALWAYS;
             if (ok) { pass++; spdlog::info("[PASS] Test 1: visibility flags"); }
-            else { fail++; spdlog::error("[FAIL] Test 1: visibility flags"); }
-        } else { fail++; spdlog::error("[FAIL] Test 1: no entity"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 1: visibility flags"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 1: no entity"); }
     }
 
     // Test 2: Scale methods
@@ -6284,8 +6285,8 @@ void test_massstub4(TestContext& ctx) {
                       std::abs(e->scale_y() - 2.5f) < 0.01f;
             e->set_scale(1.0f, 1.0f, 1.0f); // restore
             if (ok) { pass++; spdlog::info("[PASS] Test 2: SetScale"); }
-            else { fail++; spdlog::error("[FAIL] Test 2: SetScale"); }
-        } else { fail++; spdlog::error("[FAIL] Test 2: no entity"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 2: SetScale"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 2: no entity"); }
     }
 
     // Test 3: SetMesh
@@ -6296,8 +6297,8 @@ void test_massstub4(TestContext& ctx) {
             bool ok = e->mesh_override() == "/units/uel0001/uel0001_mesh";
             e->set_mesh_override(""); // restore
             if (ok) { pass++; spdlog::info("[PASS] Test 3: SetMesh"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: SetMesh"); }
-        } else { fail++; spdlog::error("[FAIL] Test 3: no entity"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: SetMesh"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 3: no entity"); }
     }
 
     // Test 4: Collision shape
@@ -6321,8 +6322,8 @@ void test_massstub4(TestContext& ctx) {
             bool ok3 = e->collision_shape().type == osc::sim::CollisionShapeType::NONE;
 
             if (ok1 && ok2 && ok3) { pass++; spdlog::info("[PASS] Test 4: collision shape"); }
-            else { fail++; spdlog::error("[FAIL] Test 4: collision shape"); }
-        } else { fail++; spdlog::error("[FAIL] Test 4: no entity"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 4: collision shape"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 4: no entity"); }
     }
 
     // Test 5: Camera shake
@@ -6335,7 +6336,7 @@ void test_massstub4(TestContext& ctx) {
         ctx.sim.clear_camera_shake_events();
         bool ok2 = ctx.sim.camera_shake_events().empty();
         if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 5: camera shake queue"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: camera shake queue"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: camera shake queue"); }
     }
 
     // Test 6: Attachment (AttachTo + DetachFrom)
@@ -6352,8 +6353,8 @@ void test_massstub4(TestContext& ctx) {
             e2->clear_parent();
             bool ok2 = e2->parent_entity_id() == 0 && e1->children().empty();
             if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 6: attachment"); }
-            else { fail++; spdlog::error("[FAIL] Test 6: attachment ok1={} ok2={}", ok1, ok2); }
-        } else { fail++; spdlog::error("[FAIL] Test 6: need 2 entities"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 6: attachment ok1={} ok2={}", ok1, ok2); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 6: need 2 entities"); }
     }
 
     // Test 7: SetParentOffset + DetachAll
@@ -6371,8 +6372,8 @@ void test_massstub4(TestContext& ctx) {
             e2->set_parent_offset({0, 0, 0});
             bool ok2 = e1->children().empty();
             if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 7: parent offset + detach all"); }
-            else { fail++; spdlog::error("[FAIL] Test 7: parent offset"); }
-        } else { fail++; spdlog::error("[FAIL] Test 7: need 2 entities"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 7: parent offset"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 7: need 2 entities"); }
     }
 
     // Test 8: SetUnSelectable
@@ -6384,8 +6385,8 @@ void test_massstub4(TestContext& ctx) {
             e->set_unselectable(false);
             bool ok2 = !e->unselectable();
             if (ok1 && ok2) { pass++; spdlog::info("[PASS] Test 8: SetUnSelectable"); }
-            else { fail++; spdlog::error("[FAIL] Test 8: SetUnSelectable"); }
-        } else { fail++; spdlog::error("[FAIL] Test 8: no entity"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 8: SetUnSelectable"); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 8: no entity"); }
     }
 
     spdlog::info("MassStub4 test: {}/{} passed", pass, pass + fail);
@@ -6404,7 +6405,7 @@ void test_spatial(TestContext& ctx) {
                   reg.grid_width() > 0 && reg.grid_height() > 0;
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Grid initialized ({}x{} cells)",
                                         reg.grid_width(), reg.grid_height()); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Grid not initialized"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Grid not initialized"); }
     }
 
     // Test 2: collect_in_radius finds entity at known position
@@ -6416,13 +6417,13 @@ void test_spatial(TestContext& ctx) {
         auto found = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok = std::find(found.begin(), found.end(), uid) != found.end();
         if (ok) { pass++; spdlog::info("[PASS] Test 2: collect_in_radius finds entity"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: collect_in_radius missed entity"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: collect_in_radius missed entity"); }
 
         // Test 3: collect_in_radius excludes entity outside range
         auto not_found = reg.collect_in_radius(0.0f, 0.0f, 10.0f);
         bool ok3 = std::find(not_found.begin(), not_found.end(), uid) == not_found.end();
         if (ok3) { pass++; spdlog::info("[PASS] Test 3: collect_in_radius excludes distant entity"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: collect_in_radius included distant entity"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: collect_in_radius included distant entity"); }
 
         // Test 4: Moving entity updates grid automatically
         auto* e = reg.find(uid);
@@ -6432,21 +6433,21 @@ void test_spatial(TestContext& ctx) {
         auto old_pos = reg.collect_in_radius(256.0f, 256.0f, 10.0f);
         bool ok4b = std::find(old_pos.begin(), old_pos.end(), uid) == old_pos.end();
         if (ok4a && ok4b) { pass++; spdlog::info("[PASS] Test 4: set_position auto-updates grid"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: grid not updated after set_position (found_new={}, gone_old={})", ok4a, ok4b); }
 
         // Test 5: collect_in_rect returns correct results
         e->set_position({100.0f, 0.0f, 100.0f});
         auto rect = reg.collect_in_rect(90.0f, 90.0f, 110.0f, 110.0f);
         bool ok5 = std::find(rect.begin(), rect.end(), uid) != rect.end();
         if (ok5) { pass++; spdlog::info("[PASS] Test 5: collect_in_rect finds entity"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: collect_in_rect missed entity"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: collect_in_rect missed entity"); }
 
         // Test 6: Destroyed entity excluded from results
         e->mark_destroyed();
         auto after_destroy = reg.collect_in_radius(100.0f, 100.0f, 20.0f);
         bool ok6 = std::find(after_destroy.begin(), after_destroy.end(), uid) == after_destroy.end();
         if (ok6) { pass++; spdlog::info("[PASS] Test 6: Destroyed entity excluded from results"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Destroyed entity still in results"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Destroyed entity still in results"); }
 
         // Test 7: Unregistered entity removed from grid
         // Entity is destroyed, but unregister should still remove from grid
@@ -6454,7 +6455,7 @@ void test_spatial(TestContext& ctx) {
         auto after_unreg = reg.collect_in_radius(100.0f, 100.0f, 20.0f);
         bool ok7 = std::find(after_unreg.begin(), after_unreg.end(), uid) == after_unreg.end();
         if (ok7) { pass++; spdlog::info("[PASS] Test 7: Unregistered entity removed from grid"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Unregistered entity still in grid"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Unregistered entity still in grid"); }
     }
 
     // Test 8: Large radius brute-force correctness check
@@ -6478,7 +6479,7 @@ void test_spatial(TestContext& ctx) {
         bool not_3 = std::find(results.begin(), results.end(), test_ids[3]) == results.end();
         bool ok = found_0 && found_1 && not_2 && not_3;
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Brute-force correctness (4 entities, radius query)"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Brute-force correctness (f0={} f1={} n2={} n3={})",
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Brute-force correctness (f0={} f1={} n2={} n3={})",
                                       found_0, found_1, not_2, not_3); }
 
         // Cleanup
@@ -6512,7 +6513,7 @@ void test_unitsound(TestContext& ctx) {
         }
     }
     if (!e1) {
-        spdlog::error("[FAIL] No living unit found for unit sound test");
+        osc::test_status::fail("[FAIL] No living unit found for unit sound test");
         return;
     }
     spdlog::info("Using entity #{} for unit sound tests", test_id);
@@ -6529,7 +6530,7 @@ void test_unitsound(TestContext& ctx) {
         "e.Blueprint.Audio['Ambient1']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n"
         "e.Blueprint.Audio['Ambient2']    = { Bank = 'XGG', Cue = 'XGG_Weapon_Sonic' }\n");
     if (!inject) {
-        spdlog::error("[FAIL] Audio inject: {}", inject.error().message);
+        osc::test_status::fail("[FAIL] Audio inject: {}", inject.error().message);
         return;
     }
 
@@ -6544,7 +6545,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("e:PlayUnitSound('TestOneShot')");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 1: PlayUnitSound with valid audio key"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: PlayUnitSound — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: PlayUnitSound — {}", r.error().message); }
     }
 
     // Test 2: PlayUnitSound with missing audio key → returns false (no error)
@@ -6552,7 +6553,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("local ok = e:PlayUnitSound('NonExistentSound')");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 2: PlayUnitSound with missing key (no crash)"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: PlayUnitSound missing — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: PlayUnitSound missing — {}", r.error().message); }
     }
 
     // Test 3: PlayUnitAmbientSound with valid audio → no error
@@ -6560,7 +6561,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("e:PlayUnitAmbientSound('TestAmbient')");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 3: PlayUnitAmbientSound with valid audio"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: PlayUnitAmbientSound — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: PlayUnitAmbientSound — {}", r.error().message); }
     }
 
     // Test 4: StopUnitAmbientSound → no error
@@ -6568,7 +6569,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("e:StopUnitAmbientSound()");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 4: StopUnitAmbientSound"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: StopUnitAmbientSound — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: StopUnitAmbientSound — {}", r.error().message); }
     }
 
     // Test 5: PlayUnitAmbientSound twice (replaces) → no error
@@ -6577,7 +6578,7 @@ void test_unitsound(TestContext& ctx) {
         auto r2 = lua("e:PlayUnitAmbientSound('Ambient2')");
         bool ok = !!r1 && !!r2;
         if (ok) { pass++; spdlog::info("[PASS] Test 5: PlayUnitAmbientSound replaces previous"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: PlayUnitAmbientSound replaces"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: PlayUnitAmbientSound replaces"); }
         lua("e:StopUnitAmbientSound()");
     }
 
@@ -6586,7 +6587,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("e:PlayUnitAmbientSound('NonExistent')");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 6: PlayUnitAmbientSound with missing key (no crash)"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: PlayUnitAmbientSound missing — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: PlayUnitAmbientSound missing — {}", r.error().message); }
     }
 
     // Test 7: StopUnitAmbientSound when nothing playing → no crash
@@ -6594,7 +6595,7 @@ void test_unitsound(TestContext& ctx) {
         auto r = lua("e:StopUnitAmbientSound()");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 7: StopUnitAmbientSound when idle"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: StopUnitAmbientSound when idle — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: StopUnitAmbientSound when idle — {}", r.error().message); }
     }
 
     spdlog::info("Unit sound test: {}/{} passed", pass, pass + fail);
@@ -6620,7 +6621,7 @@ void test_medstub(TestContext& ctx) {
         }
     }
     if (!e1) {
-        spdlog::error("[FAIL] No living unit found for medstub test");
+        osc::test_status::fail("[FAIL] No living unit found for medstub test");
         return;
     }
     spdlog::info("Using entity #{} for medstub tests", test_id);
@@ -6639,7 +6640,7 @@ void test_medstub(TestContext& ctx) {
             "animator:SetBoneEnabled('Head', false)\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 1: SetBoneEnabled(bone, false) no crash"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: SetBoneEnabled — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: SetBoneEnabled — {}", r.error().message); }
     }
 
     // Test 2: SetBoneEnabled(bone, true) re-enable
@@ -6649,7 +6650,7 @@ void test_medstub(TestContext& ctx) {
             "animator:SetBoneEnabled('Head', true)\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 2: SetBoneEnabled(bone, true) re-enable"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: SetBoneEnabled re-enable — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: SetBoneEnabled re-enable — {}", r.error().message); }
     }
 
     // Test 3: SetBoneEnabled with nonexistent bone name (resolves to root=0)
@@ -6659,7 +6660,7 @@ void test_medstub(TestContext& ctx) {
             "animator:SetBoneEnabled('NonExistentBone', false)\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 3: SetBoneEnabled nonexistent bone (root fallback)"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: SetBoneEnabled nonexistent — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: SetBoneEnabled nonexistent — {}", r.error().message); }
     }
 
     // --- AddOnGivenCallback tests ---
@@ -6679,7 +6680,7 @@ void test_medstub(TestContext& ctx) {
             "if not _test_given_fired then error('callback did not fire') end\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 4: AddOnGivenCallback fires on ChangeUnitArmy"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: AddOnGivenCallback — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: AddOnGivenCallback — {}", r.error().message); }
     }
 
     // Test 5: ChangeUnitArmy without moho callback → no crash
@@ -6701,7 +6702,7 @@ void test_medstub(TestContext& ctx) {
                 "ChangeUnitArmy(e, army)\n");
             bool ok = !!r;
             if (ok) { pass++; spdlog::info("[PASS] Test 5: ChangeUnitArmy without callback (no crash)"); }
-            else { fail++; spdlog::error("[FAIL] Test 5: ChangeUnitArmy no callback — {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 5: ChangeUnitArmy no callback — {}", r.error().message); }
         } else {
             pass++; spdlog::info("[PASS] Test 5: Skipped (only one unit), counting as pass");
         }
@@ -6719,7 +6720,7 @@ void test_medstub(TestContext& ctx) {
             "if result ~= nil then error('expected nil, got ' .. tostring(result)) end\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 6: AddBoundedProp returns nil"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: AddBoundedProp — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: AddBoundedProp — {}", r.error().message); }
     }
 
     spdlog::info("Medium stub test: {}/{} passed", pass, pass + fail);
@@ -6745,7 +6746,7 @@ void test_lowstub(TestContext& ctx) {
         }
     }
     if (!e1) {
-        spdlog::error("[FAIL] No living unit found for lowstub test");
+        osc::test_status::fail("[FAIL] No living unit found for lowstub test");
         return;
     }
     spdlog::info("Using entity #{} for lowstub tests", test_id);
@@ -6760,7 +6761,7 @@ void test_lowstub(TestContext& ctx) {
         )");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 1: IEffect BeenDestroyed returns false before Destroy"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: IEffect BeenDestroyed — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: IEffect BeenDestroyed — {}", r.error().message); }
     }
 
     // Test 2: IEffect Destroy + BeenDestroyed returns true
@@ -6773,7 +6774,7 @@ void test_lowstub(TestContext& ctx) {
         )");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 2: IEffect Destroy sets BeenDestroyed true"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: IEffect Destroy + BeenDestroyed — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: IEffect Destroy + BeenDestroyed — {}", r.error().message); }
     }
 
     // Test 3: IEffect chainable methods return self
@@ -6790,7 +6791,7 @@ void test_lowstub(TestContext& ctx) {
         )");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 3: IEffect chainable methods return self"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: IEffect chainable methods — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: IEffect chainable methods — {}", r.error().message); }
     }
 
     // Test 4: CollisionBeam Destroy + BeenDestroyed
@@ -6805,7 +6806,7 @@ void test_lowstub(TestContext& ctx) {
         )");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 4: CollisionBeam Destroy/BeenDestroyed"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: CollisionBeam Destroy/BeenDestroyed — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: CollisionBeam Destroy/BeenDestroyed — {}", r.error().message); }
     }
 
     // Test 5: decal_handle Destroy + BeenDestroyed
@@ -6820,7 +6821,7 @@ void test_lowstub(TestContext& ctx) {
         )");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 5: decal_handle Destroy/BeenDestroyed"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: decal_handle Destroy/BeenDestroyed — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: decal_handle Destroy/BeenDestroyed — {}", r.error().message); }
     }
 
     // Test 6: CreateBuilderArmController returns non-nil with SetAimingArc/SetPrecedence/Disable
@@ -6835,7 +6836,7 @@ void test_lowstub(TestContext& ctx) {
             "manip:Disable()\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 6: CreateBuilderArmController real AimManipulator"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: CreateBuilderArmController — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: CreateBuilderArmController — {}", r.error().message); }
     }
 
     // Test 7: Visual stubs no-op (AddPingPongScroller, PlayCommanderWarpInEffect, PlayFxRollOffEnd)
@@ -6850,7 +6851,7 @@ void test_lowstub(TestContext& ctx) {
             "e:RequestRefreshUI()\n");
         bool ok = !!r;
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Visual stubs no-op (scrollers, warp, rolloff)"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Visual stubs — {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Visual stubs — {}", r.error().message); }
     }
 
     spdlog::info("Low-priority stub test: {}/{} passed", pass, pass + fail);
@@ -6867,7 +6868,7 @@ void test_blend(TestContext& ctx) {
     {
         bool ok = sizeof(osc::sim::SCMMesh::Vertex) == 64;
         if (ok) { pass++; spdlog::info("[PASS] Test 1: SCMMesh::Vertex size = 64 bytes"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: SCMMesh::Vertex size = {} (expected 64)", sizeof(osc::sim::SCMMesh::Vertex)); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: SCMMesh::Vertex size = {} (expected 64)", sizeof(osc::sim::SCMMesh::Vertex)); }
     }
 
     // Test 2: Parse a real SCM mesh and verify blend weight data
@@ -6894,15 +6895,15 @@ void test_blend(TestContext& ctx) {
                                   v.bone_indices[0], v.bone_indices[1],
                                   v.bone_indices[2], v.bone_indices[3]);
                 } else {
-                    spdlog::error("[FAIL] Test 2: weights=[{},{},{},{}]",
+                    osc::test_status::fail("[FAIL] Test 2: weights=[{},{},{},{}]",
                                    v.bone_weights[0], v.bone_weights[1],
                                    v.bone_weights[2], v.bone_weights[3]);
                 }
             } else {
-                spdlog::error("[FAIL] Test 2: SCM mesh parse returned empty");
+                osc::test_status::fail("[FAIL] Test 2: SCM mesh parse returned empty");
             }
         } else {
-            spdlog::error("[FAIL] Test 2: VFS read failed for {}", mesh_path);
+            osc::test_status::fail("[FAIL] Test 2: VFS read failed for {}", mesh_path);
         }
         if (ok) pass++; else fail++;
     }
@@ -6936,7 +6937,7 @@ void test_blend(TestContext& ctx) {
                           total_verts > 0 ? 100.0f * multi_bone_count / total_verts : 0.0f);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: Could not parse mesh for multi-bone check");
+            osc::test_status::fail("[FAIL] Test 3: Could not parse mesh for multi-bone check");
         }
     }
 
@@ -6954,14 +6955,14 @@ void test_blend(TestContext& ctx) {
                                 v.bone_weights[2] + v.bone_weights[3];
                     if (sum < 0.99f || sum > 1.01f) {
                         ok = false;
-                        spdlog::error("[FAIL] Test 4: Weight sum {} != 1.0", sum);
+                        osc::test_status::fail("[FAIL] Test 4: Weight sum {} != 1.0", sum);
                         break;
                     }
                 }
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: All vertex weights sum to 1.0"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Weight sum validation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Weight sum validation failed"); }
     }
 
     spdlog::info("Blend-weight skinning test: {}/{} passed", pass, pass + fail);
@@ -6979,7 +6980,7 @@ void test_ui(TestContext& ctx) {
         bool ok = lua_isuserdata(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 1: UIControlRegistry in Lua registry"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: UIControlRegistry not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: UIControlRegistry not found"); }
     }
 
     // Test 2: moho.control_methods has real methods
@@ -6996,7 +6997,7 @@ void test_ui(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_destroy) { pass++; spdlog::info("[PASS] Test 2: moho.control_methods.Destroy is a function"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: moho.control_methods.Destroy missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: moho.control_methods.Destroy missing"); }
     }
 
     // Test 3: moho.group_methods has Destroy (inherited from control_methods after flattening)
@@ -7013,7 +7014,7 @@ void test_ui(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_destroy) { pass++; spdlog::info("[PASS] Test 3: moho.group_methods has Destroy (inherited)"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: group_methods missing inherited Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: group_methods missing inherited Destroy"); }
     }
 
     // Test 4: InternalCreateGroup is a global function
@@ -7023,7 +7024,7 @@ void test_ui(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: InternalCreateGroup is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: InternalCreateGroup not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: InternalCreateGroup not found"); }
     }
 
     // Test 5: InternalCreateFrame is a global function
@@ -7033,7 +7034,7 @@ void test_ui(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: InternalCreateFrame is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: InternalCreateFrame not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: InternalCreateFrame not found"); }
     }
 
     // Test 6: LazyVar.Create is cached in registry
@@ -7043,7 +7044,7 @@ void test_ui(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: LazyVar.Create cached in registry"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: LazyVar.Create not cached"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: LazyVar.Create not cached"); }
     }
 
     // Test 7: Create a Frame via Lua and verify _c_object
@@ -7066,7 +7067,7 @@ void test_ui(TestContext& ctx) {
             spdlog::warn("Test 7 Lua error: {}", result.error().message);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Frame created with _c_object via Lua"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Frame creation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Frame creation failed"); }
     }
 
     // Test 8: Create a Group with parent Frame via Lua
@@ -7092,7 +7093,7 @@ void test_ui(TestContext& ctx) {
             spdlog::warn("Test 8 Lua error: {}", result.error().message);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Group created with correct parent"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Group parent linkage failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Group parent linkage failed"); }
     }
 
     // Test 9: LazyVar properties exist on controls
@@ -7113,7 +7114,7 @@ void test_ui(TestContext& ctx) {
             spdlog::warn("Test 9 Lua error: {}", result.error().message);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 9: LazyVar properties present on Frame"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: LazyVars missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: LazyVars missing"); }
     }
 
     // Test 10: Control methods (Show/Hide/SetAlpha/GetAlpha)
@@ -7139,7 +7140,7 @@ void test_ui(TestContext& ctx) {
             spdlog::warn("Test 10 Lua error: {}", result.error().message);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 10: Control methods (Show/Hide/Alpha/Name) work"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: Control method tests failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: Control method tests failed"); }
     }
 
     spdlog::info("UI control test: {}/{} passed", pass, pass + fail);
@@ -7157,7 +7158,7 @@ void test_bitmap(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateBitmap is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateBitmap not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: InternalCreateBitmap not found"); }
     }
 
     // Test 2: GetTextureDimensions is a global function
@@ -7167,7 +7168,7 @@ void test_bitmap(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: GetTextureDimensions is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: GetTextureDimensions not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: GetTextureDimensions not found"); }
     }
 
     // Test 3: moho.bitmap_methods has SetNewTexture (real method after flattening)
@@ -7184,7 +7185,7 @@ void test_bitmap(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_method) { pass++; spdlog::info("[PASS] Test 3: moho.bitmap_methods.SetNewTexture is a function"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: bitmap_methods.SetNewTexture missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: bitmap_methods.SetNewTexture missing"); }
     }
 
     // Test 4: moho.bitmap_methods inherits Destroy from control_methods
@@ -7201,7 +7202,7 @@ void test_bitmap(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_destroy) { pass++; spdlog::info("[PASS] Test 4: bitmap_methods has Destroy (inherited)"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: bitmap_methods missing inherited Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: bitmap_methods missing inherited Destroy"); }
     }
 
     // Helper Lua snippet: create a bitmap table with bitmap_methods
@@ -7223,7 +7224,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 5 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Bitmap created via InternalCreateBitmap"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Bitmap creation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Bitmap creation failed"); }
     }
 
     // Test 6: InternalSetSolidColor works
@@ -7236,7 +7237,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 6 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: InternalSetSolidColor works"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: InternalSetSolidColor failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: InternalSetSolidColor failed"); }
     }
 
     // Test 7: BitmapWidth/BitmapHeight return 0 for no texture
@@ -7251,7 +7252,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 7 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: BitmapWidth/Height = 0 with no texture"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: BitmapWidth/Height unexpected values"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: BitmapWidth/Height unexpected values"); }
     }
 
     // Test 8: SetUV / SetTiled / UseAlphaHitTest
@@ -7266,7 +7267,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 8 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: SetUV/SetTiled/UseAlphaHitTest work"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: UV/tiled/alpha hit test failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: UV/tiled/alpha hit test failed"); }
     }
 
     // Test 9: Animation methods (SetFrame/GetFrame/GetNumFrames/SetFrameRate)
@@ -7283,7 +7284,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 9 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 9: Animation methods work"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Animation methods failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Animation methods failed"); }
     }
 
     // Test 10: SetNewTexture with a DDS path (reads VFS, parses header)
@@ -7299,7 +7300,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 10 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 10: SetNewTexture with DDS path works"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: SetNewTexture with DDS path failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: SetNewTexture with DDS path failed"); }
     }
 
     // Test 11: Play/Stop/Loop/Pattern animation methods
@@ -7318,7 +7319,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 11 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 11: Play/Stop/Loop/Pattern methods work"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: Animation control methods failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: Animation control methods failed"); }
     }
 
     // Test 12: Bitmap parent linkage
@@ -7339,7 +7340,7 @@ void test_bitmap(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 12 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 12: Bitmap parent linkage correct"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: Bitmap parent linkage failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: Bitmap parent linkage failed"); }
     }
 
     spdlog::info("Bitmap test: {}/{} passed", pass, pass + fail);
@@ -7357,7 +7358,7 @@ void test_text(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateText is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateText not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: InternalCreateText not found"); }
     }
 
     // Test 2: moho.text_methods has SetText (real method after flattening)
@@ -7374,7 +7375,7 @@ void test_text(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_method) { pass++; spdlog::info("[PASS] Test 2: moho.text_methods.SetText is a function"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: text_methods.SetText missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: text_methods.SetText missing"); }
     }
 
     // Test 3: moho.text_methods inherits Destroy from control_methods
@@ -7391,7 +7392,7 @@ void test_text(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_destroy) { pass++; spdlog::info("[PASS] Test 3: text_methods has Destroy (inherited)"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: text_methods missing inherited Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: text_methods missing inherited Destroy"); }
     }
 
     // Helper: create a text control (bypasses text.lua import chain)
@@ -7412,7 +7413,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 4 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Text created via InternalCreateText"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Text creation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Text creation failed"); }
     }
 
     // Test 5: SetText / GetText
@@ -7427,7 +7428,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 5 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: SetText/GetText round-trip works"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: SetText/GetText failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: SetText/GetText failed"); }
     }
 
     // Test 6: SetText with number
@@ -7442,7 +7443,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 6 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: SetText with number works"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: SetText with number failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: SetText with number failed"); }
     }
 
     // Test 7: SetNewFont updates font metrics
@@ -7458,7 +7459,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 7 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: SetNewFont updates font metrics"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: SetNewFont font metrics failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: SetNewFont font metrics failed"); }
     }
 
     // Test 8: FontAscent/FontDescent/FontExternalLeading/TextAdvance are LazyVars
@@ -7474,7 +7475,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 8 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Font metric LazyVars are tables"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Font metric LazyVars not tables"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Font metric LazyVars not tables"); }
     }
 
     // Test 9: SetNewColor / SetDropShadow / SetNewClipToWidth
@@ -7489,7 +7490,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 9 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 9: SetNewColor/SetDropShadow/SetNewClipToWidth work"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Color/shadow/clip failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Color/shadow/clip failed"); }
     }
 
     // Test 10: SetCenteredVertically / SetCenteredHorizontally
@@ -7503,7 +7504,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 10 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 10: SetCenteredVertically/Horizontally work"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: Centering failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: Centering failed"); }
     }
 
     // Test 11: GetStringAdvance returns positive value for non-empty string
@@ -7518,7 +7519,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 11 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 11: GetStringAdvance returns positive value"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: GetStringAdvance failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: GetStringAdvance failed"); }
     }
 
     // Test 12: TextAdvance LazyVar updates when text changes
@@ -7536,7 +7537,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 12 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 12: TextAdvance increases with text length"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: TextAdvance not proportional to length"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: TextAdvance not proportional to length"); }
     }
 
     // Test 13: Text parent linkage
@@ -7557,7 +7558,7 @@ void test_text(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 13 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 13: Text parent linkage correct"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: Text parent linkage failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: Text parent linkage failed"); }
     }
 
     spdlog::info("Text test: {}/{} passed", pass, pass + fail);
@@ -7575,7 +7576,7 @@ void test_edit(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 1: InternalCreateEdit is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: InternalCreateEdit not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: InternalCreateEdit not found"); }
     }
 
     // Test 2: InternalCreateItemList is a global function
@@ -7585,7 +7586,7 @@ void test_edit(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: InternalCreateItemList is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: InternalCreateItemList not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: InternalCreateItemList not found"); }
     }
 
     // Test 3: InternalCreateScrollbar is a global function
@@ -7595,7 +7596,7 @@ void test_edit(TestContext& ctx) {
         bool ok = lua_isfunction(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 3: InternalCreateScrollbar is registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: InternalCreateScrollbar not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: InternalCreateScrollbar not found"); }
     }
 
     // Test 4: moho.edit_methods has SetText + inherited Destroy
@@ -7616,7 +7617,7 @@ void test_edit(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (has_set && has_destroy) { pass++; spdlog::info("[PASS] Test 4: edit_methods has SetText + inherited Destroy"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: edit_methods missing methods (SetText={}, Destroy={})", has_set, has_destroy); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: edit_methods missing methods (SetText={}, Destroy={})", has_set, has_destroy); }
     }
 
     // Helper: create an edit control
@@ -7637,7 +7638,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 5 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Edit SetText/GetText round-trip"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Edit SetText/GetText failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Edit SetText/GetText failed"); }
     }
 
     // Test 6: ClearText
@@ -7651,7 +7652,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 6 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Edit ClearText works"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Edit ClearText failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Edit ClearText failed"); }
     }
 
     // Test 7: Color getters/setters
@@ -7669,7 +7670,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 7 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Edit color getters/setters work"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Edit color getters/setters failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Edit color getters/setters failed"); }
     }
 
     // Test 8: Caret position + visibility
@@ -7683,7 +7684,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 8 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Edit caret position + visibility"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Edit caret position/visibility failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Edit caret position/visibility failed"); }
     }
 
     // Test 9: Enable/Disable input + background
@@ -7700,7 +7701,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 9 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 9: Edit enable/disable + background"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Edit enable/disable failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Edit enable/disable failed"); }
     }
 
     // Test 10: MaxChars + highlight colors
@@ -7717,7 +7718,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 10 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 10: Edit max chars + highlight colors"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: Edit max chars/highlight colors failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: Edit max chars/highlight colors failed"); }
     }
 
     // Test 11: GetFontHeight + GetStringAdvance
@@ -7732,7 +7733,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 11 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 11: Edit font height + string advance"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: Edit font height/string advance failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: Edit font height/string advance failed"); }
     }
 
     // --- ItemList tests ---
@@ -7756,7 +7757,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 12 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 12: ItemList AddItem/GetItem/GetItemCount"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: ItemList AddItem/GetItem/GetItemCount failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: ItemList AddItem/GetItem/GetItemCount failed"); }
     }
 
     // Test 13: ItemList DeleteItem + ModifyItem
@@ -7773,7 +7774,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 13 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 13: ItemList DeleteItem + ModifyItem"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: ItemList DeleteItem/ModifyItem failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: ItemList DeleteItem/ModifyItem failed"); }
     }
 
     // Test 14: ItemList DeleteAllItems + Empty
@@ -7789,7 +7790,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 14 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 14: ItemList DeleteAllItems + Empty"); }
-        else { fail++; spdlog::error("[FAIL] Test 14: ItemList DeleteAllItems/Empty failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 14: ItemList DeleteAllItems/Empty failed"); }
     }
 
     // Test 15: ItemList Selection
@@ -7804,7 +7805,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 15 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 15: ItemList selection"); }
-        else { fail++; spdlog::error("[FAIL] Test 15: ItemList selection failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 15: ItemList selection failed"); }
     }
 
     // Test 16: ItemList SetNewFont + GetRowHeight + GetStringAdvance
@@ -7819,7 +7820,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 16 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 16: ItemList font + metrics"); }
-        else { fail++; spdlog::error("[FAIL] Test 16: ItemList font/metrics failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 16: ItemList font/metrics failed"); }
     }
 
     // Test 17: ItemList SetNewColors + ShowSelection/ShowMouseoverItem
@@ -7834,7 +7835,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 17 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 17: ItemList colors + show flags"); }
-        else { fail++; spdlog::error("[FAIL] Test 17: ItemList colors/show flags failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 17: ItemList colors/show flags failed"); }
     }
 
     // Test 18: ItemList ScrollToTop/ScrollToBottom
@@ -7849,7 +7850,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 18 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 18: ItemList scroll top/bottom"); }
-        else { fail++; spdlog::error("[FAIL] Test 18: ItemList scroll failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 18: ItemList scroll failed"); }
     }
 
     // --- Scrollbar tests ---
@@ -7870,7 +7871,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 19 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 19: Scrollbar created with _c_object"); }
-        else { fail++; spdlog::error("[FAIL] Test 19: Scrollbar creation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 19: Scrollbar creation failed"); }
     }
 
     // Test 20: Scrollbar SetNewTextures
@@ -7883,7 +7884,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 20 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 20: Scrollbar SetNewTextures"); }
-        else { fail++; spdlog::error("[FAIL] Test 20: Scrollbar SetNewTextures failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 20: Scrollbar SetNewTextures failed"); }
     }
 
     // Test 21: Scrollbar SetScrollable + DoScrollLines
@@ -7903,7 +7904,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 21 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 21: Scrollbar SetScrollable + DoScrollLines"); }
-        else { fail++; spdlog::error("[FAIL] Test 21: Scrollbar DoScrollLines failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 21: Scrollbar DoScrollLines failed"); }
     }
 
     // Test 22: Scrollbar DoScrollPages
@@ -7923,7 +7924,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 22 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 22: Scrollbar DoScrollPages"); }
-        else { fail++; spdlog::error("[FAIL] Test 22: Scrollbar DoScrollPages failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 22: Scrollbar DoScrollPages failed"); }
     }
 
     // Test 23: moho.item_list_methods + scrollbar_methods have inherited methods
@@ -7950,7 +7951,7 @@ void test_edit(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (il_has && sb_has) { pass++; spdlog::info("[PASS] Test 23: item_list_methods + scrollbar_methods have real methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 23: moho class methods missing (il={}, sb={})", il_has, sb_has); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 23: moho class methods missing (il={}, sb={})", il_has, sb_has); }
     }
 
     // Test 24: Edit SetCaretCycle
@@ -7964,7 +7965,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 24 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 24: Edit SetCaretCycle + SetDropShadow"); }
-        else { fail++; spdlog::error("[FAIL] Test 24: Edit SetCaretCycle/SetDropShadow failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 24: Edit SetCaretCycle/SetDropShadow failed"); }
     }
 
     // Test 25: Edit AcquireFocus / AbandonFocus
@@ -7978,7 +7979,7 @@ void test_edit(TestContext& ctx) {
         if (result) { ok = lua_toboolean(L, -1) != 0; lua_pop(L, 1); }
         else spdlog::warn("Test 25 Lua error: {}", result.error().message);
         if (ok) { pass++; spdlog::info("[PASS] Test 25: Edit AcquireFocus/AbandonFocus"); }
-        else { fail++; spdlog::error("[FAIL] Test 25: Edit AcquireFocus/AbandonFocus failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 25: Edit AcquireFocus/AbandonFocus failed"); }
     }
 
     spdlog::info("Edit/ItemList/Scrollbar test: {}/{} passed", pass, pass + fail);
@@ -8007,7 +8008,7 @@ void test_controls(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (all_ok) { pass++; spdlog::info("[PASS] Test 1: All 7 factory globals registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Some factory globals missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Some factory globals missing"); }
     }
 
     // --- Test 2: moho class tables have real methods ---
@@ -8083,7 +8084,7 @@ void test_controls(TestContext& ctx) {
 
         lua_pop(L, 1); // moho
         if (ok) { pass++; spdlog::info("[PASS] Test 2: moho class tables have real methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: moho class tables missing methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: moho class tables missing methods"); }
     }
 
     // Helper: create a frame parent for controls that need one
@@ -8104,7 +8105,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Border creation + SetNewTextures"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Border creation + SetNewTextures"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Border creation + SetNewTextures"); }
     }
 
     // --- Test 4: Border SetSolidColor ---
@@ -8118,7 +8119,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Border SetSolidColor"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Border SetSolidColor"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Border SetSolidColor"); }
     }
 
     // --- Test 5: Border inherits control_methods (Destroy, SetName) ---
@@ -8132,7 +8133,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Border inherits control_methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Border inherits control_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Border inherits control_methods"); }
     }
 
     // --- Test 6: Dragger creation + Destroy ---
@@ -8147,7 +8148,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Dragger creation + Destroy"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Dragger creation + Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Dragger creation + Destroy"); }
     }
 
     // --- Test 7: PostDragger stores active dragger ---
@@ -8161,7 +8162,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: PostDragger stores active dragger"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: PostDragger stores active dragger"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: PostDragger stores active dragger"); }
     }
 
     // --- Test 8: Cursor creation + SetDefaultTexture + ResetToDefault ---
@@ -8177,7 +8178,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Cursor creation + default/reset"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Cursor creation + default/reset"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Cursor creation + default/reset"); }
     }
 
     // --- Test 9: Cursor Show/Hide ---
@@ -8192,7 +8193,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 9: Cursor Show/Hide"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Cursor Show/Hide"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Cursor Show/Hide"); }
     }
 
     // --- Test 10: Movie creation + InternalSet + Play/Stop ---
@@ -8208,7 +8209,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 10: Movie creation + InternalSet + Play/Stop"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: Movie creation + InternalSet + Play/Stop"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: Movie creation + InternalSet + Play/Stop"); }
     }
 
     // --- Test 11: Movie Loop + IsLoaded + GetFrameRate + GetNumFrames ---
@@ -8225,7 +8226,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }
     }
 
     // --- Test 12: Movie inherits control_methods ---
@@ -8239,7 +8240,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 12: Movie inherits control_methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: Movie inherits control_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: Movie inherits control_methods"); }
     }
 
     // --- Test 13: Histogram creation + SetData/SetXIncrement/SetYIncrement ---
@@ -8255,7 +8256,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 13: Histogram creation + SetData/SetIncrement"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: Histogram creation + SetData/SetIncrement"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: Histogram creation + SetData/SetIncrement"); }
     }
 
     // --- Test 14: Histogram inherits control_methods ---
@@ -8269,7 +8270,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 14: Histogram inherits control_methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 14: Histogram inherits control_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 14: Histogram inherits control_methods"); }
     }
 
     // --- Test 15: WorldMesh creation + SetMesh + SetHidden/IsHidden ---
@@ -8286,7 +8287,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
-        else { fail++; spdlog::error("[FAIL] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 15: WorldMesh creation + SetHidden/IsHidden"); }
     }
 
     // --- Test 16: WorldMesh SetStance/SetColor/SetScale (no-op stubs) ---
@@ -8306,7 +8307,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 16: WorldMesh setter stubs (no crash)"); }
-        else { fail++; spdlog::error("[FAIL] Test 16: WorldMesh setter stubs"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 16: WorldMesh setter stubs"); }
     }
 
     // --- Test 17: WorldMesh GetInterpolated* return tables ---
@@ -8325,7 +8326,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 17: WorldMesh GetInterpolated* return tables"); }
-        else { fail++; spdlog::error("[FAIL] Test 17: WorldMesh GetInterpolated* return tables"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 17: WorldMesh GetInterpolated* return tables"); }
     }
 
     // --- Test 18: WorldMesh Destroy ---
@@ -8339,7 +8340,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 18: WorldMesh Destroy"); }
-        else { fail++; spdlog::error("[FAIL] Test 18: WorldMesh Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 18: WorldMesh Destroy"); }
     }
 
     // --- Test 19: Border nil-arg SetNewTextures (partial update) ---
@@ -8354,7 +8355,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 19: Border nil-arg partial SetNewTextures"); }
-        else { fail++; spdlog::error("[FAIL] Test 19: Border nil-arg partial SetNewTextures"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 19: Border nil-arg partial SetNewTextures"); }
     }
 
     // --- Test 20: Dragger has no parent (standalone object) ---
@@ -8367,7 +8368,7 @@ void test_controls(TestContext& ctx) {
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 20: Dragger standalone (no parent)"); }
-        else { fail++; spdlog::error("[FAIL] Test 20: Dragger standalone"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 20: Dragger standalone"); }
     }
 
     spdlog::info("Controls test: {}/{} passed", pass, pass + fail);
@@ -8398,7 +8399,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (all_ok) { pass++; spdlog::info("[PASS] Test 1: All 6 bootstrap globals registered"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Some bootstrap globals missing"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Some bootstrap globals missing"); }
     }
 
     // --- Test 2: GetFrame(0) returns root frame ---
@@ -8417,7 +8418,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: GetFrame(0) returns root frame with _c_object"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: GetFrame(0) invalid"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: GetFrame(0) invalid"); }
     }
 
     // --- Test 3: GetFrame(1) returns nil (single monitor) ---
@@ -8429,7 +8430,7 @@ void test_uiboot(TestContext& ctx) {
         bool ok = lua_isnil(L, -1);
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 3: GetFrame(1) returns nil"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: GetFrame(1) should be nil"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: GetFrame(1) should be nil"); }
     }
 
     // --- Test 4: GetNumRootFrames() returns 1 ---
@@ -8440,7 +8441,7 @@ void test_uiboot(TestContext& ctx) {
         bool ok = lua_isnumber(L, -1) && lua_tonumber(L, -1) == 1;
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: GetNumRootFrames() == 1"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: GetNumRootFrames invalid"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: GetNumRootFrames invalid"); }
     }
 
     // --- Test 5: Root frame has LazyVars ---
@@ -8461,7 +8462,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Root frame has 7 LazyVars"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Root frame missing LazyVars"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Root frame missing LazyVars"); }
     }
 
     // --- Test 6: Root frame has frame_methods (GetTopmostDepth, GetTargetHead) ---
@@ -8501,7 +8502,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1); // root frame
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Root frame has GetTopmostDepth + GetTargetHead"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Root frame missing frame_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Root frame missing frame_methods"); }
     }
 
     // --- Test 7: SetCursor stores cursor ---
@@ -8517,7 +8518,7 @@ void test_uiboot(TestContext& ctx) {
                   && std::string(lua_tostring(L, -1)) == "test_cursor";
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: SetCursor stores active cursor"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: SetCursor failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: SetCursor failed"); }
     }
 
     // --- Test 8: moho.UIWorldView has real methods ---
@@ -8543,7 +8544,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1); // moho
         if (ok) { pass++; spdlog::info("[PASS] Test 8: moho.UIWorldView has __init + Project"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: moho.UIWorldView missing methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: moho.UIWorldView missing methods"); }
     }
 
     // --- Test 9: WorldView creation via __init ---
@@ -8582,7 +8583,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 9: WorldView creation + LazyVars + _c_object"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: WorldView creation failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: WorldView creation failed"); }
     }
 
     // --- Test 10: WorldView Project returns {x,y} ---
@@ -8611,7 +8612,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 10: WorldView.Project returns {{x,y}}"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: WorldView.Project failed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: WorldView.Project failed"); }
     }
 
     // --- Test 11: WorldView inherits control_methods (GetName via metatable) ---
@@ -8635,7 +8636,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 11: WorldView inherits control_methods (GetName)"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: WorldView control_methods inheritance"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: WorldView control_methods inheritance"); }
     }
 
     // --- Test 12: WorldView GetRootFrame returns root frame ---
@@ -8655,7 +8656,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 12: WorldView.GetRootFrame returns non-nil"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: WorldView.GetRootFrame"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: WorldView.GetRootFrame"); }
     }
 
     // --- Test 13: WldUIProvider creation ---
@@ -8679,7 +8680,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 13: InternalCreateWldUIProvider sets _c_object"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: WldUIProvider creation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: WldUIProvider creation"); }
     }
 
     // --- Test 14: moho.WldUIProvider_methods has Destroy ---
@@ -8699,7 +8700,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 14: moho.WldUIProvider_methods.Destroy is real"); }
-        else { fail++; spdlog::error("[FAIL] Test 14: WldUIProvider_methods.Destroy"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 14: WldUIProvider_methods.Destroy"); }
     }
 
     // --- Test 15: moho.discovery_service_methods has real methods ---
@@ -8719,7 +8720,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 15: moho.discovery_service_methods.GetGameCount is real"); }
-        else { fail++; spdlog::error("[FAIL] Test 15: discovery_service_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 15: discovery_service_methods"); }
     }
 
     // --- Test 16: InternalCreateDiscoveryService returns instance ---
@@ -8744,7 +8745,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 16: InternalCreateDiscoveryService returns instance"); }
-        else { fail++; spdlog::error("[FAIL] Test 16: InternalCreateDiscoveryService"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 16: InternalCreateDiscoveryService"); }
     }
 
     // --- Test 17: moho.lobby_methods has real methods ---
@@ -8768,7 +8769,7 @@ void test_uiboot(TestContext& ctx) {
         }
         lua_pop(L, 1);
         if (ok) { pass++; spdlog::info("[PASS] Test 17: moho.lobby_methods has 4 real methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 17: lobby_methods"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 17: lobby_methods"); }
     }
 
     // --- Test 18: InternalCreateLobby returns instance ---
@@ -8793,7 +8794,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 18: InternalCreateLobby returns instance"); }
-        else { fail++; spdlog::error("[FAIL] Test 18: InternalCreateLobby"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 18: InternalCreateLobby"); }
     }
 
     // --- Test 19: Lobby stub methods return sensible defaults ---
@@ -8833,7 +8834,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 19: Lobby stubs return sensible defaults"); }
-        else { fail++; spdlog::error("[FAIL] Test 19: Lobby stubs"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 19: Lobby stubs"); }
     }
 
     // --- Test 20: WorldView stub methods don't crash ---
@@ -8861,7 +8862,7 @@ void test_uiboot(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 20: WorldView 14 stub methods don't crash"); }
-        else { fail++; spdlog::error("[FAIL] Test 20: WorldView stubs"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 20: WorldView stubs"); }
     }
 
     spdlog::info("UI boot test: {}/{} passed", pass, pass + fail);
@@ -8893,7 +8894,7 @@ void test_uirender(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 1: Create test bitmap: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 1: Create test bitmap: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -8924,7 +8925,7 @@ void test_uirender(TestContext& ctx) {
         lua_pop(L, 1); // table
 
         if (ok) { pass++; spdlog::info("[PASS] Test 2: Bitmap control has solid color set"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: Bitmap control state"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: Bitmap control state"); }
     }
 
     // --- Test 3: Read LazyVar values from C++ ---
@@ -8951,7 +8952,7 @@ void test_uirender(TestContext& ctx) {
                          left, top, width, height, depth);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: LazyVar read: Left={} Top={} Width={} Height={} Depth={}",
+            osc::test_status::fail("[FAIL] Test 3: LazyVar read: Left={} Top={} Width={} Height={} Depth={}",
                           left, top, width, height, depth);
         }
     }
@@ -8963,7 +8964,7 @@ void test_uirender(TestContext& ctx) {
         bool ok = (rgba[0] == 1.0f && rgba[1] == 0.0f &&
                    rgba[2] == 0.0f && rgba[3] == 1.0f);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: ARGB 0xFFFF0000 → RGBA (1,0,0,1)"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: ARGB→RGBA: ({},{},{},{})",
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: ARGB→RGBA: ({},{},{},{})",
                                      rgba[0], rgba[1], rgba[2], rgba[3]); }
     }
 
@@ -8976,7 +8977,7 @@ void test_uirender(TestContext& ctx) {
         // Alpha ~0.502
         ok = ok && (rgba[3] > 0.49f && rgba[3] < 0.51f);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: ARGB 0x8000FF00 → RGBA (0,1,0,~0.5)"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: ARGB→RGBA: ({},{},{},{})",
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: ARGB→RGBA: ({},{},{},{})",
                                      rgba[0], rgba[1], rgba[2], rgba[3]); }
     }
 
@@ -8999,7 +9000,7 @@ void test_uirender(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 6: Create second bitmap: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 6: Create second bitmap: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -9026,7 +9027,7 @@ void test_uirender(TestContext& ctx) {
         lua_pop(L, 1);
 
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Root frame has >=2 child controls"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Root frame children"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Root frame children"); }
     }
 
     // --- Test 8: Hidden controls should be skipped ---
@@ -9062,7 +9063,7 @@ void test_uirender(TestContext& ctx) {
         }
 
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Hidden control correctly set"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Hidden control"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Hidden control"); }
     }
 
     // --- Test 9: Controls without texture/solid color produce no quads ---
@@ -9096,14 +9097,14 @@ void test_uirender(TestContext& ctx) {
         }
 
         if (ok) { pass++; spdlog::info("[PASS] Test 9: Group control has no visual → no quad"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Group control visual state"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Group control visual state"); }
     }
 
     // --- Test 10: UIInstance struct layout is 48 bytes ---
     {
         bool ok = sizeof(renderer::UIInstance) == 48;
         if (ok) { pass++; spdlog::info("[PASS] Test 10: UIInstance struct = {} bytes", sizeof(renderer::UIInstance)); }
-        else { fail++; spdlog::error("[FAIL] Test 10: UIInstance = {} bytes (expected 48)", sizeof(renderer::UIInstance)); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: UIInstance = {} bytes (expected 48)", sizeof(renderer::UIInstance)); }
     }
 
     spdlog::info("UI render test: {}/{} passed", pass, pass + fail);
@@ -9131,7 +9132,7 @@ void test_font(TestContext& ctx) {
                          m.ascent, m.descent, m.external_leading);
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 1: Arial 14pt metrics not loaded (ok={})", ok);
+            osc::test_status::fail("[FAIL] Test 1: Arial 14pt metrics not loaded (ok={})", ok);
         }
     }
 
@@ -9141,7 +9142,7 @@ void test_font(TestContext& ctx) {
         fmp.get_metrics("Arial", 14, m);
         bool ok = m.ascent > m.descent;
         if (ok) { pass++; spdlog::info("[PASS] Test 2: Ascent ({:.2f}) > Descent ({:.2f})", m.ascent, m.descent); }
-        else { fail++; spdlog::error("[FAIL] Test 2: Ascent not > Descent"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: Ascent not > Descent"); }
     }
 
     // --- Test 3: Metrics scale with point size ---
@@ -9153,7 +9154,7 @@ void test_font(TestContext& ctx) {
         f32 ratio = m28.ascent / m14.ascent;
         bool ok = ratio > 1.8f && ratio < 2.2f;
         if (ok) { pass++; spdlog::info("[PASS] Test 3: 28pt/14pt ascent ratio = {:.2f}", ratio); }
-        else { fail++; spdlog::error("[FAIL] Test 3: 28pt/14pt ratio = {:.2f} (expected ~2.0)", ratio); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: 28pt/14pt ratio = {:.2f} (expected ~2.0)", ratio); }
     }
 
     // --- Test 4: String advance is positive for non-empty string ---
@@ -9161,7 +9162,7 @@ void test_font(TestContext& ctx) {
         f32 adv = fmp.string_advance("Arial", 14, "Hello World");
         bool ok = adv > 0.0f;
         if (ok) { pass++; spdlog::info("[PASS] Test 4: string_advance('Hello World') = {:.2f}px", adv); }
-        else { fail++; spdlog::error("[FAIL] Test 4: string_advance returned {:.2f}", adv); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: string_advance returned {:.2f}", adv); }
     }
 
     // --- Test 5: String advance scales with length ---
@@ -9171,7 +9172,7 @@ void test_font(TestContext& ctx) {
         // Double text should be roughly double advance (within 5% for kerning)
         bool ok = adv10 > adv5 * 1.9f && adv10 < adv5 * 2.1f;
         if (ok) { pass++; spdlog::info("[PASS] Test 5: advance('HelloHello')/{:.2f} / advance('Hello')/{:.2f} ≈ 2.0", adv10, adv5); }
-        else { fail++; spdlog::error("[FAIL] Test 5: ratio = {:.2f}", adv10 / adv5); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: ratio = {:.2f}", adv10 / adv5); }
     }
 
     // --- Test 6: Empty string has zero advance ---
@@ -9179,7 +9180,7 @@ void test_font(TestContext& ctx) {
         f32 adv = fmp.string_advance("Arial", 14, "");
         bool ok = adv == 0.0f;
         if (ok) { pass++; spdlog::info("[PASS] Test 6: empty string advance = 0"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: empty string advance = {:.2f}", adv); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: empty string advance = {:.2f}", adv); }
     }
 
     // --- Test 7: 'W' is wider than 'i' (proportional font) ---
@@ -9188,7 +9189,7 @@ void test_font(TestContext& ctx) {
         f32 adv_i = fmp.string_advance("Arial", 14, "i");
         bool ok = adv_w > adv_i;
         if (ok) { pass++; spdlog::info("[PASS] Test 7: 'W' ({:.2f}px) wider than 'i' ({:.2f}px)", adv_w, adv_i); }
-        else { fail++; spdlog::error("[FAIL] Test 7: W={:.2f} i={:.2f}", adv_w, adv_i); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: W={:.2f} i={:.2f}", adv_w, adv_i); }
     }
 
     // --- Test 8: Different font families can be loaded ---
@@ -9227,7 +9228,7 @@ void test_font(TestContext& ctx) {
             f32 asc = static_cast<f32>(lua_tonumber(L, -1));
             bool ok = asc > 0.0f;
             if (ok) { pass++; spdlog::info("[PASS] Test 9: Lua FontAscent = {:.2f} (real stb_truetype)", asc); }
-            else { fail++; spdlog::error("[FAIL] Test 9: FontAscent = {:.2f}", asc); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 9: FontAscent = {:.2f}", asc); }
         } else {
             // Root frame might not exist in all test configs
             pass++;
@@ -9266,7 +9267,7 @@ void test_font(TestContext& ctx) {
             spdlog::info("[PASS] Test 10: Lua GetStringAdvance (skipped — no root frame)");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 10: Lua GetStringAdvance proportional widths wrong");
+            osc::test_status::fail("[FAIL] Test 10: Lua GetStringAdvance proportional widths wrong");
         }
     }
 
@@ -9288,7 +9289,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(a, b);
         bool ok = (r.x == 50 && r.y == 40 && r.w == 60 && r.h == 60);
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Intersect overlapping rects = ({},{},{},{})", r.x, r.y, r.w, r.h); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Intersect = ({},{},{},{}) expected (50,40,60,60)", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Intersect = ({},{},{},{}) expected (50,40,60,60)", r.x, r.y, r.w, r.h); }
     }
 
     // --- Test 2: ClipRect::intersect — non-overlapping rects ---
@@ -9298,7 +9299,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(a, b);
         bool ok = (r.w == 0 && r.h == 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: Non-overlapping → w=0 h=0"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: Non-overlapping = ({},{},{},{})", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: Non-overlapping = ({},{},{},{})", r.x, r.y, r.w, r.h); }
     }
 
     // --- Test 3: ClipRect::intersect — contained rect ---
@@ -9308,7 +9309,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(outer, inner);
         bool ok = (r.x == 50 && r.y == 50 && r.w == 80 && r.h == 60);
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Contained rect preserved"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Contained = ({},{},{},{})", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Contained = ({},{},{},{})", r.x, r.y, r.w, r.h); }
     }
 
     // --- Test 4: ClipRect::intersect — edge-touching (zero overlap) ---
@@ -9318,7 +9319,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(a, b);
         bool ok = (r.w == 0 && r.h == 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Edge-touching → no overlap"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Edge-touching = ({},{},{},{})", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Edge-touching = ({},{},{},{})", r.x, r.y, r.w, r.h); }
     }
 
     // --- Test 5: Child clipped to parent bounds ---
@@ -9351,7 +9352,7 @@ void test_scissor(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 5: Lua error: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 5: Lua error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             // Read parent's bounds and verify the clip rect intersection
@@ -9364,7 +9365,7 @@ void test_scissor(TestContext& ctx) {
             bool ok = (clipped.x == 100 && clipped.y == 100 &&
                        clipped.w == 200 && clipped.h == 150);
             if (ok) { pass++; spdlog::info("[PASS] Test 5: Child clipped to parent bounds (100,100,200,150)"); }
-            else { fail++; spdlog::error("[FAIL] Test 5: Child clip = ({},{},{},{})", clipped.x, clipped.y, clipped.w, clipped.h); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 5: Child clip = ({},{},{},{})", clipped.x, clipped.y, clipped.w, clipped.h); }
         }
     }
 
@@ -9375,7 +9376,7 @@ void test_scissor(TestContext& ctx) {
         bool ok = (group.clip.x == 10 && group.clip.y == 20 &&
                    group.clip.w == 300 && group.clip.h == 400);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: UIDrawGroup stores clip rect"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: UIDrawGroup clip rect"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: UIDrawGroup clip rect"); }
     }
 
     // --- Test 7: ClipRect equality operator ---
@@ -9385,7 +9386,7 @@ void test_scissor(TestContext& ctx) {
         renderer::ClipRect c{10, 20, 30, 41};
         bool ok = (a == b) && (a != c);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: ClipRect equality operators"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: ClipRect equality"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: ClipRect equality"); }
     }
 
     // --- Test 8: Nested clip rects compound correctly ---
@@ -9405,7 +9406,7 @@ void test_scissor(TestContext& ctx) {
         // clip3 = intersect([200..500,150..400], [250..350,200..300]) = [250..350, 200..300]
         bool ok = (clip3.x == 250 && clip3.y == 200 && clip3.w == 100 && clip3.h == 100);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Nested clips compound: ({},{},{},{})", clip3.x, clip3.y, clip3.w, clip3.h); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Nested clips = ({},{},{},{})", clip3.x, clip3.y, clip3.w, clip3.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Nested clips = ({},{},{},{})", clip3.x, clip3.y, clip3.w, clip3.h); }
     }
 
     // --- Test 9: Completely outside parent is empty ---
@@ -9415,7 +9416,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(parent, child);
         bool ok = (r.w <= 0 || r.h <= 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 9: Child fully outside parent → empty clip"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: Outside child clip = ({},{},{},{})", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: Outside child clip = ({},{},{},{})", r.x, r.y, r.w, r.h); }
     }
 
     // --- Test 10: Negative coordinates handled ---
@@ -9425,7 +9426,7 @@ void test_scissor(TestContext& ctx) {
         auto r = renderer::ClipRect::intersect(a, b);
         bool ok = (r.x == 0 && r.y == 0 && r.w == 50 && r.h == 50);
         if (ok) { pass++; spdlog::info("[PASS] Test 10: Negative coords intersect correctly"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: Negative coords = ({},{},{},{})", r.x, r.y, r.w, r.h); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: Negative coords = ({},{},{},{})", r.x, r.y, r.w, r.h); }
     }
 
     spdlog::info("Scissor test: {}/{} passed", pass, pass + fail);
@@ -9458,7 +9459,7 @@ void test_border_render(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -9480,7 +9481,7 @@ void test_border_render(TestContext& ctx) {
         lua_pop(L, 1);
         ok = (bw == 16.0f && bh == 16.0f);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: BorderWidth={} BorderHeight={}", bw, bh); }
-        else { fail++; spdlog::error("[FAIL] Test 2: BorderWidth={} BorderHeight={}", bw, bh); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: BorderWidth={} BorderHeight={}", bw, bh); }
     }
 
     // --- Test 3: Border with solid color stores color ---
@@ -9505,7 +9506,7 @@ void test_border_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Border solid color set"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Border solid color"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Border solid color"); }
     }
 
     // --- Test 4: Border C++ state stores all 6 texture paths ---
@@ -9550,7 +9551,7 @@ void test_border_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: All 6 border textures stored"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Border texture paths"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Border texture paths"); }
     }
 
     // --- Test 5: Border ninepatch layout math (corner positions) ---
@@ -9575,7 +9576,7 @@ void test_border_render(TestContext& ctx) {
         ok = ok && (top_edge_x == 66.0f);
 
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Border layout math (inner {}x{}, UR at ({},50), LL at (50,{}))", inner_w, inner_h, ur_x, ll_y); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Border layout math"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Border layout math"); }
     }
 
     // --- Test 6: Border with zero-size edges (bw > width/2) clamps correctly ---
@@ -9585,7 +9586,7 @@ void test_border_render(TestContext& ctx) {
         if (inner_w < 0) inner_w = 0;
         bool ok = (inner_w == 0.0f);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Border inner clamped to 0 when bw > width/2"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: inner_w={}", inner_w); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: inner_w={}", inner_w); }
     }
 
     // --- Test 7: SetNewTextures with nil args preserves existing ---
@@ -9614,7 +9615,7 @@ void test_border_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 7: SetNewTextures preserves nil args"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: SetNewTextures nil preservation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: SetNewTextures nil preservation"); }
     }
 
     // --- Test 8: UIDrawGroup struct stores clip rect alongside texture ---
@@ -9626,7 +9627,7 @@ void test_border_render(TestContext& ctx) {
         g.instance_count = 3;
         bool ok = (g.clip.x == 10 && g.instance_offset == 5);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: UIDrawGroup clip+texture+offset"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: UIDrawGroup fields"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: UIDrawGroup fields"); }
     }
 
     spdlog::info("Border render test: {}/{} passed", pass, pass + fail);
@@ -9657,7 +9658,7 @@ void test_edit_render(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -9675,7 +9676,7 @@ void test_edit_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->control_type() == osc::ui::UIControl::ControlType::Edit;
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: Edit control_type is Edit"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: control_type"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: control_type"); }
     }
 
     // --- Test 3: SetText/GetText + caret position ---
@@ -9702,7 +9703,7 @@ void test_edit_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Text='Hello World', caret at 5"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Text/caret"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Text/caret"); }
     }
 
     // --- Test 4: Edit colors stored correctly ---
@@ -9731,7 +9732,7 @@ void test_edit_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Edit colors set (fg=black, bg=white, caret=red)"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Edit colors"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Edit colors"); }
     }
 
     // --- Test 5: Caret visibility toggle ---
@@ -9749,7 +9750,7 @@ void test_edit_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Caret visibility toggle works"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Caret visibility"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Caret visibility"); }
     }
 
     // --- Test 6: Background visibility toggle ---
@@ -9767,7 +9768,7 @@ void test_edit_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Background visibility toggle"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Background visibility"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Background visibility"); }
     }
 
     // --- Test 7: Caret cycle parameters ---
@@ -9786,7 +9787,7 @@ void test_edit_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Caret cycle params (0.5s, 0.2-0.9 alpha)"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Caret cycle"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Caret cycle"); }
     }
 
     // --- Test 8: Edit input_enabled controls caret rendering ---
@@ -9805,7 +9806,7 @@ void test_edit_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: input_enabled toggle"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: input_enabled"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: input_enabled"); }
     }
 
     spdlog::info("Edit render test: {}/{} passed", pass, pass + fail);
@@ -9836,7 +9837,7 @@ void test_itemlist_render(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -9854,7 +9855,7 @@ void test_itemlist_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->control_type() == osc::ui::UIControl::ControlType::ItemList;
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: control_type is ItemList"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: control_type"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: control_type"); }
     }
 
     // --- Test 3: Add items and verify count ---
@@ -9883,7 +9884,7 @@ void test_itemlist_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: 5 items added"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: item count"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: item count"); }
     }
 
     // --- Test 4: Selection index stored ---
@@ -9900,7 +9901,7 @@ void test_itemlist_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Selection index = 2"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Selection"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Selection"); }
     }
 
     // --- Test 5: Scroll offset ---
@@ -9918,7 +9919,7 @@ void test_itemlist_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Scroll offset set to 1"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Scroll offset"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Scroll offset"); }
     }
 
     // --- Test 6: Item colors stored ---
@@ -9937,7 +9938,7 @@ void test_itemlist_render(TestContext& ctx) {
         }
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Item colors stored"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Item colors"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Item colors"); }
     }
 
     // --- Test 7: Visible rows calculation ---
@@ -9947,7 +9948,7 @@ void test_itemlist_render(TestContext& ctx) {
         i32 visible = static_cast<i32>(height / row_height);
         bool ok = (visible >= 10); // 200/18 = 11
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Visible rows = {} for height={} row={}", visible, height, row_height); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Visible rows = {}", visible); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Visible rows = {}", visible); }
     }
 
     // --- Test 8: GetItem by index ---
@@ -9962,7 +9963,7 @@ void test_itemlist_render(TestContext& ctx) {
                   ctrl->get_item(4) == "Echo";
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: GetItem(0)=Alpha, (2)=Charlie, (4)=Echo"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: GetItem"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: GetItem"); }
     }
 
     spdlog::info("ItemList render test: {}/{} passed", pass, pass + fail);
@@ -9993,7 +9994,7 @@ void test_scrollbar_render(TestContext& ctx) {
         );
         if (err != 0) {
             fail++;
-            spdlog::error("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
+            osc::test_status::fail("[FAIL] Test 1: Lua error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         } else {
             pass++;
@@ -10011,7 +10012,7 @@ void test_scrollbar_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->control_type() == osc::ui::UIControl::ControlType::Scrollbar;
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 2: control_type is Scrollbar"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: control_type"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: control_type"); }
     }
 
     // --- Test 3: Scroll axis stored ---
@@ -10024,7 +10025,7 @@ void test_scrollbar_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->scroll_axis() == "Vert";
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Scroll axis = Vert"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Scroll axis"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Scroll axis"); }
     }
 
     // --- Test 4: SetNewTextures stores paths ---
@@ -10055,7 +10056,7 @@ void test_scrollbar_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Scrollbar textures stored"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Scrollbar textures"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Scrollbar textures"); }
     }
 
     // --- Test 5: Thumb position math (50% scroll, 25% visible) ---
@@ -10072,7 +10073,7 @@ void test_scrollbar_render(TestContext& ctx) {
                    std::abs(thumb_len - 50.0f) < 0.01f &&
                    std::abs(thumb_pos - 75.0f) < 0.01f);
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Thumb math: frac={:.2f} len={:.0f} pos={:.0f}", thumb_frac, thumb_len, thumb_pos); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Thumb math: frac={} len={} pos={}", thumb_frac, thumb_len, thumb_pos); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Thumb math: frac={} len={} pos={}", thumb_frac, thumb_len, thumb_pos); }
     }
 
     // --- Test 6: Minimum thumb size clamped to 16 ---
@@ -10083,7 +10084,7 @@ void test_scrollbar_render(TestContext& ctx) {
         f32 thumb_len = std::max(thumb_frac * track_len, 16.0f);
         bool ok = (thumb_len == 16.0f);
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Minimum thumb size = 16"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Thumb len = {}", thumb_len); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Thumb len = {}", thumb_len); }
     }
 
     // --- Test 7: Full visibility means thumb fills track ---
@@ -10094,7 +10095,7 @@ void test_scrollbar_render(TestContext& ctx) {
         f32 thumb_len = std::max(thumb_frac * track_len, 16.0f); // 200
         bool ok = (thumb_len == 200.0f);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Full visibility → thumb fills track"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Thumb len = {}", thumb_len); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Thumb len = {}", thumb_len); }
     }
 
     // --- Test 8: Scrollable ref stored ---
@@ -10108,7 +10109,7 @@ void test_scrollbar_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->scrollable_ref() < 0;
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 8: No scrollable ref initially"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Scrollable ref"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Scrollable ref"); }
     }
 
     spdlog::info("Scrollbar render test: {}/{} passed", pass, pass + fail);
@@ -10148,7 +10149,7 @@ void test_anim_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Created 4-frame bitmap"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Multi-texture bitmap"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Multi-texture bitmap"); }
     }
 
     // --- Test 2: SetFrame selects correct frame ---
@@ -10173,7 +10174,7 @@ void test_anim_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 2: SetFrame(2) → current_frame=2"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: SetFrame"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: SetFrame"); }
     }
 
     // --- Test 3: SetForwardPattern creates 0,1,2,3 pattern ---
@@ -10200,7 +10201,7 @@ void test_anim_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: Forward pattern = [0,1,2,3]"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Forward pattern"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Forward pattern"); }
     }
 
     // --- Test 4: SetPingPongPattern creates 0,1,2,3,2,1,0 ---
@@ -10228,7 +10229,7 @@ void test_anim_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: PingPong pattern = [0,1,2,3,2,1,0]"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: PingPong pattern"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: PingPong pattern"); }
     }
 
     // --- Test 5: Play/Stop state ---
@@ -10250,7 +10251,7 @@ void test_anim_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Play sets anim_playing=true"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Play state"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Play state"); }
     }
 
     // Helper: get real UIControlRegistry from Lua registry
@@ -10288,12 +10289,12 @@ void test_anim_render(TestContext& ctx) {
                       ctrl->current_frame() == 1 &&
                       ctrl->anim_playing();
             if (ok) { pass++; spdlog::info("[PASS] Test 6: advance 0.15s@10fps → frame 1"); }
-            else { fail++; spdlog::error("[FAIL] Test 6: advance (pi={} cf={} playing={})",
+            else { fail++; osc::test_status::fail("[FAIL] Test 6: advance (pi={} cf={} playing={})",
                                           ctrl->pattern_index(), ctrl->current_frame(),
                                           ctrl->anim_playing()); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 6: ctrl or registry is null");
+            osc::test_status::fail("[FAIL] Test 6: ctrl or registry is null");
         }
     }
 
@@ -10320,11 +10321,11 @@ void test_anim_render(TestContext& ctx) {
 
             bool ok = !ctrl->anim_playing() && ctrl->pattern_index() == 3;
             if (ok) { pass++; spdlog::info("[PASS] Test 7: Auto-stop at end of pattern"); }
-            else { fail++; spdlog::error("[FAIL] Test 7: auto-stop (playing={} pi={})",
+            else { fail++; osc::test_status::fail("[FAIL] Test 7: auto-stop (playing={} pi={})",
                                           ctrl->anim_playing(), ctrl->pattern_index()); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 7: ctrl or registry is null");
+            osc::test_status::fail("[FAIL] Test 7: ctrl or registry is null");
         }
     }
 
@@ -10353,12 +10354,12 @@ void test_anim_render(TestContext& ctx) {
                       ctrl->pattern_index() == 0 &&
                       ctrl->current_frame() == 0;
             if (ok) { pass++; spdlog::info("[PASS] Test 8: Loop wraps to frame 0"); }
-            else { fail++; spdlog::error("[FAIL] Test 8: loop (playing={} pi={} cf={})",
+            else { fail++; osc::test_status::fail("[FAIL] Test 8: loop (playing={} pi={} cf={})",
                                           ctrl->anim_playing(), ctrl->pattern_index(),
                                           ctrl->current_frame()); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 8: ctrl or registry is null");
+            osc::test_status::fail("[FAIL] Test 8: ctrl or registry is null");
         }
     }
 
@@ -10396,7 +10397,7 @@ void test_tiled_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Created bitmap for tiling"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Bitmap creation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Bitmap creation"); }
     }
 
     // --- Test 2: SetTiled flag ---
@@ -10418,7 +10419,7 @@ void test_tiled_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 2: SetTiled(true) sets flag"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: SetTiled flag"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: SetTiled flag"); }
     }
 
     // --- Test 3: Tiled UV calculation (200x150 control, 64x64 texture) ---
@@ -10440,10 +10441,10 @@ void test_tiled_render(TestContext& ctx) {
             bool ok = (std::abs(u1 - 3.125f) < 0.001f &&
                        std::abs(v1 - 2.34375f) < 0.001f);
             if (ok) { pass++; spdlog::info("[PASS] Test 3: Tiled UV = ({:.3f}, {:.3f})", u1, v1); }
-            else { fail++; spdlog::error("[FAIL] Test 3: Tiled UV"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: Tiled UV"); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: ctrl is null");
+            osc::test_status::fail("[FAIL] Test 3: ctrl is null");
         }
     }
 
@@ -10464,10 +10465,10 @@ void test_tiled_render(TestContext& ctx) {
                        std::abs(ctrl->uv_u1() - 0.9f) < 0.001f &&
                        std::abs(ctrl->uv_v1() - 0.8f) < 0.001f);
             if (ok) { pass++; spdlog::info("[PASS] Test 4: Non-tiled keeps custom UV"); }
-            else { fail++; spdlog::error("[FAIL] Test 4: Non-tiled UV"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 4: Non-tiled UV"); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 4: ctrl is null");
+            osc::test_status::fail("[FAIL] Test 4: ctrl is null");
         }
     }
 
@@ -10490,7 +10491,7 @@ void test_tiled_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 5: SetTiled(false) clears flag"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: SetTiled clear"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: SetTiled clear"); }
     }
 
     // --- Test 6: Tiled with zero-size texture doesn't crash ---
@@ -10511,7 +10512,7 @@ void test_tiled_render(TestContext& ctx) {
             if (ok) { pass++; spdlog::info("[PASS] Test 6: Tiled with zero texture size → safe"); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 6: ctrl is null");
+            osc::test_status::fail("[FAIL] Test 6: ctrl is null");
         }
     }
 
@@ -10529,7 +10530,7 @@ void test_input(TestContext& ctx) {
         osc::ui::UIDispatch dispatch;
         bool ok = true; // just verifying construction doesn't crash
         if (ok) { pass++; spdlog::info("[PASS] Test 1: UIDispatch created"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: UIDispatch creation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: UIDispatch creation"); }
     }
 
     // --- Test 2: Event buffering ---
@@ -10551,7 +10552,7 @@ void test_input(TestContext& ctx) {
             spdlog::info("[PASS] Test 2: Event buffering + dispatch (no crash)");
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 2: No registry");
+            osc::test_status::fail("[FAIL] Test 2: No registry");
         }
     }
 
@@ -10606,11 +10607,11 @@ void test_input(TestContext& ctx) {
 
             ok = (hit == ctrl) && (miss != ctrl);
             if (ok) { pass++; spdlog::info("[PASS] Test 3: Hit test inside=found, outside=missed"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: Hit test (hit={} ctrl={} miss={})",
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: Hit test (hit={} ctrl={} miss={})",
                                           (void*)hit, (void*)ctrl, (void*)miss); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 3: Lua setup failed");
+            osc::test_status::fail("[FAIL] Test 3: Lua setup failed");
         }
     }
 
@@ -10664,7 +10665,7 @@ void test_input(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: HandleEvent fired with ButtonPress"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: HandleEvent callback"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: HandleEvent callback"); }
     }
 
     // --- Test 5: Hidden controls are not hit ---
@@ -10695,10 +10696,10 @@ void test_input(TestContext& ctx) {
             ctrl->set_hidden(false); // restore
             bool ok = (hit != ctrl);
             if (ok) { pass++; spdlog::info("[PASS] Test 5: Hidden control not hit"); }
-            else { fail++; spdlog::error("[FAIL] Test 5: Hidden control was hit"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 5: Hidden control was hit"); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 5: null ctrl/root");
+            osc::test_status::fail("[FAIL] Test 5: null ctrl/root");
         }
     }
 
@@ -10730,10 +10731,10 @@ void test_input(TestContext& ctx) {
             ctrl->set_hit_test_disabled(false); // restore
             bool ok = (hit != ctrl);
             if (ok) { pass++; spdlog::info("[PASS] Test 6: hit_test_disabled prevents hit"); }
-            else { fail++; spdlog::error("[FAIL] Test 6: hit_test_disabled was ignored"); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 6: hit_test_disabled was ignored"); }
         } else {
             fail++;
-            spdlog::error("[FAIL] Test 6: null ctrl/root");
+            osc::test_status::fail("[FAIL] Test 6: null ctrl/root");
         }
     }
 
@@ -10791,7 +10792,7 @@ void test_input(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 7: KeyDown dispatched to focus control"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Keyboard dispatch"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Keyboard dispatch"); }
     }
 
     // --- Test 8: Event table has correct Modifiers ---
@@ -10840,7 +10841,7 @@ void test_input(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 8: Modifiers.Shift in event table"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: Modifiers"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: Modifiers"); }
     }
 
     spdlog::info("Input test: {}/{} passed", pass, pass + fail);
@@ -10878,7 +10879,7 @@ void test_onframe(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 1: NeedsFrameUpdate = true"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: NeedsFrameUpdate"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: NeedsFrameUpdate"); }
     }
 
     // --- Test 2: OnFrame callback receives delta time ---
@@ -10923,7 +10924,7 @@ void test_onframe(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 2: OnFrame called with dt=0.016"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: OnFrame callback"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: OnFrame callback"); }
     }
 
     // --- Test 3: NeedsFrameUpdate=false skips OnFrame ---
@@ -10961,7 +10962,7 @@ void test_onframe(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: NeedsFrameUpdate=false skips OnFrame"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: Skipped OnFrame"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: Skipped OnFrame"); }
     }
 
     // --- Test 4: Multiple update_controls calls accumulate ---
@@ -11001,7 +11002,7 @@ void test_onframe(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: OnFrame called 3 times"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Multiple OnFrame calls"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Multiple OnFrame calls"); }
     }
 
     // --- Test 5: Destroyed controls are skipped ---
@@ -11052,7 +11053,7 @@ void test_onframe(TestContext& ctx) {
             }
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Destroyed control skipped"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Destroyed control"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Destroyed control"); }
     }
 
     // --- Test 6: update_controls integration with renderer (just verify no crash) ---
@@ -11096,7 +11097,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Cursor control created"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Cursor creation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Cursor creation"); }
     }
 
     // --- Test 2: SetNewTexture sets texture + hotspot ---
@@ -11121,7 +11122,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 2: SetNewTexture stores path + hotspot"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: SetNewTexture"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: SetNewTexture"); }
     }
 
     // --- Test 3: SetCursor stores cursor in registry ---
@@ -11140,7 +11141,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: SetCursor stores active cursor"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: SetCursor"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: SetCursor"); }
     }
 
     // --- Test 4: Cursor visible by default ---
@@ -11153,7 +11154,7 @@ void test_cursor_render(TestContext& ctx) {
         bool ok = ctrl && ctrl->cursor_visible();
         lua_pop(L, 2);
         if (ok) { pass++; spdlog::info("[PASS] Test 4: Cursor visible by default"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: Cursor visibility"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: Cursor visibility"); }
     }
 
     // --- Test 5: Hide/Show cursor ---
@@ -11175,7 +11176,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 5: Hide() clears visibility"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: Hide"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: Hide"); }
     }
 
     // --- Test 6: Show cursor ---
@@ -11197,7 +11198,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Show() restores visibility"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Show"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Show"); }
     }
 
     // --- Test 7: Cursor quad position math (mouse - hotspot) ---
@@ -11209,7 +11210,7 @@ void test_cursor_render(TestContext& ctx) {
         bool ok = (std::abs(cx - 195.0f) < 0.01f &&
                    std::abs(cy - 147.0f) < 0.01f);
         if (ok) { pass++; spdlog::info("[PASS] Test 7: Cursor quad pos = ({}, {})", cx, cy); }
-        else { fail++; spdlog::error("[FAIL] Test 7: Cursor position math"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: Cursor position math"); }
     }
 
     // --- Test 8: SetDefaultTexture + ResetToDefault ---
@@ -11236,7 +11237,7 @@ void test_cursor_render(TestContext& ctx) {
             lua_pop(L, 2);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 8: ResetToDefault restores default texture"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: ResetToDefault"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: ResetToDefault"); }
     }
 
     spdlog::info("Cursor render test: {}/{} passed", pass, pass + fail);
@@ -11278,7 +11279,7 @@ void test_drag_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 1: Dragger created"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: Dragger creation"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: Dragger creation"); }
     }
 
     // --- Test 2: PostDragger stores dragger in registry ---
@@ -11298,7 +11299,7 @@ void test_drag_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 2: PostDragger stores active dragger"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: PostDragger"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: PostDragger"); }
     }
 
     // --- Test 3: OnMove callback fires during drag ---
@@ -11333,7 +11334,7 @@ void test_drag_render(TestContext& ctx) {
             ok = (std::abs(mx - 300.0) < 0.01 && std::abs(my - 200.0) < 0.01);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 3: OnMove(300, 200) fired"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: OnMove"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: OnMove"); }
     }
 
     // --- Test 4: OnRelease fires and clears dragger ---
@@ -11368,7 +11369,7 @@ void test_drag_render(TestContext& ctx) {
             ok = released && cleared;
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: OnRelease fired, dragger cleared"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: OnRelease"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: OnRelease"); }
     }
 
     // --- Test 5: OnCancel fires on ESC ---
@@ -11404,7 +11405,7 @@ void test_drag_render(TestContext& ctx) {
             ok = cancelled && cleared;
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 5: OnCancel fired on ESC, dragger cleared"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: OnCancel"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: OnCancel"); }
     }
 
     // --- Test 6: No dragger = normal mouse dispatch ---
@@ -11445,7 +11446,7 @@ void test_drag_render(TestContext& ctx) {
             lua_pop(L, 1);
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 6: Normal dispatch without dragger"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: Normal dispatch"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: Normal dispatch"); }
     }
 
     spdlog::info("Drag render test: {}/{} passed", pass, pass + fail);
@@ -11502,7 +11503,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest1");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 1: CreateEmitterAtEntity returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: result={}", v); }
     }
 
     // Test 2: ScaleEmitter returns self for chaining
@@ -11516,7 +11517,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest2");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 2: ScaleEmitter returns self"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: result={}", v); }
     }
 
     // Test 3: Full method chaining (Scale + Offset + SetEmitterParam + SetEmitterCurveParam)
@@ -11533,7 +11534,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest3");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 3: Full method chaining works"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: result={}", v); }
     }
 
     // Test 4: CreateEmitterAtBone returns table
@@ -11546,7 +11547,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest4");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 4: CreateEmitterAtBone returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: result={}", v); }
     }
 
     // Test 5: CreateAttachedEmitter returns table
@@ -11559,7 +11560,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest5");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 5: CreateAttachedEmitter returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: result={}", v); }
     }
 
     // Test 6: CreateBeamEmitter returns table (no entity needed)
@@ -11570,7 +11571,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest6");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 6: CreateBeamEmitter returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: result={}", v); }
     }
 
     // Test 7: AttachBeamEntityToEntity returns table
@@ -11583,7 +11584,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest7");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 7: AttachBeamEntityToEntity returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: result={}", v); }
     }
 
     // Test 8: Destroy + BeenDestroyed
@@ -11600,7 +11601,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest8");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 8: Destroy + BeenDestroyed"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: result={}", v); }
     }
 
     // Test 9: CreateDecal returns table
@@ -11613,7 +11614,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest9");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 9: CreateDecal returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: result={}", v); }
     }
 
     // Test 10: CreateSplat returns table
@@ -11625,7 +11626,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest10");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 10: CreateSplat returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: result={}", v); }
     }
 
     // Test 11: IEffectRegistry has effects from the session's Lua import chain
@@ -11634,7 +11635,7 @@ void test_emitter(TestContext& ctx) {
         size_t count = reg.count();
         bool ok = count > 0;
         if (ok) { pass++; spdlog::info("[PASS] Test 11: IEffectRegistry has {} effects", count); }
-        else { fail++; spdlog::error("[FAIL] Test 11: IEffectRegistry count=0"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: IEffectRegistry count=0"); }
     }
 
     // Test 12: CreateBeamEmitterOnEntity returns table
@@ -11647,7 +11648,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest12");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 12: CreateBeamEmitterOnEntity returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: result={}", v); }
     }
 
     // Test 13: CreateLightParticle doesn't crash (fire-and-forget, returns nothing)
@@ -11661,7 +11662,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest13");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 13: CreateLightParticle/Intel no crash"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: result={}", v); }
     }
 
     // Test 14: AttachBeamToEntity returns the same emitter
@@ -11675,7 +11676,7 @@ void test_emitter(TestContext& ctx) {
         )");
         auto v = check_result("_emtest14");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 14: AttachBeamToEntity returns same emitter"); }
-        else { fail++; spdlog::error("[FAIL] Test 14: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 14: result={}", v); }
     }
 
     spdlog::info("Emitter test: {}/{} passed", pass, pass + fail);
@@ -11737,7 +11738,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest1");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 1: __init creates _c_object"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: result={}", v); }
     }
 
     // Test 2: IsEnabled returns false initially
@@ -11750,7 +11751,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest2");
         if (v == "false") { pass++; spdlog::info("[PASS] Test 2: IsEnabled false initially"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: result={}", v); }
     }
 
     // Test 3: Enable sets enabled + fires OnEnable callback
@@ -11768,7 +11769,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest3");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 3: Enable + OnEnable callback"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: result={}", v); }
     }
 
     // Test 4: Disable sets disabled + fires OnDisable callback
@@ -11786,7 +11787,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest4");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 4: Disable + OnDisable callback"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: result={}", v); }
     }
 
     // Test 5: Enable when already enabled doesn't fire callback again
@@ -11805,7 +11806,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest5");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 5: Double-Enable fires callback once"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: result={}", v); }
     }
 
     // Test 6: GetLauncher returns the weapon's unit
@@ -11819,7 +11820,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest6");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 6: GetLauncher returns weapon unit"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: result={}", v); }
     }
 
     // Test 7: SetBeamFx stores emitter ref (no crash)
@@ -11834,7 +11835,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest7");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 7: SetBeamFx stores emitter"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: result={}", v); }
     }
 
     // Test 8: SetBeamFx with bCollideOnStart fires OnImpact
@@ -11854,7 +11855,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest8");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 8: SetBeamFx(collideOnStart) fires OnImpact"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: result={}", v); }
     }
 
     // Test 9: Destroy + BeenDestroyed
@@ -11869,7 +11870,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest9");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 9: Destroy + BeenDestroyed"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: result={}", v); }
     }
 
     // Test 10: GetArmy works (inherited from entity_methods)
@@ -11888,7 +11889,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest10");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 10: GetArmy inherited from entity_methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: result={}", v); }
     }
 
     // Test 11: GetPosition works (inherited, returns beam origin)
@@ -11901,7 +11902,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest11");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 11: GetPosition inherited from entity_methods"); }
-        else { fail++; spdlog::error("[FAIL] Test 11: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 11: result={}", v); }
     }
 
     // Test 12: Multiple beams can coexist
@@ -11926,7 +11927,7 @@ void test_collision_beam(TestContext& ctx) {
         )");
         auto v = check_result("_cbtest12");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 12: Multiple beams coexist"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: result={}", v); }
     }
 
     spdlog::info("CollisionBeam test: {}/{} passed", pass, pass + fail);
@@ -11981,7 +11982,7 @@ void test_decal_splat(TestContext& ctx) {
         )");
         auto v = check_result("_dstest1");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 1: CreateDecal returns handle table"); }
-        else { fail++; spdlog::error("[FAIL] Test 1: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 1: result={}", v); }
     }
 
     // Test 2: CreateDecal stores tex2 and shader type
@@ -12000,7 +12001,7 @@ void test_decal_splat(TestContext& ctx) {
             }
         }
         if (found) { pass++; spdlog::info("[PASS] Test 2: CreateDecal stores tex2/shader type"); }
-        else { fail++; spdlog::error("[FAIL] Test 2: tex2/shader not found on IEffect"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 2: tex2/shader not found on IEffect"); }
     }
 
     // Test 3: CDecalHandle:Destroy works
@@ -12015,7 +12016,7 @@ void test_decal_splat(TestContext& ctx) {
         )");
         auto v = check_result("_dstest3");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 3: CDecalHandle:Destroy sets _destroyed"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: result={}", v); }
     }
 
     // Test 4: CreateSplat returns table (no handle needed for TrashBag, but M90 returns one)
@@ -12027,7 +12028,7 @@ void test_decal_splat(TestContext& ctx) {
         )");
         auto v = check_result("_dstest4");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 4: CreateSplat returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: result={}", v); }
     }
 
     // Test 5: CreateSplat stores position correctly
@@ -12043,7 +12044,7 @@ void test_decal_splat(TestContext& ctx) {
             }
         }
         if (found) { pass++; spdlog::info("[PASS] Test 5: CreateSplat stores position"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: splat position not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: splat position not found"); }
     }
 
     // Test 6: CreateSplatOnBone creates effect with entity reference
@@ -12057,7 +12058,7 @@ void test_decal_splat(TestContext& ctx) {
         )");
         auto v = check_result("_dstest6");
         if (v == "ok") { pass++; spdlog::info("[PASS] Test 6: CreateSplatOnBone returns table"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: result={}", v); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: result={}", v); }
     }
 
     // Test 7: CreateSplatOnBone stores entity_id
@@ -12072,7 +12073,7 @@ void test_decal_splat(TestContext& ctx) {
             }
         }
         if (found) { pass++; spdlog::info("[PASS] Test 7: CreateSplatOnBone stores entity_id"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: bone splat entity_id not found"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: bone splat entity_id not found"); }
     }
 
     // Test 8: Effect count increased
@@ -12082,7 +12083,7 @@ void test_decal_splat(TestContext& ctx) {
         if (new_count > initial_count) {
             pass++; spdlog::info("[PASS] Test 8: Effect count increased ({} -> {})", initial_count, new_count);
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: count didn't increase ({} -> {})", initial_count, new_count);
+            fail++; osc::test_status::fail("[FAIL] Test 8: count didn't increase ({} -> {})", initial_count, new_count);
         }
     }
 
@@ -12120,7 +12121,7 @@ void test_decal_splat(TestContext& ctx) {
         if (exists_before && !exists_after) {
             pass++; spdlog::info("[PASS] Test 9: Timed effect expired after lifetime");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: before={} after={}", exists_before, exists_after);
+            fail++; osc::test_status::fail("[FAIL] Test 9: before={} after={}", exists_before, exists_after);
         }
     }
 
@@ -12144,7 +12145,7 @@ void test_decal_splat(TestContext& ctx) {
         }
 
         if (still_exists) { pass++; spdlog::info("[PASS] Test 10: Infinite-lifetime effect persists"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: infinite effect was removed"); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: infinite effect was removed"); }
     }
 
     spdlog::info("Decal/Splat test: {}/{} passed", pass, pass + fail);
@@ -12199,8 +12200,8 @@ void test_commands(TestContext& ctx) {
                 "    LOG('cmd test 1: PASS')\n"
                 "else error('FAIL before=' .. tostring(rawget(_G, '_cmd1_before')) .. ' after=' .. tostring(after)) end\n").c_str());
             if (r2) { pass++; spdlog::info("[PASS] Test 1: IssueNuke decrements silo ammo"); }
-            else { fail++; spdlog::error("[FAIL] Test 1: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 1: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 1: setup {}", r.error().message); }
     }
 
     // Test 2: IssueTactical decrements tactical silo ammo
@@ -12221,8 +12222,8 @@ void test_commands(TestContext& ctx) {
                 "    LOG('cmd test 2: PASS')\n"
                 "else error('FAIL before=' .. tostring(rawget(_G, '_cmd2_before')) .. ' after=' .. tostring(after)) end\n").c_str());
             if (r2) { pass++; spdlog::info("[PASS] Test 2: IssueTactical decrements tactical silo ammo"); }
-            else { fail++; spdlog::error("[FAIL] Test 2: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 2: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 2: setup {}", r.error().message); }
     }
 
     // Test 3: IssueNuke with zero ammo does nothing
@@ -12237,8 +12238,8 @@ void test_commands(TestContext& ctx) {
                 ("local u = GetEntityById(" + u1 + ")\n"
                 "if u:GetNukeSiloAmmoCount() == 0 then LOG('PASS') else error('ammo not 0') end\n").c_str());
             if (r2) { pass++; spdlog::info("[PASS] Test 3: IssueNuke with zero ammo does nothing"); }
-            else { fail++; spdlog::error("[FAIL] Test 3: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 3: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 3: setup {}", r.error().message); }
     }
 
     // Test 4: IssueOvercharge issues command (target entity)
@@ -12250,7 +12251,7 @@ void test_commands(TestContext& ctx) {
             "IssueOvercharge({u1}, u2)\n"
             "rawset(_G, '_cmd4', 'issued')\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 4: IssueOvercharge accepts entity target"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
         // Clear command so it doesn't try to attack
         run_lua(("IssueClearCommands({GetEntityById(" + u1 + ")})").c_str());
         ctx.sim.tick();
@@ -12274,8 +12275,8 @@ void test_commands(TestContext& ctx) {
                 "    LOG('cmd test 5: PASS')\n"
                 "else error('FAIL - pos=' .. p[1] .. ',' .. p[3]) end\n").c_str());
             if (r2) { pass++; spdlog::info("[PASS] Test 5: IssueTeleport moves unit"); }
-            else { fail++; spdlog::error("[FAIL] Test 5: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 5: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 5: setup {}", r.error().message); }
     }
 
     // Test 6: IssueFerry queues without clearing
@@ -12288,7 +12289,7 @@ void test_commands(TestContext& ctx) {
             "IssueFerry({u}, {200, 25, 200})\n"
             "rawset(_G, '_cmd6', 'issued')\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 6: IssueFerry queues without clearing"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); }
         run_lua(("IssueClearCommands({GetEntityById(" + u1 + ")})").c_str());
         ctx.sim.tick();
     }
@@ -12304,7 +12305,7 @@ void test_commands(TestContext& ctx) {
             "rawset(_G, '_cmd7_evt', evt)\n"
             "LOG('cmd test 7: PASS')\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 7: CreateEconomyEvent returns handle table"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
     // Test 8: EconomyEventIsDone initially false
@@ -12317,7 +12318,7 @@ void test_commands(TestContext& ctx) {
             "    LOG('cmd test 8: PASS - not done initially')\n"
             "else error('FAIL - done=' .. tostring(done)) end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 8: EconomyEventIsDone initially false"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); }
     }
 
     // Test 9: EconomyEventIsDone true after duration
@@ -12332,7 +12333,7 @@ void test_commands(TestContext& ctx) {
             "    LOG('cmd test 9: PASS - done after 1.2s')\n"
             "else error('FAIL - done=' .. tostring(done)) end\n");
         if (r) { pass++; spdlog::info("[PASS] Test 9: EconomyEventIsDone true after duration"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: {}", r.error().message); }
     }
 
     // Test 10: RemoveEconomyEvent cancels event
@@ -12347,7 +12348,7 @@ void test_commands(TestContext& ctx) {
             "    LOG('cmd test 10: PASS - cancelled')\n"
             "else error('FAIL done1=' .. tostring(done1) .. ' done2=' .. tostring(done2)) end\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 10: RemoveEconomyEvent cancels event"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: {}", r.error().message); }
     }
 
     // Test 11: Zero-duration economy event is immediately done
@@ -12363,8 +12364,8 @@ void test_commands(TestContext& ctx) {
                 "local evt = rawget(_G, '_cmd11_evt')\n"
                 "if EconomyEventIsDone(evt) then LOG('PASS') else error('not done') end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 11: Zero-duration economy event done after tick"); }
-            else { fail++; spdlog::error("[FAIL] Test 11: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 11: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 11: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 11: setup {}", r.error().message); }
     }
 
     // Test 12: Economy event completion sets waiting_thread_ref properly
@@ -12383,8 +12384,8 @@ void test_commands(TestContext& ctx) {
                 "if EconomyEventIsDone(evt) then LOG('PASS')\n"
                 "else error('event not done after ticking') end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 12: Economy event completes after ticking"); }
-            else { fail++; spdlog::error("[FAIL] Test 12: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 12: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 12: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 12: setup {}", r.error().message); }
     }
 
     // Test 13: IssueSacrifice queues command
@@ -12398,7 +12399,7 @@ void test_commands(TestContext& ctx) {
             "IssueClearCommands({u1})\n"
             "rawset(_G, '_cmd13', 'issued')\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 13: IssueSacrifice queues command"); }
-        else { fail++; spdlog::error("[FAIL] Test 13: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 13: {}", r.error().message); }
     }
 
     // Test 14: Multiple economy events tracked independently
@@ -12418,8 +12419,8 @@ void test_commands(TestContext& ctx) {
                 "if d1 == true and d2 == false then LOG('PASS')\n"
                 "else error('d1=' .. tostring(d1) .. ' d2=' .. tostring(d2)) end\n");
             if (r2) { pass++; spdlog::info("[PASS] Test 14: Multiple economy events independent"); }
-            else { fail++; spdlog::error("[FAIL] Test 14: {}", r2.error().message); }
-        } else { fail++; spdlog::error("[FAIL] Test 14: setup {}", r.error().message); }
+            else { fail++; osc::test_status::fail("[FAIL] Test 14: {}", r2.error().message); }
+        } else { fail++; osc::test_status::fail("[FAIL] Test 14: setup {}", r.error().message); }
     }
 
     spdlog::info("Commands test: {}/{} passed", pass, pass + fail);
@@ -12463,10 +12464,10 @@ void test_deposits(TestContext& ctx) {
                 std::abs(d.size - 2.0f) < 0.1f) {
                 pass++; spdlog::info("[PASS] Test 1: CreateResourceDeposit stores mass deposit");
             } else {
-                fail++; spdlog::error("[FAIL] Test 1: deposit fields wrong");
+                fail++; osc::test_status::fail("[FAIL] Test 1: deposit fields wrong");
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: deposit not added (before={} after={})", before, after);
+            fail++; osc::test_status::fail("[FAIL] Test 1: deposit not added (before={} after={})", before, after);
         }
     }
 
@@ -12479,7 +12480,7 @@ void test_deposits(TestContext& ctx) {
             ctx.sim.resource_deposits().back().type == sim::ResourceDeposit::Hydrocarbon) {
             pass++; spdlog::info("[PASS] Test 2: CreateResourceDeposit stores hydrocarbon deposit");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: hydrocarbon deposit not stored correctly");
+            fail++; osc::test_status::fail("[FAIL] Test 2: hydrocarbon deposit not stored correctly");
         }
     }
 
@@ -12493,7 +12494,7 @@ void test_deposits(TestContext& ctx) {
             "if not cd._c_object then error('no _c_object') end\n"
             "rawset(_G, '_dep3_cd', cd)\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 3: CreateCollisionDetector returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 3: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 3: {}", r.error().message); }
     }
 
     // Test 4: CollisionDetector has WatchBone method
@@ -12505,7 +12506,7 @@ void test_deposits(TestContext& ctx) {
             "if type(wb) ~= 'function' then error('WatchBone not function: ' .. type(wb)) end\n"
             "cd:WatchBone(0)\n");
         if (r) { pass++; spdlog::info("[PASS] Test 4: CollisionDetector WatchBone works"); }
-        else { fail++; spdlog::error("[FAIL] Test 4: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
     // Test 5: CollisionDetector has Enable/Disable from manipulator_methods
@@ -12515,7 +12516,7 @@ void test_deposits(TestContext& ctx) {
             "cd:Disable()\n"
             "cd:Enable()\n");
         if (r) { pass++; spdlog::info("[PASS] Test 5: CollisionDetector Enable/Disable work"); }
-        else { fail++; spdlog::error("[FAIL] Test 5: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 5: {}", r.error().message); }
     }
 
     // Test 6: CreateFootPlantController returns real object with SetPrecedence
@@ -12527,7 +12528,7 @@ void test_deposits(TestContext& ctx) {
             "if not fp._c_object then error('no _c_object') end\n"
             "fp:SetPrecedence(10)\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 6: CreateFootPlantController returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 6: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 6: {}", r.error().message); }
     }
 
     // Test 7: CreateSlaver returns real object with SetPrecedence
@@ -12539,7 +12540,7 @@ void test_deposits(TestContext& ctx) {
             "if not sl._c_object then error('no _c_object') end\n"
             "sl:SetPrecedence(5)\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 7: CreateSlaver returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 7: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
     // Test 8: CreateStorageManipulator returns real object
@@ -12552,7 +12553,7 @@ void test_deposits(TestContext& ctx) {
             "sm:SetPrecedence(1)\n"
             "sm:Destroy()\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 8: CreateStorageManipulator returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 8: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); }
     }
 
     // Test 9: CreateThrustController returns real object
@@ -12565,7 +12566,7 @@ void test_deposits(TestContext& ctx) {
             "tc:SetPrecedence(1)\n"
             "tc:Destroy()\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 9: CreateThrustController returns real object"); }
-        else { fail++; spdlog::error("[FAIL] Test 9: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 9: {}", r.error().message); }
     }
 
     // Test 10: CollisionDetector WatchBone returns self for chaining
@@ -12576,7 +12577,7 @@ void test_deposits(TestContext& ctx) {
             "local ret = cd:WatchBone(0)\n"
             "if ret ~= cd then error('WatchBone did not return self') end\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 10: WatchBone returns self for chaining"); }
-        else { fail++; spdlog::error("[FAIL] Test 10: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 10: {}", r.error().message); }
     }
 
     // Test 11: Multiple resource deposits tracked
@@ -12590,7 +12591,7 @@ void test_deposits(TestContext& ctx) {
         if (after == before + 3) {
             pass++; spdlog::info("[PASS] Test 11: Multiple resource deposits tracked");
         } else {
-            fail++; spdlog::error("[FAIL] Test 11: expected {} deposits, got {}", before + 3, after);
+            fail++; osc::test_status::fail("[FAIL] Test 11: expected {} deposits, got {}", before + 3, after);
         }
     }
 
@@ -12600,7 +12601,7 @@ void test_deposits(TestContext& ctx) {
             ("local u = GetEntityById(" + u1 + ")\n"
             "CreateFootPlantController(u, 0, 0, 0, true, 0):SetPrecedence(10)\n").c_str());
         if (r) { pass++; spdlog::info("[PASS] Test 12: FootPlantController chained SetPrecedence"); }
-        else { fail++; spdlog::error("[FAIL] Test 12: {}", r.error().message); }
+        else { fail++; osc::test_status::fail("[FAIL] Test 12: {}", r.error().message); }
     }
 
     spdlog::info("Deposit test: {}/{} passed", pass, pass + fail);
@@ -12638,7 +12639,7 @@ void test_beams(TestContext& ctx) {
         if (building && target == tgt_id) {
             pass++; spdlog::info("[PASS] Test 1: Build beam state (target={})", tgt_id);
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: is_building={}, target={}", building, target);
+            fail++; osc::test_status::fail("[FAIL] Test 1: is_building={}, target={}", building, target);
         }
         src_unit->set_build_target_id(0); // cleanup
     }
@@ -12650,7 +12651,7 @@ void test_beams(TestContext& ctx) {
         if (reclaiming && src_unit->reclaim_target_id() == tgt_id) {
             pass++; spdlog::info("[PASS] Test 2: Reclaim beam state");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: is_reclaiming={}", reclaiming);
+            fail++; osc::test_status::fail("[FAIL] Test 2: is_reclaiming={}", reclaiming);
         }
         src_unit->set_reclaim_target_id(0);
     }
@@ -12662,7 +12663,7 @@ void test_beams(TestContext& ctx) {
         if (repairing && src_unit->repair_target_id() == tgt_id) {
             pass++; spdlog::info("[PASS] Test 3: Repair beam state");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: is_repairing={}", repairing);
+            fail++; osc::test_status::fail("[FAIL] Test 3: is_repairing={}", repairing);
         }
         src_unit->set_repair_target_id(0);
     }
@@ -12674,7 +12675,7 @@ void test_beams(TestContext& ctx) {
         if (capturing && src_unit->capture_target_id() == tgt_id) {
             pass++; spdlog::info("[PASS] Test 4: Capture beam state");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: is_capturing={}", capturing);
+            fail++; osc::test_status::fail("[FAIL] Test 4: is_capturing={}", capturing);
         }
         src_unit->set_capture_target_id(0);
     }
@@ -12696,7 +12697,7 @@ void test_beams(TestContext& ctx) {
             if (enabled && ep.x == 100.0f && ep.z == 200.0f) {
                 pass++; spdlog::info("[PASS] Test 5: CollisionBeam enabled + endpoint");
             } else {
-                fail++; spdlog::error("[FAIL] Test 5: enabled={}, endpoint=({},{},{})",
+                fail++; osc::test_status::fail("[FAIL] Test 5: enabled={}, endpoint=({},{},{})",
                                        enabled, ep.x, ep.y, ep.z);
             }
             beam_entity->set_beam_enabled(false);
@@ -12709,7 +12710,7 @@ void test_beams(TestContext& ctx) {
             if (ok) {
                 pass++; spdlog::info("[PASS] Test 5: CollisionBeam flags set on unit");
             } else {
-                fail++; spdlog::error("[FAIL] Test 5: collision_beam={}, enabled={}",
+                fail++; osc::test_status::fail("[FAIL] Test 5: collision_beam={}, enabled={}",
                                        src_unit->is_collision_beam(), src_unit->beam_enabled());
             }
             src_unit->set_beam_enabled(false);
@@ -12725,7 +12726,7 @@ void test_beams(TestContext& ctx) {
         if (should_skip) {
             pass++; spdlog::info("[PASS] Test 6: No beam for non-existent target");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: entity 99999 unexpectedly exists");
+            fail++; osc::test_status::fail("[FAIL] Test 6: entity 99999 unexpectedly exists");
         }
         src_unit->set_build_target_id(0);
     }
@@ -12742,7 +12743,7 @@ void test_beams(TestContext& ctx) {
         if (src_building && tgt_beaming) {
             pass++; spdlog::info("[PASS] Test 7: Multiple simultaneous beam states");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: building={}, beaming={}", src_building, tgt_beaming);
+            fail++; osc::test_status::fail("[FAIL] Test 7: building={}, beaming={}", src_building, tgt_beaming);
         }
 
         src_unit->set_build_target_id(0);
@@ -12762,7 +12763,7 @@ void test_beams(TestContext& ctx) {
         if (moved) {
             pass++; spdlog::info("[PASS] Test 8: Beam endpoint updates correctly");
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: ep1=({},{},{}), ep2=({},{},{})",
+            fail++; osc::test_status::fail("[FAIL] Test 8: ep1=({},{},{}), ep2=({},{},{})",
                                    ep1.x, ep1.y, ep1.z, ep2.x, ep2.y, ep2.z);
         }
         src_unit->set_beam_enabled(false);
@@ -12815,7 +12816,7 @@ void test_shield_render(TestContext& ctx) {
         if (ok) {
             pass++; spdlog::info("[PASS] Test 1: Shield entity created with correct fields (id={})", sid);
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: shield fields incorrect");
+            fail++; osc::test_status::fail("[FAIL] Test 1: shield fields incorrect");
         }
     }
 
@@ -12834,10 +12835,10 @@ void test_shield_render(TestContext& ctx) {
             if (off) {
                 pass++; spdlog::info("[PASS] Test 2: Shield is_on toggle works");
             } else {
-                fail++; spdlog::error("[FAIL] Test 2: is_on not toggled");
+                fail++; osc::test_status::fail("[FAIL] Test 2: is_on not toggled");
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: no shield entity found");
+            fail++; osc::test_status::fail("[FAIL] Test 2: no shield entity found");
         }
     }
 
@@ -12855,10 +12856,10 @@ void test_shield_render(TestContext& ctx) {
             if (ok) {
                 pass++; spdlog::info("[PASS] Test 3: Shield health ratio = {:.2f}", ratio);
             } else {
-                fail++; spdlog::error("[FAIL] Test 3: ratio = {:.2f}", ratio);
+                fail++; osc::test_status::fail("[FAIL] Test 3: ratio = {:.2f}", ratio);
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: no shield found");
+            fail++; osc::test_status::fail("[FAIL] Test 3: no shield found");
         }
     }
 
@@ -12876,10 +12877,10 @@ void test_shield_render(TestContext& ctx) {
             if (ok) {
                 pass++; spdlog::info("[PASS] Test 4: Shield owner resolves to live unit");
             } else {
-                fail++; spdlog::error("[FAIL] Test 4: owner lookup failed");
+                fail++; osc::test_status::fail("[FAIL] Test 4: owner lookup failed");
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: no shield found");
+            fail++; osc::test_status::fail("[FAIL] Test 4: no shield found");
         }
     }
 
@@ -12898,10 +12899,10 @@ void test_shield_render(TestContext& ctx) {
             if (ok) {
                 pass++; spdlog::info("[PASS] Test 5: Shield size updated to 25");
             } else {
-                fail++; spdlog::error("[FAIL] Test 5: size not updated");
+                fail++; osc::test_status::fail("[FAIL] Test 5: size not updated");
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: no shield found");
+            fail++; osc::test_status::fail("[FAIL] Test 5: no shield found");
         }
     }
 
@@ -12921,10 +12922,10 @@ void test_shield_render(TestContext& ctx) {
             if (skip) {
                 pass++; spdlog::info("[PASS] Test 6: Sub-1.0 shield size would be skipped");
             } else {
-                fail++; spdlog::error("[FAIL] Test 6: size check failed");
+                fail++; osc::test_status::fail("[FAIL] Test 6: size check failed");
             }
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: no shield found");
+            fail++; osc::test_status::fail("[FAIL] Test 6: no shield found");
         }
     }
 
@@ -12959,7 +12960,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u && u->vet_level() == 0) {
             pass++; spdlog::info("[PASS] Test 1: Default vet level is 0");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: expected vet_level 0");
+            fail++; osc::test_status::fail("[FAIL] Test 1: expected vet_level 0");
         }
     }
 
@@ -12970,7 +12971,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u->vet_level() == 3) {
             pass++; spdlog::info("[PASS] Test 2: Vet level set to 3");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: expected vet_level 3, got {}", u->vet_level());
+            fail++; osc::test_status::fail("[FAIL] Test 2: expected vet_level 3, got {}", u->vet_level());
         }
     }
 
@@ -12982,7 +12983,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u->vet_level() == 7) {
             pass++; spdlog::info("[PASS] Test 3: Vet level stores raw value (7), renderer caps at 5");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: expected raw 7");
+            fail++; osc::test_status::fail("[FAIL] Test 3: expected raw 7");
         }
         u->set_vet_level(3); // restore
     }
@@ -12993,7 +12994,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u->adjacent_unit_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 4: No adjacents by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: expected empty adjacents");
+            fail++; osc::test_status::fail("[FAIL] Test 4: expected empty adjacents");
         }
     }
 
@@ -13009,7 +13010,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (a_has_b && b_has_a) {
             pass++; spdlog::info("[PASS] Test 5: Bidirectional adjacency established");
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: adjacency not bidirectional");
+            fail++; osc::test_status::fail("[FAIL] Test 5: adjacency not bidirectional");
         }
     }
 
@@ -13026,7 +13027,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (exactly_one) {
             pass++; spdlog::info("[PASS] Test 6: Adjacency dedup — exactly one entity draws each line");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: dedup logic error");
+            fail++; osc::test_status::fail("[FAIL] Test 6: dedup logic error");
         }
     }
 
@@ -13040,7 +13041,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (ua->adjacent_unit_ids().empty() && ub->adjacent_unit_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 7: Adjacency removed");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: adjacency not removed");
+            fail++; osc::test_status::fail("[FAIL] Test 7: adjacency not removed");
         }
     }
 
@@ -13060,7 +13061,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (ua->adjacent_unit_ids().size() == 2) {
             pass++; spdlog::info("[PASS] Test 8: Multiple adjacents (2 neighbors)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: expected 2 adjacents, got {}",
+            fail++; osc::test_status::fail("[FAIL] Test 8: expected 2 adjacents, got {}",
                                   ua->adjacent_unit_ids().size());
         }
 
@@ -13074,7 +13075,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u->vet_level() == 0) {
             pass++; spdlog::info("[PASS] Test 9: Vet level 0 — no indicators rendered");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: expected 0");
+            fail++; osc::test_status::fail("[FAIL] Test 9: expected 0");
         }
     }
 
@@ -13085,7 +13086,7 @@ void test_vet_adj_render(TestContext& ctx) {
         if (u->vet_level() == 5) {
             pass++; spdlog::info("[PASS] Test 10: Vet level 5 (max) set correctly");
         } else {
-            fail++; spdlog::error("[FAIL] Test 10: expected 5");
+            fail++; osc::test_status::fail("[FAIL] Test 10: expected 5");
         }
         u->set_vet_level(0);
     }
@@ -13115,7 +13116,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->intel_states().empty()) {
             pass++; spdlog::info("[PASS] Test 1: No intel states by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: expected empty intel_states");
+            fail++; osc::test_status::fail("[FAIL] Test 1: expected empty intel_states");
         }
     }
 
@@ -13125,7 +13126,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->is_intel_enabled("Radar") && unit->get_intel_radius("Radar") == 60.0f) {
             pass++; spdlog::info("[PASS] Test 2: Radar intel initialized (60u)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: radar init failed");
+            fail++; osc::test_status::fail("[FAIL] Test 2: radar init failed");
         }
     }
 
@@ -13135,7 +13136,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->is_intel_enabled("Sonar") && unit->get_intel_radius("Sonar") == 40.0f) {
             pass++; spdlog::info("[PASS] Test 3: Sonar intel initialized (40u)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: sonar init failed");
+            fail++; osc::test_status::fail("[FAIL] Test 3: sonar init failed");
         }
     }
 
@@ -13145,7 +13146,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->is_intel_enabled("Omni") && unit->get_intel_radius("Omni") == 30.0f) {
             pass++; spdlog::info("[PASS] Test 4: Omni intel initialized (30u)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: omni init failed");
+            fail++; osc::test_status::fail("[FAIL] Test 4: omni init failed");
         }
     }
 
@@ -13155,7 +13156,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (states.size() == 3) {
             pass++; spdlog::info("[PASS] Test 5: 3 intel types iterable");
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: expected 3 intel types, got {}", states.size());
+            fail++; osc::test_status::fail("[FAIL] Test 5: expected 3 intel types, got {}", states.size());
         }
     }
 
@@ -13169,7 +13170,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (disabled) {
             pass++; spdlog::info("[PASS] Test 6: Disabled radar still in map but enabled=false");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: radar disable failed");
+            fail++; osc::test_status::fail("[FAIL] Test 6: radar disable failed");
         }
         unit->enable_intel("Radar"); // restore
     }
@@ -13180,7 +13181,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->get_intel_radius("Radar") == 80.0f) {
             pass++; spdlog::info("[PASS] Test 7: Radar radius updated to 80");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: radius update failed");
+            fail++; osc::test_status::fail("[FAIL] Test 7: radius update failed");
         }
     }
 
@@ -13191,7 +13192,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (states.size() == 4 && states.at("Vision").radius == 26.0f) {
             pass++; spdlog::info("[PASS] Test 8: Vision intel added (26u, renders at lower alpha)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: vision init failed");
+            fail++; osc::test_status::fail("[FAIL] Test 8: vision init failed");
         }
     }
 
@@ -13202,7 +13203,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (r < 1.0f) {
             pass++; spdlog::info("[PASS] Test 9: Zero-radius sonar would be skipped by renderer");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: expected < 1.0");
+            fail++; osc::test_status::fail("[FAIL] Test 9: expected < 1.0");
         }
         unit->set_intel_radius("Sonar", 40.0f); // restore
     }
@@ -13214,7 +13215,7 @@ void test_intel_overlay(TestContext& ctx) {
         if (unit->is_intel_enabled("CustomType")) {
             pass++; spdlog::info("[PASS] Test 10: Unknown intel type exists but renderer skips it");
         } else {
-            fail++; spdlog::error("[FAIL] Test 10: custom type not stored");
+            fail++; osc::test_status::fail("[FAIL] Test 10: custom type not stored");
         }
     }
 
@@ -13239,7 +13240,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (e->mesh_override().empty()) {
             pass++; spdlog::info("[PASS] Test 1: mesh_override empty by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: expected empty mesh_override");
+            fail++; osc::test_status::fail("[FAIL] Test 1: expected empty mesh_override");
         }
     }
 
@@ -13254,7 +13255,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (e->mesh_override() == "/units/uel0001/uel0001_PhaseShield_mesh") {
             pass++; spdlog::info("[PASS] Test 2: mesh_override set to enhancement mesh");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: mesh_override not set");
+            fail++; osc::test_status::fail("[FAIL] Test 2: mesh_override not set");
         }
     }
 
@@ -13270,7 +13271,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (e->mesh_override().empty()) {
             pass++; spdlog::info("[PASS] Test 3: Empty string clears mesh override");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: mesh_override not cleared");
+            fail++; osc::test_status::fail("[FAIL] Test 3: mesh_override not cleared");
         }
     }
 
@@ -13285,7 +13286,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (unit->has_enhancement("HeavyAntiMatterCannon")) {
             pass++; spdlog::info("[PASS] Test 4: Enhancement stored in map");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: enhancement not found");
+            fail++; osc::test_status::fail("[FAIL] Test 4: enhancement not found");
         }
     }
 
@@ -13303,7 +13304,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (has_enh && has_mesh) {
             pass++; spdlog::info("[PASS] Test 5: Enhancement + mesh override coexist");
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: enhancement or mesh missing");
+            fail++; osc::test_status::fail("[FAIL] Test 5: enhancement or mesh missing");
         }
     }
 
@@ -13318,7 +13319,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (!e->is_wreckage()) {
             pass++; spdlog::info("[PASS] Test 6: Prop is_wreckage false by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: expected not wreckage");
+            fail++; osc::test_status::fail("[FAIL] Test 6: expected not wreckage");
         }
     }
 
@@ -13332,7 +13333,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (e->is_wreckage()) {
             pass++; spdlog::info("[PASS] Test 7: Prop marked as wreckage");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: wreckage flag not set");
+            fail++; osc::test_status::fail("[FAIL] Test 7: wreckage flag not set");
         }
     }
 
@@ -13351,7 +13352,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
             pass++; spdlog::info("[PASS] Test 8: Wreckage desaturation reduces color range ({:.2f} → {:.2f})",
                                   range_orig, range_desat);
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: desaturation didn't reduce range");
+            fail++; osc::test_status::fail("[FAIL] Test 8: desaturation didn't reduce range");
         }
     }
 
@@ -13366,7 +13367,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (e->is_wreckage() && e->is_unit()) {
             pass++; spdlog::info("[PASS] Test 9: Unit can be marked as wreckage");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: unit wreckage flag failed");
+            fail++; osc::test_status::fail("[FAIL] Test 9: unit wreckage flag failed");
         }
     }
 
@@ -13381,7 +13382,7 @@ void test_enhance_wreck_render(TestContext& ctx) {
         if (!e->is_wreckage()) {
             pass++; spdlog::info("[PASS] Test 10: Wreckage flag cleared");
         } else {
-            fail++; spdlog::error("[FAIL] Test 10: wreckage flag not cleared");
+            fail++; osc::test_status::fail("[FAIL] Test 10: wreckage flag not cleared");
         }
     }
 
@@ -13413,7 +13414,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->id() > 0 && fx->entity_id() == parent_id) {
             pass++; spdlog::info("[PASS] Test 1: Emitter at entity created");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: emitter creation failed");
+            fail++; osc::test_status::fail("[FAIL] Test 1: emitter creation failed");
         }
     }
 
@@ -13426,7 +13427,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->scale() == 2.5f) {
             pass++; spdlog::info("[PASS] Test 2: Emitter scale set to 2.5");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: scale not set");
+            fail++; osc::test_status::fail("[FAIL] Test 2: scale not set");
         }
     }
 
@@ -13439,7 +13440,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->offset_x() == 1.0f && fx->offset_y() == 2.0f && fx->offset_z() == 3.0f) {
             pass++; spdlog::info("[PASS] Test 3: Emitter offset (1,2,3) set");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: offset not set");
+            fail++; osc::test_status::fail("[FAIL] Test 3: offset not set");
         }
     }
 
@@ -13453,7 +13454,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->light_size() == 8.0f && fx->light_duration() == 2.0f) {
             pass++; spdlog::info("[PASS] Test 4: Light particle size=8, duration=2");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: light particle fields wrong");
+            fail++; osc::test_status::fail("[FAIL] Test 4: light particle fields wrong");
         }
     }
 
@@ -13473,7 +13474,7 @@ void test_vfx_render(TestContext& ctx) {
             fx->get_param("THICKNESS") == 3.0) {
             pass++; spdlog::info("[PASS] Test 5: Beam entity-to-entity with THICKNESS=3");
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: beam setup failed");
+            fail++; osc::test_status::fail("[FAIL] Test 5: beam setup failed");
         }
     }
 
@@ -13487,7 +13488,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->get_param("LENGTH") == 10.0) {
             pass++; spdlog::info("[PASS] Test 6: Attached beam LENGTH=10");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: beam params wrong");
+            fail++; osc::test_status::fail("[FAIL] Test 6: beam params wrong");
         }
     }
 
@@ -13500,7 +13501,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->destroyed()) {
             pass++; spdlog::info("[PASS] Test 7: Destroyed effect skipped by renderer");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: destroyed flag not set");
+            fail++; osc::test_status::fail("[FAIL] Test 7: destroyed flag not set");
         }
     }
 
@@ -13512,7 +13513,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->type() == sim::EffectType::DECAL) {
             pass++; spdlog::info("[PASS] Test 8: DECAL type skipped by particle renderer");
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: type mismatch");
+            fail++; osc::test_status::fail("[FAIL] Test 8: type mismatch");
         }
     }
 
@@ -13525,7 +13526,7 @@ void test_vfx_render(TestContext& ctx) {
         if (fx->entity_id() == 0 && fx->offset_x() == 500.0f) {
             pass++; spdlog::info("[PASS] Test 9: Unattached effect uses offset as position");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: unattached effect setup wrong");
+            fail++; osc::test_status::fail("[FAIL] Test 9: unattached effect setup wrong");
         }
     }
 
@@ -13535,7 +13536,7 @@ void test_vfx_render(TestContext& ctx) {
         if (count >= 9) { // we created 9 effects above
             pass++; spdlog::info("[PASS] Test 10: Effect registry has {} effects", count);
         } else {
-            fail++; spdlog::error("[FAIL] Test 10: expected >= 9, got {}", count);
+            fail++; osc::test_status::fail("[FAIL] Test 10: expected >= 9, got {}", count);
         }
     }
 
@@ -13558,7 +13559,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->cargo_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 1: Empty cargo by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: expected empty cargo");
+            fail++; osc::test_status::fail("[FAIL] Test 1: expected empty cargo");
         }
     }
 
@@ -13576,7 +13577,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (t->cargo_ids().size() == 3) {
             pass++; spdlog::info("[PASS] Test 2: Transport has 3 cargo units");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: expected 3 cargo");
+            fail++; osc::test_status::fail("[FAIL] Test 2: expected 3 cargo");
         }
     }
 
@@ -13591,7 +13592,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (t->cargo_ids().size() == 12) {
             pass++; spdlog::info("[PASS] Test 3: 12 cargo stored, renderer caps display at 8");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: expected 12 cargo stored");
+            fail++; osc::test_status::fail("[FAIL] Test 3: expected 12 cargo stored");
         }
     }
 
@@ -13607,7 +13608,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (t->cargo_ids().empty()) {
             pass++; spdlog::info("[PASS] Test 4: Cargo cleared");
         } else {
-            fail++; spdlog::error("[FAIL] Test 4: cargo not cleared");
+            fail++; osc::test_status::fail("[FAIL] Test 4: cargo not cleared");
         }
     }
 
@@ -13621,7 +13622,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->nuke_silo_ammo() == 0 && unit->tactical_silo_ammo() == 0) {
             pass++; spdlog::info("[PASS] Test 5: No silo ammo by default");
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: expected 0 ammo");
+            fail++; osc::test_status::fail("[FAIL] Test 5: expected 0 ammo");
         }
     }
 
@@ -13636,7 +13637,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->nuke_silo_ammo() == 3) {
             pass++; spdlog::info("[PASS] Test 6: 3 nuke ammo");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: expected 3 nuke");
+            fail++; osc::test_status::fail("[FAIL] Test 6: expected 3 nuke");
         }
     }
 
@@ -13651,7 +13652,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->tactical_silo_ammo() == 5) {
             pass++; spdlog::info("[PASS] Test 7: 5 tactical ammo");
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: expected 5 tactical");
+            fail++; osc::test_status::fail("[FAIL] Test 7: expected 5 tactical");
         }
     }
 
@@ -13667,7 +13668,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->nuke_silo_ammo() == 2 && unit->tactical_silo_ammo() == 4) {
             pass++; spdlog::info("[PASS] Test 8: 2 nuke + 4 tactical (rendered left/right)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 8: ammo counts wrong");
+            fail++; osc::test_status::fail("[FAIL] Test 8: ammo counts wrong");
         }
     }
 
@@ -13683,7 +13684,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->nuke_silo_ammo() == 0) {
             pass++; spdlog::info("[PASS] Test 9: Nuke ammo clamped to 0 (no negative)");
         } else {
-            fail++; spdlog::error("[FAIL] Test 9: expected 0");
+            fail++; osc::test_status::fail("[FAIL] Test 9: expected 0");
         }
     }
 
@@ -13698,7 +13699,7 @@ void test_transport_silo_render(TestContext& ctx) {
         if (unit->nuke_silo_ammo() == 10) {
             pass++; spdlog::info("[PASS] Test 10: 10 nuke stored, renderer caps display at 5");
         } else {
-            fail++; spdlog::error("[FAIL] Test 10: expected 10 stored");
+            fail++; osc::test_status::fail("[FAIL] Test 10: expected 10 stored");
         }
     }
 
@@ -13715,7 +13716,7 @@ void test_profile(TestContext& ctx) {
         if (!p.enabled()) {
             pass++; spdlog::info("[PASS] Test 1: Profiler starts disabled");
         } else {
-            fail++; spdlog::error("[FAIL] Test 1: Profiler should start disabled");
+            fail++; osc::test_status::fail("[FAIL] Test 1: Profiler should start disabled");
         }
     }
 
@@ -13726,7 +13727,7 @@ void test_profile(TestContext& ctx) {
         if (p.enabled()) {
             pass++; spdlog::info("[PASS] Test 2: Profiler can be enabled");
         } else {
-            fail++; spdlog::error("[FAIL] Test 2: set_enabled(true) failed");
+            fail++; osc::test_status::fail("[FAIL] Test 2: set_enabled(true) failed");
         }
     }
 
@@ -13739,7 +13740,7 @@ void test_profile(TestContext& ctx) {
         if (p.frame_count() == before + 1) {
             pass++; spdlog::info("[PASS] Test 3: Frame count incremented");
         } else {
-            fail++; spdlog::error("[FAIL] Test 3: Frame count not incremented");
+            fail++; osc::test_status::fail("[FAIL] Test 3: Frame count not incremented");
         }
     }
 
@@ -13764,13 +13765,13 @@ void test_profile(TestContext& ctx) {
                     pass++; spdlog::info("[PASS] Test 4: TestZone recorded {:.1f}us",
                                          p.zone_stats()[i].last_us);
                 } else {
-                    fail++; spdlog::error("[FAIL] Test 4: TestZone time is 0");
+                    fail++; osc::test_status::fail("[FAIL] Test 4: TestZone time is 0");
                 }
                 break;
             }
         }
         if (!found) {
-            fail++; spdlog::error("[FAIL] Test 4: TestZone not found in stats");
+            fail++; osc::test_status::fail("[FAIL] Test 4: TestZone not found in stats");
         }
     }
 
@@ -13801,7 +13802,7 @@ void test_profile(TestContext& ctx) {
             pass++; spdlog::info("[PASS] Test 5: Inner depth ({}) > Outer depth ({})",
                                  inner_depth, outer_depth);
         } else {
-            fail++; spdlog::error("[FAIL] Test 5: Bad nesting (outer={}, inner={})",
+            fail++; osc::test_status::fail("[FAIL] Test 5: Bad nesting (outer={}, inner={})",
                                   outer_depth, inner_depth);
         }
     }
@@ -13823,7 +13824,7 @@ void test_profile(TestContext& ctx) {
         if (found_tick) {
             pass++; spdlog::info("[PASS] Test 6: Sim::tick zone recorded");
         } else {
-            fail++; spdlog::error("[FAIL] Test 6: Sim::tick zone not found");
+            fail++; osc::test_status::fail("[FAIL] Test 6: Sim::tick zone not found");
         }
     }
 
@@ -13851,7 +13852,7 @@ void test_profile(TestContext& ctx) {
         if (avg > 0) {
             pass++; spdlog::info("[PASS] Test 7: Rolling avg = {:.1f}us", avg);
         } else {
-            fail++; spdlog::error("[FAIL] Test 7: Rolling avg is 0");
+            fail++; osc::test_status::fail("[FAIL] Test 7: Rolling avg is 0");
         }
     }
 

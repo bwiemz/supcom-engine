@@ -1,3 +1,4 @@
+#include "core/test_status.hpp"
 #include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -450,6 +451,30 @@ static std::string parse_string_arg(int argc, char* argv[], const char* flag,
         }
     }
     return default_val;
+}
+
+/// Exit code for a test mode run when no game data is available: CTest
+/// treats it as "skipped" (SKIP_RETURN_CODE), so data-backed tests pass
+/// harmlessly on machines without Forged Alliance.
+constexpr int kExitSkippedNoData = 77;
+
+/// End a test-mode run: fold smoke-harness issues into the tally, print a
+/// summary, and return the process exit code (0 = all checks passed).
+static int finish_test_run(const char* mode, osc::u32 smoke_issues = 0) {
+    if (smoke_issues > 0) {
+        osc::test_status::record_failure(
+            fmt::format("{} smoke issue(s) reported (see smoke report)", smoke_issues));
+    }
+    const int failures = osc::test_status::failure_count();
+    if (failures == 0) {
+        spdlog::info("=== {}: PASS ===", mode);
+        return 0;
+    }
+    spdlog::error("=== {}: FAIL ({} failed check(s)) ===", mode, failures);
+    for (const auto& message : osc::test_status::failure_messages()) {
+        spdlog::error("  - {}", message);
+    }
+    return 1;
 }
 
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
@@ -1383,12 +1408,13 @@ int main(int argc, char* argv[]) {
                     profile_test || smoke_test || ai_skirmish || draw_test ||
                     stress_test || full_smoke_test;
     bool headless = (tick_count > 0) || any_test;
+    if (any_test) osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
                       "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
                       "to see where we looked.");
-        return 1;
+        return any_test ? kExitSkippedNoData : 1;
     }
 
     spdlog::info("FA path:   {}", config.fa_path.string());
@@ -2107,7 +2133,7 @@ int main(int argc, char* argv[]) {
         lobby_harness.print_report(true);
         lobby_harness.write_report_to_file("smoke_report.txt");
         lobby_harness.deactivate();
-        return 0;
+        return finish_test_run("lobby-flow-test", lobby_harness.total_count());
     }
 
     // Instrumented mode: install SmokeTestHarness for interactive play (M166)
@@ -2953,7 +2979,7 @@ int main(int argc, char* argv[]) {
         harness.write_report_to_file("smoke_report.txt");
         spdlog::info("Report written to smoke_report.txt");
         harness.deactivate();
-        return 0;
+        return finish_test_run("full-smoke-test", harness.total_count());
     }
 
     // === Smoke Test ===
@@ -2982,6 +3008,10 @@ int main(int argc, char* argv[]) {
 
         harness.print_report(false);
         spdlog::info("=== Smoke Test Complete ===");
+        if (harness.total_count() > 0) {
+            osc::test_status::record_failure(fmt::format(
+                "smoke-test: {} issue(s) reported", harness.total_count()));
+        }
     }
 
     // === AI-vs-AI Skirmish (M163) ===
@@ -3084,7 +3114,7 @@ int main(int argc, char* argv[]) {
         if (result == 3) {
             spdlog::info("  PASS — simultaneous defeat returns Draw (3)");
         } else {
-            spdlog::error("  FAIL — expected Draw (3), got {}", result);
+            osc::test_status::fail("  FAIL — expected Draw (3), got {}", result);
             return 1;
         }
         return 0;
@@ -3139,7 +3169,7 @@ int main(int argc, char* argv[]) {
         }
 
         spdlog::info("  PASS — no crashes in {} ticks", tick_target);
-        return 0;
+        return finish_test_run("stress-test");
     }
 
     // Headless tick loop
@@ -3259,7 +3289,7 @@ int main(int argc, char* argv[]) {
             spdlog::info("[PASS] Both Lua states initialized");
             pass++;
         } else {
-            spdlog::error("[FAIL] Lua state initialization");
+            osc::test_status::fail("[FAIL] Lua state initialization");
             fail++;
         }
 
@@ -3281,14 +3311,14 @@ int main(int argc, char* argv[]) {
                 spdlog::info("[PASS] sim_L has CreateUnit");
                 pass++;
             } else {
-                spdlog::error("[FAIL] sim_L missing CreateUnit");
+                osc::test_status::fail("[FAIL] sim_L missing CreateUnit");
                 fail++;
             }
             if (!sim_has_ui_func) {
                 spdlog::info("[PASS] sim_L does NOT have InternalCreateGroup");
                 pass++;
             } else {
-                spdlog::error("[FAIL] sim_L has InternalCreateGroup (should be ui_L only)");
+                osc::test_status::fail("[FAIL] sim_L has InternalCreateGroup (should be ui_L only)");
                 fail++;
             }
         }
@@ -3309,14 +3339,14 @@ int main(int argc, char* argv[]) {
                 spdlog::info("[PASS] ui_L has InternalCreateGroup");
                 pass++;
             } else {
-                spdlog::error("[FAIL] ui_L missing InternalCreateGroup");
+                osc::test_status::fail("[FAIL] ui_L missing InternalCreateGroup");
                 fail++;
             }
             if (!ui_has_sim_func) {
                 spdlog::info("[PASS] ui_L does NOT have CreateUnit");
                 pass++;
             } else {
-                spdlog::error("[FAIL] ui_L has CreateUnit (should be sim_L only)");
+                osc::test_status::fail("[FAIL] ui_L has CreateUnit (should be sim_L only)");
                 fail++;
             }
         }
@@ -3329,7 +3359,7 @@ int main(int argc, char* argv[]) {
                 spdlog::info("[PASS] Both states share the same VFS");
                 pass++;
             } else {
-                spdlog::error("[FAIL] VFS mismatch (sim={}, ui={})",
+                osc::test_status::fail("[FAIL] VFS mismatch (sim={}, ui={})",
                               static_cast<void*>(sim_vfs),
                               static_cast<void*>(ui_vfs));
                 fail++;
@@ -3355,7 +3385,7 @@ int main(int argc, char* argv[]) {
         if (result.ok()) {
             spdlog::info("=== M140 Construction Panel Test PASSED ===");
         } else {
-            spdlog::error("=== M140 Construction Panel Test FAILED ===");
+            osc::test_status::fail("=== M140 Construction Panel Test FAILED ===");
         }
     }
 
@@ -3373,7 +3403,7 @@ int main(int argc, char* argv[]) {
                 print('M140: EntityCategoryGetUnitList returned ' .. table.getn(list) .. ' blueprints')
             )");
             if (r.ok()) { spdlog::info("[PASS] EntityCategoryGetUnitList"); pass++; }
-            else { spdlog::error("[FAIL] EntityCategoryGetUnitList"); fail++; }
+            else { osc::test_status::fail("[FAIL] EntityCategoryGetUnitList"); fail++; }
         }
 
         // Test 2: GetOrderBitmapNames returns 8 values
@@ -3385,7 +3415,7 @@ int main(int argc, char* argv[]) {
                 print('M141: GetOrderBitmapNames("move") up=' .. a)
             )");
             if (r.ok()) { spdlog::info("[PASS] GetOrderBitmapNames"); pass++; }
-            else { spdlog::error("[FAIL] GetOrderBitmapNames"); fail++; }
+            else { osc::test_status::fail("[FAIL] GetOrderBitmapNames"); fail++; }
         }
 
         // Test 3: GetRolloverInfo returns nil when nothing hovered
@@ -3395,7 +3425,7 @@ int main(int argc, char* argv[]) {
                 print('M142: GetRolloverInfo type=' .. type(info))
             )");
             if (r.ok()) { spdlog::info("[PASS] GetRolloverInfo"); pass++; }
-            else { spdlog::error("[FAIL] GetRolloverInfo"); fail++; }
+            else { osc::test_status::fail("[FAIL] GetRolloverInfo"); fail++; }
         }
 
         // Test 4: StartCursorText doesn't crash
@@ -3405,7 +3435,7 @@ int main(int argc, char* argv[]) {
                 print('M143: StartCursorText succeeded')
             )");
             if (r.ok()) { spdlog::info("[PASS] StartCursorText"); pass++; }
-            else { spdlog::error("[FAIL] StartCursorText"); fail++; }
+            else { osc::test_status::fail("[FAIL] StartCursorText"); fail++; }
         }
 
         // Test 5: orders.lua boots (pcall, allow WARN)
@@ -3419,7 +3449,7 @@ int main(int argc, char* argv[]) {
                 else print('M141: orders.lua boot WARN: ' .. tostring(err)) end
             )");
             if (r.ok()) { spdlog::info("[PASS] orders.lua boot"); pass++; }
-            else { spdlog::error("[FAIL] orders.lua boot"); fail++; }
+            else { osc::test_status::fail("[FAIL] orders.lua boot"); fail++; }
         }
 
         // Test 6: unitview.lua boots (pcall, allow WARN)
@@ -3433,7 +3463,7 @@ int main(int argc, char* argv[]) {
                 else print('M142: unitview.lua boot WARN: ' .. tostring(err)) end
             )");
             if (r.ok()) { spdlog::info("[PASS] unitview.lua boot"); pass++; }
-            else { spdlog::error("[FAIL] unitview.lua boot"); fail++; }
+            else { osc::test_status::fail("[FAIL] unitview.lua boot"); fail++; }
         }
 
         spdlog::info("=== Phase 2 Integration Test: {}/{} passed ===", pass, pass + fail);
@@ -3452,7 +3482,7 @@ int main(int argc, char* argv[]) {
                 print('M144: GetCurrentUIState = ' .. state)
             )");
             if (r.ok()) { spdlog::info("[PASS] GetCurrentUIState"); pass++; }
-            else { spdlog::error("[FAIL] GetCurrentUIState"); fail++; }
+            else { osc::test_status::fail("[FAIL] GetCurrentUIState"); fail++; }
         }
 
         // Test 2: AddBeatFunction registers and fires
@@ -3464,7 +3494,7 @@ int main(int argc, char* argv[]) {
                 print('M145: AddBeatFunction registered')
             )");
             if (r.ok()) { spdlog::info("[PASS] AddBeatFunction registration"); pass++; }
-            else { spdlog::error("[FAIL] AddBeatFunction registration"); fail++; }
+            else { osc::test_status::fail("[FAIL] AddBeatFunction registration"); fail++; }
         }
 
         // Fire beat functions
@@ -3477,7 +3507,7 @@ int main(int argc, char* argv[]) {
                 print('M145: BeatFunction fired and removed OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] BeatFunction fire + remove"); pass++; }
-            else { spdlog::error("[FAIL] BeatFunction fire + remove"); fail++; }
+            else { osc::test_status::fail("[FAIL] BeatFunction fire + remove"); fail++; }
         }
 
         // Test 3: Time queries
@@ -3494,7 +3524,7 @@ int main(int argc, char* argv[]) {
                 print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
             )");
             if (r.ok()) { spdlog::info("[PASS] Time queries"); pass++; }
-            else { spdlog::error("[FAIL] Time queries"); fail++; }
+            else { osc::test_status::fail("[FAIL] Time queries"); fail++; }
         }
 
         // Test 4: Speed control
@@ -3507,7 +3537,7 @@ int main(int argc, char* argv[]) {
                 print('M145: Speed control OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] Speed control"); pass++; }
-            else { spdlog::error("[FAIL] Speed control"); fail++; }
+            else { osc::test_status::fail("[FAIL] Speed control"); fail++; }
         }
 
         // Test 5: EscapeHandler
@@ -3520,7 +3550,7 @@ int main(int argc, char* argv[]) {
                 print('M146: EscapeHandler OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] EscapeHandler"); pass++; }
-            else { spdlog::error("[FAIL] EscapeHandler"); fail++; }
+            else { osc::test_status::fail("[FAIL] EscapeHandler"); fail++; }
         }
 
         spdlog::info("=== Phase 3 Integration Test: {}/{} passed ===", pass, pass + fail);
@@ -3541,7 +3571,7 @@ int main(int argc, char* argv[]) {
                 print('M147: FrontEndData round-trip OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] FrontEndData"); pass++; }
-            else { spdlog::error("[FAIL] FrontEndData"); fail++; }
+            else { osc::test_status::fail("[FAIL] FrontEndData"); fail++; }
         }
 
         // Test 2: HasCommandLineArg
@@ -3554,7 +3584,7 @@ int main(int argc, char* argv[]) {
                 print('M147: HasCommandLineArg OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] HasCommandLineArg"); pass++; }
-            else { spdlog::error("[FAIL] HasCommandLineArg"); fail++; }
+            else { osc::test_status::fail("[FAIL] HasCommandLineArg"); fail++; }
         }
 
         // Test 3: PlaySound doesn't crash
@@ -3565,7 +3595,7 @@ int main(int argc, char* argv[]) {
                 print('M147: PlaySound OK (handle=' .. h .. ')')
             )");
             if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }
-            else { spdlog::error("[FAIL] PlaySound"); fail++; }
+            else { osc::test_status::fail("[FAIL] PlaySound"); fail++; }
         }
 
         // Test 4: Skin selection
@@ -3577,7 +3607,7 @@ int main(int argc, char* argv[]) {
                 print('M149: Skin selection OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] Skin selection"); pass++; }
-            else { spdlog::error("[FAIL] Skin selection"); fail++; }
+            else { osc::test_status::fail("[FAIL] Skin selection"); fail++; }
         }
 
         // Test 5: Layout preference
@@ -3589,7 +3619,7 @@ int main(int argc, char* argv[]) {
                 print('M149: Layout preference OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] Layout preference"); pass++; }
-            else { spdlog::error("[FAIL] Layout preference"); fail++; }
+            else { osc::test_status::fail("[FAIL] Layout preference"); fail++; }
         }
 
         // Test 6: GetKeyBindings returns table
@@ -3602,7 +3632,7 @@ int main(int argc, char* argv[]) {
                 print('M149: GetKeyBindings OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] GetKeyBindings"); pass++; }
-            else { spdlog::error("[FAIL] GetKeyBindings"); fail++; }
+            else { osc::test_status::fail("[FAIL] GetKeyBindings"); fail++; }
         }
 
         // Test 7: Prefs table exists
@@ -3614,7 +3644,7 @@ int main(int argc, char* argv[]) {
                 print('M149: Prefs table OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] Prefs table"); pass++; }
-            else { spdlog::error("[FAIL] Prefs table"); fail++; }
+            else { osc::test_status::fail("[FAIL] Prefs table"); fail++; }
         }
 
         // Test 8: LaunchSinglePlayerSession sets launch signal
@@ -3624,7 +3654,7 @@ int main(int argc, char* argv[]) {
                 print('M148: LaunchSinglePlayerSession OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] LaunchSinglePlayerSession"); pass++; }
-            else { spdlog::error("[FAIL] LaunchSinglePlayerSession"); fail++; }
+            else { osc::test_status::fail("[FAIL] LaunchSinglePlayerSession"); fail++; }
 
             // Clear the launch flag so we don't actually try to launch
             lua_State* uL = ui_lua_state.raw();
@@ -3642,7 +3672,7 @@ int main(int argc, char* argv[]) {
                 print('M148: File I/O on ui_L OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] File I/O on ui_L"); pass++; }
-            else { spdlog::error("[FAIL] File I/O on ui_L"); fail++; }
+            else { osc::test_status::fail("[FAIL] File I/O on ui_L"); fail++; }
         }
 
         spdlog::info("=== Phase 4 Integration Test: {}/{} passed ===", pass, pass + fail);
@@ -3663,7 +3693,7 @@ int main(int argc, char* argv[]) {
                 print('M150: IN_AddKeyMapTable/IN_RemoveKeyMapTable OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] KeyMap add/remove"); pass++; }
-            else { spdlog::error("[FAIL] KeyMap add/remove"); fail++; }
+            else { osc::test_status::fail("[FAIL] KeyMap add/remove"); fail++; }
         }
 
         // Test 2: IsKeyDown exists and returns boolean
@@ -3674,7 +3704,7 @@ int main(int argc, char* argv[]) {
                 print('M150: IsKeyDown OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] IsKeyDown"); pass++; }
-            else { spdlog::error("[FAIL] IsKeyDown"); fail++; }
+            else { osc::test_status::fail("[FAIL] IsKeyDown"); fail++; }
         }
 
         // Test 3: Camera SaveSettings / RestoreSettings
@@ -3698,7 +3728,7 @@ int main(int argc, char* argv[]) {
                 end
             )");
             if (r.ok()) { spdlog::info("[PASS] Camera Save/RestoreSettings"); pass++; }
-            else { spdlog::error("[FAIL] Camera Save/RestoreSettings"); fail++; }
+            else { osc::test_status::fail("[FAIL] Camera Save/RestoreSettings"); fail++; }
         }
 
         // Test 4: UIZoomTo exists
@@ -3709,7 +3739,7 @@ int main(int argc, char* argv[]) {
                 print('M150: UIZoomTo OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] UIZoomTo"); pass++; }
-            else { spdlog::error("[FAIL] UIZoomTo"); fail++; }
+            else { osc::test_status::fail("[FAIL] UIZoomTo"); fail++; }
         }
 
         // Test 5: RegisterChatFunc + SessionSendChatMessage
@@ -3723,7 +3753,7 @@ int main(int argc, char* argv[]) {
                 print('M151: Chat system OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] Chat system"); pass++; }
-            else { spdlog::error("[FAIL] Chat system"); fail++; }
+            else { osc::test_status::fail("[FAIL] Chat system"); fail++; }
         }
 
         // Test 6: SendSystemMessage
@@ -3738,7 +3768,7 @@ int main(int argc, char* argv[]) {
                 print('M151: SendSystemMessage OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] SendSystemMessage"); pass++; }
-            else { spdlog::error("[FAIL] SendSystemMessage"); fail++; }
+            else { osc::test_status::fail("[FAIL] SendSystemMessage"); fail++; }
         }
 
         // Test 7: GetSessionClients returns table with player
@@ -3751,7 +3781,7 @@ int main(int argc, char* argv[]) {
                 print('M151: GetSessionClients OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] GetSessionClients"); pass++; }
-            else { spdlog::error("[FAIL] GetSessionClients"); fail++; }
+            else { osc::test_status::fail("[FAIL] GetSessionClients"); fail++; }
         }
 
         // Test 8: GiveResources SimCallback exists
@@ -3764,7 +3794,7 @@ int main(int argc, char* argv[]) {
                 print('M151: GiveResources SimCallback OK')
             )");
             if (r.ok()) { spdlog::info("[PASS] GiveResources SimCallback"); pass++; }
-            else { spdlog::error("[FAIL] GiveResources SimCallback"); fail++; }
+            else { osc::test_status::fail("[FAIL] GiveResources SimCallback"); fail++; }
         }
 
         spdlog::info("=== Phase 5 Integration Test: {}/{} passed ===", pass, pass + fail);
@@ -3788,6 +3818,7 @@ int main(int argc, char* argv[]) {
         osc::Profiler::instance().log_summary();
     }
 
+    const int exit_code = any_test ? finish_test_run("integration tests") : 0;
     osc::log::shutdown();
-    return 0;
+    return exit_code;
 }
