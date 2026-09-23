@@ -276,6 +276,7 @@ static void print_usage() {
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
+              << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
               << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
               << "  --golden-update    Record the golden image instead of comparing\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
@@ -1483,6 +1484,7 @@ int main(int argc, char* argv[]) {
     bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
     bool dualstate_test = parse_flag(argc, argv, "--dualstate-test");
     bool no_fog = parse_flag(argc, argv, "--no-fog");
+    bool legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
     bool profile_test = parse_flag(argc, argv, "--profile-test");
@@ -2389,6 +2391,7 @@ int main(int argc, char* argv[]) {
 
             if (no_fog) renderer.set_fog_enabled(false);
             if (no_decals) renderer.set_decals_enabled(false);
+            if (legacy_hud) renderer.set_legacy_hud(true);
 
             double sim_accumulator = 0.0;
             double paused_beat_accumulator = 0.0;

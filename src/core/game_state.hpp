@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "core/test_status.hpp"
+#include "core/ui_registry_keys.hpp"
 #include "lua/smoke_test.hpp"
 #include <spdlog/spdlog.h>
 
@@ -126,10 +127,6 @@ inline void call_on_first_update(lua_State* L) { call_lua_global(L, "OnFirstUpda
 inline constexpr const char* kGameMainModule = "/lua/ui/game/gamemain.lua";
 inline constexpr const char* kUiMainModule = "/lua/ui/uimain.lua";
 
-/// Registry flag, true while FA's game interface exists (set by
-/// ui::WldUIProvider). gamemain's beat functions drive that interface, so
-/// they run only then -- not over the score screen or the front end.
-inline constexpr const char* kWorldUiActiveKey = "__osc_world_ui_active";
 
 /// Push module[name] if `module` is already imported (retail import.lua's
 /// __modules), else nil. Never imports: the engine calls into the game UI

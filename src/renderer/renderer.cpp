@@ -1,5 +1,10 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "core/ui_registry_keys.hpp"
+
+extern "C" {
+#include <lua.h>
+}
 #include "renderer/dds_parser.hpp"
 #include "platform/paths.hpp"
 #include "core/profiler.hpp"
@@ -1895,6 +1900,18 @@ void Renderer::build_scene(const sim::SimState& sim,
 void Renderer::render(sim::SimState& sim, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
+    // FA's own game interface replaces the C++ HUD placeholders.
+    {
+        bool world_ui = false;
+        if (L) {
+            lua_pushstring(L, core::kWorldUiActiveKey);
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            world_ui = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+        }
+        legacy_hud_active_ = legacy_hud_ || !world_ui;
+    }
+
     PROFILE_ZONE("Render::frame");
     // Select current frame's sync objects
     u32 fi = frame_index_;
@@ -2056,7 +2073,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         PROFILE_ZONE("Render::overlay_update");
         overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_,
-                                 sim.player_result(), frame_dt_, &frustum);
+                                 legacy_hud_active_ ? sim.player_result() : 0,
+                                 frame_dt_, &frustum);
     }
 
     // Update particle system (sync effects, step physics, build GPU data)
@@ -2072,22 +2090,25 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     particle_renderer_.update(particle_instances, particle_system_, texture_cache_, fi);
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
-    minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
-                              window_width_, window_height_);
+    if (legacy_hud_active_)
+        minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
+                                  window_width_, window_height_);
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
     strategic_icon_renderer_.update(sim, camera_, vp, selected_ids,
                                      texture_cache_,
                                      window_width_, window_height_);
 
-    // Update economy HUD
-    hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
-                          window_width_, window_height_);
+    if (legacy_hud_active_) {
+        // Update economy HUD
+        hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
+                              window_width_, window_height_);
 
-    // Update selection info panel
-    selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
-                                    strategic_icon_renderer_.atlas_descriptor(),
-                                    window_width_, window_height_);
+        // Update selection info panel
+        selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
+                                        strategic_icon_renderer_.atlas_descriptor(),
+                                        window_width_, window_height_);
+    }
 
     // Update profile overlay
     profile_overlay_.update(font_cache_, texture_cache_,
@@ -2681,7 +2702,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 8. Draw minimap (terrain bg + unit dots + camera box)
-    if (ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && minimap_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         minimap_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -2689,7 +2710,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 9. Draw economy HUD (resource bars + text at top of screen)
-    if (ui_pipeline_ && hud_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && hud_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         hud_renderer_.render(cmd_buf_[fi], ui_layout_,
@@ -2697,7 +2718,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     }
 
     // 10. Draw selection info panel (bottom-center unit details)
-    if (ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
+    if (legacy_hud_active_ && ui_pipeline_ && selection_info_renderer_.quad_count() > 0) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           ui_pipeline_);
         selection_info_renderer_.render(cmd_buf_[fi], ui_layout_,
