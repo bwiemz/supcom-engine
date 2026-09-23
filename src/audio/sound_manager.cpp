@@ -4,7 +4,7 @@
 
 #include "audio/sound_manager.hpp"
 #include "audio/xwb_parser.hpp"
-#include "audio/xsb_parser.hpp"
+#include "audio/xact/bank_registry.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -136,6 +136,7 @@ SoundManager::SoundManager(const fs::path& sounds_dir)
         headless_ = true;
         return;
     }
+    registry_ = std::make_unique<xact::BankRegistry>(sounds_dir_);
 
     ma_engine_config cfg = ma_engine_config_init();
     cfg.listenerCount = 1;
@@ -168,51 +169,6 @@ SoundManager::~SoundManager() {
     }
 }
 
-SoundManager::BankPair* SoundManager::ensure_bank(const std::string& bank_name) {
-    auto it = banks_.find(bank_name);
-    if (it != banks_.end()) {
-        return it->second.get(); // may be nullptr (cached miss)
-    }
-
-    auto xwb_path = sounds_dir_ / (bank_name + ".xwb");
-    auto xsb_path = sounds_dir_ / (bank_name + ".xsb");
-
-    if (!fs::exists(xwb_path)) {
-        spdlog::debug("Wave bank not found: {}", xwb_path.string());
-        banks_[bank_name] = nullptr;
-        return nullptr;
-    }
-
-    auto pair = std::make_unique<BankPair>();
-    pair->xwb = std::make_unique<XwbParser>();
-    pair->xsb = std::make_unique<XsbParser>();
-
-    auto xwb_result = pair->xwb->parse(xwb_path);
-    if (!xwb_result) {
-        spdlog::warn("Failed to parse wave bank {}: {}",
-                     bank_name, xwb_result.error().message);
-        banks_[bank_name] = nullptr;
-        return nullptr;
-    }
-
-    // XSB is optional — some banks might not have cue names
-    if (fs::exists(xsb_path)) {
-        auto xsb_result = pair->xsb->parse(xsb_path);
-        if (!xsb_result) {
-            spdlog::warn("Failed to parse sound bank {}: {}",
-                         bank_name, xsb_result.error().message);
-            // Continue without XSB — can still play by index
-        }
-    }
-
-    spdlog::info("Loaded audio bank: {} ({} waves, {} cues)",
-                 bank_name, pair->xwb->entry_count(), pair->xsb->cue_count());
-
-    auto* ptr = pair.get();
-    banks_[bank_name] = std::move(pair);
-    return ptr;
-}
-
 std::vector<u8> SoundManager::wrap_as_wav(const WaveInfo& info,
                                            const std::vector<u8>& raw_data) {
     return build_wav(info, raw_data);
@@ -232,43 +188,41 @@ SoundHandle SoundManager::play_internal(const std::string& bank, const std::stri
                                          const sim::Vector3* pos, bool looping) {
     if (headless_) return INVALID_SOUND;
 
-    auto* bp = ensure_bank(bank);
-    if (!bp) return INVALID_SOUND;
-
-    // Look up cue → track index
-    auto* mapping = bp->xsb->find_cue(cue);
-    if (!mapping) {
+    if (!registry_) return INVALID_SOUND;
+    const xact::SoundBank* sb = registry_->sound_bank(bank);
+    const xact::Cue* cue_def = sb ? sb->find_cue(cue) : nullptr;
+    if (!cue_def) {
         spdlog::debug("Cue not found: {}/{}", bank, cue);
         return INVALID_SOUND;
     }
-
-    // If the cue references a different wave bank, load that
-    const auto& wb_name = bp->xsb->wavebank_name(mapping->wave_bank_index);
-    XwbParser* xwb = bp->xwb.get();
-    BankPair* alt_bank = nullptr;
-    if (wb_name != bp->xwb->bank_name()) {
-        alt_bank = ensure_bank(wb_name);
-        if (!alt_bank) return INVALID_SOUND;
-        xwb = alt_bank->xwb.get();
+    // The first play event of the cue's sound, and one of its waves.
+    // (Timed events, several tracks and effect variation arrive with the
+    // full cue engine.)
+    const xact::PlayEvent* event = nullptr;
+    for (const auto& track : sb->sounds[cue_def->sound].tracks) {
+        if (!track.plays.empty()) {
+            event = &track.plays.front();
+            break;
+        }
     }
-
-    spdlog::debug("Cue {}/{} → wb={} track={}", bank, cue, wb_name,
-                  mapping->track_index);
-
-    if (mapping->track_index >= xwb->entry_count()) {
-        spdlog::debug("Track index {} out of range for bank {} ({} entries)",
-                      mapping->track_index, wb_name, xwb->entry_count());
+    if (!event || event->waves.empty()) return INVALID_SOUND;
+    std::uniform_int_distribution<size_t> pick(0, event->waves.size() - 1);
+    const auto wave = registry_->resolve(*sb, event->waves[pick(rng_)]);
+    if (!wave) {
+        spdlog::debug("Cue {}/{}: wave not found", bank, cue);
         return INVALID_SOUND;
     }
+    const XwbParser* xwb = wave->bank;
+    looping = looping || event->loop_count == xact::PlayEvent::kLoopForever;
 
     // Read raw wave data from XWB
-    auto raw = xwb->read_wave_data(mapping->track_index);
+    auto raw = xwb->read_wave_data(wave->index);
     if (raw.empty()) {
-        spdlog::debug("Empty wave data for track {}", mapping->track_index);
+        spdlog::debug("Empty wave data for {}/{}", bank, cue);
         return INVALID_SOUND;
     }
 
-    const auto& info = xwb->entry(mapping->track_index);
+    const auto& info = xwb->entry(wave->index);
 
     // Wrap in WAV header for miniaudio decoding
     auto wav = wrap_as_wav(info, raw);

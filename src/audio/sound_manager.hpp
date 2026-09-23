@@ -4,14 +4,16 @@
 #include "sim/entity.hpp" // for Vector3
 
 #include <memory>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace osc::audio {
 
-class XwbParser;
-class XsbParser;
+namespace xact {
+class BankRegistry;
+}
 
 using SoundHandle = u32;
 constexpr SoundHandle INVALID_SOUND = 0;
@@ -28,6 +30,10 @@ public:
     SoundManager& operator=(const SoundManager&) = delete;
 
     bool is_headless() const { return headless_; }
+
+    /// FA's banks in the sounds directory, or nullptr when there is none.
+    /// Available headless too (no audio device needed to read the data).
+    xact::BankRegistry* registry() { return registry_.get(); }
 
     /// Play a one-shot sound at the given world position.
     SoundHandle play(const std::string& bank, const std::string& cue,
@@ -47,16 +53,8 @@ public:
     void gc();
 
 private:
-    struct BankPair {
-        std::unique_ptr<XwbParser> xwb;
-        std::unique_ptr<XsbParser> xsb;
-    };
-
     struct AudioEngine;
     struct ActiveSound;
-
-    /// Lazy-load a bank pair by name. Returns nullptr if not found.
-    BankPair* ensure_bank(const std::string& bank_name);
 
     /// Synthesize a WAV header around raw wave data for miniaudio decoding.
     std::vector<u8> wrap_as_wav(const struct WaveInfo& info,
@@ -70,7 +68,8 @@ private:
     bool headless_ = false;
 
     std::unique_ptr<AudioEngine> engine_;
-    std::unordered_map<std::string, std::unique_ptr<BankPair>> banks_;
+    std::unique_ptr<xact::BankRegistry> registry_;
+    std::mt19937 rng_{std::random_device{}()}; // wave variation: output only, not sim state
 
     u32 next_handle_ = 1;
     std::unordered_map<SoundHandle, std::unique_ptr<ActiveSound>> active_sounds_;

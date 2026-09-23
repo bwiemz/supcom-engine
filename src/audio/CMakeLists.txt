@@ -1,6 +1,8 @@
 add_library(osc_audio STATIC
     xwb_parser.cpp
-    xsb_parser.cpp
+    xact/global_settings.cpp
+    xact/sound_bank.cpp
+    xact/bank_registry.cpp
     sound_manager.cpp
 )
 add_library(osc::audio ALIAS osc_audio)

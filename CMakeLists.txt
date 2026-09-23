@@ -36,7 +36,7 @@ add_subdirectory(src/lua)
 add_subdirectory(src/blueprints)
 
 # Main executable
-add_executable(opensupcom src/main.cpp src/integration_tests.cpp)
+add_executable(opensupcom src/main.cpp src/integration_tests.cpp src/audio_data_test.cpp)
 target_link_libraries(opensupcom PRIVATE
     osc::warnings
     osc::platform

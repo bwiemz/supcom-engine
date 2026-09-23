@@ -16,6 +16,7 @@
 #include "lua/sim_loader.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/binding_coverage.hpp"
+#include "audio_data_test.hpp"
 #include "lua/scenario_loader.hpp"
 #include "lua/sim_bindings.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -352,6 +353,7 @@ static void print_usage() {
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
               << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
+              << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -1742,6 +1744,7 @@ int main(int argc, char* argv[]) {
     bool controls_test = parse_flag(argc, argv, "--controls-test");
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
     bool gameui_test = parse_flag(argc, argv, "--gameui-test");
+    bool audio_data_test = parse_flag(argc, argv, "--audio-data-test");
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1840,7 +1843,7 @@ int main(int argc, char* argv[]) {
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
                     profile_test || smoke_test || ai_skirmish || draw_test ||
-                    stress_test || full_smoke_test;
+                    stress_test || full_smoke_test || audio_data_test;
     bool headless = (tick_count > 0) || any_test;
     if (any_test) osc::test_status::set_count_lua_failures(true);
 
@@ -1856,6 +1859,11 @@ int main(int argc, char* argv[]) {
     spdlog::info("FA path:   {}", config.fa_path.string());
     spdlog::info("Init file: {}", config.init_file.string());
     spdlog::info("FAF data:  {}", config.faf_data_path.string());
+
+    if (audio_data_test) {
+        osc::test::run_audio_data_test(config.fa_path / "sounds");
+        return finish_test_run("audio-data-test");
+    }
 
     if (!osc::fs::exists(config.init_file)) {
         spdlog::error("Init file not found: {}", config.init_file.string());

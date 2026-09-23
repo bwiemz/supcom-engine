@@ -186,6 +186,8 @@ Result<void> XwbParser::parse(const fs::path& xwb_path) {
             entries_[i].data_offset = wd_seg.offset + play_offset;
             entries_[i].data_length = play_length;
             entries_[i].duration_samples = flags_dur >> 4;
+            entries_[i].loop_start = read_u32(p + 16);
+            entries_[i].loop_length = read_u32(p + 20);
         }
     }
 
