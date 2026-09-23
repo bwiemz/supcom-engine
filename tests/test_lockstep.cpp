@@ -296,3 +296,27 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
         relayed |= cmd.source == 2 && cmd.command.type == CommandType::Move;
     CHECK(relayed);
 }
+
+TEST_CASE("A drop report's frame number can't make a survivor work forever", "[lockstep][drop]") {
+    // B's report about C claims C's last frame is ~4 billion. Survivors walk
+    // the frames the reports carried, not the frame numbers.
+    LuaGuard g;
+    SimState a(g.L, nullptr);
+    for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) a.add_army(army, army);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport raw_b(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+
+    std::vector<osc::u8> msg;
+    osc::sim::ByteWriter w(msg);
+    w.u8v(1);           // a drop report
+    w.u32v(1);          // from B
+    w.u32v(2);          // about C
+    w.u32v(0xFFFFFFF0); // its "last frame"
+    w.u32v(0);          // no frames relayed
+    raw_b.broadcast(msg);
+    sa.send_frame();
+    sa.receive_and_advance(); // returns: that is the test
+    CHECK(sa.has_dropped(2));
+}

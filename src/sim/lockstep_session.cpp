@@ -5,6 +5,7 @@
 #include "sim/sim_state.hpp"
 
 #include <algorithm>
+#include <limits>
 
 #include <spdlog/spdlog.h>
 
@@ -236,15 +237,19 @@ void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     // same frames, up to `last`, before its defeat.
     auto confirmed = peer_confirmed_.find(source);
     const u32 held = confirmed == peer_confirmed_.end() ? 0 : confirmed->second;
-    for (u32 frame = held + 1; frame <= last; ++frame) {
-        auto relayed = vote.frames.find(frame);
-        if (relayed == vote.frames.end()) {
-            spdlog::error("[lockstep] frame {} of dropped peer {} reached no survivor that "
-                          "kept it; the game may desync",
-                          frame, source);
-            continue;
-        }
-        for (const auto& c : relayed->second) sim_.command_scheduler().submit(c);
+    // Walk the frames the reports carried, not the frame numbers up to
+    // `last`: that is only a peer's word, and must not set how long this
+    // runs. (Nor may the defeat's tick wrap around.)
+    last = std::min(last, std::numeric_limits<u32>::max() - 1);
+    u64 applied = 0;
+    for (auto it = vote.frames.upper_bound(held); it != vote.frames.end() && it->first <= last;
+         ++it, ++applied) {
+        for (const auto& c : it->second) sim_.command_scheduler().submit(c);
+    }
+    if (last > held && applied < static_cast<u64>(last - held)) {
+        spdlog::error("[lockstep] {} frames of dropped peer {} up to frame {} reached no "
+                      "survivor that kept them; the game may desync",
+                      static_cast<u64>(last - held) - applied, source, last);
     }
     sim_.command_scheduler().confirm_frame(source, last);
     sim_.command_scheduler().remove_source(source);
