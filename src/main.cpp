@@ -45,6 +45,7 @@
 #include "sim/net_transport.hpp"
 #include "sim/lockstep_session.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/lan_lobby.hpp"
 #include "lua/lan_dialog_ui.hpp"
 #include "lua/smoke_test.hpp"
@@ -55,14 +56,17 @@ extern "C" {
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <thread>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 #include <spdlog/spdlog.h>
@@ -121,11 +125,11 @@ static int l_GetEconomyTotals(lua_State* L) {
     lua_pop(L, 1);
 
     lua_newtable(L); // result table
-    if (!sim) return 1;
-    auto* brain = sim->get_army(army);
-    if (!brain) return 1;
-
-    const auto& econ = brain->economy();
+    // Observers (focus army -1) and a missing sim get the same shape with
+    // zeros, as Moho's does: the economy bar reads every field every beat.
+    auto* brain = sim ? sim->get_army(army) : nullptr;
+    static const osc::sim::EconomyState kNoEconomy{};
+    const auto& econ = brain ? brain->economy() : kNoEconomy;
 
     // Helper: push a subtable with MASS and ENERGY keys
     auto push_resource_subtable = [&](const char* name, osc::f64 mass_val, osc::f64 energy_val) {
@@ -142,7 +146,8 @@ static int l_GetEconomyTotals(lua_State* L) {
 
     push_resource_subtable("income", econ.mass.income, econ.energy.income);
     push_resource_subtable("lastUseActual",
-        brain->get_economy_usage("MASS"), brain->get_economy_usage("ENERGY"));
+        brain ? brain->get_economy_usage("MASS") : 0.0,
+        brain ? brain->get_economy_usage("ENERGY") : 0.0);
     push_resource_subtable("lastUseRequested", econ.mass.requested, econ.energy.requested);
     push_resource_subtable("maxStorage", econ.mass.max_storage, econ.energy.max_storage);
     push_resource_subtable("stored", econ.mass.stored, econ.energy.stored);
@@ -342,6 +347,7 @@ static void print_usage() {
               << "  --edit-test        Edit/ItemList/Scrollbar controls (text input, list ops, scroll)\n"
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
+              << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -493,6 +499,14 @@ static int finish_test_run(const char* mode, osc::u32 smoke_issues = 0) {
     return 1;
 }
 
+/// The UI state reaches the sim through a registry pointer; clear it before
+/// the sim is destroyed so UI scripts see "no sim" rather than freed memory.
+static void detach_ui_from_sim(lua_State* uiL) {
+    lua_pushstring(uiL, "osc_sim_state");
+    lua_pushnil(uiL);
+    lua_rawset(uiL, LUA_REGISTRYINDEX);
+}
+
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
 //    reloads blueprints/scenario, boots sim, rebuilds renderer scene. ──
 // Returns true on success, false on critical failure.
@@ -522,6 +536,7 @@ static bool execute_reload_sequence(
     // keep the transport — HostGame/JoinGame created it before launch and
     // mp_attach_session rebuilds the session over it once the fresh sim exists).
     osc::lua::mp_net_state().session.reset();
+    detach_ui_from_sim(uiL);
     sim_state.reset();
     sim_lua_state.reset();
 
@@ -831,10 +846,86 @@ static bool execute_reload_sequence(
         game_state_mgr.transition_to(osc::GameState::LOADING, uiL);
     }
     game_state_mgr.transition_to(osc::GameState::GAME, nullptr); // nullptr = skip SetupUI
-    osc::core::call_start_game_ui(uiL);
 
     spdlog::info("=== Map reload complete ===");
     return true;
+}
+
+/// A changed selection reaches the UI as Moho reports it,
+/// gamemain.OnSelectionChanged(old, new, added, removed), and then the
+/// engine's own AddOnSelectionChangedCallback callbacks. `prev` becomes `cur`.
+static void dispatch_selection_change(lua_State* uL,
+                                      std::unordered_set<osc::u32>& prev,
+                                      const std::unordered_set<osc::u32>& cur) {
+    if (cur == prev) return;
+    std::vector<osc::u32> old_ids(prev.begin(), prev.end());
+    std::vector<osc::u32> new_ids(cur.begin(), cur.end());
+    std::sort(old_ids.begin(), old_ids.end());
+    std::sort(new_ids.begin(), new_ids.end());
+    std::vector<osc::u32> added, removed;
+    std::set_difference(new_ids.begin(), new_ids.end(), old_ids.begin(),
+                        old_ids.end(), std::back_inserter(added));
+    std::set_difference(old_ids.begin(), old_ids.end(), new_ids.begin(),
+                        new_ids.end(), std::back_inserter(removed));
+    prev = cur;
+
+    osc::lua::push_units_for_ui(uL, old_ids);
+    osc::lua::push_units_for_ui(uL, new_ids);
+    osc::lua::push_units_for_ui(uL, added);
+    osc::lua::push_units_for_ui(uL, removed);
+    osc::core::call_ui_callback(uL, osc::core::kGameMainModule,
+                                "OnSelectionChanged", 4);
+
+    lua_pushstring(uL, "__osc_sel_changed_cbs");
+    lua_rawget(uL, LUA_REGISTRYINDEX);
+    if (lua_istable(uL, -1)) {
+        const int cbs_idx = lua_gettop(uL);
+        osc::lua::push_units_for_ui(uL, new_ids);
+        const int arr_idx = lua_gettop(uL);
+        const int n = luaL_getn(uL, cbs_idx); // Lua 5.0: no lua_objlen
+        for (int ci = 1; ci <= n; ci++) {
+            lua_rawgeti(uL, cbs_idx, ci);
+            if (!lua_isfunction(uL, -1)) {
+                lua_pop(uL, 1);
+                continue;
+            }
+            lua_pushvalue(uL, arr_idx);
+            if (lua_pcall(uL, 1, 0, 0) != 0) {
+                const char* err = lua_tostring(uL, -1);
+                spdlog::warn("OnSelectionChanged[{}] error: {}", ci,
+                             err ? err : "(unknown)");
+                lua_pop(uL, 1);
+            }
+        }
+        lua_pop(uL, 1); // selection array
+    }
+    lua_pop(uL, 1); // callbacks table (or nil)
+}
+
+/// Moho's world-UI start (see ui::WldUIProvider): the user side of the
+/// sync channel (/lua/UserSync.lua and its hooks: OnSync, a fresh Sync and
+/// UnitData) is loaded for the new session, then uimain.StartGameUI makes the
+/// Lua provider, whose loading dialog shows while the world loads.
+static void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
+    if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
+        spdlog::warn("UserSync.lua: {}", r.error().message);
+    osc::core::call_start_game_ui(uiL);
+    wld.start_loading_dialog(uiL);
+}
+
+/// One Moho sim beat on the user side: the sync channel (sim -> UI data and
+/// focus changes, OnSync), then the game UI's beat functions.
+static void world_beat(osc::lua::LuaState* sim_lua, lua_State* uiL) {
+    if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
+    osc::core::call_game_beat(uiL);
+}
+
+/// The world is loaded: build FA's game interface (gamemain.CreateUI) and
+/// fade the loading dialog out.
+static void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld,
+                            bool is_replay) {
+    wld.create_game_interface(uiL, is_replay);
+    wld.stop_loading_dialog(uiL);
 }
 
 /// Pump N UI frames: resume coroutines, fire OnBeat, fire beat functions.
@@ -1363,6 +1454,7 @@ int main(int argc, char* argv[]) {
     bool edit_test = parse_flag(argc, argv, "--edit-test");
     bool controls_test = parse_flag(argc, argv, "--controls-test");
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
+    bool gameui_test = parse_flag(argc, argv, "--gameui-test");
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1441,7 +1533,7 @@ int main(int argc, char* argv[]) {
                     lowstub_test || blend_test ||
                     ui_test || bitmap_test ||
                     text_test || edit_test ||
-                    controls_test || uiboot_test ||
+                    controls_test || uiboot_test || gameui_test ||
                     lobby_flow_test ||
                     uirender_test || font_test ||
                     scissor_test || border_render_test ||
@@ -1748,6 +1840,7 @@ int main(int argc, char* argv[]) {
     // FrontEndData and the Prefetcher. The engine globals it and the UI
     // bootstrap expect must exist first.
     osc::lua::register_prefetch_bindings(ui_lua_state);
+    osc::lua::register_category_bindings(ui_lua_state);
     {
         lua_State* uL = ui_lua_state.raw();
         auto global_is_defined = [&](const char* name) {
@@ -1861,7 +1954,6 @@ int main(int argc, char* argv[]) {
     // State transition: INIT → GAME or INIT → FRONT_END
     if (!map_path.empty()) {
         osc::core::call_setup_ui(ui_lua_state.raw());
-        osc::core::call_start_game_ui(ui_lua_state.raw());
     } else {
         // No map: bootstrap front-end menu UI
         // 2. Call SetupUI() (creates cursor, sets skin)
@@ -2101,6 +2193,12 @@ int main(int argc, char* argv[]) {
             lua_pushlightuserdata(sL, &game_state_mgr);
             lua_rawset(sL, LUA_REGISTRYINDEX);
         }
+        // FA's game interface. Headless test modes other than --gameui-test
+        // keep a bare root frame: they build and inspect their own controls.
+        if (!headless || gameui_test) {
+            begin_world_ui(ui_lua_state.raw(), wld_provider);
+            finish_world_ui(ui_lua_state.raw(), wld_provider, false);
+        }
     } else {
         // No map: start in FRONT_END state (main menu)
         game_state_mgr.transition_to(osc::GameState::FRONT_END, nullptr);
@@ -2293,6 +2391,7 @@ int main(int argc, char* argv[]) {
             if (no_decals) renderer.set_decals_enabled(false);
 
             double sim_accumulator = 0.0;
+            double paused_beat_accumulator = 0.0;
             auto prev_time = std::chrono::high_resolution_clock::now();
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
@@ -2445,23 +2544,15 @@ int main(int argc, char* argv[]) {
                         game_result == 2 ? "DEFEAT" : "DRAW";
                     spdlog::info("Game over: {}", result_str);
 
-                    // Set observer mode
+                    // Observer mode: requested like the UI's SetFocusArmy(-1)
+                    // (uimain.NoteGameOver asks too), applied by the next
+                    // beat so the sim and OnSync see it together.
                     lua_State* uiL = ui_lua_state.raw();
-                    lua_pushstring(uiL, "__osc_focus_army");
+                    lua_pushstring(uiL, osc::lua::kFocusArmyRequestKey);
                     lua_pushnumber(uiL, -1);
                     lua_rawset(uiL, LUA_REGISTRYINDEX);
 
-                    // Call NoteGameOver() in ui_L
-                    lua_pushstring(uiL, "NoteGameOver");
-                    lua_rawget(uiL, LUA_GLOBALSINDEX);
-                    if (lua_isfunction(uiL, -1)) {
-                        if (lua_pcall(uiL, 0, 0, 0) != 0) {
-                            spdlog::warn("NoteGameOver error: {}", lua_tostring(uiL, -1));
-                            lua_pop(uiL, 1);
-                        }
-                    } else {
-                        lua_pop(uiL, 1);
-                    }
+                    osc::core::call_note_game_over(uiL);
 
                     // Transition to SCORE state (M156a)
                     game_state_mgr.transition_to(osc::GameState::SCORE, uiL);
@@ -2469,6 +2560,7 @@ int main(int argc, char* argv[]) {
                 } // if (sim_state)
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
+                const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
                 if (!game_state_mgr.paused() && sim_state) {
                     if (osc::lua::mp_net_state().active()) {
                         // Multiplayer: advance in lockstep. Pace command frames
@@ -2503,6 +2595,25 @@ int main(int argc, char* argv[]) {
                             osc::sim::SimState::SECONDS_PER_TICK, 8);
                         for (int t = 0; t < ticks; ++t) sim_state->tick();
                     }
+                }
+
+                // Moho's sim beat reaches the user side once per tick, and
+                // keeps running at the tick rate while paused.
+                if (sim_state && sim_lua_state) {
+                    osc::u32 beats = sim_state->tick_count() - beat_tick0;
+                    if (game_state_mgr.paused()) {
+                        paused_beat_accumulator += dt;
+                        while (paused_beat_accumulator >=
+                               osc::sim::SimState::SECONDS_PER_TICK) {
+                            paused_beat_accumulator -=
+                                osc::sim::SimState::SECONDS_PER_TICK;
+                            ++beats;
+                        }
+                    } else {
+                        paused_beat_accumulator = 0.0;
+                    }
+                    for (osc::u32 b = 0; b < beats; ++b)
+                        world_beat(sim_lua_state.get(), ui_lua_state.raw());
                 }
 
                 // Process SimCallbacks from UI (M138a)
@@ -2619,38 +2730,8 @@ int main(int argc, char* argv[]) {
                 input_handler.update(renderer, *sim_state, dt);
                 }
 
-                // Fire OnSelectionChanged callbacks if selection changed
-                {
-                    const auto& cur_sel = input_handler.selected();
-                    if (cur_sel != prev_selection) {
-                        prev_selection = cur_sel;
-                        lua_State* uL = ui_lua_state.raw();
-                        lua_pushstring(uL, "__osc_sel_changed_cbs");
-                        lua_rawget(uL, LUA_REGISTRYINDEX);
-                        if (lua_istable(uL, -1)) {
-                            int cbs_idx = lua_gettop(uL); // index of the callbacks table
-                            // Build the unit array once; we'll push copies for each call
-                            osc::lua::push_selected_units_for_ui(uL);
-                            int arr_idx = lua_gettop(uL); // index of the selection array
-                            int n = luaL_getn(uL, cbs_idx); // Lua 5.0: no lua_objlen
-                            for (int ci = 1; ci <= n; ci++) {
-                                lua_rawgeti(uL, cbs_idx, ci);
-                                if (lua_isfunction(uL, -1)) {
-                                    lua_pushvalue(uL, arr_idx); // copy of selection array
-                                    if (lua_pcall(uL, 1, 0, 0) != 0) {
-                                        std::string err = lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)";
-                                        spdlog::warn("OnSelectionChanged[{}] error: {}", ci, err);
-                                        lua_pop(uL, 1); // pop error string
-                                    }
-                                } else {
-                                    lua_pop(uL, 1); // pop non-function
-                                }
-                            }
-                            lua_pop(uL, 1); // pop selection array
-                        }
-                        lua_pop(uL, 1); // pop callbacks table (or nil)
-                    }
-                }
+                dispatch_selection_change(ui_lua_state.raw(), prev_selection,
+                                          input_handler.selected());
 
                 const auto& sel = input_handler.selected();
                 if (!screenshot_path.empty() &&
@@ -2766,7 +2847,8 @@ int main(int argc, char* argv[]) {
 
                             // Transition to LOADING and show loading screen
                             game_state_mgr.transition_to(osc::GameState::LOADING, ui_lua_state.raw());
-                            wld_provider.start_loading_dialog(ui_lua_state.raw());
+                            wld_provider.destroy_game_interface(ui_lua_state.raw());
+                            begin_world_ui(ui_lua_state.raw(), wld_provider);
 
                             // Pump one UI frame to display loading screen
                             pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_count);
@@ -2801,8 +2883,8 @@ int main(int argc, char* argv[]) {
                                 instrument_harness->install_all_method_interceptors(sim_lua_state->raw());
                             }
 
-                            // Stop loading dialog and transition to GAME
-                            wld_provider.stop_loading_dialog(ui_lua_state.raw());
+                            // Build the game interface; the loading dialog fades out
+                            finish_world_ui(ui_lua_state.raw(), wld_provider, false);
                         }
                     } else {
                         lua_pop(uiL, 1);
@@ -2829,7 +2911,9 @@ int main(int argc, char* argv[]) {
                         osc::lua::mp_teardown();
 
                         // Tear down game state
+                        wld_provider.destroy_game_interface(uiL);
                         renderer.clear_scene();
+                        detach_ui_from_sim(uiL);
                         sim_state.reset();
                         sim_lua_state.reset();
 
@@ -2950,6 +3034,7 @@ int main(int argc, char* argv[]) {
         spdlog::info("=== Phase 1: FRONT_END ===");
         harness.set_phase("FRONT_END");
         // Destroy sim to match real FRONT_END state (sim_state is null during lobby)
+        detach_ui_from_sim(ui_lua_state.raw());
         sim_state.reset();
         sim_lua_state.reset();
         store.rebind(nullptr); // Detach from destroyed sim Lua state
@@ -3041,11 +3126,18 @@ int main(int argc, char* argv[]) {
             harness.install_all_method_interceptors(sim_lua_state->raw());
         }
 
+        // FA's game interface, as the windowed launch builds it
+        begin_world_ui(ui_lua_state.raw(), wld_provider);
+        finish_world_ui(ui_lua_state.raw(), wld_provider, false);
+
         // Fire OnFirstUpdate once
         osc::core::call_on_first_update(ui_lua_state.raw());
 
         for (int t = 0; t < 3000; t++) {
-            if (sim_state) sim_state->tick();
+            if (sim_state) {
+                sim_state->tick();
+                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+            }
             if ((t + 1) % 10 == 0) {
                 pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
             }
@@ -3125,7 +3217,7 @@ int main(int argc, char* argv[]) {
             }
             osc::i32 result = sim_state->player_result();
             spdlog::info("  player_result() = {} (expected 1=Victory)", result);
-            osc::core::call_lua_global(ui_lua_state.raw(), "NoteGameOver");
+            osc::core::call_note_game_over(ui_lua_state.raw());
             game_state_mgr.set_game_over(true);
             game_state_mgr.transition_to(osc::GameState::SCORE, ui_lua_state.raw());
         }
@@ -3140,6 +3232,8 @@ int main(int argc, char* argv[]) {
             lua_pushboolean(uL, 1);
             lua_rawset(uL, LUA_REGISTRYINDEX);
         }
+        wld_provider.destroy_game_interface(ui_lua_state.raw());
+        detach_ui_from_sim(ui_lua_state.raw());
         sim_state.reset();
         sim_lua_state.reset();
         // Detach store from destroyed sim Lua state to prevent dangling luaL_unref
@@ -3433,6 +3527,36 @@ int main(int argc, char* argv[]) {
     if (edit_test && !map_path.empty()) osc::test::test_edit(ui_test_ctx);
     if (controls_test && !map_path.empty()) osc::test::test_controls(ui_test_ctx);
     if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(ui_test_ctx);
+    if (gameui_test && !map_path.empty()) {
+        // Selection is input-handler state; a headless one lets the test
+        // select units (SelectUnits) and drive the selection UI.
+        osc::renderer::InputHandler headless_input;
+        std::unordered_set<osc::u32> prev_sel;
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_input_handler");
+        lua_pushlightuserdata(uL, &headless_input);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+        osc::u32 frames = 0;
+        auto pump = [&](int n) {
+            for (int i = 0; i < n; ++i) {
+                pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager,
+                                             beat_registry, ui_registry, 1, frames);
+                dispatch_selection_change(uL, prev_sel, headless_input.selected());
+            }
+        };
+        // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
+        auto play = [&](int ticks) {
+            for (int t = 0; t < ticks; ++t) {
+                sim_state->tick();
+                world_beat(sim_lua_state.get(), ui_lua_state.raw());
+                pump(6);
+            }
+        };
+        osc::test::test_gameui(ui_test_ctx, pump, play);
+        lua_pushstring(uL, "__osc_input_handler");
+        lua_pushnil(uL);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
     if (uirender_test && !map_path.empty()) osc::test::test_uirender(ui_test_ctx);
     if (font_test && !map_path.empty()) osc::test::test_font(ui_test_ctx);
     if (scissor_test && !map_path.empty()) osc::test::test_scissor(ui_test_ctx);

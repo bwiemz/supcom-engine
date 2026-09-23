@@ -19,6 +19,12 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim);
 /// on a state that has no sim bindings, e.g. the UI state for userInit.lua.
 void register_prefetch_bindings(LuaState& state);
 
+/// Register the `categories` global (lazily created category objects with
+/// + - * set operators) on a state without sim bindings. Moho gives the UI
+/// state one too: the game UI's range overlays, selection helpers and
+/// construction tabs build category expressions.
+void register_category_bindings(LuaState& state);
+
 /// Push the sim state's shared Vector metatable (x/y/z alias [1]/[2]/[3]),
 /// creating it on first use. Every vector the engine hands to scripts
 /// carries it: retail reads positions as both pos[1] and pos.x.

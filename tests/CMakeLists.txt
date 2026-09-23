@@ -13,6 +13,7 @@ add_executable(osc_tests
     test_fixed_step.cpp
     test_binding_coverage.cpp
     test_lua_state.cpp
+    test_sim_sync.cpp
     test_init_loader.cpp
     test_blueprint_loading.cpp
     test_map.cpp

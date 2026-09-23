@@ -37,16 +37,24 @@ void GameStateManager::set_paused(bool p, lua_State* ui_L) {
     if (paused_ == p) return;
     paused_ = p;
     if (ui_L) {
-        lua_pushstring(ui_L, p ? "OnPause" : "OnResume");
-        lua_rawget(ui_L, LUA_GLOBALSINDEX);
-        if (lua_isfunction(ui_L, -1)) {
-            if (lua_pcall(ui_L, 0, 0, 0) != 0) {
-                spdlog::warn("{} error: {}", p ? "OnPause" : "OnResume",
-                             lua_tostring(ui_L, -1));
-                lua_pop(ui_L, 1);
+        // gamemain.OnPause(pausedBy, timeoutsRemaining) / OnResume().
+        // pausedBy is a command source; only local pauses exist so far, so
+        // it is this client's (SessionGetLocalCommandSource), with no pause
+        // timeouts.
+        if (p) {
+            lua_Number source = 1;
+            lua_pushstring(ui_L, "SessionGetLocalCommandSource");
+            lua_rawget(ui_L, LUA_GLOBALSINDEX);
+            if (lua_isfunction(ui_L, -1) && lua_pcall(ui_L, 0, 1, 0) == 0 &&
+                lua_isnumber(ui_L, -1)) {
+                source = lua_tonumber(ui_L, -1);
             }
-        } else {
             lua_pop(ui_L, 1);
+            lua_pushnumber(ui_L, source);
+            lua_pushnumber(ui_L, -1);
+            core::call_ui_callback(ui_L, core::kGameMainModule, "OnPause", 2);
+        } else {
+            core::call_ui_callback(ui_L, core::kGameMainModule, "OnResume", 0);
         }
     }
 }

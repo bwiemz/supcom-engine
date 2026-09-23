@@ -15,6 +15,20 @@ void Camera::init(f32 map_width, f32 map_height) {
     distance_ = std::max(map_width, map_height) * 0.4f;
 }
 
+f32 Camera::max_zoom() const {
+    return std::max(MIN_ZOOM, std::max(map_w_, map_h_) * 1.5f * max_zoom_mult_);
+}
+
+void Camera::set_zoom(f32 distance) {
+    distance_ = std::clamp(distance, min_zoom(), max_zoom());
+}
+
+void Camera::reset() {
+    init(map_w_, map_h_);
+    yaw_ = 0.0f;
+    pitch_ = 0.87f;
+}
+
 void Camera::update(GLFWwindow* window, f64 dt) {
     auto fdt = static_cast<f32>(dt);
     if (!input_enabled_) {

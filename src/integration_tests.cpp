@@ -11,6 +11,8 @@
 #include "renderer/camera.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/ui_renderer.hpp"
+#include "ui/wld_ui_provider.hpp"
+#include "core/game_state.hpp"
 #include "ui/font_metrics_provider.hpp"
 #include "ui/ui_dispatch.hpp"
 #include "sim/anim_cache.hpp"
@@ -8444,6 +8446,209 @@ void test_controls(TestContext& ctx) {
 // Helper: Lua 5.0 has no luaL_dostring
 static int do_lua_string(lua_State* L, const char* s) {
     return luaL_loadbuffer(L, s, std::strlen(s), "=test") || lua_pcall(L, 0, 0, 0);
+}
+
+// ====================================================================
+// Retail in-game UI (M187)
+// ====================================================================
+
+/// Number of controls under `root` (not counting it).
+static int count_descendants(const osc::ui::UIControl* root) {
+    int n = 0;
+    for (const auto* child : root->children()) n += 1 + count_descendants(child);
+    return n;
+}
+
+void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
+                 const std::function<void(int)>& play) {
+    spdlog::info("=== GAME UI TEST (M187) ===");
+    lua_State* L = ctx.L;
+    auto lua_ok = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) {
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+            return false;
+        }
+        spdlog::info("[PASS] {}", what);
+        return true;
+    };
+
+    // 1. The engine holds retail's provider object, with gamemain's
+    //    per-instance CreateGameInterface override.
+    {
+        lua_pushstring(L, osc::ui::WldUIProvider::kLuaObjectKey);
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        bool ok = false;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "CreateGameInterface");
+            lua_rawget(L, -2);
+            ok = lua_isfunction(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (ok) spdlog::info("[PASS] Test 1: provider object held by the engine");
+        else osc::test_status::fail("[FAIL] Test 1: no provider object with CreateGameInterface");
+    }
+
+    // 2. CreateGameInterface ran gamemain.CreateUI: the game parent and the
+    //    control/status clusters exist.
+    lua_ok("Test 2: gamemain built its parent and clusters", R"(
+        local gm = import('/lua/ui/game/gamemain.lua')
+        local parent = gm.GetGameParent()
+        if not parent then error('GetGameParent() is nil') end
+        if not gm.GetControlCluster() then error('no control cluster') end
+        if not gm.GetStatusCluster() then error('no status cluster') end
+    )");
+
+    // 3. The game UI is a real control tree (borders, worldview, economy,
+    //    construction, orders, unit view, minimap, chat ...).
+    {
+        const osc::ui::UIControl* parent = nullptr;
+        auto r = ctx.lua_state.do_string(
+            "__osc_test_game_parent = import('/lua/ui/game/gamemain.lua').GetGameParent()");
+        if (r) {
+            lua_pushstring(L, "__osc_test_game_parent");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "_c_object");
+                lua_rawget(L, -2);
+                parent = static_cast<const osc::ui::UIControl*>(lua_touserdata(L, -1));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        int n = parent ? count_descendants(parent) : 0;
+        if (n >= 100) spdlog::info("[PASS] Test 3: game UI has {} controls", n);
+        else osc::test_status::fail("[FAIL] Test 3: game UI has {} controls (expected >= 100)", n);
+    }
+
+    // 4. Frames run the UI: CreateUI's control-cluster OnFrame fires
+    //    OnFirstUpdate once and switches itself off.
+    pump_frames(5);
+    lua_ok("Test 4: first frame ran OnFirstUpdate", R"(
+        local cluster = import('/lua/ui/game/gamemain.lua').GetControlCluster()
+        if cluster:NeedsFrameUpdate() then
+            error('control cluster still waits for its first frame')
+        end
+    )");
+
+    // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
+    //    HideGameUI('off') after ~2.5 s of UI time.
+    pump_frames(60 * 5);
+    lua_ok("Test 5: the game UI is shown after the loading fade", R"(
+        if import('/lua/ui/game/gamemain.lua').gameUIHidden then
+            error('game UI still hidden 5 s after StopLoadingDialog')
+        end
+    )");
+
+    // 6. Each sim beat drives gamemain.OnBeat, which runs the beat functions
+    //    the game UI registers (economy, score, avatars ...).
+    lua_ok("Test 6a: register a beat function", R"(
+        __osc_test_beats = 0
+        import('/lua/ui/game/gamemain.lua').AddBeatFunction(function()
+            __osc_test_beats = __osc_test_beats + 1
+        end)
+    )");
+    play(3);
+    lua_ok("Test 6b: gamemain beat functions run once per sim beat", R"(
+        if __osc_test_beats ~= 3 then
+            error('3 beats ran the beat function ' .. __osc_test_beats .. ' times')
+        end
+    )");
+
+    // 7. Pausing reaches gamemain.OnPause(pausedBy, timeouts) / OnResume,
+    //    running retail's own handlers (pause banner, tabs). A local pause
+    //    is by this client's command source.
+    lua_ok("Test 7a: observe gamemain pause callbacks", R"(
+        local gm = import('/lua/ui/game/gamemain.lua')
+        local onPause, onResume = gm.OnPause, gm.OnResume
+        __osc_test_paused_by = false
+        __osc_test_resumed = false
+        gm.OnPause = function(pausedBy, timeouts)
+            __osc_test_paused_by = pausedBy
+            return onPause(pausedBy, timeouts)
+        end
+        gm.OnResume = function()
+            __osc_test_resumed = true
+            return onResume()
+        end
+    )");
+    {
+        lua_pushstring(L, "__osc_game_state_mgr");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* mgr = static_cast<osc::GameStateManager*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (!mgr) {
+            osc::test_status::fail("[FAIL] Test 7: no GameStateManager in the UI state");
+        } else {
+            mgr->set_paused(true, L);
+            pump_frames(2);
+            mgr->set_paused(false, L);
+            pump_frames(2);
+            lua_ok("Test 7b: OnPause(local command source) then OnResume ran", R"(
+                if __osc_test_paused_by ~= SessionGetLocalCommandSource() then
+                    error('OnPause pausedBy = ' .. tostring(__osc_test_paused_by))
+                end
+                if not __osc_test_resumed then error('OnResume never ran') end
+            )");
+        }
+    }
+
+    // 8. Play 30 game-seconds with the game UI live: the sync channel,
+    //    economy, score, avatars and unit view update every beat. Any script
+    //    error there fails the run (thread, sync and UI callback errors are
+    //    counted in test modes).
+    const int failures_before = osc::test_status::failure_count();
+    play(300);
+    if (osc::test_status::failure_count() == failures_before)
+        spdlog::info("[PASS] Test 8: 30 game-seconds with the game UI, no script errors");
+    else
+        osc::test_status::fail("[FAIL] Test 8: script errors while the game UI ran");
+
+    // 10 (before game over). Selecting the commander, as OnFirstUpdate does
+    //    in a real game: gamemain.OnSelectionChanged updates the orders and
+    //    construction panels, and the unit view fades in from the rollover
+    //    info. Errors in any of them are counted.
+    const int failures_before_select = osc::test_status::failure_count();
+    lua_ok("Test 10a: select the commander", R"(
+        local avatars = GetArmyAvatars()
+        if table.getn(avatars) < 1 then error('no avatar to select') end
+        SelectUnits(avatars)
+    )");
+    play(30);
+    lua_ok("Test 10b: unit view shows the selected commander", R"(
+        local info = GetRolloverInfo()
+        if not info then error('no rollover info for the selection') end
+        if info.blueprintId ~= 'uel0001' then
+            error('rollover blueprint ' .. tostring(info.blueprintId))
+        end
+        local bg = import('/lua/ui/game/unitview.lua').controls.bg
+        if bg:GetAlpha() < 0.99 then
+            error('unit view alpha ' .. bg:GetAlpha())
+        end
+    )");
+    if (osc::test_status::failure_count() == failures_before_select)
+        spdlog::info("[PASS] Test 10c: selection UI ran without script errors");
+    else
+        osc::test_status::fail("[FAIL] Test 10c: script errors in the selection UI");
+
+    // 9. Game over as Moho plays it: uimain.NoteGameOver asks for observer
+    //    focus; the next beat applies it through the sync channel, and
+    //    UserSync's OnSync hook tells the avatars (which stop updating)
+    //    before gamemain's beat functions run with no focus army.
+    lua_ok("Test 9a: NoteGameOver requests observer focus", R"(
+        import('/lua/ui/uimain.lua').NoteGameOver()
+        if GetFocusArmy() == -1 then error('focus changed before the beat') end
+    )");
+    const int failures_before_over = osc::test_status::failure_count();
+    play(20);
+    lua_ok("Test 9b: the beat applied observer focus", R"(
+        if GetFocusArmy() ~= -1 then error('focus is ' .. GetFocusArmy()) end
+    )");
+    if (osc::test_status::failure_count() == failures_before_over)
+        spdlog::info("[PASS] Test 9c: the game UI keeps running after game over");
+    else
+        osc::test_status::fail("[FAIL] Test 9c: script errors after game over");
 }
 
 void test_uiboot(TestContext& ctx) {

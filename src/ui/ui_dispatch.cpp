@@ -1,6 +1,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/keymap.hpp"
+#include "core/test_status.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
@@ -9,6 +10,19 @@ extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
 }
+
+namespace {
+
+/// A UI script callback raised an error. In test modes that fails the run,
+/// as a dying script thread does (see ThreadManager); in play it is logged.
+void report_ui_callback_error(const std::string& what) {
+    spdlog::warn("{}", what);
+    if (osc::test_status::count_lua_failures())
+        osc::test_status::record_failure("Lua UI callback error: " + what);
+}
+
+} // namespace
+
 
 namespace osc::ui {
 
@@ -228,7 +242,8 @@ bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,
     lua_pushvalue(L, -2); // self
     push_event_table(L, ev);
     if (lua_pcall(L, 2, 1, 0) != 0) {
-        spdlog::warn("HandleEvent error: {}", lua_tostring(L, -1));
+        report_ui_callback_error(fmt::format("HandleEvent error: {}",
+                                             lua_tostring(L, -1)));
         lua_pop(L, 2);
         return false;
     }
@@ -385,8 +400,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 lua_pushnumber(L, ev.mouse_y);
                 lua_rawset(L, -3);
                 if (lua_pcall(L, 1, 0, 0) != 0) {
-                    spdlog::warn("OnMouseButtonPress error: {}",
-                                 lua_tostring(L, -1));
+                    report_ui_callback_error(fmt::format(
+                        "OnMouseButtonPress error: {}", lua_tostring(L, -1)));
                     lua_pop(L, 1);
                 }
             } else {
@@ -453,8 +468,9 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
             lua_pushvalue(L, -2); // self
             lua_pushnumber(L, dt);
             if (lua_pcall(L, 2, 0, 0) != 0) {
-                spdlog::warn("OnFrame error for control #{}: {}",
-                             ctrl->control_id(), lua_tostring(L, -1));
+                report_ui_callback_error(fmt::format(
+                    "OnFrame error for control #{}: {}", ctrl->control_id(),
+                    lua_tostring(L, -1)));
                 lua_pop(L, 1);
             }
         } else {

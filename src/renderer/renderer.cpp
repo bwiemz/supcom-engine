@@ -45,8 +45,7 @@ static void glfw_scroll_callback(GLFWwindow* window, double /*xoffset*/,
 
 void Renderer::on_scroll(f64 y_offset) {
     f32 zoom_factor = 1.0f - static_cast<f32>(y_offset) * 0.1f;
-    camera_.set_distance(
-        std::clamp(camera_.distance() * zoom_factor, 30.0f, 2000.0f));
+    camera_.set_zoom(camera_.distance() * zoom_factor);
 }
 
 bool Renderer::init(u32 width, u32 height, const std::string& title,

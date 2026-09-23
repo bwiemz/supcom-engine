@@ -2067,6 +2067,10 @@ void register_prefetch_bindings(LuaState& state) {
     state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);
 }
 
+void register_category_bindings(LuaState& state) {
+    setup_categories(state.raw());
+}
+
 // ====================================================================
 // IEffect creation helpers
 // ====================================================================

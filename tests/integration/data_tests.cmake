@@ -18,6 +18,9 @@
 #     not self.Blueprint (enhancements, unit sounds); GiveStorage persists;
 #     finished or paused animations hold their pose; EnableIntel only
 #     enables intel the unit has (retail SetupIntel had cloaked every unit).
+#   M187: gameui-test -- the engine drives retail's in-game UI
+#     (uimain.StartGameUI, the provider's CreateGameInterface ->
+#     gamemain.CreateUI) and the sim -> UI sync channel.
 
 set(OSC_DATA_TESTS_GATE
     adjacency-test ai-test anim-render-test anim-test armor-test audio-test
@@ -26,6 +29,7 @@ set(OSC_DATA_TESTS_GATE
     construction-test controls-test cursor-render-test damage-test decal-test
     decalsplat-test deposit-test drag-render-test draw-test dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
+    gameui-test
     enhance-wreck-test fire-test flags-test font-test fow-test full-smoke-test
     input-test intel-overlay-test intel-test itemlist-render-test jammer-test
     layercap-test los-test lowstub-test manip-test massstub-test massstub2-test

@@ -2,6 +2,8 @@
 
 #include "core/types.hpp"
 
+#include <functional>
+
 struct lua_State;
 
 namespace osc::sim { class SimState; }
@@ -104,6 +106,12 @@ void test_anim_render(TestContext& ctx);
 void test_tiled_render(TestContext& ctx);
 void test_input(TestContext& ctx);
 void test_onframe(TestContext& ctx);
+/// Retail in-game UI (M187): the engine drove uimain.StartGameUI and the
+/// provider's StartLoadingDialog -> CreateGameInterface -> StopLoadingDialog.
+/// `pump_frames(n)` advances n UI frames (threads, OnFrame); `play(n)` plays
+/// n sim ticks as the game loop does (tick, sim beat to the UI, UI frames).
+void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
+                 const std::function<void(int)>& play);
 void test_cursor_render(TestContext& ctx);
 void test_drag_render(TestContext& ctx);
 void test_emitter(TestContext& ctx);
