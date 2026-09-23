@@ -158,10 +158,11 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   exercised on every CI run (`ctest -L mp`). Still missing: pipelined command
   delay, slot and faction sync, LAN discovery, and routing every sim mutation
   (SimCallbacks) through the command stream. Cross-OS determinism is
-  unproven: entity iteration order comes from `unordered_map`, and the sim
-  RNG and libm differ between platforms. See roadmap Phases D and G.
-- **Retail parity:** retail AI threads die on unbound retail-only methods, and
-  the retail front end does not yet reach a hosted lobby. See roadmap Phase B.
+  unproven. The sim walks entities and answers spatial queries in id order
+  (M195), but still has a constant-seeded static RNG beside `SimRandom`
+  (M196), and libm and floating-point contraction differ between
+  platforms (M197). Scripts' `pairs` over tables keyed by objects follows
+  addresses. See roadmap Phases D and G.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
   still read the live sim; they move over with M191's split of the bindings

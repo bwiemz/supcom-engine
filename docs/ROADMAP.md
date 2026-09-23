@@ -193,7 +193,7 @@ scripts, windowed, on Linux.
 
 | # | Milestone | Scope |
 |---|---|---|
-| M195 | Ordered iteration | Entity registry iteration in id order. Deterministic Lua-visible lists (`GetListOfUnits`, threat queries, guards). |
+| M195 | Ordered iteration | Entity registry iteration in id order. Deterministic Lua-visible lists (`GetListOfUnits`, threat queries, guards). **✅** The registry walks entities in id order. Ids only grow, so a new entity is appended to an id-ordered list; a removed one leaves a gap until the end of the tick. Entities created during a walk wait for the next one, and removed ones are skipped. Spatial queries return ids in ascending order. The other order-sensitive walks follow id or name order too: a dying structure's `OnNotAdjacentTo` calls, the enhancement table handed to scripts, and the floating-point sums behind `GetBlueprintStat`. The Lua-visible unit lists, threat queries and guards all build on these, so they follow. *Left:* scripts' own `pairs` over object-keyed tables follows their addresses; the static RNG is M196. |
 | M196 | One sim RNG | `Random()` and sim `math.random` on the seeded `SimRandom` with our own distributions. The renderer gets a separate RNG. Checksum trace tool: per-tick hash with divergence bisection. |
 | M197 | FP policy | `-ffp-contract=off` and `/fp:precise`. A portable deterministic implementation of the transcendental functions used in the sim. Pin Lua number formatting. |
 | M198 | All mutation in-tick | SimCallbacks travel in the command stream. Peer drop is decided by consensus, not locally. |
