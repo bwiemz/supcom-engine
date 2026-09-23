@@ -136,7 +136,7 @@ void ParticleSystem::emit_particles(EmitterState& es, f32 dt,
         p.accel_y = bp.y_accel.sample_random(t);
         p.accel_z = bp.z_accel.sample_random(t);
         if (bp.gravity) {
-            p.accel_y -= 9.81f;
+            p.accel_y -= 9.81f / (kTicksPerSecond * kTicksPerSecond); // per tick²
         }
 
         // Size
@@ -192,23 +192,33 @@ void ParticleSystem::step_particles(EmitterState& es, f32 dt) {
 // update
 // ---------------------------------------------------------------------------
 
-void ParticleSystem::update(f32 dt) {
+void ParticleSystem::update(f32 dt_seconds) {
+    // FA's emitter blueprints count in sim ticks: emitter and particle
+    // lifetimes, emission rates, velocities (a muzzle flash emits for 2 ticks
+    // and its particles live 1). Advance the simulation in ticks.
+    const f32 dt = dt_seconds * kTicksPerSecond;
     u32 running_total = particle_count(); // compute once, not per-emitter
     for (auto& es : emitters_) {
         if (es.active) {
             es.emitter_time += dt;
 
-            // Check emitter lifetime expiry (repeating emitters loop)
-            if (es.blueprint && es.emitter_time >= es.blueprint->lifetime) {
-                if (es.blueprint->repeattime > 0) {
-                    es.emitter_time = std::fmod(es.emitter_time,
-                                                es.blueprint->lifetime);
+            // An emitter emits for its Lifetime: once, like a muzzle flash
+            // (made per shot and never destroyed, so it must end by itself);
+            // forever when Lifetime is negative, like smoke; or every
+            // Repeattime when that is longer, idle in between.
+            bool emitting = true;
+            if (es.blueprint && es.blueprint->lifetime > 0 &&
+                es.emitter_time >= es.blueprint->lifetime) {
+                if (es.blueprint->repeattime > es.blueprint->lifetime) {
+                    es.emitter_time = std::fmod(es.emitter_time, es.blueprint->repeattime);
+                    emitting = es.emitter_time < es.blueprint->lifetime;
                 } else {
                     es.active = false;
+                    emitting = false;
                 }
             }
 
-            emit_particles(es, dt, running_total);
+            if (emitting) emit_particles(es, dt, running_total);
         }
 
         step_particles(es, dt);
@@ -232,9 +242,24 @@ ParticleSystem::build_instances(f32 /*cam_x*/, f32 /*cam_y*/, f32 /*cam_z*/,
                                const Frustum* frustum) {
     instances_.clear();
     instances_.reserve(particle_count());
+    groups_.clear();
 
-    for (const auto& es : emitters_) {
-        if (!es.blueprint) continue;
+    // Emitters by texture, so each texture's particles draw in one run.
+    std::vector<const EmitterState*> order;
+    order.reserve(emitters_.size());
+    for (const auto& es : emitters_)
+        if (es.blueprint) order.push_back(&es);
+    auto additive = [](const EmitterState* e) { return e->blueprint->blendmode == 3; };
+    std::stable_sort(order.begin(), order.end(), [&](const EmitterState* a, const EmitterState* b) {
+        if (additive(a) != additive(b)) return !additive(a);
+        if (a->blueprint->texture_path != b->blueprint->texture_path)
+            return a->blueprint->texture_path < b->blueprint->texture_path;
+        return a->blueprint->ramp_texture_path < b->blueprint->ramp_texture_path;
+    });
+
+    for (const EmitterState* esp : order) {
+        const auto& es = *esp;
+        const u32 group_start = static_cast<u32>(instances_.size());
 
         // Frustum cull: skip entire emitter if origin is outside frustum
         if (frustum) {
@@ -290,13 +315,23 @@ ParticleSystem::build_instances(f32 /*cam_x*/, f32 /*cam_y*/, f32 /*cam_z*/,
             inst.uv_w = frame_w;
             inst.uv_h = frame_h;
 
-            // Default white tint
+            // Default white tint; the ramp gives the colour over its life
             inst.r = 1.0f;
             inst.g = 1.0f;
             inst.b = 1.0f;
+            inst.ramp_u = life_frac;
 
             instances_.push_back(inst);
         }
+        const u32 added = static_cast<u32>(instances_.size()) - group_start;
+        if (added == 0) continue;
+        const std::string& tex = es.blueprint->texture_path;
+        const std::string& ramp = es.blueprint->ramp_texture_path;
+        const bool add = additive(esp);
+        if (!groups_.empty() && groups_.back().texture == tex && groups_.back().ramp == ramp &&
+            groups_.back().additive == add)
+            groups_.back().count += added;
+        else groups_.push_back({tex, ramp, add, group_start, added});
     }
 
     return instances_;

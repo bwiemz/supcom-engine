@@ -4,6 +4,7 @@
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/frustum.hpp"
 
+#include <string>
 #include <vector>
 
 namespace osc::sim {
@@ -50,6 +51,7 @@ struct ParticleInstance {
     f32 uv_x, uv_y;            // texture frame offset
     f32 uv_w, uv_h;            // texture frame size
     f32 r, g, b;                // tint color (1,1,1 default)
+    f32 ramp_u;                 // life fraction: where the ramp texture is read
 };
 
 /// CPU particle simulation. Manages emitter state and particle physics.
@@ -66,8 +68,9 @@ public:
                       EmitterBlueprintCache& bp_cache,
                       struct lua_State* L);
 
-    /// Advance simulation: emit new particles, step physics, kill expired.
-    void update(f32 dt);
+    /// Advance simulation by `dt_seconds`: emit new particles, step physics,
+    /// kill expired.
+    void update(f32 dt_seconds);
 
     /// Build GPU instance buffer data from live particles.
     /// Call after update(). Returns the instance array for upload.
@@ -75,13 +78,31 @@ public:
         f32 cam_x, f32 cam_y, f32 cam_z,
         const Frustum* frustum = nullptr);
 
+    /// The instances of build_instances(), in runs that share a texture and
+    /// blend: each emitter's particles use its blueprint's `Texture` and
+    /// `Blendmode` (alpha-blended runs first, then additive).
+    struct TextureGroup {
+        std::string texture;   // VFS path; empty for an emitter that names none
+        std::string ramp;      // its RampTexture: colour over a particle's life
+        bool additive = false; // FA Blendmode 3
+        u32 offset = 0;
+        u32 count = 0;
+    };
+    const std::vector<TextureGroup>& texture_groups() const { return groups_; }
+
     u32 emitter_count() const { return static_cast<u32>(emitters_.size()); }
     u32 particle_count() const;
 
     /// Remove all emitters and particles (for scene teardown).
-    void clear() { emitters_.clear(); instances_.clear(); }
+    void clear() {
+        emitters_.clear();
+        instances_.clear();
+        groups_.clear();
+    }
 
     static constexpr u32 MAX_PARTICLES = 16384;
+    /// Sim ticks per second: emitter blueprints' unit of time.
+    static constexpr f32 kTicksPerSecond = 10.0f;
 
 private:
     void emit_particles(EmitterState& es, f32 dt, u32& running_total);
@@ -89,6 +110,7 @@ private:
 
     std::vector<EmitterState> emitters_;
     std::vector<ParticleInstance> instances_;
+    std::vector<TextureGroup> groups_;
 };
 
 } // namespace osc::renderer

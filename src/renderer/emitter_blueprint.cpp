@@ -186,7 +186,9 @@ EmitterBlueprintData EmitterBlueprintCache::parse_from_lua(lua_State* L,
         lua_field_u32(L, table_idx, "TextureFrameCount", 1);
     bp.texture_strip_count =
         lua_field_u32(L, table_idx, "TextureStripCount", 1);
-    bp.blendmode = lua_field_u32(L, table_idx, "Blendmode", 0);
+    // Retail spells it both ways.
+    bp.blendmode =
+        lua_field_u32(L, table_idx, "Blendmode", lua_field_u32(L, table_idx, "BlendMode", 0));
     bp.lod_cutoff = lua_field_f32(L, table_idx, "LODCutoff", 300.0f);
     bp.sort_order = lua_field_f32(L, table_idx, "SortOrder", 0.0f);
 
@@ -210,9 +212,12 @@ EmitterBlueprintData EmitterBlueprintCache::parse_from_lua(lua_State* L,
     bp.interpolate_emission =
         lua_field_bool(L, table_idx, "InterpolateEmission", true);
 
-    // Texture paths
-    bp.texture_path =
-        lua_field_string(L, table_idx, "TextureFileName", "");
+    // Texture paths. FA's emitter blueprints name the particle texture
+    // `Texture` (with `RampTexture` beside it); without it every particle
+    // drew as a solid square.
+    bp.texture_path = lua_field_string(L, table_idx, "Texture", "");
+    if (bp.texture_path.empty())
+        bp.texture_path = lua_field_string(L, table_idx, "TextureFileName", "");
     bp.ramp_texture_path =
         lua_field_string(L, table_idx, "RampTexture", "");
 

@@ -898,9 +898,11 @@ layout(location = 3) in float inAlpha;
 layout(location = 4) in vec2 inUVOffset;  // texture frame offset
 layout(location = 5) in vec2 inUVSize;    // texture frame size
 layout(location = 6) in vec3 inColor;     // tint
+layout(location = 7) in float inRampU;    // life fraction
 
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out vec4 fragColor;
+layout(location = 2) out float fragRampU;
 
 void main() {
     // 6 vertices per quad (2 triangles)
@@ -933,6 +935,7 @@ void main() {
     fragUV = inUVOffset + uv01 * inUVSize;
 
     fragColor = vec4(inColor, inAlpha);
+    fragRampU = inRampU;
 }
 )glsl";
 
@@ -940,15 +943,18 @@ const char* particle_frag = R"glsl(
 #version 450
 
 layout(set = 0, binding = 0) uniform sampler2D texSampler;
+layout(set = 1, binding = 0) uniform sampler2D rampSampler; // colour over life
 
 layout(location = 0) in vec2 fragUV;
 layout(location = 1) in vec4 fragColor;
+layout(location = 2) in float fragRampU;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
     vec4 texColor = texture(texSampler, fragUV);
-    outColor = texColor * fragColor;
+    vec4 ramp = texture(rampSampler, vec2(clamp(fragRampU, 0.0, 1.0), 0.5));
+    outColor = texColor * fragColor * ramp;
     if (outColor.a < 0.01) discard;
 }
 )glsl";

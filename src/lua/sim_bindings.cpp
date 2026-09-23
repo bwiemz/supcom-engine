@@ -2364,6 +2364,12 @@ static int l_CreateLightParticle(lua_State* L) {
     fx->set_light_duration(duration);
     fx->set_glow_texture(glow);
     fx->set_ramp_texture(ramp);
+    // A flash: its duration is in ticks (the commander's warp-in flashes
+    // for 4 and 10), and it ends by itself -- it lingered forever before.
+    if (duration > 0) {
+        fx->set_param("LIFETIME", duration * sim::SimState::SECONDS_PER_TICK);
+        fx->set_birth_time(sim->game_time());
+    }
     // Light particles are fire-and-forget, no method chaining needed.
     // Return nil (same as original stub_noop) — FA doesn't use the return value.
     return 0;
