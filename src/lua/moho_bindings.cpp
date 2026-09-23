@@ -9300,9 +9300,14 @@ static renderer::Renderer* get_renderer(lua_State* L) {
 /// the class), loses its _c_object, leaves the tree and is marked destroyed.
 static void destroy_control_tree(lua_State* L, ui::UIControlRegistry* reg,
                                  ui::UIControl* ctrl) {
+    // Scripts destroy things from OnDestroy (themselves, their parent);
+    // marking the teardown first makes those calls no-ops rather than a
+    // second OnDestroy and a registry ref freed twice.
+    ctrl->set_destroying();
     const std::vector<ui::UIControl*> children = ctrl->children();
     for (auto* child : children)
-        if (child && !child->destroyed()) destroy_control_tree(L, reg, child);
+        if (child && !child->destroyed() && !child->destroying())
+            destroy_control_tree(L, reg, child);
 
     const int ref = ctrl->lua_table_ref();
     if (ref >= 0) {
@@ -9348,7 +9353,7 @@ static void destroy_control_tree(lua_State* L, ui::UIControlRegistry* reg,
 
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (!ctrl || ctrl->destroyed()) return 0;
+    if (!ctrl || ctrl->destroyed() || ctrl->destroying()) return 0;
     auto* reg = get_ui_registry(L);
     if (!reg) return 0;
     destroy_control_tree(L, reg, ctrl);
