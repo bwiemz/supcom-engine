@@ -2142,7 +2142,6 @@ int main(int argc, char* argv[]) {
             __osc_lobby_flow_after_count = GetNumRootFrames()
             __osc_lobby_flow_hosted =
                 rawget(_G, '__osc_lobby_hosting_callback_fired') == true
-                and rawget(_G, '__osc_lobby_connection_callback_fired') == true
                 and rawget(_G, '__osc_pending_host_comm') == nil
                 and __osc_lobby_flow_after_count >= __osc_lobby_flow_before_count
         )");
@@ -2167,9 +2166,6 @@ int main(int argc, char* argv[]) {
             lua_getglobal(uL, "__osc_lobby_hosting_callback_fired");
             const bool hosting_callback = lua_toboolean(uL, -1) != 0;
             lua_pop(uL, 1);
-            lua_getglobal(uL, "__osc_lobby_connection_callback_fired");
-            const bool connection_callback = lua_toboolean(uL, -1) != 0;
-            lua_pop(uL, 1);
             lua_getglobal(uL, "__osc_pending_host_comm");
             const bool pending_host_comm = !lua_isnil(uL, -1);
             lua_pop(uL, 1);
@@ -2180,9 +2176,9 @@ int main(int argc, char* argv[]) {
 
             spdlog::error(
                 "Lobby flow did not reach hosted lobby state "
-                "(ButtonSkirmish={}, HostGame={}, Hosting={}, Connection={}, pending_comm={})",
+                "(ButtonSkirmish={}, HostGame={}, Hosting={}, pending_comm={})",
                 button_type_text, host_game_called, hosting_callback,
-                connection_callback, pending_host_comm);
+                pending_host_comm);
             lobby_harness.print_report(true);
             lobby_harness.write_report_to_file("smoke_report.txt");
             lobby_harness.deactivate();

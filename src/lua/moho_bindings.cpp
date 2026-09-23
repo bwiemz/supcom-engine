@@ -12613,15 +12613,13 @@ static int lobby_HostGame(lua_State* L) {
             "  if LobbyComm and LobbyComm.quietTimeout == nil then LobbyComm.quietTimeout = 30000 end\n"
             "  rawset(_G, '__osc_pending_host_comm', nil)\n"
             "  rawset(_G, '__osc_pending_host_name', nil)\n"
-            "  -- Fire Hosting callback first (creates HostUtils, adds host to slot 1)\n"
+            "  -- Hosting() is the host's only callback: it takes slot 1 and\n"
+            "  -- builds the lobby UI (retail and FAF alike). ConnectionToHost-\n"
+            "  -- Established is for joining clients; firing it on the host made\n"
+            "  -- the lobby add the host again as a remote player.\n"
             "  if comm and comm.Hosting then\n"
             "    comm:Hosting()\n"
             "    rawset(_G, '__osc_lobby_hosting_callback_fired', true)\n"
-            "  end\n"
-            "  -- Then fire ConnectionToHostEstablished (creates the lobby UI)\n"
-            "  if comm and comm.ConnectionToHostEstablished then\n"
-            "    comm:ConnectionToHostEstablished(1, name, 1)\n"
-            "    rawset(_G, '__osc_lobby_connection_callback_fired', true)\n"
             "  end\n"
             "end)\n";
         if (luaL_loadbuffer(L, code, std::strlen(code), "=HostGame") == 0) {
@@ -12743,6 +12741,15 @@ static int lobby_SendData(lua_State* L) {
     return 0;
 }
 
+// Steam-build lobby methods (retail FA 3599 on Steam). UpdateSteamLobby
+// publishes lobby metadata to Steam matchmaking: offline, nothing to publish.
+// JoinSteamGame joins through a Steam lobby id; with no Steam backend it is
+// the regular JoinGame.
+static int lobby_UpdateSteamLobby(lua_State* L) { // stub: no Steam backend
+    (void)L;
+    return 0;
+}
+
 static const MethodEntry ui_lobby_methods[] = {
     {"BroadcastData",       lobby_BroadcastData},
     {"ConnectToPeer",       lobby_ConnectToPeer},
@@ -12762,6 +12769,8 @@ static const MethodEntry ui_lobby_methods[] = {
     {"MakeValidGameName",   lobby_MakeValidGameName},
     {"MakeValidPlayerName", lobby_MakeValidPlayerName},
     {"SendData",            lobby_SendData},
+    {"UpdateSteamLobby",    lobby_UpdateSteamLobby},
+    {"JoinSteamGame",       lobby_JoinGame},
     {nullptr, nullptr},
 };
 
