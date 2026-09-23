@@ -548,9 +548,12 @@ void SimState::queue_replay(const Replay& replay) {
 }
 
 void SimState::stop_unit(Unit& unit) {
+    const bool factory_build = unit.building_factory_order();
     unit.clear_commands();
-    // The order it was working on goes too: an enhancement under way stops.
-    if (unit.is_enhancing()) unit.cancel_enhance(L_);
+    // The order it was working on goes too: a factory's unit under
+    // construction, or an enhancement under way.
+    if (factory_build) unit.cancel_factory_build(entity_registry_, L_);
+    if (!unit.destroyed() && unit.is_enhancing()) unit.cancel_enhance(L_);
 }
 
 void SimState::dispatch_due_commands() {

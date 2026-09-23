@@ -8917,6 +8917,9 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         IssueCommand(GetUnitCommandFromCommandCap('RULEUCC_Stop'))
     )");
     play(1);
+    if (army1_unit("uel0105"))
+        osc::test_status::fail("[FAIL] Test 10s2: Stop left the factory's engineer half-built");
+    else spdlog::info("[PASS] Test 10s2: Stop took the engineer under construction");
     lua_ok("Test 10t: stopped; an enhancement for the commander", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
         if table.getn(q) ~= 0 then error(table.getn(q) .. ' entries after Stop') end

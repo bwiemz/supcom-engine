@@ -132,12 +132,29 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
         if (g == index) group.push_back(i);
     }
     // Newest first, so earlier positions stay valid.
+    const bool in_progress = building_factory_order();
     bool cancel = false;
     for (auto it = group.rbegin(); it != group.rend() && count > 0; ++it, --count) {
-        if (*it == 0 && build_target_id_ != 0) cancel = true;
+        if (*it == 0 && in_progress) cancel = true;
         command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(*it));
     }
-    if (cancel) finish_build(registry, L, false);
+    if (cancel) cancel_factory_build(registry, L);
+}
+
+void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
+    const u32 target_id = build_target_id_;
+    if (target_id == 0) return;
+    finish_build(registry, L, false); // OnFailedToBuild; the factory's work ends
+    // The unit under construction goes with it, through its own Destroy
+    // (OnDestroy and the rest of its script lifecycle).
+    auto* target = registry.find(target_id);
+    if (!target || target->destroyed()) return;
+    if (target->is_unit()) static_cast<Unit*>(target)->call_lua_method(L, "Destroy");
+    target = registry.find(target_id);
+    if (target && !target->destroyed()) { // no script object (or no Destroy)
+        target->mark_destroyed();
+        registry.unregister_entity(target_id);
+    }
 }
 
 // --- Adjacency helpers ---

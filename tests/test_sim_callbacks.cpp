@@ -82,7 +82,8 @@ struct CallbackSim {
             function make_unit()
                 local u = {}
                 for _, name in ipairs({'OnPaused', 'OnUnpaused', 'OnAutoModeOn', 'OnAutoModeOff',
-                                       'OnScriptBitSet', 'OnScriptBitClear'}) do
+                                       'OnScriptBitSet', 'OnScriptBitClear', 'OnFailedToBuild',
+                                       'Destroy'}) do
                     local hook = name
                     u[hook] = function(self, bit)
                         table.insert(hooks, bit and (hook .. bit) or hook)
@@ -400,4 +401,40 @@ TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", 
     q = f.factory_queue();
     REQUIRE(q.size() == 1);
     CHECK((q[0].blueprint_id == "a" && q[0].count == 4));
+}
+
+TEST_CASE("Cancelling a factory's build under way destroys the unit it was building",
+          "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    const osc::u32 partial = w.spawn(); // the unit on the factory's floor
+    Unit& f = w.unit(id);
+    w.unit(partial).set_is_being_built(true);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "a";
+    f.push_command(build, false);
+    f.push_command(build, false);
+    f.set_build_target_id(partial); // the first order is under way
+    REQUIRE(f.building_factory_order());
+
+    // Taking one off takes the newest: the build under way continues.
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kDecreaseBuildCountCallback;
+    cb.args["Index"] = 1.0;
+    cb.args["Count"] = 1.0;
+    cb.unit_ids = {id};
+    w.sim.run_sim_callback(cb);
+    CHECK(f.factory_queue().at(0).count == 1);
+    CHECK(f.build_target_id() == partial);
+    CHECK(w.hooks().empty());
+
+    // Taking the last one off cancels it: the factory fails the build and
+    // the partial unit is destroyed through its own Destroy.
+    w.sim.run_sim_callback(cb);
+    CHECK(f.factory_queue().empty());
+    CHECK(f.build_target_id() == 0);
+    CHECK(w.hooks() == "OnFailedToBuild,Destroy");
+    auto* gone = w.sim.entity_registry().find(partial);
+    CHECK((gone == nullptr || gone->destroyed()));
 }

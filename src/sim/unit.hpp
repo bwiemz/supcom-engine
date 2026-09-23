@@ -196,8 +196,16 @@ public:
     std::vector<BuildQueueEntry> factory_queue() const;
     /// Remove up to `count` orders from the `index`-th (1-based) group of
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
-    /// the order in progress cancels its build, as a failed one.
+    /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// A factory's build under way is cancelled: the factory hears
+    /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
+    void cancel_factory_build(EntityRegistry& registry, lua_State* L);
+    /// True while a factory order is under way.
+    bool building_factory_order() const {
+        return build_target_id_ != 0 && !command_queue_.empty() &&
+               command_queue_.front().type == CommandType::BuildFactory;
+    }
 
     // Command queue
     const std::deque<UnitCommand>& command_queue() const {
