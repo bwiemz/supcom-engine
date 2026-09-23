@@ -1,6 +1,7 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
 #include "core/ui_registry_keys.hpp"
+#include "sim/build_placement.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -1998,15 +1999,8 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             f32 size_x = sim.build_ghost_foot_x();
             f32 size_z = sim.build_ghost_foot_z();
 
-            // Snap to grid (structures align to 1-unit grid in FA)
-            wx = std::floor(wx) + 0.5f;
-            wz = std::floor(wz) + 0.5f;
-
-            // Re-snap to footprint grid (center on even/odd footprint)
-            if (static_cast<int>(size_x) % 2 == 0)
-                wx = std::floor(wx);
-            if (static_cast<int>(size_z) % 2 == 0)
-                wz = std::floor(wz);
+            // Where a build order at the cursor would place it
+            sim::snap_structure_center(wx, wz, size_x, size_z);
 
             f32 wy = sim.terrain()->get_terrain_height(wx, wz);
 

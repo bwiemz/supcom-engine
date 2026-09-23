@@ -9,6 +9,7 @@
 
 #include "core/types.hpp"
 
+#include <cmath>
 #include <functional>
 #include <map>
 #include <string>
@@ -26,6 +27,16 @@ struct PlacementRules {
     bool on_water = false;
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
 };
+
+/// Snap a structure's center to the build grid: odd footprints center on a
+/// cell, even ones on a cell corner, so the footprint covers whole cells.
+/// The placement ghost and the build order both use it.
+inline void snap_structure_center(f32& x, f32& z, f32 size_x, f32 size_z) {
+    x = std::floor(x) + 0.5f;
+    z = std::floor(z) + 0.5f;
+    if (static_cast<int>(size_x) % 2 == 0) x = std::floor(x);
+    if (static_cast<int>(size_z) % 2 == 0) z = std::floor(z);
+}
 
 /// Blueprint lookup (blueprints live in Lua); unknown ids get defaults.
 using PlacementRulesLookup = std::function<PlacementRules(const std::string& bp_id)>;

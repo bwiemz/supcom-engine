@@ -1015,6 +1015,122 @@ static bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
     return hit && hit != root && !dynamic_cast<osc::ui::WorldView*>(hit);
 }
 
+// ── FA's command mode (/lua/ui/game/commandmode.lua) ──
+static constexpr const char* kCommandModeModule = "/lua/ui/game/commandmode.lua";
+
+/// A unit blueprint's footprint from the UI state's blueprint store.
+static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f32& sx,
+                                osc::f32& sz) {
+    auto* store = osc::lua::LuaState::get_blueprint_store(uiL);
+    auto* entry = store ? store->find(bp_id) : nullptr;
+    if (!entry) return;
+    store->push_lua_table(*entry, uiL);
+    lua_pushstring(uiL, "Footprint");
+    lua_rawget(uiL, -2);
+    if (lua_istable(uiL, -1)) {
+        lua_pushstring(uiL, "SizeX");
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) sx = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        lua_pop(uiL, 1);
+        lua_pushstring(uiL, "SizeZ");
+        lua_rawget(uiL, -2);
+        if (lua_isnumber(uiL, -1)) sz = static_cast<osc::f32>(lua_tonumber(uiL, -1));
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 2); // Footprint + blueprint
+}
+
+/// FA's current command mode: GetCommandMode() -> {mode, data}, once the
+/// game UI has loaded the module. Build mode carries the footprint (for
+/// the ghost and the snap).
+static osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
+    osc::renderer::CommandMode m;
+    osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
+    if (!lua_isfunction(uiL, -1)) {
+        lua_pop(uiL, 1);
+        return m;
+    }
+    if (lua_pcall(uiL, 0, 1, 0) != 0) {
+        spdlog::warn("GetCommandMode error: {}", lua_tostring(uiL, -1));
+        lua_pop(uiL, 1);
+        return m;
+    }
+    if (lua_istable(uiL, -1)) {
+        lua_rawgeti(uiL, -1, 1);
+        if (lua_type(uiL, -1) == LUA_TSTRING) m.mode = lua_tostring(uiL, -1);
+        lua_pop(uiL, 1);
+        lua_rawgeti(uiL, -1, 2);
+        if (lua_istable(uiL, -1)) {
+            lua_pushstring(uiL, "name");
+            lua_rawget(uiL, -2);
+            if (lua_type(uiL, -1) == LUA_TSTRING) m.name = lua_tostring(uiL, -1);
+            lua_pop(uiL, 1);
+        }
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1);
+    if (m.mode == "build" && !m.name.empty())
+        blueprint_footprint(uiL, m.name, m.footprint_x, m.footprint_z);
+    return m;
+}
+
+/// Report an issued command to commandmode.OnCommandIssued, as Moho does:
+/// a non-Shift command ends the mode, and FA draws its feedback blip.
+static void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c) {
+    lua_newtable(uiL);
+    lua_pushstring(uiL, "CommandType");
+    lua_pushstring(uiL, c.type.c_str());
+    lua_rawset(uiL, -3);
+    lua_pushstring(uiL, "Clear");
+    lua_pushboolean(uiL, c.clear ? 1 : 0);
+    lua_rawset(uiL, -3);
+    if (!c.blueprint.empty()) {
+        lua_pushstring(uiL, "Blueprint");
+        lua_pushstring(uiL, c.blueprint.c_str());
+        lua_rawset(uiL, -3);
+    }
+    lua_pushstring(uiL, "Target");
+    lua_newtable(uiL);
+    lua_pushstring(uiL, "Type");
+    lua_pushstring(uiL, c.target_id ? "Entity" : "Position");
+    lua_rawset(uiL, -3);
+    if (c.target_id) {
+        lua_pushstring(uiL, "EntityId");
+        lua_pushnumber(uiL, c.target_id);
+        lua_rawset(uiL, -3);
+    }
+    lua_pushstring(uiL, "Position");
+    lua_newtable(uiL);
+    lua_pushnumber(uiL, c.position.x);
+    lua_rawseti(uiL, -2, 1);
+    lua_pushnumber(uiL, c.position.y);
+    lua_rawseti(uiL, -2, 2);
+    lua_pushnumber(uiL, c.position.z);
+    lua_rawseti(uiL, -2, 3);
+    lua_rawset(uiL, -3); // Target.Position
+    lua_rawset(uiL, -3); // command.Target
+    osc::core::call_ui_callback(uiL, kCommandModeModule, "OnCommandIssued", 1);
+}
+
+/// Leave FA's command mode, cancelled (a right-click).
+static void cancel_command_mode(lua_State* uiL) {
+    lua_pushboolean(uiL, 1);
+    osc::core::call_ui_callback(uiL, kCommandModeModule, "EndCommandMode", 1);
+}
+
+/// Show the build ghost while FA is in build mode. The ghost is cleared
+/// only if this set it (other code may place ghosts too).
+static void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::CommandMode& m,
+                             bool& ghost_from_mode) {
+    if (m.mode == "build" && !m.name.empty()) {
+        sim.set_build_ghost(m.name, m.footprint_x, m.footprint_z);
+        ghost_from_mode = true;
+    } else if (ghost_from_mode) {
+        sim.clear_build_ghost();
+        ghost_from_mode = false;
+    }
+}
+
 /// A selection action reaches the UI as Moho reports it,
 /// gamemain.OnSelectionChanged(old, new, added, removed), and then the
 /// engine's own AddOnSelectionChangedCallback callbacks. Moho reports every
@@ -2562,6 +2678,16 @@ int main(int argc, char* argv[]) {
 
             double sim_accumulator = 0.0;
             double paused_beat_accumulator = 0.0;
+
+            // FA's command mode drives world clicks (read once per frame).
+            osc::renderer::CommandMode current_command_mode;
+            bool ghost_from_mode = false;
+            input_handler.set_command_mode_hooks(
+                {[&] { return current_command_mode; },
+                 [&](const osc::renderer::IssuedCommand& c) {
+                     report_command_issued(ui_lua_state.raw(), c);
+                 },
+                 [&] { cancel_command_mode(ui_lua_state.raw()); }});
             auto prev_time = std::chrono::high_resolution_clock::now();
             bool p_was_pressed = false;
             bool plus_was_pressed = false;
@@ -2812,6 +2938,8 @@ int main(int argc, char* argv[]) {
 
                 // Player input: selection + commands
                 if (sim_state) {
+                current_command_mode = read_command_mode(ui_lua_state.raw());
+                sync_build_ghost(*sim_state, current_command_mode, ghost_from_mode);
                 input_handler.update(renderer, *sim_state, dt, [&] {
                     osc::f64 mx = 0, my = 0;
                     renderer.mouse_position(mx, my);
@@ -3648,7 +3776,14 @@ int main(int argc, char* argv[]) {
                 pump(6);
             }
         };
-        osc::test::test_gameui(ui_test_ctx, pump, play);
+        // A world click as the input handler makes it under FA's command mode.
+        auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
+            const auto mode = read_command_mode(uL);
+            auto issued = headless_input.click_in_command_mode(*sim_state, mode, x, z, shift);
+            if (issued) report_command_issued(uL, *issued);
+            return issued.has_value();
+        };
+        osc::test::test_gameui(ui_test_ctx, pump, play, click);
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);

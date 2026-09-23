@@ -6,6 +6,8 @@
 #include "sim/entity.hpp" // Vector3
 
 #include <array>
+#include <optional>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -17,6 +19,34 @@ namespace osc::renderer {
 
 class Camera;
 class Renderer;
+
+/// FA's command mode (/lua/ui/game/commandmode.lua): what a world click
+/// does after the player picked a build icon or an order button.
+struct CommandMode {
+    std::string mode; ///< "build", "order", "ping"...; empty for none
+    std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
+    f32 footprint_x = 1.0f; ///< build: the structure's footprint
+    f32 footprint_z = 1.0f;
+};
+
+/// A command a command-mode click issued, as FA's OnCommandIssued sees it.
+struct IssuedCommand {
+    std::string type;      ///< "BuildMobile", "Move", "Attack", ...
+    sim::Vector3 position; ///< target point (build: the snapped center)
+    u32 target_id = 0;     ///< target entity, if any
+    std::string blueprint; ///< build: blueprint id
+    bool clear = true;     ///< replaced the units' queues (no Shift)
+};
+
+/// The engine side of FA's command mode, provided by the game loop (the
+/// renderer layer does not talk to Lua): the current mode, the report of an
+/// issued command (commandmode.OnCommandIssued), and a cancel
+/// (EndCommandMode) for a right-click.
+struct CommandModeHooks {
+    std::function<CommandMode()> current;
+    std::function<void(const IssuedCommand&)> issued;
+    std::function<void()> cancel;
+};
 
 /// Handles player input: unit selection, command dispatch, drag selection box,
 /// control groups (Ctrl+0-9), and camera bookmarks (Ctrl+Shift+0-9).
@@ -36,6 +66,17 @@ public:
 
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
+
+    void set_command_mode_hooks(CommandModeHooks hooks) { mode_hooks_ = std::move(hooks); }
+
+    /// A left-click at world (wx, wz) under command mode `mode`: route its
+    /// order to the selected units. Build places `mode.name` at the snapped
+    /// point (builders only); an order issues that cap, at the unit under the
+    /// click when the order targets one. Nothing when the mode has no world
+    /// click (none, ping) or nothing takes the order.
+    std::optional<IssuedCommand> click_in_command_mode(sim::SimState& sim,
+                                                       const CommandMode& mode,
+                                                       f32 wx, f32 wz, bool shift);
 
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
@@ -111,6 +152,9 @@ private:
 
     /// Find the nearest player-owned unit to a world XZ point within radius.
     u32 pick_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
+    /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
+    u32 pick_any_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
+    CommandModeHooks mode_hooks_;
 };
 
 } // namespace osc::renderer

@@ -8460,7 +8460,8 @@ static int count_descendants(const osc::ui::UIControl* root) {
 }
 
 void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
-                 const std::function<void(int)>& play) {
+                 const std::function<void(int)>& play,
+                 const std::function<bool(f32, f32, bool)>& click) {
     spdlog::info("=== GAME UI TEST (M187) ===");
     lua_State* L = ctx.L;
     auto lua_ok = [&](const char* what, const char* code) {
@@ -8661,6 +8662,55 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         GetSelectedUnits()[1]:ProcessInfo('SetAutoMode', 'false')
     )");
     play(1);
+    // Command modes: a build icon or order button puts FA in a command
+    // mode, and the next world click issues it (then OnCommandIssued ends
+    // the mode).
+    lua_ok("Test 11a: pick the T1 power generator from the build panel", R"(
+        __osc_test_acu_pos = GetSelectedUnits()[1]:GetPosition()
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('build', {name = 'ueb1101'})
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) + 12.3f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1)) + 7.8f;
+        lua_pop(L, 3);
+        if (click(x, z, false))
+            spdlog::info("[PASS] Test 11b: the world click issued the build");
+        else
+            osc::test_status::fail("[FAIL] Test 11b: build click issued nothing");
+    }
+    lua_ok("Test 11c: the commander builds it; the mode ended", R"(
+        local q = GetSelectedUnits()[1]:GetCommandQueue()
+        if not q[1] or q[1].commandType ~= 20 then
+            error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
+        end
+        if import('/lua/ui/game/commandmode.lua').GetCommandMode()[1] then
+            error('command mode still active after a non-Shift click')
+        end
+        import('/lua/ui/game/commandmode.lua').StartCommandMode('order', {name = 'RULEUCC_Move'})
+    )");
+    {
+        lua_getglobal(L, "__osc_test_acu_pos");
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 3);
+        const f32 x = static_cast<f32>(lua_tonumber(L, -2)) - 20.0f;
+        const f32 z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 3);
+        if (click(x, z, false))
+            spdlog::info("[PASS] Test 11d: the move order click issued");
+        else
+            osc::test_status::fail("[FAIL] Test 11d: move click issued nothing");
+    }
+    lua_ok("Test 11e: the commander moves", R"(
+        local q = GetSelectedUnits()[1]:GetCommandQueue()
+        if not q[1] or q[1].commandType ~= 2 then
+            error('commander queue head: ' .. tostring(q[1] and q[1].commandType))
+        end
+    )");
+    play(1);
+
     // Re-selecting the same units is still a selection action: Moho reports
     // it, and retail refreshes the panels (how its own startup race -- the
     // commander selected before the UI shows -- gets its orders).

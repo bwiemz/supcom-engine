@@ -1,4 +1,5 @@
 #include "renderer/input_handler.hpp"
+#include "sim/build_placement.hpp"
 #include "renderer/renderer.hpp"
 
 #include "sim/sim_state.hpp"
@@ -103,11 +104,27 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         }
     }
 
+    // FA's command mode (a build icon or order button picked in the UI)
+    // turns a world click into that command.
+    const CommandMode mode = mode_hooks_.current ? mode_hooks_.current() : CommandMode{};
+    const bool mode_active = mode.mode == "build" || mode.mode == "order";
+
     if (!lmb && lmb_was_pressed_) {
         // Left button just released
         if (dragging_) {
             handle_drag_select(renderer, sim);
             dragging_ = false;
+        } else if (!on_minimap && mode_active) {
+            f32 wx, wz;
+            const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                               renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+            if (renderer.camera().screen_to_world(
+                    mx, my, static_cast<f32>(renderer.width()),
+                    static_cast<f32>(renderer.height()), 0, wx, wz)) {
+                if (auto issued = click_in_command_mode(sim, mode, wx, wz, shift);
+                    issued && mode_hooks_.issued)
+                    mode_hooks_.issued(*issued);
+            }
         } else if (!on_minimap) {
             handle_left_click(renderer, sim, mx, my);
         }
@@ -142,6 +159,9 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             sim.set_human_input_active(false);
             spdlog::debug("Minimap move: {} units to ({:.0f},{:.0f})",
                           selected_.size(), mm_wx, mm_wz);
+        } else if (mode_active) {
+            // Right-click leaves the command mode, as in FA.
+            if (mode_hooks_.cancel) mode_hooks_.cancel();
         } else {
             handle_right_click(renderer, sim, mx, my);
         }
@@ -277,6 +297,112 @@ void InputHandler::handle_right_click(Renderer& renderer,
     spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
                   enemy_id ? "Attack" : "Move",
                   selected_.size(), wx, wz);
+}
+
+namespace {
+
+/// An FA order cap and the sim command it issues. `targets_unit`: the order
+/// needs a unit (or, for reclaim, any entity) under the click.
+struct OrderSpec {
+    const char* cap;
+    sim::CommandType type;
+    const char* fa_type; // CommandType as FA's OnCommandIssued sees it
+    bool targets_unit;
+};
+
+constexpr OrderSpec kOrders[] = {
+    {"RULEUCC_Move", sim::CommandType::Move, "Move", false},
+    {"RULEUCC_Attack", sim::CommandType::Attack, "Attack", false},
+    {"RULEUCC_Patrol", sim::CommandType::Patrol, "Patrol", false},
+    {"RULEUCC_Guard", sim::CommandType::Guard, "Guard", true},
+    {"RULEUCC_Reclaim", sim::CommandType::Reclaim, "Reclaim", true},
+    {"RULEUCC_Repair", sim::CommandType::Repair, "Repair", true},
+    {"RULEUCC_Capture", sim::CommandType::Capture, "Capture", true},
+    {"RULEUCC_Transport", sim::CommandType::TransportUnload, "TransportUnloadUnits", false},
+    {"RULEUCC_Ferry", sim::CommandType::Ferry, "Ferry", false},
+    {"RULEUCC_Teleport", sim::CommandType::Teleport, "Teleport", false},
+    {"RULEUCC_Nuke", sim::CommandType::Nuke, "Nuke", false},
+    {"RULEUCC_Tactical", sim::CommandType::Tactical, "Tactical", false},
+    {"RULEUCC_Overcharge", sim::CommandType::Overcharge, "Overcharge", true},
+    {"RULEUCC_Sacrifice", sim::CommandType::Sacrifice, "Sacrifice", true},
+};
+
+} // namespace
+
+std::optional<IssuedCommand> InputHandler::click_in_command_mode(
+    sim::SimState& sim, const CommandMode& mode, f32 wx, f32 wz, bool shift) {
+    IssuedCommand out;
+    out.clear = !shift;
+    sim::UnitCommand cmd;
+    std::vector<u32> ids;
+
+    auto live_selected = [&](auto keep) {
+        for (u32 uid : selected_) {
+            auto* e = sim.entity_registry().find(uid);
+            if (!e || !e->is_unit() || e->destroyed()) continue;
+            if (keep(static_cast<const sim::Unit&>(*e))) ids.push_back(uid);
+        }
+        std::sort(ids.begin(), ids.end());
+    };
+    auto surface_y = [&](f32 x, f32 z) {
+        return sim.terrain() ? sim.terrain()->get_surface_height(x, z) : 0.0f;
+    };
+
+    if (mode.mode == "build") {
+        if (mode.name.empty()) return std::nullopt;
+        sim::snap_structure_center(wx, wz, mode.footprint_x, mode.footprint_z);
+        // Mobile builders take the order; factories build through their queue.
+        live_selected([](const sim::Unit& u) {
+            return u.build_rate() > 0 && !u.has_category("STRUCTURE");
+        });
+        cmd.type = sim::CommandType::BuildMobile;
+        cmd.blueprint_id = mode.name;
+        out.type = "BuildMobile";
+        out.blueprint = mode.name;
+    } else if (mode.mode == "order") {
+        const OrderSpec* spec = nullptr;
+        for (const auto& o : kOrders)
+            if (mode.name == o.cap) { spec = &o; break; }
+        if (!spec) return std::nullopt;
+        cmd.type = spec->type;
+        out.type = spec->fa_type;
+        cmd.target_id = pick_any_unit(sim, wx, wz, 5.0f);
+        if (spec->targets_unit && cmd.target_id == 0) return std::nullopt;
+        live_selected([&](const sim::Unit& u) {
+            return u.has_command_cap(spec->cap) && u.entity_id() != cmd.target_id;
+        });
+    } else {
+        return std::nullopt; // no mode, or one without a world click (ping)
+    }
+    if (ids.empty()) return std::nullopt;
+
+    cmd.target_pos = {wx, surface_y(wx, wz), wz};
+    cmd.command_id = sim.next_command_id();
+    out.position = cmd.target_pos;
+    out.target_id = cmd.target_id;
+    // Player-issued order: routed so a networked match broadcasts it.
+    sim.set_human_input_active(true);
+    sim.route_command(ids, cmd, !shift);
+    sim.set_human_input_active(false);
+    return out;
+}
+
+u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
+                                f32 radius) const {
+    u32 best_id = 0;
+    f32 best_dist2 = radius * radius;
+    for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
+        auto* e = sim.entity_registry().find(id);
+        if (!e || !e->is_unit() || e->destroyed()) continue;
+        const f32 dx = e->position().x - wx;
+        const f32 dz = e->position().z - wz;
+        const f32 d2 = dx * dx + dz * dz;
+        if (d2 <= best_dist2) {
+            best_dist2 = d2;
+            best_id = id;
+        }
+    }
+    return best_id;
 }
 
 u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
