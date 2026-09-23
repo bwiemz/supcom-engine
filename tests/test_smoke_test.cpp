@@ -169,7 +169,7 @@ TEST_CASE("SmokeTestHarness pcall error recording", "[smoke]") {
     harness.do_string_logged(state.raw(), "local x = nil; x.foo()");
 
     auto report = harness.generate_report();
-    REQUIRE(report.size() >= 1);
+    REQUIRE(!report.empty());
     bool found_pcall = false;
     for (auto& e : report) {
         if (e.category == osc::lua::SmokeCategory::PcallError) found_pcall = true;

@@ -883,7 +883,7 @@ void UIRenderer::advance_animations(lua_State* L,
                     if (ctrl->anim_looping()) {
                         pi = 0;
                     } else {
-                        pi = ps - 1;
+                        // Stays on the last pattern frame.
                         ctrl->set_anim_playing(false);
                         accum = 0.0f;
                         break;
@@ -898,7 +898,7 @@ void UIRenderer::advance_animations(lua_State* L,
                     if (ctrl->anim_looping()) {
                         f = 0;
                     } else {
-                        f = n - 1;
+                        // Stays on the last frame.
                         ctrl->set_anim_playing(false);
                         accum = 0.0f;
                         break;

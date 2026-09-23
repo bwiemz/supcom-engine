@@ -71,14 +71,11 @@ private:
 
     void build_single_unit(const sim::EntityRecord& unit, const sim::WorldSnapshot& snap,
                            FontCache& font_cache, TextureCache& tex_cache,
-                           VkDescriptorSet icon_atlas_ds,
-                           f32 panel_x, f32 panel_y, f32 panel_w, f32 panel_h);
+                           VkDescriptorSet icon_atlas_ds, f32 px, f32 py, f32 pw, f32 panel_h);
 
-    void build_multi_unit(const sim::FrameView& view,
-                          const std::unordered_set<u32>& selected_ids,
+    void build_multi_unit(const sim::FrameView& view, const std::unordered_set<u32>& selected_ids,
                           FontCache& font_cache, TextureCache& tex_cache,
-                          VkDescriptorSet icon_atlas_ds,
-                          f32 panel_x, f32 panel_y, f32 panel_w, f32 panel_h);
+                          VkDescriptorSet icon_atlas_ds, f32 px, f32 py, f32 pw, f32 panel_h);
 
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};

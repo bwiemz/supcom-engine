@@ -4780,7 +4780,7 @@ static int weapon_DoInstaHit(lua_State* L) {
         auto* target_unit = static_cast<sim::Unit*>(target_e);
         if (!target_unit->can_take_damage()) return 0;
         amount *= sim->armor_definition().get_multiplier(
-            target_unit->armor_type(), w->damage_type.c_str());
+            target_unit->armor_type(), w->damage_type);
         if (amount <= 0) return 0;
     }
 
@@ -9942,6 +9942,7 @@ static int bitmap_SetPingPongPattern(lua_State* L) {
     if (!ctrl || ctrl->num_frames() <= 0) return 0;
     i32 n = ctrl->num_frames();
     std::vector<i32> pat;
+    pat.reserve(2 * static_cast<size_t>(n));
     for (i32 i = 0; i < n; i++) pat.push_back(i);
     for (i32 i = n - 2; i >= 0; i--) pat.push_back(i);
     ctrl->set_frame_pattern(std::move(pat));
@@ -13664,7 +13665,7 @@ static constexpr f64 UI_FRAMES_PER_SECOND = 60.0;
 static int l_ui_WaitSeconds(lua_State* L) {
     f64 seconds = luaL_checknumber(L, 1);
     if (seconds < 0.0) seconds = 0.0;
-    u32 frames = static_cast<u32>(seconds * UI_FRAMES_PER_SECOND + 0.5);
+    u32 frames = static_cast<u32>(std::llround(seconds * UI_FRAMES_PER_SECOND));
     if (frames < 1) frames = 1;
     lua_pushnumber(L, static_cast<lua_Number>(frames));
     return lua_yield(L, 1);
@@ -15728,7 +15729,7 @@ static int l_GetFromCurrentProfile(lua_State* L) {
     const char* key = luaL_checkstring(L, 1);
     auto* prefs = get_prefs(L);
     const std::string profile = prefs ? prefs->current_profile_path() : std::string{};
-    if (profile.empty()) lua_pushnil(L);
+    if (!prefs || profile.empty()) lua_pushnil(L);
     else prefs->push(profile + "." + key, L);
     if (lua_isnil(L, -1) && lua_gettop(L) >= 3) {
         lua_pop(L, 1);
@@ -15743,7 +15744,7 @@ static int l_SetToCurrentProfile(lua_State* L) {
     lua_settop(L, 2);
     auto* prefs = get_prefs(L);
     const std::string profile = prefs ? prefs->current_profile_path() : std::string{};
-    if (!profile.empty()) prefs->set(profile + "." + key, L, 2);
+    if (prefs && !profile.empty()) prefs->set(profile + "." + key, L, 2);
     return 0;
 }
 

@@ -77,10 +77,8 @@ public:
 
 private:
     /// Project world position to screen pixel coordinates.
-    static bool world_to_screen(f32 wx, f32 wy, f32 wz,
-                                const std::array<f32, 16>& vp,
-                                f32 screen_w, f32 screen_h,
-                                f32& out_x, f32& out_y);
+    static bool world_to_screen(f32 wx, f32 wy, f32 wz, const std::array<f32, 16>& vp, f32 sw,
+                                f32 sh, f32& out_x, f32& out_y);
 
     void emit_quad(f32 x, f32 y, f32 w, f32 h,
                    f32 u0, f32 v0, f32 u1, f32 v1,

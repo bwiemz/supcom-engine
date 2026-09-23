@@ -120,7 +120,7 @@ fs::path home_dir(const EnvLookup& env) {
 }
 
 fs::path known_folder(KnownFolder folder, const EnvLookup& env) {
-    const fs::path home = home_dir(env);
+    fs::path home = home_dir(env); // not const: returned by move below
     switch (folder) {
     case KnownFolder::Documents: {
         if (auto p = xdg_var(env, "XDG_DOCUMENTS_DIR")) return *p;

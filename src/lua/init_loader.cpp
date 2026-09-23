@@ -106,7 +106,7 @@ void InitLoader::read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs) {
         }
     }
     lua_pop(L, 1);
-    vfs.set_hook_dirs(std::move(dirs));
+    vfs.set_hook_dirs(dirs);
     for (const auto& dir : vfs.hook_dirs()) {
         spdlog::info("VFS hook directory: {}", dir);
     }

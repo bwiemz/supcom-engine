@@ -32,7 +32,7 @@ enum class CommandType : u8 {
 };
 
 struct UnitCommand {
-    CommandType type;
+    CommandType type = CommandType::Stop;
     Vector3 target_pos;
     u32 target_id = 0;          // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)

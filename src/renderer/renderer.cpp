@@ -179,7 +179,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         return false;
     }
 
-    auto vkb_dev = dev_ret.value();
+    const auto& vkb_dev = dev_ret.value();
     device_ = vkb_dev.device;
 
     auto gq = vkb_dev.get_queue(vkb::QueueType::graphics);

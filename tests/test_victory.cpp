@@ -21,7 +21,6 @@ extern "C" {
 #include <string>
 #include <vector>
 
-using osc::sim::ArmyBrain;
 using osc::sim::BrainState;
 using osc::sim::SimState;
 using osc::sim::Unit;

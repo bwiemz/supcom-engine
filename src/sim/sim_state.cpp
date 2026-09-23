@@ -224,7 +224,7 @@ FogMode parse_fog_mode(const std::string& value) {
     return FogMode::Explored; // FA default (covers "explored")
 }
 
-void SimState::set_fog_of_war(std::string mode) {
+void SimState::set_fog_of_war(const std::string& mode) {
     fog_mode_ = parse_fog_mode(mode);
 }
 
