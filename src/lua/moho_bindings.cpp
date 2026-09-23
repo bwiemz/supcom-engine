@@ -7812,17 +7812,6 @@ static const MethodEntry shield_methods[] = {
 // ---------------------------------------------------------------------------
 
 // Helper: extract entity from blip table (same _c_object pattern as check_entity)
-static sim::Entity* check_blip_entity(lua_State* L) {
-    if (!lua_istable(L, 1)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, 1);
-    auto* entity = lua_isuserdata(L, -1)
-                       ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                       : nullptr;
-    lua_pop(L, 1);
-    return entity;
-}
-
 /// Read _c_entity_id from blip table (arg 1).
 static u32 get_blip_entity_id(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
@@ -7831,6 +7820,16 @@ static u32 get_blip_entity_id(lua_State* L) {
     u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
     lua_pop(L, 1);
     return id;
+}
+
+/// The live entity behind a blip, or nullptr. Resolved by id: AI scripts
+/// keep blips across ticks, and the entity may be gone.
+static sim::Entity* check_blip_entity(lua_State* L) {
+    auto* sim = get_sim(L);
+    const u32 id = get_blip_entity_id(L);
+    if (!sim || id == 0) return nullptr;
+    auto* e = sim->entity_registry().find(id);
+    return (e && !e->destroyed()) ? e : nullptr;
 }
 
 /// Read _c_req_army from blip table (arg 1). Returns 0-based army, -1 if absent.

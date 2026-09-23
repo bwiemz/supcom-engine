@@ -2838,11 +2838,14 @@ static int l_CreateEconomyEvent(lua_State* L) {
 
     auto* evt = sim->economy_events().create(unit_id, mass, energy, duration);
 
-    // Return a Lua table with _c_object = lightuserdata(EconomyEvent*)
+    // Return a Lua table with _c_object = lightuserdata(EconomyEvent*); the
+    // event keeps a ref to it so it can detach it before being freed.
     lua_newtable(L);
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, static_cast<sim::Waitable*>(evt));
     lua_rawset(L, -3);
+    lua_pushvalue(L, -1);
+    evt->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
     return 1;
 }
 

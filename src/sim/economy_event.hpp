@@ -52,6 +52,11 @@ public:
 
     void cancel() { cancelled_ = true; }
 
+    /// Registry ref to the script's handle table (LUA_NOREF if none): the
+    /// handle's _c_object is nulled before the registry frees a finished
+    /// event, since scripts RemoveEconomyEvent() it after WaitFor returns.
+    int lua_table_ref() const { return lua_table_ref_; }
+    void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 private:
     u32 unit_id_ = 0;
     f64 total_mass_ = 0.0;
@@ -60,6 +65,7 @@ private:
     f64 elapsed_ = 0.0;
     bool done_ = false;
     bool cancelled_ = false;
+    int lua_table_ref_ = -2; // LUA_NOREF
 };
 
 /// Owns all active economy events.
