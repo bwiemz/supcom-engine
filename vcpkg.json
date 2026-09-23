@@ -10,7 +10,23 @@
     "fmt",
     "glfw3",
     "vulkan-headers",
-    "vulkan-loader",
+    {
+      "name": "vulkan-loader",
+      "features": [
+        {
+          "name": "xlib",
+          "platform": "linux"
+        },
+        {
+          "name": "xcb",
+          "platform": "linux"
+        },
+        {
+          "name": "wayland",
+          "platform": "linux"
+        }
+      ]
+    },
     "vulkan-memory-allocator",
     "vk-bootstrap",
     "shaderc",
