@@ -4357,9 +4357,14 @@ static int weapon_SetTargetEntity(lua_State* L) {
     return 0;
 }
 
+// weapon:ResetTarget(): drop the target and look again on the next tick,
+// whatever TargetCheckInterval says ("force the weapon to recheck").
 static int weapon_ResetTarget(lua_State* L) {
     auto* w = check_weapon(L);
-    if (w) w->target_entity_id = 0;
+    if (w) {
+        w->target_entity_id = 0;
+        w->target_check_clock = 0;
+    }
     return 0;
 }
 
@@ -4529,16 +4534,25 @@ static int weapon_TransferTarget(lua_State* L) {
     return 0;
 }
 
+// weapon:SetTargetingPriorities({category, ...}): compiled now, as Moho
+// copies them (FAF clears the table it passes right after the call).
 static int weapon_SetTargetingPriorities(lua_State* L) {
     auto* w = check_weapon(L);
     if (!w) return 0;
-    if (w->targeting_priorities_ref >= 0)
-        luaL_unref(L, LUA_REGISTRYINDEX, w->targeting_priorities_ref);
+    w->target_priorities.clear();
     if (lua_istable(L, 2)) {
-        lua_pushvalue(L, 2);
-        w->targeting_priorities_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    } else {
-        w->targeting_priorities_ref = -2;
+        for (int i = 1;; ++i) {
+            lua_rawgeti(L, 2, i);
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            sim::CategoryExpr priority = lua_type(L, -1) == LUA_TSTRING
+                                             ? sim::parse_category_list(lua_tostring(L, -1))
+                                             : sim::compile_category(L, -1);
+            lua_pop(L, 1);
+            if (!priority.empty()) w->target_priorities.push_back(std::move(priority));
+        }
     }
     return 0;
 }

@@ -6386,6 +6386,144 @@ void test_weapon(TestContext& ctx) {
     spdlog::info("Weapon test: {}/{} passed", pass, pass + fail);
 }
 
+// M200c: how weapons choose targets. Priorities, restrictions, alliances,
+// the attack order's target, cylindrical range and rechecks, with retail
+// units on Seton's Clutch, away from the commanders.
+void test_targeting(TestContext& ctx) {
+    spdlog::info("=== TARGETING TEST: how weapons choose targets ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    auto ticks = [&](int n) {
+        for (int i = 0; i < n; ++i) ctx.sim.tick();
+    };
+    auto unit_of = [&](const char* global) -> osc::sim::Unit* {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_target(unit, index)
+            return unit:GetWeapon(index or 1):GetCurrentTarget()
+        end
+        -- Priorities: a T1 tank prefers TECH1 MOBILE to a nearer structure.
+        __osc_tank = __osc_spawn('uel0201', 'ARMY_1', 220, 790)
+        __osc_pgen = __osc_spawn('ueb1101', 'ARMY_2', 228, 790)
+        __osc_foe = __osc_spawn('uel0201', 'ARMY_2', 235, 796)
+        -- Alliance: an ally's structure beside a tank.
+        __osc_ally_tank = __osc_spawn('uel0201', 'ARMY_1', 220, 850)
+        __osc_ally_pgen = __osc_spawn('ueb1101', 'ARMY_3', 228, 850)
+        SetAlliance('ARMY_1', 'ARMY_3', 'Ally')
+        -- Range is a cylinder: a target 17 away and 8 up is in range (18).
+        __osc_high_tank = __osc_spawn('uel0201', 'ARMY_1', 300, 790)
+        __osc_high = __osc_spawn('ueb1101', 'ARMY_2', 317, 790)
+        __osc_high_id = __osc_high:GetEntityId()
+        -- Restrictions: tactical missile defence only shoots TACTICAL MISSILE.
+        __osc_tmd = __osc_spawn('ueb4201', 'ARMY_1', 300, 850)
+        __osc_tmd_foe = __osc_spawn('uel0201', 'ARMY_2', 312, 850)
+        -- Rechecks: a Loyalist's HeavyBolter (weapon 2) rechecks, and moves
+        -- to a better target; its Disintigrator (weapon 1) keeps its first.
+        __osc_loyalist = __osc_spawn('url0303', 'ARMY_1', 220, 910)
+        __osc_recheck_pgen = __osc_spawn('ueb1101', 'ARMY_2', 228, 910)
+        -- AboveWaterTargetsOnly: nothing on the seabed.
+        __osc_shore = __osc_spawn('uel0201', 'ARMY_1', 205, 730)
+        __osc_seabed = __osc_spawn('uel0201', 'ARMY_2', 192, 730)
+        __osc_seabed_id = __osc_seabed:GetEntityId()
+    )");
+    if (auto* high = unit_of("__osc_high_id")) {
+        auto p = high->position();
+        p.y += 8.0f;
+        high->set_position(p);
+    }
+    if (auto* seabed = unit_of("__osc_seabed_id")) seabed->set_layer("Seabed");
+
+    ticks(8);
+    lua_check("Test 1: a farther TECH1 MOBILE unit beats a nearer structure", R"(
+        if __osc_target(__osc_tank) ~= __osc_foe then error('target is not the enemy tank') end
+    )");
+    lua_check("Test 2: an ally is never a target", R"(
+        if __osc_ally_tank:GetWeapon(1):WeaponHasTarget() then error('it targets its ally') end
+        SetAlliance('ARMY_1', 'ARMY_3', 'Enemy')
+    )");
+    lua_check("Test 3: range is horizontal; height doesn't count against it", R"(
+        local h, t = __osc_high:GetPosition(), __osc_high_tank:GetPosition()
+        if h[2] - t[2] < 7 then error('the target sank back to ' .. h[2] - t[2]) end
+        if __osc_target(__osc_high_tank) ~= __osc_high then error('not in range') end
+        __osc_high_tank:GetWeapon(1):ChangeMaxHeightDiff(4)
+    )");
+    lua_check("Test 4: TargetRestrictOnlyAllow keeps a TMD off tanks", R"(
+        if __osc_tmd:GetWeapon(1):WeaponHasTarget() then error('the TMD targets a tank') end
+    )");
+    lua_check("Test 5: AboveWaterTargetsOnly ignores a unit on the seabed", R"(
+        if __osc_shore:GetWeapon(1):WeaponHasTarget() then error('it targets the seabed') end
+    )");
+    lua_check("Test 6: both of a Loyalist's guns start on the only target, a structure", R"(
+        if __osc_target(__osc_loyalist, 1) ~= __osc_recheck_pgen then error('weapon 1') end
+        if __osc_target(__osc_loyalist, 2) ~= __osc_recheck_pgen then error('weapon 2') end
+        __osc_intruder = __osc_spawn('uel0201', 'ARMY_2', 232, 912)
+        -- Priorities are copied when set: FAF clears the table right after.
+        -- The enemy tank moves nearer than the structure, so only the new
+        -- priorities (not distance) can pick the structure.
+        Warp(__osc_foe, {224, GetTerrainHeight(224, 793), 793})
+        local structures = {ParseEntityCategory('STRUCTURE')}
+        __osc_tank:GetWeapon(1):SetTargetingPriorities(structures)
+        structures[1] = nil
+        __osc_tank:GetWeapon(1):ResetTarget()
+    )");
+
+    // ResetTarget looks again on the next tick, though the tank's
+    // TargetCheckInterval is 5 ticks.
+    ticks(1);
+    lua_check("Test 7: SetTargetingPriorities takes effect (a copy, not the table), at once", R"(
+        if __osc_target(__osc_tank) ~= __osc_pgen then error('target is not the structure') end
+        IssueAttack({__osc_tank}, __osc_foe)
+    )");
+
+    ticks(7);
+    lua_check("Test 8: an ally turned enemy becomes a target", R"(
+        if __osc_target(__osc_ally_tank) ~= __osc_ally_pgen then error('no target') end
+    )");
+    lua_check("Test 9: MaxHeightDiff drops a target too high above", R"(
+        if __osc_high_tank:GetWeapon(1):WeaponHasTarget() then error('still targeted') end
+    )");
+    lua_check("Test 10: AlwaysRecheckTarget moves to a higher priority (a T1 tank)", R"(
+        if __osc_target(__osc_loyalist, 2) ~= __osc_intruder then error('it kept the structure') end
+    )");
+    lua_check("Test 11: without it a weapon keeps its target", R"(
+        if __osc_target(__osc_loyalist, 1) ~= __osc_recheck_pgen then error('it switched') end
+    )");
+    ticks(2);
+    lua_check("Test 12: an attack order's target overrides the priorities", R"(
+        if __osc_target(__osc_tank) ~= __osc_foe then error('the order was ignored') end
+    )");
+
+    if (osc::test_status::failure_count() - fail == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 13: no script errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 13: script errors while targeting");
+    }
+    spdlog::info("Targeting test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 
