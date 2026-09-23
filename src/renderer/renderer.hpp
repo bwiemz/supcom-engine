@@ -49,7 +49,17 @@ class Renderer {
 public:
     /// Initialize Vulkan, GLFW window, and all pipelines.
     /// Returns false if Vulkan is unavailable (fall back to headless).
-    bool init(u32 width, u32 height, const std::string& title);
+    /// Create the window and Vulkan device.
+    ///
+    /// offscreen: for scripted captures (screenshots, golden images). The GLFW
+    /// window is never shown -- showing blocks until the compositor maps the
+    /// window, which never happens with the screen locked -- so nothing
+    /// appears and focus is never taken. Rendering still targets the hidden
+    /// window's surface. With OSC_HEADLESS_SURFACE=1 it targets a
+    /// VK_EXT_headless_surface instead (Mesa drivers incl. lavapipe; not
+    /// NVIDIA's proprietary driver), for machines without any display.
+    bool init(u32 width, u32 height, const std::string& title,
+              bool offscreen = false);
 
     /// One-time scene upload (terrain mesh, static buffers, mesh preload).
     void build_scene(const sim::SimState& sim, vfs::VirtualFileSystem* vfs,

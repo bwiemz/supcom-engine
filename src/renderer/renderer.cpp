@@ -48,7 +48,8 @@ void Renderer::on_scroll(f64 y_offset) {
         std::clamp(camera_.distance() * zoom_factor, 30.0f, 2000.0f));
 }
 
-bool Renderer::init(u32 width, u32 height, const std::string& title) {
+bool Renderer::init(u32 width, u32 height, const std::string& title,
+                    bool offscreen) {
     // GLFW
     if (!glfwInit()) {
         spdlog::error("Failed to initialize GLFW");
@@ -56,7 +57,10 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_RESIZABLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
+    // Offscreen keeps a hidden window (input and timing code expect one) but
+    // never shows it: GLFW's show waits for the compositor to map the window.
+    glfwWindowHint(GLFW_VISIBLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
     window_ = glfwCreateWindow(static_cast<int>(width),
                                static_cast<int>(height),
                                title.c_str(), nullptr, nullptr);
@@ -96,6 +100,11 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     inst_builder.set_app_name("OpenSupCom")
         .request_validation_layers(validation)
         .require_api_version(1, 0, 0);
+    if (offscreen && std::getenv("OSC_HEADLESS_SURFACE")) {
+        inst_builder.set_headless(true)
+            .enable_extension(VK_KHR_SURFACE_EXTENSION_NAME)
+            .enable_extension(VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME);
+    }
     if (validation) inst_builder.set_debug_callback(&Renderer::vulkan_debug_callback);
     auto inst_ret = inst_builder.build();
     if (inst_ret) {
@@ -115,8 +124,20 @@ bool Renderer::init(u32 width, u32 height, const std::string& title) {
     debug_messenger_ = vkb_inst.debug_messenger;
 
     // Surface
-    if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) !=
-        VK_SUCCESS) {
+    if (offscreen && std::getenv("OSC_HEADLESS_SURFACE")) {
+        auto create_headless = reinterpret_cast<PFN_vkCreateHeadlessSurfaceEXT>(
+            vkGetInstanceProcAddr(instance_, "vkCreateHeadlessSurfaceEXT"));
+        VkHeadlessSurfaceCreateInfoEXT hs_ci{};
+        hs_ci.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
+        if (!create_headless ||
+            create_headless(instance_, &hs_ci, nullptr, &surface_) != VK_SUCCESS) {
+            spdlog::error("Offscreen rendering needs VK_EXT_headless_surface, "
+                          "which this Vulkan driver does not provide");
+            return false;
+        }
+        spdlog::info("Rendering offscreen (headless surface)");
+    } else if (glfwCreateWindowSurface(instance_, window_, nullptr, &surface_) !=
+               VK_SUCCESS) {
         spdlog::error("Failed to create window surface");
         return false;
     }

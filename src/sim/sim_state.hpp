@@ -147,6 +147,15 @@ public:
     map::Terrain* terrain() const { return terrain_.get(); }
     void build_pathfinding_grid();
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
+
+    /// Block a completed structure's footprint on the pathfinding grid for as
+    /// long as the unit exists (released automatically when it is removed
+    /// from the registry). No-op for non-structures and repeat calls.
+    void occupy_footprint(Unit& unit);
+    /// Whether this entity currently blocks the grid (tests / diagnostics).
+    bool occupies_footprint(u32 entity_id) const {
+        return occupied_footprints_.count(entity_id) != 0;
+    }
     const map::Pathfinder* pathfinder() const { return pathfinder_.get(); }
     void build_visibility_grid();
     void build_spatial_grid();
@@ -440,6 +449,14 @@ private:
     blueprints::BlueprintStore* blueprint_store_;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
+    /// Footprints this sim has marked on the grid, by entity id (lookup only;
+    /// never iterated, so the unordered order cannot leak into the sim).
+    struct Footprint { f32 x, z, size_x, size_z; };
+    std::unordered_map<u32, Footprint> occupied_footprints_;
+
+    /// Registry unregister hook: sever the entity's Lua table from the C++
+    /// object and release its footprint.
+    void on_entity_unregistered(Entity& entity);
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     std::unique_ptr<audio::SoundManager> sound_manager_;

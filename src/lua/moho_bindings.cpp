@@ -967,9 +967,11 @@ static int entity_Destroy(lua_State* L) {
         lua_pushlightuserdata(L, nullptr);
         lua_rawset(L, 1);
 
-        // Release Lua registry ref before freeing the C++ object
+        // Release Lua registry ref before freeing the C++ object (and say so,
+        // so SimState's unregister hook does not release it a second time).
         if (lua_ref >= 0) {
             luaL_unref(L, LUA_REGISTRYINDEX, lua_ref);
+            e->set_lua_table_ref(LUA_NOREF);
         }
 
         auto* sim = get_sim(L);

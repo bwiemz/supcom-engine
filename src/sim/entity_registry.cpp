@@ -29,6 +29,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
 void EntityRegistry::unregister_entity(u32 id) {
     auto it = entities_.find(id);
     if (it != entities_.end()) {
+        if (unregister_hook_) unregister_hook_(*it->second);
         if (grid_initialized_) {
             i32 cx = it->second->grid_cell_x();
             i32 cz = it->second->grid_cell_z();

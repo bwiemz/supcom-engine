@@ -4,6 +4,7 @@
 #include "sim/sim_random.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -22,8 +23,16 @@ public:
     /// Register an entity and assign it a unique ID. Returns the ID.
     u32 register_entity(std::unique_ptr<Entity> entity);
 
-    /// Remove an entity by ID.
+    /// Remove an entity by ID. Every removal path (Lua Destroy, reclaim,
+    /// sacrifice, projectile impact, ...) goes through here, so the
+    /// unregister hook sees each entity exactly once, while still valid.
     void unregister_entity(u32 id);
+
+    /// Called for each entity just before it is removed. SimState uses it to
+    /// release what the entity owns outside the registry (its Lua table's
+    /// pointer back to C++, a structure's pathfinding footprint).
+    using UnregisterHook = std::function<void(Entity&)>;
+    void set_unregister_hook(UnregisterHook hook) { unregister_hook_ = std::move(hook); }
 
     /// Look up an entity by ID. Returns nullptr if not found.
     Entity* find(u32 id) const;
@@ -63,6 +72,7 @@ public:
 
 private:
     std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
+    UnregisterHook unregister_hook_;
     u32 next_id_ = 1;
 
     SimRandom default_random_;

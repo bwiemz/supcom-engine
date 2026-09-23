@@ -2161,7 +2161,12 @@ int main(int argc, char* argv[]) {
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!headless) {
         osc::renderer::Renderer renderer;
-        if (renderer.init(1600, 900, "OpenSupCom")) {
+        // Scripted captures render offscreen: no window to show, focus to
+        // steal, or compositor to wait for.
+        const bool offscreen_capture =
+            !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+            !parse_string_arg(argc, argv, "--golden", "").empty();
+        if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
             // Build 3D scene if we have a sim state (--map was provided)
             if (sim_state) {
                 renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
