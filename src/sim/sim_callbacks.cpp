@@ -2,8 +2,8 @@
 // them as commands, inside a tick; here too (SimState::dispatch_due_commands),
 // so in multiplayer every peer runs each one on the same tick.
 
-#include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -14,7 +14,6 @@ extern "C" {
 
 #include <string>
 #include <type_traits>
-#include <unordered_set>
 #include <variant>
 
 namespace osc::sim {
@@ -34,43 +33,99 @@ struct NotHumanInput {
     NotHumanInput& operator=(const NotHumanInput&) = delete;
 };
 
-/// ProcessInfo(action, value): the unit's own method of that name, with the
-/// value as a boolean -- for the settings the UI sends this way only (retail:
-/// auto mode, repeat build; FAF's construction panel also pauses factories),
-/// never an arbitrary method a UI script names.
-void process_info(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
-    static const std::unordered_set<std::string> kActions = {"SetAutoMode", "SetRepeatQueue",
-                                                             "SetPaused"};
-    auto get = [&](const char* key) -> std::string {
-        auto it = cb.args.find(key);
-        if (it == cb.args.end()) return {};
-        if (const auto* str = std::get_if<std::string>(&it->second)) return *str;
-        return {};
-    };
-    const std::string action = get("Action");
-    const bool value = get("Value") == "true";
-    if (!kActions.count(action)) {
-        spdlog::warn("ProcessInfo: unsupported action '{}'", action);
-        return;
-    }
+template <typename T> const T* arg(const SimCallbackEntry& cb, const char* key) {
+    auto it = cb.args.find(key);
+    return it == cb.args.end() ? nullptr : std::get_if<T>(&it->second);
+}
+
+/// The live units a callback names, in its order.
+template <typename Fn> void for_each_unit(SimState& sim, const SimCallbackEntry& cb, Fn fn) {
     for (u32 eid : cb.unit_ids) {
         auto* e = sim.entity_registry().find(eid);
-        if (!e || !e->is_unit() || e->destroyed() || e->lua_table_ref() < 0) continue;
-        lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
-        const int unit = lua_gettop(L);
-        lua_pushstring(L, action.c_str());
-        lua_gettable(L, unit);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, unit);
-            lua_pushboolean(L, value ? 1 : 0);
-            if (lua_pcall(L, 2, 0, 0) != 0) {
-                spdlog::warn("ProcessInfo {} error: {}", action, lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
-            lua_pop(L, 1);
-        }
-        lua_pop(L, 1); // unit table
+        if (!e || !e->is_unit() || e->destroyed()) continue;
+        fn(*static_cast<Unit*>(e));
+    }
+}
+
+/// self:OnScriptBitSet(bit) / OnScriptBitClear(bit).
+void script_bit_hook(lua_State* L, const Unit& u, i32 bit, bool set) {
+    if (u.lua_table_ref() < 0) return;
+    const char* name = set ? "OnScriptBitSet" : "OnScriptBitClear";
+    lua_rawgeti(L, LUA_REGISTRYINDEX, u.lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, name);
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        lua_pushnumber(L, bit);
+        if (lua_pcall(L, 2, 0, 0) != 0) spdlog::warn("{} error: {}", name, lua_tostring(L, -1));
+    }
+    lua_settop(L, self - 1);
+}
+
+// A setting applies to each unit, and a unit whose setting changes gets the
+// script hook Moho calls for it.
+
+void set_paused(lua_State* L, Unit& u, bool v) {
+    if (u.is_paused() == v) return;
+    u.pause(v);
+    u.call_lua_method(L, v ? "OnPaused" : "OnUnpaused");
+}
+
+void set_auto_mode(lua_State* L, Unit& u, bool v) {
+    if (u.auto_mode() == v) return;
+    u.set_auto_mode(v);
+    u.call_lua_method(L, v ? "OnAutoModeOn" : "OnAutoModeOff");
+}
+
+void set_script_bit(lua_State* L, Unit& u, i32 bit, bool v) {
+    if (u.get_script_bit(bit) == v) return;
+    u.set_script_bit(bit, v);
+    script_bit_hook(L, u, bit, v);
+}
+
+/// The UI's unit settings (kUnitSettingCallback).
+void unit_setting(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* setting = arg<std::string>(cb, "Setting");
+    const auto* flag = arg<bool>(cb, "Value");
+    const auto* number = arg<f64>(cb, "Value");
+    const auto* bit = arg<f64>(cb, "Bit");
+    const std::string name = setting ? *setting : std::string();
+
+    if (name == "Paused" && flag) {
+        for_each_unit(sim, cb, [&](Unit& u) { set_paused(L, u, *flag); });
+    } else if (name == "AutoMode" && flag) {
+        for_each_unit(sim, cb, [&](Unit& u) { set_auto_mode(L, u, *flag); });
+    } else if (name == "AutoSurfaceMode" && flag) {
+        for_each_unit(sim, cb, [&](Unit& u) { u.set_auto_surface_mode(*flag); });
+    } else if (name == "FireState" && number && (*number == 0 || *number == 1 || *number == 2)) {
+        const auto state = static_cast<i32>(*number);
+        for_each_unit(sim, cb, [&](Unit& u) { u.set_fire_state(state); });
+    } else if (name == "ScriptBit" && flag && bit && *bit >= 0 && *bit <= 8 &&
+               *bit == static_cast<f64>(static_cast<i32>(*bit))) {
+        const auto b = static_cast<i32>(*bit);
+        for_each_unit(sim, cb, [&](Unit& u) { set_script_bit(L, u, b, *flag); });
+    } else {
+        spdlog::warn("unit setting: unsupported '{}'", name);
+    }
+}
+
+/// ProcessInfo(action, value): UserUnit's request for one of the settings
+/// the UI sends this way (retail: auto mode, repeat build; FAF's
+/// construction panel also pauses factories). The value arrives as text.
+void process_info(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    const auto* action = arg<std::string>(cb, "Action");
+    const auto* text = arg<std::string>(cb, "Value");
+    const bool value = text && *text == "true";
+    const std::string name = action ? *action : std::string();
+    if (name == "SetPaused") {
+        for_each_unit(sim, cb, [&](Unit& u) { set_paused(L, u, value); });
+    } else if (name == "SetAutoMode") {
+        for_each_unit(sim, cb, [&](Unit& u) { set_auto_mode(L, u, value); });
+    } else if (name == "SetRepeatQueue") {
+        for_each_unit(sim, cb, [&](Unit& u) { u.set_repeat_queue(value); });
+    } else {
+        spdlog::warn("ProcessInfo: unsupported action '{}'", name);
     }
 }
 
@@ -89,31 +144,13 @@ bool push_callbacks_module(lua_State* L) {
     return false;
 }
 
-} // namespace
-
-void SimState::run_sim_callback(const SimCallbackEntry& cb) {
-    lua_State* L = L_;
-    const int top = lua_gettop(L);
-    const NotHumanInput not_human(*this);
-
-    if (cb.func_name == kProcessInfoCallback) {
-        process_info(*this, L, cb);
-        lua_settop(L, top);
-        return;
-    }
-
-    if (!push_callbacks_module(L)) {
-        lua_settop(L, top);
-        return;
-    }
+/// FA's /lua/SimCallbacks.lua DoCallback(func name, args, units).
+void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
+    if (!push_callbacks_module(L)) return;
     lua_pushstring(L, "DoCallback");
     lua_rawget(L, -2);
-    if (!lua_isfunction(L, -1)) {
-        lua_settop(L, top);
-        return;
-    }
+    if (!lua_isfunction(L, -1)) return;
 
-    // DoCallback(func name, args, units)
     lua_pushstring(L, cb.func_name.c_str());
     lua_newtable(L);
     for (const auto& [key, val] : cb.args) {
@@ -132,13 +169,11 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
         lua_newtable(L);
         const int units = lua_gettop(L);
         int idx = 1;
-        for (u32 eid : cb.unit_ids) {
-            auto* e = entity_registry_.find(eid);
-            if (e && e->is_unit() && !e->destroyed() && e->lua_table_ref() >= 0) {
-                lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
-                lua_rawseti(L, units, idx++);
-            }
-        }
+        for_each_unit(sim, cb, [&](const Unit& u) {
+            if (u.lua_table_ref() < 0) return;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, u.lua_table_ref());
+            lua_rawseti(L, units, idx++);
+        });
     } else {
         lua_pushnil(L);
     }
@@ -146,6 +181,17 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
         const char* err = lua_tostring(L, -1);
         spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
     }
+}
+
+} // namespace
+
+void SimState::run_sim_callback(const SimCallbackEntry& cb) {
+    lua_State* L = L_;
+    const int top = lua_gettop(L);
+    const NotHumanInput not_human(*this);
+    if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
+    else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
+    else do_callback(*this, L, cb);
     lua_settop(L, top);
 }
 

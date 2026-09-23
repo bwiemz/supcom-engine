@@ -20,6 +20,7 @@ extern "C" {
 }
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,19 @@ struct CallbackSim {
                 end,
             }
             import = function(path) return module end
+            -- A unit's script object, recording the hooks the engine calls.
+            hooks = {}
+            function make_unit()
+                local u = {}
+                for _, name in ipairs({'OnPaused', 'OnUnpaused', 'OnAutoModeOn', 'OnAutoModeOff',
+                                       'OnScriptBitSet', 'OnScriptBitClear'}) do
+                    local hook = name
+                    u[hook] = function(self, bit)
+                        table.insert(hooks, bit and (hook .. bit) or hook)
+                    end
+                end
+                return u
+            end
         )";
         REQUIRE(luaL_loadbuffer(L, code, std::string(code).size(), "stub") == 0);
         REQUIRE(lua_pcall(L, 0, 0, 0) == 0);
@@ -84,9 +98,24 @@ struct CallbackSim {
     osc::u32 spawn() {
         auto u = std::make_unique<Unit>();
         u->set_army(0);
-        lua_newtable(L); // its script object, as the sim gives every unit
+        // its script object, as the sim gives every unit
+        lua_pushstring(L, "make_unit");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
         u->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
         return sim.entity_registry().register_entity(std::move(u));
+    }
+
+    Unit& unit(osc::u32 id) { return *static_cast<Unit*>(sim.entity_registry().find(id)); }
+
+    /// The hooks called so far, in order, comma-separated.
+    std::string hooks() {
+        const std::string code = "return table.concat(hooks, ',')";
+        REQUIRE(luaL_loadbuffer(L, code.c_str(), code.size(), "h") == 0);
+        REQUIRE(lua_pcall(L, 0, 1, 0) == 0);
+        std::string v = lua_tostring(L, -1);
+        lua_pop(L, 1);
+        return v;
     }
 
     int call_count() {
@@ -115,6 +144,18 @@ SimCallbackEntry toggle(osc::u32 unit) {
     cb.args["Mode"] = std::string("fast");
     cb.args["Level"] = 3.0;
     cb.args["On"] = true;
+    cb.unit_ids = {unit};
+    return cb;
+}
+
+/// The request the orders panel's SetPaused, SetFireState, ... make.
+SimCallbackEntry setting(const char* name, osc::sim::SimCallbackArg value, osc::u32 unit,
+                         std::optional<double> bit = std::nullopt) {
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kUnitSettingCallback;
+    cb.args["Setting"] = std::string(name);
+    cb.args["Value"] = std::move(value);
+    if (bit) cb.args["Bit"] = *bit;
     cb.unit_ids = {unit};
     return cb;
 }
@@ -220,4 +261,93 @@ TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lo
     CHECK(b.field(1, "c.args.Mode") == "fast");
     CHECK(b.field(1, "c.units") == "1");
     CHECK(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
+}
+
+TEST_CASE("The UI's unit settings apply inside a tick, with their script hooks", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    w.unit(id).economy().consumption_active = true;
+
+    w.sim.submit_callback(setting("Paused", true, id));
+    CHECK_FALSE(w.unit(id).is_paused()); // not between ticks
+    w.sim.tick();
+    CHECK(w.unit(id).is_paused());
+    CHECK_FALSE(w.unit(id).economy().consumption_active); // as unit:SetPaused does
+    CHECK(w.hooks() == "OnPaused");
+
+    // A setting that doesn't change calls no hook.
+    w.sim.submit_callback(setting("Paused", true, id));
+    w.sim.tick();
+    CHECK(w.hooks() == "OnPaused");
+
+    w.sim.submit_callback(setting("Paused", false, id));
+    w.sim.submit_callback(setting("AutoMode", true, id));
+    w.sim.submit_callback(setting("ScriptBit", true, id, 3.0));
+    w.sim.submit_callback(setting("FireState", 2.0, id));
+    w.sim.submit_callback(setting("AutoSurfaceMode", true, id));
+    w.sim.tick();
+    CHECK_FALSE(w.unit(id).is_paused());
+    CHECK(w.unit(id).auto_mode());
+    CHECK(w.unit(id).get_script_bit(3));
+    CHECK(w.unit(id).fire_state() == 2);
+    CHECK(w.unit(id).auto_surface_mode());
+    CHECK(w.hooks() == "OnPaused,OnUnpaused,OnAutoModeOn,OnScriptBitSet3");
+
+    w.sim.submit_callback(setting("ScriptBit", false, id, 3.0));
+    w.sim.tick();
+    CHECK_FALSE(w.unit(id).get_script_bit(3));
+    CHECK(w.hooks() == "OnPaused,OnUnpaused,OnAutoModeOn,OnScriptBitSet3,OnScriptBitClear3");
+}
+
+TEST_CASE("Unit settings out of range are ignored", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    w.sim.submit_callback(setting("FireState", 7.0, id));
+    w.sim.submit_callback(setting("FireState", 1.5, id));
+    w.sim.submit_callback(setting("ScriptBit", true, id, 9.0));
+    w.sim.submit_callback(setting("ScriptBit", true, id, -1.0));
+    w.sim.submit_callback(setting("Paused", std::string("yes"), id)); // not a bool
+    w.sim.submit_callback(setting("Unheard", true, id));
+    w.sim.tick();
+    CHECK(w.unit(id).fire_state() == 0);
+    CHECK(w.unit(id).script_bits() == 0);
+    CHECK_FALSE(w.unit(id).is_paused());
+    CHECK(w.hooks().empty());
+}
+
+TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kProcessInfoCallback;
+    cb.args["Action"] = std::string("SetPaused");
+    cb.args["Value"] = std::string("true");
+    cb.unit_ids = {id};
+    w.sim.submit_callback(cb);
+    cb.args["Action"] = std::string("SetAutoMode");
+    w.sim.submit_callback(cb);
+    cb.args["Action"] = std::string("SetRepeatQueue");
+    w.sim.submit_callback(cb);
+    cb.args["Action"] = std::string("Destroy"); // only settings, never any method
+    w.sim.submit_callback(cb);
+    w.sim.tick();
+    CHECK(w.unit(id).is_paused());
+    CHECK(w.unit(id).auto_mode());
+    CHECK(w.unit(id).repeat_queue());
+    CHECK(w.hooks() == "OnPaused,OnAutoModeOn");
+}
+
+TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
+    CallbackSim a, b;
+    const osc::u32 ua = a.spawn();
+    b.spawn();
+    CHECK(a.sim.compute_sync_checksum() == b.sim.compute_sync_checksum());
+    a.unit(ua).set_fire_state(1);
+    CHECK(a.sim.compute_sync_checksum() != b.sim.compute_sync_checksum());
+    a.unit(ua).set_fire_state(0);
+    a.unit(ua).set_paused(true);
+    CHECK(a.sim.compute_sync_checksum() != b.sim.compute_sync_checksum());
+    a.unit(ua).set_paused(false);
+    a.unit(ua).set_script_bit(5, true);
+    CHECK(a.sim.compute_sync_checksum() != b.sim.compute_sync_checksum());
 }

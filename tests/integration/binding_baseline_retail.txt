@@ -38,7 +38,6 @@ G GetFireState
 G GetIdleEngineers
 G GetIdleFactories
 G GetIsAutoMode
-G GetIsAutoSurfaceMode
 G GetIsPaused
 G GetIsSubmerged
 G GetMovieDuration
@@ -81,12 +80,8 @@ G SessionIsGameOver
 G SessionIsObservingAllowed
 G SessionIsPaused
 G SetAllianceOneWay
-G SetAutoMode
-G SetAutoSurfaceMode
-G SetFireState
 G SetOverlayFilter
 G SetOverlayFilters
-G SetPaused
 G SetQueueGrid
 G SetQueueState
 G SetUIControlsAlpha
@@ -95,8 +90,6 @@ G SoundIsPrepared
 G SplitProp
 G StartSound
 G StopAllSounds
-G ToggleFireState
-G ToggleScriptBit
 G UISelectAndZoomTo
 G UnProject
 G ValidateIPAddress

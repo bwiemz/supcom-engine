@@ -12,12 +12,21 @@ namespace osc::sim {
 /// Value; unit_ids = the unit). Handled by the engine, not SimCallbacks.lua.
 inline constexpr const char* kProcessInfoCallback = "__osc_ProcessInfo";
 
+/// Func name of the UI's unit-setting requests: SetPaused, SetFireState,
+/// ToggleFireState, ToggleScriptBit, SetAutoMode and SetAutoSurfaceMode
+/// (Args Setting, Value, and Bit for a script bit; the UI resolves a toggle
+/// to the value it sets). Handled by the engine.
+inline constexpr const char* kUnitSettingCallback = "__osc_UnitSetting";
+
+/// A SimCallback argument: FA's callbacks carry strings, numbers and bools.
+using SimCallbackArg = std::variant<std::string, f64, bool>;
+
 struct SimCallbackEntry {
     std::string func_name;
     // Args: simple key→value map. Values can be string, number, or bool.
     // This covers the vast majority of FA SimCallback usage. Ordered, so
     // every peer builds the script's args table the same way.
-    std::map<std::string, std::variant<std::string, f64, bool>> args;
+    std::map<std::string, SimCallbackArg> args;
     // Optional: selected unit entity IDs (when addUnitSelection=true)
     std::vector<u32> unit_ids;
 };

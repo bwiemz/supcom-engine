@@ -1447,6 +1447,15 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         entities.mix_f32(p.y);
         entities.mix_f32(p.z);
         entities.mix_f32(e.health());
+        // The player's settings: a pause or fire state that differs between
+        // peers is a desync before it moves anything.
+        if (e.is_unit()) {
+            const auto& u = static_cast<const Unit&>(e);
+            entities.mix(u.script_bits());
+            entities.mix(static_cast<u64>(static_cast<u32>(u.fire_state())));
+            entities.mix((u.is_paused() ? 1u : 0u) | (u.auto_mode() ? 2u : 0u) |
+                         (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u));
+        }
     });
     parts.entities = entities.h;
     return parts;

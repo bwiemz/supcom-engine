@@ -52,6 +52,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -2762,15 +2763,7 @@ static int unit_Stop(lua_State* L) {
 // unit:SetPaused(bool) — set/clear pause flag + economy
 static int unit_SetPaused(lua_State* L) {
     auto* u = check_unit(L);
-    if (u) {
-        bool paused = lua_toboolean(L, 2) != 0;
-        u->set_paused(paused);
-        // When pausing, zero economy activity (FA Lua re-enables on unpause)
-        if (paused) {
-            u->economy().production_active = false;
-            u->economy().consumption_active = false;
-        }
-    }
+    if (u) u->pause(lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -3681,8 +3674,12 @@ static int unit_SetRepeatQueue(lua_State* L) {
     return 0;
 }
 
-// Not simulated yet: submarines don't auto-surface and nothing stuns.
-static int unit_IsAutoSurfaceMode(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+static int unit_IsAutoSurfaceMode(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->auto_surface_mode() ? 1 : 0);
+    return 1;
+}
+// Not simulated yet: nothing stuns.
 static int unit_IsStunned(lua_State* L) { lua_pushboolean(L, 0); return 1; }
 
 // Selection sets: named groups a unit belongs to (selection.lua's
@@ -14170,6 +14167,87 @@ static int l_GetIsSubmerged(lua_State* L) {
     return 1;
 }
 
+/// GetIsAutoSurfaceMode(units) -> whether every unit surfaces by itself.
+static int l_GetIsAutoSurfaceMode(lua_State* L) {
+    lua_pushboolean(
+        L, all_units(ui_unit_list(L, 1), [](const sim::Unit& u) { return u.auto_surface_mode(); }));
+    return 1;
+}
+
+// The orders panel's unit settings. Each is a request the sim applies
+// inside a tick, like an order: in multiplayer every peer applies it on the
+// same tick. A toggle is resolved here, from the state the UI shows, to the
+// value it sets, so every unit in a mixed selection ends up alike.
+
+/// Queue `setting` = `value` (plus the script bit, if any) for the units in
+/// the array at index 1.
+static void queue_unit_setting(lua_State* L, const char* setting, sim::SimCallbackArg value,
+                               std::optional<f64> bit = std::nullopt) {
+    auto* queue = get_callback_queue(L);
+    if (!queue) return;
+    sim::SimCallbackEntry entry;
+    entry.func_name = sim::kUnitSettingCallback;
+    entry.args["Setting"] = std::string(setting);
+    entry.args["Value"] = std::move(value);
+    if (bit) entry.args["Bit"] = *bit;
+    for (auto* u : ui_unit_list(L, 1)) entry.unit_ids.push_back(u->entity_id());
+    if (!entry.unit_ids.empty()) queue->push(std::move(entry));
+}
+
+/// SetPaused(units, paused)
+static int l_SetPaused(lua_State* L) {
+    queue_unit_setting(L, "Paused", lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// SetAutoMode(units, on) -- a factory's or silo's automatic building.
+static int l_SetAutoMode(lua_State* L) {
+    queue_unit_setting(L, "AutoMode", lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// SetAutoSurfaceMode(units, on)
+static int l_SetAutoSurfaceMode(lua_State* L) {
+    queue_unit_setting(L, "AutoSurfaceMode", lua_toboolean(L, 2) != 0);
+    return 0;
+}
+
+/// SetFireState(units, state): the orders panel passes 'ReturnFire',
+/// 'HoldFire' or 'HoldGround'; 0, 1 or 2 is taken too.
+static int l_SetFireState(lua_State* L) {
+    f64 state = -1;
+    if (lua_type(L, 2) == LUA_TNUMBER) {
+        state = lua_tonumber(L, 2);
+    } else if (lua_type(L, 2) == LUA_TSTRING) {
+        const std::string name = lua_tostring(L, 2);
+        if (name == "ReturnFire") state = 0;
+        else if (name == "HoldFire") state = 1;
+        else if (name == "HoldGround") state = 2;
+    }
+    if (state != 0 && state != 1 && state != 2) {
+        return luaL_error(L, "SetFireState: unknown fire state");
+    }
+    queue_unit_setting(L, "FireState", state);
+    return 0;
+}
+
+/// ToggleFireState(units, current) -> the next state after `current`
+/// (GetFireState's -1 for a mixed selection starts over at return fire).
+static int l_ToggleFireState(lua_State* L) {
+    const int current = static_cast<int>(luaL_checknumber(L, 2));
+    queue_unit_setting(L, "FireState", static_cast<f64>(current < 0 ? 0 : (current + 1) % 3));
+    return 0;
+}
+
+/// ToggleScriptBit(units, bit, current): every unit's bit becomes `not
+/// current`, where current is the state the button shows.
+static int l_ToggleScriptBit(lua_State* L) {
+    const auto bit = static_cast<i32>(luaL_checknumber(L, 2));
+    if (bit < 0 || bit > 8) return luaL_error(L, "ToggleScriptBit: bit %d out of range", bit);
+    queue_unit_setting(L, "ScriptBit", lua_toboolean(L, 3) == 0, static_cast<f64>(bit));
+    return 0;
+}
+
 /// GetAssistingUnitsList(units) -> the units guarding/assisting any of them.
 static int l_GetAssistingUnitsList(lua_State* L) {
     const auto targets = ui_unit_list(L, 1);
@@ -16246,6 +16324,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetIsPaused", l_GetIsPaused);
     state.register_function("GetIsAutoMode", l_GetIsAutoMode);
     state.register_function("GetIsSubmerged", l_GetIsSubmerged);
+    state.register_function("GetIsAutoSurfaceMode", l_GetIsAutoSurfaceMode);
+    state.register_function("SetPaused", l_SetPaused);
+    state.register_function("SetAutoMode", l_SetAutoMode);
+    state.register_function("SetAutoSurfaceMode", l_SetAutoSurfaceMode);
+    state.register_function("SetFireState", l_SetFireState);
+    state.register_function("ToggleFireState", l_ToggleFireState);
+    state.register_function("ToggleScriptBit", l_ToggleScriptBit);
     state.register_function("GetAssistingUnitsList", l_GetAssistingUnitsList);
     state.register_function("SessionGetCommandSourceNames", l_SessionGetCommandSourceNames);
     state.register_function("GetIdleEngineers", l_GetIdleEngineers);

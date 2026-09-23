@@ -131,6 +131,15 @@ public:
     // Pause state
     bool is_paused() const { return paused_; }
     void set_paused(bool p) { paused_ = p; }
+    /// Pause or resume the unit's work, as unit:SetPaused does: pausing also
+    /// stops its economy activity (FA's scripts restart it on resume).
+    void pause(bool p) {
+        paused_ = p;
+        if (p) {
+            economy_.production_active = false;
+            economy_.consumption_active = false;
+        }
+    }
 
     // Shield back-reference (entity ID, set by _c_CreateShield)
     u32 shield_entity_id() const { return shield_entity_id_; }
@@ -147,6 +156,7 @@ public:
     void set_fire_state(i32 s) { fire_state_ = s; }
 
     // Script bits (9 toggles, bits 0-8)
+    u16 script_bits() const { return script_bits_; }
     bool get_script_bit(i32 bit) const {
         return (bit >= 0 && bit <= 8) ? ((script_bits_ >> bit) & 1) != 0 : false;
     }
@@ -405,6 +415,10 @@ public:
     /// Stored; the factory queue does not repeat yet.
     bool repeat_queue() const { return repeat_queue_; }
     void set_repeat_queue(bool v) { repeat_queue_ = v; }
+    /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
+    /// do not surface by themselves yet.
+    bool auto_surface_mode() const { return auto_surface_mode_; }
+    void set_auto_surface_mode(bool v) { auto_surface_mode_ = v; }
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
@@ -655,6 +669,7 @@ private:
     bool sonar_stealth_ = false;
     bool auto_mode_ = false;
     bool repeat_queue_ = false;
+    bool auto_surface_mode_ = false;
     u32 focus_entity_id_ = 0;
     // Damage/kill flags
     bool can_take_damage_ = true;

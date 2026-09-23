@@ -8831,6 +8831,41 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     }
     lua_ok("Test 10k: unpause", "GetSelectedUnits()[1]:ProcessInfo('SetPaused', 'false')");
     play(1);
+    // The orders panel's own settings: retail's pause toggle, fire state and
+    // script toggles are requests the sim applies in its next tick.
+    lua_ok("Test 10l: the orders panel pauses the selection", R"(
+        import('/lua/ui/game/orders.lua').TogglePauseState()
+        if GetIsPaused(GetSelectedUnits()) then error('paused before the sim ran') end
+    )");
+    play(1);
+    lua_ok("Test 10m: paused; resume and hold fire", R"(
+        local sel = GetSelectedUnits()
+        if not GetIsPaused(sel) then error('not paused') end
+        import('/lua/ui/game/orders.lua').TogglePauseState()
+        SetFireState(sel, 'HoldFire')
+    )");
+    play(1);
+    lua_ok("Test 10n: resumed and holding fire; cycle it and set a toggle", R"(
+        local sel = GetSelectedUnits()
+        if GetIsPaused(sel) then error('still paused') end
+        if GetFireState(sel) ~= 1 then error('fire state ' .. GetFireState(sel)) end
+        import('/lua/ui/game/orders.lua').CycleRetaliateStateUp()
+        ToggleScriptBit(sel, 6, false)
+    )");
+    play(1);
+    lua_ok("Test 10o: holding ground with the toggle on; restore both", R"(
+        local sel = GetSelectedUnits()
+        if GetFireState(sel) ~= 2 then error('fire state ' .. GetFireState(sel)) end
+        if not GetScriptBit(sel, 6) then error('script bit 6 not set') end
+        ToggleScriptBit(sel, 6, true)
+        SetFireState(sel, 'ReturnFire')
+    )");
+    play(1);
+    lua_ok("Test 10p: restored", R"(
+        local sel = GetSelectedUnits()
+        if GetScriptBit(sel, 6) then error('script bit 6 still set') end
+        if GetFireState(sel) ~= 0 then error('fire state ' .. GetFireState(sel)) end
+    )");
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
