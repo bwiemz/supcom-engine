@@ -1,5 +1,6 @@
 #include "sim/unit.hpp"
 #include "core/dmath.hpp"
+#include "core/test_status.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
@@ -1059,7 +1060,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             // Set weapon target to position & fire
             if (!weapons_.empty()) {
                 weapons_[0]->target_entity_id = 0;
-                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->fire_clock = 0;
                 weapons_[0]->try_fire(*this, registry, L);
             }
             call_lua_method(L, "OnSiloBuildFinish");
@@ -1076,7 +1077,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             remove_tactical_silo_ammo(1);
             if (!weapons_.empty()) {
                 weapons_[0]->target_entity_id = cmd.target_id;
-                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->fire_clock = 0;
                 weapons_[0]->try_fire(*this, registry, L);
             }
             call_lua_method(L, "OnSiloBuildFinish");
@@ -1114,7 +1115,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             for (auto& w : weapons_) {
                 if (w->max_range > 0) {
                     w->target_entity_id = cmd.target_id;
-                    w->fire_cooldown = 0;
+                    w->fire_clock = 0;
                     w->try_fire(*this, registry, L);
                     break;
                 }
@@ -1279,9 +1280,15 @@ weapons_only:
         set_health(new_hp);
     }
 
-    // Update weapons (target scanning + firing)
-    for (auto& weapon : weapons_) {
-        weapon->update(dt, *this, registry, L, ctx.visibility_grid);
+    // Weapons hear about the motion change (through the unit script) before
+    // they fire this tick. A unit under construction neither moves nor
+    // fights. A weapon's script may kill its own unit (KamikazeWeapon).
+    if (!is_being_built()) {
+        update_motion_horz(L);
+        for (auto& weapon : weapons_) {
+            if (destroyed() || dying_) break;
+            weapon->update(*this, registry, L, ctx.visibility_grid);
+        }
     }
 
     // Update manipulators (rotators, animators, sliders, aim controllers)
@@ -2645,6 +2652,66 @@ void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L) {
             lua_pop(L, 1); // transport_tbl
         }
     }
+}
+
+namespace {
+
+const char* motion_horz_name(Unit::MotionHorz motion) {
+    switch (motion) {
+    case Unit::MotionHorz::Stopped: return "Stopped";
+    case Unit::MotionHorz::Cruise: return "Cruise";
+    case Unit::MotionHorz::TopSpeed: return "TopSpeed";
+    case Unit::MotionHorz::Stopping: return "Stopping";
+    }
+    return "Stopped";
+}
+
+} // namespace
+
+/// Moho reports a unit's horizontal motion as it starts, reaches top speed,
+/// slows and stops. Retail's Unit script plays move sounds and effects on it
+/// and passes it to every weapon (FiringRandomnessWhileMoving, packing to
+/// move). Ground units here reach full speed at once, so a start is Cruise
+/// then TopSpeed a tick later, and a stop is Stopping then Stopped.
+void Unit::update_motion_horz(lua_State* L) {
+    const bool flying = is_air_unit();
+    const bool moving = flying ? current_airspeed_ > 0.01f : navigator_.is_moving();
+    const bool at_top = !flying || current_airspeed_ >= 0.99f * max_airspeed_;
+    MotionHorz next = motion_horz_;
+    switch (motion_horz_) {
+    case MotionHorz::Stopped:
+        if (moving) next = MotionHorz::Cruise;
+        break;
+    case MotionHorz::Cruise:
+    case MotionHorz::TopSpeed:
+        if (!moving) next = MotionHorz::Stopping;
+        else next = at_top ? MotionHorz::TopSpeed : MotionHorz::Cruise;
+        break;
+    case MotionHorz::Stopping: next = moving ? MotionHorz::Cruise : MotionHorz::Stopped; break;
+    }
+    if (next == motion_horz_) return;
+    const MotionHorz old = motion_horz_;
+    motion_horz_ = next;
+
+    if (!L || lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, "OnMotionHorzEventChange");
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        lua_pushstring(L, motion_horz_name(next));
+        lua_pushstring(L, motion_horz_name(old));
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                "OnMotionHorzEventChange error: " + std::string(err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+    }
+    lua_settop(L, top);
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {

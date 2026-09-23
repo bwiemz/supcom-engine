@@ -6199,6 +6199,193 @@ void test_projectile(TestContext& ctx) {
     spdlog::info("Projectile test: {}/{} passed", pass, pass + fail);
 }
 
+// M200b: weapons fire through retail's state machine. The engine picks
+// targets and runs the fire clock; each weapon script gets OnGotTarget,
+// OnLostTarget and OnFire, and fires its own racks and salvos. Every pair
+// stands far from the commanders' start positions.
+void test_weapon(TestContext& ctx) {
+    spdlog::info("=== WEAPON TEST: weapons fire through their scripts ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    // Log each watched weapon's state changes and shots. ChangeState is
+    // looked up when called, so wrapping the global sees every change.
+    lua_check("setup: shooters and targets", R"(
+        __osc_wlog = {}
+        local states = {'IdleState', 'RackSalvoChargeState', 'RackSalvoFireReadyState',
+                        'RackSalvoFiringState', 'RackSalvoReloadState',
+                        'WeaponUnpackingState', 'WeaponPackingState', 'DeadState'}
+        local change = ChangeState
+        rawset(_G, 'ChangeState', function(obj, state)
+            local log = __osc_wlog[obj]
+            if log then
+                if type(state) == 'string' then state = obj[state] end
+                for _, name in states do
+                    if obj[name] == state then
+                        table.insert(log, {name = name, tick = GetGameTick()})
+                        break
+                    end
+                end
+            end
+            return change(obj, state)
+        end)
+        local function pair(shooter, x, z, gap)
+            local land = GetTerrainHeight(x, z) >= GetSurfaceHeight(x, z) - 0.01 and
+                         GetTerrainHeight(x + gap, z) >= GetSurfaceHeight(x + gap, z) - 0.01
+            if not land then error(shooter .. ': water at ' .. x .. ',' .. z) end
+            local unit = CreateUnitHPR(shooter, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            local target = CreateUnitHPR('ueb1101', 'ARMY_2', x + gap,
+                                         GetTerrainHeight(x + gap, z), z, 0, 0, 0)
+            local w = unit:GetWeapon(1)
+            __osc_wlog[w] = {}
+            w.__osc_shots = {}
+            local fire = w.CreateProjectileAtMuzzle
+            w.CreateProjectileAtMuzzle = function(self, muzzle)
+                local proj = fire(self, muzzle)
+                table.insert(self.__osc_shots, {tick = GetGameTick(), proj = proj})
+                return proj
+            end
+            return unit, target, w
+        end
+        __osc_tank, __osc_tank_target = pair('uel0201', 220, 790, 12)   -- ROF 1
+        __osc_bot = pair('url0106', 220, 850, 8)                         -- 3-shot salvo
+        __osc_mml = pair('xsl0111', 300, 790, 30)                        -- 6.67 s reload
+        __osc_built = pair('uel0201', 220, 730, 10)                      -- under construction
+        __osc_built_id = __osc_built:GetEntityId()
+
+        -- A tank driving 30 units, its motion events and its weapon's copies.
+        local y = GetTerrainHeight(300, 940)
+        local mover = CreateUnitHPR('uel0201', 'ARMY_1', 300, y, 940, 0, 0, 0)
+        __osc_motion, __osc_wmotion = {}, {}
+        local on_motion = mover.OnMotionHorzEventChange
+        mover.OnMotionHorzEventChange = function(self, new, old)
+            table.insert(__osc_motion, old .. '>' .. new)
+            return on_motion(self, new, old)
+        end
+        local w = mover:GetWeapon(1)
+        local on_wmotion = w.OnMotionHorzEventChange
+        w.OnMotionHorzEventChange = function(self, new, old)
+            table.insert(__osc_wmotion, old .. '>' .. new)
+            return on_wmotion(self, new, old)
+        end
+        IssueMove({mover}, {330, GetTerrainHeight(330, 940), 940})
+    )");
+    {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_built_id");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto* built = ctx.sim.entity_registry().find(id);
+        if (built && built->is_unit())
+            static_cast<osc::sim::Unit*>(built)->set_is_being_built(true);
+    }
+
+    for (int i = 0; i < 160; ++i) ctx.sim.tick();
+
+    lua_check("Test 1: the tank walks Idle -> FireReady -> Firing", R"(
+        local log = __osc_wlog[__osc_tank:GetWeapon(1)]
+        local names = {}
+        for i, e in log do names[i] = e.name end
+        local seen = table.concat(names, ' ')
+        if not string.find(seen, 'RackSalvoFireReadyState RackSalvoFiringState', 1, true) then
+            error('states: ' .. seen)
+        end
+    )");
+    lua_check("Test 2: its shots are its projectile class, carrying its damage", R"(
+        local shots = __osc_tank:GetWeapon(1).__osc_shots
+        if table.getn(shots) < 2 then error(table.getn(shots) .. ' shots') end
+        local class = import('/projectiles/tdfgauss01/tdfgauss01_script.lua').TypeClass
+        local proj = shots[1].proj
+        if getmetatable(proj) ~= class then error('not a TDFGauss01') end
+        if proj.DamageData.DamageAmount ~= 24 then
+            error('damage ' .. tostring(proj.DamageData.DamageAmount))
+        end
+    )");
+    lua_check("Test 3: the fire clock spaces shots 1/RateOfFire apart (10 ticks)", R"(
+        local shots = __osc_tank:GetWeapon(1).__osc_shots
+        if table.getn(shots) < 10 then error(table.getn(shots) .. ' shots in 160 ticks') end
+        for i = 2, table.getn(shots) do
+            local gap = shots[i].tick - shots[i - 1].tick
+            if gap ~= 10 then error('shot ' .. i .. ' came ' .. gap .. ' ticks after') end
+        end
+    )");
+    lua_check("Test 4: a salvo weapon fires its three muzzles a tick apart", R"(
+        local shots = __osc_bot:GetWeapon(1).__osc_shots
+        if table.getn(shots) < 3 then error(table.getn(shots) .. ' shots') end
+        for i = 2, 3 do
+            local gap = shots[i].tick - shots[i - 1].tick
+            if gap ~= 1 then error('muzzle ' .. i .. ' came ' .. gap .. ' ticks after') end
+        end
+    )");
+    lua_check("Test 5: a reload weapon waits out RackSalvoReloadTime", R"(
+        local w = __osc_mml:GetWeapon(1)
+        if table.getn(w.__osc_shots) < 1 then error('it never fired') end
+        local log, reload = __osc_wlog[w], nil
+        for i, e in log do
+            if e.name == 'RackSalvoReloadState' then reload = i break end
+        end
+        if not reload then error('it never reloaded') end
+        local after = log[reload + 1]
+        if not after then error('still reloading after ' .. GetGameTick() - log[reload].tick) end
+        if after.tick - log[reload].tick < 66 then
+            error('reloaded in ' .. after.tick - log[reload].tick .. ' ticks')
+        end
+    )");
+    lua_check("Test 6: a unit under construction holds its fire", R"(
+        local w = __osc_built:GetWeapon(1)
+        if table.getn(__osc_wlog[w]) > 0 or table.getn(w.__osc_shots) > 0 then
+            error('it fought')
+        end
+    )");
+    lua_check("Test 7: losing the target sends OnLostTarget (back to Idle)", R"(
+        local w = __osc_tank:GetWeapon(1)
+        local p = __osc_tank_target:GetPosition()
+        Warp(__osc_tank_target, {p[1] + 60, p[2], p[3]})
+        __osc_lost_from = table.getn(__osc_wlog[w])
+    )");
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    lua_check("Test 7b: ...and the weapon has no target", R"(
+        local w = __osc_tank:GetWeapon(1)
+        if w:WeaponHasTarget() then error('still has a target') end
+        local log = __osc_wlog[w]
+        local last = log[table.getn(log)]
+        if table.getn(log) <= __osc_lost_from or last.name ~= 'IdleState' then
+            error('last state ' .. tostring(last and last.name))
+        end
+    )");
+
+    lua_check("Test 9: a drive raises Stopped>Cruise>TopSpeed>Stopping>Stopped", R"(
+        local seen = table.concat(__osc_motion, ' ')
+        if seen ~= 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped' then
+            error('events: ' .. seen)
+        end
+    )");
+    lua_check("Test 10: the unit script passes each motion event to its weapons", R"(
+        local seen, weapon = table.concat(__osc_motion, ' '), table.concat(__osc_wmotion, ' ')
+        if weapon ~= seen then error('weapon saw: ' .. weapon) end
+    )");
+
+    if (osc::test_status::failure_count() == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 11: the weapon and motion scripts ran without errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 11: script errors while weapons fired");
+    }
+    spdlog::info("Weapon test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

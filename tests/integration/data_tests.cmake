@@ -48,7 +48,7 @@ set(OSC_DATA_TESTS_GATE
     terrain-normal-test terrain-tex-test text-test threat-test
     tiled-render-test toggle-test transport-silo-test transport-test ui-test
     uiboot-test uirender-test unitsound-test upgrade-test vet-adj-render-test
-    vet-test vfx-render-test victory-test wreck-test
+    vet-test vfx-render-test victory-test weapon-test wreck-test
 )
 
 set(OSC_DATA_TESTS_RETAIL_GAP

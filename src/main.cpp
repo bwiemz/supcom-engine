@@ -370,6 +370,7 @@ static void print_usage() {
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
+              << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
@@ -1717,6 +1718,7 @@ int main(int argc, char* argv[]) {
     bool terrain_tex_test = parse_flag(argc, argv, "--terrain-tex-test");
     bool decal_test = parse_flag(argc, argv, "--decal-test");
     bool projectile_test = parse_flag(argc, argv, "--projectile-test");
+    bool weapon_test = parse_flag(argc, argv, "--weapon-test");
     bool shadow_test = parse_flag(argc, argv, "--shadow-test");
     bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
     bool spatial_test = parse_flag(argc, argv, "--spatial-test");
@@ -1801,47 +1803,28 @@ int main(int argc, char* argv[]) {
     }
 
     // Determine if any test/headless flag was set
-    bool any_test = damage_test || move_test || fire_test || economy_test ||
-                    build_test || chain_test || ai_test || reclaim_test ||
-                    platoon_test || threat_test || combat_test ||
-                    repair_test || upgrade_test || capture_test ||
-                    path_test || toggle_test || enhance_test ||
-                    intel_test || shield_test || transport_test ||
-                    fow_test || los_test || stall_test || jammer_test ||
-                    stub_test || audio_test || bone_test || manip_test ||
-                    canpath_test || armor_test || vet_test ||
-                    wreck_test || adjacency_test || stats_test ||
-                    silo_test || flags_test || layercap_test ||
-                    massstub_test || massstub2_test || massstub3_test ||
-                    anim_test || teamcolor_test || normal_test ||
-                    prop_test || scale_test || specular_test ||
-                    terrain_normal_test || terrain_tex_test ||
-                    decal_test || projectile_test || shadow_test ||
-                    massstub4_test || spatial_test ||
-                    unitsound_test || medstub_test ||
-                    lowstub_test || blend_test ||
-                    ui_test || bitmap_test ||
-                    text_test || edit_test ||
-                    controls_test || uiboot_test || gameui_test ||
-                    lobby_flow_test ||
-                    uirender_test || font_test ||
-                    scissor_test || border_render_test ||
-                    edit_render_test || itemlist_render_test ||
-                    scrollbar_render_test || anim_render_test ||
-                    tiled_render_test || input_test ||
-                    onframe_test || cursor_render_test ||
-                    drag_render_test || emitter_test ||
-                    collision_test || decalsplat_test ||
-                    cmd_test || deposit_test ||
-                    beam_test || shield_render_test ||
-                    vet_adj_render_test || intel_overlay_test ||
-                    enhance_wreck_test || vfx_render_test ||
-                    transport_silo_test ||
-                    dualstate_test ||
-                    construction_test || phase2_test ||
-                    phase3_test || phase4_test || phase5_test ||
-                    profile_test || smoke_test || ai_skirmish || draw_test ||
-                    stress_test || full_smoke_test || audio_data_test || victory_test;
+    bool any_test =
+        damage_test || move_test || fire_test || economy_test || build_test || chain_test ||
+        ai_test || reclaim_test || platoon_test || threat_test || combat_test || repair_test ||
+        upgrade_test || capture_test || path_test || toggle_test || enhance_test || intel_test ||
+        shield_test || transport_test || fow_test || los_test || stall_test || jammer_test ||
+        stub_test || audio_test || bone_test || manip_test || canpath_test || armor_test ||
+        vet_test || wreck_test || adjacency_test || stats_test || silo_test || flags_test ||
+        layercap_test || massstub_test || massstub2_test || massstub3_test || anim_test ||
+        teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
+        terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
+        shadow_test || massstub4_test || spatial_test || unitsound_test || medstub_test ||
+        lowstub_test || blend_test || ui_test || bitmap_test || text_test || edit_test ||
+        controls_test || uiboot_test || gameui_test || lobby_flow_test || uirender_test ||
+        font_test || scissor_test || border_render_test || edit_render_test ||
+        itemlist_render_test || scrollbar_render_test || anim_render_test || tiled_render_test ||
+        input_test || onframe_test || cursor_render_test || drag_render_test || emitter_test ||
+        collision_test || decalsplat_test || cmd_test || deposit_test || beam_test ||
+        shield_render_test || vet_adj_render_test || intel_overlay_test || enhance_wreck_test ||
+        vfx_render_test || transport_silo_test || dualstate_test || construction_test ||
+        phase2_test || phase3_test || phase4_test || phase5_test || profile_test || smoke_test ||
+        ai_skirmish || draw_test || stress_test || full_smoke_test || audio_data_test ||
+        victory_test;
     bool headless = (tick_count > 0) || any_test || replay_to_play.has_value();
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -3937,6 +3920,7 @@ int main(int argc, char* argv[]) {
     if (terrain_normal_test && !map_path.empty()) osc::test::test_terrain_normal(test_ctx);
     if (decal_test && !map_path.empty()) osc::test::test_decal(test_ctx);
     if (projectile_test && !map_path.empty()) osc::test::test_projectile(test_ctx);
+    if (weapon_test && !map_path.empty()) osc::test::test_weapon(test_ctx);
     if (terrain_tex_test && !map_path.empty()) osc::test::test_terrain_tex(test_ctx);
     if (shadow_test && !map_path.empty()) osc::test::test_shadow(test_ctx);
     if (massstub4_test && !map_path.empty()) osc::test::test_massstub4(test_ctx);

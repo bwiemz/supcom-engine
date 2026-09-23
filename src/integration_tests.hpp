@@ -84,6 +84,7 @@ void test_specular(TestContext& ctx);
 void test_terrain_normal(TestContext& ctx);
 void test_decal(TestContext& ctx);
 void test_projectile(TestContext& ctx);
+void test_weapon(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);
