@@ -12,7 +12,6 @@
 G BaseManagerReclaimThread
 G ClearQueueGrid
 G ConTextMatches
-G CopyCurrentReplay
 G CreateStorageManip
 G CreateTrail
 G ERROR
@@ -25,9 +24,6 @@ G GenerateArmyStart
 G GenerateBuildTemplateFromSelection
 G GetArmy
 G GetMovieDuration
-G GetSpecialFileInfo
-G GetSpecialFilePath
-G GetSpecialFiles
 G GetValidAttackingUnits
 G IN_ClearKeyMap
 G IncreaseBuildCountInQueue
@@ -39,14 +35,12 @@ G IsCommandDone
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
-G LaunchReplaySession
 G LoadSavedGame
 G MapBorderAdd
 G MapBorderClear
 G MetaImpact
 G RefreshSteamGames
 G RemoveProfileDirectories
-G RemoveSpecialFile
 G RenderOverlayEconomy
 G SessionIsPaused
 G SetAllianceOneWay
