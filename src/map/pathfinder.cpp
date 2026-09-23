@@ -302,4 +302,187 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
     return true;
 }
 
+// --- Reachability ----------------------------------------------------------
+
+namespace {
+
+bool is_naval_layer(const std::string& layer) {
+    return layer == "Water" || layer == "Seabed" || layer == "Sub";
+}
+
+/// Visit the cells at Chebyshev distance exactly `r` from (cx, cz) that lie
+/// inside a w x h grid.
+template <typename Fn>
+void for_ring(i32 cx, i32 cz, i32 r, u32 w, u32 h, Fn&& fn) {
+    auto visit = [&](i32 x, i32 z) {
+        if (x >= 0 && z >= 0 && static_cast<u32>(x) < w && static_cast<u32>(z) < h)
+            fn(static_cast<u32>(x), static_cast<u32>(z));
+    };
+    if (r == 0) {
+        visit(cx, cz);
+        return;
+    }
+    for (i32 dx = -r; dx <= r; ++dx) {
+        visit(cx + dx, cz - r);
+        visit(cx + dx, cz + r);
+    }
+    for (i32 dz = -r + 1; dz <= r - 1; ++dz) {
+        visit(cx - r, cz + dz);
+        visit(cx + r, cz + dz);
+    }
+}
+
+/// How far find_path() looks for a passable cell around an impassable goal.
+constexpr i32 NEAREST_PASSABLE_RADIUS = 20;
+
+} // namespace
+
+const Pathfinder::ComponentLabels& Pathfinder::labels_for(
+    const std::string& layer, f32 draft, bool amphibious) const {
+    const bool naval = !amphibious && is_naval_layer(layer);
+    const f32 key_draft = naval && draft > 0 ? draft : 0.0f;
+
+    ComponentLabels* set = nullptr;
+    for (auto& s : label_cache_) {
+        if (s.amphibious == amphibious && s.naval == naval && s.draft == key_draft) {
+            set = &s;
+            break;
+        }
+    }
+    if (!set) {
+        if (label_cache_.size() < MAX_LABEL_SETS) {
+            set = &label_cache_.emplace_back();
+        } else {
+            set = &*std::min_element(label_cache_.begin(), label_cache_.end(),
+                                     [](const ComponentLabels& a, const ComponentLabels& b) {
+                                         return a.last_used < b.last_used;
+                                     });
+        }
+        set->amphibious = amphibious;
+        set->naval = naval;
+        set->draft = key_draft;
+        set->labels.clear(); // built below
+    }
+    set->last_used = ++label_uses_;
+    if (set->labels.empty() || set->grid_version != grid_.version()) build_labels(*set);
+    return *set;
+}
+
+void Pathfinder::build_labels(ComponentLabels& set) const {
+    static const std::string kLand = "Land";
+    static const std::string kWater = "Water";
+    const std::string& layer = set.naval ? kWater : kLand;
+    const u32 w = grid_.grid_width();
+    const u32 h = grid_.grid_height();
+    auto passable = [&](u32 x, u32 z) {
+        return grid_.is_passable_for(x, z, layer, set.draft, set.amphibious);
+    };
+
+    set.labels.assign(static_cast<size_t>(w) * h, 0);
+    std::vector<u32> stack;
+    u32 next_label = 0;
+    for (u32 z = 0; z < h; ++z) {
+        for (u32 x = 0; x < w; ++x) {
+            const u32 seed = z * w + x;
+            if (set.labels[seed] != 0 || !passable(x, z)) continue;
+            set.labels[seed] = ++next_label;
+            stack.push_back(seed);
+            while (!stack.empty()) {
+                const u32 cur = stack.back();
+                stack.pop_back();
+                const u32 cx = cur % w;
+                const u32 cz = cur / w;
+                auto spread = [&](u32 nx, u32 nz) {
+                    const u32 n = nz * w + nx;
+                    if (set.labels[n] == 0 && passable(nx, nz)) {
+                        set.labels[n] = next_label;
+                        stack.push_back(n);
+                    }
+                };
+                if (cx > 0) spread(cx - 1, cz);
+                if (cx + 1 < w) spread(cx + 1, cz);
+                if (cz > 0) spread(cx, cz - 1);
+                if (cz + 1 < h) spread(cx, cz + 1);
+            }
+        }
+    }
+    set.grid_version = grid_.version();
+}
+
+Reachability Pathfinder::reachability(f32 start_x, f32 start_z,
+                                      f32 goal_x, f32 goal_z,
+                                      const std::string& layer,
+                                      f32 draft, bool amphibious) const {
+    Reachability r;
+    r.best_x = start_x;
+    r.best_z = start_z;
+
+    u32 sx, sz, gx, gz;
+    grid_.world_to_grid(start_x, start_z, sx, sz);
+    grid_.world_to_grid(goal_x, goal_z, gx, gz);
+    if (layer == "Air" || (sx == gx && sz == gz)) {
+        r.reachable = true;
+        r.best_x = goal_x;
+        r.best_z = goal_z;
+        return r;
+    }
+
+    const auto& set = labels_for(layer, draft, amphibious);
+    const u32 w = grid_.grid_width();
+    const u32 h = grid_.grid_height();
+
+    // Components on the nearest ring around (cx, cz) that has any passable
+    // cell: the cell's own component when it is passable.
+    auto nearest_components = [&](u32 cx, u32 cz) {
+        std::vector<u32> found;
+        for (i32 radius = 0; radius <= NEAREST_PASSABLE_RADIUS && found.empty(); ++radius) {
+            for_ring(static_cast<i32>(cx), static_cast<i32>(cz), radius, w, h,
+                     [&](u32 x, u32 z) {
+                         const u32 label = set.labels[z * w + x];
+                         if (label != 0 &&
+                             std::find(found.begin(), found.end(), label) == found.end())
+                             found.push_back(label);
+                     });
+        }
+        return found;
+    };
+
+    // A unit standing on an obstacle (inside a factory footprint) leaves by
+    // the nearest passable cells, as A* expands from an impassable start.
+    const std::vector<u32> from = nearest_components(sx, sz);
+    if (from.empty()) return r; // enclosed: nothing is reachable
+    auto is_from = [&](u32 label) {
+        return label != 0 && std::find(from.begin(), from.end(), label) != from.end();
+    };
+
+    for (u32 label : nearest_components(gx, gz)) {
+        if (is_from(label)) {
+            r.reachable = true;
+            r.best_x = goal_x;
+            r.best_z = goal_z;
+            return r;
+        }
+    }
+
+    // Unreachable: the closest cell the unit can get to instead.
+    const i32 max_radius = static_cast<i32>(std::max(w, h));
+    for (i32 radius = 1; radius <= max_radius; ++radius) {
+        f32 best_d2 = FLT_MAX;
+        for_ring(static_cast<i32>(gx), static_cast<i32>(gz), radius, w, h,
+                 [&](u32 x, u32 z) {
+                     if (!is_from(set.labels[z * w + x])) return;
+                     f32 wx, wz;
+                     grid_.grid_to_world(x, z, wx, wz);
+                     const f32 d2 = (wx - goal_x) * (wx - goal_x) + (wz - goal_z) * (wz - goal_z);
+                     if (d2 < best_d2) {
+                         best_d2 = d2;
+                         r.best_x = wx;
+                         r.best_z = wz;
+                     }
+                 });
+        if (best_d2 != FLT_MAX) break;
+    }
+    return r;
+}
+
 } // namespace osc::map

@@ -149,13 +149,16 @@ void PathfindingGrid::mark_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
     world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
 
     if (obstacle_refs_.size() != cells_.size()) obstacle_refs_.assign(cells_.size(), 0);
+    bool changed = false;
     for (u32 z = gz0; z <= gz1; ++z) {
         for (u32 x = gx0; x <= gx1; ++x) {
             const size_t i = static_cast<size_t>(z) * grid_width_ + x;
             if (obstacle_refs_[i] < UINT16_MAX) ++obstacle_refs_[i];
+            changed |= cells_[i] != CellPassability::Obstacle;
             cells_[i] = CellPassability::Obstacle;
         }
     }
+    if (changed) ++version_;
 }
 
 void PathfindingGrid::clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
@@ -166,15 +169,18 @@ void PathfindingGrid::clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ) {
     world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
     world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
 
+    bool changed = false;
     for (u32 z = gz0; z <= gz1; ++z) {
         for (u32 x = gx0; x <= gx1; ++x) {
             const size_t i = static_cast<size_t>(z) * grid_width_ + x;
             if (obstacle_refs_[i] == 0) continue;
             if (--obstacle_refs_[i] == 0) {
                 cells_[i] = base_cells_[i]; // restore terrain passability
+                changed = true;
             }
         }
     }
+    if (changed) ++version_;
 }
 
 } // namespace osc::map

@@ -6,6 +6,7 @@
 
 #include "map/heightmap.hpp"
 #include "map/pathfinder.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/manipulator.hpp"
@@ -218,4 +219,47 @@ TEST_CASE("a failed request is retried eventually (terrain can open up)",
         nav.set_goal(goal, pf, here, "Land");
     }
     CHECK(pf->requests_this_tick() == 1); // the retry happened
+}
+
+TEST_CASE("reachability is answered from connectivity, without the path budget",
+          "[nav][reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim);
+    const auto* pf = sim.pathfinder();
+
+    // Spend the whole per-tick movement budget first: queries must not care.
+    pf->reset_request_count();
+    for (int i = 0; i < osc::map::Pathfinder::MAX_REQUESTS_PER_TICK; ++i)
+        pf->increment_request_count();
+
+    CHECK(pf->reachable(20.0f, 64.0f, 40.0f, 30.0f, "Land"));   // same side
+    CHECK_FALSE(pf->reachable(20.0f, 64.0f, 100.0f, 64.0f, "Land")); // across
+    CHECK(pf->reachable(100.0f, 20.0f, 110.0f, 100.0f, "Land")); // far side
+    CHECK(pf->reachable(20.0f, 64.0f, 100.0f, 64.0f, "Air"));    // air: always
+
+    // Across the wall, the best point is the near side of it, level with the goal.
+    const auto across = pf->reachability(20.0f, 64.0f, 100.0f, 64.0f, "Land");
+    CHECK(across.best_x > 50.0f);
+    CHECK(across.best_x < 60.0f);
+    CHECK(across.best_z > 60.0f);
+    CHECK(across.best_z < 68.0f);
+    // The queries spent none of the budget.
+    CHECK(pf->requests_this_tick() == osc::map::Pathfinder::MAX_REQUESTS_PER_TICK);
+}
+
+TEST_CASE("reachability follows obstacles that open and close", "[nav][reach]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    auto* grid = sim.pathfinding_grid();
+    const auto* pf = sim.pathfinder();
+
+    REQUIRE(pf->reachable(10.0f, 64.0f, 110.0f, 64.0f, "Land"));
+    // A line of buildings across the whole map splits it...
+    grid->mark_obstacle(64.0f, 64.0f, 4.0f, 130.0f);
+    CHECK_FALSE(pf->reachable(10.0f, 64.0f, 110.0f, 64.0f, "Land"));
+    // ...until they are gone.
+    grid->clear_obstacle(64.0f, 64.0f, 4.0f, 130.0f);
+    CHECK(pf->reachable(10.0f, 64.0f, 110.0f, 64.0f, "Land"));
 }

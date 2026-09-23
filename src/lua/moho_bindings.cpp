@@ -2844,56 +2844,51 @@ static int unit_ShieldIsOn(lua_State* L) {
     return 1;
 }
 
-// unit:CanPathTo(destPos) -> bool
-// Uses A* pathfinder to check if a path exists from unit to destination.
-static int unit_CanPathTo(lua_State* L) {
+// unit:CanPathTo(destPos) -> reachable, bestPos
+// Whether the unit can get to destPos at all, and where it would end up:
+// destPos when reachable, else the reachable point closest to it (retail AI
+// retargets to bestPos). A connectivity query, not a path search, so a
+// movement-heavy tick can't make it answer "unreachable" -- the AI would
+// then wait for transports that never come.
+static int push_path_reachability(lua_State* L) {
     auto* unit = check_unit(L);
     auto* sim = get_sim(L);
-    if (!unit || !sim || !sim->pathfinder()) {
-        lua_pushboolean(L, 1); // fallback: allow
-        return 1;
-    }
-    f32 dx = 0, dz = 0;
+    sim::Vector3 dest{0, 0, 0};
     if (lua_istable(L, 2)) {
         lua_rawgeti(L, 2, 1);
-        dx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+        dest.x = static_cast<f32>(lua_tonumber(L, -1));
+        lua_rawgeti(L, 2, 2);
+        dest.y = static_cast<f32>(lua_tonumber(L, -1));
         lua_rawgeti(L, 2, 3);
-        dz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+        dest.z = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 3);
     }
-    auto result = sim->pathfinder()->find_path(
-        unit->position().x, unit->position().z,
-        dx, dz, unit->layer());
-    lua_pushboolean(L, result.found ? 1 : 0);
-    return 1;
+    if (!unit || !sim || !sim->pathfinder()) {
+        lua_pushboolean(L, 1); // no pathfinding grid: nothing blocks
+        push_vector3(L, dest);
+        return 2;
+    }
+    const auto& pos = unit->position();
+    const auto reach = sim->pathfinder()->reachability(
+        pos.x, pos.z, dest.x, dest.z, unit->layer(), unit->naval_draft(),
+        unit->is_amphibious() || unit->is_hover());
+    lua_pushboolean(L, reach.reachable ? 1 : 0);
+    if (reach.reachable) {
+        push_vector3(L, dest);
+    } else {
+        const f32 y = sim->terrain()
+            ? sim->terrain()->get_surface_height(reach.best_x, reach.best_z) : pos.y;
+        push_vector3(L, {reach.best_x, y, reach.best_z});
+    }
+    return 2;
 }
 
-// unit:CanPathToCell(destPos) -> bool
-// Similar to CanPathTo but intended to be more lenient (cell-level check).
-// Currently uses the same A* approach.
-static int unit_CanPathToCell(lua_State* L) {
-    auto* unit = check_unit(L);
-    auto* sim = get_sim(L);
-    if (!unit || !sim || !sim->pathfinder()) {
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-    f32 dx = 0, dz = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        dx = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        dz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-    auto result = sim->pathfinder()->find_path(
-        unit->position().x, unit->position().z,
-        dx, dz, unit->layer());
-    lua_pushboolean(L, result.found ? 1 : 0);
-    return 1;
-}
+static int unit_CanPathTo(lua_State* L) { return push_path_reachability(L); }
+
+// unit:CanPathToCell(destPos) -> reachable, bestPos
+// Retail's cell-granular variant; the reachability answer is already
+// cell-granular, so it is the same query.
+static int unit_CanPathToCell(lua_State* L) { return push_path_reachability(L); }
 
 // unit:GetArmorMult(damageType) → multiplier
 static int unit_GetArmorMult(lua_State* L) {

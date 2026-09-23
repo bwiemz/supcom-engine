@@ -57,6 +57,10 @@ public:
     /// its terrain passability once no footprint covers it.
     void clear_obstacle(f32 wx, f32 wz, f32 sizeX, f32 sizeZ);
 
+    /// Changes whenever a cell's passability does (obstacles placed or
+    /// cleared), so data derived from the grid can tell it is stale.
+    u64 version() const { return version_; }
+
 private:
     u32 grid_width_;
     u32 grid_height_;
@@ -68,6 +72,7 @@ private:
     std::vector<u16> obstacle_refs_;           // footprints covering each cell
     std::vector<f32> water_depth_;
     f32 water_elevation_ = 0;
+    u64 version_ = 0;
 };
 
 } // namespace osc::map
