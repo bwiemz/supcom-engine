@@ -160,6 +160,8 @@ void FontCache::init(VkDevice device, VmaAllocator allocator,
     ds_layout_ = ds_layout;
     sampler_ = sampler;
     vfs_ = vfs;
+    // Without a device the cache still lays out glyphs (tests); no GPU upload.
+    if (!device_) return;
 
     // Create descriptor pool for font atlas textures (64 max fonts)
     VkDescriptorPoolSize pool_size{};
@@ -298,6 +300,14 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
             static_cast<int>(codepoint),
             &gw, &gh, &xoff, &yoff);
 
+        // Every glyph gets its advance; blank ones (the space) have no
+        // bitmap but must still move the pen by the font's own width.
+        GlyphInfo gi{};
+        int advance_raw, lsb;
+        stbtt_GetCodepointHMetrics(&font, static_cast<int>(codepoint),
+                                   &advance_raw, &lsb);
+        gi.x_advance = advance_raw * scale;
+
         if (glyph_bmp) {
             // Clamp to cell bounds
             u32 copy_w = std::min(static_cast<u32>(gw), cell_w - 2);
@@ -316,8 +326,6 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
 
             stbtt_FreeBitmap(glyph_bmp, nullptr);
 
-            // Store glyph info
-            GlyphInfo gi{};
             gi.u0 = static_cast<f32>(x0) / atlas->atlas_width;
             gi.v0 = static_cast<f32>(y0) / atlas->atlas_height;
             gi.u1 = static_cast<f32>(x0 + copy_w) / atlas->atlas_width;
@@ -326,14 +334,8 @@ FontAtlas* FontCache::load_font(const std::string& family, i32 pointsize) {
             gi.y_offset = static_cast<f32>(yoff);
             gi.width = static_cast<f32>(copy_w);
             gi.height = static_cast<f32>(copy_h);
-
-            int advance_raw, lsb;
-            stbtt_GetCodepointHMetrics(&font, static_cast<int>(codepoint),
-                                       &advance_raw, &lsb);
-            gi.x_advance = advance_raw * scale;
-
-            atlas->glyphs[codepoint] = gi;
         }
+        atlas->glyphs[codepoint] = gi;
     }
 
     // Upload atlas to GPU
