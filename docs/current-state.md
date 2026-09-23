@@ -27,10 +27,10 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 365 cases / 6,028 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 375 cases / 31,955 assertions (the RNG tests draw many values). Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
-| Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 35 triaged findings. Changed lines follow `.clang-format`. |
-| Data-backed gate on retail (`ctest -L gate`) | All 107 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
+| Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format`. |
+| Data-backed gate on retail (`ctest -L gate`) | All 108 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), `data.determinism` (two processes play a four-AI game identically), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
 | Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 
@@ -158,11 +158,12 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   exercised on every CI run (`ctest -L mp`). Still missing: pipelined command
   delay, slot and faction sync, LAN discovery, and routing every sim mutation
   (SimCallbacks) through the command stream. Cross-OS determinism is
-  unproven. The sim walks entities and answers spatial queries in id order
-  (M195), but still has a constant-seeded static RNG beside `SimRandom`
-  (M196), and libm and floating-point contraction differ between
-  platforms (M197). Scripts' `pairs` over tables keyed by objects follows
-  addresses. See roadmap Phases D and G.
+  unproven. The sim walks entities in id order (M195) and draws all its
+  randomness from one seeded stream (M196). Two processes play the same
+  four-AI game identically (`data.determinism`), so object addresses don't
+  leak into the outcome within one build. Across platforms, libm and
+  floating-point contraction still differ (M197). See roadmap Phases D
+  and G.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
   still read the live sim; they move over with M191's split of the bindings
