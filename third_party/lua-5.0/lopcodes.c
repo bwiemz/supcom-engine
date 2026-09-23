@@ -34,6 +34,10 @@ const char *const luaP_opnames[] = {
   "MUL",
   "DIV",
   "POW",
+  "BOR",
+  "BAND",
+  "SHL",
+  "SHR",
   "UNM",
   "NOT",
   "LEN",
@@ -81,6 +85,10 @@ const lu_byte luaP_opmodes[NUM_OPCODES] = {
  ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_MUL */
  ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_DIV */
  ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_POW */
+ ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_BOR */
+ ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_BAND */
+ ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_SHL */
+ ,opmode(0, 0, 1, 1, 1, 0, iABC)		/* OP_SHR */
  ,opmode(0, 1, 0, 0, 1, 0, iABC)		/* OP_UNM */
  ,opmode(0, 1, 0, 0, 1, 0, iABC)		/* OP_NOT */
  ,opmode(0, 1, 0, 0, 1, 0, iABC)		/* OP_LEN */

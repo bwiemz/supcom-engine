@@ -342,6 +342,48 @@ TEST_CASE("Front-end fallback bindings preserve real UI globals", "[frontend][lu
     REQUIRE(focus_army == 2.0);
 }
 
+TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][lua]") {
+    // UI scripts keep unit objects across beats (avatars, idle lists,
+    // selections). They must resolve through the registry, never hold a
+    // pointer: an unregistered entity waits in the graveyard and is freed at
+    // tick end, while the script's handle lives on.
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry ui_registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, ui_registry);
+
+    auto acu = std::make_unique<osc::sim::Unit>();
+    acu->set_army(0);
+    acu->add_category("COMMAND");
+    const auto id = sim.entity_registry().register_entity(std::move(acu));
+
+    auto result = lua.do_string(R"(
+        kept = GetArmyAvatars()[1]
+        alive_idle = kept:IsIdle() and 1 or 0
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    lua_getglobal(L, "alive_idle");
+    CHECK(lua_tonumber(L, -1) == 1.0); // resolves: an idle unit
+    lua_pop(L, 1);
+
+    sim.entity_registry().unregister_entity(id); // into the graveyard
+    result = lua.do_string(R"(
+        dead_idle = kept:IsIdle() and 1 or 0
+        dead_avatars = table.getn(GetArmyAvatars())
+    )");
+    REQUIRE(result.ok());
+    lua_getglobal(L, "dead_idle");
+    CHECK(lua_tonumber(L, -1) == 0.0); // no longer resolves to the old unit
+    lua_pop(L, 1);
+    lua_getglobal(L, "dead_avatars");
+    CHECK(lua_tonumber(L, -1) == 0.0);
+    lua_pop(L, 1);
+    sim.entity_registry().collect_garbage();
+}
+
 TEST_CASE("UI SetFocusArmy updates focus army registry state", "[frontend][lua]") {
     osc::lua::LuaState lua;
     osc::sim::SimState sim(lua.raw(), nullptr);

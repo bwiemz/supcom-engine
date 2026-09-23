@@ -32,7 +32,7 @@ static const char *const token2string [] = {
     "end", "false", "for", "function", "if",
     "in", "local", "nil", "not", "or", "repeat",
     "return", "then", "true", "until", "while", "*name",
-    "..", "...", "==", ">=", "<=", "~=",
+    "..", "...", "==", ">=", "<=", "~=", "<<", ">>",
     "*number", "*string", "<eof>"
 };
 
@@ -368,11 +368,13 @@ int luaX_lex (LexState *LS, SemInfo *seminfo) {
       }
       case '<': {
         next(LS);
+        if (LS->current == '<') { next(LS); return TK_SHL; }  /* LuaPlus */
         if (LS->current != '=') return '<';
         else { next(LS); return TK_LE; }
       }
       case '>': {
         next(LS);
+        if (LS->current == '>') { next(LS); return TK_SHR; }  /* LuaPlus */
         if (LS->current != '=') return '>';
         else { next(LS); return TK_GE; }
       }

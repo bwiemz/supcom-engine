@@ -25,6 +25,7 @@
 */
 typedef enum BinOpr {
   OPR_ADD, OPR_SUB, OPR_MULT, OPR_DIV, OPR_POW,
+  OPR_BOR, OPR_BAND, OPR_SHL, OPR_SHR,  /* LuaPlus bitwise; ORDER OP */
   OPR_CONCAT,
   OPR_NE, OPR_EQ,
   OPR_LT, OPR_LE, OPR_GT, OPR_GE,

@@ -45,6 +45,7 @@
 #include "core/preferences.hpp"
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/sim_sync.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -102,9 +103,25 @@ static sim::Entity* check_entity(lua_State* L, int idx = 1) {
 
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+    if (lua_isuserdata(L, -1)) {
+        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        return entity;
+    }
     lua_pop(L, 1);
-    return entity;
+
+    // A handle by id (the UI state's unit objects): those outlive their
+    // entity -- scripts keep avatars, idle lists and selections -- so each
+    // call resolves the id; the registry stops listing an entity as soon as
+    // it is unregistered, long before its memory is freed.
+    lua_pushstring(L, "_c_entity_id");
+    lua_rawget(L, idx);
+    const bool by_id = lua_isnumber(L, -1);
+    const auto id = by_id ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+    lua_pop(L, 1);
+    if (!by_id) return nullptr;
+    auto* sim = get_sim(L);
+    return sim ? sim->entity_registry().find(id) : nullptr;
 }
 
 static sim::Unit* check_unit(lua_State* L, int idx = 1) {
@@ -1719,13 +1736,8 @@ static int entity_SetParentOffset(lua_State* L) {
 
 /// Helper: extract an Entity* from a Lua table at the given stack index.
 static sim::Entity* check_entity_arg(lua_State* L, int idx) {
-    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return nullptr; }
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return entity;
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    return check_entity(L, idx);
 }
 
 static int entity_AttachTo(lua_State* L) {
@@ -3578,6 +3590,7 @@ static const MethodEntry unit_methods[] = {
     {"IsUnitState",                 unit_IsUnitState},
     {"SetUnitState",                unit_SetUnitState},
     {"IsIdleState",                 unit_IsIdleState},
+    {"IsIdle",                      unit_IsIdleState}, // UserUnit
     {"GetFireState",                unit_GetFireState},
     {"SetFireState",                unit_SetFireState},
     {"ToggleFireState",             unit_ToggleFireState},
@@ -11824,61 +11837,14 @@ static int l_InternalCreateWorldMesh(lua_State* L) {
 
 // --- WldUIProvider methods (M76 → M135g) ---
 
-static ui::WldUIProvider* check_wld_provider(lua_State* L, int idx = 1) {
-    if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    auto* p = static_cast<ui::WldUIProvider*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return p;
-}
-
-static int wld_CreateGameInterface(lua_State* L) {
-    auto* p = check_wld_provider(L);
-    bool is_replay = lua_toboolean(L, 2) != 0;
-    if (p) p->create_game_interface(L, is_replay);
-    return 0;
-}
-
-static int wld_DestroyGameInterface(lua_State* L) {
-    auto* p = check_wld_provider(L);
-    if (p) p->destroy_game_interface(L);
-    return 0;
-}
-
-static int wld_StartLoadingDialog(lua_State* L) {
-    auto* p = check_wld_provider(L);
-    if (p) p->start_loading_dialog(L);
-    return 0;
-}
-
-static int wld_UpdateLoadingDialog(lua_State* L) {
-    auto* p = check_wld_provider(L);
-    if (p) p->update_loading_dialog(L, static_cast<f32>(luaL_optnumber(L, 2, 0.0)));
-    return 0;
-}
-
-static int wld_StopLoadingDialog(lua_State* L) {
-    auto* p = check_wld_provider(L);
-    if (p) p->stop_loading_dialog(L);
-    return 0;
-}
-
-static int wld_GetPrefetchTextures(lua_State* L) {
-    lua_newtable(L); // empty table — no prefetch needed
-    return 1;
-}
-
+// Moho's WldUIProvider class carries no engine-side CreateGameInterface /
+// loading-dialog methods: those are names the engine *calls* on the Lua
+// object (ui::WldUIProvider::call_method). Defining them here too would
+// recurse through the engine for any provider that doesn't override one.
 static int wlduiprovider_Destroy(lua_State* /*L*/) { return 0; }
 
 static const MethodEntry ui_wlduiprovider_methods[] = {
-    {"CreateGameInterface", wld_CreateGameInterface},
     {"Destroy", wlduiprovider_Destroy},
-    {"DestroyGameInterface", wld_DestroyGameInterface},
-    {"GetPrefetchTextures", wld_GetPrefetchTextures},
-    {"StartLoadingDialog", wld_StartLoadingDialog},
-    {"StopLoadingDialog", wld_StopLoadingDialog},
-    {"UpdateLoadingDialog", wld_UpdateLoadingDialog},
     {nullptr, nullptr},
 };
 
@@ -11898,6 +11864,13 @@ static int l_InternalCreateWldUIProvider(lua_State* L) {
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, provider);
     lua_rawset(L, 1);
+
+    // The engine drives this object (StartLoadingDialog, CreateGameInterface,
+    // ...), and gamemain overrides those per instance, so keep the object
+    // itself -- the newest provider replaces an older one.
+    lua_pushstring(L, ui::WldUIProvider::kLuaObjectKey);
+    lua_pushvalue(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
 
     // Don't set metatable — FA's ClassUI system handles metatables via __index chain.
     // Setting it here would overwrite the class hierarchy and break Lua-side overrides.
@@ -12865,12 +12838,7 @@ static int camera_RestoreSettings(lua_State* L) {
 static int camera_SetZoom(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
-    f32 zoom = static_cast<f32>(luaL_checknumber(L, 2));
-    constexpr f32 MIN_DIST = 10.0f;
-    constexpr f32 MAX_DIST = 1000.0f;
-    if (zoom < MIN_DIST) zoom = MIN_DIST;
-    if (zoom > MAX_DIST) zoom = MAX_DIST;
-    r->camera().set_distance(zoom);
+    r->camera().set_zoom(static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
@@ -12883,12 +12851,159 @@ static int camera_GetZoom(lua_State* L) {
 
 static int camera_RevertRotation(lua_State* /*L*/) { return 0; }
 
+// Headless (no renderer) the camera methods answer with the renderer
+// camera's defaults, so UI scripts run the same in tests.
+static constexpr f32 kHeadlessMaxZoom = 1536.0f; // 1024 map x 1.5
+
+/// camera:SetMaxZoomMult(mult) -- scales the far zoom limit.
+static int camera_SetMaxZoomMult(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (r) r->camera().set_max_zoom_mult(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
+}
+
+static int camera_GetMinZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    lua_pushnumber(L, r ? r->camera().min_zoom() : renderer::Camera::MIN_ZOOM);
+    return 1;
+}
+
+static int camera_GetMaxZoom(lua_State* L) {
+    auto* r = get_renderer(L);
+    lua_pushnumber(L, r ? r->camera().max_zoom() : kHeadlessMaxZoom);
+    return 1;
+}
+
+/// Zoom changes are immediate (no easing yet), so the target zoom is the
+/// current one.
+static int camera_SetTargetZoom(lua_State* L) { return camera_SetZoom(L); }
+static int camera_GetTargetZoom(lua_State* L) { return camera_GetZoom(L); }
+
+static int camera_Reset(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (r) r->camera().reset();
+    return 0;
+}
+
+/// Read {x, y, z} (array or vector table) at idx into x/z.
+static bool read_xz(lua_State* L, int idx, f32& x, f32& z) {
+    if (!lua_istable(L, idx)) return false;
+    lua_rawgeti(L, idx, 1);
+    lua_rawgeti(L, idx, 3);
+    bool ok = lua_isnumber(L, -2) && lua_isnumber(L, -1);
+    if (ok) {
+        x = static_cast<f32>(lua_tonumber(L, -2));
+        z = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_pop(L, 2);
+    return ok;
+}
+
+/// camera:MoveTo(position, orientationHPR, zoom, seconds) and
+/// camera:SnapTo(position, orientationHPR, zoom): placed at once (no
+/// animation yet). Orientation is heading, pitch, roll in radians.
+static int camera_MoveTo(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r) return 0;
+    auto& cam = r->camera();
+    f32 x = 0, z = 0;
+    if (read_xz(L, 2, x, z)) cam.set_target(x, z);
+    if (lua_istable(L, 3)) {
+        lua_rawgeti(L, 3, 1);
+        lua_rawgeti(L, 3, 2);
+        if (lua_isnumber(L, -2)) cam.set_yaw(static_cast<f32>(lua_tonumber(L, -2)));
+        if (lua_isnumber(L, -1)) cam.set_pitch(static_cast<f32>(lua_tonumber(L, -1)));
+        lua_pop(L, 2);
+    }
+    if (lua_isnumber(L, 4)) cam.set_zoom(static_cast<f32>(lua_tonumber(L, 4)));
+    return 0;
+}
+
+/// camera:MoveToRegion(rect, seconds): centre on the rect ({x0, y0, x1, y1}
+/// or a Rect with x0/y0/x1/y1 fields, y being map z) and zoom to fit it.
+static int camera_MoveToRegion(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (!r || !lua_istable(L, 2)) return 0;
+    f32 v[4] = {0, 0, 0, 0};
+    static const char* const keys[4] = {"x0", "y0", "x1", "y1"};
+    for (int i = 0; i < 4; ++i) {
+        lua_pushstring(L, keys[i]);
+        lua_rawget(L, 2);
+        if (!lua_isnumber(L, -1)) {
+            lua_pop(L, 1);
+            lua_rawgeti(L, 2, i + 1);
+        }
+        v[i] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    auto& cam = r->camera();
+    cam.set_target((v[0] + v[2]) * 0.5f, (v[1] + v[3]) * 0.5f);
+    cam.set_zoom(std::max(std::abs(v[2] - v[0]), std::abs(v[3] - v[1])));
+    return 0;
+}
+
+/// camera:GetFocusPosition() -> {x, y, z} of the point the camera looks at.
+static int camera_GetFocusPosition(lua_State* L) {
+    auto* r = get_renderer(L);
+    f32 x = r ? r->camera().target_x() : 512.0f;
+    f32 z = r ? r->camera().target_z() : 512.0f;
+    f32 y = 0.0f;
+    if (auto* sim = get_sim(L); sim && sim->terrain())
+        y = sim->terrain()->get_terrain_height(x, z);
+    lua_newtable(L);
+    lua_pushnumber(L, x); lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, y); lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, z); lua_rawseti(L, -2, 3);
+    return 1;
+}
+
+static int camera_GetHeading(lua_State* L) {
+    auto* r = get_renderer(L);
+    lua_pushnumber(L, r ? r->camera().yaw() : 0.0f);
+    return 1;
+}
+
+static int camera_GetPitch(lua_State* L) {
+    auto* r = get_renderer(L);
+    lua_pushnumber(L, r ? r->camera().pitch() : 0.87f);
+    return 1;
+}
+
+// Camera behaviours the orbit camera doesn't model yet: accepted and ignored
+// (spin, rotation hold, clock source, acceleration mode, easing, entity
+// tracking, locking, the playable-rect sync).
+static int camera_Ignored(lua_State* /*L*/) { return 0; }
+
 static const MethodEntry camera_methods[] = {
-    {"SaveSettings",    camera_SaveSettings},
-    {"RestoreSettings", camera_RestoreSettings},
-    {"SetZoom",         camera_SetZoom},
-    {"GetZoom",         camera_GetZoom},
-    {"RevertRotation",  camera_RevertRotation},
+    {"SaveSettings",     camera_SaveSettings},
+    {"RestoreSettings",  camera_RestoreSettings},
+    {"SetZoom",          camera_SetZoom},
+    {"GetZoom",          camera_GetZoom},
+    {"RevertRotation",   camera_RevertRotation},
+    {"SetMaxZoomMult",   camera_SetMaxZoomMult},
+    {"GetMinZoom",       camera_GetMinZoom},
+    {"GetMaxZoom",       camera_GetMaxZoom},
+    {"SetTargetZoom",    camera_SetTargetZoom},
+    {"GetTargetZoom",    camera_GetTargetZoom},
+    {"Reset",            camera_Reset},
+    {"MoveTo",           camera_MoveTo},
+    {"SnapTo",           camera_MoveTo},
+    {"MoveToRegion",     camera_MoveToRegion},
+    {"GetFocusPosition", camera_GetFocusPosition},
+    {"GetHeading",       camera_GetHeading},
+    {"GetPitch",         camera_GetPitch},
+    {"Spin",             camera_Ignored},
+    {"HoldRotation",     camera_Ignored},
+    {"UseSystemClock",   camera_Ignored},
+    {"UseGameClock",     camera_Ignored},
+    {"SetAccMode",       camera_Ignored},
+    {"EnableEaseInOut",  camera_Ignored},
+    {"TrackEntities",    camera_Ignored},
+    {"TargetEntities",   camera_Ignored},
+    {"NoseCam",          camera_Ignored},
+    {"Lock",             camera_Ignored},
+    {"Unlock",           camera_Ignored},
+    {"SyncPlayableRect", camera_Ignored},
     {nullptr, nullptr},
 };
 
@@ -12904,19 +13019,11 @@ static int l_UIZoomTo(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; ++i) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "_c_object");
-            lua_rawget(L, -2);
-            if (lua_islightuserdata(L, -1)) {
-                auto* unit = static_cast<osc::sim::Unit*>(lua_touserdata(L, -1));
-                if (unit) {
-                    auto pos = unit->position();
-                    sum_x += pos.x;
-                    sum_z += pos.z;
-                    ++count;
-                }
-            }
-            lua_pop(L, 1); // _c_object
+        if (auto* e = check_entity(L, lua_gettop(L)); e && !e->destroyed()) {
+            auto pos = e->position();
+            sum_x += pos.x;
+            sum_z += pos.z;
+            ++count;
         }
         lua_pop(L, 1); // array element
     }
@@ -13322,9 +13429,15 @@ static void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
     lua_newtable(L);
     int tbl = lua_gettop(L);
 
-    // _c_object
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, entity);
+    // A handle by id, never a raw pointer: UI scripts keep these across
+    // beats (avatars, idle lists, selections), and check_entity resolves the
+    // id on every call. The sim generation rejects handles from an earlier
+    // game, whose ids a new sim reuses.
+    lua_pushstring(L, "_c_entity_id");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_rawset(L, tbl);
+    lua_pushstring(L, "_c_sim_gen");
+    lua_pushnumber(L, static_cast<lua_Number>(sim::SimState::sim_generation()));
     lua_rawset(L, tbl);
 
     // EntityId
@@ -13382,6 +13495,21 @@ static int l_GetSelectedUnits(lua_State* L) {
         }
     }
     return 1;
+}
+
+void push_units_for_ui(lua_State* L, const std::vector<u32>& ids) {
+    lua_newtable(L);
+    int result = lua_gettop(L);
+    auto* sim = get_sim(L);
+    if (!sim) return;
+    int idx = 1;
+    for (u32 eid : ids) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (entity && entity->is_unit() && !entity->destroyed()) {
+            push_unit_for_ui(L, entity);
+            lua_rawseti(L, result, idx++);
+        }
+    }
 }
 
 void push_selected_units_for_ui(lua_State* L) {
@@ -13483,15 +13611,10 @@ static int l_ValidateUnitsList(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "_c_object");
-            lua_rawget(L, -2);
-            auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (e && !e->destroyed()) {
-                lua_rawseti(L, result, out_idx++);
-                continue;
-            }
+        auto* e = check_entity(L, lua_gettop(L));
+        if (e && !e->destroyed()) {
+            lua_rawseti(L, result, out_idx++);
+            continue;
         }
         lua_pop(L, 1);
     }
@@ -13585,12 +13708,144 @@ static int l_GetFocusArmy(lua_State* L) {
     return 1;
 }
 
+/// The focus army's live units matching `pred`, in entity-id order.
+/// Empty when there is no sim or the player is observing.
+template <typename Pred>
+static std::vector<sim::Entity*> focus_army_units(lua_State* L, Pred pred) {
+    std::vector<sim::Entity*> out;
+    auto* sim = get_sim(L);
+    if (!sim) return out;
+    int focus = 0;
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) focus = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    if (focus < 0) return out;
+    sim->entity_registry().for_each([&](sim::Entity& e) {
+        if (!e.is_unit() || e.destroyed() || e.army() != focus) return;
+        if (pred(static_cast<sim::Unit&>(e))) out.push_back(&e);
+    });
+    std::sort(out.begin(), out.end(), [](const sim::Entity* a, const sim::Entity* b) {
+        return a->entity_id() < b->entity_id();
+    });
+    return out;
+}
+
+/// Push units as an array of UI unit objects; `nil_if_empty` pushes nil for
+/// none (the idle lists: avatars.lua takes a table as "show the idle tab").
+static void push_ui_unit_array(lua_State* L, const std::vector<sim::Entity*>& units,
+                               bool nil_if_empty) {
+    if (units.empty() && nil_if_empty) { lua_pushnil(L); return; }
+    lua_newtable(L);
+    int idx = 1;
+    for (auto* e : units) {
+        push_unit_for_ui(L, e);
+        lua_rawseti(L, -2, idx++);
+    }
+}
+
+/// Same idle test as unit:IsIdleState().
+static bool unit_is_idle(const sim::Unit& u) {
+    return u.command_queue().empty() && !u.is_building() && !u.is_being_built() &&
+           !u.is_repairing() && !u.is_capturing();
+}
+
+/// GetArmyAvatars() -> the focus army's commander units (the avatars the
+/// game UI shows and zooms to at game start).
+static int l_GetArmyAvatars(lua_State* L) {
+    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
+        return u.has_category("COMMAND");
+    }), false);
+    return 1;
+}
+
+/// GetIdleEngineers() -> the focus army's idle engineers (commanders are
+/// avatars, not engineers), or nil if there are none.
+static int l_GetIdleEngineers(lua_State* L) {
+    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
+        return u.has_category("ENGINEER") && !u.has_category("COMMAND") &&
+               unit_is_idle(u);
+    }), true);
+    return 1;
+}
+
+/// GetIdleFactories() -> the focus army's idle factories, or nil.
+static int l_GetIdleFactories(lua_State* L) {
+    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
+        return u.has_category("FACTORY") && unit_is_idle(u);
+    }), true);
+    return 1;
+}
+
+/// SessionGetLocalCommandSource() -> this client's command source (1-based).
+/// Command sources are the players' clients; single player has one.
+static int l_SessionGetLocalCommandSource(lua_State* L) {
+    const auto& mp = mp_net_state();
+    lua_pushnumber(L, mp.active() ? static_cast<lua_Number>(mp.local_source + 1) : 1);
+    return 1;
+}
+
+/// SessionGetCommandSourceNames() -> player name per command source: the
+/// human armies' nicknames in army order (AIs have no command source).
+static int l_SessionGetCommandSourceNames(lua_State* L) {
+    lua_newtable(L);
+    auto* sim = get_sim(L);
+    if (!sim) return 1;
+    int idx = 1;
+    for (size_t i = 0; i < sim->army_count(); ++i) {
+        auto* brain = sim->army_at(i);
+        if (!brain || !brain->is_human()) continue;
+        lua_pushstring(L, brain->nickname().c_str());
+        lua_rawseti(L, -2, idx++);
+    }
+    return 1;
+}
+
+/// AddConsoleOutputReciever(fn) -> handle (Moho's spelling). The console
+/// echo (consoleecho.lua) registers here; console output is not forwarded
+/// to receivers yet, so they are only kept until removed.
+static int l_AddConsoleOutputReciever(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    lua_pushstring(L, "__osc_console_receivers");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "__osc_console_receivers");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_pushvalue(L, 1);
+    int handle = luaL_ref(L, -2);
+    lua_pop(L, 1);
+    lua_pushnumber(L, handle);
+    return 1;
+}
+
+static int l_RemoveConsoleOutputReciever(lua_State* L) {
+    if (!lua_isnumber(L, 1)) return 0;
+    lua_pushstring(L, "__osc_console_receivers");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1))
+        luaL_unref(L, -1, static_cast<int>(lua_tonumber(L, 1)));
+    lua_pop(L, 1);
+    return 0;
+}
+
+/// SetFocusArmy(army) -- 1-based, -1 = observer. During a world session it
+/// is a request the next sim beat applies (sync_beat), as Moho's session
+/// does, so the sim and the UI's OnSync see the change together; with no
+/// session there is nothing to wait for, so it applies at once.
 static int l_SetFocusArmy(lua_State* L) {
     int army = static_cast<int>(luaL_checknumber(L, 1));
-    lua_pushstring(L, "__osc_focus_army");
+    lua_pushstring(L, core::kWorldUiActiveKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const bool in_session = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    lua_pushstring(L, in_session ? kFocusArmyRequestKey : "__osc_focus_army");
     lua_pushnumber(L, army > 0 ? army - 1 : army);
     lua_rawset(L, LUA_REGISTRYINDEX);
-    spdlog::debug("UI SetFocusArmy: {}", army);
+    spdlog::debug("UI SetFocusArmy: {}{}", army, in_session ? " (next beat)" : "");
     return 0;
 }
 
@@ -13625,12 +13880,7 @@ static int l_GetUnitCommandData(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
-        lua_pushstring(L, "_c_object");
-        lua_rawget(L, -2);
-        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-        lua_pop(L, 1); // _c_object value
-
+        auto* entity = check_entity(L, lua_gettop(L));
         if (!entity || !entity->is_unit() || entity->destroyed()) {
             lua_pop(L, 1); // unit table
             continue;
@@ -14043,14 +14293,8 @@ static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
 /// Helper: extract Entity* from a ui_L unit table (has _c_object lightuserdata).
 /// Returns nullptr if table is missing or entity is invalid.
 static sim::Entity* extract_ui_entity(lua_State* L, int idx) {
-    if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    auto* e = lua_isuserdata(L, -1)
-                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                  : nullptr;
-    lua_pop(L, 1);
-    return e;
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    return check_entity(L, idx);
 }
 
 /// ui_L category filter helper. If keep_matches is true, keeps units matching
@@ -14263,6 +14507,22 @@ static int l_GetRolloverInfo(lua_State* L) {
         lua_rawset(L, -3);
     };
 
+    // Fuel: -1 for units without any, which hides the unit view's fuel line
+    // (it multiplies Physics.FuelUseTime by the ratio). Fuel use is not
+    // simulated yet, so fuelled units report a full tank.
+    lua_Number fuel_ratio = -1;
+    if (push_entity_blueprint(L, unit)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "FuelUseTime");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0) fuel_ratio = 1;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 2); // Physics + blueprint
+    }
+
     lua_newtable(L); // result table
 
     set_str("blueprintId",    unit->blueprint_id().c_str());
@@ -14273,7 +14533,7 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("armyIndex",      static_cast<lua_Number>(unit->army()));
     set_num("workProgress",   static_cast<lua_Number>(unit->work_progress()));
     set_num("shieldRatio",    static_cast<lua_Number>(unit->shield_ratio()));
-    set_num("fuelRatio",      1.0);
+    set_num("fuelRatio",      fuel_ratio);
 
     const auto& econ = unit->economy();
     set_num("massProduced",     static_cast<lua_Number>(econ.production_mass));
@@ -14479,24 +14739,6 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
     lua_rawset(L, LUA_REGISTRYINDEX);
 
     spdlog::info("LaunchSinglePlayerSession: scenario={}", scenario);
-    return 0;
-}
-
-/// StartGameUI() — transition to GAME state, call CreateWldUIProvider
-static int l_StartGameUI(lua_State* L) {
-    auto* mgr = get_game_state_mgr(L);
-    if (mgr) mgr->transition_to(osc::GameState::GAME, L);
-
-    lua_pushstring(L, "CreateWldUIProvider");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        if (lua_pcall(L, 0, 0, 0) != 0) {
-            spdlog::warn("CreateWldUIProvider error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
     return 0;
 }
 
@@ -15450,6 +15692,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("ValidateUnitsList", l_ValidateUnitsList);
     state.register_function("SetFocusArmy", l_SetFocusArmy);
     state.register_function("GetFocusArmy", l_GetFocusArmy);
+    state.register_function("GetArmyAvatars", l_GetArmyAvatars);
+    state.register_function("SessionGetLocalCommandSource", l_SessionGetLocalCommandSource);
+    state.register_function("SessionGetCommandSourceNames", l_SessionGetCommandSourceNames);
+    state.register_function("GetIdleEngineers", l_GetIdleEngineers);
+    state.register_function("GetIdleFactories", l_GetIdleFactories);
+    state.register_function("AddConsoleOutputReciever", l_AddConsoleOutputReciever);
+    state.register_function("RemoveConsoleOutputReciever", l_RemoveConsoleOutputReciever);
 
     // SimCallback UI→Sim bridge (M138a)
     state.register_function("SimCallback", l_SimCallback);
@@ -15646,7 +15895,6 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
     state.register_function("WorldIsLoading", l_WorldIsLoading);
     state.register_function("LaunchSinglePlayerSession", l_LaunchSinglePlayerSession);
-    state.register_function("StartGameUI", l_StartGameUI);
     state.register_function("StartFrontEndUI", l_StartFrontEndUI);
 
     // Cache the LazyVar.Create function in registry for fast access.

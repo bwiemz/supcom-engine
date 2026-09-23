@@ -30,6 +30,17 @@ public:
     void set_distance(f32 d) { distance_ = d; }
     void set_target(f32 x, f32 z) { target_x_ = x; target_z_ = z; }
 
+    /// Zoom limits (camera distance). The far limit scales with the map and
+    /// with the UI's SetMaxZoomMult, as Moho's does.
+    static constexpr f32 MIN_ZOOM = 30.0f;
+    f32 min_zoom() const { return MIN_ZOOM; }
+    f32 max_zoom() const;
+    void set_max_zoom_mult(f32 mult) { if (mult > 0.0f) max_zoom_mult_ = mult; }
+    /// Set the distance, clamped to the zoom limits.
+    void set_zoom(f32 distance);
+    /// Back to the initial view of the map (centre, default zoom and angles).
+    void reset();
+
     /// When false, update() ignores keyboard and mouse (scripted captures).
     void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
 
@@ -64,6 +75,7 @@ private:
     // Map bounds for clamping
     f32 map_w_ = 1024;
     f32 map_h_ = 1024;
+    f32 max_zoom_mult_ = 1.0f;
 
     // Mouse state for orbit
     bool orbiting_ = false;
