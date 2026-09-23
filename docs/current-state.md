@@ -27,7 +27,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 375 cases / 31,955 assertions (the RNG tests draw many values). Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 380 cases / 37,983 assertions (the RNG tests draw many values). Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format`. |
 | Data-backed gate on retail (`ctest -L gate`) | All 108 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), `data.determinism` (two processes play a four-AI game identically), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
@@ -158,12 +158,14 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   exercised on every CI run (`ctest -L mp`). Still missing: pipelined command
   delay, slot and faction sync, LAN discovery, and routing every sim mutation
   (SimCallbacks) through the command stream. Cross-OS determinism is
-  unproven. The sim walks entities in id order (M195) and draws all its
+  not yet demonstrated. The sim walks entities in id order (M195) and draws all its
   randomness from one seeded stream (M196). Two processes play the same
   four-AI game identically (`data.determinism`), so object addresses don't
-  leak into the outcome within one build. Across platforms, libm and
-  floating-point contraction still differ (M197). See roadmap Phases D
-  and G.
+  leak into the outcome within one build. For platforms (M197), the sim's
+  transcendental math is FDLIBM; contraction is off; Lua formats numbers
+  with `std::to_chars`. CI shows it for a synthetic game: MSVC, GCC and
+  Clang reach the same pinned checksum. A data-backed Windows-vs-Linux
+  lockstep game is M199. See roadmap Phases D and G.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
   still read the live sim; they move over with M191's split of the bindings

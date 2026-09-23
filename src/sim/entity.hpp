@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/dmath.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -52,9 +53,9 @@ inline Quaternion quat_multiply(const Quaternion& a, const Quaternion& b) {
 /// Convert Euler angles (heading=Y, pitch=X, roll=Z, intrinsic YXZ) to quaternion.
 /// FA convention: heading rotates around Y axis, pitch around X, roll around Z.
 inline Quaternion euler_to_quat(f32 heading, f32 pitch, f32 roll) {
-    f32 ch = std::cos(heading * 0.5f), sh = std::sin(heading * 0.5f);
-    f32 cp = std::cos(pitch * 0.5f),   sp = std::sin(pitch * 0.5f);
-    f32 cr = std::cos(roll * 0.5f),    sr = std::sin(roll * 0.5f);
+    f32 ch = osc::dmath::cos(heading * 0.5f), sh = osc::dmath::sin(heading * 0.5f);
+    f32 cp = osc::dmath::cos(pitch * 0.5f), sp = osc::dmath::sin(pitch * 0.5f);
+    f32 cr = osc::dmath::cos(roll * 0.5f), sr = osc::dmath::sin(roll * 0.5f);
     // YXZ intrinsic = ZXY extrinsic
     return {
         ch * sp * cr + sh * cp * sr,  // x

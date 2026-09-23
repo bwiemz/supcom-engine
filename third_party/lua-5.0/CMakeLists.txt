@@ -43,6 +43,9 @@ set_target_properties(lua50 PROPERTIES LINKER_LANGUAGE CXX)
 # Public include directory so consumers can #include <lua.h>
 target_include_directories(lua50 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+# lmathlib's transcendental functions (see the note in lmathlib.c).
+target_link_libraries(lua50 PUBLIC osc_fdlibm)
+
 # Suppress common warnings in vendored code
 if(MSVC)
     target_compile_options(lua50 PRIVATE /W0)

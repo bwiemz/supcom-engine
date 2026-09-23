@@ -1,4 +1,5 @@
 #include "lua/sim_bindings.hpp"
+#include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/lua_state.hpp"
@@ -3275,9 +3276,9 @@ static int l_EulerToQuaternion(lua_State* L) {
     f32 pitch = static_cast<f32>(lua_tonumber(L, 2));
     f32 roll = static_cast<f32>(lua_tonumber(L, 3));
 
-    f32 ch = std::cos(heading * 0.5f), sh = std::sin(heading * 0.5f);
-    f32 cp = std::cos(pitch * 0.5f), sp = std::sin(pitch * 0.5f);
-    f32 cr = std::cos(roll * 0.5f), sr = std::sin(roll * 0.5f);
+    f32 ch = osc::dmath::cos(heading * 0.5f), sh = osc::dmath::sin(heading * 0.5f);
+    f32 cp = osc::dmath::cos(pitch * 0.5f), sp = osc::dmath::sin(pitch * 0.5f);
+    f32 cr = osc::dmath::cos(roll * 0.5f), sr = osc::dmath::sin(roll * 0.5f);
 
     lua_newtable(L);
     lua_pushnumber(L, 1);

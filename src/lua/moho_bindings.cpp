@@ -1,4 +1,5 @@
 #include "lua/moho_bindings.hpp"
+#include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "video/video_decoder.hpp"
@@ -613,9 +614,8 @@ static int entity_GetHeading(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) { lua_pushnumber(L, 0); return 1; }
     const auto& q = e->orientation();
-    f32 heading = std::atan2(
-        2.0f * (q.w * q.y + q.x * q.z),
-        1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+    f32 heading =
+        osc::dmath::atan2(2.0f * (q.w * q.y + q.x * q.z), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
     lua_pushnumber(L, heading);
     return 1;
 }
@@ -3346,7 +3346,7 @@ static int unit_SetRotation(lua_State* L) {
         // 1-arg: SetRotation(yaw_radians) — Y-axis rotation
         f32 yaw = static_cast<f32>(lua_tonumber(L, 2));
         f32 half = yaw * 0.5f;
-        e->set_orientation({0, std::sin(half), 0, std::cos(half)});
+        e->set_orientation({0, osc::dmath::sin(half), 0, osc::dmath::cos(half)});
     }
     return 0;
 }
@@ -4539,7 +4539,7 @@ static int weapon_CreateProjectile(lua_State* L) {
     // Velocity-align: set initial orientation facing fire direction
     proj->velocity_align = true;
     if (proj->velocity.x != 0 || proj->velocity.z != 0) {
-        f32 heading = std::atan2(proj->velocity.x, proj->velocity.z);
+        f32 heading = osc::dmath::atan2(proj->velocity.x, proj->velocity.z);
         proj->set_orientation(sim::euler_to_quat(heading, 0.0f, 0.0f));
     }
 

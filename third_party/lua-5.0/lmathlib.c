@@ -15,6 +15,13 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+/* OpenSupCom: the transcendental functions come from FDLIBM (osc_fdlibm.h),
+** so a script's math.sin, math.pow or ^ gives the same bits on every platform
+** -- the system libms differ in the last one, which a lockstep game can't
+** afford. sqrt, floor, ceil, fmod, frexp and ldexp stay: IEEE-754 defines
+** them exactly. */
+#include "osc_fdlibm.h"
+
 
 #undef PI
 #define PI (3.14159265358979323846)
@@ -41,37 +48,37 @@ static int math_abs (lua_State *L) {
 }
 
 static int math_sin (lua_State *L) {
-  lua_pushnumber(L, sin(TORAD(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, ieee_sin(TORAD(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_cos (lua_State *L) {
-  lua_pushnumber(L, cos(TORAD(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, ieee_cos(TORAD(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_tan (lua_State *L) {
-  lua_pushnumber(L, tan(TORAD(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, ieee_tan(TORAD(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_asin (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(asin(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, FROMRAD(ieee_asin(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_acos (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(acos(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, FROMRAD(ieee_acos(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_atan (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(atan(luaL_checknumber(L, 1))));
+  lua_pushnumber(L, FROMRAD(ieee_atan(luaL_checknumber(L, 1))));
   return 1;
 }
 
 static int math_atan2 (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(atan2(luaL_checknumber(L, 1), luaL_checknumber(L, 2))));
+  lua_pushnumber(L, FROMRAD(ieee_atan2(luaL_checknumber(L, 1), luaL_checknumber(L, 2))));
   return 1;
 }
 
@@ -96,22 +103,22 @@ static int math_sqrt (lua_State *L) {
 }
 
 static int math_pow (lua_State *L) {
-  lua_pushnumber(L, pow(luaL_checknumber(L, 1), luaL_checknumber(L, 2)));
+  lua_pushnumber(L, ieee_pow(luaL_checknumber(L, 1), luaL_checknumber(L, 2)));
   return 1;
 }
 
 static int math_log (lua_State *L) {
-  lua_pushnumber(L, log(luaL_checknumber(L, 1)));
+  lua_pushnumber(L, ieee_log(luaL_checknumber(L, 1)));
   return 1;
 }
 
 static int math_log10 (lua_State *L) {
-  lua_pushnumber(L, log10(luaL_checknumber(L, 1)));
+  lua_pushnumber(L, ieee_log10(luaL_checknumber(L, 1)));
   return 1;
 }
 
 static int math_exp (lua_State *L) {
-  lua_pushnumber(L, exp(luaL_checknumber(L, 1)));
+  lua_pushnumber(L, ieee_exp(luaL_checknumber(L, 1)));
   return 1;
 }
 

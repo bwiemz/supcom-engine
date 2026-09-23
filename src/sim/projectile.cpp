@@ -1,4 +1,5 @@
 #include "sim/projectile.hpp"
+#include "core/dmath.hpp"
 #include "sim/entity_registry.hpp"
 #include "map/terrain.hpp"
 
@@ -91,7 +92,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
                 // Angle between current velocity and desired
                 f32 dot = (velocity.x * dx + velocity.y * dy + velocity.z * dz) / (spd * spd);
                 dot = std::clamp(dot, -1.0f, 1.0f);
-                f32 angle = std::acos(dot);
+                f32 angle = osc::dmath::acos(dot);
 
                 if (angle > 0.001f) {
                     f32 t = std::min(1.0f, max_turn / angle);
@@ -133,8 +134,8 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     if (velocity_align) {
         f32 spd_xz = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
         if (spd_xz > 0.001f || std::abs(velocity.y) > 0.001f) {
-            f32 heading = std::atan2(velocity.x, velocity.z);
-            f32 pitch = std::atan2(-velocity.y, spd_xz);
+            f32 heading = osc::dmath::atan2(velocity.x, velocity.z);
+            f32 pitch = osc::dmath::atan2(-velocity.y, spd_xz);
             set_orientation(euler_to_quat(heading, pitch, 0.0f));
         }
     }

@@ -15,6 +15,22 @@ if(MSVC)
     endif()
 endif()
 
+# Floating point: the sim must compute the same bits on every compiler and
+# CPU (lockstep, replays). No contraction into fused multiply-adds -- GCC's
+# default outside ISO mode and Clang's within an expression; it changes the
+# rounding wherever the CPU has FMA (ARM64, x86-64 built for AVX2) -- and
+# MSVC's precise model. x86-64 uses SSE2, so there is no x87 excess
+# precision; 32-bit x86 would have it.
+if(MSVC)
+    add_compile_options(/fp:precise)
+else()
+    add_compile_options(-ffp-contract=off)
+endif()
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(WARNING "32-bit builds may use x87 excess precision: the sim would not be "
+                    "deterministic across platforms")
+endif()
+
 add_library(osc_warnings INTERFACE)
 add_library(osc::warnings ALIAS osc_warnings)
 if(MSVC)

@@ -1,4 +1,5 @@
 #include "sim/weapon.hpp"
+#include "core/dmath.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/projectile.hpp"
@@ -179,7 +180,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     // same spread (a per-process std::random_device would desync clients).
     if (firing_randomness > 0) {
         f32 angle = registry.sim_random().range(-firing_randomness, firing_randomness);
-        f32 c = std::cos(angle), s = std::sin(angle);
+        f32 c = osc::dmath::cos(angle), s = osc::dmath::sin(angle);
         f32 nx = vel.x * c - vel.z * s;
         f32 nz = vel.x * s + vel.z * c;
         vel.x = nx;
@@ -281,7 +282,7 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
         }
         lua_pop(L, 1); // __blueprints
     }
-    f32 heading = std::atan2(vel.x, vel.z);
+    f32 heading = osc::dmath::atan2(vel.x, vel.z);
     proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
 
     u32 proj_id = registry.register_entity(std::move(proj));
