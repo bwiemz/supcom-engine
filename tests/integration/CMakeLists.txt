@@ -85,6 +85,17 @@ set_tests_properties(data.golden.scmp009_game_ui PROPERTIES
     LABELS "data;gate;golden"
     SKIP_RETURN_CODE 77
     TIMEOUT 300)
+# The same scene for a player whose profile shows the minimap window
+# (retail's `stratview`): preferences load from Game.prefs, retail opens the
+# window, and the engine draws the map into it.
+add_test(NAME data.golden.scmp009_game_ui_minimap
+         COMMAND opensupcom --map ${OSC_TEST_MAP} --golden scmp009_game_ui_minimap
+                 --prefs ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/minimap.prefs
+                 --screenshot-frame 600 --camera 672,346,60 --golden-tolerance 0.001)
+set_tests_properties(data.golden.scmp009_game_ui_minimap PROPERTIES
+    LABELS "data;gate;golden"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 300)
 
 # ── Engine API coverage ratchet (roadmap M184) ─────────────────────────────
 # Fails if the game's scripts call an engine function/method that is neither

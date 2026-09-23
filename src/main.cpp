@@ -278,6 +278,8 @@ static void print_usage() {
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
               << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
               << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
+              << "  --prefs <path>     Game.prefs to use (default: the user's config dir;\n"
+              << "                     tests and captures keep preferences in memory)\n"
               << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
               << "  --golden-update    Record the golden image instead of comparing\n"
               << "  --binding-coverage <file>  Report engine API the scripts call but\n"
@@ -2034,9 +2036,30 @@ int main(int argc, char* argv[]) {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Preferences — load Game.prefs if present, store pointer in UI registry
+    // Preferences (Game.prefs). An interactive game keeps them in the user's
+    // config dir. Tests and captures never touch that file, so the player's
+    // settings cannot change a result: --prefs PATH seeds them instead, and
+    // is written back only when interactive.
     osc::core::Preferences prefs;
-    prefs.load("Game.prefs");
+    {
+        const bool capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                             !parse_string_arg(argc, argv, "--golden", "").empty();
+        const bool interactive = !headless && !capture;
+        std::filesystem::path file = parse_string_arg(argc, argv, "--prefs", "");
+        if (file.empty() && interactive) {
+            file = osc::platform::known_folder(osc::platform::KnownFolder::Config) /
+                   "opensupcom" / "Game.prefs";
+        }
+        if (!file.empty()) prefs.load(file);
+        if (interactive) prefs.set_path(file);
+        // Retail's menus need a current profile; it would ask for one in a
+        // first-run dialog (and then offer the tutorial). The engine makes
+        // "Player" instead.
+        if (prefs.ensure_profile("Player")) {
+            prefs.set_bool(prefs.current_profile_path() + ".MenuTutorialPrompt", true);
+            prefs.save();
+        }
+    }
     {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_preferences");
@@ -2179,7 +2202,6 @@ int main(int argc, char* argv[]) {
             });
             lua_rawset(uL, LUA_GLOBALSINDEX);
         };
-        set_nil_fn("GetOptions");          // prefs.lua
         set_num_fn("GetVolume", 1.0);      // usermusic.lua
         set_stub("SetVolume");             // volume control
         set_stub("ConExecute");            // console commands
@@ -2244,66 +2266,6 @@ int main(int argc, char* argv[]) {
         // No map: bootstrap front-end menu UI
         // 2. Call SetupUI() (creates cursor, sets skin)
         osc::core::call_setup_ui(ui_lua_state.raw());
-        // 2b. Pre-create a default profile so FA skips the profile dialog.
-        // FA's prefs system uses nested tables which our C++ Preferences can't
-        // store. Instead, override GetPreference to intercept profile queries
-        // and return the default profile data from a Lua-side table.
-        {
-            ui_lua_state.do_string(R"(
-                local _origGetPref = GetPreference
-                local _origSetPref = SetPreference
-                local _profileData = {
-                    current = 0,
-                    profiles = {
-                        [0] = {
-                            Name = 'Player',
-                            MenuTutorialPrompt = true,
-                        }
-                    }
-                }
-
-                -- Walk a dotted key path through a nested table.
-                -- Numeric segments are coerced (e.g. "profiles.0" → profiles[0]).
-                local function walk_path(tbl, path)
-                    for seg in string.gfind(path, '[^.]+') do
-                        if type(tbl) ~= 'table' then return nil end
-                        local num = tonumber(seg)
-                        if num and tbl[num] ~= nil then
-                            tbl = tbl[num]
-                        elseif tbl[seg] ~= nil then
-                            tbl = tbl[seg]
-                        else
-                            return nil
-                        end
-                    end
-                    return tbl
-                end
-
-                function GetPreference(key, default)
-                    if type(key) == 'string' then
-                        -- Exact 'profile' returns entire profile table
-                        if key == 'profile' then return _profileData end
-                        -- Any profile.* key: walk dotted path
-                        if string.sub(key, 1, 8) == 'profile.' then
-                            local result = walk_path(_profileData, string.sub(key, 9))
-                            if result ~= nil then return result end
-                            return default
-                        end
-                    end
-                    return _origGetPref(key, default)
-                end
-
-                function SetPreference(key, value)
-                    -- Intercept profile writes to keep _profileData in sync
-                    if key == 'profile' and type(value) == 'table' then
-                        _profileData = value
-                        return
-                    end
-                    return _origSetPref(key, value)
-                end
-                LOG('Default profile created: Player')
-            )");
-        }
         // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
         {
             auto r = ui_lua_state.do_string(
