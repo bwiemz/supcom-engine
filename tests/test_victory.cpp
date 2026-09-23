@@ -536,3 +536,69 @@ TEST_CASE("Single participant never auto-resolves", "[victory][edge]") {
     CHECK(sim.get_army(0)->state() == BrainState::InProgress);
     CHECK_FALSE(sim.game_ended());
 }
+
+// A networked peer that goes quiet is defeated so the match resolves. After
+// the match is decided a quiet peer is only a player leaving the score
+// screen, and must not rewrite the result.
+TEST_CASE("A peer dropping mid-match is defeated", "[victory][drop]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    spawn(sim, 0, {"COMMAND"});
+    osc::u32 dropped_acu = spawn(sim, 1, {"COMMAND"});
+    tick_n(sim, kPastGrace);
+
+    sim.defeat_army(1);
+
+    CHECK(sim.get_army(1)->state() == BrainState::Defeat);
+    auto* acu = static_cast<Unit*>(sim.entity_registry().find(dropped_acu));
+    REQUIRE(acu != nullptr);
+    CHECK(acu->is_dying());
+}
+
+TEST_CASE("A peer dropping after the engine decided the match changes nothing",
+          "[victory][drop]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_victory_condition("demoralization");
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    osc::u32 winner_acu = spawn(sim, 0, {"COMMAND"});
+    osc::u32 loser_acu = spawn(sim, 1, {"COMMAND"});
+    tick_n(sim, kPastGrace);
+    destroy(sim, loser_acu);
+    tick_n(sim, 2);
+    REQUIRE(sim.game_ended());
+    REQUIRE(sim.get_army(0)->state() == BrainState::Victory);
+
+    sim.defeat_army(0); // the winner leaves the score screen first
+
+    CHECK(sim.get_army(0)->state() == BrainState::Victory);
+    auto* acu = static_cast<Unit*>(sim.entity_registry().find(winner_acu));
+    REQUIRE(acu != nullptr);
+    CHECK_FALSE(acu->is_dying());
+}
+
+TEST_CASE("A peer dropping after the victory script ended the game changes nothing",
+          "[victory][drop]") {
+    // Retail's OnVictory only posts to Sync, so a script-decided winner's
+    // brain stays InProgress; EndGame is the only mark the match is over.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.set_script_victory(true);
+    sim.add_army("ARMY_1", "ARMY_1");
+    sim.add_army("ARMY_2", "ARMY_2");
+    osc::u32 winner_acu = spawn(sim, 0, {"COMMAND"});
+    tick_n(sim, kPastGrace);
+    sim.get_army(1)->set_state(BrainState::Defeat); // SetArmyOutOfGame
+    sim.set_game_ended(true);                        // EndGame
+
+    sim.defeat_army(0);
+
+    CHECK(sim.get_army(0)->state() == BrainState::InProgress);
+    auto* acu = static_cast<Unit*>(sim.entity_registry().find(winner_acu));
+    REQUIRE(acu != nullptr);
+    CHECK_FALSE(acu->is_dying());
+}

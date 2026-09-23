@@ -823,11 +823,13 @@ static int entity_Destroy(lua_State* L) {
             if (!dying_unit->is_dying() && !dying_unit->is_crashing()) {
                 auto* sim_ptr = get_sim(L);
 
-                // Record Units_Lost for victim army
+                // A loss for its army (Moho's Units_Killed)
                 if (sim_ptr) {
                     auto* victim_brain = sim_ptr->get_army(e->army());
                     if (victim_brain) {
-                        victim_brain->add_stat("Units_Lost", 1.0);
+                        victim_brain->record_unit_lost(dying_unit->blueprint_id(),
+                                                       dying_unit->build_cost_mass(),
+                                                       dying_unit->build_cost_energy());
                     }
                 }
 
@@ -867,7 +869,10 @@ static int entity_Destroy(lua_State* L) {
                     if (killer_army >= 0 && killer_army != victim_army) {
                         auto* killer_brain = sim_ptr->get_army(killer_army);
                         if (killer_brain) {
-                            killer_brain->add_stat("Units_Killed", 1.0);
+                            killer_brain->record_enemy_killed(
+                                dying_unit->blueprint_id(), dying_unit->build_cost_mass(),
+                                dying_unit->build_cost_energy(),
+                                dying_unit->has_category("COMMAND"));
                         }
                     }
                 }
@@ -5341,15 +5346,31 @@ static int brain_SetArmyStat(lua_State* L) {
     return 0;
 }
 
-// GetBlueprintStat(self, statName, category) -> number
-// Unlike GetArmyStat (returns {Value=n}), this returns a plain number.
-// score.lua does arithmetic on the result.
+// GetBlueprintStat(self, statName, category) -> number: the stat over the
+// blueprints in the category (retail's score splits kills, builds and losses
+// into land, air, naval, structures, commanders and experimentals). A plain
+// number, unlike GetArmyStat's {Value = n}.
 static int brain_GetBlueprintStat(lua_State* L) {
     auto* brain = check_brain(L);
     if (!brain) { lua_pushnumber(L, 0); return 1; }
     const char* stat_name = luaL_checkstring(L, 2);
-    f64 val = brain->get_stat(stat_name, 0.0);
-    lua_pushnumber(L, val);
+    const auto* per_bp = brain->blueprint_stats(stat_name);
+    auto* store = LuaState::get_blueprint_store(L);
+    if (!lua_istable(L, 3) || !per_bp || !store) {
+        lua_pushnumber(L, lua_istable(L, 3) && per_bp ? 0.0 : brain->get_stat(stat_name, 0.0));
+        return 1;
+    }
+    f64 total = 0.0;
+    for (const auto& [bp_id, value] : *per_bp) {
+        auto* entry = store->find(bp_id);
+        if (!entry) continue;
+        store->push_lua_table(*entry, L);
+        std::unordered_set<std::string> cats;
+        sim::collect_blueprint_categories(L, lua_gettop(L), cats);
+        lua_pop(L, 1);
+        if (categories_match(L, 3, cats)) total += value;
+    }
+    lua_pushnumber(L, total);
     return 1;
 }
 
@@ -15480,82 +15501,6 @@ static int l_SessionResume(lua_State* L) {
 
 // ── Score screen data (M146b) ────────────────────────────────────────────────
 
-/// GetArmyScore(armyIndex) → table with army stats for score screen
-static int l_GetArmyScore(lua_State* L) {
-    auto* sim = get_sim(L);
-    int army_idx = static_cast<int>(luaL_checknumber(L, 1)) - 1;
-
-    lua_newtable(L);
-    if (!sim) return 1;
-
-    auto* brain = sim->get_army(army_idx);
-    if (!brain) return 1;
-
-    auto set_num = [&](const char* k, f64 v) {
-        lua_pushstring(L, k); lua_pushnumber(L, v); lua_rawset(L, -3);
-    };
-
-    // general subtable
-    lua_pushstring(L, "general");
-    lua_newtable(L);
-
-    // Compute score from accumulated stats
-    f64 units_built = brain->get_stat("Units_Built", 0.0);
-    f64 units_killed = brain->get_stat("Units_Killed", 0.0);
-    f64 mass_total = brain->get_stat("Economy_TotalProduced_Mass", 0.0);
-    f64 score = units_killed * 3.0 + units_built * 2.0 + mass_total / 100.0;
-    set_num("score", score);
-
-    {
-        int unit_count = 0;
-        auto units = brain->get_units(sim->entity_registry());
-        for (auto* e : units) {
-            if (e && e->is_unit() && !e->destroyed()) unit_count++;
-        }
-        set_num("currentunits", unit_count);
-    }
-    set_num("currentcap", brain->unit_cap());
-    set_num("kills", brain->get_stat("Units_Killed", 0.0));
-    set_num("losses", brain->get_stat("Units_Lost", 0.0));
-    set_num("built", brain->get_stat("Units_Built", 0.0));
-    set_num("massTotal", brain->get_stat("Economy_TotalProduced_Mass", 0.0));
-    set_num("energyTotal", brain->get_stat("Economy_TotalProduced_Energy", 0.0));
-    lua_rawset(L, -3);
-
-    // resources subtable
-    lua_pushstring(L, "resources");
-    lua_newtable(L);
-
-    auto push_rate_table = [&](const char* name, f64 rate) {
-        lua_pushstring(L, name);
-        lua_newtable(L);
-        lua_pushstring(L, "rate"); lua_pushnumber(L, rate); lua_rawset(L, -3);
-        lua_rawset(L, -3);
-    };
-
-    auto& econ = brain->economy();
-    push_rate_table("massin", econ.mass.income);
-    push_rate_table("massout", econ.mass.requested);
-    push_rate_table("energyin", econ.energy.income);
-    push_rate_table("energyout", econ.energy.requested);
-
-    // storage subtable
-    lua_pushstring(L, "storage");
-    lua_newtable(L);
-    set_num("maxMass", econ.mass.max_storage);
-    set_num("storedMass", econ.mass.stored);
-    set_num("maxEnergy", econ.energy.max_storage);
-    set_num("storedEnergy", econ.energy.stored);
-    lua_rawset(L, -3); // set storage
-    lua_rawset(L, -3); // set resources
-
-    // Defeated flag
-    lua_pushstring(L, "Defeated");
-    lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
-    lua_rawset(L, -3);
-
-    return 1;
-}
 
 /// IsObserver() → boolean (true if focus army is -1)
 static int l_IsObserver(lua_State* L) {
@@ -15917,7 +15862,35 @@ static int l_GetLayoutPreference(lua_State* L) {
 // ── Exit/return (M146d) ───────────────────────────────────────────────────────
 
 /// ExitGame() — return from score screen to front-end menu
+static void clear_chat_history(lua_State* L);
+
+/// SessionIsGameOver() -> whether the session has ended (the sim called
+/// EndGame, or the score screen ended it).
+static int l_SessionIsGameOver(lua_State* L) {
+    auto* sim = get_sim(L);
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, (sim && sim->game_ended()) || (mgr && mgr->sim_stopped()) ? 1 : 0);
+    return 1;
+}
+
+/// SessionEndGame() -- the score screen ends the session: this client's sim
+/// stops. It is a local UI action, so it leaves sim state alone; writing it
+/// there would diverge from the other peers.
+static int l_SessionEndGame(lua_State* L) {
+    if (auto* mgr = get_game_state_mgr(L)) mgr->stop_sim();
+    return 0;
+}
+
 static int l_ExitGame(lua_State* L) {
+    // Leaving a game (the score screen's Continue): tear the session down
+    // and return to the front end, as ReturnToLobby does.
+    if (get_sim(L)) {
+        clear_chat_history(L);
+        lua_pushstring(L, "__osc_return_to_lobby");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        return 0;
+    }
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->transition_to(osc::GameState::FRONT_END, L);
     auto* beat = get_beat_registry(L);
@@ -16115,10 +16088,8 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
     set_bool_fn("SessionIsObservingAllowed", false);
-    set_bool_fn("SessionIsGameOver", false);
     set_bool_fn("SessionIsBeingRecorded", false);
     set_bool_fn("SessionCanRestart", false);
-    set_stub("SessionEndGame");
     set_nil_fn("SessionGetCommandSourceNames");
     set_nil_fn("SessionGetLocalCommandSource");
     set_nil_fn("GetMouseScreenPos");
@@ -16361,7 +16332,6 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SessionResume", l_SessionResume);
 
     // Score screen data (M146b)
-    state.register_function("GetArmyScore", l_GetArmyScore);
     state.register_function("IsObserver", l_IsObserver);
 
     // Escape handler / HideGameUI (M146c)
@@ -16371,6 +16341,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
 
     // Exit/return (M146d)
     state.register_function("ExitGame", l_ExitGame);
+    state.register_function("SessionIsGameOver", l_SessionIsGameOver);
+    state.register_function("SessionEndGame", l_SessionEndGame);
     state.register_function("ReturnToLobby", l_ReturnToLobby);
     state.register_function("ExitApplication", l_ExitApplication);
 

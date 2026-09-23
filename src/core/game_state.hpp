@@ -34,12 +34,20 @@ public:
     f64 speed() const { return speed_; }
     void set_speed(f64 s);
     bool game_over() const { return game_over_; }
-    void set_game_over(bool v) { game_over_ = v; }
+    void set_game_over(bool v) {
+        game_over_ = v;
+        if (!v) sim_stopped_ = false; // a new session
+    }
+    /// SessionEndGame (the score screen opening): the session is over and
+    /// the sim no longer ticks.
+    bool sim_stopped() const { return sim_stopped_; }
+    void stop_sim() { sim_stopped_ = true; }
 
 private:
     GameState state_ = GameState::INIT;
     bool paused_ = false;
     bool game_over_ = false;
+    bool sim_stopped_ = false;
     f64 speed_ = 1.0;
     static void call_setup_ui(lua_State* ui_L);
 };

@@ -8975,6 +8975,106 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         osc::test_status::fail("[FAIL] Test 9c: script errors after game over");
 }
 
+void test_victory_flow(TestContext& ctx, const std::function<void(int)>& pump_frames,
+                       const std::function<void(int)>& play,
+                       const std::function<bool(const char*)>& sim_lua) {
+    spdlog::info("=== VICTORY TEST (M189) ===");
+    lua_State* L = ctx.L;
+    auto lua_ok = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) {
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+            return false;
+        }
+        spdlog::info("[PASS] {}", what);
+        return true;
+    };
+    if (!ctx.sim.script_victory()) {
+        osc::test_status::fail("[FAIL] Test 1: the scenario's victory script is not running");
+        return;
+    }
+    spdlog::info("[PASS] Test 1: victory.lua decides this game, not the engine");
+
+    lua_ok("Test 2: watch the game-result UI", R"(
+        __osc_results = {}
+        local gr = import('/lua/ui/game/gameresult.lua')
+        local orig = gr.DoGameResult
+        gr.DoGameResult = function(army, result)
+            table.insert(__osc_results, army .. ':' .. result)
+            orig(army, result)
+        end
+    )");
+    // The commanders warp in over the first seconds (retail's
+    // WarpInEffectThread); then every army but the first loses its own.
+    play(50);
+    if (!sim_lua(R"(
+        for i, brain in ArmyBrains do
+            if i ~= 1 and not ArmyIsCivilian(brain:GetArmyIndex()) then
+                for _, u in brain:GetListOfUnits(categories.COMMAND, false) do u:Kill() end
+            end
+        end
+    )")) {
+        osc::test_status::fail("[FAIL] Test 3: could not kill the commanders");
+        return;
+    }
+    play(100); // 10 s: deaths finish, the script's 3 s polls see them
+
+    // The engine does not decide: the survivor has no result yet (the script
+    // holds a victory for 15 s), while the defeated are out of the game.
+    if (ctx.sim.game_ended())
+        osc::test_status::fail("[FAIL] Test 3: the game ended before the script's 15 s hold");
+    else
+        spdlog::info("[PASS] Test 3: no instant engine victory");
+    lua_ok("Test 4: each commander-less army was defeated by the script", R"(
+        local n = 0
+        for _, r in __osc_results do
+            if string.find(r, ':defeat') then n = n + 1 end
+        end
+        if n == 0 then error('no defeat results: ' .. table.concat(__osc_results, ', ')) end
+        __osc_defeats = n
+    )");
+
+    play(250); // the 15 s hold, OnVictory, and EndGame 3 s later
+    lua_ok("Test 5: the survivor's victory reached the UI", R"(
+        local won = false
+        for _, r in __osc_results do
+            if r == '1:victory' then won = true end
+        end
+        if not won then error('results: ' .. table.concat(__osc_results, ', ')) end
+    )");
+    if (ctx.sim.game_ended())
+        spdlog::info("[PASS] Test 6: the script ended the session (EndGame)");
+    else
+        osc::test_status::fail("[FAIL] Test 6: the session never ended");
+    lua_ok("Test 7: the UI sees the session over", R"(
+        if not SessionIsGameOver() then error('SessionIsGameOver() is false') end
+    )");
+    pump_frames(2);
+    lua_ok("Test 8: NoteGameOver moved the player to observer", R"(
+        if GetFocusArmy() ~= -1 then error('focus army ' .. GetFocusArmy()) end
+    )");
+    // Moho does not pause at game over: the world plays on until the
+    // player opens the score screen, which ends the session (SessionEndGame).
+    const auto tick = ctx.sim.tick_count();
+    play(5);
+    if (ctx.sim.tick_count() > tick)
+        spdlog::info("[PASS] Test 9: the game plays on after game over");
+    else
+        osc::test_status::fail("[FAIL] Test 9: the sim stopped at game over");
+
+    // Retail's score threads (aibrain.lua CollectCurrentScores and
+    // SyncCurrentScores) read the engine's army stats under Moho's names;
+    // the score panel's data arrives through Sync.Score.
+    lua_ok("Test 10: retail's score counts each lost commander", R"(
+        local scores = import('/lua/ui/game/score.lua').currentScores
+        if not scores or not scores[1] or not scores[2] then error('no scores synced') end
+        if scores[2].units.cdr.lost ~= 1 then error('army 2 commanders lost: ' .. tostring(scores[2].units.cdr.lost)) end
+        if scores[2].general.lost.count < 1 then error('army 2 lost ' .. tostring(scores[2].general.lost.count)) end
+        if scores[1].units.cdr.lost ~= 0 then error('army 1 lost its commander?') end
+    )");
+    (void)L;
+}
+
 void test_uiboot(TestContext& ctx) {
     spdlog::info("=== UI BOOT TEST (M76) ===");
     int pass = 0, fail = 0;

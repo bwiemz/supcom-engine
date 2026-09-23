@@ -171,6 +171,20 @@ public:
     }
     void add_stat(const std::string& key, f64 delta) { stats_[key] += delta; }
 
+    // Moho's army stats, under retail's names (aibrain.lua reads them for
+    // the score). Units_Killed is this army's *losses* and Enemies_Killed its
+    // kills; Units_History counts units built. The *Value_* stats sum those
+    // units' build costs. Each count is also kept per blueprint, for
+    // GetBlueprintStat(stat, category).
+    void record_unit_built(const std::string& bp_id, f64 mass, f64 energy);
+    void record_unit_lost(const std::string& bp_id, f64 mass, f64 energy);
+    void record_enemy_killed(const std::string& bp_id, f64 mass, f64 energy, bool commander);
+    /// A counted stat by blueprint (blueprint id -> value), or nullptr.
+    const std::unordered_map<std::string, f64>* blueprint_stats(const std::string& stat) const {
+        auto it = blueprint_stats_.find(stat);
+        return it == blueprint_stats_.end() ? nullptr : &it->second;
+    }
+
     // --- Build restrictions (per-army) ---
     void add_build_restriction(const std::string& category) {
         build_restrictions_.insert(category);
@@ -225,6 +239,7 @@ private:
     std::string skin_name_;
     std::unordered_set<std::string> build_restrictions_;
     std::unordered_map<std::string, f64> stats_;
+    std::unordered_map<std::string, std::unordered_map<std::string, f64>> blueprint_stats_;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;

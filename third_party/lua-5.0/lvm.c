@@ -138,8 +138,14 @@ static const TObject *luaV_getnotable (lua_State *L, const TObject *t,
   if (ttisnil(t))
     return &luaO_nilobject;
   const TObject *tm = luaT_gettmbyobj(L, t, TM_INDEX);
-  if (ttisnil(tm))
+  if (ttisnil(tm)) {
+    /* Moho: so does indexing a boolean. Retail's and FAF's Unit.lua mark a
+       dead unit's UnitData entry `false`, and SimSync's
+       NoteFocusArmyChanged reads data.OwnerArmy of every entry. */
+    if (ttisboolean(t))
+      return &luaO_nilobject;
     luaG_typeerror(L, t, "index");
+  }
   if (ttisfunction(tm)) {
     callTMres(L, tm, t, key);
     return L->top;

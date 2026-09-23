@@ -354,6 +354,7 @@ static void print_usage() {
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
               << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
+              << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -1220,6 +1221,23 @@ static void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua
     osc::core::call_game_beat(uiL);
 }
 
+/// Game over, as Moho reports it: once the sim has ended the session
+/// (EndGame from the scenario's victory script, or the engine's own
+/// adjudication without one), the UI hears uimain.NoteGameOver. Retail's
+/// game-result UI (Sync.GameResult -> DoGameResult) announces the outcome and
+/// offers the score screen: nothing is paused and the view is not switched.
+static void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr,
+                                    lua_State* uiL) {
+    if (!sim || !sim->game_ended() || mgr.game_over()) return;
+    mgr.set_game_over(true);
+    const osc::i32 result = sim->player_result();
+    spdlog::info("Game over: {}", result == 1   ? "VICTORY"
+                                  : result == 2 ? "DEFEAT"
+                                  : result == 3 ? "DRAW"
+                                                : "ended");
+    osc::core::call_note_game_over(uiL);
+}
+
 /// The world is loaded: build FA's game interface (gamemain.CreateUI) and
 /// fade the loading dialog out.
 static void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld,
@@ -1756,6 +1774,7 @@ int main(int argc, char* argv[]) {
     bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
     bool gameui_test = parse_flag(argc, argv, "--gameui-test");
     bool audio_data_test = parse_flag(argc, argv, "--audio-data-test");
+    bool victory_test = parse_flag(argc, argv, "--victory-test");
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1854,7 +1873,7 @@ int main(int argc, char* argv[]) {
                     construction_test || phase2_test ||
                     phase3_test || phase4_test || phase5_test ||
                     profile_test || smoke_test || ai_skirmish || draw_test ||
-                    stress_test || full_smoke_test || audio_data_test;
+                    stress_test || full_smoke_test || audio_data_test || victory_test;
     bool headless = (tick_count > 0) || any_test;
     if (any_test) osc::test_status::set_count_lua_failures(true);
 
@@ -2234,10 +2253,8 @@ int main(int argc, char* argv[]) {
         set_bool_fn("SessionIsActive", false);
         set_bool_fn("SessionIsMultiplayer", false);
         set_bool_fn("SessionIsObservingAllowed", false);
-        set_bool_fn("SessionIsGameOver", false);
         set_bool_fn("SessionIsBeingRecorded", false);
         set_bool_fn("SessionCanRestart", false);
-        set_stub("SessionEndGame");
         set_nil_fn("SessionGetCommandSourceNames");
         set_nil_fn("SessionGetLocalCommandSource");
         // System info
@@ -2454,7 +2471,7 @@ int main(int argc, char* argv[]) {
         }
         // FA's game interface. Headless test modes other than --gameui-test
         // keep a bare root frame: they build and inspect their own controls.
-        if (!headless || gameui_test) {
+        if (!headless || gameui_test || victory_test) {
             begin_world_ui(ui_lua_state.raw(), wld_provider);
             finish_world_ui(ui_lua_state.raw(), wld_provider, false);
         }
@@ -2822,35 +2839,11 @@ int main(int argc, char* argv[]) {
                 }
                 esc_was_pressed = esc_pressed;
 
-                // Auto-pause when game ends (M146a)
-                if (sim_state) {
-                osc::i32 game_result = sim_state->player_result();
-                if (game_result != 0 && !game_state_mgr.game_over()) {
-                    game_state_mgr.set_game_over(true);
-                    game_state_mgr.set_paused(true, ui_lua_state.raw());
-                    const char* result_str =
-                        game_result == 1 ? "VICTORY" :
-                        game_result == 2 ? "DEFEAT" : "DRAW";
-                    spdlog::info("Game over: {}", result_str);
-
-                    // Observer mode: requested like the UI's SetFocusArmy(-1)
-                    // (uimain.NoteGameOver asks too), applied by the next
-                    // beat so the sim and OnSync see it together.
-                    lua_State* uiL = ui_lua_state.raw();
-                    lua_pushstring(uiL, osc::lua::kFocusArmyRequestKey);
-                    lua_pushnumber(uiL, -1);
-                    lua_rawset(uiL, LUA_REGISTRYINDEX);
-
-                    osc::core::call_note_game_over(uiL);
-
-                    // Transition to SCORE state (M156a)
-                    game_state_mgr.transition_to(osc::GameState::SCORE, uiL);
-                }
-                } // if (sim_state)
+                note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
                 // Fixed-timestep sim ticking (scaled by sim_speed)
                 const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
-                if (!game_state_mgr.paused() && sim_state) {
+                if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
                     if (osc::lua::mp_net_state().active()) {
                         // Multiplayer: advance in lockstep. Pace command frames
                         // at the sim tick rate; the session only advances the
@@ -3412,7 +3405,7 @@ int main(int argc, char* argv[]) {
                 spdlog::info("  Army {} ({}): {} units, {} structures, kills={:.0f} built={:.0f}",
                              a, brain->name(), units, structures,
                              brain->get_stat("Units_Killed"),
-                             brain->get_stat("Units_Built"));
+                             brain->get_stat("Units_History"));
             }
         }
 
@@ -3645,8 +3638,8 @@ int main(int argc, char* argv[]) {
             spdlog::info("  Army {} ({}): kills={:.0f} losses={:.0f} built={:.0f} mass={:.0f}",
                          i, brain->name(),
                          brain->get_stat("Units_Killed"),
-                         brain->get_stat("Units_Lost"),
-                         brain->get_stat("Units_Built"),
+                         brain->get_stat("Units_Killed"),
+                         brain->get_stat("Units_History"),
                          brain->get_stat("Economy_TotalProduced_Mass"));
         }
 
@@ -3738,7 +3731,7 @@ int main(int argc, char* argv[]) {
     if (edit_test && !map_path.empty()) osc::test::test_edit(ui_test_ctx);
     if (controls_test && !map_path.empty()) osc::test::test_controls(ui_test_ctx);
     if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(ui_test_ctx);
-    if (gameui_test && !map_path.empty()) {
+    if ((gameui_test || victory_test) && !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
@@ -3766,6 +3759,7 @@ int main(int argc, char* argv[]) {
                 apply_sim_callbacks(test_callbacks, *sim_state, *sim_lua_state);
                 sim_state->tick();
                 world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
+                note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
                 pump(6);
             }
         };
@@ -3776,7 +3770,15 @@ int main(int argc, char* argv[]) {
             if (issued) report_command_issued(uL, *issued);
             return issued.has_value();
         };
-        osc::test::test_gameui(ui_test_ctx, pump, play, click);
+        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click);
+        if (victory_test) {
+            auto sim_lua = [&](const char* code) {
+                auto r = sim_lua_state->do_string(code);
+                if (!r) spdlog::error("sim Lua: {}", r.error().message);
+                return static_cast<bool>(r);
+            };
+            osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
+        }
         lua_pushstring(uL, "__osc_input_handler");
         lua_pushnil(uL);
         lua_rawset(uL, LUA_REGISTRYINDEX);

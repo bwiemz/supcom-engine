@@ -291,6 +291,13 @@ public:
     // Game end state
     bool game_ended() const { return game_ended_; }
     void set_game_ended(bool v) { game_ended_ = v; }
+
+    /// Whether the scenario's scripts decide the game (retail and FAF fork
+    /// /lua/victory.lua's CheckVictory from BeginSession): then they call
+    /// OnDefeat/OnVictory/OnDraw and EndGame, and the engine only keeps its
+    /// own adjudication (update_victory) for data without a victory script.
+    bool script_victory() const { return script_victory_; }
+    void set_script_victory(bool v) { script_victory_ = v; }
     const std::string& victory_condition() const { return victory_condition_; }
     void set_victory_condition(std::string mode);
     VictoryMode victory_mode() const { return victory_mode_; }
@@ -328,7 +335,9 @@ public:
 
     /// Force an army into the Defeat state and dispose its units per the share
     /// rule. Idempotent + bounds-checked. Used when a networked peer drops so the
-    /// match resolves (the survivor wins) instead of hanging.
+    /// match resolves (the survivor wins) instead of hanging. A no-op once the
+    /// game has ended, so a player leaving the score screen can't rewrite the
+    /// result on the other peers.
     void defeat_army(i32 army);
 
     /// Number of alliance-connected "teams" still in the game (non-civilian,
@@ -500,6 +509,7 @@ private:
     std::vector<TempVision> temp_visions_;
     u32 next_command_id_ = 0;
     bool game_ended_ = false;
+    bool script_victory_ = false;
     std::string victory_condition_ = "demoralization";
     VictoryMode victory_mode_ = VictoryMode::Demoralization;
     std::string share_condition_ = "shareuntildeath";

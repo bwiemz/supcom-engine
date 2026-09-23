@@ -27,7 +27,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 337 cases / 5,729 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 344 cases / 5,770 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Data-backed gate on retail (`ctest -L gate`) | All 105 pass: 102 data modes (including the no-map lobby flow and `--gameui-test`), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
@@ -64,7 +64,9 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   resolves instead of hanging. Verified: `--lan-join ... --mp-drop-at 20` makes the
   client leave mid-match; the host logs `peer source 1 timed out (31 frames behind)
   — dropped`, continues to completion (`stalled=0 dropped=1`), while a normal
-  no-drop match still syncs (`dropped=0`). See
+  no-drop match still syncs (`dropped=0`). Once the game has ended a quiet peer
+  is only a player leaving the score screen (`SessionEndGame` stops that
+  client's sim), so `defeat_army` leaves the result alone. See
   `docs/superpowers/specs/2026-07-04-mp-player-drop-design.md`.
 - **LAN IP-entry UI:** a front-end "LAN Game" button opens a dialog (host-IP field +
   Host/Join/Close + status) that calls the `LanHost([port])` / `LanJoin(ip[, port])` /
@@ -107,11 +109,18 @@ Some historical plan checkboxes are stale. The following items from the April fu
 - sim-side focus army normalization for FA Lua's 1-based army ids
 - classification of the known FA AI builder `deepcopy` diagnostic below the active log level
 
-## Game Modes / Victory Conditions (2026-07-03)
+## Game Modes / Victory Conditions (updated 2026-09-23, M189)
 
-Victory and defeat are entirely C++-driven in `SimState` (FA's `lua/victory.lua` is
-not run). The game modes are enforced with categories matching FA's real
-`lua/victory.lua` (verified against retail game data):
+With retail or FAF data, the scenario's own `/lua/victory.lua` decides the game,
+as in Moho. Retail's `BeginSession` hook forks `CheckVictory`, which calls the
+brains' `OnDefeat`/`OnVictory`/`OnDraw` (so retail's result UI appears) and then
+`EndGame`. The engine then ends the session (`SessionIsGameOver`,
+`NoteGameOver`) without pausing, and retail's score screen ends it for good
+(`SessionEndGame`). `--victory-test` plays that through.
+
+The engine's own adjudication (`SimState::update_victory`, below) runs only for
+data without a victory script. It enforces the game modes with categories
+matching FA's `lua/victory.lua`:
 
 - **Assassination** (`demoralization`) — eliminated when the last `COMMAND`/ACU dies.
 - **Supremacy** (`domination`) — `STRUCTURE + ENGINEER - WALL`: eliminated when no
@@ -130,8 +139,16 @@ per the `Share` option (`ShareUntilDeath` destroys; `FullShare` → ally; `Parti
 (`Union`/`Common`/…) pools allied economy; `TeamShareOverflow=enabled` routes wasted
 overflow to allies. Covered by `tests/test_victory.cpp`, `test_fow.cpp`,
 `test_common_army.cpp`, `test_team_share_overflow.cpp`, `test_handicap.cpp`.
-Not yet modeled: FA's 15s allied-victory-request sustain, and `TransferToKiller`
-(needs per-unit killer attribution).
+In that fallback, not yet modeled: FA's 15s allied-victory-request sustain, and
+`TransferToKiller` (needs per-unit killer attribution).
+
+Army stats use Moho's names and meanings, which retail's score threads read:
+- `Units_History` counts units built, `Units_Killed` counts the army's losses,
+  and `Enemies_Killed` counts its kills;
+- the value built, lost and destroyed, commanders destroyed;
+- the economy totals, rates and waste, and the unit cap.
+
+`GetBlueprintStat` splits them by category.
 
 ## Known Gaps And Risks
 
@@ -144,9 +161,10 @@ Not yet modeled: FA's 15s allied-victory-request sustain, and `TransferToKiller`
   RNG and libm differ between platforms. See roadmap Phases D and G.
 - **Retail parity:** retail AI threads die on unbound retail-only methods, and
   the retail front end does not yet reach a hosted lobby. See roadmap Phase B.
-- **Victory:** the C++ `SimState::update_victory` and retail's `victory.lua`
-  (now running through the `/schook` hook) both run. Reconciling them is
-  roadmap M189.
+- **Death weapons:** projectiles are not yet instances of their script
+  classes (M201). So a death weapon's `PassDamageData` fails. An ACU's
+  `OnKilled` then falls back to engine destruction, and its death blast does no
+  damage.
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
