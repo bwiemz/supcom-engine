@@ -9,6 +9,7 @@
 #include <vector>
 
 namespace osc::sim {
+class FrameView;
 class SimState;
 class Unit;
 } // namespace osc::sim
@@ -40,7 +41,7 @@ public:
     void build_atlas(TextureCache& tex_cache);
 
     /// Update icon quads from sim state. Returns true if strategic zoom is active.
-    bool update(const sim::SimState& sim, const Camera& camera,
+    bool update(const sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix,
                 const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache,

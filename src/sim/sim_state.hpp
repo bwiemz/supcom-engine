@@ -10,6 +10,7 @@
 #include "sim/thread_manager.hpp"
 
 #include <array>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -214,6 +215,12 @@ public:
 
     // Tick loop
     void tick();
+
+    /// Called at the end of every tick, whoever runs it (the game loop, the
+    /// lockstep session, a test harness): the renderer's snapshots hang here.
+    void set_tick_observer(std::function<void(const SimState&)> fn) {
+        tick_observer_ = std::move(fn);
+    }
     u32 tick_count() const { return tick_count_; }
     f64 game_time() const { return game_time_; }
 
@@ -485,6 +492,7 @@ private:
     std::unique_ptr<map::Pathfinder> pathfinder_;
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     audio::SoundManager* sound_manager_ = nullptr;
+    std::function<void(const SimState&)> tick_observer_;
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;

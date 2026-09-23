@@ -11,6 +11,7 @@
 #include <vector>
 
 namespace osc::sim {
+class FrameView;
 class SimState;
 }
 
@@ -36,9 +37,10 @@ class OverlayRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
 
-    /// Build overlay quads from sim state + selection + camera.
+    /// Build overlay quads from sim state + selection + camera, placed where
+    /// `view` draws each entity (between the last two ticks).
     /// game_result: 0=in progress, 1=victory, 2=defeat, 3=draw.
-    void update(sim::SimState& sim, const Camera& camera,
+    void update(sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix,
                 const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache,

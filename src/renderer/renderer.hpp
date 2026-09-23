@@ -40,6 +40,7 @@ class VirtualFileSystem;
 }
 
 namespace osc::sim {
+class FrameView;
 class SimState;
 }
 
@@ -68,8 +69,9 @@ public:
     /// Tear down scene-specific GPU resources for map reload.
     void clear_scene();
 
-    /// Render one frame (updates unit instances, draws everything).
-    void render(sim::SimState& sim, lua_State* L,
+    /// Render one frame (updates unit instances, draws everything). The world
+    /// is posed as `view` draws it, between the sim's last two ticks.
+    void render(sim::SimState& sim, const sim::FrameView& view, lua_State* L,
                 ui::UIControlRegistry* ui_registry = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr);
 

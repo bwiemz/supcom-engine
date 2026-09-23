@@ -8,6 +8,7 @@
 #include "sim/shield.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/ieffect.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -90,7 +91,8 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
+void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
+                              const Camera& camera,
                               const std::array<f32, 16>& vp_matrix,
                               const std::unordered_set<u32>* selected_ids,
                               TextureCache& tex_cache,
@@ -169,7 +171,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
         if (entity.destroyed()) return;
         if (!entity.is_unit()) return;
 
-        auto pos = entity.position();
+        auto pos = view.position(entity);
 
         // Frustum cull
         if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 10.0f)) return;
@@ -359,7 +361,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                     auto* adj = registry.find(adj_id);
                     if (!adj || adj->destroyed()) continue;
 
-                    auto adj_pos = adj->position();
+                    auto adj_pos = view.position(*adj);
                     f32 adj_sx, adj_sy;
                     if (!world_to_screen(adj_pos.x, adj_pos.y, adj_pos.z,
                                           vp_matrix, sw, sh, adj_sx, adj_sy))
@@ -395,7 +397,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             if (cmds.empty()) continue;
 
             // Start from unit position
-            auto pos = e->position();
+            auto pos = view.position(*e);
             f32 prev_sx, prev_sy;
             if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh,
                                  prev_sx, prev_sy))
@@ -424,7 +426,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                 if (cmd.target_id > 0) {
                     auto* target = registry.find(cmd.target_id);
                     if (target && !target->destroyed()) {
-                        auto tp = target->position();
+                        auto tp = view.position(*target);
                         projected = world_to_screen(tp.x, tp.y, tp.z, vp_matrix,
                                                      sw, sh, sx1, sy1);
                     } else {
@@ -507,7 +509,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             auto* e = registry.find(uid);
             if (!e || !e->is_unit() || e->destroyed()) continue;
             auto* unit = static_cast<const sim::Unit*>(e);
-            auto pos = e->position();
+            auto pos = view.position(*e);
 
             for (auto& [type, state] : unit->intel_states()) {
                 if (!state.enabled || state.radius < 1.0f) continue;
@@ -592,8 +594,8 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             auto* target = registry.find(target_id);
             if (!target || target->destroyed()) return;
 
-            auto src_pos = entity.position();
-            auto dst_pos = target->position();
+            auto src_pos = view.position(entity);
+            auto dst_pos = view.position(*target);
 
             // Distance cull
             f32 dx = src_pos.x - eye_x;
@@ -633,8 +635,8 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             if (entity.destroyed()) return;
             if (!entity.is_collision_beam() || !entity.beam_enabled()) return;
 
-            auto src_pos = entity.position();
-            auto dst_pos = entity.beam_endpoint();
+            auto src_pos = view.position(entity);
+            auto dst_pos = view.beam_end(entity);
 
             f32 dx = src_pos.x - eye_x;
             f32 dz = src_pos.z - eye_z;
@@ -683,7 +685,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             auto* owner = registry.find(shield->owner_id);
             if (!owner || owner->destroyed()) return;
 
-            auto pos = owner->position();
+            auto pos = view.position(*owner);
 
             // Frustum cull
             if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 20.0f)) return;
@@ -789,7 +791,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
             if (fx_ptr->entity_id() > 0) {
                 auto* parent = registry.find(fx_ptr->entity_id());
                 if (!parent || parent->destroyed()) continue;
-                auto pp = parent->position();
+                auto pp = view.position(*parent);
                 wx += pp.x;
                 wy += pp.y;
                 wz += pp.z;
@@ -806,7 +808,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                 auto* target = registry.find(fx_ptr->target_entity_id());
                 if (!target || target->destroyed()) continue;
 
-                auto tp = target->position();
+                auto tp = view.position(*target);
                 f32 sx0, sy0, sx1, sy1;
                 if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0))
                     continue;
@@ -845,7 +847,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
                 if (fx_ptr->entity_id() > 0) {
                     auto* beam_parent = registry.find(fx_ptr->entity_id());
                     if (beam_parent && !beam_parent->destroyed()) {
-                        const auto& q = beam_parent->orientation();
+                        const auto q = view.orientation(*beam_parent);
                         fwd_x = 2.0f * (q.x * q.z + q.w * q.y);
                         fwd_y = 2.0f * (q.y * q.z - q.w * q.x);
                         fwd_z = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);

@@ -183,7 +183,7 @@ scripts, windowed, on Linux.
 
 | # | Milestone | Scope |
 |---|---|---|
-| M190 | Sim/User boundary | Implement FA's Sync model: `Sync` → `UserSync` each beat, and the renderer and UI read snapshots. Add render interpolation between ticks. This unlocks a threaded renderer and faithful UI. |
+| M190 | Sim/User boundary | Implement FA's Sync model: `Sync` → `UserSync` each beat, and the renderer and UI read snapshots. Add render interpolation between ticks. This unlocks a threaded renderer and faithful UI. Design: `docs/plans/2026-09-23-m190-sim-user-boundary-design.md`. **M190a ✅** The world is drawn between the sim's last two ticks, as Moho draws it. Each tick's poses (and animated bone poses) are captured into a snapshot through a sim tick observer. One `FrameView` per frame interpolates them for every renderer, and for picking, so a model and its overlays agree. Alpha comes from a clock that follows real tick arrivals, so a lockstep stall holds still instead of rocking. `Warp`, `SetPosition(pos, true)`, attaching, boarding a transport and a script-less teleport jump rather than slide, as in Moho; attachments jump with their parent, link by link. `--interp-test` (offscreen, four frames per tick) sees a walking ACU move on 100% of frames; without interpolation it moves on 25%. **M190b** (next): the renderer reads only snapshots. |
 | M191 | Split `moho_bindings.cpp` | Split by moho class into `src/lua/bindings/{sim,ui}/`. Break the library cycle: lua↔renderer, core→lua/vfs, sim→blueprints. |
 | M192 | Slim `main.cpp` | Move it to `src/app/` (cli, game loop, reload). Move test modes to `tests/integration/`. |
 | M193 | Unit command state machine | Turn `Unit::update` into per-command handlers. |
@@ -348,8 +348,9 @@ in the repo if they contain game assets).
 |---|---|
 | A | **Complete and merged** (PR #18). All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
 | A′ | In progress alongside B (M183, the strata fix, landed). |
-| B | **Done.** M184–M189 are done (PRs #20–#26 and the M189 branch). The retail gate went from 44 to all 99 data modes, and `retail-gap` is empty; `tests/integration/data_tests.cmake` records each step. Phase B is complete; next is Phase C (architecture seams). |
-| C–I | Not started. |
+| B | **Done.** M184–M189 are done (PRs #20–#27). The retail gate went from 44 to all 99 data modes, and `retail-gap` is empty; `tests/integration/data_tests.cmake` records each step. Phase B is complete; next is Phase C (architecture seams). |
+| C | In progress: M190a (drawing between ticks) is done; M190b is next. |
+| D–I | Not started. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)
 - ~~**Fog of war** looks wrong around the focus army's ACU~~ Diagnosed with

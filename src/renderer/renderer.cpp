@@ -16,6 +16,7 @@ extern "C" {
 #include "sim/scm_parser.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
+#include "sim/world_snapshot.hpp"
 #include "map/terrain.hpp"
 #include "renderer/normal_overlay.hpp"
 #include "renderer/frustum.hpp"
@@ -1900,7 +1901,7 @@ void Renderer::build_scene(const sim::SimState& sim,
     spdlog::info("Scene built");
 }
 
-void Renderer::render(sim::SimState& sim, lua_State* L,
+void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
     // FA's own game interface replaces the C++ HUD placeholders.
@@ -2007,7 +2008,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
-        unit_renderer_.update(sim, mesh_cache_, L, &texture_cache_, &camera_,
+        unit_renderer_.update(sim, view, mesh_cache_, L, &texture_cache_, &camera_,
                               selected_ids, &frustum);
     }
 
@@ -2080,7 +2081,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
         WorldViewPainter minimap_painter;
         if (!legacy_hud_active_) {
             minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
-                minimap_renderer_.paint(sim, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                minimap_renderer_.paint(sim, view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
                                         window_width_, window_height_, out);
             };
         }
@@ -2099,7 +2100,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // Update game overlays (health bars, selection circles, command lines, game over)
     {
         PROFILE_ZONE("Render::overlay_update");
-        overlay_renderer_.update(sim, camera_, vp, selected_ids, texture_cache_,
+        overlay_renderer_.update(sim, view, camera_, vp, selected_ids, texture_cache_,
                                  window_width_, window_height_,
                                  legacy_hud_active_ ? sim.player_result() : 0,
                                  frame_dt_, &frustum);
@@ -2108,7 +2109,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     // Update particle system (sync effects, step physics, build GPU data)
     {
         PROFILE_ZONE("Render::particle_update");
-        particle_system_.sync_effects(sim, emitter_bp_cache_, L);
+        particle_system_.sync_effects(sim, view, emitter_bp_cache_, L);
         particle_system_.update(frame_dt_);
     }
     f32 p_eye_x, p_eye_y, p_eye_z;
@@ -2119,11 +2120,11 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
     if (legacy_hud_active_)
-        minimap_renderer_.update(sim, camera_, texture_cache_, selected_ids,
+        minimap_renderer_.update(sim, view, camera_, texture_cache_, selected_ids,
                                   window_width_, window_height_);
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
-    strategic_icon_renderer_.update(sim, camera_, vp, selected_ids,
+    strategic_icon_renderer_.update(sim, view, camera_, vp, selected_ids,
                                      texture_cache_,
                                      window_width_, window_height_);
 

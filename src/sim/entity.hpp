@@ -139,6 +139,11 @@ public:
     const Quaternion& orientation() const { return orientation_; }
     void set_orientation(const Quaternion& o) { orientation_ = o; }
 
+    /// The entity teleported (Warp, or SetPosition with `immediate`): the
+    /// renderer jumps it to its new pose instead of sliding it there.
+    void note_snap() { ++snap_serial_; }
+    u32 snap_serial() const { return snap_serial_; }
+
     f32 health() const { return health_; }
     void set_health(f32 h) { health_ = std::max(0.0f, h); }
 
@@ -241,7 +246,12 @@ public:
     i32 attached_bone() const { return attached_bone_; }
     void set_parent(u32 pid, i32 pbone, i32 abone = -1) {
         parent_entity_id_ = pid; parent_bone_ = pbone; attached_bone_ = abone;
+        followed_parent_snap_ = kNotFollowed; // attaching is a jump
     }
+    /// The parent's snap serial when this entity last followed it: the
+    /// entity jumps with its parent (see SimState::follow_attachments).
+    u32 followed_parent_snap() const { return followed_parent_snap_; }
+    void set_followed_parent_snap(u32 s) { followed_parent_snap_ = s; }
     void clear_parent() { parent_entity_id_ = 0; parent_bone_ = -1; attached_bone_ = -1; }
     const Vector3& parent_offset() const { return parent_offset_; }
     void set_parent_offset(const Vector3& off) { parent_offset_ = off; }
@@ -290,6 +300,9 @@ private:
     i32 army_ = -1;
     Vector3 position_;
     Quaternion orientation_;
+    u32 snap_serial_ = 0;
+    static constexpr u32 kNotFollowed = ~0u;
+    u32 followed_parent_snap_ = kNotFollowed;
     f32 health_ = 0;
     f32 max_health_ = 0;
     f32 regen_rate_ = 0;

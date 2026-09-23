@@ -7,6 +7,7 @@
 #include <vector>
 
 namespace osc::sim {
+class FrameView;
 class IEffect;
 class SimState;
 } // namespace osc::sim
@@ -58,8 +59,9 @@ struct ParticleInstance {
 class ParticleSystem {
 public:
     /// Sync emitter list with IEffectRegistry — create new emitters,
-    /// remove destroyed ones, update positions from entities.
-    void sync_effects(const sim::SimState& sim,
+    /// remove destroyed ones, update positions from entities as `view`
+    /// draws them.
+    void sync_effects(const sim::SimState& sim, const sim::FrameView& view,
                       EmitterBlueprintCache& bp_cache,
                       struct lua_State* L);
 

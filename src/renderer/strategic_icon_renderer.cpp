@@ -5,6 +5,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "sim/unit.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -294,7 +295,7 @@ void StrategicIconRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-bool StrategicIconRenderer::update(const sim::SimState& sim,
+bool StrategicIconRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
                                     const Camera& camera,
                                     const std::array<f32, 16>& vp_matrix,
                                     const std::unordered_set<u32>* selected_ids,
@@ -335,7 +336,7 @@ bool StrategicIconRenderer::update(const sim::SimState& sim,
     registry.for_each([&](const sim::Entity& entity) {
         if (entity.destroyed() || !entity.is_unit()) return;
 
-        auto pos = entity.position();
+        auto pos = view.position(entity);
 
         // Distance cull (wider range for strategic view)
         f32 dx = pos.x - eye_x;

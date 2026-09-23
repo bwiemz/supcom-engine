@@ -22,6 +22,7 @@ add_library(osc_sim STATIC
     lockstep_session.cpp
     net_transport.cpp
     sim_state.cpp
+    world_snapshot.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 

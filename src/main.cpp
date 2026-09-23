@@ -5,6 +5,7 @@
 #include "core/game_state.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#include "core/tick_clock.hpp"
 #include "core/types.hpp"
 #include "integration_tests.hpp"
 #include "platform/crash_handler.hpp"
@@ -46,6 +47,7 @@
 #include "sim/shield.hpp"
 #include "sim/net_transport.hpp"
 #include "sim/lockstep_session.hpp"
+#include "sim/world_snapshot.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
 #include "lua/lan_lobby.hpp"
@@ -355,6 +357,7 @@ static void print_usage() {
               << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
+              << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -528,6 +531,28 @@ static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
     sim.set_sound_manager(sound);
 }
 
+/// The world as it is drawn: the sim's last two ticks, and how far the frame
+/// is between them. Every tick lands here, whoever runs it (the loop, the
+/// lockstep session), so interpolation follows the ticks that really came.
+struct WorldInterp {
+    osc::sim::WorldHistory history;
+    osc::TickClock clock{osc::sim::SimState::SECONDS_PER_TICK};
+
+    /// Follow a new sim's ticks from its first one. Must outlive `sim`.
+    void attach(osc::sim::SimState& sim) {
+        history.clear();
+        clock.reset();
+        sim.set_tick_observer([this](const osc::sim::SimState& s) {
+            history.capture(s);
+            clock.on_tick();
+        });
+    }
+
+    osc::sim::FrameView view() const {
+        return {&history.prev(), &history.cur(), clock.alpha()};
+    }
+};
+
 static bool execute_reload_sequence(
     std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
     std::unique_ptr<osc::sim::SimState>& sim_state,
@@ -541,6 +566,7 @@ static bool execute_reload_sequence(
     osc::renderer::Renderer* renderer,               // nullable for headless
     osc::renderer::InputHandler* input_handler,       // nullable for headless
     std::unordered_set<osc::u32>* prev_selection,     // nullable for headless
+    WorldInterp* world_interp,                         // nullable for headless
     double& sim_accumulator,
     const std::string& launch_scenario)
 {
@@ -590,6 +616,7 @@ static bool execute_reload_sequence(
         lua_pop(uiL, 1);
         attach_sound(*sim_lua_state, *sim_state, sound);
     }
+    if (world_interp) world_interp->attach(*sim_state);
     sim_state->set_bone_cache(
         std::make_unique<osc::sim::BoneCache>(&vfs, &store));
     sim_state->set_anim_cache(
@@ -1775,6 +1802,8 @@ int main(int argc, char* argv[]) {
     bool gameui_test = parse_flag(argc, argv, "--gameui-test");
     bool audio_data_test = parse_flag(argc, argv, "--audio-data-test");
     bool victory_test = parse_flag(argc, argv, "--victory-test");
+    // Windowed (it checks what is drawn), so not one of the headless modes.
+    const bool interp_test = parse_flag(argc, argv, "--interp-test");
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1875,7 +1904,7 @@ int main(int argc, char* argv[]) {
                     profile_test || smoke_test || ai_skirmish || draw_test ||
                     stress_test || full_smoke_test || audio_data_test || victory_test;
     bool headless = (tick_count > 0) || any_test;
-    if (any_test) osc::test_status::set_count_lua_failures(true);
+    if (any_test || interp_test) osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
@@ -1942,11 +1971,12 @@ int main(int argc, char* argv[]) {
     // and captures run it without an output device; headless runs have no
     // frames, so their sim tick is its clock.
     const bool silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                                !parse_string_arg(argc, argv, "--golden", "").empty();
+                                !parse_string_arg(argc, argv, "--golden", "").empty() || interp_test;
     osc::audio::SoundManager sound(config.fa_path / "sounds", !headless && !silent_capture);
     sound.set_sim_clocked(headless);
 
     // Phase 3: Map + Sim boot (only when --map provided)
+    WorldInterp world_interp; // outlives every sim it observes
     std::unique_ptr<osc::sim::SimState> sim_state;
     osc::lua::ScenarioMetadata scenario_meta;
 
@@ -1954,6 +1984,8 @@ int main(int argc, char* argv[]) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
 
     attach_sound(*sim_lua_state, *sim_state, &sound);
+    // Only a drawn world needs its ticks captured.
+    if (!headless) world_interp.attach(*sim_state);
 
     // Bone cache (lazy-loaded per-blueprint SCM bone data)
     auto bone_cache = std::make_unique<osc::sim::BoneCache>(&vfs, &store);
@@ -2589,11 +2621,11 @@ int main(int argc, char* argv[]) {
     // Phase 5: Windowed mode (renderer) or headless tick loop
     if (!headless) {
         osc::renderer::Renderer renderer;
-        // Scripted captures render offscreen: no window to show, focus to
-        // steal, or compositor to wait for.
+        // Scripted captures and checks render offscreen: no window to show,
+        // focus to steal, or compositor to wait for.
         const bool offscreen_capture =
             !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-            !parse_string_arg(argc, argv, "--golden", "").empty();
+            !parse_string_arg(argc, argv, "--golden", "").empty() || interp_test;
         if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
             // Build 3D scene if we have a sim state (--map was provided)
             if (sim_state) {
@@ -2736,6 +2768,13 @@ int main(int argc, char* argv[]) {
                 parse_string_arg(argc, argv, "--screenshot-frame", "120").c_str(),
                 nullptr, 10));
             constexpr double kScreenshotFrameDt = 1.0 / 60.0;
+            // --interp-test: four frames per sim tick, on a fixed clock.
+            constexpr double kInterpFrameDt = osc::sim::SimState::SECONDS_PER_TICK / 4.0;
+            osc::test::InterpProbe interp_probe;
+            if (interp_test) {
+                renderer.set_fixed_frame_dt(static_cast<osc::f32>(kInterpFrameDt));
+                renderer.camera().set_input_enabled(false);
+            }
             osc::u32 frames_rendered = 0;
             bool screenshot_done = false;
             bool screenshot_ok = false;
@@ -2760,12 +2799,14 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            while (!renderer.should_close() && !screenshot_done) {
+            while (!renderer.should_close() && !screenshot_done &&
+                   !(interp_test && interp_probe.done())) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
                 prev_time = now;
                 if (!screenshot_path.empty()) dt = kScreenshotFrameDt;
+                if (interp_test) dt = kInterpFrameDt;
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
 
@@ -2844,6 +2885,7 @@ int main(int argc, char* argv[]) {
                 // Fixed-timestep sim ticking (scaled by sim_speed)
                 const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
                 if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
+                    world_interp.clock.advance(dt * game_state_mgr.speed());
                     if (osc::lua::mp_net_state().active()) {
                         // Multiplayer: advance in lockstep. Pace command frames
                         // at the sim tick rate; the session only advances the
@@ -2922,6 +2964,18 @@ int main(int argc, char* argv[]) {
                 // Fire beat functions each frame (M145b)
                 beat_registry.fire_all(ui_lua_state.raw());
 
+                // This frame's world, between the last two ticks: what is
+                // drawn and what clicks pick.
+                const osc::sim::FrameView frame_view = world_interp.view();
+                input_handler.set_frame_view(frame_view);
+                if (interp_test && sim_state) {
+                    interp_probe.on_frame(*sim_state, frame_view, [&](const char* code) {
+                        auto r = sim_lua_state->do_string(code);
+                        if (!r) spdlog::error("sim Lua: {}", r.error().message);
+                        return static_cast<bool>(r);
+                    });
+                }
+
                 // Player input: selection + commands
                 if (sim_state) {
                 current_command_mode = read_command_mode(ui_lua_state.raw());
@@ -2954,7 +3008,7 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if (sim_state) {
-                    renderer.render(*sim_state, ui_lua_state.raw(), &ui_registry,
+                    renderer.render(*sim_state, frame_view, ui_lua_state.raw(), &ui_registry,
                                     sel.empty() ? nullptr : &sel);
                 } else {
                     // No sim state (front-end/lobby) — render UI only
@@ -3066,6 +3120,7 @@ int main(int argc, char* argv[]) {
                                 game_state_mgr,
                                 &renderer, &input_handler,
                                 &prev_selection,
+                                &world_interp,
                                 sim_accumulator,
                                 launch_scenario);
 
@@ -3161,6 +3216,11 @@ int main(int argc, char* argv[]) {
             }
 
             renderer.shutdown();
+            if (interp_test) {
+                if (!interp_probe.done())
+                    osc::test_status::fail("[FAIL] interp: the window closed before the check ended");
+                return finish_test_run("interp-test");
+            }
             if (!screenshot_path.empty() &&
                 osc::renderer::Renderer::validation_error_count() > 0) {
                 spdlog::error("{} Vulkan validation error(s) during the capture run",
@@ -3312,6 +3372,7 @@ int main(int argc, char* argv[]) {
             nullptr,   // renderer (headless)
             nullptr,   // input_handler (headless)
             nullptr,   // prev_selection (headless)
+            nullptr,   // world_interp (headless)
             sim_accumulator_fst,
             map_path);
 
