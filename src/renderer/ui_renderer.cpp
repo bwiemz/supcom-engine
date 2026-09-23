@@ -455,6 +455,7 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
     }
 
     int tbl_idx = lua_gettop(L);
+    const size_t first_quad = quads_.size();
 
     // Read layout LazyVars
     f32 left = read_lazyvar(L, tbl_idx, "Left");
@@ -622,6 +623,30 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
 
     }
 
+    // This control's own quads draw in its render pass's band.
+    if (const auto band = ui::control_draw_band(ctrl->render_pass());
+        band != ui::DrawBand::Overlay) {
+        for (size_t i = first_quad; i < quads_.size(); ++i) quads_[i].band = band;
+    }
+
+    // A minimap view shows the map: world content, over UnderWorld controls.
+    if (auto* wv = dynamic_cast<ui::WorldView*>(ctrl);
+        wv && wv->is_minimap() && on_screen && minimap_painter_ && *minimap_painter_) {
+        painted_.clear();
+        (*minimap_painter_)({left, top, width, height}, painted_);
+        for (const auto& q : painted_) {
+            if (quad_count_ >= MAX_UI_QUADS) break;
+            QuadEntry e{};
+            e.inst = q.inst;
+            e.texture_ds = q.texture_ds;
+            e.clip = self_clip;
+            e.depth = depth;
+            e.band = ui::DrawBand::WorldContent;
+            quads_.push_back(e);
+            quad_count_++;
+        }
+    }
+
     lua_pop(L, 1); // pop Lua table
 
     // Recurse into children, clipped to the viewport only (see above)
@@ -651,7 +676,8 @@ void UIRenderer::collect_world_views(lua_State* L, ui::UIControl* ctrl) {
 void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
                         TextureCache& tex_cache, FontCache& font_cache,
                         u32 viewport_w, u32 viewport_h,
-                        f32 mouse_x, f32 mouse_y) {
+                        f32 mouse_x, f32 mouse_y,
+                        const WorldViewPainter& minimap) {
     mouse_x_ = mouse_x;
     mouse_y_ = mouse_y;
     quads_.clear();
@@ -679,8 +705,10 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
     // Walk the control tree from root with full viewport as initial clip
     ClipRect viewport_clip{0, 0, static_cast<i32>(viewport_w),
                            static_cast<i32>(viewport_h)};
+    minimap_painter_ = &minimap;
     collect_control(L, root, tex_cache, font_cache, viewport_w, viewport_h,
                     viewport_clip);
+    minimap_painter_ = nullptr;
 
     // UI below a main world view is hidden where the view covers it: FA
     // draws the 3D world into the view (here: the scene underneath all UI).
@@ -701,9 +729,10 @@ void UIRenderer::update(lua_State* L, const ui::UIControlRegistry& registry,
 
     if (quads_.empty()) return;
 
-    // Sort by depth (lower depth = drawn first = further back)
+    // Sort by band, then depth (lower = drawn first = further back)
     std::stable_sort(quads_.begin(), quads_.end(),
                      [](const QuadEntry& a, const QuadEntry& b) {
+                         if (a.band != b.band) return a.band < b.band;
                          return a.depth < b.depth;
                      });
 

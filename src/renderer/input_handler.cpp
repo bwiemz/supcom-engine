@@ -53,12 +53,11 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
         map_h = static_cast<f32>(sim.terrain()->map_height());
     }
 
-    // The C++ minimap only takes clicks while it is drawn.
+    // The minimap takes clicks where it was drawn: the C++ HUD's corner, or
+    // FA's minimap window while that is shown.
     f32 mm_wx = 0, mm_wz = 0;
-    bool on_minimap = renderer.legacy_hud_active() &&
-                      renderer.minimap().hit_test(
-                          mx, my, renderer.width(), renderer.height(),
-                          map_w, map_h, mm_wx, mm_wz);
+    bool on_minimap = renderer.minimap().hit_test(mx, my, renderer.width(), renderer.height(),
+                                                  map_w, map_h, mm_wx, mm_wz);
 
     // --- Left mouse: selection or minimap click-to-jump ---
     if (lmb && !lmb_was_pressed_) {

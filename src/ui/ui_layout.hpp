@@ -46,4 +46,19 @@ inline bool hidden_by_world(const ControlRect& r, f32 depth,
     return false;
 }
 
+/// MAUI's UIRP_UnderWorld render pass (UIUtil.lua): a control drawn before
+/// the world views' content.
+inline constexpr i32 kRenderPassUnderWorld = 1;
+
+/// Moho draws the UI in bands, and by depth within each: controls whose
+/// render pass is UnderWorld alone, then what world views show, then the rest.
+/// Retail's minimap window relies on it: its background (window_m) is deeper
+/// than the minimap view but UnderWorld, so the map draws over it.
+enum class DrawBand : u8 { UnderWorld = 0, WorldContent = 1, Overlay = 2 };
+
+/// The band a control's own quads draw in, from its SetRenderPass bitmask.
+inline DrawBand control_draw_band(i32 render_pass) {
+    return render_pass == kRenderPassUnderWorld ? DrawBand::UnderWorld : DrawBand::Overlay;
+}
+
 } // namespace osc::ui

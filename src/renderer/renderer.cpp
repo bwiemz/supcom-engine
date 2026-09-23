@@ -1968,6 +1968,7 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
     ui_renderer_.set_frame_index(fi);
     overlay_renderer_.set_frame_index(fi);
     minimap_renderer_.set_frame_index(fi);
+    minimap_renderer_.begin_frame();
     strategic_icon_renderer_.set_frame_index(fi);
     hud_renderer_.set_frame_index(fi);
     selection_info_renderer_.set_frame_index(fi);
@@ -2074,10 +2075,19 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));
         }
         ui_dispatch_.dispatch_events(L, *ui_registry);
+        // FA's minimap WorldView shows the minimap, drawn with the UI.
+        WorldViewPainter minimap_painter;
+        if (!legacy_hud_active_) {
+            minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
+                minimap_renderer_.paint(sim, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                                        window_width_, window_height_, out);
+            };
+        }
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
                             window_width_, window_height_,
                             static_cast<f32>(ui_dispatch_.mouse_x()),
-                            static_cast<f32>(ui_dispatch_.mouse_y()));
+                            static_cast<f32>(ui_dispatch_.mouse_y()),
+                            minimap_painter);
     }
 
     // Stage fog of war data from visibility grid (CPU side)

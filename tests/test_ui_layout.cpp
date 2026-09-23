@@ -47,3 +47,16 @@ TEST_CASE("UI below a main world view is hidden where it covers it", "[ui][layou
     CHECK_FALSE(hidden_by_world({0, 0, 1600, 900}, 1.0f, map_area));
     CHECK_FALSE(hidden_by_world({0, 0, 10, 10}, 1.0f, {}));      // no world view
 }
+
+TEST_CASE("UI draws in render-pass bands", "[ui][layout]") {
+    using osc::ui::DrawBand;
+    using osc::ui::control_draw_band;
+    // UIUtil: UIRP_UnderWorld = 1, UIRP_PostGlow = 8. Retail's minimap window
+    // background is UnderWorld alone; it draws before the map it frames.
+    CHECK(control_draw_band(1) == DrawBand::UnderWorld);
+    CHECK(control_draw_band(0) == DrawBand::Overlay);      // no pass set
+    CHECK(control_draw_band(8) == DrawBand::Overlay);      // PostGlow (glow, handles)
+    CHECK(control_draw_band(1 | 8) == DrawBand::Overlay);  // the main views' mask
+    CHECK(DrawBand::UnderWorld < DrawBand::WorldContent);
+    CHECK(DrawBand::WorldContent < DrawBand::Overlay);
+}
