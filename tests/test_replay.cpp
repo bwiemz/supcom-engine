@@ -140,6 +140,7 @@ TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     // --- Record ---
     LuaGuard ga;
     SimState a(ga.L, nullptr);
+    a.set_seed(777); // a game's own seed, not the default
     auto ids = setup(a);
     a.set_recording(true);
     a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
@@ -153,10 +154,13 @@ TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     std::vector<osc::u8> bytes = a.recorded_replay().serialize();
     Replay loaded;
     REQUIRE(Replay::deserialize(bytes, loaded));
+    CHECK(loaded.seed == 777);
 
-    // --- Replay into a fresh sim with the same deterministic setup ---
+    // --- Replay into a fresh sim seeded as the recording was, before any
+    // of it runs (boot scripts roll numbers too) ---
     LuaGuard gb;
     SimState b(gb.L, nullptr);
+    b.set_seed(loaded.seed);
     auto ids_b = setup(b);
     REQUIRE(ids_b == ids); // same id assignment
     b.queue_replay(loaded);
@@ -166,4 +170,24 @@ TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     // And the units actually moved (the replay did real work).
     auto* u = static_cast<Unit*>(b.entity_registry().find(ids[0]));
     CHECK(u->position().x > 0.0f);
+}
+
+TEST_CASE("A version 1 replay (no seed) still loads, with the default seed", "[replay]") {
+    Replay r;
+    r.final_tick = 9;
+    r.command_delay = 2;
+    r.victory_condition = "demoralization";
+    std::vector<osc::u8> bytes = r.serialize();
+    // Version 1 had no seed: drop the 8 bytes after command_delay and
+    // rewrite the version.
+    constexpr size_t kSeedAt = 4 + 4 + 4 + 4; // magic, version, final_tick, command_delay
+    bytes.erase(bytes.begin() + kSeedAt, bytes.begin() + kSeedAt + 8);
+    bytes[4] = 1;
+
+    Replay loaded;
+    REQUIRE(Replay::deserialize(bytes, loaded));
+    CHECK(loaded.final_tick == 9);
+    CHECK(loaded.command_delay == 2);
+    CHECK(loaded.victory_condition == "demoralization");
+    CHECK(loaded.seed == osc::sim::SimRandom::kDefaultSeed);
 }

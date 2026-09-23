@@ -11,6 +11,7 @@
 
 #include <array>
 #include <functional>
+#include <iosfwd>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -287,7 +288,12 @@ public:
     // With recording on, every scheduled command is captured into a Replay that
     // (thanks to lockstep determinism) reproduces the match when re-fed into a
     // fresh sim.
-    void set_recording(bool on) { recording_ = on; }
+    /// Record the commands from now on, with the game's seed: a replay
+    /// replays the game from its start.
+    void set_recording(bool on) {
+        recording_ = on;
+        if (on) recorded_replay_.seed = seed_;
+    }
     bool recording() const { return recording_; }
     const Replay& recorded_replay() const { return recorded_replay_; }
 
@@ -353,19 +359,45 @@ public:
     /// and diagnostics.
     i32 surviving_team_count() const;
 
-    /// Deterministic checksum of the authoritative sim state (tick, army
-    /// economies/states, and every entity's id/army/position/health). Two sims
-    /// fed identical inputs on the same build produce identical checksums; a
-    /// divergence signals a desync. This is the primitive lockstep multiplayer
-    /// uses to detect out-of-sync clients, and validates single-player
-    /// determinism / replay. Order-independent (entities are sorted by id).
+    /// The parts of the sync checksum, hashed separately so a divergence
+    /// says what diverged: the random stream (an extra or missing roll
+    /// shows the tick it happens), the armies (state, stored economy), and
+    /// the entities (id, army, position, health, in id order).
+    struct ChecksumParts {
+        u64 rng = 0;
+        u64 armies = 0;
+        u64 entities = 0;
+        u32 total() const;
+    };
+    ChecksumParts checksum_parts() const;
+
+    /// Deterministic checksum of the authoritative sim state (the parts
+    /// above, and the tick). Two sims fed identical inputs on the same
+    /// build produce identical checksums; a divergence signals a desync.
+    /// This is the primitive lockstep multiplayer uses to detect
+    /// out-of-sync clients, and validates single-player determinism.
     u32 compute_sync_checksum() const;
+
+    /// Write each tick's checksum and its parts as a line of text
+    /// ("tick total rng armies entities", hex) -- a trace two runs can be
+    /// compared by (tools/checksum_diff.py). Null stops it.
+    void set_checksum_trace(std::ostream* out) { checksum_trace_ = out; }
 
     // --- Deterministic sim RNG ---
     // Any sim randomness (e.g. weapon firing spread) must draw from this seeded
     // stream so every lockstep client rolls identically. The host chooses the
     // seed and broadcasts it; single-player uses the fixed default.
-    void set_seed(u64 s) { sim_random_.seed(s); }
+    /// Seed the game's random stream (before anything rolls: boot scripts
+    /// do too). A recording keeps it, so a replay can seed the same way.
+    void set_seed(u64 s) {
+        seed_ = s;
+        sim_random_.seed(s);
+    }
+    u64 seed() const { return seed_; }
+    /// The session's one random stream: weapons, scripts' Random and
+    /// math.random. Deterministic from the seed and the calls made on it.
+    SimRandom& random() { return sim_random_; }
+    const SimRandom& random() const { return sim_random_; }
     u32 sim_rand() { return sim_random_.next_u32(); }
     f32 sim_rand_range(f32 lo, f32 hi) { return sim_random_.range(lo, hi); }
 
@@ -476,6 +508,7 @@ private:
     // Declared before entity_registry_ so it outlives the registry that holds a
     // SimRandom* into it (registry destruction must not see a dead RNG).
     SimRandom sim_random_;                    // deterministic, seeded per game
+    u64 seed_ = SimRandom::kDefaultSeed;      // what set_seed was given
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;
@@ -494,6 +527,7 @@ private:
     std::unique_ptr<map::VisibilityGrid> visibility_grid_;
     audio::SoundManager* sound_manager_ = nullptr;
     std::function<void(const SimState&)> tick_observer_;
+    std::ostream* checksum_trace_ = nullptr;
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;

@@ -4,8 +4,6 @@
 24 src/integration_tests.cpp readability-redundant-string-cstr
 1 src/lua/engine_bindings.cpp bugprone-unchecked-string-to-number-conversion
 2 src/lua/moho_bindings.cpp performance-no-int-to-ptr
-1 src/lua/sim_bindings.cpp bugprone-random-generator-seed
-1 src/lua/sim_bindings.cpp bugprone-throwing-static-initialization
 2 src/main.cpp bugprone-unchecked-string-to-number-conversion
 1 src/renderer/overlay_renderer.hpp bugprone-throwing-static-initialization
 1 src/renderer/unit_renderer.cpp bugprone-nondeterministic-pointer-iteration-order

@@ -64,7 +64,8 @@ There are several layers. Use the lowest one that can show the behaviour.
 **The sim is deterministic; keep it that way.**
 - Everything that changes sim state happens inside `SimState::tick()`, or through the command stream.
 - Don't let hash-map iteration order or pointer order decide a sim outcome.
-- Don't use a random source other than the sim's.
+- Don't use a random source other than the sim's (`SimState::random()`, which scripts' `Random` and `math.random` use too).
+- To find where two runs part ways, compare `--checksum-trace` files with `tools/checksum_diff.py`. It names the first divergent tick and whether the random stream, the armies or the entities differ. `data.determinism` in the gate plays a game twice this way.
 - The renderer and the UI read per-tick snapshots (`sim::WorldSnapshot` / `FrameView`), never the live sim. The draw path doesn't include sim headers.
 
 **Lua 5.0 and LuaPlus.**

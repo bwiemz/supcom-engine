@@ -37,11 +37,27 @@ f32 EmitterCurve::sample(f32 t) const {
     return keys.back().y;
 }
 
+namespace {
+
+/// The renderer's own random stream for particle variance, apart from the
+/// sim's (and from the C library's rand(), which the UI state's math.random
+/// shares). Seeded the same every run, so captures are reproducible.
+f32 visual_random01() {
+    thread_local u64 state = 0x2545F4914F6CDD1Dull;
+    u64 z = (state += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return static_cast<f32>(z >> 40) * (1.0f / 16777216.0f);
+}
+
+} // namespace
+
 f32 EmitterCurve::sample_random(f32 t) const {
     if (keys.empty()) return 0.0f;
     if (keys.size() == 1) {
         f32 variance = keys[0].z;
-        f32 r = static_cast<f32>(std::rand()) / static_cast<f32>(RAND_MAX);
+        f32 r = visual_random01();
         return keys[0].y + variance * (2.0f * r - 1.0f);
     }
 
@@ -53,13 +69,13 @@ f32 EmitterCurve::sample_random(f32 t) const {
             f32 frac = (span > 0.0f) ? (t - keys[i].x) / span : 0.0f;
             f32 y = keys[i].y + frac * (keys[i + 1].y - keys[i].y);
             f32 z = keys[i].z + frac * (keys[i + 1].z - keys[i].z);
-            f32 r = static_cast<f32>(std::rand()) / static_cast<f32>(RAND_MAX);
+            f32 r = visual_random01();
             return y + z * (2.0f * r - 1.0f);
         }
     }
 
     f32 variance = keys.back().z;
-    f32 r = static_cast<f32>(std::rand()) / static_cast<f32>(RAND_MAX);
+    f32 r = visual_random01();
     return keys.back().y + variance * (2.0f * r - 1.0f);
 }
 

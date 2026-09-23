@@ -62,6 +62,7 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <random>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -267,6 +268,8 @@ static int l_GetArmiesTable(lua_State* L) {
 }
 
 static void print_usage() {
+    // The option table is laid out by hand.
+    // clang-format off
     std::cout << "OpenSupCom v0.1.0\n"
               << "Open-source engine reimplementation for Supreme Commander: "
                  "Forged Alliance\n\n"
@@ -293,6 +296,9 @@ static void print_usage() {
               << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
               << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
               << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
+              << "  --seed <n>         The game's random seed (default: fixed for tests and\n"
+              << "                     headless runs, fresh for an interactive game)\n"
+              << "  --checksum-trace <f>  Write each tick's sync checksum and its parts\n"
               << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
               << "  --move-test        After ticks, move entity #1 and run 200 more ticks\n"
               << "  --fire-test        Teleport entities #1 and #2 close, run 100 combat ticks\n"
@@ -387,6 +393,7 @@ static void print_usage() {
               << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --help             Show this help message\n";
+    // clang-format on
 }
 
 static osc::lua::InitConfig parse_args(int argc, char* argv[]) {
@@ -532,6 +539,30 @@ static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
     sim.set_sound_manager(sound);
 }
 
+/// --checksum-trace <file>: every game's sims write their per-tick checksum
+/// here (see SimState::set_checksum_trace); null when not asked for.
+static std::ofstream* g_checksum_trace = nullptr;
+
+/// The random seed of a new game: `--seed` when given; else a fixed one when
+/// the run must repeat (tests, headless runs, captures); else a fresh one.
+/// A multiplayer session then replaces it with the seed its peers share.
+static osc::u64 new_game_seed(const std::string& seed_arg, bool reproducible) {
+    if (!seed_arg.empty()) return std::strtoull(seed_arg.c_str(), nullptr, 0);
+    if (reproducible) return osc::sim::SimRandom::kDefaultSeed;
+    std::random_device rd;
+    return (static_cast<osc::u64>(rd()) << 32) ^ rd();
+}
+
+/// The seed a launch boots its sim with. A multiplayer launch uses the seed
+/// the lobby shared: every peer must roll the same numbers from the first
+/// line of boot (scenario scripts, BeginSession's AI setup), not only once
+/// the session attaches afterwards.
+static osc::u64 launch_seed(const std::string& seed_arg, bool reproducible) {
+    const auto& mp = osc::lua::mp_net_state();
+    if (mp.transport_ready) return mp.seed;
+    return new_game_seed(seed_arg, reproducible);
+}
+
 /// The world as it is drawn: the sim's last two ticks, and how far the frame
 /// is between them. Every tick lands here, whoever runs it (the loop, the
 /// lockstep session), so interpolation follows the ticks that really came.
@@ -556,21 +587,16 @@ struct WorldInterp {
 
 static bool execute_reload_sequence(
     std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
-    std::unique_ptr<osc::sim::SimState>& sim_state,
-    osc::lua::LuaState& ui_lua_state,
-    osc::vfs::VirtualFileSystem& vfs,
-    osc::blueprints::BlueprintStore& store,
-    osc::lua::InitLoader& loader,
-    const osc::lua::InitConfig& config,
-    osc::lua::ScenarioMetadata& scenario_meta,
-    osc::GameStateManager& game_state_mgr,
-    osc::renderer::Renderer* renderer,               // nullable for headless
-    osc::renderer::InputHandler* input_handler,       // nullable for headless
-    std::unordered_set<osc::u32>* prev_selection,     // nullable for headless
-    WorldInterp* world_interp,                         // nullable for headless
-    double& sim_accumulator,
-    const std::string& launch_scenario)
-{
+    std::unique_ptr<osc::sim::SimState>& sim_state, osc::lua::LuaState& ui_lua_state,
+    osc::vfs::VirtualFileSystem& vfs, osc::blueprints::BlueprintStore& store,
+    osc::lua::InitLoader& loader, const osc::lua::InitConfig& config,
+    osc::lua::ScenarioMetadata& scenario_meta, osc::GameStateManager& game_state_mgr,
+    osc::renderer::Renderer* renderer,            // nullable for headless
+    osc::renderer::InputHandler* input_handler,   // nullable for headless
+    std::unordered_set<osc::u32>* prev_selection, // nullable for headless
+    WorldInterp* world_interp,                    // nullable for headless
+    osc::u64 seed,                                // the new game's random seed
+    double& sim_accumulator, const std::string& launch_scenario) {
     lua_State* uiL = ui_lua_state.raw();
 
     // 1. GPU fence — ensure no in-flight work
@@ -607,6 +633,9 @@ static bool execute_reload_sequence(
 
     // 6. Create fresh SimState
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+    sim_state->set_seed(seed);
+    sim_state->set_checksum_trace(g_checksum_trace);
+    spdlog::info("Game seed {:#018x}", seed);
 
     // 7. Audio (the application's engine, kept in the UI state), bone
     // cache, anim cache
@@ -1981,6 +2010,19 @@ int main(int argc, char* argv[]) {
     const bool silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
                                 !parse_string_arg(argc, argv, "--golden", "").empty() || scripted_window;
     osc::audio::SoundManager sound(config.fa_path / "sounds", !headless && !silent_capture);
+    // --seed N: the game's random seed (weapon spread, scripts' Random and
+    // math.random). Runs that must repeat default to a fixed one.
+    const std::string seed_arg = parse_string_arg(argc, argv, "--seed", "");
+    const bool reproducible_run = headless || scripted_window || silent_capture;
+    std::ofstream checksum_trace;
+    if (const auto trace = parse_string_arg(argc, argv, "--checksum-trace", ""); !trace.empty()) {
+        checksum_trace.open(trace, std::ios::trunc);
+        if (!checksum_trace) {
+            spdlog::error("--checksum-trace: cannot write {}", trace);
+            return 1;
+        }
+        g_checksum_trace = &checksum_trace;
+    }
     sound.set_sim_clocked(headless);
 
     // Phase 3: Map + Sim boot (only when --map provided)
@@ -1990,6 +2032,12 @@ int main(int argc, char* argv[]) {
 
     if (!map_path.empty()) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+    {
+        const osc::u64 seed = new_game_seed(seed_arg, reproducible_run);
+        sim_state->set_seed(seed);
+        sim_state->set_checksum_trace(g_checksum_trace);
+        spdlog::info("Game seed {:#018x}", seed);
+    }
 
     attach_sound(*sim_lua_state, *sim_state, &sound);
     // Only a drawn world needs its ticks captured.
@@ -3142,16 +3190,12 @@ int main(int argc, char* argv[]) {
                             renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
 
                             // Execute reload in stages, pumping UI frames between each
-                            execute_reload_sequence(
-                                sim_lua_state, sim_state,
-                                ui_lua_state, vfs, store,
-                                loader, config, scenario_meta,
-                                game_state_mgr,
-                                &renderer, &input_handler,
-                                &prev_selection,
-                                &world_interp,
-                                sim_accumulator,
-                                launch_scenario);
+                            execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs,
+                                                    store, loader, config, scenario_meta,
+                                                    game_state_mgr, &renderer, &input_handler,
+                                                    &prev_selection, &world_interp,
+                                                    launch_seed(seed_arg, reproducible_run),
+                                                    sim_accumulator, launch_scenario);
 
                             // Reset per-session state for the new game
                             first_update_fired = false;
@@ -3398,17 +3442,14 @@ int main(int argc, char* argv[]) {
 
         // Execute reload sequence to create sim state (headless — no renderer)
         double sim_accumulator_fst = 0.0;
-        bool reload_ok = execute_reload_sequence(
-            sim_lua_state, sim_state,
-            ui_lua_state, vfs, store,
-            loader, config, scenario_meta,
-            game_state_mgr,
-            nullptr,   // renderer (headless)
-            nullptr,   // input_handler (headless)
-            nullptr,   // prev_selection (headless)
-            nullptr,   // world_interp (headless)
-            sim_accumulator_fst,
-            map_path);
+        bool reload_ok = execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
+                                                 loader, config, scenario_meta, game_state_mgr,
+                                                 nullptr, // renderer (headless)
+                                                 nullptr, // input_handler (headless)
+                                                 nullptr, // prev_selection (headless)
+                                                 nullptr, // world_interp (headless)
+                                                 new_game_seed(seed_arg, /*reproducible=*/true),
+                                                 sim_accumulator_fst, map_path);
 
         if (!reload_ok) {
             spdlog::error("Phase 3: Reload failed — skipping remaining phases");

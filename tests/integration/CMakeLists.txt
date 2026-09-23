@@ -70,6 +70,21 @@ foreach(mode IN LISTS OSC_DATA_TESTS_NO_MAP_RETAIL_GAP)
     osc_add_data_test(${mode} retail-gap NO_MAP)
 endforeach()
 
+# M196: the same game, played twice as two processes (every address
+# different), stays identical tick for tick -- nothing depends on hash
+# order, a shared or unseeded random stream, or object addresses.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME data.determinism
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/determinism.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1500
+                     --seed 4242)
+    set_tests_properties(data.determinism PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+endif()
+
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
 # The golden PNGs contain game art, so they live outside the repository, in
 # $OSC_GOLDEN_DIR (else the user state dir). A missing golden is "skipped";

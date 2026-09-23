@@ -23,7 +23,6 @@
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <random>
 #include <string>
 #include <string_view>
 #include <spdlog/spdlog.h>
@@ -3480,21 +3479,70 @@ static int l_MATH_Lerp(lua_State* L) {
     return 1;
 }
 
-// Deterministic RNG for replay consistency. Seeded per-sim.
-static std::mt19937 s_sim_rng{42};
+// Sim scripts' randomness all comes from the session's SimRandom: seeded
+// per game (and shared by lockstep peers), drawn with our own distributions
+// so every platform rolls the same numbers.
+static sim::SimRandom* session_random(lua_State* L) {
+    auto* sim = get_sim(L);
+    return sim ? &sim->random() : nullptr;
+}
 
+/// Random() -> [0, 1); Random(n) -> an integer in [1, n]; Random(a, b) ->
+/// an integer in [a, b] (either order).
 static int l_Random(lua_State* L) {
-    if (lua_gettop(L) == 0) {
-        std::uniform_real_distribution<f64> dist(0.0, 1.0);
-        lua_pushnumber(L, dist(s_sim_rng));
+    auto* session = session_random(L);
+    if (!session) return luaL_error(L, "Random: no sim");
+    auto& rng = *session;
+    const int n = lua_gettop(L);
+    if (n == 0) {
+        lua_pushnumber(L, rng.next_double());
         return 1;
     }
-    int lo = static_cast<int>(lua_tonumber(L, 1));
-    int hi = lua_gettop(L) >= 2 ? static_cast<int>(lua_tonumber(L, 2)) : lo;
+    i64 lo = 1;
+    i64 hi = static_cast<i64>(luaL_checknumber(L, 1));
+    if (n >= 2) {
+        lo = hi;
+        hi = static_cast<i64>(luaL_checknumber(L, 2));
+    }
     if (lo > hi) std::swap(lo, hi);
-    std::uniform_int_distribution<int> dist(lo, hi);
-    lua_pushnumber(L, dist(s_sim_rng));
+    lua_pushnumber(L, static_cast<lua_Number>(rng.next_int(lo, hi)));
     return 1;
+}
+
+/// math.random in the sim state: Lua 5.0's contract (errors included) on the
+/// session's stream, instead of the C library's rand(), which differs
+/// between platforms and is shared with the UI state and the renderer.
+static int l_sim_math_random(lua_State* L) {
+    auto* session = session_random(L);
+    if (!session) return luaL_error(L, "math.random: no sim");
+    auto& rng = *session;
+    switch (lua_gettop(L)) {
+    case 0: lua_pushnumber(L, rng.next_double()); break;
+    case 1: {
+        const int u = luaL_checkint(L, 1);
+        luaL_argcheck(L, 1 <= u, 1, "interval is empty");
+        lua_pushnumber(L, static_cast<lua_Number>(rng.next_int(1, u)));
+        break;
+    }
+    case 2: {
+        const int l = luaL_checkint(L, 1);
+        const int u = luaL_checkint(L, 2);
+        luaL_argcheck(L, l <= u, 2, "interval is empty");
+        lua_pushnumber(L, static_cast<lua_Number>(rng.next_int(l, u)));
+        break;
+    }
+    default: return luaL_error(L, "wrong number of arguments");
+    }
+    return 1;
+}
+
+/// math.randomseed in the sim state reseeds the session's stream (as
+/// deterministic as the seed a script passes).
+static int l_sim_math_randomseed(lua_State* L) {
+    auto* session = session_random(L);
+    if (!session) return luaL_error(L, "math.randomseed: no sim");
+    session->seed(static_cast<u64>(static_cast<i64>(luaL_checkint(L, 1))));
+    return 0;
 }
 
 static int l_STR_GetTokens(lua_State* L) {
@@ -4923,6 +4971,21 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("MATH_IRound", l_MATH_IRound);
     state.register_function("MATH_Lerp", l_MATH_Lerp);
     state.register_function("Random", l_Random);
+    {
+        // math.random/randomseed on the session's stream (see above).
+        lua_State* L = state.raw();
+        lua_pushstring(L, "math");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "random");
+            lua_pushcfunction(L, l_sim_math_random);
+            lua_rawset(L, -3);
+            lua_pushstring(L, "randomseed");
+            lua_pushcfunction(L, l_sim_math_randomseed);
+            lua_rawset(L, -3);
+        }
+        lua_pop(L, 1);
+    }
 
     // String utilities
     state.register_function("STR_GetTokens", l_STR_GetTokens);

@@ -10,7 +10,10 @@ namespace osc::sim {
 // from render/UI code; only from the deterministic sim tick path.
 class SimRandom {
 public:
-    explicit SimRandom(u64 seed = 0x9E3779B97F4A7C15ull) : state_(seed) {}
+    /// The seed of a game that names none (tests, headless runs, captures).
+    static constexpr u64 kDefaultSeed = 0x9E3779B97F4A7C15ull;
+
+    explicit SimRandom(u64 seed = kDefaultSeed) : state_(seed) {}
 
     void seed(u64 s) { state_ = s; }
 
@@ -27,6 +30,23 @@ public:
     f32 range(f32 lo, f32 hi) {
         f32 unit = static_cast<f32>(next_u64() >> 40) * (1.0f / 16777216.0f);
         return lo + (hi - lo) * unit;
+    }
+
+    /// Uniform double in [0, 1), from the top 53 bits.
+    double next_double() {
+        return static_cast<double>(next_u64() >> 11) * (1.0 / 9007199254740992.0);
+    }
+
+    /// Uniform integer in [lo, hi] (inclusive; lo <= hi), without modulo
+    /// bias: draws in the incomplete top slice are rejected. Integer
+    /// arithmetic only, so every platform gets the same values.
+    i64 next_int(i64 lo, i64 hi) {
+        const u64 span = static_cast<u64>(hi) - static_cast<u64>(lo) + 1; // 0 = all 2^64
+        if (span == 0) return static_cast<i64>(next_u64());
+        const u64 reject_below = (0 - span) % span; // 2^64 mod span
+        u64 r = next_u64();
+        while (r < reject_below) r = next_u64();
+        return static_cast<i64>(static_cast<u64>(lo) + r % span);
     }
 
     u64 state() const { return state_; }
