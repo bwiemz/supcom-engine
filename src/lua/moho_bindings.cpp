@@ -13007,7 +13007,7 @@ static int l_GetSelectedUnits(lua_State* L) {
     return 1;
 }
 
-void osc::lua::push_selected_units_for_ui(lua_State* L) {
+void push_selected_units_for_ui(lua_State* L) {
     l_GetSelectedUnits(L);
     // l_GetSelectedUnits pushes 1 table; nothing else to do
 }
