@@ -24,6 +24,8 @@
 #include <cmath>
 #include <cstring>
 #include <random>
+#include <string>
+#include <string_view>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -83,6 +85,130 @@ static int l_c_CreateEntity(lua_State* L) {
     ent->set_lua_table_ref(ref);
 
     return 0;
+}
+
+// ====================================================================
+// Blueprint script classes. Moho makes each unit an instance of its
+// blueprint's ScriptClass from ScriptModule; both default from the .bp
+// file: /units/UEB1101/UEB1101_unit.bp -> /units/UEB1101/UEB1101_script.lua,
+// class "TypeClass". The generic Unit class is the fallback when a
+// blueprint has no script or it fails to load.
+// ====================================================================
+
+/// "<dir>/<id>_unit.bp" -> "<dir>/<id>_script.lua"; empty if not that shape.
+static std::string default_script_module(std::string source) {
+    std::transform(source.begin(), source.end(), source.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    constexpr std::string_view suffix = "_unit.bp";
+    if (source.size() <= suffix.size() ||
+        source.compare(source.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return {};
+    return source.substr(0, source.size() - suffix.size()) + "_script.lua";
+}
+
+/// Push the generic Unit class (or moho.unit_methods, or nil).
+static void push_generic_unit_class(lua_State* L) {
+    lua_pushstring(L, "__unit_class");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) return;
+    lua_pop(L, 1);
+    lua_pushstring(L, "moho");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "unit_methods");
+        lua_rawget(L, -2);
+        lua_remove(L, -2);
+    }
+}
+
+/// Read a string field of the table at `index` ("" if absent).
+static std::string string_field(lua_State* L, int index, const char* key) {
+    lua_pushstring(L, key);
+    lua_rawget(L, index);
+    std::string value = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return value;
+}
+
+/// Resolve bp_id's script class without the cache: pushes the class table,
+/// or nil when the blueprint names no loadable class.
+static void resolve_unit_script_class(lua_State* L, const char* bp_id) {
+    const int top = lua_gettop(L);
+    std::string module, class_name;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, bp_id);
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            const int bp = lua_gettop(L);
+            module = string_field(L, bp, "ScriptModule");
+            class_name = string_field(L, bp, "ScriptClass");
+            if (module.empty()) module = default_script_module(string_field(L, bp, "Source"));
+        }
+    }
+    lua_settop(L, top);
+    if (class_name.empty()) class_name = "TypeClass";
+
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (module.empty() || !lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushstring(L, module.c_str());
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("Unit script {} ({}) failed to load, using the generic Unit: {}",
+                     module, bp_id, lua_tostring(L, -1));
+        lua_settop(L, top);
+        lua_pushnil(L);
+        return;
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, class_name.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_remove(L, -2); // module table
+            return;
+        }
+    }
+    spdlog::warn("Unit script {} ({}) defines no {}, using the generic Unit",
+                 module, bp_id, class_name);
+    lua_settop(L, top);
+    lua_pushnil(L);
+}
+
+/// Push the Lua class for units of bp_id: its script class, else the
+/// generic Unit. Resolved once per blueprint (scripts load on first use).
+static void push_unit_class(lua_State* L, const char* bp_id) {
+    static const char* kCache = "__osc_unit_script_classes";
+    lua_pushstring(L, kCache);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, kCache);
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    const int cache = lua_gettop(L);
+    lua_pushstring(L, bp_id);
+    lua_rawget(L, cache);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        resolve_unit_script_class(L, bp_id);
+        // Cache misses as false so a broken script is tried (and logged) once.
+        lua_pushstring(L, bp_id);
+        if (lua_istable(L, -2)) lua_pushvalue(L, -2);
+        else lua_pushboolean(L, 0);
+        lua_rawset(L, cache);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        push_generic_unit_class(L);
+    }
+    lua_remove(L, cache);
 }
 
 // ====================================================================
@@ -669,19 +795,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     // Create Lua instance table
     lua_newtable(L);
 
-    // Set metatable: prefer __unit_class, fall back to moho.unit_methods
-    lua_pushstring(L, "__unit_class");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "unit_methods");
-            lua_rawget(L, -2);
-            lua_remove(L, -2);
-        }
-    }
+    // Metatable: the blueprint's script class (else the generic Unit)
+    push_unit_class(L, bp_id);
     if (lua_istable(L, -1)) {
         lua_setmetatable(L, -2);
     } else {
@@ -793,6 +908,50 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     return id; // Lua table left on stack
 }
 
+/// Moho creates a unit's weapon objects between OnPreCreate and OnCreate:
+/// each is an instance of unit:GetWeaponClass(label) (see unit:GetWeapon),
+/// and its OnCreate sets up turret aim controllers, target priorities and
+/// initial silo ammo. Unit scripts then find their weapons by label in their
+/// own OnCreate. Firing itself stays C++-driven until roadmap M200.
+static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
+    lua_pushstring(L, "GetWeaponCount");
+    lua_gettable(L, unit_tbl);
+    if (!lua_isfunction(L, -1)) { lua_pop(L, 1); return; }
+    lua_pushvalue(L, unit_tbl);
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("{} GetWeaponCount error: {}", what, lua_tostring(L, -1));
+        lua_pop(L, 1);
+        return;
+    }
+    const int count = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    for (int i = 1; i <= count; ++i) {
+        lua_pushstring(L, "GetWeapon");
+        lua_gettable(L, unit_tbl);
+        lua_pushvalue(L, unit_tbl);
+        lua_pushnumber(L, i);
+        if (lua_pcall(L, 2, 1, 0) != 0 || !lua_istable(L, -1)) {
+            if (lua_isstring(L, -1))
+                spdlog::warn("{} GetWeapon({}) error: {}", what, i, lua_tostring(L, -1));
+            lua_pop(L, 1);
+            continue;
+        }
+        const int weapon_tbl = lua_gettop(L);
+        lua_pushstring(L, "OnCreate");
+        lua_gettable(L, weapon_tbl);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, weapon_tbl);
+            if (lua_pcall(L, 1, 0, 0) != 0) {
+                spdlog::warn("{} weapon OnCreate error: {}", what, lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_settop(L, weapon_tbl - 1);
+    }
+}
+
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
 static int l_CreateUnit(lua_State* L) {
     auto* sim = get_sim(L);
@@ -831,6 +990,8 @@ static int l_CreateUnit(lua_State* L) {
     } else {
         lua_pop(L, 1);
     }
+
+    create_unit_weapons(L, tbl, "Unit");
 
     // OnCreate
     lua_pushstring(L, "OnCreate");
@@ -924,6 +1085,8 @@ static int l_create_building_unit(lua_State* L) {
     } else {
         lua_pop(L, 1);
     }
+
+    create_unit_weapons(L, tbl, "Building");
 
     // OnCreate
     lua_pushstring(L, "OnCreate");
@@ -1862,6 +2025,11 @@ static int l_CreatePrefetchSet(lua_State* L) {
 /// Extract Entity* from a Lua arg (table with _c_object lightuserdata).
 static sim::Entity* effect_check_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_unit"); // a weapon table: its _c_object is a Weapon*
+    lua_rawget(L, idx);
+    const bool weapon = lua_isuserdata(L, -1);
+    lua_pop(L, 1);
+    if (weapon) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     auto* e = lua_isuserdata(L, -1)
@@ -1949,7 +2117,7 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
@@ -1967,7 +2135,7 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
     const char* bp = luaL_optstring(L, 4, "");
     auto* fx = sim->effect_registry().create();
@@ -1999,7 +2167,7 @@ static int l_CreateAttachedBeam(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
     // length and thickness at args 4,5 stored as params for future rendering
     const char* bp = luaL_optstring(L, 6, "");
@@ -2043,9 +2211,9 @@ static int l_AttachBeamEntityToEntity(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
     auto* start_ent = effect_check_entity(L, 1);
-    i32 start_bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 start_bone = effect_bone_arg(L, 2, start_ent, -1);
     auto* end_ent = effect_check_entity(L, 3);
-    i32 end_bone = static_cast<i32>(luaL_optnumber(L, 4, -1));
+    i32 end_bone = effect_bone_arg(L, 4, end_ent, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 5, 0));
     const char* bp = luaL_optstring(L, 6, "");
     auto* fx = sim->effect_registry().create();
@@ -2066,7 +2234,7 @@ static int l_CreateLightParticle(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
     auto* entity = effect_check_entity(L, 1);
-    i32 bone = static_cast<i32>(luaL_optnumber(L, 2, -1));
+    i32 bone = effect_bone_arg(L, 2, entity, -1);
     i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
     f32 size = static_cast<f32>(luaL_optnumber(L, 4, 1.0));
     f32 duration = static_cast<f32>(luaL_optnumber(L, 5, 1.0));
@@ -2161,7 +2329,7 @@ static int l_CreateSplatOnBone(lua_State* L) {
         oz = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 3);
     }
-    i32 bone = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    i32 bone = effect_bone_arg(L, 3, entity, 0);
 
     auto* fx = sim->effect_registry().create();
     fx->set_type(sim::EffectType::SPLAT);
@@ -2404,27 +2572,22 @@ static int l_CreateAimController(lua_State* L) {
     // arg 1 can be either a weapon table or a unit table
     sim::Unit* unit = nullptr;
     if (lua_istable(L, 1)) {
-        // Try weapon first (_c_object → Weapon*)
-        lua_pushstring(L, "_c_object");
+        // A weapon table stores its owner in _c_unit (its _c_object is a
+        // Weapon*, which must never be treated as an Entity*); a unit table
+        // has only _c_object.
+        lua_pushstring(L, "_c_unit");
         lua_rawget(L, 1);
-        if (lua_isuserdata(L, -1)) {
-            auto* ptr = lua_touserdata(L, -1);
-            // Check if it's an Entity (unit) or Weapon
-            auto* ent = static_cast<sim::Entity*>(ptr);
-            if (ent && ent->is_unit()) {
-                unit = static_cast<sim::Unit*>(ent);
-            }
-        }
+        const bool is_weapon = lua_isuserdata(L, -1);
+        if (is_weapon) unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
         lua_pop(L, 1);
 
-        // If not a unit, try _c_unit (weapon tables store owner here)
-        if (!unit) {
-            lua_pushstring(L, "_c_unit");
+        if (!is_weapon) {
+            lua_pushstring(L, "_c_object");
             lua_rawget(L, 1);
-            if (lua_isuserdata(L, -1)) {
-                unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
-            }
+            auto* ent = lua_isuserdata(L, -1)
+                            ? static_cast<sim::Entity*>(lua_touserdata(L, -1)) : nullptr;
             lua_pop(L, 1);
+            if (ent && ent->is_unit()) unit = static_cast<sim::Unit*>(ent);
         }
     }
 
@@ -3036,7 +3199,7 @@ static int l_OrientFromDir(lua_State* L) {
 // Retrieves or creates the shared vector metatable from the registry.
 // The metatable provides __index for named access (x->1, y->2, z->3)
 // and __newindex for named assignment.
-static void push_vector_metatable(lua_State* L) {
+void push_vector_metatable(lua_State* L) {
     lua_pushstring(L, "osc_vector_mt");
     lua_gettable(L, LUA_REGISTRYINDEX);
     if (!lua_isnil(L, -1)) return; // already created

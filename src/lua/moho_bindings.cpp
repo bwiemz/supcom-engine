@@ -7,6 +7,7 @@
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/sim_bindings.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
@@ -73,8 +74,17 @@ static sim::SimState* get_sim(lua_State* L) {
     return sim;
 }
 
+/// True for a weapon's Lua table: its _c_object is a Weapon*, not an Entity*.
+static bool is_weapon_table(lua_State* L, int idx) {
+    lua_pushstring(L, "_c_unit");
+    lua_rawget(L, idx);
+    const bool weapon = lua_isuserdata(L, -1);
+    lua_pop(L, 1);
+    return weapon;
+}
+
 static sim::Entity* check_entity(lua_State* L, int idx = 1) {
-    if (!lua_istable(L, idx)) return nullptr;
+    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
 
     // Check sim generation — stale handles from a previous SimState return nullptr
     lua_pushstring(L, "_c_sim_gen");
@@ -224,6 +234,8 @@ static void push_vector3(lua_State* L, const sim::Vector3& v) {
     lua_pushnumber(L, 3);
     lua_pushnumber(L, v.z);
     lua_settable(L, -3);
+    push_vector_metatable(L); // pos.x as well as pos[1], as Moho's vectors
+    lua_setmetatable(L, -2);
 }
 
 // ====================================================================
@@ -1710,7 +1722,7 @@ static int entity_SetParentOffset(lua_State* L) {
 
 /// Helper: extract an Entity* from a Lua table at the given stack index.
 static sim::Entity* check_entity_arg(lua_State* L, int idx) {
-    if (!lua_istable(L, idx)) return nullptr;
+    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
     if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return nullptr; }
@@ -2211,41 +2223,69 @@ static int unit_GetWeapon(lua_State* L) {
     lua_pushstring(L, weapon->label.c_str());
     lua_rawset(L, -3);
 
-    // Set metatable — look up or create shared weapon metatable from registry
-    lua_pushstring(L, "__osc_weapon_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L); // mt
-        int mt_idx = lua_gettop(L);
-        lua_pushstring(L, "__index");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, mt_idx);
-        // Copy methods from moho.weapon_methods
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "weapon_methods");
-            lua_rawget(L, -2);
+    // Class: the unit's weapon class for this label (unit:GetWeaponClass,
+    // i.e. its Weapons table entry or the base /lua/sim/Weapon.lua Weapon),
+    // with `unit` set as Weapon.__init does. Retail scripts call Lua-side
+    // Weapon methods (SetWeaponEnabled, WeaponUsesEnergy). OnCreate and the
+    // firing callbacks stay C++-driven until roadmap M200.
+    const int wtable = lua_gettop(L);
+    bool classed = false;
+    if (unit->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, unit->lua_table_ref());
+        const int utable = lua_gettop(L);
+        lua_pushstring(L, "GetWeaponClass");
+        lua_gettable(L, utable);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, utable);
+            lua_pushstring(L, weapon->label.c_str());
+            if (lua_pcall(L, 2, 1, 0) == 0 && lua_istable(L, -1)) {
+                lua_setmetatable(L, wtable);
+                lua_pushstring(L, "unit");
+                lua_pushvalue(L, utable);
+                lua_rawset(L, wtable);
+                classed = true;
+            }
+        }
+        lua_settop(L, wtable);
+    }
+
+    // Otherwise the shared engine-methods metatable.
+    if (!classed) {
+        lua_pushstring(L, "__osc_weapon_mt");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        if (!lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L); // mt
+            int mt_idx = lua_gettop(L);
+            lua_pushstring(L, "__index");
+            lua_pushvalue(L, mt_idx);
+            lua_rawset(L, mt_idx);
+            // Copy methods from moho.weapon_methods
+            lua_pushstring(L, "moho");
+            lua_rawget(L, LUA_GLOBALSINDEX);
             if (lua_istable(L, -1)) {
-                int src_idx = lua_gettop(L);
-                lua_pushnil(L);
-                while (lua_next(L, src_idx) != 0) {
-                    lua_pushvalue(L, -2);
-                    lua_pushvalue(L, -2);
-                    lua_rawset(L, mt_idx);
-                    lua_pop(L, 1);
+                lua_pushstring(L, "weapon_methods");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    int src_idx = lua_gettop(L);
+                    lua_pushnil(L);
+                    while (lua_next(L, src_idx) != 0) {
+                        lua_pushvalue(L, -2);
+                        lua_pushvalue(L, -2);
+                        lua_rawset(L, mt_idx);
+                        lua_pop(L, 1);
+                    }
                 }
+                lua_pop(L, 1);
             }
             lua_pop(L, 1);
+            // Cache in registry
+            lua_pushstring(L, "__osc_weapon_mt");
+            lua_pushvalue(L, mt_idx);
+            lua_rawset(L, LUA_REGISTRYINDEX);
         }
-        lua_pop(L, 1);
-        // Cache in registry
-        lua_pushstring(L, "__osc_weapon_mt");
-        lua_pushvalue(L, mt_idx);
-        lua_rawset(L, LUA_REGISTRYINDEX);
+        lua_setmetatable(L, -2);
     }
-    lua_setmetatable(L, -2);
 
     // Store Lua table ref on the weapon
     lua_pushvalue(L, -1);
@@ -3749,9 +3789,25 @@ static int proj_GetVelocity(lua_State* L) {
     return 3;
 }
 
+// projectile:SetVelocity(vx, vy, vz) or projectile:SetVelocity(speed); the
+// one-argument form keeps the direction of travel (or, at rest, the facing).
 static int proj_SetVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (!p) { lua_pushvalue(L, 1); return 1; }
+    if (!lua_isnumber(L, 3)) {
+        const f32 speed = static_cast<f32>(luaL_checknumber(L, 2));
+        sim::Vector3 dir = p->velocity;
+        f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        if (len < 1e-6f) {
+            dir = sim::quat_rotate(p->orientation(), {0.0f, 0.0f, 1.0f});
+            len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+        }
+        if (len > 1e-6f) {
+            p->velocity = {dir.x / len * speed, dir.y / len * speed, dir.z / len * speed};
+        }
+        lua_pushvalue(L, 1);
+        return 1;
+    }
     p->velocity.x = static_cast<f32>(luaL_checknumber(L, 2));
     p->velocity.y = static_cast<f32>(luaL_checknumber(L, 3));
     p->velocity.z = static_cast<f32>(luaL_checknumber(L, 4));
@@ -3962,13 +4018,15 @@ static int proj_SetCollision(lua_State* L) {
 
 static int proj_SetCollideEntity(lua_State* L) {
     // No-op + chaining (collision system not fully implemented)
-    lua_pushvalue(L, 1); return 1;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int proj_SetCollideSurface(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) p->collide_surface = (lua_toboolean(L, 2) != 0);
-    lua_pushvalue(L, 1); return 1;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int proj_StayUnderwater(lua_State* L) {
@@ -8214,25 +8272,29 @@ static int manip_Destroy(lua_State* L) {
 static int manip_Enable(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(true);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_Disable(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(false);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_SetEnabled(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_enabled(lua_toboolean(L, 2) != 0);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_SetPrecedence(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) m->set_precedence(static_cast<i32>(lua_tonumber(L, 2)));
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int manip_IsEnabled(lua_State* L) {
@@ -8279,7 +8341,8 @@ static int rotate_SetCurrentAngle(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_current_angle(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_GetCurrentAngle(lua_State* L) {
@@ -8298,7 +8361,8 @@ static int rotate_SetSpinDown(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_spin_down(
             lua_toboolean(L, 2) != 0);
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_SetTargetSpeed(lua_State* L) {
@@ -8307,7 +8371,8 @@ static int rotate_SetTargetSpeed(lua_State* L) {
         static_cast<sim::RotateManipulator*>(m)->set_target_speed(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int rotate_ClearGoal(lua_State* L) {
@@ -8315,7 +8380,8 @@ static int rotate_ClearGoal(lua_State* L) {
     if (m) {
         static_cast<sim::RotateManipulator*>(m)->clear_goal();
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- AnimationManipulator methods ---
@@ -8350,7 +8416,8 @@ static int anim_SetAnimationFraction(lua_State* L) {
         static_cast<sim::AnimManipulator*>(m)->set_animation_fraction(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int anim_GetAnimationFraction(lua_State* L) {
@@ -8389,7 +8456,8 @@ static int anim_SetAnimationTime(lua_State* L) {
         static_cast<sim::AnimManipulator*>(m)->set_animation_time(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- SlideManipulator methods ---
@@ -8449,7 +8517,8 @@ static int aim_SetFiringArc(lua_State* L) {
             static_cast<f32>(lua_tonumber(L, 6)),
             static_cast<f32>(lua_tonumber(L, 7)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_SetHeadingPitch(lua_State* L) {
@@ -8459,7 +8528,8 @@ static int aim_SetHeadingPitch(lua_State* L) {
             static_cast<f32>(lua_tonumber(L, 2)),
             static_cast<f32>(lua_tonumber(L, 3)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_GetHeadingPitch(lua_State* L) {
@@ -8487,7 +8557,8 @@ static int aim_SetResetPoseTime(lua_State* L) {
         static_cast<sim::AimManipulator*>(m)->set_reset_pose_time(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int aim_SetAimHeadingOffset(lua_State* L) {
@@ -8496,7 +8567,8 @@ static int aim_SetAimHeadingOffset(lua_State* L) {
         static_cast<sim::AimManipulator*>(m)->set_aim_heading_offset(
             static_cast<f32>(lua_tonumber(L, 2)));
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 // --- Method tables ---
@@ -8526,12 +8598,13 @@ static const MethodEntry aim_manipulator_methods[] = {
 // animator:SetBoneEnabled(boneName, enabled)
 static int anim_SetBoneEnabled(lua_State* L) {
     auto* m = check_manip_base(L);
-    if (!m || !m->owner()) return 0;
+    if (!m || !m->owner()) { lua_pushvalue(L, 1); return 1; }
     auto* anim = static_cast<sim::AnimManipulator*>(m);
     i32 bone_idx = resolve_bone_index(m->owner(), L, 2);
     bool enabled = lua_toboolean(L, 3) != 0;
     anim->set_bone_enabled(bone_idx, enabled);
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static int anim_SetBlendTime(lua_State* L) {
@@ -8541,7 +8614,8 @@ static int anim_SetBlendTime(lua_State* L) {
         if (seconds < 0.0f) seconds = 0.0f;
         static_cast<sim::AnimManipulator*>(m)->set_blend_time(seconds);
     }
-    return 0;
+    lua_pushvalue(L, 1); // setters return self for chaining
+    return 1;
 }
 
 static const MethodEntry animation_manipulator_methods[] = {

@@ -1320,22 +1320,10 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
         economy_.consumption_active = true;
     }
 
-    // Set UnitBeingBuilt and UnitBuildOrder on builder Lua table
-    // (FactoryUnit.BuildingState.Main reads these)
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int btbl = lua_gettop(L);
-        lua_pushstring(L, "UnitBeingBuilt");
-        lua_pushvalue(L, target_tbl);
-        lua_rawset(L, btbl);
-        lua_pushstring(L, "UnitBuildOrder");
-        const char* build_order = "MobileBuild";
-        if (cmd.type == CommandType::BuildFactory) build_order = "UnitBuild";
-        else if (cmd.type == CommandType::Upgrade) build_order = "Upgrade";
-        lua_pushstring(L, build_order);
-        lua_rawset(L, btbl);
-        lua_pop(L, 1); // btbl
-    }
+    // UnitBeingBuilt / UnitBuildOrder on the builder are the scripts' own
+    // fields (StructureUnit/ConstructionUnit.OnStartBuild set them), not the
+    // engine's: clearing them when the build ended broke factory rolloff,
+    // which still reads UnitBeingBuilt afterwards.
 
     // Call builder:OnStartBuild(target, order_type)
     const char* order_str = "UnitBuild";
@@ -1552,19 +1540,6 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
             }
             lua_pop(L, 1); // builder_tbl
         }
-    }
-
-    // Clear UnitBeingBuilt and UnitBuildOrder on builder Lua table
-    if (lua_table_ref() >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
-        int btbl = lua_gettop(L);
-        lua_pushstring(L, "UnitBeingBuilt");
-        lua_pushnil(L);
-        lua_rawset(L, btbl);
-        lua_pushstring(L, "UnitBuildOrder");
-        lua_pushnil(L);
-        lua_rawset(L, btbl);
-        lua_pop(L, 1);
     }
 
     // Clear builder's economy drain
