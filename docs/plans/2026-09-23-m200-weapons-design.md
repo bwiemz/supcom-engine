@@ -99,6 +99,40 @@ projectile scripts extracted from the retail `.scd` archives.
   error-free, and `data.determinism`, `data.replay_roundtrip` and the
   cross-OS check still pass.
 
+**What building M200b established about Moho:**
+
+- **Blueprint defaults.** Scripts see blueprints the engine rebuilt from its
+  typed copies, so a numeric weapon field a `.bp` omits reads as 0. Retail
+  depends on this: its `GetDamageTable` adds `DamageRadius`, which 228 of
+  its 494 weapons omit, the UEF commander's gun among them.
+  `RegisterUnitBlueprint` now fills the fields retail reads unguarded.
+- **The fire clock** counts whole ticks, `round(10 / RateOfFire)`, the same
+  rounding FAF's DPS calculator uses. It restarts on every `OnFire`, even
+  one the state machine ignores. Retail's bombers need `SkipReadyState`
+  for exactly that reason: an `OnFire` that only moves the weapon from Idle
+  to FireReady costs a whole cycle.
+- **`CanFire` includes the unit's `Busy` state**, as FAF's decompiled
+  pseudocode has it. `SetBusy` is that state: XSL0111's own script waits on
+  `IsUnitState('Busy')`. The firing states set it, which makes a weapon's
+  salvo exclusive unless the blueprint says `NotExclusive`.
+- **Consequence: retail's reload weapons detour through Idle.**
+  `RackSalvoReloadState` asks `CanFire()` while its unit is still Busy, so
+  the weapon goes to Idle. Idle's `OnFire` restarts the clock, and the shot
+  waits for the next one. That costs up to one fire period, unless an
+  unpack, a charge or a reload animation already takes that long:
+  `RackSalvoFireReadyState` fires at once when the blueprint has
+  `AnimationReload`. Measured with `--weapon-test`: XSL0111 (reload
+  animation) fires every 71 ticks against 1/RateOfFire = 67. DEL0204's
+  gatling starts a salvo every 91 ticks: reload, unpack and a 3.1 s charge
+  cover its 10-tick period. FAF's reload state skips `CanFire` for this
+  reason; we match the engine and let each game's scripts decide.
+- **Thread latency.** A state's `Main` is forked, so a shot leaves a tick
+  after its `OnFire`. Shots are still exactly one period apart.
+- **Motion events.** Our ground units reach full speed at once, so a start
+  raises `Stopped→Cruise`, then `Cruise→TopSpeed` a tick later, and a stop
+  raises `Stopping`, then `Stopped`. Retail's `Unit` script plays move
+  sounds and effects on these events and forwards each one to its weapons.
+
 ### M200c — target priorities and restrictions
 
 - Targets are chosen by `SetTargetingPriorities` order, then distance.
