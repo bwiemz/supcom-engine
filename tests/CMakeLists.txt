@@ -7,6 +7,7 @@ add_executable(osc_tests
     test_script_hooks.cpp
     test_blueprint_categories.cpp
     test_category_expr.cpp
+    test_scm_bones.cpp
     test_image.cpp
     test_navigation_throttle.cpp
     test_build_placement.cpp
