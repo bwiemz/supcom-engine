@@ -15,7 +15,7 @@ namespace osc::sim {
 /// the new sim is seeded with `seed` before any of it runs, since boot
 /// scripts roll numbers too.
 struct Replay {
-    static constexpr u32 kVersion = 2; // 2: the game's random seed
+    static constexpr u32 kVersion = 3; // 2: the game's seed; 3: SimCallbacks
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers

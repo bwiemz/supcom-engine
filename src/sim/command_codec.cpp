@@ -89,9 +89,24 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.str(c.command.blueprint_id);
     w.u32v(static_cast<u32>(c.unit_ids.size()));
     for (u32 id : c.unit_ids) w.u32v(id);
+
+    w.u8v(c.callback ? 1 : 0);
+    if (!c.callback) return;
+    const SimCallbackEntry& cb = *c.callback;
+    w.str(cb.func_name);
+    w.u32v(static_cast<u32>(cb.args.size()));
+    for (const auto& [key, value] : cb.args) {
+        w.str(key);
+        w.u8v(static_cast<u8>(value.index()));
+        if (const auto* s = std::get_if<std::string>(&value)) w.str(*s);
+        else if (const auto* n = std::get_if<f64>(&value)) w.f64v(*n);
+        else w.u8v(std::get<bool>(value) ? 1 : 0);
+    }
+    w.u32v(static_cast<u32>(cb.unit_ids.size()));
+    for (u32 id : cb.unit_ids) w.u32v(id);
 }
 
-bool read_command(ByteReader& r, ScheduledCommand& c) {
+bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback) {
     c = ScheduledCommand{};
     c.exec_tick = r.u32v();
     c.source = r.u32v();
@@ -105,6 +120,23 @@ bool read_command(ByteReader& r, ScheduledCommand& c) {
     c.command.blueprint_id = r.str();
     const u32 n = r.u32v();
     for (u32 i = 0; i < n && r.ok(); ++i) c.unit_ids.push_back(r.u32v());
+
+    if (!with_callback || r.u8v() == 0) return r.ok();
+    SimCallbackEntry cb;
+    cb.func_name = r.str();
+    const u32 nargs = r.u32v();
+    for (u32 i = 0; i < nargs && r.ok(); ++i) {
+        std::string key = r.str();
+        switch (r.u8v()) {
+        case 0: cb.args[key] = r.str(); break;
+        case 1: cb.args[key] = r.f64v(); break;
+        case 2: cb.args[key] = r.u8v() != 0; break;
+        default: r.fail(); break;
+        }
+    }
+    const u32 nunits = r.u32v();
+    for (u32 i = 0; i < nunits && r.ok(); ++i) cb.unit_ids.push_back(r.u32v());
+    if (r.ok()) c.callback = std::move(cb);
     return r.ok();
 }
 

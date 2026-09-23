@@ -37,7 +37,8 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
     const u32 count = r.u32v();
     for (u32 i = 0; i < count && r.ok(); ++i) {
         ScheduledCommand c;
-        if (read_command(r, c)) out.commands.push_back(std::move(c));
+        if (read_command(r, c, /*with_callback=*/out.version >= 3))
+            out.commands.push_back(std::move(c));
     }
     if (!r.ok()) {
         out = Replay{};

@@ -95,6 +95,10 @@ bool mp_attach_session(osc::sim::SimState& sim) {
                   const osc::sim::UnitCommand& cmd, bool clear) {
             session->submit_local(ids, cmd, clear);
         });
+    // And the UI's SimCallbacks, so every peer runs them on the same tick.
+    sim.set_local_callback_sink([session](osc::sim::SimCallbackEntry cb) {
+        session->submit_local_callback(std::move(cb));
+    });
     // Every client seeds its sim from the host's shared seed so RNG matches.
     sim.set_seed(s.seed);
     spdlog::info("[mp] LockstepSession attached (local source {}, seed {:#018x})",

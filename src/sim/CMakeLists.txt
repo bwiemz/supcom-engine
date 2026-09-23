@@ -24,6 +24,7 @@ add_library(osc_sim STATIC
     sim_state.cpp
     world_snapshot.cpp
     command_codec.cpp
+    sim_callbacks.cpp
 )
 add_library(osc::sim ALIAS osc_sim)
 

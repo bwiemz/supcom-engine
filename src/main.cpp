@@ -927,147 +927,11 @@ static bool execute_reload_sequence(
     return true;
 }
 
-/// Apply the UI's queued SimCallbacks to the sim, as their tick does:
-/// retail /lua/SimCallbacks.lua DoCallback(name, args, units). ProcessInfo
-/// requests (UserUnit:ProcessInfo -- auto mode, repeat queue) travel the
-/// same queue. Like the UI's other unit-setting toggles (pause, fire state,
-/// script bits), they change this client's sim directly: lockstep
-/// multiplayer does not broadcast unit settings yet (roadmap Phase G);
-/// only orders issued through route_command are.
-static void apply_sim_callbacks(osc::sim::SimCallbackQueue& queue,
-                                osc::sim::SimState& sim,
-                                osc::lua::LuaState& sim_lua) {
-    if (queue.empty()) return;
-    auto callbacks = queue.drain();
-    lua_State* sL = sim_lua.raw();
-    auto* sim_state = &sim;
-
-    // ProcessInfo(action, value): the unit's own method of that name, with
-    // the value as a boolean -- for the settings the UI sends this way only
-    // (retail: auto mode, repeat build; FAF's construction panel also pauses
-    // factories), never an arbitrary method a UI script names.
-    static const std::unordered_set<std::string> kProcessInfoActions = {
-        "SetAutoMode", "SetRepeatQueue", "SetPaused"};
-    auto process_info = [&](const osc::sim::SimCallbackEntry& cb) {
-        auto get = [&](const char* key) -> std::string {
-            auto it = cb.args.find(key);
-            if (it == cb.args.end()) return {};
-            if (auto* str = std::get_if<std::string>(&it->second)) return *str;
-            return {};
-        };
-        const std::string action = get("Action");
-        const bool value = get("Value") == "true";
-        if (!kProcessInfoActions.count(action)) {
-            spdlog::warn("ProcessInfo: unsupported action '{}'", action);
-            return;
-        }
-        for (osc::u32 eid : cb.unit_ids) {
-            auto* e = sim.entity_registry().find(eid);
-            if (!e || !e->is_unit() || e->destroyed() || e->lua_table_ref() < 0) continue;
-            lua_rawgeti(sL, LUA_REGISTRYINDEX, e->lua_table_ref());
-            const int unit = lua_gettop(sL);
-            lua_pushstring(sL, action.c_str());
-            lua_gettable(sL, unit);
-            if (lua_isfunction(sL, -1)) {
-                lua_pushvalue(sL, unit);
-                lua_pushboolean(sL, value ? 1 : 0);
-                if (lua_pcall(sL, 2, 0, 0) != 0) {
-                    spdlog::warn("ProcessInfo {} error: {}", action, lua_tostring(sL, -1));
-                    lua_pop(sL, 1);
-                }
-            } else {
-                lua_pop(sL, 1);
-            }
-            lua_pop(sL, 1); // unit table
-        }
-    };
-
-    // These callbacks carry the local player's UI-panel orders,
-    // so mark human input active: in multiplayer route_command
-    // then forwards them to the lockstep session for broadcast
-    // (single-player applies them directly, unaffected).
-    sim_state->set_human_input_active(true);
-
-    // Import SimCallbacks module once for the batch
-    lua_pushstring(sL, "import");
-    lua_rawget(sL, LUA_GLOBALSINDEX);
-    bool have_module = false;
-    if (lua_isfunction(sL, -1)) {
-        lua_pushstring(sL, "/lua/SimCallbacks.lua");
-        if (lua_pcall(sL, 1, 1, 0) == 0 && lua_istable(sL, -1)) {
-            have_module = true;
-        } else {
-            if (lua_isstring(sL, -1))
-                spdlog::warn("SimCallback import error: {}", lua_tostring(sL, -1));
-            lua_pop(sL, 1);
-        }
-    } else {
-        lua_pop(sL, 1);
-    }
-
-    if (have_module) {
-        int mod = lua_gettop(sL);
-        for (const auto& cb : callbacks) {
-            if (cb.func_name == osc::sim::kProcessInfoCallback) {
-                process_info(cb);
-                continue;
-            }
-            // Get DoCallback function (re-fetch each time since pcall may error)
-            lua_pushstring(sL, "DoCallback");
-            lua_rawget(sL, mod);
-            if (!lua_isfunction(sL, -1)) {
-                lua_pop(sL, 1);
-                continue;
-            }
-
-            // Arg 1: func name
-            lua_pushstring(sL, cb.func_name.c_str());
-
-            // Arg 2: args table
-            lua_newtable(sL);
-            for (const auto& [key, val] : cb.args) {
-                lua_pushstring(sL, key.c_str());
-                std::visit([&](const auto& v) {
-                    using T = std::decay_t<decltype(v)>;
-                    if constexpr (std::is_same_v<T, std::string>) {
-                        lua_pushstring(sL, v.c_str());
-                    } else if constexpr (std::is_same_v<T, osc::f64>) {
-                        lua_pushnumber(sL, static_cast<lua_Number>(v));
-                    } else if constexpr (std::is_same_v<T, bool>) {
-                        lua_pushboolean(sL, v ? 1 : 0);
-                    }
-                }, val);
-                lua_rawset(sL, -3);
-            }
-
-            // Arg 3: units table (array of unit entity tables), or nil
-            if (!cb.unit_ids.empty()) {
-                lua_newtable(sL);
-                int units_tbl = lua_gettop(sL);
-                int idx = 1;
-                for (osc::u32 eid : cb.unit_ids) {
-                    auto* entity = sim_state->entity_registry().find(eid);
-                    if (entity && entity->is_unit() && !entity->destroyed()) {
-                        if (entity->lua_table_ref() >= 0) {
-                            lua_rawgeti(sL, LUA_REGISTRYINDEX, entity->lua_table_ref());
-                            lua_rawseti(sL, units_tbl, idx++);
-                        }
-                    }
-                }
-            } else {
-                lua_pushnil(sL); // no units
-            }
-
-            // Call DoCallback(name, args, units)
-            if (lua_pcall(sL, 3, 0, 0) != 0) {
-                const char* err = lua_tostring(sL, -1);
-                spdlog::warn("SimCallback '{}' error: {}", cb.func_name, err ? err : "(unknown)");
-                lua_pop(sL, 1);
-            }
-        }
-        lua_pop(sL, 1); // pop module table
-    }
-    sim_state->set_human_input_active(false);
+/// Hand the UI's queued SimCallbacks to the sim. Moho runs them as
+/// commands, inside a tick: in multiplayer they are broadcast and every peer
+/// runs them on the same tick; in single-player they run at the next tick.
+static void submit_sim_callbacks(osc::sim::SimCallbackQueue& queue, osc::sim::SimState& sim) {
+    for (auto& cb : queue.drain()) sim.submit_callback(std::move(cb));
 }
 
 /// Whether the cursor is over FA's UI rather than the world: the deepest
@@ -3004,7 +2868,7 @@ int main(int argc, char* argv[]) {
 
                 // Process SimCallbacks from UI (M138a)
                 if (sim_state && sim_lua_state)
-                    apply_sim_callbacks(sim_callback_queue, *sim_state, *sim_lua_state);
+                    submit_sim_callbacks(sim_callback_queue, *sim_state);
 
                 // OnFirstUpdate — fire once after first sim tick
                 static bool first_update_fired = false;
@@ -3892,7 +3756,7 @@ int main(int argc, char* argv[]) {
         // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
         auto play = [&](int ticks) {
             for (int t = 0; t < ticks; ++t) {
-                apply_sim_callbacks(test_callbacks, *sim_state, *sim_lua_state);
+                submit_sim_callbacks(test_callbacks, *sim_state);
                 sim_state->tick();
                 world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
                 note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);

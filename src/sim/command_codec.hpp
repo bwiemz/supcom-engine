@@ -36,6 +36,7 @@ public:
     f64 f64v();
     std::string str();
     bool ok() const { return ok_; }
+    void fail() { ok_ = false; }
     size_t position() const { return pos_; }
 
 private:
@@ -45,8 +46,10 @@ private:
     bool ok_ = true;
 };
 
+/// A command, with its SimCallback if it carries one.
 void write_command(ByteWriter& w, const ScheduledCommand& c);
-/// False when the bytes ran out.
-bool read_command(ByteReader& r, ScheduledCommand& c);
+/// False when the bytes ran out or are malformed. `with_callback` is false
+/// only for replays written before commands could carry callbacks.
+bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback = true);
 
 } // namespace osc::sim

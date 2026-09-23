@@ -494,6 +494,27 @@ u32 SimState::schedule_command(u32 source, const std::vector<u32>& unit_ids,
     return exec_tick;
 }
 
+u32 SimState::schedule_callback(u32 source, SimCallbackEntry callback) {
+    ScheduledCommand sc;
+    sc.exec_tick = tick_count_ + 1 + command_delay_;
+    sc.source = source;
+    sc.callback = std::move(callback);
+    const u32 exec_tick = sc.exec_tick;
+    if (recording_) {
+        recorded_replay_.commands.push_back(sc);
+        if (exec_tick > recorded_replay_.final_tick) recorded_replay_.final_tick = exec_tick;
+        recorded_replay_.command_delay = command_delay_;
+        recorded_replay_.victory_condition = victory_condition_;
+    }
+    command_scheduler_.submit(std::move(sc));
+    return exec_tick;
+}
+
+void SimState::submit_callback(SimCallbackEntry callback) {
+    if (local_callback_sink_) local_callback_sink_(std::move(callback));
+    else schedule_callback(0, std::move(callback));
+}
+
 void SimState::route_command(const std::vector<u32>& unit_ids,
                              const UnitCommand& command, bool clear_existing) {
     // Local human order under an active network session → broadcast + schedule
@@ -527,6 +548,10 @@ void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
     command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& sc) {
+        if (sc.callback) {
+            run_sim_callback(*sc.callback);
+            return;
+        }
         for (u32 uid : sc.unit_ids) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;

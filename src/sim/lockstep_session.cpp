@@ -32,6 +32,15 @@ void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
     pending_.push_back(std::move(sc));    // and queue for broadcast
 }
 
+void LockstepSession::submit_local_callback(SimCallbackEntry callback) {
+    ScheduledCommand sc;
+    sc.exec_tick = next_frame_;
+    sc.source = local_source_;
+    sc.callback = std::move(callback);
+    sim_.command_scheduler().submit(sc); // apply to local sim
+    pending_.push_back(std::move(sc));   // and queue for broadcast
+}
+
 void LockstepSession::send_frame() {
     std::vector<u8> msg;
     ByteWriter w(msg);

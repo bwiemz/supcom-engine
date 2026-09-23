@@ -1,11 +1,13 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/unit_command.hpp"
 
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -21,6 +23,9 @@ struct ScheduledCommand {
     UnitCommand command;        // the order payload
     std::vector<u32> unit_ids;  // entities that receive the order
     bool clear_existing = true; // replace the queue (fresh order) vs append (queued)
+    /// A UI script's SimCallback instead of a unit order: run in the sim at
+    /// exec_tick on every peer (see SimState::run_sim_callback).
+    std::optional<SimCallbackEntry> callback;
 };
 
 /// Tick-keyed command buffer for deterministic — and lockstep-ready — command
@@ -77,9 +82,12 @@ public:
                       const std::function<void(const ScheduledCommand&)>& apply) {
         auto it = by_tick_.find(tick);
         if (it == by_tick_.end()) return;
-        sort_canonical(it->second);
-        for (const auto& c : it->second) apply(c);
+        // Taken out first: applying one (a SimCallback runs scripts) may
+        // submit more commands.
+        std::vector<ScheduledCommand> due = std::move(it->second);
         by_tick_.erase(it);
+        sort_canonical(due);
+        for (const auto& c : due) apply(c);
     }
 
     /// Peek the (canonically ordered) commands pending for a tick.

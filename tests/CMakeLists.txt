@@ -15,6 +15,7 @@ add_executable(osc_tests
     test_ordered_iteration.cpp
     test_dmath.cpp
     test_cross_platform.cpp
+    test_sim_callbacks.cpp
     test_binding_coverage.cpp
     test_lua_state.cpp
     test_sim_sync.cpp

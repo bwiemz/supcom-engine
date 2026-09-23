@@ -32,6 +32,10 @@ public:
     void submit_local(const std::vector<u32>& unit_ids, const UnitCommand& cmd,
                       bool clear_existing);
 
+    /// Queue a local SimCallback the same way: every peer runs it on the
+    /// frame's tick.
+    void submit_local_callback(SimCallbackEntry callback);
+
     /// Phase 1: broadcast this peer's frame (queued commands + confirmation +
     /// last checksum) and confirm the frame locally.
     void send_frame();

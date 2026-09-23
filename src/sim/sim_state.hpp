@@ -269,7 +269,26 @@ public:
     void set_local_command_sink(LocalCommandSink sink) {
         local_command_sink_ = std::move(sink);
     }
-    void clear_local_command_sink() { local_command_sink_ = nullptr; }
+    void clear_local_command_sink() {
+        local_command_sink_ = nullptr;
+        local_callback_sink_ = nullptr;
+    }
+
+    /// A UI script's SimCallback. Moho runs these in the sim, as commands:
+    /// in multiplayer it goes to the local callback sink (the lockstep
+    /// session broadcasts it and every peer runs it on the same tick); in
+    /// single-player it is scheduled for the next tick. Either way it runs
+    /// inside a tick, never between them.
+    void submit_callback(SimCallbackEntry callback);
+    /// Schedule a SimCallback from `source` after the command delay; returns
+    /// the tick it will run on. Recorded in a replay like any command.
+    u32 schedule_callback(u32 source, SimCallbackEntry callback);
+    using LocalCallbackSink = std::function<void(SimCallbackEntry)>;
+    void set_local_callback_sink(LocalCallbackSink sink) { local_callback_sink_ = std::move(sink); }
+    /// Run a SimCallback now: an engine-handled ProcessInfo, else FA's
+    /// /lua/SimCallbacks.lua DoCallback(name, args, units). Called for due
+    /// callbacks at the start of a tick.
+    void run_sim_callback(const SimCallbackEntry& cb);
     /// True once a network command sink is installed (i.e. this is a networked
     /// multiplayer session rather than local single-player).
     bool multiplayer() const { return static_cast<bool>(local_command_sink_); }
@@ -539,6 +558,7 @@ private:
     CommandScheduler command_scheduler_;
     u32 command_delay_ = 0;
     LocalCommandSink local_command_sink_;   // set → networked multiplayer
+    LocalCallbackSink local_callback_sink_; // set → networked multiplayer
     bool human_input_active_ = false;        // raised around local human input
     Replay recorded_replay_;
     bool recording_ = false;

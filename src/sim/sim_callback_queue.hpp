@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/types.hpp"
+#include <map>
 #include <string>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -15,8 +15,9 @@ inline constexpr const char* kProcessInfoCallback = "__osc_ProcessInfo";
 struct SimCallbackEntry {
     std::string func_name;
     // Args: simple key→value map. Values can be string, number, or bool.
-    // This covers the vast majority of FA SimCallback usage.
-    std::unordered_map<std::string, std::variant<std::string, f64, bool>> args;
+    // This covers the vast majority of FA SimCallback usage. Ordered, so
+    // every peer builds the script's args table the same way.
+    std::map<std::string, std::variant<std::string, f64, bool>> args;
     // Optional: selected unit entity IDs (when addUnitSelection=true)
     std::vector<u32> unit_ids;
 };
