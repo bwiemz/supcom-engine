@@ -1,4 +1,5 @@
 #include "sim/navigator.hpp"
+#include "core/dmath.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "map/pathfinder.hpp"
@@ -189,7 +190,7 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     // --- 1. Heading: turn toward target ---
     f32 dx = wp.x - pos.x;
     f32 dz = wp.z - pos.z;
-    f32 desired_heading = std::atan2(dx, dz); // atan2(x,z) for Y-up heading
+    f32 desired_heading = osc::dmath::atan2(dx, dz); // atan2(x,z) for Y-up heading
     f32 heading = unit.heading();
 
     // Shortest-arc angle difference
@@ -230,8 +231,8 @@ bool Navigator::update_air(Unit& unit, f64 dt,
 
     // --- 4. Move along heading ---
     f32 step = airspeed * fdt;
-    pos.x += std::sin(heading) * step;
-    pos.z += std::cos(heading) * step;
+    pos.x += osc::dmath::sin(heading) * step;
+    pos.z += osc::dmath::cos(heading) * step;
 
     // --- 5. Altitude management ---
     // Use get_terrain_height (NOT get_surface_height) — air units fly above terrain,

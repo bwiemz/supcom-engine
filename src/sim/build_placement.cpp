@@ -1,4 +1,5 @@
 #include "sim/build_placement.hpp"
+#include "core/dmath.hpp"
 
 #include "map/pathfinding_grid.hpp"
 #include "sim/sim_state.hpp"
@@ -110,7 +111,8 @@ bool StructurePlacement::terrain_allows(const PlacementRules& r,
 }
 
 bool StructurePlacement::structure_overlaps(const StructureSite& site) const {
-    const f32 reach = 0.5f * std::hypot(site.size_x, site.size_z) + MAX_STRUCTURE_HALF_EXTENT;
+    const f32 reach =
+        0.5f * osc::dmath::hypot(site.size_x, site.size_z) + MAX_STRUCTURE_HALF_EXTENT;
     const auto& registry = sim_.entity_registry();
     for (u32 id : registry.collect_in_radius(site.x, site.z, reach)) {
         const auto* e = registry.find(id);

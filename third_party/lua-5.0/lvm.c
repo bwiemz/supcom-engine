@@ -32,8 +32,21 @@
 
 
 /* function to convert a lua_Number to a string */
+/* OpenSupCom: numbers become strings through std::to_chars, which the C++
+** standard defines exactly (as printf's "%.14g" in the "C" locale). sprintf
+** follows the process locale (a script may call os.setlocale) and the C
+** runtime (glibc and MSVC spell NaN differently), and tostring() results
+** become table keys and messages that lockstep peers must agree on. */
+#include <charconv>
+
+static void osc_number2str (char *s, lua_Number n) {
+  /* 32 bytes: "%.14g" of a double needs at most 22 */
+  std::to_chars_result r = std::to_chars(s, s + 31, n, std::chars_format::general, 14);
+  *r.ptr = '\0';
+}
+
 #ifndef lua_number2str
-#define lua_number2str(s,n)     sprintf((s), LUA_NUMBER_FMT, (n))
+#define lua_number2str(s,n)     osc_number2str((s), (n))
 #endif
 
 

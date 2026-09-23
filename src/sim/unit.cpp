@@ -1,4 +1,5 @@
 #include "sim/unit.hpp"
+#include "core/dmath.hpp"
 #include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/bone_data.hpp"
@@ -270,8 +271,8 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
         // Move forward (decaying) and down
         auto p = position();
         f32 fwd = current_airspeed_ * 0.5f;
-        p.x += std::sin(heading_) * fwd * dt;
-        p.z += std::cos(heading_) * fwd * dt;
+        p.x += osc::dmath::sin(heading_) * fwd * dt;
+        p.z += osc::dmath::cos(heading_) * fwd * dt;
         p.y += crash_velocity_y_ * dt;
 
         // Terrain impact check
