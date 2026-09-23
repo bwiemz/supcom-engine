@@ -232,7 +232,7 @@ LUALIB_API void luaL_openlib (lua_State *L, const char *libname,
       lua_newtable(L);  /* create it */
       lua_pushstring(L, libname);
       lua_pushvalue(L, -2);
-      lua_settable(L, LUA_GLOBALSINDEX);  /* register it with given name */
+      lua_settable(L, LUA_GLOBALSINDEX);  /* it with given name */
     }
     lua_insert(L, -(nup+1));  /* move library table to below upvalues */
   }
@@ -274,7 +274,7 @@ static void getsizes (lua_State *L) {
     lua_pushliteral(L, "k");
     lua_rawset(L, -3);  /* metatable(N).__mode = "k" */
     lua_pushvalue(L, -1);
-    lua_rawseti(L, LUA_REGISTRYINDEX, ARRAYSIZE_REF);  /* store in register */
+    lua_rawseti(L, LUA_REGISTRYINDEX, ARRAYSIZE_REF);  /* store in */
   }
 }
 

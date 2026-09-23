@@ -276,7 +276,7 @@ static void code_params (LexState *ls, int nparams, int dots) {
   fs->f->is_vararg = cast(lu_byte, dots);
   if (dots)
     create_local(ls, "arg");
-  luaK_reserveregs(fs, fs->nactvar);  /* reserve register for parameters */
+  luaK_reserveregs(fs, fs->nactvar);  /* reserve for parameters */
 }
 
 
@@ -619,7 +619,7 @@ static void funcargs (LexState *ls, expdesc *f) {
     }
   }
   lua_assert(f->k == VNONRELOC);
-  base = f->info;  /* base register for call */
+  base = f->info;  /* base for call */
   if (args.k == VCALL)
     nparams = LUA_MULTRET;  /* open call */
   else {

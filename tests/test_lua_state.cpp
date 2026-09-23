@@ -14,8 +14,11 @@
 #include <vector>
 
 extern "C" {
+#include <lauxlib.h>
 #include <lua.h>
 }
+
+#include <stdexcept>
 
 using namespace osc::lua;
 
@@ -68,6 +71,59 @@ TEST_CASE("LuaState register and call C function", "[lua]") {
     auto result = state.do_string("result = test_fn()");
     REQUIRE(result.ok());
     CHECK(called == 1);
+}
+
+namespace {
+int g_probes_destroyed = 0;
+struct Probe {
+    std::string payload = "heap allocated so a skipped destructor leaks";
+    ~Probe() { ++g_probes_destroyed; }
+};
+} // namespace
+
+TEST_CASE("lua_error runs destructors of C++ objects it unwinds", "[lua]") {
+    // Bindings routinely hold std::string / RAII locks when they raise a Lua
+    // error. With longjmp (GCC/Clang, Lua built as C) those destructors are
+    // skipped; Lua built as C++ throws an exception instead.
+    LuaState state;
+    state.register_function("raise_with_probe", [](lua_State* L) -> int {
+        Probe probe;
+        return luaL_error(L, "boom from %s", "binding");
+    });
+    g_probes_destroyed = 0;
+    auto result = state.do_string(R"(
+        ok, msg = pcall(raise_with_probe)
+    )");
+    REQUIRE(result.ok());
+    CHECK(g_probes_destroyed == 1);
+    lua_getglobal(state.raw(), "ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)).find("boom from binding") !=
+          std::string::npos);
+    lua_pop(state.raw(), 1);
+}
+
+TEST_CASE("C++ exceptions escaping a binding become Lua errors", "[lua]") {
+    LuaState state;
+    state.register_function("throw_std", [](lua_State*) -> int {
+        throw std::runtime_error("binding blew up");
+    });
+    auto result = state.do_string(R"(
+        ok, msg = pcall(throw_std)
+        after = 1  -- the state is still usable
+    )");
+    REQUIRE(result.ok());
+    lua_getglobal(state.raw(), "ok");
+    CHECK(lua_toboolean(state.raw(), -1) == 0);
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "msg");
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "binding blew up");
+    lua_pop(state.raw(), 1);
+    lua_getglobal(state.raw(), "after");
+    CHECK(lua_tonumber(state.raw(), -1) == 1);
+    lua_pop(state.raw(), 1);
 }
 
 TEST_CASE("LuaState != operator (LuaPlus patch)", "[lua]") {

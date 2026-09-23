@@ -39,10 +39,24 @@
 */
 
 
+/*
+** OpenSupCom: when this file is compiled as C++ (GCC/Clang builds), errors
+** are raised as C++ exceptions instead of longjmp, as Lua 5.1+ does with
+** LUAI_THROW. longjmp skips the destructors of C++ objects in the binding
+** frames it crosses (leaked strings, locks never released); an exception
+** runs them. MSVC keeps longjmp: its x64 longjmp already unwinds C++ frames.
+*/
+#if defined(__cplusplus) && !defined(OSC_LUA_USE_LONGJMP)
+#define OSC_LUA_CXX_EXCEPTIONS 1
+#include <exception>
+#endif
+
 /* chain list of long jump buffers */
 struct lua_longjmp {
   struct lua_longjmp *previous;
+#ifndef OSC_LUA_CXX_EXCEPTIONS
   jmp_buf b;
+#endif
   volatile int status;  /* error code */
 };
 
@@ -70,7 +84,11 @@ static void seterrorobj (lua_State *L, int errcode, StkId oldtop) {
 void luaD_throw (lua_State *L, int errcode) {
   if (L->errorJmp) {
     L->errorJmp->status = errcode;
+#ifdef OSC_LUA_CXX_EXCEPTIONS
+    throw L->errorJmp;
+#else
     longjmp(L->errorJmp->b, 1);
+#endif
   }
   else {
     G(L)->panic(L);
@@ -84,8 +102,29 @@ int luaD_rawrunprotected (lua_State *L, Pfunc f, void *ud) {
   lj.status = 0;
   lj.previous = L->errorJmp;  /* chain new error handler */
   L->errorJmp = &lj;
+#ifdef OSC_LUA_CXX_EXCEPTIONS
+  try {
+    (*f)(L, ud);
+  }
+  catch (struct lua_longjmp *) {
+    /* a Lua error: status was set by luaD_throw (possibly for an outer
+       handler whose frame this is -- statuses are per-handler, so fine) */
+  }
+  catch (const std::exception &e) {
+    /* A C++ exception escaping an engine binding: turn it into an ordinary
+       Lua runtime error rather than unwinding through Lua's own frames,
+       which would leave the call stack inconsistent. */
+    lua_pushstring(L, e.what());
+    lj.status = LUA_ERRRUN;
+  }
+  catch (...) {
+    lua_pushstring(L, "unknown C++ exception");
+    lj.status = LUA_ERRRUN;
+  }
+#else
   if (setjmp(lj.b) == 0)
     (*f)(L, ud);
+#endif
   L->errorJmp = lj.previous;  /* restore old error handler */
   return lj.status;
 }

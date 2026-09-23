@@ -337,7 +337,7 @@ static Instruction luaG_symbexec (const Proto *pt, int lastpc, int reg) {
       }
     }
     if (testOpMode(op, OpModesetA)) {
-      if (a == reg) last = pc;  /* change register `a' */
+      if (a == reg) last = pc;  /* change `a' */
     }
     if (testOpMode(op, OpModeT)) {
       check(pc+2 < pt->sizecode);  /* check skip */

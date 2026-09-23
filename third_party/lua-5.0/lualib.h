@@ -10,6 +10,12 @@
 
 #include "lua.h"
 
+/* OpenSupCom: C linkage for the public API even when Lua itself is
+   compiled as C++ (see ldo.c, LUAI_THROW). */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 #ifndef LUALIB_API
 #define LUALIB_API	LUA_API
@@ -52,5 +58,9 @@ LUALIB_API int luaopen_loadlib (lua_State *L);
 #define lua_strlibopen	luaopen_string
 #define lua_mathlibopen	luaopen_math
 #define lua_dblibopen	luaopen_debug
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
