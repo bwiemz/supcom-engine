@@ -6,6 +6,7 @@
 #include "sim/entity.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 
 #include <GLFW/glfw3.h>
@@ -490,6 +491,43 @@ void InputHandler::handle_groups_and_bookmarks(Renderer& renderer,
 
         number_was_pressed_[i] = pressed;
     }
+}
+
+std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
+                                                   const sim::SimState& sim) const {
+    const auto& bp = sim.build_ghost_bp();
+    if (bp.empty() || !sim.terrain()) return std::nullopt;
+    f64 mx = 0, my = 0;
+    renderer.mouse_position(mx, my);
+    f32 wx = 0, wz = 0;
+    if (!renderer.camera().screen_to_world(static_cast<f32>(mx), static_cast<f32>(my),
+                                           static_cast<f32>(renderer.width()),
+                                           static_cast<f32>(renderer.height()), 0.0f, wx,
+                                           wz))
+        return std::nullopt;
+
+    const f32 size_x = sim.build_ghost_foot_x();
+    const f32 size_z = sim.build_ghost_foot_z();
+    // Where a build order at the cursor would place it
+    sim::snap_structure_center(wx, wz, size_x, size_z);
+
+    BuildGhost ghost;
+    ghost.blueprint_id = bp;
+    ghost.x = wx;
+    ghost.y = sim.terrain()->get_terrain_height(wx, wz);
+    ghost.z = wz;
+    // Buildable unless the footprint covers impassable ground
+    if (const auto* grid = sim.pathfinding_grid()) {
+        const f32 half_x = size_x * 0.5f;
+        const f32 half_z = size_z * 0.5f;
+        u32 gx0, gz0, gx1, gz1;
+        grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
+        grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
+        for (u32 gz = gz0; gz <= gz1 && ghost.valid; ++gz)
+            for (u32 gx = gx0; gx <= gx1 && ghost.valid; ++gx)
+                if (grid->get(gx, gz) == map::CellPassability::Impassable) ghost.valid = false;
+    }
+    return ghost;
 }
 
 } // namespace osc::renderer

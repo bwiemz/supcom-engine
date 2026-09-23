@@ -10,8 +10,7 @@
 
 namespace osc::sim {
 class FrameView;
-class SimState;
-class Unit;
+struct EntityRecord;
 } // namespace osc::sim
 
 namespace osc::renderer {
@@ -40,8 +39,9 @@ public:
     /// Build the procedural icon atlas texture (called once after TextureCache ready).
     void build_atlas(TextureCache& tex_cache);
 
-    /// Update icon quads from sim state. Returns true if strategic zoom is active.
-    bool update(const sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
+    /// Update icon quads from the world as `view` draws it. Returns true if
+    /// strategic zoom is active.
+    bool update(const sim::FrameView& view, const Camera& camera,
                 const std::array<f32, 16>& vp_matrix,
                 const std::unordered_set<u32>* selected_ids,
                 TextureCache& tex_cache,
@@ -67,7 +67,7 @@ public:
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
     /// Classify a unit into an icon type based on its categories.
-    static StrategicIconType classify_unit(const sim::Unit& unit);
+    static StrategicIconType classify_unit(const sim::EntityRecord& unit);
 
     /// Atlas layout constants (public for reuse by SelectionInfoRenderer).
     static constexpr u32 ICON_CELL_SIZE = 32;

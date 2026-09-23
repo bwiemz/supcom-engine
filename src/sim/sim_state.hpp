@@ -168,6 +168,7 @@ public:
     void build_visibility_grid();
     void build_spatial_grid();
     map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
+    const map::VisibilityGrid* visibility_grid() const { return visibility_grid_.get(); }
     void add_temp_vision(u32 army, f32 x, f32 z, f32 radius, f32 lifetime_sec) {
         temp_visions_.push_back({army, x, z, radius, static_cast<i32>(lifetime_sec * 10.0f)});
     }

@@ -1,13 +1,9 @@
 #include "renderer/selection_info_renderer.hpp"
+#include "sim/world_snapshot.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/texture_cache.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/entity.hpp"
-#include "sim/unit.hpp"
-#include "sim/unit_command.hpp"
-#include "sim/army_brain.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -45,10 +41,10 @@ static const char* command_name(sim::CommandType type) {
 
 /// Extract a short display name from blueprint ID like "uel0001" -> "UEL0001"
 /// or custom_name if set.
-static std::string unit_display_name(const sim::Unit& unit) {
-    if (!unit.custom_name().empty()) return unit.custom_name();
+static std::string unit_display_name(const sim::EntityRecord& unit) {
+    if (!unit.custom_name.empty()) return unit.custom_name;
     // Uppercase the unit_id
-    std::string name = unit.unit_id();
+    std::string name = unit.unit_id;
     for (char& c : name) c = static_cast<char>(std::toupper(static_cast<u8>(c)));
     return name;
 }
@@ -146,7 +142,8 @@ f32 SelectionInfoRenderer::emit_text(const std::string& text, f32 x, f32 y,
     return cursor_x - x;
 }
 
-void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
+void SelectionInfoRenderer::build_single_unit(const sim::EntityRecord& unit,
+                                               const sim::WorldSnapshot& snap,
                                                FontCache& font_cache,
                                                TextureCache& tex_cache,
                                                VkDescriptorSet icon_atlas_ds,
@@ -162,10 +159,13 @@ void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
 
     // Army color accent bar at top
     f32 ar, ag, ab;
-    // We need SimState for army color but don't have it here — use fallback
-    // Actually, the caller should pass sim. Let's use the army index directly.
-    i32 army = unit.army();
-    if (army >= 0 && army < 8) {
+    i32 army = unit.army;
+    const sim::ArmyRecord* brain = snap.army(army);
+    if (brain && brain->has_color) {
+        ar = brain->r / 255.0f;
+        ag = brain->g / 255.0f;
+        ab = brain->b / 255.0f;
+    } else if (army >= 0 && army < 8) {
         ar = ARMY_COLORS[army][0];
         ag = ARMY_COLORS[army][1];
         ab = ARMY_COLORS[army][2];
@@ -175,8 +175,8 @@ void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
     emit_solid(px, py, pw, 3.0f, ar, ag, ab, 1.0f);
 
     // Health bar
-    f32 hp_frac = (unit.max_health() > 0)
-                      ? unit.health() / unit.max_health()
+    f32 hp_frac = (unit.max_health > 0)
+                      ? unit.health / unit.max_health
                       : 1.0f;
     hp_frac = std::clamp(hp_frac, 0.0f, 1.0f);
 
@@ -198,12 +198,12 @@ void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
     // HP text
     char hp_buf[48];
     std::snprintf(hp_buf, sizeof(hp_buf), "%.0f / %.0f",
-                  unit.health(), unit.max_health());
+                  unit.health, unit.max_health);
 
     // Build progress bar (if being built)
-    if (unit.is_being_built() || unit.fraction_complete() < 0.999f) {
+    if (unit.is_being_built || unit.fraction_complete < 0.999f) {
         f32 bp_y = bar_y + bar_h + 4.0f;
-        f32 bp_frac = std::clamp(unit.fraction_complete(), 0.0f, 1.0f);
+        f32 bp_frac = std::clamp(unit.fraction_complete, 0.0f, 1.0f);
 
         emit_solid(bar_x, bp_y, bar_w, 6.0f, 0.1f, 0.1f, 0.1f, 0.8f);
         f32 bp_fill = bar_w * bp_frac;
@@ -232,26 +232,26 @@ void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
                   font_cache, "Arial", FONT_SIZE_SMALL);
 
         // Build progress percentage
-        if (unit.is_being_built() || unit.fraction_complete() < 0.999f) {
+        if (unit.is_being_built || unit.fraction_complete < 0.999f) {
             char bp_buf[16];
             std::snprintf(bp_buf, sizeof(bp_buf), "%.0f%%",
-                          unit.fraction_complete() * 100.0f);
+                          unit.fraction_complete * 100.0f);
             emit_text(bp_buf, bar_x + bar_w - 30.0f, bar_y + bar_h + 3.0f,
                       0.5f, 0.7f, 1.0f, 0.9f,
                       font_cache, "Arial", FONT_SIZE_SMALL);
         }
 
         // Current command status
-        auto& cmds = unit.command_queue();
+        const auto cmds = snap.commands_of(unit);
         const char* cmd_text = cmds.empty() ? "Idle" : command_name(cmds.front().type);
         emit_text(cmd_text, px + 42.0f, py + PANEL_HEIGHT_SINGLE - 24.0f,
                   0.6f, 0.7f, 0.6f, 0.8f,
                   font_cache, "Arial", FONT_SIZE_SMALL);
 
         // Weapon count
-        if (unit.weapon_count() > 0) {
+        if (unit.weapon_count > 0) {
             char wbuf[32];
-            std::snprintf(wbuf, sizeof(wbuf), "%d wpn", unit.weapon_count());
+            std::snprintf(wbuf, sizeof(wbuf), "%d wpn", unit.weapon_count);
             emit_text(wbuf, px + pw - 60.0f, py + PANEL_HEIGHT_SINGLE - 24.0f,
                       0.7f, 0.6f, 0.5f, 0.7f,
                       font_cache, "Arial", FONT_SIZE_SMALL);
@@ -279,7 +279,7 @@ void SelectionInfoRenderer::build_single_unit(const sim::Unit& unit,
     }
 }
 
-void SelectionInfoRenderer::build_multi_unit(const sim::SimState& sim,
+void SelectionInfoRenderer::build_multi_unit(const sim::FrameView& view,
                                               const std::unordered_set<u32>& selected_ids,
                                               FontCache& font_cache,
                                               TextureCache& tex_cache,
@@ -287,20 +287,18 @@ void SelectionInfoRenderer::build_multi_unit(const sim::SimState& sim,
                                               f32 px, f32 py,
                                               f32 pw, f32 /*ph*/) {
     VkDescriptorSet white_ds = tex_cache.fallback_descriptor();
-    auto& registry = sim.entity_registry();
 
     // Count by icon type
     u32 type_counts[static_cast<u32>(StrategicIconType::COUNT)] = {};
     f32 total_hp = 0, total_max_hp = 0;
 
     for (u32 uid : selected_ids) {
-        auto* e = registry.find(uid);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
-        auto* unit = static_cast<const sim::Unit*>(e);
-        auto itype = StrategicIconRenderer::classify_unit(*unit);
+        auto* e = view.find(uid);
+        if (!e || !e->is_unit) continue;
+        auto itype = StrategicIconRenderer::classify_unit(*e);
         type_counts[static_cast<u32>(itype)]++;
-        total_hp += e->health();
-        total_max_hp += e->max_health();
+        total_hp += e->health;
+        total_max_hp += e->max_health;
     }
 
     // --- Panel bg + aggregate HP bar ---
@@ -397,7 +395,7 @@ void SelectionInfoRenderer::build_multi_unit(const sim::SimState& sim,
     }
 }
 
-void SelectionInfoRenderer::update(const sim::SimState& sim,
+void SelectionInfoRenderer::update(const sim::FrameView& view,
                                     const std::unordered_set<u32>* selected_ids,
                                     FontCache& font_cache, TextureCache& tex_cache,
                                     VkDescriptorSet icon_atlas_ds,
@@ -413,15 +411,13 @@ void SelectionInfoRenderer::update(const sim::SimState& sim,
     f32 sw = static_cast<f32>(viewport_w);
     f32 sh = static_cast<f32>(viewport_h);
 
-    auto& registry = sim.entity_registry();
-
     u32 valid_count = 0;
-    const sim::Unit* single_unit = nullptr;
+    const sim::EntityRecord* single_unit = nullptr;
     for (u32 uid : *selected_ids) {
-        auto* e = registry.find(uid);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
+        auto* e = view.find(uid);
+        if (!e || !e->is_unit) continue;
         valid_count++;
-        single_unit = static_cast<const sim::Unit*>(e);
+        single_unit = e;
     }
 
     if (valid_count == 0) return;
@@ -434,10 +430,10 @@ void SelectionInfoRenderer::update(const sim::SimState& sim,
     f32 panel_y = sh - panel_h - PANEL_MARGIN_BOTTOM;
 
     if (is_single) {
-        build_single_unit(*single_unit, font_cache, tex_cache, icon_atlas_ds,
+        build_single_unit(*single_unit, *view.cur(), font_cache, tex_cache, icon_atlas_ds,
                           panel_x, panel_y, panel_w, panel_h);
     } else {
-        build_multi_unit(sim, *selected_ids, font_cache, tex_cache, icon_atlas_ds,
+        build_multi_unit(view, *selected_ids, font_cache, tex_cache, icon_atlas_ds,
                          panel_x, panel_y, panel_w, panel_h);
     }
 

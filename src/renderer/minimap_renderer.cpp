@@ -4,8 +4,6 @@
 #include "renderer/texture_cache.hpp"
 #include "map/terrain.hpp"
 #include "map/heightmap.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/entity.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -14,16 +12,14 @@
 
 namespace osc::renderer {
 
-static void get_army_color_simple(const sim::Entity& entity,
-                                   const sim::SimState& sim,
+static void get_army_color_simple(const sim::EntityRecord& entity, const sim::FrameView& view,
                                    f32& r, f32& g, f32& b) {
-    i32 army = entity.army();
-    if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-        auto* brain = sim.army_at(static_cast<size_t>(army));
-        if (brain && brain->has_color()) {
-            r = brain->color_r() / 255.0f;
-            g = brain->color_g() / 255.0f;
-            b = brain->color_b() / 255.0f;
+    i32 army = entity.army;
+    if (const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(army) : nullptr) {
+        if (brain->has_color) {
+            r = brain->r / 255.0f;
+            g = brain->g / 255.0f;
+            b = brain->b / 255.0f;
         } else if (army < 8) {
             r = ARMY_COLORS[army][0];
             g = ARMY_COLORS[army][1];
@@ -169,8 +165,7 @@ void MinimapRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quads_.push_back(q);
 }
 
-void MinimapRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
-                             const Camera& camera,
+void MinimapRenderer::update(const sim::FrameView& view, const Camera& camera,
                               TextureCache& tex_cache,
                               const std::unordered_set<u32>* /*selected_ids*/,
                               u32 viewport_w, u32 viewport_h) {
@@ -184,7 +179,7 @@ void MinimapRenderer::update(const sim::SimState& sim, const sim::FrameView& vie
     const f32 margin = static_cast<f32>(MINIMAP_MARGIN);
     view_ = {margin, static_cast<f32>(viewport_h) - size - margin, size, size};
     area_ = fit_map_area(view_.x, view_.y, view_.w, view_.h, map_w_, map_h_);
-    build(sim, view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
+    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/true);
 
     // Batch consecutive quads by texture and upload
     for (u32 i = 0; i < quads_.size(); ++i) {
@@ -200,8 +195,7 @@ void MinimapRenderer::update(const sim::SimState& sim, const sim::FrameView& vie
     }
 }
 
-void MinimapRenderer::paint(const sim::SimState& sim, const sim::FrameView& view,
-                            const Camera& camera,
+void MinimapRenderer::paint(const sim::FrameView& view, const Camera& camera,
                              TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
                              u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out) {
     quads_.clear();
@@ -209,12 +203,11 @@ void MinimapRenderer::paint(const sim::SimState& sim, const sim::FrameView& view
     view_ = {x, y, w, h};
     area_ = fit_map_area(x, y, w, h, map_w_, map_h_);
     if (area_.w <= 0 || area_.h <= 0) return;
-    build(sim, view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
+    build(view, camera, tex_cache, viewport_w, viewport_h, /*framed=*/false);
     out.insert(out.end(), quads_.begin(), quads_.end());
 }
 
-void MinimapRenderer::build(const sim::SimState& sim, const sim::FrameView& view,
-                            const Camera& camera,
+void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
                              TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
                              bool framed) {
     white_ds_ = tex_cache.fallback_descriptor();
@@ -232,27 +225,25 @@ void MinimapRenderer::build(const sim::SimState& sim, const sim::FrameView& view
     emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
 
     // --- Unit dots ---
-    auto& registry = sim.entity_registry();
-    registry.for_each([&](const sim::Entity& entity) {
-        if (entity.destroyed()) return;
-        if (!entity.is_unit()) return;
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_unit) continue;
 
         auto pos = view.position(entity);
         // Map world position to minimap pixel position
         f32 nx = pos.x / map_w_; // normalized [0,1]
         f32 nz = pos.z / map_h_;
-        if (nx < 0 || nx > 1 || nz < 0 || nz > 1) return;
+        if (nx < 0 || nx > 1 || nz < 0 || nz > 1) continue;
 
         f32 dot_x = ax + nx * aw;
         f32 dot_y = ay + nz * ah;
 
         f32 r, g, b;
-        get_army_color_simple(entity, sim, r, g, b);
+        get_army_color_simple(entity, view, r, g, b);
 
         constexpr f32 DOT_SIZE = 3.0f;
         emit_quad(dot_x - DOT_SIZE * 0.5f, dot_y - DOT_SIZE * 0.5f,
                   DOT_SIZE, DOT_SIZE, r, g, b, 1.0f, white_ds_);
-    });
+    }
 
     // --- Camera frustum box ---
     // Unproject the 4 screen corners to world XZ to get the camera view area

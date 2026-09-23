@@ -6287,11 +6287,15 @@ void test_shadow(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: Renderer initialized with shadow resources");
 
             // Test 4: Build scene and render 3 frames without crash
-            renderer.build_scene(ctx.sim, &ctx.vfs, ctx.L);
+            renderer.build_scene(ctx.sim.terrain(), ctx.sim.blueprint_store(),
+                                 sim::world_blueprints(ctx.sim), &ctx.vfs, ctx.L);
+            sim::WorldHistory history;
+            history.capture(ctx.sim);
             bool render_ok = true;
             for (int f = 0; f < 3; f++) {
                 try {
-                    renderer.render(ctx.sim, osc::sim::FrameView{}, ctx.L);
+                    renderer.render(sim::FrameView(&history.prev(), &history.cur(), 1.0f),
+                                    history.events(), nullptr, ctx.L);
                     renderer.poll_events(0.016);
                 } catch (...) {
                     render_ok = false;

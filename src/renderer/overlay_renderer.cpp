@@ -1,13 +1,6 @@
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/entity.hpp"
-#include "sim/unit.hpp"
-#include "sim/unit_command.hpp"
-#include "sim/shield.hpp"
-#include "sim/army_brain.hpp"
-#include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -91,7 +84,7 @@ void OverlayRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
+void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& events,
                               const Camera& camera,
                               const std::array<f32, 16>& vp_matrix,
                               const std::unordered_set<u32>* selected_ids,
@@ -103,6 +96,8 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
     quads_.reserve(MAX_OVERLAY_QUADS);
     quad_count_ = 0;
     white_ds_ = tex_cache.fallback_descriptor();
+    static const sim::WorldSnapshot kNoWorld;
+    const sim::WorldSnapshot& snap = view.cur() ? *view.cur() : kNoWorld;
 
     f32 sw = static_cast<f32>(viewport_w);
     f32 sh = static_cast<f32>(viewport_h);
@@ -115,7 +110,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
     camera.eye_position(eye_x, eye_y, eye_z);
 
     // --- Consume death events and spawn explosion VFX ---
-    for (auto& de : sim.death_events()) {
+    for (const auto& de : events.deaths) {
         if (explosions_.size() < MAX_EXPLOSIONS) {
             explosions_.push_back({de.x, de.y, de.z,
                                    std::max(de.scale, 1.0f),
@@ -123,7 +118,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                                    1.0f, 0.8f, 0.3f}); // orange flash
         }
     }
-    sim.clear_death_events();
+    events.deaths.clear();
 
     // Tick and render active explosions
     for (auto it = explosions_.begin(); it != explosions_.end();) {
@@ -164,30 +159,27 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         ++it;
     }
 
-    auto& registry = sim.entity_registry();
-
     // Iterate all entities for health bars + selection circles
-    registry.for_each([&](const sim::Entity& entity) {
-        if (entity.destroyed()) return;
-        if (!entity.is_unit()) return;
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_unit) continue;
 
         auto pos = view.position(entity);
 
         // Frustum cull
-        if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 10.0f)) return;
+        if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 10.0f)) continue;
 
         bool is_selected = selected_ids &&
-                           selected_ids->count(entity.entity_id()) > 0;
+                           selected_ids->count(entity.id) > 0;
 
         // Project unit position to screen
         f32 sx, sy;
         if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy))
-            return;
+            continue;
 
         // --- Health bar ---
         // Only show if damaged or selected
-        f32 hp_frac = (entity.max_health() > 0)
-                          ? entity.health() / entity.max_health()
+        f32 hp_frac = (entity.max_health > 0)
+                          ? entity.health / entity.max_health
                           : 1.0f;
         if (hp_frac < 0.999f || is_selected) {
             constexpr f32 BAR_W = 40.0f;
@@ -209,15 +201,15 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         }
 
         // --- Build progress indicator (for units being built OR actively building) ---
-        auto* unit = static_cast<const sim::Unit*>(&entity);
-        if (unit->is_being_built() && entity.fraction_complete() < 0.999f) {
+        const sim::EntityRecord* unit = &entity;
+        if (unit->is_being_built && entity.fraction_complete < 0.999f) {
             // Unit under construction: blue progress bar below health bar
             constexpr f32 BP_W = 40.0f;
             constexpr f32 BP_H = 3.0f;
             constexpr f32 BP_Y_OFFSET = 14.0f; // pixels above center (below health bar)
             f32 bp_x = sx - BP_W * 0.5f;
             f32 bp_y = sy - BP_Y_OFFSET;
-            f32 bp_frac = std::clamp(entity.fraction_complete(), 0.0f, 1.0f);
+            f32 bp_frac = std::clamp(entity.fraction_complete, 0.0f, 1.0f);
 
             emit_quad(bp_x, bp_y, BP_W, BP_H, 0.1f, 0.1f, 0.15f, 0.7f);
             f32 bp_fill = BP_W * bp_frac;
@@ -230,7 +222,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
             constexpr f32 BI_Y_OFFSET = 14.0f;
             f32 bi_x = sx - BI_W * 0.5f;
             f32 bi_y = sy - BI_Y_OFFSET;
-            f32 wp = std::clamp(unit->work_progress(), 0.0f, 1.0f);
+            f32 wp = std::clamp(unit->work_progress, 0.0f, 1.0f);
 
             emit_quad(bi_x, bi_y, BI_W, BI_H, 0.1f, 0.1f, 0.05f, 0.6f);
             f32 bi_fill = BI_W * wp;
@@ -239,11 +231,11 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         }
 
         // --- Veterancy indicators (gold chevrons above health bar) ---
-        if (unit->vet_level() > 0 && cam_dist < 400.0f && (hp_frac < 0.999f || is_selected)) {
+        if (unit->vet_level > 0 && cam_dist < 400.0f && (hp_frac < 0.999f || is_selected)) {
             constexpr f32 CHEV_SIZE = 5.0f;  // each chevron square
             constexpr f32 CHEV_GAP  = 1.5f;  // gap between chevrons
             constexpr f32 CHEV_Y_OFFSET = 26.0f; // above health bar
-            u8 vl = unit->vet_level();
+            u8 vl = unit->vet_level;
             if (vl > 5) vl = 5;
             f32 total_w = vl * CHEV_SIZE + (vl - 1) * CHEV_GAP;
             f32 start_x = sx - total_w * 0.5f;
@@ -256,12 +248,11 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         }
 
         // --- Transport cargo indicators (small dots below unit) ---
-        if (!unit->cargo_ids().empty() && cam_dist < 400.0f) {
+        if (unit->cargo_count > 0 && cam_dist < 400.0f) {
             constexpr f32 CARGO_DOT = 4.0f;
             constexpr f32 CARGO_GAP = 2.0f;
             constexpr f32 CARGO_Y = 8.0f; // below unit center
-            auto& cargo = unit->cargo_ids();
-            u32 cargo_count = static_cast<u32>(cargo.size());
+            u32 cargo_count = unit->cargo_count;
             if (cargo_count > 8) cargo_count = 8; // cap display at 8
             f32 total_cw = cargo_count * CARGO_DOT + (cargo_count - 1) * CARGO_GAP;
             f32 cx_start = sx - total_cw * 0.5f;
@@ -274,8 +265,8 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
         // --- Silo ammo indicators (nuke = red, tactical = blue) ---
         if (cam_dist < 400.0f) {
-            i32 nuke = unit->nuke_silo_ammo();
-            i32 tac = unit->tactical_silo_ammo();
+            i32 nuke = unit->nuke_silo_ammo;
+            i32 tac = unit->tactical_silo_ammo;
             if (nuke > 0 || tac > 0) {
                 constexpr f32 AMMO_DOT = 5.0f;
                 constexpr f32 AMMO_GAP = 2.0f;
@@ -352,14 +343,14 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
             }
 
             // --- Adjacency lines (orange lines to adjacent structures) ---
-            auto& adj_ids = unit->adjacent_unit_ids();
+            const auto adj_ids = snap.adjacent_of(entity);
             if (!adj_ids.empty() && cam_dist < 400.0f) {
                 for (u32 adj_id : adj_ids) {
                     // Only draw each pair once (lower id draws the line)
-                    if (adj_id < entity.entity_id()) continue;
+                    if (adj_id < entity.id) continue;
 
-                    auto* adj = registry.find(adj_id);
-                    if (!adj || adj->destroyed()) continue;
+                    auto* adj = view.find(adj_id);
+                    if (!adj) continue;
 
                     auto adj_pos = view.position(*adj);
                     f32 adj_sx, adj_sy;
@@ -385,15 +376,14 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                 }
             }
         }
-    });
+    }
 
     // --- Command lines (full queue for selected units) ---
     if (selected_ids && !selected_ids->empty()) {
         for (u32 uid : *selected_ids) {
-            auto* e = registry.find(uid);
-            if (!e || !e->is_unit() || e->destroyed()) continue;
-            auto* unit = static_cast<const sim::Unit*>(e);
-            auto& cmds = unit->command_queue();
+            auto* e = view.find(uid);
+            if (!e || !e->is_unit) continue;
+            const auto cmds = snap.commands_of(*e);
             if (cmds.empty()) continue;
 
             // Start from unit position
@@ -424,8 +414,8 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                 bool projected = false;
                 // For entity-targeted commands, project target entity position
                 if (cmd.target_id > 0) {
-                    auto* target = registry.find(cmd.target_id);
-                    if (target && !target->destroyed()) {
+                    auto* target = view.find(cmd.target_id);
+                    if (target) {
                         auto tp = view.position(*target);
                         projected = world_to_screen(tp.x, tp.y, tp.z, vp_matrix,
                                                      sw, sh, sx1, sy1);
@@ -506,13 +496,13 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         constexpr f32 PI2 = 6.2831853f;
 
         for (u32 uid : *selected_ids) {
-            auto* e = registry.find(uid);
-            if (!e || !e->is_unit() || e->destroyed()) continue;
-            auto* unit = static_cast<const sim::Unit*>(e);
+            auto* e = view.find(uid);
+            if (!e || !e->is_unit) continue;
             auto pos = view.position(*e);
 
-            for (auto& [type, state] : unit->intel_states()) {
-                if (!state.enabled || state.radius < 1.0f) continue;
+            for (const auto& intel : snap.intel_of(*e)) {
+                // Captured only when on with a radius of at least 1.
+                const std::string& type = intel.type;
                 if (!intel_ring_types_.count(type)) continue;
 
                 // Color by intel type
@@ -523,7 +513,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                 else if (type == "Vision") { cg = 0.6f; ca = 0.2f; }
                 else continue; // skip unknown intel types
 
-                f32 radius = state.radius;
+                f32 radius = intel.radius;
                 f32 prev_sx2 = 0, prev_sy2 = 0;
                 bool prev_valid2 = false;
 
@@ -569,30 +559,30 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
     // --- Active operation beams (build/reclaim/repair/capture) ---
     if (cam_dist < 600.0f) {
-        registry.for_each([&](const sim::Entity& entity) {
-            if (entity.destroyed() || !entity.is_unit()) return;
-            auto* unit = static_cast<const sim::Unit*>(&entity);
+        for (const sim::EntityRecord& entity : view.entities()) {
+            if (!entity.is_unit) continue;
+            const sim::EntityRecord* unit = &entity;
 
             // Determine beam target and color
             u32 target_id = 0;
             f32 br = 0, bg = 0, bb = 0, ba = 0.6f;
             if (unit->is_building()) {
-                target_id = unit->build_target_id();
+                target_id = unit->build_target_id;
                 br = 0.2f; bg = 0.9f; bb = 0.6f; // teal
             } else if (unit->is_reclaiming()) {
-                target_id = unit->reclaim_target_id();
+                target_id = unit->reclaim_target_id;
                 br = 0.9f; bg = 0.8f; bb = 0.2f; // gold
             } else if (unit->is_repairing()) {
-                target_id = unit->repair_target_id();
+                target_id = unit->repair_target_id;
                 br = 0.3f; bg = 1.0f; bb = 0.3f; // green
             } else if (unit->is_capturing()) {
-                target_id = unit->capture_target_id();
+                target_id = unit->capture_target_id;
                 br = 1.0f; bg = 1.0f; bb = 0.2f; // yellow
             }
-            if (target_id == 0) return;
+            if (target_id == 0) continue;
 
-            auto* target = registry.find(target_id);
-            if (!target || target->destroyed()) return;
+            auto* target = view.find(target_id);
+            if (!target) continue;
 
             auto src_pos = view.position(entity);
             auto dst_pos = view.position(*target);
@@ -600,20 +590,20 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
             // Distance cull
             f32 dx = src_pos.x - eye_x;
             f32 dz = src_pos.z - eye_z;
-            if (dx * dx + dz * dz > 600.0f * 600.0f) return;
+            if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
 
             f32 sx0, sy0, sx1, sy1;
             if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z,
                                   vp_matrix, sw, sh, sx0, sy0))
-                return;
+                continue;
             if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z,
                                   vp_matrix, sw, sh, sx1, sy1))
-                return;
+                continue;
 
             // Draw beam line (thicker than command lines)
             f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
             f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-            if (len < 2.0f) return;
+            if (len < 2.0f) continue;
 
             constexpr f32 BEAM_THICK = 2.5f;
             f32 nx = -ldy / len * BEAM_THICK;
@@ -626,33 +616,32 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
             emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
                       br, bg, bb, ba);
-        });
+        }
     }
 
     // --- CollisionBeam rendering ---
     if (cam_dist < 600.0f) {
-        registry.for_each([&](const sim::Entity& entity) {
-            if (entity.destroyed()) return;
-            if (!entity.is_collision_beam() || !entity.beam_enabled()) return;
+        for (const sim::EntityRecord& entity : view.entities()) {
+            if (!entity.is_collision_beam || !entity.beam_enabled) continue;
 
             auto src_pos = view.position(entity);
             auto dst_pos = view.beam_end(entity);
 
             f32 dx = src_pos.x - eye_x;
             f32 dz = src_pos.z - eye_z;
-            if (dx * dx + dz * dz > 600.0f * 600.0f) return;
+            if (dx * dx + dz * dz > 600.0f * 600.0f) continue;
 
             f32 sx0, sy0, sx1, sy1;
             if (!world_to_screen(src_pos.x, src_pos.y, src_pos.z,
                                   vp_matrix, sw, sh, sx0, sy0))
-                return;
+                continue;
             if (!world_to_screen(dst_pos.x, dst_pos.y, dst_pos.z,
                                   vp_matrix, sw, sh, sx1, sy1))
-                return;
+                continue;
 
             f32 ldx = sx1 - sx0, ldy = sy1 - sy0;
             f32 len = std::sqrt(ldx * ldx + ldy * ldy);
-            if (len < 2.0f) return;
+            if (len < 2.0f) continue;
 
             constexpr f32 BEAM_THICK = 3.5f; // thicker for weapons
             f32 nx = -ldy / len * BEAM_THICK;
@@ -666,7 +655,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
             // Red/orange for weapon beams
             emit_quad(min_x, min_y, max_x - min_x, max_y - min_y,
                       1.0f, 0.4f, 0.1f, 0.8f);
-        });
+        }
     }
 
     // --- Shield bubble rendering (projected circle outlines) ---
@@ -675,39 +664,36 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
         constexpr f32 SHIELD_LINE_THICK = 2.0f;
         constexpr f32 PI2 = 6.2831853f;
 
-        registry.for_each([&](const sim::Entity& entity) {
-            if (entity.destroyed() || !entity.is_shield()) return;
-            auto* shield = static_cast<const sim::Shield*>(&entity);
-            if (!shield->is_on) return;
-            if (shield->owner_id == 0) return;
+        for (const sim::EntityRecord& entity : view.entities()) {
+            if (!entity.is_shield) continue;
+            if (!entity.shield_on) continue;
+            if (entity.shield_owner_id == 0) continue;
 
             // Find owner unit for position
-            auto* owner = registry.find(shield->owner_id);
-            if (!owner || owner->destroyed()) return;
+            auto* owner = view.find(entity.shield_owner_id);
+            if (!owner) continue;
 
             auto pos = view.position(*owner);
 
             // Frustum cull
-            if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 20.0f)) return;
+            if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 20.0f)) continue;
 
-            f32 radius = shield->size;
-            if (radius < 1.0f) return;
+            f32 radius = entity.shield_size;
+            if (radius < 1.0f) continue;
 
             // Army color for shield tint
             f32 sr = 0.5f, sg = 0.5f, sb = 0.8f;
-            i32 army = owner->army();
-            if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-                auto* brain = sim.army_at(static_cast<size_t>(army));
-                if (brain && brain->has_color()) {
-                    sr = brain->color_r() / 255.0f;
-                    sg = brain->color_g() / 255.0f;
-                    sb = brain->color_b() / 255.0f;
+            if (const auto* brain = snap.army(owner->army)) {
+                if (brain->has_color) {
+                    sr = brain->r / 255.0f;
+                    sg = brain->g / 255.0f;
+                    sb = brain->b / 255.0f;
                 }
             }
 
             // Shield health ratio modulates alpha (damaged = more visible)
-            f32 hp_frac = (shield->max_health() > 0)
-                              ? shield->health() / shield->max_health()
+            f32 hp_frac = (entity.max_health > 0)
+                              ? entity.health / entity.max_health
                               : 1.0f;
             f32 alpha = 0.15f + (1.0f - hp_frac) * 0.25f; // 0.15 at full, 0.4 at empty
 
@@ -768,29 +754,28 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                     }
                 }
             }
-        });
+        }
     }
 
     // --- VFX/emitter particle rendering (billboard particles for IEffect) ---
     if (cam_dist < 600.0f && quad_count_ < MAX_OVERLAY_QUADS) {
-        auto& effects = sim.effect_registry().all();
-        for (auto& fx_ptr : effects) {
-            if (!fx_ptr || fx_ptr->destroyed()) continue;
+        for (const sim::EffectRecord& fx : snap.effects) {
+            const sim::EffectRecord* fx_ptr = &fx;
 
-            auto type = fx_ptr->type();
+            auto type = fx_ptr->type;
 
             // Skip decals/splats (handled by decal renderer)
             if (type == sim::EffectType::DECAL || type == sim::EffectType::SPLAT)
                 continue;
 
             // Resolve effect world position from parent entity + offset
-            f32 wx = fx_ptr->offset_x();
-            f32 wy = fx_ptr->offset_y();
-            f32 wz = fx_ptr->offset_z();
+            f32 wx = fx_ptr->offset_x;
+            f32 wy = fx_ptr->offset_y;
+            f32 wz = fx_ptr->offset_z;
 
-            if (fx_ptr->entity_id() > 0) {
-                auto* parent = registry.find(fx_ptr->entity_id());
-                if (!parent || parent->destroyed()) continue;
+            if (fx_ptr->entity_id > 0) {
+                auto* parent = view.find(fx_ptr->entity_id);
+                if (!parent) continue;
                 auto pp = view.position(*parent);
                 wx += pp.x;
                 wy += pp.y;
@@ -804,9 +789,9 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
             // Beam entity-to-entity: draw line between two entities
             if (type == sim::EffectType::BEAM_ENTITY_TO_ENTITY) {
-                if (fx_ptr->target_entity_id() == 0) continue;
-                auto* target = registry.find(fx_ptr->target_entity_id());
-                if (!target || target->destroyed()) continue;
+                if (fx_ptr->target_entity_id == 0) continue;
+                auto* target = view.find(fx_ptr->target_entity_id);
+                if (!target) continue;
 
                 auto tp = view.position(*target);
                 f32 sx0, sy0, sx1, sy1;
@@ -819,7 +804,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                 f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
                 if (len < 2.0f) continue;
 
-                f32 thick = static_cast<f32>(fx_ptr->get_param("THICKNESS"));
+                f32 thick = fx_ptr->thickness;
                 if (thick < 1.0f) thick = 2.0f;
                 f32 nx = -ldy2 / len * thick;
                 f32 ny = ldx2 / len * thick;
@@ -836,7 +821,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
             // Attached beam: draw a line from entity in forward direction
             if (type == sim::EffectType::ATTACHED_BEAM) {
-                f32 beam_len = static_cast<f32>(fx_ptr->get_param("LENGTH"));
+                f32 beam_len = fx_ptr->length;
                 if (beam_len < 1.0f) beam_len = 5.0f;
 
                 f32 sx0, sy0, sx1, sy1;
@@ -844,9 +829,9 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                     continue;
                 // Use entity heading to orient the beam
                 f32 fwd_x = 0.0f, fwd_y = 0.0f, fwd_z = 1.0f;
-                if (fx_ptr->entity_id() > 0) {
-                    auto* beam_parent = registry.find(fx_ptr->entity_id());
-                    if (beam_parent && !beam_parent->destroyed()) {
+                if (fx_ptr->entity_id > 0) {
+                    auto* beam_parent = view.find(fx_ptr->entity_id);
+                    if (beam_parent) {
                         const auto q = view.orientation(*beam_parent);
                         fwd_x = 2.0f * (q.x * q.z + q.w * q.y);
                         fwd_y = 2.0f * (q.y * q.z - q.w * q.x);
@@ -862,7 +847,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
                 f32 ldx2 = sx1 - sx0, ldy2 = sy1 - sy0;
                 f32 len = std::sqrt(ldx2 * ldx2 + ldy2 * ldy2);
                 if (len >= 2.0f) {
-                    f32 thick = static_cast<f32>(fx_ptr->get_param("THICKNESS"));
+                    f32 thick = fx_ptr->thickness;
                     if (thick < 1.0f) thick = 2.0f;
                     f32 nx = -ldy2 / len * thick;
                     f32 ny = ldx2 / len * thick;
@@ -885,7 +870,7 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
 
             // Light particle: larger glowing circle
             if (type == sim::EffectType::LIGHT_PARTICLE) {
-                f32 size = fx_ptr->light_size() * fx_ptr->scale();
+                f32 size = fx_ptr->light_size * fx_ptr->scale;
                 if (size < 1.0f) size = 4.0f;
                 f32 screen_size = size * 3.0f; // scale to screen pixels
                 emit_quad(sx_fx - screen_size * 0.5f, sy_fx - screen_size * 0.5f,
@@ -895,16 +880,14 @@ void OverlayRenderer::update(sim::SimState& sim, const sim::FrameView& view,
             }
 
             // Emitter particles: small colored dot at effect position
-            f32 psize = 4.0f * fx_ptr->scale();
+            f32 psize = 4.0f * fx_ptr->scale;
             // Color by army (simple hash)
             f32 pr = 0.7f, pg = 0.7f, pb = 0.7f;
-            i32 army = fx_ptr->army();
-            if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-                auto* brain = sim.army_at(static_cast<size_t>(army));
-                if (brain && brain->has_color()) {
-                    pr = brain->color_r() / 255.0f;
-                    pg = brain->color_g() / 255.0f;
-                    pb = brain->color_b() / 255.0f;
+            if (const auto* brain = snap.army(fx_ptr->army)) {
+                if (brain->has_color) {
+                    pr = brain->r / 255.0f;
+                    pg = brain->g / 255.0f;
+                    pb = brain->b / 255.0f;
                 }
             }
 

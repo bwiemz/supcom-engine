@@ -8,7 +8,7 @@
 #include <vector>
 
 namespace osc::sim {
-class SimState;
+class FrameView;
 }
 
 namespace osc::renderer {
@@ -22,9 +22,9 @@ class HudRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
 
-    /// Update HUD quads from sim state.
+    /// Update HUD quads from the player army's economy in the newest tick.
     /// player_army: 0-based index of the player's army.
-    void update(const sim::SimState& sim, i32 player_army,
+    void update(const sim::FrameView& view, i32 player_army,
                 FontCache& font_cache, TextureCache& tex_cache,
                 u32 viewport_w, u32 viewport_h);
 

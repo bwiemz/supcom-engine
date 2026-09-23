@@ -15,7 +15,6 @@ struct lua_State;
 
 namespace osc::sim {
 class FrameView;
-class SimState;
 }
 
 namespace osc::renderer {
@@ -55,14 +54,14 @@ public:
     void build(VkDevice device, VmaAllocator allocator,
                VkCommandPool cmd_pool, VkQueue queue);
 
-    /// Pre-load GPU meshes for all blueprints currently in the entity registry.
-    void preload_meshes(const sim::SimState& sim, MeshCache& mesh_cache,
+    /// Pre-load GPU meshes for these blueprints (sim::world_blueprints).
+    void preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
                         lua_State* L);
 
-    /// Update per-frame instance data from sim state, posed as `view` draws
-    /// it (between the last two ticks).
+    /// Update per-frame instance data from the world as `view` draws it
+    /// (between the last two ticks).
     /// If selected_ids is non-null, those units get a selection highlight.
-    void update(const sim::SimState& sim, const sim::FrameView& view, MeshCache& mesh_cache,
+    void update(const sim::FrameView& view, MeshCache& mesh_cache,
                 lua_State* L, TextureCache* tex_cache = nullptr,
                 const Camera* camera = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr,

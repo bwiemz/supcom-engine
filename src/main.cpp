@@ -853,7 +853,9 @@ static bool execute_reload_sequence(
     }
 
     // 14. Rebuild renderer scene
-    if (renderer) renderer->build_scene(*sim_state, &vfs, uiL);
+    if (renderer)
+        renderer->build_scene(sim_state->terrain(), sim_state->blueprint_store(),
+                              osc::sim::world_blueprints(*sim_state), &vfs, uiL);
 
     // 15. Reset camera to map center (spherical coords: target + distance)
     if (renderer && sim_state->terrain()) {
@@ -2635,7 +2637,9 @@ int main(int argc, char* argv[]) {
         if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
             // Build 3D scene if we have a sim state (--map was provided)
             if (sim_state) {
-                renderer.build_scene(*sim_state, &vfs, ui_lua_state.raw());
+                renderer.build_scene(sim_state->terrain(), sim_state->blueprint_store(),
+                                     osc::sim::world_blueprints(*sim_state), &vfs,
+                                     ui_lua_state.raw());
             }
 
             // Store renderer pointer in UI Lua registry for WorldView/GetCamera
@@ -3017,8 +3021,10 @@ int main(int argc, char* argv[]) {
                     }
                 }
                 if (sim_state) {
-                    renderer.render(*sim_state, frame_view, ui_lua_state.raw(), &ui_registry,
-                                    sel.empty() ? nullptr : &sel);
+                    const auto ghost = input_handler.build_ghost(renderer, *sim_state);
+                    renderer.render(frame_view, world_interp.history.events(),
+                                    ghost ? &*ghost : nullptr, ui_lua_state.raw(),
+                                    &ui_registry, sel.empty() ? nullptr : &sel);
                     if (!render_dump_path.empty()) {
                         render_dump.on_frame(
                             *sim_state,
