@@ -140,10 +140,10 @@ Unit tests:
 
 `data.replay_roundtrip` (gate), on retail data:
 
-1. Process A plays SCMP_009 with four armies. Armies 2–4 are AI; army 1 is a
-   "player" whose scripted orders go through the human route
-   (`--scripted-orders`): moves, a factory queue, a pause, a fire state. A's
-   stream therefore holds orders, unit settings and callbacks.
+1. Process A plays SCMP_009 with four AI armies. Army 1 also takes a player's
+   scripted orders through the human route (`--scripted-orders`): moves, a
+   pause, a fire state, a Stop. So A's stream holds orders, unit settings
+   and callbacks, and army 1 is steered by both its AI and its "player".
 2. A records the game.
 3. Process B plays the replay. Every tick's checksum must match, and so must
    the final one.
