@@ -87,9 +87,13 @@ void LockstepSession::receive_and_advance() {
         std::vector<ScheduledCommand> commands;
         for (u32 i = 0; i < count && r.ok(); ++i) {
             ScheduledCommand c;
-            if (read_command(r, c)) commands.push_back(std::move(c));
+            // A peer speaks only for itself: a command in its frame that
+            // claims another source is forged or corrupt.
+            if (read_command(r, c) && c.source == source) commands.push_back(std::move(c));
+            else r.fail();
         }
-        if (!r.ok()) continue; // malformed frame — ignore
+        // Malformed, or claiming to be this peer: ignore the whole frame.
+        if (!r.ok() || source == local_source_) continue;
         for (auto& c : commands) sim_.command_scheduler().submit(std::move(c));
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
