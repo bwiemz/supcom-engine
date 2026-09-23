@@ -16,6 +16,11 @@ namespace osc::sim {
 /// A player / AI / network command scheduled to execute on a specific sim tick.
 /// This is the unit of deterministic replay and lockstep exchange: fed the same
 /// stream, every client applies the same orders on the same ticks.
+/// The source of commands the engine itself issues on every peer at once (a
+/// dropped player's defeat): never a lockstep participant, so the gate
+/// doesn't wait on it, and it sorts after every player within a tick.
+inline constexpr u32 kEngineSource = 0xFFFFFFFFu;
+
 struct ScheduledCommand {
     u32 exec_tick = 0;          // tick at which the order is applied
     u32 source = 0;             // originating command source (player / peer / AI)
@@ -41,7 +46,7 @@ public:
     /// Submit a command. Its sequence is assigned here (monotonic) and its
     /// source is registered as a participant.
     void submit(ScheduledCommand cmd) {
-        register_source(cmd.source);
+        if (cmd.source != kEngineSource) register_source(cmd.source);
         cmd.sequence = next_sequence_++;
         by_tick_[cmd.exec_tick].push_back(std::move(cmd));
     }

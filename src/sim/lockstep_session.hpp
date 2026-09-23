@@ -3,6 +3,7 @@
 #include "core/types.hpp"
 #include "sim/command_scheduler.hpp"
 
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -10,6 +11,7 @@ namespace osc::sim {
 
 class SimState;
 class INetTransport;
+class ByteReader;
 
 /// Drives a SimState in deterministic lockstep with remote peers over an
 /// INetTransport.
@@ -48,20 +50,41 @@ public:
     u32 current_frame() const { return next_frame_; }
     bool desynced() const { return desynced_; }
 
-    // --- Peer-drop detection ---
-    // Declare a peer dropped once it is more than `frames` command frames behind
-    // in confirmations (default 30 ≈ 3s at 10 Hz). 0 disables detection. A
-    // dropped source is removed from the scheduler gate so the survivor stops
-    // stalling; the game loop defeats its army.
+    // --- Peer drop, by agreement (M198b) ---
+    // A peer more than `frames` command frames behind in confirmations
+    // (default 30 ≈ 3s at 10 Hz; 0 disables detection) is dropped -- but not
+    // by one survivor alone: survivors may hold different last frames from
+    // it (it died mid-broadcast), and each notices at its own moment. So a
+    // survivor that times it out stops taking its frames and reports the last
+    // one it holds, with the peer's recent frames; a report from another
+    // survivor draws its own. Once every survivor has reported, all take the
+    // furthest frame reported as the peer's last, apply any of its frames they
+    // missed (relayed in the reports), release it from the gate, and defeat
+    // its army on the tick after -- the same tick on every survivor.
     void set_drop_timeout(u32 frames) { drop_timeout_frames_ = frames; }
     /// Sources newly declared dropped since the last call (drained on return).
     std::vector<u32> take_dropped();
     bool has_dropped(u32 src) const;
 
 private:
+    static constexpr u8 kFrameMessage = 0;
+    static constexpr u8 kDropMessage = 1;
+    /// How many of a peer's latest frames are kept to relay if it drops.
+    static constexpr u32 kRelayFrames = 256;
+
+    /// A drop being agreed: each survivor's report of the dropped peer's last
+    /// frame it holds, and that peer's frames, merged from every report.
+    struct DropVote {
+        std::map<u32, u32> last_frame;                       // reporter -> frame
+        std::map<u32, std::vector<ScheduledCommand>> frames; // frame -> commands
+    };
+
     SimState& sim_;
     INetTransport& transport_;
     u32 local_source_;
+    std::vector<u32> all_sources_;
+    std::unordered_map<u32, std::map<u32, std::vector<ScheduledCommand>>> recent_frames_;
+    std::map<u32, DropVote> drop_votes_;       // sources being dropped, by source
     u32 next_frame_ = 1;                       // frame currently accepting input
     std::vector<ScheduledCommand> pending_;      // local commands for next_frame_
     std::unordered_map<u32, u32> my_checksums_;   // tick -> local checksum
@@ -71,6 +94,12 @@ private:
     std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
     std::vector<u32> dropped_;                    // sources already declared dropped
     std::vector<u32> newly_dropped_;              // drained by take_dropped()
+
+    bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
+    void begin_drop(u32 source);
+    void take_drop_report(ByteReader& r);
+    void finalize_drops();
+    void finalize_drop(u32 source, const DropVote& vote);
 
     void note_peer_checksum(u32 tick, u32 checksum);
     void record_local_checksum(u32 tick, u32 checksum);

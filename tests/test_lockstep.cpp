@@ -197,6 +197,7 @@ TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
     auto send = [&](osc::u32 from, osc::u32 claimed) {
         std::vector<osc::u8> msg;
         osc::sim::ByteWriter w(msg);
+        w.u8v(0); // a frame message
         w.u32v(from);
         w.u32v(1); // frame
         w.u8v(0);  // no checksum
@@ -225,4 +226,73 @@ TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
     sa.receive_and_advance();
     CHECK(a.tick_count() == 1);
     CHECK(unit->command_queue().size() == 1);
+}
+
+TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") {
+    // Three peers. C's last frame -- carrying an order -- reaches A but not B
+    // before C dies. Deciding the drop alone, A would play C's order and B
+    // would not: a desync. By agreement, B gets the frame relayed, and both
+    // defeat C's army on the same tick.
+    LuaGuard ga, gb, gc;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
+    std::vector<osc::u32> movers;
+    for (SimState* s : {&a, &b, &c}) {
+        s->set_victory_condition("sandbox");
+        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) s->add_army(army, army);
+        movers.clear();
+        for (int army = 0; army < 3; ++army) {
+            auto u = std::make_unique<Unit>();
+            u->set_army(army);
+            u->set_max_speed(6.0f);
+            u->set_position({static_cast<osc::f32>(army) * 50.0f, 0.0f, 0.0f});
+            movers.push_back(s->entity_registry().register_entity(std::move(u)));
+        }
+    }
+    b.set_recording(true);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint()),
+        tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+    LockstepSession sb(b, tb, 1, {0, 1, 2});
+    LockstepSession sc(c, tc, 2, {0, 1, 2});
+    sa.set_drop_timeout(5);
+    sb.set_drop_timeout(5);
+
+    for (int round = 0; round < 5; ++round) {
+        sa.send_frame();
+        sb.send_frame();
+        sc.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+        sc.receive_and_advance();
+    }
+    // C orders its unit, and dies mid-broadcast: the frame reaches A only.
+    sc.submit_local({movers[2]}, move_to(300.0f, 0.0f), true);
+    hub.set_link(2, 1, false);
+    sa.send_frame();
+    sb.send_frame();
+    sc.send_frame();
+    for (int round = 0; round < 30; ++round) {
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+        sa.send_frame();
+        sb.send_frame();
+    }
+    sa.receive_and_advance();
+    sb.receive_and_advance();
+
+    REQUIRE(sa.has_dropped(2));
+    REQUIRE(sb.has_dropped(2));
+    CHECK(a.tick_count() > 10); // both play on past the drop
+    CHECK(a.tick_count() == b.tick_count());
+    CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
+    CHECK_FALSE(sa.desynced());
+    CHECK_FALSE(sb.desynced());
+    CHECK(a.army_at(2)->is_defeated());
+    CHECK(b.army_at(2)->is_defeated());
+    // B played C's last order, relayed by A.
+    bool relayed = false;
+    for (const auto& cmd : b.recorded_replay().commands)
+        relayed |= cmd.source == 2 && cmd.command.type == CommandType::Move;
+    CHECK(relayed);
 }
