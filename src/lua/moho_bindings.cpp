@@ -103,9 +103,25 @@ static sim::Entity* check_entity(lua_State* L, int idx = 1) {
 
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+    if (lua_isuserdata(L, -1)) {
+        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        return entity;
+    }
     lua_pop(L, 1);
-    return entity;
+
+    // A handle by id (the UI state's unit objects): those outlive their
+    // entity -- scripts keep avatars, idle lists and selections -- so each
+    // call resolves the id; the registry stops listing an entity as soon as
+    // it is unregistered, long before its memory is freed.
+    lua_pushstring(L, "_c_entity_id");
+    lua_rawget(L, idx);
+    const bool by_id = lua_isnumber(L, -1);
+    const auto id = by_id ? static_cast<u32>(lua_tonumber(L, -1)) : 0u;
+    lua_pop(L, 1);
+    if (!by_id) return nullptr;
+    auto* sim = get_sim(L);
+    return sim ? sim->entity_registry().find(id) : nullptr;
 }
 
 static sim::Unit* check_unit(lua_State* L, int idx = 1) {
@@ -1720,13 +1736,8 @@ static int entity_SetParentOffset(lua_State* L) {
 
 /// Helper: extract an Entity* from a Lua table at the given stack index.
 static sim::Entity* check_entity_arg(lua_State* L, int idx) {
-    if (!lua_istable(L, idx) || is_weapon_table(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return nullptr; }
-    auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    return entity;
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    return check_entity(L, idx);
 }
 
 static int entity_AttachTo(lua_State* L) {
@@ -13008,19 +13019,11 @@ static int l_UIZoomTo(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; ++i) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "_c_object");
-            lua_rawget(L, -2);
-            if (lua_islightuserdata(L, -1)) {
-                auto* unit = static_cast<osc::sim::Unit*>(lua_touserdata(L, -1));
-                if (unit) {
-                    auto pos = unit->position();
-                    sum_x += pos.x;
-                    sum_z += pos.z;
-                    ++count;
-                }
-            }
-            lua_pop(L, 1); // _c_object
+        if (auto* e = check_entity(L, lua_gettop(L)); e && !e->destroyed()) {
+            auto pos = e->position();
+            sum_x += pos.x;
+            sum_z += pos.z;
+            ++count;
         }
         lua_pop(L, 1); // array element
     }
@@ -13426,9 +13429,15 @@ static void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
     lua_newtable(L);
     int tbl = lua_gettop(L);
 
-    // _c_object
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, entity);
+    // A handle by id, never a raw pointer: UI scripts keep these across
+    // beats (avatars, idle lists, selections), and check_entity resolves the
+    // id on every call. The sim generation rejects handles from an earlier
+    // game, whose ids a new sim reuses.
+    lua_pushstring(L, "_c_entity_id");
+    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_rawset(L, tbl);
+    lua_pushstring(L, "_c_sim_gen");
+    lua_pushnumber(L, static_cast<lua_Number>(sim::SimState::sim_generation()));
     lua_rawset(L, tbl);
 
     // EntityId
@@ -13602,15 +13611,10 @@ static int l_ValidateUnitsList(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "_c_object");
-            lua_rawget(L, -2);
-            auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-            lua_pop(L, 1);
-            if (e && !e->destroyed()) {
-                lua_rawseti(L, result, out_idx++);
-                continue;
-            }
+        auto* e = check_entity(L, lua_gettop(L));
+        if (e && !e->destroyed()) {
+            lua_rawseti(L, result, out_idx++);
+            continue;
         }
         lua_pop(L, 1);
     }
@@ -13876,12 +13880,7 @@ static int l_GetUnitCommandData(lua_State* L) {
     int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, 1, i);
-        if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
-        lua_pushstring(L, "_c_object");
-        lua_rawget(L, -2);
-        auto* entity = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-        lua_pop(L, 1); // _c_object value
-
+        auto* entity = check_entity(L, lua_gettop(L));
         if (!entity || !entity->is_unit() || entity->destroyed()) {
             lua_pop(L, 1); // unit table
             continue;
@@ -14294,14 +14293,8 @@ static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
 /// Helper: extract Entity* from a ui_L unit table (has _c_object lightuserdata).
 /// Returns nullptr if table is missing or entity is invalid.
 static sim::Entity* extract_ui_entity(lua_State* L, int idx) {
-    if (!lua_istable(L, idx)) return nullptr;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, idx);
-    auto* e = lua_isuserdata(L, -1)
-                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                  : nullptr;
-    lua_pop(L, 1);
-    return e;
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    return check_entity(L, idx);
 }
 
 /// ui_L category filter helper. If keep_matches is true, keeps units matching
