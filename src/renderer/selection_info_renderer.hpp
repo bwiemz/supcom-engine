@@ -10,8 +10,9 @@
 #include <vector>
 
 namespace osc::sim {
-class SimState;
-class Unit;
+class FrameView;
+struct EntityRecord;
+struct WorldSnapshot;
 }
 
 namespace osc::renderer {
@@ -26,7 +27,7 @@ class SelectionInfoRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
 
-    void update(const sim::SimState& sim,
+    void update(const sim::FrameView& view,
                 const std::unordered_set<u32>* selected_ids,
                 FontCache& font_cache, TextureCache& tex_cache,
                 VkDescriptorSet icon_atlas_ds,
@@ -38,6 +39,8 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+    /// This frame's quads (the render-state dump reads them).
+    const std::vector<UIInstance>& quads() const { return quads_; }
 
     u32 quad_count() const { return quad_count_; }
 
@@ -66,12 +69,12 @@ private:
     void begin_group(VkDescriptorSet ds);
     void end_group();
 
-    void build_single_unit(const sim::Unit& unit,
+    void build_single_unit(const sim::EntityRecord& unit, const sim::WorldSnapshot& snap,
                            FontCache& font_cache, TextureCache& tex_cache,
                            VkDescriptorSet icon_atlas_ds,
                            f32 panel_x, f32 panel_y, f32 panel_w, f32 panel_h);
 
-    void build_multi_unit(const sim::SimState& sim,
+    void build_multi_unit(const sim::FrameView& view,
                           const std::unordered_set<u32>& selected_ids,
                           FontCache& font_cache, TextureCache& tex_cache,
                           VkDescriptorSet icon_atlas_ds,

@@ -1,9 +1,6 @@
 #include "renderer/particle_system.hpp"
 #include "renderer/frustum.hpp"
 
-#include "sim/entity.hpp"
-#include "sim/ieffect.hpp"
-#include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -18,17 +15,14 @@ namespace osc::renderer {
 // sync_effects -- mirror IEffectRegistry into emitter state
 // ---------------------------------------------------------------------------
 
-void ParticleSystem::sync_effects(const sim::SimState& sim, const sim::FrameView& view,
+void ParticleSystem::sync_effects(const sim::FrameView& view,
                                   EmitterBlueprintCache& bp_cache,
                                   lua_State* L) {
-    const auto& effects = sim.effect_registry().all();
-
     // Build ID→effect map once (O(E)) to avoid O(N*E) nested loops
-    std::unordered_map<u32, const sim::IEffect*> effect_map;
-    effect_map.reserve(effects.size());
-    for (const auto& fx : effects) {
-        if (fx && !fx->destroyed())
-            effect_map[fx->id()] = fx.get();
+    std::unordered_map<u32, const sim::EffectRecord*> effect_map;
+    if (const sim::WorldSnapshot* snap = view.cur()) {
+        effect_map.reserve(snap->effects.size());
+        for (const auto& fx : snap->effects) effect_map[fx.id] = &fx;
     }
 
     // Build set of tracked effect IDs for O(1) "already tracked?" check
@@ -43,13 +37,12 @@ void ParticleSystem::sync_effects(const sim::SimState& sim, const sim::FrameView
         } else if (es.active) {
             // Update position for attached emitters
             const auto* fx = it->second;
-            if (fx->entity_id() > 0) {
-                auto* ent = sim.entity_registry().find(fx->entity_id());
-                if (ent) {
+            if (fx->entity_id > 0) {
+                if (const auto* ent = view.find(fx->entity_id)) {
                     const sim::Vector3 pos = view.position(*ent);
-                    es.origin_x = pos.x + fx->offset_x();
-                    es.origin_y = pos.y + fx->offset_y();
-                    es.origin_z = pos.z + fx->offset_z();
+                    es.origin_x = pos.x + fx->offset_x;
+                    es.origin_y = pos.y + fx->offset_y;
+                    es.origin_z = pos.z + fx->offset_z;
                 }
             }
         }
@@ -66,7 +59,7 @@ void ParticleSystem::sync_effects(const sim::SimState& sim, const sim::FrameView
 
     // Create emitters for new effects (O(E) with O(1) tracked check)
     for (const auto& [id, fx] : effect_map) {
-        auto t = fx->type();
+        auto t = fx->type;
         if (t != sim::EffectType::EMITTER_AT_ENTITY &&
             t != sim::EffectType::EMITTER_AT_BONE &&
             t != sim::EffectType::ATTACHED_EMITTER) {
@@ -75,15 +68,15 @@ void ParticleSystem::sync_effects(const sim::SimState& sim, const sim::FrameView
 
         if (tracked_ids.count(id)) continue;
 
-        const auto* bp = bp_cache.get(fx->blueprint_path(), L);
+        const auto* bp = bp_cache.get(fx->blueprint_path, L);
         if (!bp) continue;
 
         EmitterState es;
         es.blueprint = bp;
         es.effect_id = id;
-        es.origin_x = fx->offset_x();
-        es.origin_y = fx->offset_y();
-        es.origin_z = fx->offset_z();
+        es.origin_x = fx->offset_x;
+        es.origin_y = fx->offset_y;
+        es.origin_z = fx->offset_z;
         emitters_.push_back(std::move(es));
     }
 }

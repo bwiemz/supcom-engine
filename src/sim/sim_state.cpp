@@ -701,6 +701,11 @@ void SimState::tick() {
         PROFILE_ZONE("Sim::observer");
         tick_observer_(*this);
     }
+    // Death flashes and camera shakes are shown from the tick's capture;
+    // the sim is done with them (events raised between ticks wait for the
+    // next one).
+    death_events_.clear();
+    camera_shake_events_.clear();
 }
 
 void SimState::update_economies() {

@@ -3,16 +3,15 @@
 #include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_types.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/unit.hpp"
-#include "sim/entity.hpp"
-#include "sim/prop.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <cstring>
+#include <ostream>
+#include <string>
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -25,16 +24,15 @@ struct CubeVertex {
 };
 
 /// Resolve army color for an entity.
-static void get_army_color(const sim::Entity& entity,
-                            const sim::SimState& sim,
+static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView& view,
                             f32& r, f32& g, f32& b, f32& a) {
-    i32 army = entity.army();
-    if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-        auto* brain = sim.army_at(static_cast<size_t>(army));
-        if (brain && brain->has_color()) {
-            r = brain->color_r() / 255.0f;
-            g = brain->color_g() / 255.0f;
-            b = brain->color_b() / 255.0f;
+    i32 army = entity.army;
+    const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(army) : nullptr;
+    if (brain) {
+        if (brain->has_color) {
+            r = brain->r / 255.0f;
+            g = brain->g / 255.0f;
+            b = brain->b / 255.0f;
         } else if (army < 8) {
             r = ARMY_COLORS[army][0];
             g = ARMY_COLORS[army][1];
@@ -45,7 +43,7 @@ static void get_army_color(const sim::Entity& entity,
     } else {
         r = g = b = 1.0f; // neutral/props: white (albedo shows through for mesh)
     }
-    a = (entity.fraction_complete() < 1.0f) ? 0.4f : 1.0f;
+    a = (entity.fraction_complete < 1.0f) ? 0.4f : 1.0f;
 }
 
 /// Build column-major 4x4 model matrix from position + quaternion + non-uniform scale.
@@ -171,17 +169,8 @@ void UnitRenderer::build(VkDevice device, VmaAllocator allocator,
     }
 }
 
-void UnitRenderer::preload_meshes(const sim::SimState& sim,
+void UnitRenderer::preload_meshes(const std::vector<std::string>& bp_ids,
                                    MeshCache& mesh_cache, lua_State* L) {
-    // Collect unique blueprint IDs
-    std::unordered_set<std::string> bp_ids;
-    sim.entity_registry().for_each([&](const sim::Entity& entity) {
-        if ((entity.is_unit() || entity.is_prop() || entity.is_projectile()) && !entity.destroyed() &&
-            !entity.blueprint_id().empty()) {
-            bp_ids.insert(entity.blueprint_id());
-        }
-    });
-
     u32 loaded = 0, failed = 0;
     for (auto& id : bp_ids) {
         if (mesh_cache.get(id, L))
@@ -194,8 +183,8 @@ void UnitRenderer::preload_meshes(const sim::SimState& sim,
                  bp_ids.size(), loaded, failed);
 }
 
-void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
-                           MeshCache& mesh_cache, lua_State* L, TextureCache* tex_cache,
+void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
+                           lua_State* L, TextureCache* tex_cache,
                            const Camera* camera,
                            const std::unordered_set<u32>* selected_ids,
                            const Frustum* frustum) {
@@ -214,7 +203,7 @@ void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
 
     // Per-instance bone info (parallel to mesh_groups entries)
     struct InstanceBones {
-        const sim::Unit* unit = nullptr;
+        u32 id = 0;          // 0 = no bones (props, projectiles)
         u32 bone_count = 0;  // 0 = no skinning
     };
 
@@ -225,31 +214,28 @@ void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
     };
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups;
 
-    sim.entity_registry().for_each([&](const sim::Entity& entity) {
-        if ((!entity.is_unit() && !entity.is_prop() && !entity.is_projectile()) || entity.destroyed())
-            return;
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) continue;
         if (cube_count + mesh_count >= MAX_INSTANCES)
-            return;
+            continue;
 
         const sim::Vector3 pos = view.position(entity);
 
         // Frustum cull all entities (units, props, projectiles)
         if (frustum) {
             f32 bound_radius = 5.0f; // default for projectiles
-            if (entity.is_unit()) {
-                auto* unit = static_cast<const sim::Unit*>(&entity);
-                f32 fp = unit->footprint_size_x();
-                bound_radius = std::max(fp * 1.5f, 5.0f);
-            } else if (entity.is_prop()) {
-                bound_radius = std::max(entity.scale_x() * 2.0f, 2.0f);
+            if (entity.is_unit) {
+                bound_radius = std::max(entity.footprint_size_x * 1.5f, 5.0f);
+            } else if (entity.is_prop) {
+                bound_radius = std::max(entity.scale_x * 2.0f, 2.0f);
             }
             if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, bound_radius)) {
-                return;
+                continue;
             }
         }
 
         f32 r, g, b, a;
-        get_army_color(entity, sim, r, g, b, a);
+        get_army_color(entity, view, r, g, b, a);
 
         // Compute camera distance for LOD selection
         f32 cam_dist = 0.0f;
@@ -264,28 +250,28 @@ void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
 
         // Try mesh lookup (mesh_override from SetMesh takes priority)
         const GPUMesh* gpu = nullptr;
-        if (!entity.mesh_override().empty())
-            gpu = mesh_cache.get_lod(entity.mesh_override(), cam_dist, L);
-        if (!gpu && !entity.blueprint_id().empty())
-            gpu = mesh_cache.get_lod(entity.blueprint_id(), cam_dist, L);
+        if (!entity.mesh_override.empty())
+            gpu = mesh_cache.get_lod(entity.mesh_override, cam_dist, L);
+        if (!gpu && !entity.blueprint_id.empty())
+            gpu = mesh_cache.get_lod(entity.blueprint_id, cam_dist, L);
 
         if (gpu) {
-            if (mesh_count >= MAX_INSTANCES) return;
+            if (mesh_count >= MAX_INSTANCES) continue;
             MeshInstance inst{};
-            f32 sx = entity.scale_x() * gpu->uniform_scale;
-            f32 sy = entity.scale_y() * gpu->uniform_scale;
-            f32 sz = entity.scale_z() * gpu->uniform_scale;
+            f32 sx = entity.scale_x * gpu->uniform_scale;
+            f32 sy = entity.scale_y * gpu->uniform_scale;
+            f32 sz = entity.scale_z * gpu->uniform_scale;
             build_model_matrix(inst.model, pos, view.orientation(entity), sx, sy, sz);
             // Wreckage: desaturate + darken to distinguish from live units
-            if (entity.is_wreckage()) {
+            if (entity.is_wreckage) {
                 f32 lum = 0.299f * r + 0.587f * g + 0.114f * b;
                 r = lum * 0.5f + r * 0.15f;
                 g = lum * 0.5f + g * 0.15f;
                 b = lum * 0.5f + b * 0.15f;
             }
             // Selection highlight: brighten team color
-            if (selected_ids && entity.is_unit() &&
-                selected_ids->count(entity.entity_id())) {
+            if (selected_ids && entity.is_unit &&
+                selected_ids->count(entity.id)) {
                 r = r * 0.5f + 0.5f;
                 g = g * 0.5f + 0.5f;
                 b = b * 0.5f + 0.5f;
@@ -296,32 +282,31 @@ void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
             gd.instances.push_back(inst);
 
             // Track bone data for this instance (props have no bones)
-            if (entity.is_unit()) {
-                auto* unit = static_cast<const sim::Unit*>(&entity);
-                u32 bc = unit->animated_bone_count();
+            if (entity.is_unit) {
+                u32 bc = entity.bone_count;
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
-                gd.bones.push_back({unit, bc});
+                gd.bones.push_back({entity.id, bc});
             } else {
-                gd.bones.push_back({nullptr, 0});
+                gd.bones.push_back({0, 0});
             }
 
             mesh_count++;
         } else {
-            if (cube_count >= MAX_INSTANCES) return;
+            if (cube_count >= MAX_INSTANCES) continue;
             auto& inst = cube_instances[cube_count];
             inst.x = pos.x;
             inst.y = pos.y;
             inst.z = pos.z;
             inst.scale = 2.0f;
             // Use muted green for props (trees/rocks) to avoid white cube sea
-            if (entity.is_prop()) {
+            if (entity.is_prop) {
                 inst.r = 0.28f; inst.g = 0.42f; inst.b = 0.18f; inst.a = a;
             } else {
                 inst.r = r; inst.g = g; inst.b = b; inst.a = a;
             }
             cube_count++;
         }
-    });
+    }
 
     cube_instance_count_ = cube_count;
 
@@ -365,12 +350,9 @@ void UnitRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
             for (u32 i = 0; i < safe_count; i++) {
                 u32 base = bone_offset + i * group_bones;
 
-                auto* unit = gd.bones[i].unit;
                 u32 bc = 0;
-                if (unit) {
-                    const auto& mats = view.bones(unit->entity_id(), blended)
-                                           ? blended
-                                           : unit->animated_bone_matrices();
+                if (gd.bones[i].id && view.bones(gd.bones[i].id, blended)) {
+                    const auto& mats = blended;
                     bc = static_cast<u32>(mats.size());
                     if (bc > group_bones) bc = group_bones;
 
@@ -518,6 +500,44 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     }
     cube_instance_count_ = 0;
     mesh_groups_.clear();
+}
+
+void UnitRenderer::dump(std::ostream& out) const {
+    auto fnv = [](const std::string& text) {
+        u64 h = 1469598103934665603ULL;
+        for (unsigned char c : text) {
+            h ^= c;
+            h *= 1099511628211ULL;
+        }
+        return h;
+    };
+    std::vector<std::string> lines;
+    const auto* meshes = static_cast<const MeshInstance*>(mesh_instance_mapped_[fi_]);
+    const auto* bones = static_cast<const f32*>(bone_ssbo_mapped_[fi_]);
+    for (const auto& g : mesh_groups_) {
+        for (u32 i = 0; meshes && i < g.instance_count; ++i) {
+            const MeshInstance& m = meshes[g.instance_offset + i];
+            std::string line = fmt::format("mesh {} |", g.mesh ? g.mesh->texture_path : "?");
+            for (f32 v : m.model) line += fmt::format(" {:.4f}", v);
+            line += fmt::format(" | {:.3f} {:.3f} {:.3f} {:.3f}", m.r, m.g, m.b, m.a);
+            if (bones && g.bones_per_instance > 0) {
+                std::string pose;
+                const f32* b = bones + static_cast<size_t>(g.bone_base_offset +
+                                                           i * g.bones_per_instance) * 16;
+                for (u32 k = 0; k < g.bones_per_instance * 16; ++k) pose += fmt::format("{:.4f},", b[k]);
+                line += fmt::format(" | bones {} {:016x}", g.bones_per_instance, fnv(pose));
+            }
+            lines.push_back(std::move(line));
+        }
+    }
+    const auto* cubes = static_cast<const CubeInstance*>(cube_instance_mapped_[fi_]);
+    for (u32 i = 0; cubes && i < cube_instance_count_; ++i) {
+        const CubeInstance& c = cubes[i];
+        lines.push_back(fmt::format("cube {:.4f} {:.4f} {:.4f} {:.3f} | {:.3f} {:.3f} {:.3f} {:.3f}",
+                                    c.x, c.y, c.z, c.scale, c.r, c.g, c.b, c.a));
+    }
+    std::sort(lines.begin(), lines.end());
+    for (const auto& l : lines) out << l << '\n';
 }
 
 } // namespace osc::renderer

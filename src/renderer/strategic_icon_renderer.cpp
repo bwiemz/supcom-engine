@@ -2,9 +2,6 @@
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/texture_cache.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/entity.hpp"
-#include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -13,16 +10,14 @@
 
 namespace osc::renderer {
 
-static void get_army_color(const sim::Entity& entity,
-                            const sim::SimState& sim,
+static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView& view,
                             f32& r, f32& g, f32& b) {
-    i32 army = entity.army();
-    if (army >= 0 && army < static_cast<i32>(sim.army_count())) {
-        auto* brain = sim.army_at(static_cast<size_t>(army));
-        if (brain && brain->has_color()) {
-            r = brain->color_r() / 255.0f;
-            g = brain->color_g() / 255.0f;
-            b = brain->color_b() / 255.0f;
+    i32 army = entity.army;
+    if (const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(army) : nullptr) {
+        if (brain->has_color) {
+            r = brain->r / 255.0f;
+            g = brain->g / 255.0f;
+            b = brain->b / 255.0f;
             return;
         }
         if (army < 8) {
@@ -247,19 +242,16 @@ void StrategicIconRenderer::build_atlas(TextureCache& tex_cache) {
 
 // --- Unit classification ---
 
-StrategicIconType StrategicIconRenderer::classify_unit(const sim::Unit& unit) {
-    if (unit.has_category("COMMAND"))
-        return StrategicIconType::Commander;
-    if (unit.has_category("ENGINEER") || unit.has_category("CONSTRUCTION"))
-        return StrategicIconType::Engineer;
-    if (unit.has_category("STRUCTURE"))
-        return StrategicIconType::Structure;
-    if (unit.has_category("AIR"))
-        return StrategicIconType::Air;
-    if (unit.has_category("NAVAL"))
-        return StrategicIconType::Naval;
-    if (unit.has_category("LAND"))
-        return StrategicIconType::Land;
+StrategicIconType StrategicIconRenderer::classify_unit(const sim::EntityRecord& unit) {
+    switch (unit.icon) {
+    case sim::IconClass::Commander: return StrategicIconType::Commander;
+    case sim::IconClass::Engineer:  return StrategicIconType::Engineer;
+    case sim::IconClass::Structure: return StrategicIconType::Structure;
+    case sim::IconClass::Air:       return StrategicIconType::Air;
+    case sim::IconClass::Naval:     return StrategicIconType::Naval;
+    case sim::IconClass::Land:      return StrategicIconType::Land;
+    case sim::IconClass::Generic:   break;
+    }
     return StrategicIconType::Generic;
 }
 
@@ -295,7 +287,7 @@ void StrategicIconRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
     quad_count_++;
 }
 
-bool StrategicIconRenderer::update(const sim::SimState& sim, const sim::FrameView& view,
+bool StrategicIconRenderer::update(const sim::FrameView& view,
                                     const Camera& camera,
                                     const std::array<f32, 16>& vp_matrix,
                                     const std::unordered_set<u32>* selected_ids,
@@ -321,8 +313,6 @@ bool StrategicIconRenderer::update(const sim::SimState& sim, const sim::FrameVie
     f32 eye_x, eye_y, eye_z;
     camera.eye_position(eye_x, eye_y, eye_z);
 
-    auto& registry = sim.entity_registry();
-
     // Collect visible units with screen positions (two-pass: rings first, icons second)
     struct VisibleUnit {
         f32 sx, sy;
@@ -333,36 +323,35 @@ bool StrategicIconRenderer::update(const sim::SimState& sim, const sim::FrameVie
     std::vector<VisibleUnit> visible;
     visible.reserve(256);
 
-    registry.for_each([&](const sim::Entity& entity) {
-        if (entity.destroyed() || !entity.is_unit()) return;
+    for (const sim::EntityRecord& entity : view.entities()) {
+        if (!entity.is_unit) continue;
 
         auto pos = view.position(entity);
 
         // Distance cull (wider range for strategic view)
         f32 dx = pos.x - eye_x;
         f32 dz = pos.z - eye_z;
-        if (dx * dx + dz * dz > 1200.0f * 1200.0f) return;
+        if (dx * dx + dz * dz > 1200.0f * 1200.0f) continue;
 
         // Project to screen
         f32 sx, sy;
         if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy))
-            return;
+            continue;
 
         // Skip if off-screen
         if (sx < -icon_size || sx > sw + icon_size ||
             sy < -icon_size || sy > sh + icon_size)
-            return;
+            continue;
 
         // Get army color
         f32 r, g, b;
-        get_army_color(entity, sim, r, g, b);
+        get_army_color(entity, view, r, g, b);
 
         bool is_selected = selected_ids &&
-                           selected_ids->count(entity.entity_id()) > 0;
+                           selected_ids->count(entity.id) > 0;
 
-        auto* unit = static_cast<const sim::Unit*>(&entity);
-        visible.push_back({sx, sy, r, g, b, classify_unit(*unit), is_selected});
-    });
+        visible.push_back({sx, sy, r, g, b, classify_unit(entity), is_selected});
+    }
 
     // Pass 1: Selection rings (drawn with white_ds, behind icons)
     // Limit rings to half the budget so icons always have room.

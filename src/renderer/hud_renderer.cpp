@@ -1,8 +1,7 @@
 #include "renderer/hud_renderer.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/texture_cache.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/army_brain.hpp"
+#include "sim/world_snapshot.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -125,20 +124,17 @@ static std::string format_number(f64 val) {
     return buf;
 }
 
-void HudRenderer::update(const sim::SimState& sim, i32 player_army,
+void HudRenderer::update(const sim::FrameView& view, i32 player_army,
                            FontCache& font_cache, TextureCache& tex_cache,
                            u32 viewport_w, u32 /*viewport_h*/) {
     quads_.clear();
     groups_.clear();
     quad_count_ = 0;
 
-    if (player_army < 0 || player_army >= static_cast<i32>(sim.army_count()))
-        return;
+    const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(player_army) : nullptr;
+    if (!brain || !brain->valid) return;
 
-    auto* brain = sim.army_at(static_cast<size_t>(player_army));
-    if (!brain) return;
-
-    auto& econ = brain->economy();
+    const sim::ArmyRecord& econ = *brain;
     VkDescriptorSet white_ds = tex_cache.fallback_descriptor();
 
     // Layout: centered at top of screen
@@ -270,18 +266,18 @@ void HudRenderer::update(const sim::SimState& sim, i32 player_army,
                   font_cache, "Arial", FONT_SIZE - 2);
 
         // Efficiency indicators (if stalling)
-        if (brain->mass_efficiency() < 0.99) {
+        if (brain->mass_efficiency < 0.99) {
             char eff_buf[32];
             std::snprintf(eff_buf, sizeof(eff_buf), "%.0f%%",
-                          brain->mass_efficiency() * 100.0);
+                          brain->mass_efficiency * 100.0);
             emit_text(eff_buf, mass_x + BAR_WIDTH * 0.5f - 10.0f, inner_y + 1.0f,
                       1.0f, 0.3f, 0.3f, 1.0f,
                       font_cache, "Arial", FONT_SIZE);
         }
-        if (brain->energy_efficiency() < 0.99) {
+        if (brain->energy_efficiency < 0.99) {
             char eff_buf[32];
             std::snprintf(eff_buf, sizeof(eff_buf), "%.0f%%",
-                          brain->energy_efficiency() * 100.0);
+                          brain->energy_efficiency * 100.0);
             emit_text(eff_buf, energy_x + BAR_WIDTH * 0.5f - 10.0f, en_inner_y + 1.0f,
                       1.0f, 0.3f, 0.3f, 1.0f,
                       font_cache, "Arial", FONT_SIZE);

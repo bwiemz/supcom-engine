@@ -1,7 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
 #include "core/ui_registry_keys.hpp"
-#include "sim/build_placement.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -14,8 +13,6 @@ extern "C" {
 #include "renderer/shader_utils.hpp"
 #include "renderer/terrain_mesh.hpp"
 #include "sim/scm_parser.hpp"
-#include "sim/sim_state.hpp"
-#include "sim/entity.hpp"
 #include "sim/world_snapshot.hpp"
 #include "map/terrain.hpp"
 #include "renderer/normal_overlay.hpp"
@@ -31,6 +28,7 @@ extern "C" {
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <ostream>
 #include <unordered_map>
 
 /// Log a Vulkan/VMA error with file and line context.
@@ -1479,10 +1477,10 @@ void Renderer::clear_scene() {
               std::end(terrain_strata_scales_), 0.0f);
 }
 
-void Renderer::build_scene(const sim::SimState& sim,
+void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintStore* store,
+                           const std::vector<std::string>& preload,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
     emitter_bp_cache_.set_vfs(vfs);
-    auto* terrain = sim.terrain();
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
@@ -1494,17 +1492,17 @@ void Renderer::build_scene(const sim::SimState& sim,
     unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
 
     // Initialize mesh cache, texture cache, and preload meshes
-    if (vfs && sim.blueprint_store()) {
+    if (vfs && store) {
         if (!caches_initialized_) {
             mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                             vfs, sim.blueprint_store());
+                             vfs, store);
             texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                                 texture_ds_layout_, texture_sampler_, vfs);
             font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                              texture_ds_layout_, texture_sampler_, vfs);
             caches_initialized_ = true;
         }
-        unit_renderer_.preload_meshes(sim, mesh_cache_, L);
+        unit_renderer_.preload_meshes(preload, mesh_cache_, L);
     }
 
     // Create bone SSBO descriptor pool and per-frame sets
@@ -1901,7 +1899,8 @@ void Renderer::build_scene(const sim::SimState& sim,
     spdlog::info("Scene built");
 }
 
-void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State* L,
+void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
+                      const BuildGhost* ghost, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
     // FA's own game interface replaces the C++ HUD placeholders.
@@ -1977,13 +1976,11 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
     fog_renderer_.set_frame_index(fi);
     profile_overlay_.set_frame_index(fi);
 
-    // Process camera shake events from sim
+    // Camera shakes of the ticks since the last frame
     {
-        auto shakes = sim.camera_shake_events(); // copy before clear
-        if (!shakes.empty()) {
-            sim.clear_camera_shake_events();
+        if (!events.shakes.empty()) {
             f32 total_intensity = 0;
-            for (const auto& ev : shakes) {
+            for (const auto& ev : events.shakes) {
                 f32 dx = camera_.target_x() - ev.x;
                 f32 dz = camera_.target_z() - ev.z;
                 f32 dist = std::sqrt(dx * dx + dz * dz);
@@ -1993,6 +1990,7 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
                 }
             }
             camera_.apply_shake(total_intensity);
+            events.shakes.clear();
         }
     }
 
@@ -2008,58 +2006,22 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
-        unit_renderer_.update(sim, view, mesh_cache_, L, &texture_cache_, &camera_,
+        unit_renderer_.update(view, mesh_cache_, L, &texture_cache_, &camera_,
                               selected_ids, &frustum);
     }
 
-    // Build preview ghost — render a semi-transparent mesh at the cursor
-    const auto& ghost_bp = sim.build_ghost_bp();
-    if (!ghost_bp.empty() && sim.terrain()) {
-        f64 mx, my;
-        mouse_position(mx, my);
-        f32 wx, wz;
-        if (camera_.screen_to_world(static_cast<f32>(mx), static_cast<f32>(my),
-                                     static_cast<f32>(window_width_),
-                                     static_cast<f32>(window_height_),
-                                     0.0f, wx, wz)) {
-            f32 size_x = sim.build_ghost_foot_x();
-            f32 size_z = sim.build_ghost_foot_z();
+    // Build preview ghost — a semi-transparent mesh where input places it
+    if (ghost && !ghost->blueprint_id.empty()) {
+        // Green = valid, Red = invalid, semi-transparent
+        f32 gr = ghost->valid ? 0.2f : 1.0f;
+        f32 gg = ghost->valid ? 0.9f : 0.2f;
+        f32 gb = ghost->valid ? 0.3f : 0.2f;
+        f32 ga = 0.35f;
 
-            // Where a build order at the cursor would place it
-            sim::snap_structure_center(wx, wz, size_x, size_z);
-
-            f32 wy = sim.terrain()->get_terrain_height(wx, wz);
-
-            // Check placement validity via pathfinding grid
-            bool valid = true;
-            auto* grid = sim.pathfinding_grid();
-            if (grid) {
-                f32 half_x = size_x * 0.5f;
-                f32 half_z = size_z * 0.5f;
-                u32 gx0, gz0, gx1, gz1;
-                grid->world_to_grid(wx - half_x, wz - half_z, gx0, gz0);
-                grid->world_to_grid(wx + half_x, wz + half_z, gx1, gz1);
-                for (u32 gz = gz0; gz <= gz1 && valid; ++gz) {
-                    for (u32 gx = gx0; gx <= gx1 && valid; ++gx) {
-                        auto cell = grid->get(gx, gz);
-                        if (cell == map::CellPassability::Impassable) {
-                            valid = false;
-                        }
-                    }
-                }
-            }
-
-            // Green = valid, Red = invalid, semi-transparent
-            f32 gr = valid ? 0.2f : 1.0f;
-            f32 gg = valid ? 0.9f : 0.2f;
-            f32 gb = valid ? 0.3f : 0.2f;
-            f32 ga = 0.35f;
-
-            const GPUMesh* ghost_mesh = mesh_cache_.get(ghost_bp, L);
-            if (ghost_mesh) {
-                unit_renderer_.inject_ghost(ghost_mesh, wx, wy, wz,
-                                            gr, gg, gb, ga, &texture_cache_);
-            }
+        const GPUMesh* ghost_mesh = mesh_cache_.get(ghost->blueprint_id, L);
+        if (ghost_mesh) {
+            unit_renderer_.inject_ghost(ghost_mesh, ghost->x, ghost->y, ghost->z,
+                                        gr, gg, gb, ga, &texture_cache_);
         }
     }
 
@@ -2080,9 +2042,13 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
         // FA's minimap WorldView shows the minimap, drawn with the UI.
         WorldViewPainter minimap_painter;
         if (!legacy_hud_active_) {
+            painted_minimap_.clear();
             minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
-                minimap_renderer_.paint(sim, view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
+                const size_t first = out.size();
+                minimap_renderer_.paint(view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
                                         window_width_, window_height_, out);
+                painted_minimap_.insert(painted_minimap_.end(),
+                                        out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
         }
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
@@ -2093,23 +2059,23 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
     }
 
     // Stage fog of war data from visibility grid (CPU side)
-    if (fog_enabled_ && fog_renderer_.initialized() && sim.visibility_grid()) {
-        fog_renderer_.stage(*sim.visibility_grid(), player_army_);
+    if (fog_enabled_ && fog_renderer_.initialized() && view.cur() && view.cur()->visibility) {
+        fog_renderer_.stage(*view.cur()->visibility, player_army_);
     }
 
     // Update game overlays (health bars, selection circles, command lines, game over)
     {
         PROFILE_ZONE("Render::overlay_update");
-        overlay_renderer_.update(sim, view, camera_, vp, selected_ids, texture_cache_,
-                                 window_width_, window_height_,
-                                 legacy_hud_active_ ? sim.player_result() : 0,
+        const i32 game_result = legacy_hud_active_ && view.cur() ? view.cur()->player_result : 0;
+        overlay_renderer_.update(view, events, camera_, vp, selected_ids, texture_cache_,
+                                 window_width_, window_height_, game_result,
                                  frame_dt_, &frustum);
     }
 
     // Update particle system (sync effects, step physics, build GPU data)
     {
         PROFILE_ZONE("Render::particle_update");
-        particle_system_.sync_effects(sim, view, emitter_bp_cache_, L);
+        particle_system_.sync_effects(view, emitter_bp_cache_, L);
         particle_system_.update(frame_dt_);
     }
     f32 p_eye_x, p_eye_y, p_eye_z;
@@ -2120,21 +2086,21 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
     if (legacy_hud_active_)
-        minimap_renderer_.update(sim, view, camera_, texture_cache_, selected_ids,
+        minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
                                   window_width_, window_height_);
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
-    strategic_icon_renderer_.update(sim, view, camera_, vp, selected_ids,
+    strategic_icon_renderer_.update(view, camera_, vp, selected_ids,
                                      texture_cache_,
                                      window_width_, window_height_);
 
     if (legacy_hud_active_) {
         // Update economy HUD
-        hud_renderer_.update(sim, player_army_, font_cache_, texture_cache_,
+        hud_renderer_.update(view, player_army_, font_cache_, texture_cache_,
                               window_width_, window_height_);
 
         // Update selection info panel
-        selection_info_renderer_.update(sim, selected_ids, font_cache_, texture_cache_,
+        selection_info_renderer_.update(view, selected_ids, font_cache_, texture_cache_,
                                         strategic_icon_renderer_.atlas_descriptor(),
                                         window_width_, window_height_);
     }
@@ -2810,6 +2776,48 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
 }
 
 // --- UI-only rendering (loading screen) ---
+
+void Renderer::dump_frame(std::ostream& out) const {
+    auto quad_line = [](const UIInstance& q) {
+        return fmt::format("{:.3f} {:.3f} {:.3f} {:.3f} | {:.4f} {:.4f} {:.4f} {:.4f} | "
+                           "{:.3f} {:.3f} {:.3f} {:.3f}",
+                           q.rect[0], q.rect[1], q.rect[2], q.rect[3], q.uv[0], q.uv[1],
+                           q.uv[2], q.uv[3], q.color[0], q.color[1], q.color[2], q.color[3]);
+    };
+    auto section = [&](const char* name, std::vector<std::string> lines) {
+        std::sort(lines.begin(), lines.end());
+        out << "[" << name << "] " << lines.size() << '\n';
+        for (const auto& l : lines) out << l << '\n';
+    };
+    auto quads = [&](const std::vector<UIInstance>& qs) {
+        std::vector<std::string> lines;
+        lines.reserve(qs.size());
+        for (const auto& q : qs) lines.push_back(quad_line(q));
+        return lines;
+    };
+    auto ui_quads = [&](const std::vector<UIQuad>& qs) {
+        std::vector<std::string> lines;
+        lines.reserve(qs.size());
+        for (const auto& q : qs) lines.push_back(quad_line(q.inst));
+        return lines;
+    };
+
+    out << "[units]\n";
+    unit_renderer_.dump(out);
+    section("overlay", quads(overlay_renderer_.quads()));
+    section("icons", quads(strategic_icon_renderer_.quads()));
+    section("minimap-window", ui_quads(painted_minimap_));
+    section("minimap-hud", ui_quads(minimap_renderer_.quads()));
+    section("hud", quads(hud_renderer_.quads()));
+    section("selection-info", quads(selection_info_renderer_.quads()));
+    std::vector<std::string> emitters;
+    for (const auto& e : particle_system_.emitters()) {
+        emitters.push_back(fmt::format("{} {} {:.4f} {:.4f} {:.4f}", e.effect_id,
+                                       e.active ? "on" : "off", e.origin_x, e.origin_y,
+                                       e.origin_z));
+    }
+    section("emitters", std::move(emitters));
+}
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
     // (debug removed)

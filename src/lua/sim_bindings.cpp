@@ -1564,6 +1564,14 @@ static int l_GetTerrainType(lua_State* L) {
     return 1;
 }
 
+/// GetTerrainTypeOffset(x, z) -- the terrain type's height offset at a point,
+/// which retail's CreateWreckageProp adds to the terrain height. No FA
+/// terrain type (/lua/TerrainTypes.lua) defines one, so it is 0.
+static int l_GetTerrainTypeOffset(lua_State* L) {
+    lua_pushnumber(L, 0);
+    return 1;
+}
+
 // ====================================================================
 // Categories system
 // ====================================================================
@@ -4847,7 +4855,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetTerrainHeight", l_GetTerrainHeight);
     state.register_function("GetSurfaceHeight", l_GetSurfaceHeight);
     state.register_function("GetTerrainType", l_GetTerrainType);
-    state.register_function("GetTerrainTypeOffset", l_GetTerrainType);
+    state.register_function("GetTerrainTypeOffset", l_GetTerrainTypeOffset);
     state.register_function("GetPlayableRect", [](lua_State* L) -> int {
         auto* sim = get_sim(L);
         lua_newtable(L);

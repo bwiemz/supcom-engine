@@ -38,6 +38,7 @@ extern "C" {
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 
 namespace osc::test {
 
@@ -6286,11 +6287,15 @@ void test_shadow(TestContext& ctx) {
             spdlog::info("[PASS] Test 3: Renderer initialized with shadow resources");
 
             // Test 4: Build scene and render 3 frames without crash
-            renderer.build_scene(ctx.sim, &ctx.vfs, ctx.L);
+            renderer.build_scene(ctx.sim.terrain(), ctx.sim.blueprint_store(),
+                                 sim::world_blueprints(ctx.sim), &ctx.vfs, ctx.L);
+            sim::WorldHistory history;
+            history.capture(ctx.sim);
             bool render_ok = true;
             for (int f = 0; f < 3; f++) {
                 try {
-                    renderer.render(ctx.sim, osc::sim::FrameView{}, ctx.L);
+                    renderer.render(sim::FrameView(&history.prev(), &history.cur(), 1.0f),
+                                    history.events(), nullptr, ctx.L);
                     renderer.poll_events(0.016);
                 } catch (...) {
                     render_ok = false;
@@ -14634,6 +14639,92 @@ void InterpProbe::on_frame(sim::SimState& sim, const sim::FrameView& view,
     last_[2] = drawn.z;
     have_last_ = true;
     if (++frames_ >= kInterpFrames) finish();
+}
+
+// ── --render-dump ────────────────────────────────────────────────────────────
+
+namespace {
+constexpr u32 kDumpSceneTick = 60;
+constexpr u32 kDumpFirstTick = 100;
+constexpr u32 kDumpLastTick = 180;
+constexpr int kDumpEvery = 16; // frames
+} // namespace
+
+void RenderDumpProbe::on_frame(sim::SimState& sim,
+                               const std::function<bool(const char*)>& sim_lua,
+                               const std::function<void(const std::vector<u32>&)>& select,
+                               const std::function<void(std::ostream&)>& dump) {
+    if (done_) return;
+    ++frames_;
+    const u32 tick = sim.tick_count();
+    if (!scene_ && tick >= kDumpSceneTick) {
+        scene_ = true;
+        const u32 acu_id = army_acu_id(sim, 0);
+        const sim::Entity* acu = acu_id ? sim.entity_registry().find(acu_id) : nullptr;
+        if (!acu) {
+            test_status::fail("[FAIL] render-dump: army 1 has no commander");
+            done_ = true;
+            return;
+        }
+        // Toward the map centre (d) and across it (n).
+        const auto* terrain = sim.terrain();
+        const auto p = acu->position();
+        f32 dx = (terrain ? terrain->map_width() * 0.5f : p.x) - p.x;
+        f32 dz = (terrain ? terrain->map_height() * 0.5f : p.z) - p.z;
+        const f32 len = std::max(std::sqrt(dx * dx + dz * dz), 1.0f);
+        dx /= len;
+        dz /= len;
+        const std::string script = fmt::format(R"(
+            local px, pz, dx, dz = {}, {}, {}, {}
+            local function at(f, s) return px + dx * f - dz * s, pz + dz * f + dx * s end
+            local function spawn(bp, army, f, s)
+                local x, z = at(f, s)
+                return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            end
+            local tanks = {{}}
+            for i = -2, 1 do table.insert(tanks, spawn('uel0201', 'ARMY_1', 10, i * 4)) end
+            local bots = {{}}
+            for i = -2, 1 do table.insert(bots, spawn('url0107', 'ARMY_2', 34, i * 4)) end
+            spawn('ueb4202', 'ARMY_1', 6, 10)
+            local eng = spawn('uel0105', 'ARMY_1', 2, -8)
+            local bx, bz = at(4, -14)
+            IssueBuildMobile({{eng}}, {{bx, GetTerrainHeight(bx, bz), bz}}, 'ueb1101', {{}})
+            local mx, mz = at(24, 0)
+            IssueMove(tanks, {{mx, GetTerrainHeight(mx, mz), mz}})
+            local ax, az = at(12, 0)
+            IssueMove(bots, {{ax, GetTerrainHeight(ax, az), az}})
+        )", p.x, p.z, dx, dz);
+        if (!sim_lua(script.c_str())) {
+            test_status::fail("[FAIL] render-dump: the scene script failed");
+            done_ = true;
+        }
+        return;
+    }
+    if (scene_ && !selected_ && tick >= kDumpSceneTick + 2) {
+        selected_ = true;
+        std::vector<u32> army1;
+        sim.entity_registry().for_each([&](const sim::Entity& e) {
+            if (e.is_unit() && !e.destroyed() && e.army() == 0) army1.push_back(e.entity_id());
+        });
+        std::sort(army1.begin(), army1.end());
+        select(army1);
+    }
+    if (tick >= kDumpFirstTick && tick <= kDumpLastTick && frames_ % kDumpEvery == 0) {
+        std::ostringstream frame;
+        frame << "=== frame " << frames_ << " tick " << tick << '\n';
+        dump(frame);
+        text_ += frame.str();
+    }
+    if (tick > kDumpLastTick) {
+        done_ = true;
+        std::ofstream out(path_, std::ios::binary);
+        out << text_;
+        if (!out) {
+            test_status::fail("[FAIL] render-dump: could not write {}", path_);
+            return;
+        }
+        spdlog::info("render-dump: {} bytes written to {}", text_.size(), path_);
+    }
 }
 
 void InterpProbe::finish() {

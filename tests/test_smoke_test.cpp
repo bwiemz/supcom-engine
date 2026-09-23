@@ -709,3 +709,22 @@ TEST_CASE("Teleport destination validates bounds and occupancy", "[teleport]") {
         sim.is_valid_teleport_destination(*unit, {60.0f, 0.0f, 60.0f}));
     REQUIRE(sim.is_valid_teleport_destination(*unit, {70.0f, 0.0f, 60.0f}));
 }
+
+TEST_CASE("GetTerrainTypeOffset is a height offset, not a terrain type", "[sim][terrain]") {
+    // Retail's CreateWreckageProp adds it to a terrain height; a table there
+    // failed every wreck. No FA terrain type defines an offset.
+    osc::lua::LuaState state;
+    osc::blueprints::BlueprintStore store(state.raw());
+    osc::sim::SimState sim(state.raw(), &store);
+    osc::lua::register_sim_bindings(state, sim);
+
+    auto result = state.do_string("return GetTerrainHeight(10, 10) + GetTerrainTypeOffset(10, 10)");
+    REQUIRE(result.ok());
+    CHECK(lua_type(state.raw(), -1) == LUA_TNUMBER);
+    lua_pop(state.raw(), 1);
+
+    result = state.do_string("return GetTerrainType(10, 10).Name");
+    REQUIRE(result.ok());
+    CHECK(std::string(lua_tostring(state.raw(), -1)) == "Default");
+    lua_pop(state.raw(), 1);
+}

@@ -27,6 +27,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -41,10 +42,26 @@ class VirtualFileSystem;
 
 namespace osc::sim {
 class FrameView;
-class SimState;
+struct WorldEvents;
+}
+
+namespace osc::map {
+class Terrain;
+}
+
+namespace osc::blueprints {
+class BlueprintStore;
 }
 
 namespace osc::renderer {
+
+/// A structure being placed: drawn translucent at its snapped spot, green
+/// where it can be built and red where it can't. Input works it out.
+struct BuildGhost {
+    std::string blueprint_id;
+    f32 x = 0, y = 0, z = 0;
+    bool valid = true;
+};
 
 class Renderer {
 public:
@@ -62,21 +79,32 @@ public:
     bool init(u32 width, u32 height, const std::string& title,
               bool offscreen = false);
 
-    /// One-time scene upload (terrain mesh, static buffers, mesh preload).
-    void build_scene(const sim::SimState& sim, vfs::VirtualFileSystem* vfs,
-                     lua_State* L);
+    /// One-time scene upload (terrain mesh, static buffers, and the meshes
+    /// of `preload`, e.g. sim::world_blueprints).
+    void build_scene(const map::Terrain* terrain, blueprints::BlueprintStore* store,
+                     const std::vector<std::string>& preload,
+                     vfs::VirtualFileSystem* vfs, lua_State* L);
 
     /// Tear down scene-specific GPU resources for map reload.
     void clear_scene();
 
-    /// Render one frame (updates unit instances, draws everything). The world
-    /// is posed as `view` draws it, between the sim's last two ticks.
-    void render(sim::SimState& sim, const sim::FrameView& view, lua_State* L,
+    /// Render one frame from the world as `view` draws it, between the
+    /// sim's last two ticks. It shows (and takes) the death flashes and
+    /// camera shakes in `events`, and draws `ghost` when placing a structure.
+    /// The renderer reads no live sim state.
+    void render(const sim::FrameView& view, sim::WorldEvents& events,
+                const BuildGhost* ghost, lua_State* L,
                 ui::UIControlRegistry* ui_registry = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr);
 
+    /// Everything the last render() generated from the world -- mesh
+    /// instances and bone poses, overlay, strategic-icon, minimap and HUD
+    /// quads, emitter origins -- as sorted text lines, so two runs (or two
+    /// implementations) can be compared exactly.
+    void dump_frame(std::ostream& out) const;
+
     /// Render only the UI layer (no 3D scene, no bloom).
-    /// Used during loading screen when SimState doesn't exist.
+    /// Used during the loading screen and front end, when there is no world.
     void render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry);
 
     /// Initialize texture/font caches without a full scene build.
@@ -261,6 +289,7 @@ private:
     UIRenderer ui_renderer_;
     OverlayRenderer overlay_renderer_;
     MinimapRenderer minimap_renderer_;
+    std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;

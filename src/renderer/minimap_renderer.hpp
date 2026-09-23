@@ -14,7 +14,6 @@ class Terrain;
 
 namespace osc::sim {
 class FrameView;
-class SimState;
 }
 
 namespace osc::renderer {
@@ -62,14 +61,14 @@ public:
     }
 
     /// Build the C++ HUD's corner minimap and upload it for render().
-    void update(const sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
+    void update(const sim::FrameView& view, const Camera& camera,
                 TextureCache& tex_cache,
                 const std::unordered_set<u32>* selected_ids,
                 u32 viewport_w, u32 viewport_h);
 
     /// Draw the minimap into the view rect (x, y, w, h): its quads are
     /// appended to `out`, for the UI renderer to draw at the view's depth.
-    void paint(const sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
+    void paint(const sim::FrameView& view, const Camera& camera,
                TextureCache& tex_cache, f32 x, f32 y, f32 w, f32 h,
                u32 viewport_w, u32 viewport_h, std::vector<UIQuad>& out);
 
@@ -80,6 +79,8 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+    /// This frame's quads from update() (the legacy HUD's minimap).
+    const std::vector<UIQuad>& quads() const { return quads_; }
 
     u32 quad_count() const { return quad_count_; }
 
@@ -97,7 +98,7 @@ public:
 
 private:
     /// Build the map's quads into quads_ for the map drawn at area_.
-    void build(const sim::SimState& sim, const sim::FrameView& view, const Camera& camera,
+    void build(const sim::FrameView& view, const Camera& camera,
                TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
                bool framed);
 

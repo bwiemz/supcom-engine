@@ -10,6 +10,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/sim_bindings.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/world_snapshot.hpp"
@@ -397,4 +398,158 @@ TEST_CASE("Warp and an immediate SetPosition teleport; a plain SetPosition moves
     REQUIRE(lua.do_string("Warp(ent, {10, 0, 10})").ok());
     CHECK(e.snap_serial() == 3);
     CHECK(e.orientation().y == 1.0f); // no orientation given: kept
+}
+
+// --- The rest of the snapshot (M190b) ----------------------------------------
+
+TEST_CASE("capture_world records what the renderer draws a unit with", "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    sim.add_army("ARMY_1", "ARMY_1").set_color(10, 20, 30);
+    sim.add_army("ARMY_2", "ARMY_2");
+
+    const osc::u32 target = spawn_at(sim, {5, 0, 5});
+    const osc::u32 id = spawn_at(sim, {1, 0, 1});
+    Unit& u = unit(sim, id);
+    u.set_unit_id("uel0105");
+    u.set_custom_name("Bob");
+    u.add_category("ENGINEER");
+    u.add_category("LAND");
+    u.set_max_health(200);
+    u.set_health(150);
+    u.set_is_being_built(true);
+    u.set_fraction_complete(0.5f);
+    u.set_build_target_id(target);
+    u.set_work_progress(0.25f);
+    u.set_vet_level(2);
+    u.add_cargo(target);
+    u.give_nuke_silo_ammo(3);
+    u.add_adjacent(target);
+    u.add_intel("Radar", 40);
+    u.enable_intel("Radar");
+    u.add_intel("Sonar", 30); // off: nothing to ring
+    u.add_intel("Omni", 0.5f);
+    u.enable_intel("Omni"); // too small to ring
+    osc::sim::UnitCommand move{};
+    move.type = osc::sim::CommandType::Move;
+    move.target_pos = {9, 0, 9};
+    u.push_command(move, true);
+    osc::sim::UnitCommand attack{};
+    attack.type = osc::sim::CommandType::Attack;
+    attack.target_id = target;
+    u.push_command(attack, false);
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+    const auto* r = snap.find(id);
+    REQUIRE(r != nullptr);
+    CHECK(r->is_unit);
+    CHECK(r->army == 0);
+    CHECK(r->unit_id == "uel0105");
+    CHECK(r->custom_name == "Bob");
+    CHECK(r->icon == osc::sim::IconClass::Engineer);
+    CHECK(r->health == 150.0f);
+    CHECK(r->max_health == 200.0f);
+    CHECK(r->is_being_built);
+    CHECK(r->fraction_complete == 0.5f);
+    CHECK(r->is_building());
+    CHECK(r->build_target_id == target);
+    CHECK(r->work_progress == 0.25f);
+    CHECK(r->vet_level == 2);
+    CHECK(r->cargo_count == 1);
+    CHECK(r->nuke_silo_ammo == 3);
+
+    const auto cmds = snap.commands_of(*r);
+    REQUIRE(cmds.size() == 2);
+    CHECK(cmds[0].type == osc::sim::CommandType::Move);
+    CHECK(cmds[0].target_pos.x == 9.0f);
+    CHECK(cmds[1].target_id == target);
+
+    const auto intel = snap.intel_of(*r);
+    REQUIRE(intel.size() == 1);
+    CHECK(intel[0].type == "Radar");
+    CHECK(intel[0].radius == 40.0f);
+
+    const auto adj = snap.adjacent_of(*r);
+    REQUIRE(adj.size() == 1);
+    CHECK(adj[0] == target);
+
+    REQUIRE(snap.armies.size() == 2);
+    CHECK(snap.armies[0].valid);
+    CHECK(snap.armies[0].has_color);
+    CHECK(snap.armies[0].g == 20);
+    CHECK_FALSE(snap.armies[1].has_color);
+    CHECK(snap.army(2) == nullptr);
+}
+
+TEST_CASE("capture_world records shields, live effects and the economy", "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    auto& brain = sim.add_army("ARMY_1", "ARMY_1");
+    brain.economy().mass.stored = 123;
+    brain.economy().energy.max_storage = 5000;
+
+    const osc::u32 owner = spawn_at(sim, {0, 0, 0});
+    auto shield = std::make_unique<osc::sim::Shield>();
+    shield->owner_id = owner;
+    shield->is_on = true;
+    shield->size = 18;
+    const osc::u32 shield_id = sim.entity_registry().register_entity(std::move(shield));
+
+    auto* beam = sim.effect_registry().create();
+    beam->set_type(osc::sim::EffectType::ATTACHED_BEAM);
+    beam->set_entity_id(owner);
+    beam->set_param("LENGTH", 12);
+    beam->set_param("THICKNESS", 3);
+    auto* gone = sim.effect_registry().create();
+    gone->mark_destroyed();
+
+    WorldSnapshot snap;
+    osc::sim::capture_world(sim, snap);
+
+    const auto* s = snap.find(shield_id);
+    REQUIRE(s != nullptr);
+    CHECK(s->is_shield);
+    CHECK(s->shield_on);
+    CHECK(s->shield_owner_id == owner);
+    CHECK(s->shield_size == 18.0f);
+
+    REQUIRE(snap.effects.size() == 1);
+    CHECK(snap.effects[0].id == beam->id());
+    CHECK(snap.effects[0].type == osc::sim::EffectType::ATTACHED_BEAM);
+    CHECK(snap.effects[0].entity_id == owner);
+    CHECK(snap.effects[0].length == 12.0f);
+    CHECK(snap.effects[0].thickness == 3.0f);
+
+    CHECK(snap.armies[0].mass.stored == 123.0);
+    CHECK(snap.armies[0].energy.max_storage == 5000.0);
+}
+
+TEST_CASE("Death flashes and camera shakes reach the renderer once", "[interp][snapshot]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    WorldHistory history;
+    sim.set_tick_observer([&](const SimState& s) { history.capture(s); });
+
+    // Raised between ticks (a SimCallback): shown with the next tick.
+    sim.add_death_event(1, 2, 3, 4, 0);
+    osc::sim::CameraShakeEvent shake;
+    shake.x = 7;
+    sim.add_camera_shake(shake);
+    sim.tick();
+    REQUIRE(history.events().deaths.size() == 1);
+    CHECK(history.events().deaths[0].z == 3.0f);
+    REQUIRE(history.events().shakes.size() == 1);
+    CHECK(history.events().shakes[0].x == 7.0f);
+    // The sim is done with them once the tick is captured.
+    CHECK(sim.death_events().empty());
+    CHECK(sim.camera_shake_events().empty());
+
+    // Two ticks before the renderer looks: both ticks' events wait for it.
+    sim.add_death_event(5, 5, 5, 1, 0);
+    sim.tick();
+    CHECK(history.events().deaths.size() == 2);
+    history.events().clear(); // the renderer took them
+    sim.tick();
+    CHECK(history.events().deaths.empty());
 }

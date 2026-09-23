@@ -20,6 +20,7 @@ namespace osc::renderer {
 
 class Camera;
 class Renderer;
+struct BuildGhost;
 
 /// FA's command mode (/lua/ui/game/commandmode.lua): what a world click
 /// does after the player picked a build icon or an order button.
@@ -67,6 +68,12 @@ public:
 
     /// Currently selected unit IDs.
     const std::unordered_set<u32>& selected() const { return selected_; }
+
+    /// The structure being placed (the sim's build ghost), at the snapped
+    /// spot under the cursor with whether it can be built there, or
+    /// nothing when no structure is being placed.
+    std::optional<BuildGhost> build_ghost(const Renderer& renderer,
+                                          const sim::SimState& sim) const;
 
     /// Where this frame draws the world: clicks pick the unit the player
     /// sees under the cursor, not its position at the last tick. Without

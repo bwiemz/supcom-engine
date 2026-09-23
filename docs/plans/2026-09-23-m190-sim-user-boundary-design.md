@@ -76,7 +76,7 @@ The loop's accumulator can't be used for alpha: in multiplayer it paces frame *s
 - `InputHandler` picks against the same interpolated positions.
 - `SetPosition(pos, true)` and `Warp` bump the entity's snap serial; `Warp` also applies its orientation.
 
-**M190b**
+**M190b** (done)
 - The snapshot grows to cover everything the renderer reads:
   - per entity: kind, army, mesh key, scale, health, build fraction, the icon class precomputed from categories, operation state and target, veterancy, cargo, silo ammo;
   - per army: colours;
@@ -84,8 +84,11 @@ The loop's accumulator can't be used for alpha: in multiplayer it paces frame *s
   - a side table for the selected units' command queues and intel states;
   - the effect records.
 - The death and camera-shake queues are moved into the snapshot at capture, so the renderer never writes to the sim.
-- The build ghost moves out of `SimState` into user state.
-- `Renderer::render` loses its `SimState&`. No file in `src/renderer` includes a sim header except `world_snapshot.hpp`.
+- The renderer no longer reads the build ghost from `SimState`. Input (`InputHandler::build_ghost`) works out its snapped spot and validity from the sim, and hands the renderer a `BuildGhost`. The ghost's *storage* moves out of `SimState` with the UI bindings that set it (M191).
+- `Renderer::render` and `build_scene` lose their `SimState&`.
+- In `src/renderer`, only `InputHandler` includes a sim-state header. It is input, which works on the live sim and moves out of the renderer with M192. `mesh_cache`/`renderer.cpp` also include `sim/scm_parser.hpp`, which is the SCM file format, not sim state.
+- The sim clears its death and shake queues at the end of each tick, after the capture has copied them. `WorldHistory` holds them until the renderer shows them. This also fixes headless runs, which never render, keeping every event forever.
+- **Checked with `--render-dump`.** A scripted scene (tanks, bots, a shield, an engineer building, army 1 selected) is rendered offscreen, and everything the renderers generate is dumped for 21 frames. The dump after the refactor is byte-identical to the one taken before it.
 
 **Later**
 - The UI state's user-unit bindings (`UserUnit:GetPosition`, `GetHealth`…) read the snapshot too. That belongs with M191, which splits the bindings by Moho class into sim and user sides.

@@ -8,8 +8,6 @@
 
 namespace osc::sim {
 class FrameView;
-class IEffect;
-class SimState;
 } // namespace osc::sim
 
 namespace osc::renderer {
@@ -58,10 +56,13 @@ struct ParticleInstance {
 /// Each frame, call update() then read instances() for GPU upload.
 class ParticleSystem {
 public:
-    /// Sync emitter list with IEffectRegistry — create new emitters,
-    /// remove destroyed ones, update positions from entities as `view`
-    /// draws them.
-    void sync_effects(const sim::SimState& sim, const sim::FrameView& view,
+    /// Live emitters (the render-state dump reads their origins).
+    const std::vector<EmitterState>& emitters() const { return emitters_; }
+
+    /// Sync emitters with the world's effects — create new emitters,
+    /// retire those whose effect is gone, place attached ones where `view`
+    /// draws their entity.
+    void sync_effects(const sim::FrameView& view,
                       EmitterBlueprintCache& bp_cache,
                       struct lua_State* L);
 

@@ -27,7 +27,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 360 cases / 5,968 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 364 cases / 6,025 assertions. Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Data-backed gate on retail (`ctest -L gate`) | All 107 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
@@ -161,10 +161,17 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   RNG and libm differ between platforms. See roadmap Phases D and G.
 - **Retail parity:** retail AI threads die on unbound retail-only methods, and
   the retail front end does not yet reach a hosted lobby. See roadmap Phase B.
-- **Sim/user boundary (M190b):** the renderer draws poses from per-tick
-  snapshots, but still reads everything else (health, commands, economy,
-  the fog grid) from the live sim, and clears two sim event queues itself.
-  The rest of the snapshot, and the UI state's unit bindings, come next.
+- **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
+  The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
+  still read the live sim; they move over with M191's split of the bindings
+  into sim and user sides. `InputHandler` (picking, orders, the build
+  ghost) works on the live sim by design.
+- **Props aren't script-class instances:** retail props, trees and wrecks
+  should be instances of `Prop`, `Tree`/`TreeGroup` (`/lua/proptree.lua`) or
+  `Wreckage` (`/lua/wreckage.lua`), but get only `moho.prop_methods`. So
+  retail's `CreateWreckageProp` fails at `SetReclaimValues`, and a retail
+  unit death leaves no scripted wreck. Tracked with the projectile script
+  classes (M201).
 - **Death weapons:** projectiles are not yet instances of their script
   classes (M201). So a death weapon's `PassDamageData` fails. An ACU's
   `OnKilled` then falls back to engine destruction, and its death blast does no
