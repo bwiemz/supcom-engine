@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/lua_copy.hpp"
+
 struct lua_State;
 
 namespace osc::lua {
@@ -9,12 +11,8 @@ namespace osc::lua {
 /// a request the next sim beat applies, as Moho's CWldSession does.
 inline constexpr const char* kFocusArmyRequestKey = "__osc_focus_army_request";
 
-/// Push onto `to` a deep copy of the value at `from_idx` in `from`. Plain
-/// data only -- nil, booleans, numbers, strings and tables of them; other
-/// values (functions, userdata, threads) and entries keyed by them are
-/// dropped, as Moho's sync carries data, not code. A table reached twice
-/// (shared or cyclic) is copied once and shared in the copy too.
-void copy_lua_value(lua_State* from, int from_idx, lua_State* to);
+/// Plain-data deep copy between states (see core/lua_copy.hpp).
+using core::copy_lua_value;
 
 /// One Moho sim beat on the sim -> user channel:
 ///  1. apply a pending focus-army request: both states' focus army change,
