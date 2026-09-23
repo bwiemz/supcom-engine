@@ -1,6 +1,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/entity.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <spdlog/spdlog.h>
 
@@ -13,6 +14,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     u32 id = next_id_++;
     entity->set_entity_id(id);
     entity->set_registry(this);
+    order_.push_back({id, entity.get()});
     entities_[id] = std::move(entity);
 
     if (grid_initialized_) {
@@ -33,6 +35,12 @@ void EntityRegistry::unregister_entity(u32 id) {
     // which may create or remove entities and so rehash the map.
     std::unique_ptr<Entity> entity = std::move(it->second);
     entities_.erase(it);
+    auto slot = std::lower_bound(order_.begin(), order_.end(), id,
+                                 [](const Slot& s, u32 v) { return s.id < v; });
+    if (slot != order_.end() && slot->id == id && slot->entity) {
+        slot->entity = nullptr;
+        ++removed_slots_;
+    }
     if (grid_initialized_) {
         i32 cx = entity->grid_cell_x();
         i32 cz = entity->grid_cell_z();
@@ -49,12 +57,23 @@ Entity* EntityRegistry::find(u32 id) const {
     return it != entities_.end() ? it->second.get() : nullptr;
 }
 
+void EntityRegistry::collect_garbage() {
+    graveyard_.clear();
+    compact();
+}
+
+void EntityRegistry::compact() {
+    // Not under a walk: it holds its place by index.
+    if (walking_ > 0 || removed_slots_ == 0) return;
+    std::erase_if(order_, [](const Slot& s) { return s.entity == nullptr; });
+    removed_slots_ = 0;
+}
+
 // --- Spatial hash grid ---
 
 void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
     // Reset all entity grid cells so stale coordinates are not reused on re-init
-    for (const auto& [id, e] : entities_)
-        e->set_grid_cell(-1, -1);
+    for_each([](Entity& e) { e.set_grid_cell(-1, -1); });
     grid_cells_.clear();
 
     grid_width_ = (map_width + CELL_SIZE - 1) / CELL_SIZE;
@@ -65,12 +84,12 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
     grid_initialized_ = true;
 
     // Retroactively insert all existing entities (e.g. props created before grid init)
-    for (const auto& [id, e] : entities_) {
+    for_each([this](Entity& e) {
         i32 cx, cz;
-        world_to_cell(e->position().x, e->position().z, cx, cz);
-        grid_insert(id, cx, cz);
-        e->set_grid_cell(cx, cz);
-    }
+        world_to_cell(e.position().x, e.position().z, cx, cz);
+        grid_insert(e.entity_id(), cx, cz);
+        e.set_grid_cell(cx, cz);
+    });
 
     spdlog::info("Spatial hash grid: {}x{} cells (cell_size={}u, {} entities indexed)",
                  grid_width_, grid_height_, CELL_SIZE, entities_.size());
@@ -122,13 +141,13 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
     f32 r2 = radius * radius;
 
     if (!grid_initialized_) {
-        // Fallback to O(N) scan
-        for (const auto& [id, e] : entities_) {
-            if (e->destroyed()) continue;
-            f32 dx = e->position().x - x;
-            f32 dz = e->position().z - z;
-            if (dx * dx + dz * dz <= r2) result.push_back(id);
-        }
+        // Fallback to O(N) scan (already in id order)
+        for_each([&](const Entity& e) {
+            if (e.destroyed()) return;
+            f32 dx = e.position().x - x;
+            f32 dz = e.position().z - z;
+            if (dx * dx + dz * dz <= r2) result.push_back(e.entity_id());
+        });
         return result;
     }
 
@@ -150,6 +169,8 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
             }
         }
     }
+    // A cell lists ids in the order they moved in; callers get a canonical order.
+    std::sort(result.begin(), result.end());
     return result;
 }
 
@@ -160,14 +181,13 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
     if (z0 > z1) std::swap(z0, z1);
 
     if (!grid_initialized_) {
-        // Fallback to O(N) scan
-        for (const auto& [id, e] : entities_) {
-            if (e->destroyed()) continue;
-            f32 ex = e->position().x;
-            f32 ez = e->position().z;
-            if (ex >= x0 && ex <= x1 && ez >= z0 && ez <= z1)
-                result.push_back(id);
-        }
+        // Fallback to O(N) scan (already in id order)
+        for_each([&](const Entity& e) {
+            if (e.destroyed()) return;
+            f32 ex = e.position().x;
+            f32 ez = e.position().z;
+            if (ex >= x0 && ex <= x1 && ez >= z0 && ez <= z1) result.push_back(e.entity_id());
+        });
         return result;
     }
 
@@ -188,6 +208,7 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
             }
         }
     }
+    std::sort(result.begin(), result.end());
     return result;
 }
 

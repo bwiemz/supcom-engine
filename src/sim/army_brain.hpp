@@ -5,6 +5,7 @@
 #include "sim/platoon.hpp"
 
 #include <memory>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -180,7 +181,9 @@ public:
     void record_unit_lost(const std::string& bp_id, f64 mass, f64 energy);
     void record_enemy_killed(const std::string& bp_id, f64 mass, f64 energy, bool commander);
     /// A counted stat by blueprint (blueprint id -> value), or nullptr.
-    const std::unordered_map<std::string, f64>* blueprint_stats(const std::string& stat) const {
+    /// Per-blueprint values of a stat, by blueprint id (a sum over them is
+    /// then the same on every platform).
+    const std::map<std::string, f64>* blueprint_stats(const std::string& stat) const {
         auto it = blueprint_stats_.find(stat);
         return it == blueprint_stats_.end() ? nullptr : &it->second;
     }
@@ -239,7 +242,7 @@ private:
     std::string skin_name_;
     std::unordered_set<std::string> build_restrictions_;
     std::unordered_map<std::string, f64> stats_;
-    std::unordered_map<std::string, std::unordered_map<std::string, f64>> blueprint_stats_;
+    std::unordered_map<std::string, std::map<std::string, f64>> blueprint_stats_;
 
     std::vector<std::unique_ptr<Platoon>> platoons_;
     u32 next_platoon_id_ = 1;

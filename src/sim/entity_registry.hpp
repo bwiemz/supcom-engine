@@ -46,7 +46,7 @@ public:
     /// callbacks (a structure finishing its upgrade replaces itself), and the
     /// C++ frame that ran the callback is still inside that unit's update.
     /// SimState calls this at the end of each tick.
-    void collect_garbage() { graveyard_.clear(); }
+    void collect_garbage();
 
     /// Initialize spatial hash grid. Must be called after map dimensions are known.
     /// If not called, collect_in_radius/collect_in_rect fall back to O(N) scan.
@@ -55,17 +55,24 @@ public:
     /// Notify the registry that an entity's position has changed.
     void notify_position_changed(Entity& entity);
 
-    /// Collect entity IDs within radius of a point (2D distance, ignoring Y).
+    /// Collect entity IDs within radius of a point (2D distance, ignoring Y),
+    /// in ascending id order.
     std::vector<u32> collect_in_radius(f32 x, f32 z, f32 radius) const;
 
-    /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y).
+    /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
+    /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
 
-    /// Iterate all entities.
+    /// Iterate all entities in id order: the same order on every platform,
+    /// as lockstep needs (a hash map's order is the standard library's).
+    /// Entities created during the walk are visited by the next walk;
+    /// entities removed during it are skipped.
     template <typename F>
     void for_each(F&& fn) const {
-        for (const auto& [id, e] : entities_)
-            fn(*e);
+        const Walking guard(walking_);
+        const size_t n = order_.size();
+        for (size_t i = 0; i < n; ++i)
+            if (Entity* e = order_[i].entity) fn(*e);
     }
 
     u32 grid_width() const { return grid_width_; }
@@ -79,7 +86,26 @@ public:
     SimRandom& sim_random() { return *sim_random_; }
 
 private:
-    std::unordered_map<u32, std::unique_ptr<Entity>> entities_;
+    std::unordered_map<u32, std::unique_ptr<Entity>> entities_; ///< lookup only
+    /// Every live entity in id order (ids only grow, so a new one appends).
+    /// A removed entity leaves a null slot until compact(), so a walk in
+    /// progress keeps its place.
+    struct Slot {
+        u32 id;
+        Entity* entity;
+    };
+    std::vector<Slot> order_;
+    size_t removed_slots_ = 0;
+    /// Walks in progress (a walk's callback may start another).
+    mutable u32 walking_ = 0;
+    struct Walking {
+        u32& depth;
+        explicit Walking(u32& d) : depth(d) { ++depth; }
+        ~Walking() { --depth; }
+        Walking(const Walking&) = delete;
+        Walking& operator=(const Walking&) = delete;
+    };
+    void compact();
     std::vector<std::unique_ptr<Entity>> graveyard_; ///< see collect_garbage()
     UnregisterHook unregister_hook_;
     u32 next_id_ = 1;

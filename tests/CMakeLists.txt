@@ -12,6 +12,7 @@ add_executable(osc_tests
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_interpolation.cpp
+    test_ordered_iteration.cpp
     test_binding_coverage.cpp
     test_lua_state.cpp
     test_sim_sync.cpp
