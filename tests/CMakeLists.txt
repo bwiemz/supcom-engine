@@ -8,6 +8,7 @@ add_executable(osc_tests
     test_blueprint_categories.cpp
     test_image.cpp
     test_navigation_throttle.cpp
+    test_build_placement.cpp
     test_entity_lifetime.cpp
     test_fixed_step.cpp
     test_binding_coverage.cpp

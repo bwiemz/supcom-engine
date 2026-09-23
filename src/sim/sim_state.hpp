@@ -147,6 +147,7 @@ public:
     map::Terrain* terrain() const { return terrain_.get(); }
     void build_pathfinding_grid();
     map::PathfindingGrid* pathfinding_grid() { return pathfinding_grid_.get(); }
+    const map::PathfindingGrid* pathfinding_grid() const { return pathfinding_grid_.get(); }
 
     /// Block a completed structure's footprint on the pathfinding grid for as
     /// long as the unit exists (released automatically when it is removed

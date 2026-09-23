@@ -122,9 +122,6 @@ public:
     const Vector3& start_position() const { return start_position_; }
     void set_start_position(const Vector3& pos) { start_position_ = pos; }
 
-    // --- Build placement counter (for grid offset in FindPlaceToBuild) ---
-    i32 next_build_place_index() { return build_place_counter_++; }
-
     // --- Current enemy ---
     i32 current_enemy_index() const { return current_enemy_index_; }
     void set_current_enemy_index(i32 idx) { current_enemy_index_ = idx; }
@@ -201,7 +198,6 @@ private:
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
-    i32 build_place_counter_ = 0;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
     bool has_color_ = false;
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
