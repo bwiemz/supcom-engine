@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <set>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -30,10 +32,17 @@ public:
         inboxes_.emplace_back();
         return static_cast<int>(inboxes_.size()) - 1;
     }
-    /// Deliver a message to every endpoint except the sender.
+    /// Deliver a message to every endpoint except the sender (and those
+    /// whose link from it is down).
     void broadcast(int from, const std::vector<u8>& msg) {
         for (int i = 0; i < static_cast<int>(inboxes_.size()); ++i)
-            if (i != from) inboxes_[i].push_back(msg);
+            if (i != from && !down_.count({from, i})) inboxes_[i].push_back(msg);
+    }
+    /// Cut or restore the one-way link from `from` to `to` (tests: a peer that
+    /// dies mid-broadcast reaches some peers and not others).
+    void set_link(int from, int to, bool up) {
+        if (up) down_.erase({from, to});
+        else down_.insert({from, to});
     }
     /// Take all messages queued for an endpoint.
     std::vector<std::vector<u8>> drain(int id) {
@@ -45,6 +54,7 @@ public:
 
 private:
     std::vector<std::vector<std::vector<u8>>> inboxes_;
+    std::set<std::pair<int, int>> down_;
 };
 
 /// INetTransport backed by a shared LoopbackHub (no real network).

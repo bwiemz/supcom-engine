@@ -2979,21 +2979,12 @@ int main(int argc, char* argv[]) {
                             session->send_frame();
                             session->receive_and_advance();
                             // A timed-out peer is defeated so the match resolves
-                            // instead of stalling in "waiting for players".
-                            // The defeat is a command in the next tick, so it
-                            // happens inside a tick and a recording keeps it.
-                            // (Tagged with this peer's source: the dropped
-                            // one's would put it back in the lockstep gate.)
-                            for (osc::u32 src : session->take_dropped()) {
-                                spdlog::warn("[mp] peer {} dropped — defeating "
-                                             "its army",
-                                             src);
-                                osc::sim::SimCallbackEntry defeat;
-                                defeat.func_name = osc::sim::kDefeatArmyCallback;
-                                defeat.args["Army"] = static_cast<osc::f64>(src);
-                                sim_state->schedule_callback(osc::lua::mp_net_state().local_source,
-                                                             std::move(defeat));
-                            }
+                            // instead of stalling in "waiting for players": the
+                            // survivors agree on its last frame, and the session
+                            // defeats its army on the same tick on every one of
+                            // them (a command, so replays keep it).
+                            for (osc::u32 src : session->take_dropped())
+                                spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
                         }
                     } else {
                         // At most 8 ticks per frame; a slower-than-real-time
