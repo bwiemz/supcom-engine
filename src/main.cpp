@@ -14,6 +14,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/init_loader.hpp"
 #include "lua/session_manager.hpp"
+#include "lua/special_files.hpp"
 #include "lua/sim_loader.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/binding_coverage.hpp"
@@ -312,6 +313,11 @@ static void print_usage() {
               << "                     headless runs, fresh for an interactive game)\n"
               << "  --checksum-trace <f>  Write each tick's sync checksum and its parts\n"
               << "  --record <file>    Record the game as a replay, written when the run ends\n"
+              << "  --watch <file>     Watch a replay in the game\n"
+              << "  --user-dir <dir>   Replays and saved games folder (default: FA's user folder\n"
+              << "                     for an interactive game, else a temporary one)\n"
+              << "  --replay-flow-test Offscreen: open the first listed replay as retail's\n"
+              << "                     replay dialog does, and watch it to its end\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
@@ -566,43 +572,16 @@ static std::string g_record_path;
 
 /// Write `sim`'s recording to `path`.
 static bool write_recording(const osc::sim::SimState& sim, const std::string& path) {
-    const auto& replay = sim.recorded_replay();
-    const auto bytes = replay.serialize();
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out.write(reinterpret_cast<const char*>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    if (!out) {
-        spdlog::error("--record: cannot write {}", path);
-        return false;
-    }
-    spdlog::info("Replay: {} commands over {} ticks written to {}", replay.commands.size(),
-                 replay.final_tick, path);
-    return true;
+    return osc::lua::write_replay_file(sim.recorded_replay(), path);
 }
 
 /// A replay file that can start its game, or nothing (the reason logged).
 static std::optional<osc::sim::Replay> load_replay(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        spdlog::error("--replay: cannot read {}", path);
-        return std::nullopt;
-    }
-    const std::vector<osc::u8> bytes((std::istreambuf_iterator<char>(in)),
-                                     std::istreambuf_iterator<char>());
-    osc::sim::Replay replay;
-    if (!osc::sim::Replay::deserialize(bytes, replay)) {
-        spdlog::error("--replay: {} is not a replay, or is damaged", path);
-        return std::nullopt;
-    }
-    if (!replay.has_setup) {
-        spdlog::error("--replay: {} (format {}) has no game setup to start from", path,
-                      replay.version);
-        return std::nullopt;
-    }
-    if (replay.build != osc::sim::build_id()) {
-        spdlog::warn("--replay: recorded by build {}, playing on {}; a different build may "
+    auto replay = osc::lua::read_replay_file(path);
+    if (replay && replay->build != osc::sim::build_id()) {
+        spdlog::warn("Replay: recorded by build {}, playing on {}; a different build may "
                      "play it differently",
-                     replay.build, osc::sim::build_id());
+                     replay->build, osc::sim::build_id());
     }
     return replay;
 }
@@ -746,7 +725,9 @@ static bool execute_reload_sequence(
     std::unordered_set<osc::u32>* prev_selection, // nullable for headless
     WorldInterp* world_interp,                    // nullable for headless
     osc::u64 seed,                                // the new game's random seed
-    double& sim_accumulator, const std::string& launch_scenario) {
+    double& sim_accumulator, const std::string& launch_scenario,
+    const osc::sim::Replay* replay = nullptr) { // a replay to play instead
+
     lua_State* uiL = ui_lua_state.raw();
 
     // 1. GPU fence — ensure no in-flight work
@@ -783,6 +764,7 @@ static bool execute_reload_sequence(
 
     // 6. Create fresh SimState
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+    if (replay) seed = replay->setup.seed;
     sim_state->set_seed(seed);
     sim_state->set_checksum_trace(g_checksum_trace);
     spdlog::info("Game seed {:#018x}", seed);
@@ -808,7 +790,9 @@ static bool execute_reload_sequence(
     // spawns an ACU for every army ListArmies() returns -- an army without a
     // brain then runs its commander's scripts against no brain at all.
     osc::sim::GameSetup setup;
-    {
+    if (replay) {
+        setup = replay->setup; // the recorded game's own
+    } else {
         lua_pushstring(uiL, "__osc_front_end_data");
         lua_rawget(uiL, LUA_REGISTRYINDEX);
         auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
@@ -820,8 +804,10 @@ static bool execute_reload_sequence(
             lua_settop(uiL, top);
         }
     }
-    setup.scenario = launch_scenario;
-    setup.seed = seed;
+    if (!replay) {
+        setup.scenario = launch_scenario;
+        setup.seed = seed;
+    }
 
     // 8. Load scenario from selected map
     osc::lua::ScenarioLoader new_scenario_loader;
@@ -887,7 +873,8 @@ static bool execute_reload_sequence(
 
     // 12. Start the session from the setup
     {
-        if (setup.slots.empty() && sim_state->army_count() >= 2) {
+        if (!replay && setup.slots.empty() && setup.ai_armies.empty() &&
+            sim_state->army_count() >= 2) {
             // No sessionConfig: ARMY_2 is the AI (legacy behavior).
             setup.ai_armies = {1};
             spdlog::info("Session: fallback — ARMY_2 as AI (no sessionConfig)");
@@ -909,7 +896,8 @@ static bool execute_reload_sequence(
                          sess_result.error().message);
         }
         sim_state->set_game_setup(setup);
-        if (!g_record_path.empty()) sim_state->set_recording(true);
+        // Every game records (for LastGame and --record); a replay plays.
+        if (!replay) sim_state->set_recording(true);
     }
 
     // 13. Update UI state's sim_state registry pointer to new SimState
@@ -1749,7 +1737,12 @@ int main(int argc, char* argv[]) {
     const bool interp_test = parse_flag(argc, argv, "--interp-test");
     const std::string render_dump_path = parse_string_arg(argc, argv, "--render-dump", "");
     // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
-    const bool scripted_window = interp_test || !render_dump_path.empty();
+    // --watch <file>: open a replay in the game, as the replay dialog does.
+    // --replay-flow-test: the dialog's own path (the first replay
+    // GetSpecialFiles lists), played to its end offscreen.
+    const std::string watch_path = parse_string_arg(argc, argv, "--watch", "");
+    const bool replay_flow_test = parse_flag(argc, argv, "--replay-flow-test");
+    const bool scripted_window = interp_test || !render_dump_path.empty() || replay_flow_test;
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1852,7 +1845,7 @@ int main(int argc, char* argv[]) {
     bool headless = (tick_count > 0) || any_test || replay_to_play.has_value();
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
-    if (any_test || interp_test) osc::test_status::set_count_lua_failures(true);
+    if (any_test || interp_test || replay_flow_test) osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
@@ -2120,11 +2113,11 @@ int main(int argc, char* argv[]) {
     // config dir. Tests and captures never touch that file, so the player's
     // settings cannot change a result: --prefs PATH seeds them instead, and
     // is written back only when interactive.
+    const bool interactive = !headless &&
+                             parse_string_arg(argc, argv, "--screenshot", "").empty() &&
+                             parse_string_arg(argc, argv, "--golden", "").empty();
     osc::core::Preferences prefs;
     {
-        const bool capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                             !parse_string_arg(argc, argv, "--golden", "").empty();
-        const bool interactive = !headless && !capture;
         std::filesystem::path file = parse_string_arg(argc, argv, "--prefs", "");
         if (file.empty() && interactive) {
             file = osc::platform::known_folder(osc::platform::KnownFolder::Config) /
@@ -2146,6 +2139,46 @@ int main(int argc, char* argv[]) {
         lua_pushlightuserdata(uL, &prefs);
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
+
+    // Replays and saved games (FA's special files). An interactive game keeps
+    // them in FA's user folder; other runs use --user-dir, else a temporary
+    // folder of their own (removed at exit), never the player's.
+    std::filesystem::path user_dir = parse_string_arg(argc, argv, "--user-dir", "");
+    std::filesystem::path temp_user_dir;
+    if (user_dir.empty() && interactive) user_dir = osc::lua::SpecialFiles::default_root();
+    if (user_dir.empty()) {
+        std::random_device rd;
+        temp_user_dir =
+            std::filesystem::temp_directory_path() / fmt::format("opensupcom-user-{:08x}", rd());
+        user_dir = temp_user_dir;
+    }
+    struct TempDirRemover {
+        std::filesystem::path dir;
+        ~TempDirRemover() {
+            std::error_code ec;
+            if (!dir.empty()) std::filesystem::remove_all(dir, ec);
+        }
+    } temp_user_dir_remover{temp_user_dir};
+    osc::lua::SpecialFiles special_files(user_dir);
+    osc::lua::register_special_file_bindings(ui_lua_state, &special_files);
+    // FA's LastGame: the game just left, as recorded, in the current
+    // profile's replays -- when a new game starts, on the way back to the
+    // lobby, and at exit. Interactive games only; a replay isn't recorded.
+    auto save_last_game = [&]() {
+        if (!interactive || !sim_state || !sim_state->recording() || sim_state->playback()) return;
+        const auto& replay = sim_state->recorded_replay();
+        if (!replay.has_setup || replay.final_tick == 0) return;
+        const std::string profile =
+            prefs.get_string(prefs.current_profile_path() + ".Name", "Player");
+        const auto* type = osc::lua::SpecialFiles::find_type("Replay");
+        const auto path = special_files.path(*type, profile, "LastGame");
+        if (path.empty()) {
+            spdlog::warn("Replay: profile name '{}' can't be a folder name; LastGame not saved",
+                         profile);
+            return;
+        }
+        osc::lua::write_replay_file(replay, path);
+    };
 
     // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider
     osc::ui::WldUIProvider wld_provider;
@@ -2417,7 +2450,8 @@ int main(int argc, char* argv[]) {
             return 1;
         }
         sim_state->set_game_setup(game_setup);
-        if (!g_record_path.empty()) sim_state->set_recording(true);
+        // Recorded for --record, and an interactive game for its LastGame.
+        if (!g_record_path.empty() || interactive) sim_state->set_recording(true);
         if (replay_to_play) return play_replay(*sim_state, *replay_to_play);
     }
 
@@ -2695,6 +2729,7 @@ int main(int argc, char* argv[]) {
             if (legacy_hud) renderer.set_legacy_hud(true);
 
             double sim_accumulator = 0.0;
+            std::optional<osc::sim::ReplayPlayback> active_playback; // a replay being watched
             double paused_beat_accumulator = 0.0;
 
             // FA's command mode drives world clicks (read once per frame).
@@ -2796,9 +2831,52 @@ int main(int argc, char* argv[]) {
                 }
             }
 
+            // Open the replay (--watch, --replay-flow-test) through the same
+            // globals retail's replay dialog calls; the loop then launches it.
+            bool replay_flow_done = false;
+            osc::u32 replay_flow_frames = 0;
+            if (!watch_path.empty() || replay_flow_test) {
+                lua_State* uL = ui_lua_state.raw();
+                lua_pushstring(uL, "__osc_watch_file");
+                lua_pushstring(uL, watch_path.c_str());
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+                auto opened = ui_lua_state.do_string(replay_flow_test ? R"(
+                    local data = GetSpecialFiles('Replay')
+                    local profile, name
+                    for p, names in data.files do
+                        if names[1] then
+                            profile, name = p, names[1]
+                            break
+                        end
+                    end
+                    if not name then error('GetSpecialFiles lists no replay') end
+                    local info = GetSpecialFileInfo(profile, name, 'Replay')
+                    if not info or not info.WriteTime or not info.TimeStamp then
+                        error('GetSpecialFileInfo does not describe ' .. name)
+                    end
+                    __osc_watch_file = data.directory .. profile .. '/' .. name .. '.' ..
+                                       data.extension
+                    if LaunchReplaySession(__osc_watch_file) ~= true then
+                        error('LaunchReplaySession refused ' .. __osc_watch_file)
+                    end
+                )"
+                                                                      : R"(
+                    if LaunchReplaySession(__osc_watch_file) ~= true then
+                        error('cannot play ' .. __osc_watch_file)
+                    end
+                )");
+                if (!opened) {
+                    spdlog::error("Replay: {}", opened.error().message);
+                    if (replay_flow_test) {
+                        osc::test_status::fail("[FAIL] replay-flow: {}", opened.error().message);
+                        return finish_test_run("replay-flow-test");
+                    }
+                }
+            }
+
             while (!renderer.should_close() && !screenshot_done &&
                    !(interp_test && interp_probe.done()) &&
-                   !(!render_dump_path.empty() && render_dump.done())) {
+                   !(!render_dump_path.empty() && render_dump.done()) && !replay_flow_done) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
@@ -2923,7 +3001,18 @@ int main(int argc, char* argv[]) {
                         const int ticks = osc::consume_fixed_steps(
                             sim_accumulator, dt * game_state_mgr.speed(),
                             osc::sim::SimState::SECONDS_PER_TICK, 8);
-                        for (int t = 0; t < ticks; ++t) sim_state->tick();
+                        for (int t = 0; t < ticks; ++t) {
+                            // A replay plays to its end, then holds there.
+                            if (active_playback && active_playback->finished(*sim_state)) break;
+                            sim_state->tick();
+                            if (active_playback) {
+                                const bool diverged = active_playback->diverged_at() != 0;
+                                if (!active_playback->check(*sim_state) && !diverged) {
+                                    spdlog::warn("Replay: diverged from the recording at tick {}",
+                                                 active_playback->diverged_at());
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -2949,6 +3038,15 @@ int main(int argc, char* argv[]) {
                 // Process SimCallbacks from UI (M138a)
                 if (sim_state && sim_lua_state)
                     submit_sim_callbacks(sim_callback_queue, *sim_state);
+
+                // --replay-flow-test ends when the replay has played out.
+                if (replay_flow_test) {
+                    ++replay_flow_frames;
+                    if (active_playback && sim_state && active_playback->finished(*sim_state))
+                        replay_flow_done = true;
+                    else if (replay_flow_frames > 40000)
+                        replay_flow_done = true; // stuck: reported below
+                }
 
                 // OnFirstUpdate — fire once after first sim tick
                 static bool first_update_fired = false;
@@ -3121,8 +3219,24 @@ int main(int argc, char* argv[]) {
                         std::string launch_scenario = sc ? sc : "";
                         lua_pop(uiL, 1);
 
+                        // A replay to play (LaunchReplaySession), if any
+                        std::optional<osc::sim::Replay> launch_replay;
+                        lua_pushstring(uiL, "__osc_launch_replay");
+                        lua_rawget(uiL, LUA_REGISTRYINDEX);
+                        if (lua_type(uiL, -1) == LUA_TSTRING) {
+                            launch_replay = load_replay(lua_tostring(uiL, -1));
+                            if (!launch_replay) launch_scenario.clear();
+                        }
+                        lua_pop(uiL, 1);
+                        lua_pushstring(uiL, "__osc_launch_replay");
+                        lua_pushnil(uiL);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+
                         if (!launch_scenario.empty()) {
-                            spdlog::info("Launch requested: {}", launch_scenario);
+                            spdlog::info("Launch requested: {}{}", launch_scenario,
+                                         launch_replay ? " (replay)" : "");
+                            save_last_game(); // the game being left, if any
+                            active_playback.reset();
 
                             // Transition to LOADING and show loading screen
                             game_state_mgr.transition_to(osc::GameState::LOADING, ui_lua_state.raw());
@@ -3134,12 +3248,20 @@ int main(int argc, char* argv[]) {
                             renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
 
                             // Execute reload in stages, pumping UI frames between each
-                            execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs,
-                                                    store, loader, config, scenario_meta,
-                                                    game_state_mgr, &renderer, &input_handler,
-                                                    &prev_selection, &world_interp,
-                                                    launch_seed(seed_arg, reproducible_run),
-                                                    sim_accumulator, launch_scenario);
+                            execute_reload_sequence(
+                                sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config,
+                                scenario_meta, game_state_mgr, &renderer, &input_handler,
+                                &prev_selection, &world_interp,
+                                launch_seed(seed_arg, reproducible_run), sim_accumulator,
+                                launch_scenario, launch_replay ? &*launch_replay : nullptr);
+                            if (launch_replay && sim_state) {
+                                // Watched as an observer, as the replay plays.
+                                active_playback.emplace(std::move(*launch_replay));
+                                active_playback->start(*sim_state);
+                                lua_pushstring(uiL, "__osc_focus_army");
+                                lua_pushnumber(uiL, -1);
+                                lua_rawset(uiL, LUA_REGISTRYINDEX);
+                            }
 
                             // Reset per-session state for the new game
                             first_update_fired = false;
@@ -3148,7 +3270,7 @@ int main(int argc, char* argv[]) {
                             // transport (HostGame/JoinGame), build the lockstep
                             // session over it now that the game's sim exists.
                             // No-op in single-player.
-                            if (sim_state) {
+                            if (sim_state && !active_playback) {
                                 osc::lua::mp_attach_session(*sim_state);
                             }
 
@@ -3160,7 +3282,8 @@ int main(int argc, char* argv[]) {
                             }
 
                             // Build the game interface; the loading dialog fades out
-                            finish_world_ui(ui_lua_state.raw(), wld_provider, false);
+                            finish_world_ui(ui_lua_state.raw(), wld_provider,
+                                            active_playback.has_value());
                         }
                     } else {
                         lua_pop(uiL, 1);
@@ -3185,6 +3308,8 @@ int main(int argc, char* argv[]) {
                         // Tear down any multiplayer session/transport before the
                         // sim it references is destroyed.
                         osc::lua::mp_teardown();
+                        save_last_game();
+                        active_playback.reset();
 
                         // Tear down game state
                         wld_provider.destroy_game_interface(uiL);
@@ -3232,7 +3357,29 @@ int main(int argc, char* argv[]) {
                 osc::Profiler::instance().end_frame();
             }
 
+            save_last_game(); // quitting leaves the game being played
             renderer.shutdown();
+            if (replay_flow_test) {
+                auto is_replay = ui_lua_state.do_string(
+                    "if not SessionIsReplay() then error('SessionIsReplay() is false') end");
+                if (!active_playback || !sim_state) {
+                    osc::test_status::fail("[FAIL] replay-flow: the replay never launched");
+                } else if (!active_playback->finished(*sim_state)) {
+                    osc::test_status::fail("[FAIL] replay-flow: stopped at tick {} of {}",
+                                           sim_state->tick_count(),
+                                           active_playback->replay().final_tick);
+                } else if (active_playback->diverged_at() != 0) {
+                    osc::test_status::fail("[FAIL] replay-flow: diverged at tick {}",
+                                           active_playback->diverged_at());
+                } else if (!is_replay) {
+                    osc::test_status::fail("[FAIL] replay-flow: {}", is_replay.error().message);
+                } else {
+                    spdlog::info("[PASS] replay-flow: {} ticks watched in the game, matching "
+                                 "the recording",
+                                 sim_state->tick_count());
+                }
+                return finish_test_run("replay-flow-test");
+            }
             if (interp_test) {
                 if (!interp_probe.done())
                     osc::test_status::fail("[FAIL] interp: the window closed before the check ended");

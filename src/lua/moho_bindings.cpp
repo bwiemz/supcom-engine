@@ -14074,11 +14074,12 @@ static bool unit_is_idle(const sim::Unit& u) {
 }
 
 /// GetArmyAvatars() -> the focus army's commander units (the avatars the
-/// game UI shows and zooms to at game start).
+/// game UI shows and zooms to at game start), or nil when it has none (an
+/// observer has none): retail's gamemain and avatars.lua test for nil, as for
+/// GetIdleEngineers.
 static int l_GetArmyAvatars(lua_State* L) {
-    push_ui_unit_array(L, focus_army_units(L, [](const sim::Unit& u) {
-        return u.has_category("COMMAND");
-    }), false);
+    push_ui_unit_array(
+        L, focus_army_units(L, [](const sim::Unit& u) { return u.has_category("COMMAND"); }), true);
     return 1;
 }
 
@@ -15327,6 +15328,10 @@ static int l_LaunchSinglePlayerSession(lua_State* L) {
     // Signal main loop to transition FRONT_END -> LOADING -> GAME
     lua_pushstring(L, "__osc_launch_requested");
     lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    // A lobby game, not a replay a LaunchReplaySession asked for before it.
+    lua_pushstring(L, "__osc_launch_replay");
+    lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
 
     spdlog::info("LaunchSinglePlayerSession: scenario={}", scenario);

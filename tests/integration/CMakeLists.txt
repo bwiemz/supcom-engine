@@ -95,6 +95,19 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+
+    # M199b: retail's replay dialog path -- GetSpecialFiles lists the
+    # recording, LaunchReplaySession opens it -- and the game plays it to
+    # its end, offscreen, matching the recording at every tick.
+    add_test(NAME data.replay_flow
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/replay_flow.py
+                     $<TARGET_FILE:opensupcom>
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 2 --ticks 300
+                     --seed 9 --scripted-orders)
+    set_tests_properties(data.replay_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
