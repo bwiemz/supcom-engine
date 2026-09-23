@@ -2183,9 +2183,8 @@ static int unit_GetWeapon(lua_State* L) {
 
     // Class: the unit's weapon class for this label (unit:GetWeaponClass,
     // i.e. its Weapons table entry or the base /lua/sim/Weapon.lua Weapon),
-    // with `unit` set as Weapon.__init does. Retail scripts call Lua-side
-    // Weapon methods (SetWeaponEnabled, WeaponUsesEnergy). OnCreate and the
-    // firing callbacks stay C++-driven until roadmap M200.
+    // with `unit` set as Weapon.__init does. A classed weapon fires through
+    // its script (Weapon::fires_through_script).
     const int wtable = lua_gettop(L);
     bool classed = false;
     if (unit->lua_table_ref() >= 0) {
@@ -2248,6 +2247,7 @@ static int unit_GetWeapon(lua_State* L) {
     // Store Lua table ref on the weapon
     lua_pushvalue(L, -1);
     weapon->lua_table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    weapon->script_class = classed;
 
     return 1;
 }
@@ -4314,9 +4314,18 @@ static int weapon_WeaponHasTarget(lua_State* L) {
     return 1;
 }
 
+// Moho's firing condition (a target, enabled, the unit not Busy, ...), not
+// the fire clock: retail's reload state asks it while its unit is Busy.
 static int weapon_CanFire(lua_State* L) {
     auto* w = check_weapon(L);
-    lua_pushboolean(L, w && w->fire_cooldown <= 0 && w->enabled);
+    auto* sim = get_sim(L);
+    bool can = false;
+    if (w && sim) {
+        auto* owner = sim->entity_registry().find(w->owner_entity_id);
+        can = owner && !owner->destroyed() && owner->is_unit() &&
+              w->can_fire(static_cast<const sim::Unit&>(*owner), sim->entity_registry());
+    }
+    lua_pushboolean(L, can);
     return 1;
 }
 
@@ -4356,12 +4365,9 @@ static int weapon_ResetTarget(lua_State* L) {
 
 static int weapon_GetFireClockPct(lua_State* L) {
     auto* w = check_weapon(L);
-    if (!w || w->rate_of_fire <= 0) { lua_pushnumber(L, 1); return 1; }
-    f32 period = 1.0f / w->rate_of_fire;
-    f32 pct = 1.0f - (w->fire_cooldown / period);
-    if (pct < 0) pct = 0;
-    if (pct > 1) pct = 1;
-    lua_pushnumber(L, pct);
+    if (!w) { lua_pushnumber(L, 1); return 1; }
+    const f64 pct = 1.0 - static_cast<f64>(w->fire_clock) / w->fire_period();
+    lua_pushnumber(L, std::clamp(pct, 0.0, 1.0));
     return 1;
 }
 

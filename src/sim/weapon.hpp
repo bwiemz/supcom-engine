@@ -30,6 +30,9 @@ public:
     f32 muzzle_velocity = 25;
     bool fire_on_death = false;
     bool manual_fire = false;
+    bool counted_projectile = false; // CountedProjectile: fires silo ammo
+    bool overcharge = false;         // OverChargeWeapon
+    bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
     f32 firing_randomness = 0;    // angular scatter in radians
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
@@ -44,17 +47,35 @@ public:
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
+    bool script_class = false;  // the Lua object is an instance of a weapon class
     i32 weapon_index = 0;       // 0-based index within unit
     u32 owner_entity_id = 0;    // back-pointer to owning unit
 
     // Runtime state
     u32 target_entity_id = 0;   // 0 = no target
     bool enabled = true;
-    f32 fire_cooldown = 0;      // seconds until can fire again
+    u32 fire_clock = 0; // ticks until the fire clock is ready again
 
-    /// Per-tick: scan for targets, fire if ready.
-    void update(f64 dt, Unit& owner, EntityRegistry& registry,
-                lua_State* L,
+    /// Ticks between shots: 1/RateOfFire, rounded to whole ticks as Moho
+    /// does (at least one).
+    u32 fire_period() const;
+
+    /// Retail's firing cycle drives this weapon: the engine picks targets and
+    /// runs the fire clock, and the weapon's script state machine gets
+    /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos.
+    /// Silo, OverCharge and beam weapons keep the engine's own firing until
+    /// their commands (M206) and beam collision exist.
+    bool fires_through_script() const {
+        return script_class && lua_table_ref >= 0 && !counted_projectile && !overcharge && !beam;
+    }
+
+    /// Moho's CanFire: a target, the weapon enabled, the unit free (not
+    /// Busy), and a bomber over its drop zone. Aim is always on target
+    /// until turrets exist (M200d).
+    bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
+
+    /// Per tick: advance the fire clock, pick targets, fire when ready.
+    void update(Unit& owner, EntityRegistry& registry, lua_State* L,
                 const map::VisibilityGrid* visibility_grid = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
@@ -70,6 +91,10 @@ public:
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry,
                           const map::VisibilityGrid* visibility_grid);
+    void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, u32 previous_target);
+    /// Call the weapon script's `method(self)`, if it has one. Returns its
+    /// first result's truth (true when there is no such method).
+    bool call_script(lua_State* L, const char* method) const;
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.

@@ -378,7 +378,7 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
     auto weapon = std::make_unique<osc::sim::Weapon>();
     weapon->max_range = 100.0f;
     weapon->damage = 10.0f;
-    weapon->fire_cooldown = 10.0f;
+    weapon->fire_clock = 100;
     auto* weapon_ptr = weapon.get();
     owner->add_weapon(std::move(weapon));
     auto owner_id = registry.register_entity(std::move(owner));
@@ -395,11 +395,11 @@ TEST_CASE("Weapons do not auto-target cloaked units without omni", "[cloak]") {
     REQUIRE(owner_ptr != nullptr);
     REQUIRE(target_ptr != nullptr);
 
-    weapon_ptr->update(0.0, *owner_ptr, registry, nullptr);
+    weapon_ptr->update(*owner_ptr, registry, nullptr);
     REQUIRE(weapon_ptr->target_entity_id == target_id);
 
     target_ptr->set_cloaked(true);
-    weapon_ptr->update(0.0, *owner_ptr, registry, nullptr);
+    weapon_ptr->update(*owner_ptr, registry, nullptr);
     REQUIRE(weapon_ptr->target_entity_id == 0);
 }
 

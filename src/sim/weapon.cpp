@@ -1,6 +1,7 @@
 #include "sim/weapon.hpp"
 #include "sim/projectile_script.hpp"
 #include "core/dmath.hpp"
+#include "core/test_status.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/projectile.hpp"
@@ -41,28 +42,95 @@ bool is_weapon_targetable(const Unit& owner, const Entity& target,
 
 } // namespace
 
-void Weapon::update(f64 dt, Unit& owner, EntityRegistry& registry,
-                    lua_State* L,
+u32 Weapon::fire_period() const {
+    if (rate_of_fire <= 0) return 10;
+    const f64 ticks = std::floor(10.0 / static_cast<f64>(rate_of_fire) + 0.5);
+    return static_cast<u32>(std::clamp(ticks, 1.0, 1.0e6));
+}
+
+bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
+    if (!enabled || target_entity_id == 0 || owner.busy()) return false;
+    // A script callback earlier this tick may have destroyed the target.
+    const Entity* target = registry.find(target_entity_id);
+    if (!target || target->destroyed()) return false;
+    if (need_compute_bomb_drop) {
+        const f32 dx = target->position().x - owner.position().x;
+        const f32 dz = target->position().z - owner.position().z;
+        if (dx * dx + dz * dz > bomb_drop_threshold * bomb_drop_threshold) return false;
+    }
+    return true;
+}
+
+bool Weapon::call_script(lua_State* L, const char* method) const {
+    if (!L || lua_table_ref < 0) return true;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref);
+    const int self = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, self);
+    bool result = true;
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        if (lua_pcall(L, 1, 1, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                "Weapon " + label + " " + method + " error: " + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+            result = false;
+        } else {
+            result = lua_toboolean(L, -1) != 0;
+        }
+    }
+    lua_settop(L, top);
+    return result;
+}
+
+void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
                     const map::VisibilityGrid* visibility_grid) {
+    if (fire_clock > 0) --fire_clock;
+
     if (!enabled || fire_on_death || manual_fire) return;
     if (max_range <= 0 || damage <= 0) return;
     // HoldFire (1) = don't auto-target or fire at all
     if (owner.fire_state() == 1) return;
 
-    // Tick cooldown
-    fire_cooldown = std::max(0.0f, fire_cooldown - static_cast<f32>(dt));
-
-    // Target acquisition
+    const u32 previous_target = target_entity_id;
     update_targeting(owner, registry, visibility_grid);
 
-    if (target_entity_id == 0) return;
+    if (L && fires_through_script()) {
+        update_scripted(owner, registry, L, previous_target);
+        return;
+    }
 
-    // Fire if cooldown expired
-    if (fire_cooldown <= 0) {
-        if (try_fire(owner, registry, L, visibility_grid)) {
-            fire_cooldown = (rate_of_fire > 0) ? (1.0f / rate_of_fire) : 1.0f;
+    if (target_entity_id == 0 || fire_clock > 0) return;
+    if (try_fire(owner, registry, L, visibility_grid)) fire_clock = fire_period();
+}
+
+void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
+                             u32 previous_target) {
+    // Each callback may kill the unit or disable the weapon.
+    const auto still_firing = [&] {
+        return !owner.destroyed() && !owner.is_dying() && fires_through_script();
+    };
+    if (target_entity_id != previous_target) {
+        if (previous_target != 0) {
+            call_script(L, "OnLostTarget");
+            if (!still_firing()) return;
+        }
+        if (target_entity_id != 0) {
+            call_script(L, "OnGotTarget");
+            if (!still_firing()) return;
         }
     }
+
+    // The fire clock: when it is ready and the weapon can fire, the script
+    // gets OnFire (its state machine decides what that means) and the clock
+    // restarts.
+    if (fire_clock > 0 || !can_fire(owner, registry)) return;
+    if (!call_script(L, "CanWeaponFire") || !still_firing()) return;
+    call_script(L, "OnFire");
+    fire_clock = fire_period();
 }
 
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,

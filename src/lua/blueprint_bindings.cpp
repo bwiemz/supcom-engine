@@ -90,6 +90,47 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     }
     lua_pop(L, 1); // Display
 
+    // Moho hands scripts blueprints rebuilt from its typed copies, so a
+    // numeric weapon field a .bp leaves out reads as 0. Retail's weapon
+    // scripts rely on it: GetDamageTable adds DamageRadius (which 228 of
+    // retail's 494 weapons omit, the UEF commander's gun among them) and the
+    // firing states compare the rack times without nil checks.
+    static constexpr const char* kWeaponNumberDefaults[] = {
+        "Damage",
+        "DamageRadius",
+        "RackRecoilDistance",
+        "RackReloadTimeout",
+        "RackSalvoChargeTime",
+        "RackSalvoReloadTime",
+        "WeaponRepackTimeout",
+    };
+    lua_pushstring(L, "Weapon");
+    lua_rawget(L, 1);
+    if (lua_istable(L, -1)) {
+        const int weapons = lua_gettop(L);
+        for (int i = 1;; ++i) {
+            lua_rawgeti(L, weapons, i);
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            if (lua_istable(L, -1)) {
+                for (const char* field : kWeaponNumberDefaults) {
+                    lua_pushstring(L, field);
+                    lua_rawget(L, -2);
+                    const bool missing = lua_isnil(L, -1);
+                    lua_pop(L, 1);
+                    if (!missing) continue;
+                    lua_pushstring(L, field);
+                    lua_pushnumber(L, 0);
+                    lua_rawset(L, -3);
+                }
+            }
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1); // Weapon
+
     return 0;
 }
 

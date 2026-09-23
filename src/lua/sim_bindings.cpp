@@ -253,6 +253,22 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isboolean(L, -1)) weapon->manual_fire = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
 
+                    lua_pushstring(L, "CountedProjectile");
+                    lua_gettable(L, we);
+                    weapon->counted_projectile = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+
+                    lua_pushstring(L, "OverChargeWeapon");
+                    lua_gettable(L, we);
+                    weapon->overcharge = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+
+                    // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
+                    lua_pushstring(L, "BeamLifetime");
+                    lua_gettable(L, we);
+                    weapon->beam = lua_isnumber(L, -1) != 0;
+                    lua_pop(L, 1);
+
                     // RackBones[1].MuzzleBones[1] → muzzle bone name (string)
                     lua_pushstring(L, "RackBones");
                     lua_gettable(L, we);
@@ -901,8 +917,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 /// Moho creates a unit's weapon objects between OnPreCreate and OnCreate:
 /// each is an instance of unit:GetWeaponClass(label) (see unit:GetWeapon),
 /// and its OnCreate sets up turret aim controllers, target priorities and
-/// initial silo ammo. Unit scripts then find their weapons by label in their
-/// own OnCreate. Firing itself stays C++-driven until roadmap M200.
+/// initial silo ammo, and enters IdleState. Unit scripts then find their
+/// weapons by label in their own OnCreate.
 static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
     lua_pushstring(L, "GetWeaponCount");
     lua_gettable(L, unit_tbl);

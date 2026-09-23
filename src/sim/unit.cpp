@@ -1059,7 +1059,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             // Set weapon target to position & fire
             if (!weapons_.empty()) {
                 weapons_[0]->target_entity_id = 0;
-                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->fire_clock = 0;
                 weapons_[0]->try_fire(*this, registry, L);
             }
             call_lua_method(L, "OnSiloBuildFinish");
@@ -1076,7 +1076,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             remove_tactical_silo_ammo(1);
             if (!weapons_.empty()) {
                 weapons_[0]->target_entity_id = cmd.target_id;
-                weapons_[0]->fire_cooldown = 0;
+                weapons_[0]->fire_clock = 0;
                 weapons_[0]->try_fire(*this, registry, L);
             }
             call_lua_method(L, "OnSiloBuildFinish");
@@ -1114,7 +1114,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
             for (auto& w : weapons_) {
                 if (w->max_range > 0) {
                     w->target_entity_id = cmd.target_id;
-                    w->fire_cooldown = 0;
+                    w->fire_clock = 0;
                     w->try_fire(*this, registry, L);
                     break;
                 }
@@ -1279,9 +1279,13 @@ weapons_only:
         set_health(new_hp);
     }
 
-    // Update weapons (target scanning + firing)
-    for (auto& weapon : weapons_) {
-        weapon->update(dt, *this, registry, L, ctx.visibility_grid);
+    // Update weapons (target scanning + firing). A unit under construction
+    // doesn't fight. A weapon's script may kill its own unit (KamikazeWeapon).
+    if (!is_being_built()) {
+        for (auto& weapon : weapons_) {
+            if (destroyed() || dying_) break;
+            weapon->update(*this, registry, L, ctx.visibility_grid);
+        }
     }
 
     // Update manipulators (rotators, animators, sliders, aim controllers)
