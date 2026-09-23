@@ -14162,6 +14162,31 @@ static int l_ClearSessionExtraSelectList(lua_State* L) {
     return 0;
 }
 
+/// SetOverlayFilters(names) -- FA's active range-overlay filters
+/// (multifunction.lua). Kept for the renderer, which shows the matching
+/// intel range rings.
+static int l_SetOverlayFilters(lua_State* L) {
+    lua_newtable(L);
+    int n = 1;
+    if (lua_istable(L, 1)) {
+        const int count = luaL_getn(L, 1);
+        for (int i = 1; i <= count; ++i) {
+            lua_rawgeti(L, 1, i);
+            if (lua_type(L, -1) == LUA_TSTRING) lua_rawseti(L, -2, n++);
+            else lua_pop(L, 1);
+        }
+    }
+    lua_pushstring(L, core::kOverlayFiltersKey);
+    lua_insert(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// SetOverlayFilter(name, categories, colors, thicknesses...) defines one
+/// filter's look; the renderer draws its own ring style, so this is kept
+/// only as a known filter.
+static int l_SetOverlayFilter(lua_State* /*L*/) { return 0; }
+
 /// SessionGetLocalCommandSource() -> this client's command source (1-based).
 /// Command sources are the players' clients; single player has one.
 static int l_SessionGetLocalCommandSource(lua_State* L) {
@@ -16172,6 +16197,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetArmyAvatars", l_GetArmyAvatars);
     state.register_function("SessionGetLocalCommandSource", l_SessionGetLocalCommandSource);
     state.register_function("GetFireState", l_GetFireState);
+    state.register_function("SetOverlayFilters", l_SetOverlayFilters);
+    state.register_function("SetOverlayFilter", l_SetOverlayFilter);
     state.register_function("AddToSessionExtraSelectList", l_AddToSessionExtraSelectList);
     state.register_function("RemoveFromSessionExtraSelectList", l_RemoveFromSessionExtraSelectList);
     state.register_function("ClearSessionExtraSelectList", l_ClearSessionExtraSelectList);

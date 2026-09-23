@@ -9,4 +9,8 @@ namespace osc::core {
 /// HUD placeholders only when it does not exist (or with --legacy-hud).
 inline constexpr const char* kWorldUiActiveKey = "__osc_world_ui_active";
 
+/// FA's active range-overlay filters (SetOverlayFilters): an array of
+/// filter names, read by the renderer.
+inline constexpr const char* kOverlayFiltersKey = "__osc_overlay_filters";
+
 } // namespace osc::core

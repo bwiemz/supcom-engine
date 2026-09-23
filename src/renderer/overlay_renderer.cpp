@@ -15,6 +15,19 @@
 
 namespace osc::renderer {
 
+std::unordered_set<std::string> intel_ring_types_for_filters(
+    const std::vector<std::string>& filters) {
+    std::unordered_set<std::string> types;
+    for (const auto& f : filters) {
+        if (f == "AllIntel") {
+            types.insert({"Radar", "Sonar", "Omni"});
+        } else if (f == "Radar" || f == "Sonar" || f == "Omni") {
+            types.insert(f);
+        }
+    }
+    return types;
+}
+
 void OverlayRenderer::init(VkDevice device, VmaAllocator allocator) {
     VkBufferCreateInfo buf_info{};
     buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -498,6 +511,7 @@ void OverlayRenderer::update(sim::SimState& sim, const Camera& camera,
 
             for (auto& [type, state] : unit->intel_states()) {
                 if (!state.enabled || state.radius < 1.0f) continue;
+                if (!intel_ring_types_.count(type)) continue;
 
                 // Color by intel type
                 f32 cr = 0, cg = 0, cb = 0, ca = 0.35f;

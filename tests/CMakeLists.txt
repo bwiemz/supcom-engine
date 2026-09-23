@@ -21,6 +21,7 @@ add_executable(osc_tests
     test_emitter_blueprint.cpp
     test_ui_layout.cpp
     test_ui_controls.cpp
+    test_overlay_filters.cpp
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp

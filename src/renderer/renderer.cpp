@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <lua.h>
+#include <lauxlib.h>
 }
 #include "renderer/dds_parser.hpp"
 #include "platform/paths.hpp"
@@ -1911,6 +1912,28 @@ void Renderer::render(sim::SimState& sim, lua_State* L,
             lua_pop(L, 1);
         }
         legacy_hud_active_ = legacy_hud_ || !world_ui;
+
+        // Intel range rings: all with the C++ HUD; with FA's UI, only the
+        // intel types its range-overlay filters enable (SetOverlayFilters).
+        std::unordered_set<std::string> rings;
+        if (legacy_hud_active_) {
+            rings = kAllIntelRingTypes;
+        } else if (L) {
+            std::vector<std::string> filters;
+            lua_pushstring(L, core::kOverlayFiltersKey);
+            lua_rawget(L, LUA_REGISTRYINDEX);
+            if (lua_istable(L, -1)) {
+                const int n = luaL_getn(L, lua_gettop(L));
+                for (int i = 1; i <= n; ++i) {
+                    lua_rawgeti(L, -1, i);
+                    if (lua_type(L, -1) == LUA_TSTRING) filters.emplace_back(lua_tostring(L, -1));
+                    lua_pop(L, 1);
+                }
+            }
+            lua_pop(L, 1);
+            rings = intel_ring_types_for_filters(filters);
+        }
+        overlay_renderer_.set_intel_ring_types(std::move(rings));
     }
 
     PROFILE_ZONE("Render::frame");
