@@ -27,6 +27,15 @@ EmitterBlueprint {
     Lifetime = 80.00,
     Blendmode = 3.00,
     LODCutoff = 100.00,
+    Texture = [[/textures/particles/cloud_smoke_alpha_10.dds]],
+    RampTexture = [[/textures/particles/ramp_white_02.dds]],
+}
+)";
+        // Some of retail's blueprints spell it BlendMode.
+        std::ofstream(root / "effects" / "Emitters" / "spark_emit.bp") << R"(
+EmitterBlueprint {
+    BlendMode = 3,
+    Lifetime = -1,
 }
 )";
         std::ofstream(root / "effects" / "Emitters" / "empty_emit.bp") << "local x = 1\n";
@@ -51,6 +60,12 @@ EmitterBlueprint {
         CHECK(bp->lifetime == 80.0f);
         CHECK(bp->blendmode == 3u);
         CHECK(bp->lod_cutoff == 100.0f);
+        CHECK(bp->texture_path == "/textures/particles/cloud_smoke_alpha_10.dds");
+        CHECK(bp->ramp_texture_path == "/textures/particles/ramp_white_02.dds");
+        const auto* spark = cache.get("/effects/emitters/spark_emit.bp", L);
+        REQUIRE(spark != nullptr);
+        CHECK(spark->blendmode == 3u);
+        CHECK(spark->lifetime == -1.0f);
         CHECK(cache.get("/effects/emitters/mist_emit.bp", L) == bp); // cached
         CHECK(lua_gettop(L) == top);
         lua_getglobal(L, "EmitterBlueprint");

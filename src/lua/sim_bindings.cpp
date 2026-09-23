@@ -13,6 +13,7 @@
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/script_class.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
@@ -95,17 +96,6 @@ static int l_c_CreateEntity(lua_State* L) {
 // blueprint has no script or it fails to load.
 // ====================================================================
 
-/// "<dir>/<id>_unit.bp" -> "<dir>/<id>_script.lua"; empty if not that shape.
-static std::string default_script_module(std::string source) {
-    std::transform(source.begin(), source.end(), source.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    constexpr std::string_view suffix = "_unit.bp";
-    if (source.size() <= suffix.size() ||
-        source.compare(source.size() - suffix.size(), suffix.size(), suffix) != 0)
-        return {};
-    return source.substr(0, source.size() - suffix.size()) + "_script.lua";
-}
-
 /// Push the generic Unit class (or moho.unit_methods, or nil).
 static void push_generic_unit_class(lua_State* L) {
     lua_pushstring(L, "__unit_class");
@@ -121,94 +111,14 @@ static void push_generic_unit_class(lua_State* L) {
     }
 }
 
-/// Read a string field of the table at `index` ("" if absent).
-static std::string string_field(lua_State* L, int index, const char* key) {
-    lua_pushstring(L, key);
-    lua_rawget(L, index);
-    std::string value = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
-    lua_pop(L, 1);
-    return value;
-}
-
-/// Resolve bp_id's script class without the cache: pushes the class table,
-/// or nil when the blueprint names no loadable class.
-static void resolve_unit_script_class(lua_State* L, const char* bp_id) {
-    const int top = lua_gettop(L);
-    std::string module, class_name;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, bp_id);
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            const int bp = lua_gettop(L);
-            module = string_field(L, bp, "ScriptModule");
-            class_name = string_field(L, bp, "ScriptClass");
-            if (module.empty()) module = default_script_module(string_field(L, bp, "Source"));
-        }
-    }
-    lua_settop(L, top);
-    if (class_name.empty()) class_name = "TypeClass";
-
-    lua_pushstring(L, "import");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (module.empty() || !lua_isfunction(L, -1)) {
-        lua_settop(L, top);
-        lua_pushnil(L);
-        return;
-    }
-    lua_pushstring(L, module.c_str());
-    if (lua_pcall(L, 1, 1, 0) != 0) {
-        spdlog::warn("Unit script {} ({}) failed to load, using the generic Unit: {}",
-                     module, bp_id, lua_tostring(L, -1));
-        lua_settop(L, top);
-        lua_pushnil(L);
-        return;
-    }
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, class_name.c_str());
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_remove(L, -2); // module table
-            return;
-        }
-    }
-    spdlog::warn("Unit script {} ({}) defines no {}, using the generic Unit",
-                 module, bp_id, class_name);
-    lua_settop(L, top);
-    lua_pushnil(L);
-}
-
 /// Push the Lua class for units of bp_id: its script class, else the
 /// generic Unit. Resolved once per blueprint (scripts load on first use).
 static void push_unit_class(lua_State* L, const char* bp_id) {
-    static const char* kCache = "__osc_unit_script_classes";
-    lua_pushstring(L, kCache);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_newtable(L);
-        lua_pushstring(L, kCache);
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    const int cache = lua_gettop(L);
-    lua_pushstring(L, bp_id);
-    lua_rawget(L, cache);
-    if (lua_isnil(L, -1)) {
-        lua_pop(L, 1);
-        resolve_unit_script_class(L, bp_id);
-        // Cache misses as false so a broken script is tried (and logged) once.
-        lua_pushstring(L, bp_id);
-        if (lua_istable(L, -2)) lua_pushvalue(L, -2);
-        else lua_pushboolean(L, 0);
-        lua_rawset(L, cache);
-    }
+    sim::push_blueprint_script_class(L, bp_id, "_unit.bp", "__osc_unit_script_classes", "Unit");
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
         push_generic_unit_class(L);
     }
-    lua_remove(L, cache);
 }
 
 // ====================================================================
@@ -1301,14 +1211,18 @@ static int l_KillThread(lua_State* L) {
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "_c_ref");
         lua_rawget(L, 1);
-        if (lua_isnumber(L, -1)) {
-            int ref = static_cast<int>(lua_tonumber(L, -1));
+        lua_pushstring(L, "_c_serial");
+        lua_rawget(L, 1);
+        if (lua_isnumber(L, -2)) {
+            int ref = static_cast<int>(lua_tonumber(L, -2));
+            // The serial names the thread: its ref may be another's by now.
+            const u64 serial = lua_isnumber(L, -1) ? static_cast<u64>(lua_tonumber(L, -1)) : 0;
             auto* sim = get_sim(L);
             if (sim && ref >= 0) {
-                sim->thread_manager().kill_thread(ref);
+                sim->thread_manager().kill_thread(ref, serial);
             }
         }
-        lua_pop(L, 1);
+        lua_pop(L, 2);
     }
     return 0;
 }
@@ -1688,6 +1602,46 @@ static void setup_categories(lua_State* L) {
 // or: Damage(instigator, target, amount, vector, damageType)
 // FA canonical signature. Calls target:OnDamage(instigator, amount, vector, damageType).
 static int l_Damage(lua_State* L) {
+    // Retail's order is Damage(instigator, location, target, amount, type)
+    // (Projectile.DoDamage, CollisionBeam, DoT all call it so); this
+    // engine's own tests use Damage(instigator, target, amount, [vector],
+    // type). Only retail's has a table third. Rearrange it into the second,
+    // the vector being the hit's direction: location to target.
+    if (lua_istable(L, 3) && lua_type(L, 4) == LUA_TNUMBER) {
+        lua_settop(L, 5);
+        const bool located = lua_istable(L, 2);
+        f32 lx = 0, ly = 0, lz = 0;
+        if (located) {
+            for (int i = 1; i <= 3; ++i) {
+                lua_rawgeti(L, 2, i);
+                const f32 v = static_cast<f32>(lua_tonumber(L, -1));
+                lua_pop(L, 1);
+                (i == 1 ? lx : i == 2 ? ly : lz) = v;
+            }
+        }
+        lua_pushvalue(L, 1); // instigator
+        lua_pushvalue(L, 3); // target
+        lua_pushvalue(L, 4); // amount
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 3);
+        const auto* target = lua_isuserdata(L, -1)
+                                 ? static_cast<const sim::Entity*>(lua_touserdata(L, -1))
+                                 : nullptr;
+        lua_pop(L, 1);
+        if (located && target) {
+            lua_newtable(L);
+            const f32 d[3] = {target->position().x - lx, target->position().y - ly,
+                              target->position().z - lz};
+            for (int i = 0; i < 3; ++i) {
+                lua_pushnumber(L, d[i]);
+                lua_rawseti(L, -2, i + 1);
+            }
+        } else {
+            lua_pushnil(L);
+        }
+        lua_pushvalue(L, 5); // type
+        for (int i = 0; i < 5; ++i) lua_remove(L, 1);
+    }
     int nargs = lua_gettop(L);
     // arg1 = instigator, arg2 = target, arg3 = amount
     // 4 args: arg4 = damageType (no vector)
@@ -2259,6 +2213,29 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     return 1;
 }
 
+// CreateTrail(entity, bone, army, blueprintPath) -> IEffect: a polytrail
+// that follows the entity (projectile scripts make theirs in OnCreate). The
+// handle chains like an emitter's (OffsetEmitter, SetEmitterParam, ...).
+static int l_CreateTrail(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* entity = effect_check_entity(L, 1);
+    i32 bone = effect_bone_arg(L, 2, entity, -1);
+    i32 army = static_cast<i32>(luaL_optnumber(L, 3, 0));
+    const char* bp = luaL_optstring(L, 4, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::TRAIL_EMITTER);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_bone_index(bone);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
 // CreateBeamEmitter(blueprintPath, army)
 static int l_CreateBeamEmitter(lua_State* L) {
     auto* sim = get_sim(L);
@@ -2360,6 +2337,12 @@ static int l_CreateLightParticle(lua_State* L) {
     fx->set_light_duration(duration);
     fx->set_glow_texture(glow);
     fx->set_ramp_texture(ramp);
+    // A flash: its duration is in ticks (the commander's warp-in flashes
+    // for 4 and 10), and it ends by itself -- it lingered forever before.
+    if (duration > 0) {
+        fx->set_param("LIFETIME", duration * sim::SimState::SECONDS_PER_TICK);
+        fx->set_birth_time(sim->game_time());
+    }
     // Light particles are fire-and-forget, no method chaining needed.
     // Return nil (same as original stub_noop) — FA doesn't use the return value.
     return 0;
@@ -5010,6 +4993,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CreateEmitterAtEntity", l_CreateEmitterAtEntity);
     state.register_function("CreateEmitterOnEntity", l_CreateEmitterAtEntity); // same semantics
     state.register_function("CreateAttachedEmitter", l_CreateAttachedEmitter);
+    state.register_function("CreateTrail", l_CreateTrail);
     state.register_function("CreateAttachedBeam", l_CreateAttachedBeam);
     state.register_function("AttachBeamToEntity", l_AttachBeamToEntity);
     state.register_function("AttachBeamEntityToEntity", l_AttachBeamEntityToEntity);
@@ -5194,6 +5178,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("GetCurrentCommandSource", stub_zero);
     state.register_function("RequestPause", l_sim_RequestPause);
     state.register_function("SimConExecute", stub_noop);
+    // MetaImpact(entity, pos, radius, amount): the physics push a big impact
+    // gives nearby units (Projectile.DoMetaImpact) -- cosmetic, not simulated.
+    state.register_function("MetaImpact", stub_noop);
     state.register_function("BeginLogging", stub_noop);
     state.register_function("EndLogging", stub_noop);
     state.register_function("SuspendSim", stub_noop);

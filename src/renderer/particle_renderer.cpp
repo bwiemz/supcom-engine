@@ -49,10 +49,12 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
     push_range.offset = 0;
     push_range.size = sizeof(ParticlePushConstants);
 
+    // Set 0: the particle texture; set 1: its ramp (same layout).
+    const VkDescriptorSetLayout set_layouts[2] = {texture_ds_layout, texture_ds_layout};
     VkPipelineLayoutCreateInfo layout_ci{};
     layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_ci.setLayoutCount = 1;
-    layout_ci.pSetLayouts = &texture_ds_layout;
+    layout_ci.setLayoutCount = 2;
+    layout_ci.pSetLayouts = set_layouts;
     layout_ci.pushConstantRangeCount = 1;
     layout_ci.pPushConstantRanges = &push_range;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout_);
@@ -71,13 +73,14 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
 
     // Vertex input: no per-vertex data, all per-instance
     // ParticleInstance layout: pos(3f) + size(1f) + rotation(1f) + alpha(1f)
-    //                        + uvOffset(2f) + uvSize(2f) + color(3f) = 13 floats = 52B
+    //                        + uvOffset(2f) + uvSize(2f) + color(3f) + rampU(1f)
+    //                        = 14 floats = 56B
     VkVertexInputBindingDescription bind{};
     bind.binding = 0;
     bind.stride = sizeof(ParticleInstance);
     bind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-    VkVertexInputAttributeDescription attrs[7] = {};
+    VkVertexInputAttributeDescription attrs[8] = {};
     // location 0: pos (vec3)
     attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, pos_x)};
     // location 1: size (float)
@@ -92,12 +95,14 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
     attrs[5] = {5, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ParticleInstance, uv_w)};
     // location 6: color (vec3)
     attrs[6] = {6, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, r)};
+    // location 7: ramp u (float)
+    attrs[7] = {7, 0, VK_FORMAT_R32_SFLOAT, offsetof(ParticleInstance, ramp_u)};
 
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input.vertexBindingDescriptionCount = 1;
     vertex_input.pVertexBindingDescriptions = &bind;
-    vertex_input.vertexAttributeDescriptionCount = 7;
+    vertex_input.vertexAttributeDescriptionCount = 8;
     vertex_input.pVertexAttributeDescriptions = attrs;
 
     // Input assembly
@@ -243,8 +248,7 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
 }
 
 void ParticleRenderer::update(const std::vector<ParticleInstance>& instances,
-                              const ParticleSystem& /*psys*/,
-                              TextureCache& tex_cache, u32 fi) {
+                              const ParticleSystem& psys, TextureCache& tex_cache, u32 fi) {
     instance_count_ = static_cast<u32>(instances.size());
     if (instance_count_ == 0) {
         groups_.clear();
@@ -263,16 +267,35 @@ void ParticleRenderer::update(const std::vector<ParticleInstance>& instances,
                     instance_count_ * sizeof(ParticleInstance));
     }
 
-    // For now, single draw group using fallback texture
-    // (full per-emitter texture grouping in a future pass)
+    // One draw per texture run. A texture still loading skips its particles
+    // this frame (rather than flashing them as white squares); an emitter
+    // that names no texture keeps the white fallback.
     groups_.clear();
-    DrawGroup group;
-    group.texture_ds = tex_cache.fallback_descriptor();
-    group.instance_offset = 0;
-    group.instance_count = instance_count_;
-    group.additive = false;
-    groups_.push_back(group);
-    draw_count_ = instance_count_;
+    draw_count_ = 0;
+    for (const auto& run : psys.texture_groups()) {
+        if (run.offset >= instance_count_) break;
+        DrawGroup group;
+        if (run.texture.empty()) {
+            group.texture_ds = tex_cache.fallback_descriptor();
+        } else {
+            const GPUTexture* tex = tex_cache.get(run.texture);
+            if (!tex) continue;
+            group.texture_ds = tex->descriptor_set;
+        }
+        // No ramp: white, so the texture's own colour shows.
+        if (run.ramp.empty()) {
+            group.ramp_ds = tex_cache.fallback_descriptor();
+        } else {
+            const GPUTexture* ramp = tex_cache.get(run.ramp);
+            if (!ramp) continue;
+            group.ramp_ds = ramp->descriptor_set;
+        }
+        group.instance_offset = run.offset;
+        group.instance_count = std::min(run.count, instance_count_ - run.offset);
+        group.additive = run.additive;
+        groups_.push_back(group);
+        draw_count_ += group.instance_count;
+    }
 }
 
 void ParticleRenderer::render(VkCommandBuffer cmd,
@@ -300,9 +323,9 @@ void ParticleRenderer::render(VkCommandBuffer cmd,
         vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT,
                            0, sizeof(ParticlePushConstants), &pc);
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                layout_, 0, 1, &group.texture_ds,
-                                0, nullptr);
+        const VkDescriptorSet sets[2] = {group.texture_ds, group.ramp_ds};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 2, sets, 0,
+                                nullptr);
 
         vkCmdBindVertexBuffers(cmd, 0, 1, vbufs, offsets);
 

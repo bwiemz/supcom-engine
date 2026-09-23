@@ -43,6 +43,7 @@ public:
 private:
     struct DrawGroup {
         VkDescriptorSet texture_ds = VK_NULL_HANDLE;
+        VkDescriptorSet ramp_ds = VK_NULL_HANDLE;
         u32 instance_offset = 0;
         u32 instance_count = 0;
         bool additive = false;

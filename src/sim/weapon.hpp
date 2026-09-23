@@ -14,6 +14,7 @@ class VisibilityGrid;
 namespace osc::sim {
 
 class EntityRegistry;
+class Projectile;
 class Unit;
 
 class Weapon {
@@ -57,6 +58,12 @@ public:
                 const map::VisibilityGrid* visibility_grid = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
+    /// Fire one projectile from `spawn_pos` at `target` (along the owner's
+    /// facing when null): the weapon's muzzle velocity and spread, the
+    /// projectile blueprint's physics, the weapon's damage. It is registered
+    /// and given its script object (OnCreate runs). Returns it.
+    Projectile* launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
+                       EntityRegistry& registry, lua_State* L, bool in_water);
     bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
                   const map::VisibilityGrid* visibility_grid = nullptr);
 

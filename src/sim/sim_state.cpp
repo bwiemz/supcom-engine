@@ -745,6 +745,10 @@ void SimState::tick() {
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
     {
         PROFILE_ZONE("Sim::vfx_gc");
+        effect_registry_.destroy_detached([&](u32 id) {
+            const Entity* e = entity_registry_.find(id);
+            return !e || e->destroyed();
+        });
         effect_registry_.expire_timed(game_time_);
         effect_registry_.gc();
     }
