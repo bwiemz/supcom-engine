@@ -73,7 +73,8 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
 
     // Vertex input: no per-vertex data, all per-instance
     // ParticleInstance layout: pos(3f) + size(1f) + rotation(1f) + alpha(1f)
-    //                        + uvOffset(2f) + uvSize(2f) + color(3f) = 13 floats = 52B
+    //                        + uvOffset(2f) + uvSize(2f) + color(3f) + rampU(1f)
+    //                        = 14 floats = 56B
     VkVertexInputBindingDescription bind{};
     bind.binding = 0;
     bind.stride = sizeof(ParticleInstance);
