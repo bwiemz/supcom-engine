@@ -32,7 +32,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 | Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format`. |
 | Data-backed gate on retail (`ctest -L gate`) | All 108 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), `data.determinism` (two processes play a four-AI game identically), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
-| Retail-only engine API still unbound | 96 globals and 44 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
+| Retail-only engine API still unbound | 54 globals and 30 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 
 ## Verified Locally
 
@@ -155,9 +155,11 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 
 - **Multiplayer:** the lockstep session, lobby handshake, command routing,
   desync detection and peer drop all work across two processes. They are
-  exercised on every CI run (`ctest -L mp`). Still missing: pipelined command
-  delay, slot and faction sync, LAN discovery, and routing every sim mutation
-  (SimCallbacks) through the command stream. Cross-OS determinism is
+  exercised on every CI run (`ctest -L mp`). SimCallbacks and the orders
+  panel's unit settings (pause, fire state, toggles) travel in the command
+  stream and run on every peer on the same tick (M198). Still missing:
+  pipelined command delay, slot and faction sync, LAN discovery, and peers
+  agreeing on a dropped player's last tick (M198b). Cross-OS determinism is
   not yet demonstrated. The sim walks entities in id order (M195) and draws all its
   randomness from one seeded stream (M196). Two processes play the same
   four-AI game identically (`data.determinism`), so object addresses don't
