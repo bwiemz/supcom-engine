@@ -5,6 +5,7 @@
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
 
+#include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -91,6 +92,10 @@ public:
                       TextureCache* tex_cache);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+
+    /// This frame's instances, one sorted line each: mesh, model matrix,
+    /// colour and a digest of the bone pose (the render-state dump).
+    void dump(std::ostream& out) const;
 
     static constexpr u32 MAX_INSTANCES = 8192;
     static constexpr u32 MAX_BONES_PER_UNIT = 64;

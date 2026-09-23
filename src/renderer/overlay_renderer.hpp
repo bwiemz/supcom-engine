@@ -55,6 +55,8 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+    /// This frame's quads (the render-state dump reads them).
+    const std::vector<UIInstance>& quads() const { return quads_; }
 
     /// Intel types whose range rings selected units show ("Radar", "Sonar",
     /// "Omni", "Vision"). FA shows them per its range-overlay filters; the

@@ -3,6 +3,9 @@
 #include "core/types.hpp"
 
 #include <functional>
+#include <vector>
+#include <string>
+#include <iosfwd>
 
 struct lua_State;
 
@@ -147,6 +150,30 @@ private:
     int moving_frames_ = 0;  // the ACU moved between the last two ticks
     int changed_frames_ = 0; // ...and its drawn position changed this frame
     int off_segment_ = 0;    // drawn outside the two ticks' positions
+    bool done_ = false;
+};
+
+/// --render-dump <file>: a scripted scene (army 1's tanks, a shield
+/// generator and an engineer building, fighting army 2's bots, with army
+/// 1's units selected) rendered offscreen at four frames per tick; every
+/// 16th frame from tick 100 to 180 is written with Renderer::dump_frame.
+/// Two runs give identical files, so a refactor of the render path can be
+/// checked frame for frame against a dump taken before it.
+class RenderDumpProbe {
+public:
+    explicit RenderDumpProbe(std::string path) : path_(std::move(path)) {}
+    /// Once per frame, after render().
+    void on_frame(sim::SimState& sim, const std::function<bool(const char*)>& sim_lua,
+                  const std::function<void(const std::vector<u32>&)>& select,
+                  const std::function<void(std::ostream&)>& dump);
+    bool done() const { return done_; }
+
+private:
+    std::string path_;
+    std::string text_;
+    int frames_ = 0;
+    bool scene_ = false;
+    bool selected_ = false;
     bool done_ = false;
 };
 

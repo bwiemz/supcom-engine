@@ -58,6 +58,9 @@ struct ParticleInstance {
 /// Each frame, call update() then read instances() for GPU upload.
 class ParticleSystem {
 public:
+    /// Live emitters (the render-state dump reads their origins).
+    const std::vector<EmitterState>& emitters() const { return emitters_; }
+
     /// Sync emitter list with IEffectRegistry — create new emitters,
     /// remove destroyed ones, update positions from entities as `view`
     /// draws them.

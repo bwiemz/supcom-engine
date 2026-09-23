@@ -31,6 +31,7 @@ extern "C" {
 #include <array>
 #include <cstdlib>
 #include <cstring>
+#include <ostream>
 #include <unordered_map>
 
 /// Log a Vulkan/VMA error with file and line context.
@@ -2080,9 +2081,13 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
         // FA's minimap WorldView shows the minimap, drawn with the UI.
         WorldViewPainter minimap_painter;
         if (!legacy_hud_active_) {
+            painted_minimap_.clear();
             minimap_painter = [&](const ui::ControlRect& r, std::vector<UIQuad>& out) {
+                const size_t first = out.size();
                 minimap_renderer_.paint(sim, view, camera_, texture_cache_, r.x, r.y, r.w, r.h,
                                         window_width_, window_height_, out);
+                painted_minimap_.insert(painted_minimap_.end(),
+                                        out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
         }
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
@@ -2810,6 +2815,48 @@ void Renderer::render(sim::SimState& sim, const sim::FrameView& view, lua_State*
 }
 
 // --- UI-only rendering (loading screen) ---
+
+void Renderer::dump_frame(std::ostream& out) const {
+    auto quad_line = [](const UIInstance& q) {
+        return fmt::format("{:.3f} {:.3f} {:.3f} {:.3f} | {:.4f} {:.4f} {:.4f} {:.4f} | "
+                           "{:.3f} {:.3f} {:.3f} {:.3f}",
+                           q.rect[0], q.rect[1], q.rect[2], q.rect[3], q.uv[0], q.uv[1],
+                           q.uv[2], q.uv[3], q.color[0], q.color[1], q.color[2], q.color[3]);
+    };
+    auto section = [&](const char* name, std::vector<std::string> lines) {
+        std::sort(lines.begin(), lines.end());
+        out << "[" << name << "] " << lines.size() << '\n';
+        for (const auto& l : lines) out << l << '\n';
+    };
+    auto quads = [&](const std::vector<UIInstance>& qs) {
+        std::vector<std::string> lines;
+        lines.reserve(qs.size());
+        for (const auto& q : qs) lines.push_back(quad_line(q));
+        return lines;
+    };
+    auto ui_quads = [&](const std::vector<UIQuad>& qs) {
+        std::vector<std::string> lines;
+        lines.reserve(qs.size());
+        for (const auto& q : qs) lines.push_back(quad_line(q.inst));
+        return lines;
+    };
+
+    out << "[units]\n";
+    unit_renderer_.dump(out);
+    section("overlay", quads(overlay_renderer_.quads()));
+    section("icons", quads(strategic_icon_renderer_.quads()));
+    section("minimap-window", ui_quads(painted_minimap_));
+    section("minimap-hud", ui_quads(minimap_renderer_.quads()));
+    section("hud", quads(hud_renderer_.quads()));
+    section("selection-info", quads(selection_info_renderer_.quads()));
+    std::vector<std::string> emitters;
+    for (const auto& e : particle_system_.emitters()) {
+        emitters.push_back(fmt::format("{} {} {:.4f} {:.4f} {:.4f}", e.effect_id,
+                                       e.active ? "on" : "off", e.origin_x, e.origin_y,
+                                       e.origin_z));
+    }
+    section("emitters", std::move(emitters));
+}
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
     // (debug removed)

@@ -54,6 +54,8 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+    /// This frame's quads (the render-state dump reads them).
+    const std::vector<UIInstance>& quads() const { return quads_; }
 
     u32 quad_count() const { return quad_count_; }
     bool is_strategic_zoom() const { return strategic_zoom_active_; }

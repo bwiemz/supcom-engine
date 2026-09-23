@@ -13,6 +13,9 @@
 
 #include <cmath>
 #include <cstring>
+#include <ostream>
+#include <string>
+#include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -518,6 +521,44 @@ void UnitRenderer::destroy(VkDevice device, VmaAllocator allocator) {
     }
     cube_instance_count_ = 0;
     mesh_groups_.clear();
+}
+
+void UnitRenderer::dump(std::ostream& out) const {
+    auto fnv = [](const std::string& text) {
+        u64 h = 1469598103934665603ULL;
+        for (unsigned char c : text) {
+            h ^= c;
+            h *= 1099511628211ULL;
+        }
+        return h;
+    };
+    std::vector<std::string> lines;
+    const auto* meshes = static_cast<const MeshInstance*>(mesh_instance_mapped_[fi_]);
+    const auto* bones = static_cast<const f32*>(bone_ssbo_mapped_[fi_]);
+    for (const auto& g : mesh_groups_) {
+        for (u32 i = 0; meshes && i < g.instance_count; ++i) {
+            const MeshInstance& m = meshes[g.instance_offset + i];
+            std::string line = fmt::format("mesh {} |", g.mesh ? g.mesh->texture_path : "?");
+            for (f32 v : m.model) line += fmt::format(" {:.4f}", v);
+            line += fmt::format(" | {:.3f} {:.3f} {:.3f} {:.3f}", m.r, m.g, m.b, m.a);
+            if (bones && g.bones_per_instance > 0) {
+                std::string pose;
+                const f32* b = bones + static_cast<size_t>(g.bone_base_offset +
+                                                           i * g.bones_per_instance) * 16;
+                for (u32 k = 0; k < g.bones_per_instance * 16; ++k) pose += fmt::format("{:.4f},", b[k]);
+                line += fmt::format(" | bones {} {:016x}", g.bones_per_instance, fnv(pose));
+            }
+            lines.push_back(std::move(line));
+        }
+    }
+    const auto* cubes = static_cast<const CubeInstance*>(cube_instance_mapped_[fi_]);
+    for (u32 i = 0; cubes && i < cube_instance_count_; ++i) {
+        const CubeInstance& c = cubes[i];
+        lines.push_back(fmt::format("cube {:.4f} {:.4f} {:.4f} {:.3f} | {:.3f} {:.3f} {:.3f} {:.3f}",
+                                    c.x, c.y, c.z, c.scale, c.r, c.g, c.b, c.a));
+    }
+    std::sort(lines.begin(), lines.end());
+    for (const auto& l : lines) out << l << '\n';
 }
 
 } // namespace osc::renderer

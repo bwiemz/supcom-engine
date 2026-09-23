@@ -27,6 +27,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -74,6 +75,12 @@ public:
     void render(sim::SimState& sim, const sim::FrameView& view, lua_State* L,
                 ui::UIControlRegistry* ui_registry = nullptr,
                 const std::unordered_set<u32>* selected_ids = nullptr);
+
+    /// Everything the last render() generated from the world -- mesh
+    /// instances and bone poses, overlay, strategic-icon, minimap and HUD
+    /// quads, emitter origins -- as sorted text lines, so two runs (or two
+    /// implementations) can be compared exactly.
+    void dump_frame(std::ostream& out) const;
 
     /// Render only the UI layer (no 3D scene, no bloom).
     /// Used during loading screen when SimState doesn't exist.
@@ -261,6 +268,7 @@ private:
     UIRenderer ui_renderer_;
     OverlayRenderer overlay_renderer_;
     MinimapRenderer minimap_renderer_;
+    std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;

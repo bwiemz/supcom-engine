@@ -80,6 +80,8 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+    /// This frame's quads from update() (the legacy HUD's minimap).
+    const std::vector<UIQuad>& quads() const { return quads_; }
 
     u32 quad_count() const { return quad_count_; }
 

@@ -358,6 +358,7 @@ static void print_usage() {
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
+              << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -1804,6 +1805,9 @@ int main(int argc, char* argv[]) {
     bool victory_test = parse_flag(argc, argv, "--victory-test");
     // Windowed (it checks what is drawn), so not one of the headless modes.
     const bool interp_test = parse_flag(argc, argv, "--interp-test");
+    const std::string render_dump_path = parse_string_arg(argc, argv, "--render-dump", "");
+    // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
+    const bool scripted_window = interp_test || !render_dump_path.empty();
     bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
     bool uirender_test = parse_flag(argc, argv, "--uirender-test");
     bool font_test = parse_flag(argc, argv, "--font-test");
@@ -1904,6 +1908,8 @@ int main(int argc, char* argv[]) {
                     profile_test || smoke_test || ai_skirmish || draw_test ||
                     stress_test || full_smoke_test || audio_data_test || victory_test;
     bool headless = (tick_count > 0) || any_test;
+    // --render-dump compares renders; its scene's script errors are logged,
+    // not counted, so a dump is still written.
     if (any_test || interp_test) osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
@@ -1971,7 +1977,7 @@ int main(int argc, char* argv[]) {
     // and captures run it without an output device; headless runs have no
     // frames, so their sim tick is its clock.
     const bool silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-                                !parse_string_arg(argc, argv, "--golden", "").empty() || interp_test;
+                                !parse_string_arg(argc, argv, "--golden", "").empty() || scripted_window;
     osc::audio::SoundManager sound(config.fa_path / "sounds", !headless && !silent_capture);
     sound.set_sim_clocked(headless);
 
@@ -2625,7 +2631,7 @@ int main(int argc, char* argv[]) {
         // focus to steal, or compositor to wait for.
         const bool offscreen_capture =
             !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
-            !parse_string_arg(argc, argv, "--golden", "").empty() || interp_test;
+            !parse_string_arg(argc, argv, "--golden", "").empty() || scripted_window;
         if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
             // Build 3D scene if we have a sim state (--map was provided)
             if (sim_state) {
@@ -2768,10 +2774,12 @@ int main(int argc, char* argv[]) {
                 parse_string_arg(argc, argv, "--screenshot-frame", "120").c_str(),
                 nullptr, 10));
             constexpr double kScreenshotFrameDt = 1.0 / 60.0;
-            // --interp-test: four frames per sim tick, on a fixed clock.
+            // --interp-test / --render-dump: four frames per sim tick, on a
+            // fixed clock.
             constexpr double kInterpFrameDt = osc::sim::SimState::SECONDS_PER_TICK / 4.0;
             osc::test::InterpProbe interp_probe;
-            if (interp_test) {
+            osc::test::RenderDumpProbe render_dump(render_dump_path);
+            if (scripted_window) {
                 renderer.set_fixed_frame_dt(static_cast<osc::f32>(kInterpFrameDt));
                 renderer.camera().set_input_enabled(false);
             }
@@ -2800,13 +2808,14 @@ int main(int argc, char* argv[]) {
             }
 
             while (!renderer.should_close() && !screenshot_done &&
-                   !(interp_test && interp_probe.done())) {
+                   !(interp_test && interp_probe.done()) &&
+                   !(!render_dump_path.empty() && render_dump.done())) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
                 prev_time = now;
                 if (!screenshot_path.empty()) dt = kScreenshotFrameDt;
-                if (interp_test) dt = kInterpFrameDt;
+                if (scripted_window) dt = kInterpFrameDt;
                 // Clamp dt to avoid spiral of death
                 if (dt > 0.25) dt = 0.25;
 
@@ -3010,6 +3019,19 @@ int main(int argc, char* argv[]) {
                 if (sim_state) {
                     renderer.render(*sim_state, frame_view, ui_lua_state.raw(), &ui_registry,
                                     sel.empty() ? nullptr : &sel);
+                    if (!render_dump_path.empty()) {
+                        render_dump.on_frame(
+                            *sim_state,
+                            [&](const char* code) {
+                                auto r = sim_lua_state->do_string(code);
+                                if (!r) spdlog::error("sim Lua: {}", r.error().message);
+                                return static_cast<bool>(r);
+                            },
+                            [&](const std::vector<osc::u32>& ids) {
+                                input_handler.set_selected({ids.begin(), ids.end()});
+                            },
+                            [&](std::ostream& out) { renderer.dump_frame(out); });
+                    }
                 } else {
                     // No sim state (front-end/lobby) — render UI only
                     renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
@@ -3220,6 +3242,11 @@ int main(int argc, char* argv[]) {
                 if (!interp_probe.done())
                     osc::test_status::fail("[FAIL] interp: the window closed before the check ended");
                 return finish_test_run("interp-test");
+            }
+            if (!render_dump_path.empty()) {
+                if (!render_dump.done())
+                    osc::test_status::fail("[FAIL] render-dump: the window closed before the dump ended");
+                return finish_test_run("render-dump");
             }
             if (!screenshot_path.empty() &&
                 osc::renderer::Renderer::validation_error_count() > 0) {
