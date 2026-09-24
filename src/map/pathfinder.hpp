@@ -105,9 +105,11 @@ private:
     /// Raw A* on the grid. If the goal is unreachable (or the search limit
     /// is hit) the path leads to the explored cell closest to the goal
     /// instead; empty only when no cell other than the start is reachable.
-    GridPath astar(u32 sx, u32 sz, u32 gx, u32 gz,
-                   const std::string& layer, f32 draft = 0,
-                   bool amphibious = false) const;
+    /// From a start cell inside a structure's footprint, or when `closed_in`,
+    /// it may cross the obstacle cells joined to the start, at a cost, to
+    /// get out.
+    GridPath astar(u32 sx, u32 sz, u32 gx, u32 gz, const std::string& layer, f32 draft = 0,
+                   bool amphibious = false, bool closed_in = false) const;
 
     /// Smooth path by removing redundant waypoints via line-of-sight.
     std::vector<std::pair<u32, u32>> smooth_path(
@@ -128,6 +130,7 @@ private:
     mutable std::vector<f32> g_cost_buf_;
     mutable std::vector<u32> parent_buf_;
     mutable std::vector<bool> closed_buf_;
+    mutable std::vector<u8> escape_buf_; ///< the footprint a start is inside
 };
 
 } // namespace osc::map
