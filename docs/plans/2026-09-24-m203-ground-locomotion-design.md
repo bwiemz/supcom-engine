@@ -98,6 +98,24 @@ These findings come from reading the engine code, retail's Lua and blueprints, a
 - **Footprints:** mobile units hold their footprint on the pathing grid while stationary, so paths go around parked groups.
 - **Proof:** a group ordered to one point spreads around it, and two columns crossing pass each other.
 
+**What building M203b established:**
+
+- **Separation is a pass, not a force in steering.** After every unit has
+  moved, each overlapping pair of ground units is pushed apart by half its
+  overlap. An idle unit makes way for a moving one; otherwise the smaller
+  gives more. Nothing is pushed where its layer can't go. The pairs are
+  found through a tick-local bucket grid, walked in id order, so the sums
+  come out the same on every platform.
+- **A crowd needs its own arrival.** Six tanks sent to one point can't all
+  stand on it, and without help five would jostle for it for ever. A unit
+  jostled for five ticks near its goal, without getting nearer, counts
+  itself there.
+- **Left:**
+  - Steering around a unit ahead, within `MaxSteerForce`, rather than
+    bumping into it.
+  - Parked groups holding their footprint on the pathing grid.
+  - Formations (M204), which give each unit of a group its own spot.
+
 ## Risks
 
 - **Everything takes longer.** Units that turn and accelerate arrive later, so tests that expect arrival within some number of ticks, AI timings and the weapon test's motion sequence change. Each is checked, not loosened blindly.
