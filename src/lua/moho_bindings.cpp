@@ -53,6 +53,7 @@
 #include "lua/sim_sync.hpp"
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -5697,18 +5698,12 @@ static int brain_GetThreatsAroundPosition(lua_State* L) {
 
     auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
 
-    // Bucket threats into 32x32 cells using a map keyed by (cellX, cellZ)
+    // Bucket threats into 32x32 cells. An ordered map, summed in id order:
+    // the list goes to scripts, and a hash map's order differs between
+    // standard libraries -- the air-scout AI takes the first entry, so
+    // Windows and Linux games parted at their first scouting run.
     constexpr f32 CELL_SIZE = 32.0f;
-    struct CellKey {
-        i32 cx, cz;
-        bool operator==(const CellKey& o) const { return cx == o.cx && cz == o.cz; }
-    };
-    struct CellHash {
-        size_t operator()(const CellKey& k) const {
-            return std::hash<i64>()(static_cast<i64>(k.cx) << 32 | static_cast<u32>(k.cz));
-        }
-    };
-    std::unordered_map<CellKey, f32, CellHash> cells;
+    std::map<std::pair<i32, i32>, f32> cells;
 
     for (u32 eid : ids) {
         auto* entity = sim->entity_registry().find(eid);
@@ -5724,23 +5719,25 @@ static int brain_GetThreatsAroundPosition(lua_State* L) {
         f32 threat = get_unit_threat_for_type(unit, threat_type);
         if (threat <= 0) continue;
 
-        CellKey key{
-            static_cast<i32>(std::floor(unit->position().x / CELL_SIZE)),
-            static_cast<i32>(std::floor(unit->position().z / CELL_SIZE))};
-        cells[key] += threat;
+        cells[{static_cast<i32>(std::floor(unit->position().x / CELL_SIZE)),
+               static_cast<i32>(std::floor(unit->position().z / CELL_SIZE))}] += threat;
     }
 
-    // Return table of {cellX, cellZ, threatValue}
+    // Return table of {cellX, cellZ, threatValue}: the most threatening
+    // first, as the scripts that take entry [1] expect; ties by cell.
+    std::vector<std::pair<std::pair<i32, i32>, f32>> ordered(cells.begin(), cells.end());
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const auto& a, const auto& b) { return a.second > b.second; });
     lua_newtable(L);
     int idx = 1;
-    for (const auto& [key, threat] : cells) {
+    for (const auto& [key, threat] : ordered) {
         lua_pushnumber(L, idx++);
         lua_newtable(L);
         lua_pushnumber(L, 1);
-        lua_pushnumber(L, key.cx * CELL_SIZE + CELL_SIZE * 0.5f);
+        lua_pushnumber(L, key.first * CELL_SIZE + CELL_SIZE * 0.5f);
         lua_rawset(L, -3);
         lua_pushnumber(L, 2);
-        lua_pushnumber(L, key.cz * CELL_SIZE + CELL_SIZE * 0.5f);
+        lua_pushnumber(L, key.second * CELL_SIZE + CELL_SIZE * 0.5f);
         lua_rawset(L, -3);
         lua_pushnumber(L, 3);
         lua_pushnumber(L, threat);
