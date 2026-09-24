@@ -72,7 +72,6 @@ M SetDamageRadius
 M SetDirectionalAnim
 M SetStrategicUnderlay
 M SetStunned
-M SetThrustingParam
 M SetWeaponDisableByLabel
 M StopSiloBuild
 M TakeResource

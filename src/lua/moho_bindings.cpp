@@ -9107,6 +9107,14 @@ static const MethodEntry collision_manipulator_methods[] = {
 };
 
 // Minimal entries for other classes
+// A thrust controller turns an aircraft's engines with its motion
+// (UEA0107 sets their arcs). It only moves bones on screen, which our air
+// movement doesn't drive yet, so its arcs change nothing.
+static const MethodEntry thrust_manipulator_methods[] = {
+    {"SetThrustingParam", stub_noop},
+    {nullptr, nullptr},
+};
+
 static const MethodEntry empty_methods[] = {
     {nullptr, nullptr},
 };
@@ -13490,7 +13498,7 @@ static const MohoClassDef moho_classes[] = {
     {"RotateManipulator",       rotate_manipulator_methods,     "manipulator_methods"},
     {"SlideManipulator",        slide_manipulator_methods,      "manipulator_methods"},
     {"SlaveManipulator",        empty_methods,                  "manipulator_methods"},
-    {"ThrustManipulator",       empty_methods,                  "manipulator_methods"},
+    {"ThrustManipulator",       thrust_manipulator_methods,     "manipulator_methods"},
     {"BoneEntityManipulator",   empty_methods,                  "manipulator_methods"},
     {"StorageManipulator",      empty_methods,                  "manipulator_methods"},
     {"FootPlantManipulator",    empty_methods,                  "manipulator_methods"},
