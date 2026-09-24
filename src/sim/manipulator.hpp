@@ -7,6 +7,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -232,6 +233,9 @@ public:
     }
     void clear_target() { has_target_ = false; }
     bool has_target() const { return has_target_; }
+    /// An arcing weapon's launch angle above the horizontal: the pitch to
+    /// take instead of the straight line to the target (none: the line).
+    void set_elevation(std::optional<f32> radians) { elevation_ = radians; }
 
 private:
     i32 yaw_bone_ = -1;
@@ -247,6 +251,7 @@ private:
     f32 reset_pose_time_ = 2.0f;
     f32 aim_heading_offset_ = 0;
     Vector3 target_;
+    std::optional<f32> elevation_;
     f32 tolerance_ = 0;
     f32 idle_time_ = 0;
     bool has_target_ = false;
