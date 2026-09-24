@@ -542,7 +542,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 1);
         }
 
-        // Read BuildRate from blueprint Economy.BuildRate
+        // Economy.BuildRate, and MaxBuildDistance: how far past its footprint
+        // it builds, reclaims and repairs (Moho's default 5).
         {
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Economy");
@@ -552,6 +553,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1))
                     unit->set_build_rate(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+                lua_pushstring(L, "MaxBuildDistance");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_max_build_distance(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
             }
             lua_pop(L, 2);
@@ -609,33 +615,23 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         unit->set_default_collision_shape(sim::blueprint_collision_shape(L, lua_gettop(L)));
         lua_pop(L, 1);
 
-        // Footprint.SizeX / SizeZ (for pathfinding obstacle marking)
+        // Footprint (pathfinding obstacles, placement, ranges).
         {
             store->push_lua_table(*entry, L);
-            lua_pushstring(L, "Footprint");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                f32 sx = 0, sz = 0;
-                lua_pushstring(L, "SizeX");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1)) sx = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                lua_pushstring(L, "SizeZ");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1)) sz = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                unit->set_footprint_size(sx, sz);
-            }
-            lua_pop(L, 2);
+            const auto [sx, sz] = sim::blueprint_footprint(L, lua_gettop(L));
+            unit->set_footprint_size(sx, sz);
+            lua_pop(L, 1);
         }
 
-        // Physics.SkirtSizeX/Z, SkirtOffsetX/Z (for adjacency detection)
+        // Physics.SkirtSizeX/Z, SkirtOffsetX/Z (adjacency, build ranges). As
+        // Moho's: at least the footprint, never offset outward
+        // (RUnitBlueprint's physics init).
         {
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Physics");
             lua_gettable(L, -2);
+            f32 ssx = 0, ssz = 0, sox = 0, soz = 0;
             if (lua_istable(L, -1)) {
-                f32 ssx = 0, ssz = 0, sox = 0, soz = 0;
                 lua_pushstring(L, "SkirtSizeX");
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1)) ssx = static_cast<f32>(lua_tonumber(L, -1));
@@ -652,9 +648,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1)) soz = static_cast<f32>(lua_tonumber(L, -1));
                 lua_pop(L, 1);
-                unit->set_skirt(ssx, ssz, sox, soz);
             }
             lua_pop(L, 2);
+            unit->set_skirt(std::max(ssx, unit->footprint_size_x()),
+                            std::max(ssz, unit->footprint_size_z()), std::min(sox, 0.0f),
+                            std::min(soz, 0.0f));
         }
 
         // Transport.Class1Capacity / TransportClass (for cargo tracking)
@@ -4545,7 +4543,7 @@ static int l_IssueAttack(lua_State* L) {
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4561,7 +4559,7 @@ static int l_IssueGuard(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4579,7 +4577,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4595,14 +4593,14 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
 static int l_IssueDive(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Dive;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4674,7 +4672,7 @@ static int l_IssueUpgrade(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Upgrade;
     cmd.blueprint_id = bp_id;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4734,7 +4732,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4770,7 +4768,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5039,7 +5037,7 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
 
     return 0;
 }
@@ -5053,8 +5051,19 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
 
+    return 0;
+}
+
+// IssueTransportUnloadSpecific(transports, units, position): its position is
+// the third argument. Which units it drops is not modelled yet: it unloads
+// them all there.
+static int l_IssueTransportUnloadSpecific(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::TransportUnload;
+    cmd.target_pos = extract_position(L, 3);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5112,7 +5121,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5125,7 +5134,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5135,7 +5144,7 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5475,7 +5484,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueClearFactoryCommands", l_IssueClearFactoryCommands);
     state.register_function("IssueTransportLoad", l_IssueTransportLoad);
     state.register_function("IssueTransportUnload", l_IssueTransportUnload);
-    state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnload);
+    state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnloadSpecific);
     state.register_function("IssueFerry", l_IssueFerry);
     state.register_function("IssueNuke", l_IssueNuke);
     state.register_function("IssueTactical", l_IssueTactical);

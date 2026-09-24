@@ -119,6 +119,32 @@ TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
     }
 }
 
+TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[nav][m206e]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+
+    // A site out of reach sends its builder toward it once (M206e). A path
+    // request put off by the budget must be asked for again, or the builder
+    // waits for it for ever.
+    const int builders = osc::map::Pathfinder::MAX_REQUESTS_PER_TICK + 4;
+    std::vector<Unit*> units;
+    for (int i = 0; i < builders; ++i) {
+        auto* u = spawn_land_unit(sim, 10.0f, 10.0f + 4.0f * static_cast<osc::f32>(i));
+        UnitCommand build = order(CommandType::BuildMobile, 110.0f, 10.0f + 4.0f * i);
+        build.blueprint_id = "ueb2101";
+        u->push_command(build, true);
+        units.push_back(u);
+    }
+
+    for (int t = 0; t < 5; ++t) sim.tick();
+
+    for (int i = 0; i < builders; ++i) {
+        INFO("builder " << i);
+        CHECK(units[i]->position().x > 11.0f); // started at x = 10
+    }
+}
+
 namespace {
 
 /// 128x128 map split in two by a cliff wall along x = 60..64.

@@ -131,6 +131,8 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
             lua_pushvalue(L, -2);
             lua_rawset(L, obj);
             prop.set_default_collision_shape(blueprint_collision_shape(L, lua_gettop(L)));
+            const auto [sx, sz] = blueprint_footprint(L, lua_gettop(L));
+            prop.set_footprint_size(sx, sz);
         }
         lua_pop(L, 1);
     }

@@ -258,6 +258,69 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 - **The queue:** `Issue*` functions append, as Moho's do.
 - **Launch orders:** a mobile unit too close to its target backs away (M206a drops the order).
 
+**What the decompiled engine shows:** [faf-re](https://github.com/Draiget/faf-re) decompiles Moho's unit tasks, with the addresses of each function. It settles what the scripts and FAF's notes left open.
+- **Defaults** (`RUnitBlueprint`, `REntityBlueprint::OnInitBlueprint`):
+  - `MaxBuildDistance` is 5.
+  - A blueprint without a `Footprint` gets `ceil(SizeX)` × `ceil(SizeZ)`.
+  - The skirt is at least the footprint, and a positive `SkirtOffset` becomes 0.
+- **The gap:** every range is measured as a gap: the ground distance between the two centres, minus the builder's largest footprint side (whole cells), minus the target's largest side.
+- **Build** (`CUnitMobileBuildTask`):
+  - **In range:** the gap against the new structure's largest skirt side is at most `MaxBuildDistance`. A T1 engineer (footprint 1) builds point defence (skirt 1) from 7 away, and a land factory (skirt 8) from 14.
+  - **Out of range, or standing on the site:** the builder moves just clear of the site's skirt, grown by one cell. Still out of range after that, the order fails.
+- **Repair** (`CUnitRepairTask`, which also serves a guard's assist): the gap against the target's skirt. It starts within `MaxBuildDistance` and carries on until the gap passes twice that.
+- **Reclaim** (`CUnitReclaimTask`):
+  - **In range:** the gap against the target's footprint is at most `MaxBuildDistance`, or `AI.GuardScanRadius` if that is larger and the unit is patrolling. A point target counts as 2 × 2.
+  - **Out of range:** the unit walks up to the target.
+- **Capture** (`CUnitCaptureTask`): the footprint gap, against fixed numbers rather than `MaxBuildDistance`. The unit moves in when the gap is over 5 and gives up beyond 10.
+- **Guard** (`CUnitGuardTask`): a guarding engineer stays put while within twice `MaxBuildDistance` of the unit it guards.
+- **`Issue*`:** every sim-side `Issue*` passes `clearQueue = false`, so it appends. `IssueClearCommands` clears, and `IssueStop` issues a Stop.
+- **Launch orders** (`CUnitFireAtTask`):
+  - **Too close:** a mobile launcher backs off along the line from the target through itself, to 1.1 × `MinRadius`. An immobile one gives up.
+  - **In range with no missile:** if the silo is neither building nor full, the order asks it for one, and gives up if the silo won't take it.
+  - **Firing:** a nuke calls its unit's `OnNukeLaunched`.
+
+**What the engine does instead:**
+- **Ranges:** fixed and measured centre to centre (build 6, reclaim 5, repair 6, capture 6), whatever the target's size.
+- **Footprints:** blueprint registration fills a missing `Footprint` from the size rounded to nearest (FAF's reading), where Moho rounds up. Props get none.
+- **Guard:** a guarding engineer adds its build power from any distance.
+- **`Issue*`:** 14 of the functions clear the queue.
+- **Launch orders:** a launcher too close drops the order, and one without a missile waits for a build that nothing orders.
+
+**The slice:**
+- **Footprints:** a missing one rounds the size up, as Moho's does; props get one; a skirt is at least the footprint.
+- **Ranges:**
+  - Build, repair, reclaim and capture measure their gaps as above.
+  - Out of range, a builder heads just clear of the target's skirt rather than stopping at the edge of its reach.
+  - A builder standing on its site moves off it.
+  - Repair continues to twice its reach.
+- **Guard:**
+  - A guarding engineer assists only within reach of what it assists (repair's rule, against the target's skirt), and moves in otherwise.
+  - It follows the unit it guards once that unit is more than twice its `MaxBuildDistance` away.
+- **The queue:** `Issue*` appends.
+- **Launch orders:** too close, a launcher backs off; with no missile, the order asks the silo for one; a nuke calls `OnNukeLaunched`.
+- **Proof:** `--range-test`:
+  - **Build:** a T1 engineer builds point defence from 7 without moving, walks from 9, and builds a land factory from 14. An ACU (`MaxBuildDistance` 10) builds point defence from 12.
+  - **Repair:** it keeps going as its target moves away, and stops past twice its reach.
+  - **Reclaim:** within reach it reclaims in place; beyond, it walks up.
+  - **Guard:** an engineer guarding an ACU that builds out of the engineer's reach moves in before the build goes faster.
+  - **Footprints:** a T2 tank 1.2 long spans 2 cells. An engineer reclaims an oak grove (8 by 10) from 16 without moving.
+  - **The queue:** `IssueMove` then `IssueAttack` leaves both orders queued.
+  - **Launch orders:** an ACU with the tactical-missile enhancement, ordered at a point too close, backs off and fires. A TML ordered to fire with an empty silo starts building a missile.
+
+**What building M206e established:**
+- **The back-off needed the weapon to wait.** The test's launcher is an ACU with the tactical-missile enhancement (`MinRadius` 5); a nuke sub needs 140 of open water. Our manual weapon took the order's target as soon as the order was queued, even too close, and the unpacking weapon held the ACU in place. Moho hands the weapon its target only in range (the fire-at task's Starting state). The weapon now takes it only while the order is within its range band.
+- **Missile-test effects:**
+  - **An empty launcher's own order builds a missile.** In `--missile-test`, a launch cancelled while waiting leaves its launcher holding two missiles: the one it was given, and the one its order asked the silo for.
+  - **Assisting engineers were out of reach.** Three of the four engineers helping a silo stood beyond it, so they walked two ticks before helping. The test now places them within reach.
+- **`IssueTransportUnloadSpecific(transports, units, position)` was `IssueTransportUnload` under another name,** reading its position from the unit list. It now reads the third argument. Which units it drops is still not modelled.
+- **A path the pathfinder puts off must be asked for again.** A unit walking up to its work sets its goal once, but the navigator keeps a throttled request pending without retrying it. The approach now asks again, as the move orders do.
+- **The footprints were already there.** Blueprint registration fills a missing `Footprint` (an earlier fix, for scripts that read it), and the survey missed it. The new fallback changed no test, and a mutation that removed it was not caught. What remains is Moho's rounding up, which differs on 13 retail axes (a T2 tank's 1.2 length is 2 cells, not 1), and footprints for props, which registration leaves alone.
+
+**Risks:**
+- **Readings, not measurements:** where `PrepareMove` puts a unit (it isn't decompiled yet), and which unit categories may help (REPAIR and RECLAIM stand in for Moho's builder checks).
+- **Factories assisting factories now do nothing.** Moho gives guarding factories their own behaviour, which reads as copying the queue. It isn't modelled, and they no longer lend build power.
+- **The queue change reaches every script.** Retail's AI clears before it replaces, so appending should match Moho, but the long AI games will play differently.
+
 ### M206f: ferry
 
 - **Beacons:** ferry beacons, and transports that load at the beacon and unload at its destination.

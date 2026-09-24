@@ -3,6 +3,7 @@
 #include "sim/entity.hpp"
 
 #include <optional>
+#include <utility>
 
 struct lua_State;
 
@@ -17,6 +18,11 @@ namespace osc::sim {
 /// base sits at CollisionOffsetX/Y/Z, as retail's wrecks and GetRandomOffset
 /// read those fields. None for a blueprint without sizes.
 CollisionShape blueprint_collision_shape(lua_State* L, int bp_index);
+
+/// The footprint, in whole cells, that the blueprint at `bp_index` gives an
+/// entity: its Footprint.SizeX/SizeZ, else its SizeX/SizeZ rounded up, as
+/// Moho's REntityBlueprint::OnInitBlueprint fills it. 0 without either.
+std::pair<f32, f32> blueprint_footprint(lua_State* L, int bp_index);
 
 /// How far from its entity's position any point of `shape` can lie.
 f32 collision_reach(const CollisionShape& shape);

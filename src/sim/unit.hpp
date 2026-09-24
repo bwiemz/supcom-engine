@@ -69,6 +69,10 @@ public:
         return static_cast<i32>(weapons_.size());
     }
     f32 build_rate() const { return build_rate_; }
+    /// Economy.MaxBuildDistance: how far past the footprints it builds,
+    /// reclaims and repairs (see sim/work_range.hpp).
+    f32 max_build_distance() const { return max_build_distance_; }
+    void set_max_build_distance(f32 d) { max_build_distance_ = d; }
     void set_build_rate(f32 r) { build_rate_ = r; }
 
     const std::string& layer() const { return layer_; }
@@ -259,11 +263,6 @@ public:
     void clear_commands(const char* source = "?");
     void clear_queued_commands(); // remove all but current command
 
-    // Footprint (from blueprint, for pathfinding obstacle marking)
-    f32 footprint_size_x() const { return footprint_size_x_; }
-    f32 footprint_size_z() const { return footprint_size_z_; }
-    void set_footprint_size(f32 sx, f32 sz) { footprint_size_x_ = sx; footprint_size_z_ = sz; }
-
     /// Per-tick update: process command queue + movement + weapons.
     void update(f64 dt, SimContext& ctx);
 
@@ -410,7 +409,8 @@ public:
     /// Its OverChargeWeapon (switched off until an OverCharge order), if any.
     Weapon* overcharge_weapon() const;
     /// The launch or OverCharge order at the head of the queue, if `w` is
-    /// the weapon it fires; else null.
+    /// the weapon it fires and the order has handed it its target (a launch
+    /// within the weapon's range band, an OverCharge switched on); else null.
     const UnitCommand* launch_order_for(const Weapon& w) const;
     UnitCommand* launch_order_for(const Weapon& w);
 
@@ -678,12 +678,18 @@ private:
     /// Move along the navigator's path, no faster than `speed_cap` if set (a
     /// formation keeping its slowest unit's pace).
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    /// Walk toward work out of reach (the goal set when the order sent the
+    /// unit): nav_update, first asking again for a path the pathfinder put
+    /// off (the navigator keeps a throttled request without retrying it).
+    /// True until the unit gets there.
+    bool approach_update(f64 dt, SimContext& ctx);
     void apply_vet_buffs(lua_State* L);
     void fire_on_veteran(lua_State* L);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
+    f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units
@@ -711,9 +717,7 @@ private:
     f64 capture_time_ = 0;        // total seconds to capture
     f64 capture_energy_cost_ = 0; // total energy drain
     bool capturable_ = true;      // can this unit be captured?
-    bool being_captured_ = false;  // is this unit currently being captured?
-    f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
-    f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
+    bool being_captured_ = false; // is this unit currently being captured?
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
     void update_motion_horz(lua_State* L);

@@ -930,9 +930,7 @@ static int entity_Destroy(lua_State* L) {
         if (e->is_unit()) {
             auto pos = e->position();
             f32 scale = 1.0f;
-            auto* u = static_cast<sim::Unit*>(e);
-            if (u->footprint_size_x() > 0)
-                scale = u->footprint_size_x() * 0.5f;
+            if (e->footprint_size_x() > 0) scale = e->footprint_size_x() * 0.5f;
             auto* sim = get_sim(L);
             if (sim)
                 sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());

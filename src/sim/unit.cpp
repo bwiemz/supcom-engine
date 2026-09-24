@@ -8,6 +8,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
+#include "sim/work_range.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 
@@ -363,6 +364,15 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     return result;
 }
 
+bool Unit::approach_update(f64 dt, SimContext& ctx) {
+    if (navigator_.status() == Navigator::Status::WaitingForPath) {
+        const Vector3 goal = navigator_.goal();
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+    }
+    return nav_update(dt, ctx.terrain);
+}
+
 namespace {
 
 /// What reclaiming `target` takes and yields, as Moho asks the reclaimer's
@@ -540,21 +550,42 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
         case CommandType::BuildMobile: {
             if (build_target_id_ == 0) {
-                // Phase 1: Move to build site
-                f32 dx = cmd.target_pos.x - position().x;
-                f32 dz = cmd.target_pos.z - position().z;
-                f32 dist2 = dx * dx + dz * dz;
-                f32 build_range = 6.0f;
-
-                if (dist2 > build_range * build_range) {
-                    if (!navigator_.is_moving() ||
-                        navigator_.goal().x != cmd.target_pos.x ||
-                        navigator_.goal().z != cmd.target_pos.z) {
-                        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
-                                            naval_draft_, is_amphibious() || is_hover());
+                // Phase 1: reach the site. In range when the gap to its skirt
+                // is within MaxBuildDistance and the builder is off the
+                // skirt (Moho's CUnitMobileBuildTask); else it walks just
+                // clear of the skirt, one cell out, and builds from there or
+                // gives up.
+                if (cmd.site_skirt_x <= 0) {
+                    const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
+                    cmd.site_skirt_x = sx;
+                    cmd.site_skirt_z = sz;
+                }
+                const f32 half_x = cmd.site_skirt_x * 0.5f;
+                const f32 half_z = cmd.site_skirt_z * 0.5f;
+                const auto reachable = [&] {
+                    const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+                    const f32 room = footprint_extent(*this) * 0.5f;
+                    const bool on_site =
+                        std::abs(position().x - cmd.target_pos.x) <= half_x + room &&
+                        std::abs(position().z - cmd.target_pos.z) <= half_z + room;
+                    return !on_site &&
+                           work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+                };
+                if (!cmd.approached && !reachable()) {
+                    if (effective_speed() <= 0) {
+                        command_queue_.pop_front();
+                        continue;
                     }
-                    navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                    goto done_commands;
+                    cmd.approached = true;
+                    navigator_.set_goal(
+                        approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1),
+                        ctx.pathfinder, position(), layer_, naval_draft_,
+                        is_amphibious() || is_hover());
+                }
+                if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                if (!reachable()) {
+                    command_queue_.pop_front();
+                    continue;
                 }
                 navigator_.abort_move();
 
@@ -625,20 +656,39 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target
-            constexpr f32 reclaim_range = 5.0f;
-            f32 rdx = target->position().x - position().x;
-            f32 rdz = target->position().z - position().z;
-            f32 rdist2 = rdx * rdx + rdz * rdz;
-            if (rdist2 > reclaim_range * reclaim_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != target->position().x ||
-                    navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: the gap to its footprint within MaxBuildDistance (Moho's
+            // CUnitReclaimTask). Out of reach, or standing on it, the unit
+            // walks up to it, and reclaims from there or gives up.
+            {
+                const f32 extent = footprint_extent(*target);
+                const f32 gap = work_gap(*this, target->position(), extent);
+                const f32 rdx = target->position().x - position().x;
+                const f32 rdz = target->position().z - position().z;
+                const bool on_top = rdx * rdx + rdz * rdz < 1.0f;
+                if (reclaim_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && (gap > max_build_distance_ || on_top)) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, target->position(),
+                                                           target->footprint_size_x() * 0.5f,
+                                                           target->footprint_size_z() * 0.5f),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > max_build_distance_) {
+                        if (is_reclaiming()) stop_reclaiming();
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > max_build_distance_) {
+                    stop_reclaiming();
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 
@@ -719,20 +769,37 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target if out of range
-            constexpr f32 repair_range = 6.0f;
-            f32 rdx = rtarget->position().x - position().x;
-            f32 rdz = rtarget->position().z - position().z;
-            f32 rdist2 = rdx * rdx + rdz * rdz;
-            if (rdist2 > repair_range * repair_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != rtarget->position().x ||
-                    navigator_.goal().z != rtarget->position().z) {
-                    navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: the gap to its skirt within MaxBuildDistance to begin,
+            // twice that to go on (Moho's CUnitRepairTask). Out of reach, the
+            // unit walks just clear of its skirt, and repairs from there or
+            // gives up.
+            {
+                const auto& runit = static_cast<const Unit&>(*rtarget);
+                const f32 gap = work_gap(*this, rtarget->position(), skirt_extent(runit));
+                if (repair_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && gap > max_build_distance_) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, rtarget->position(),
+                                                           runit.skirt_size_x() * 0.5f + 1,
+                                                           runit.skirt_size_z() * 0.5f + 1),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > max_build_distance_) {
+                        if (is_repairing()) stop_repairing(L, registry);
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > 2 * max_build_distance_) {
+                    stop_repairing(L, registry);
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 
@@ -773,20 +840,37 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target if out of range
-            constexpr f32 capture_range = 6.0f;
-            f32 cdx = ctarget->position().x - position().x;
-            f32 cdz = ctarget->position().z - position().z;
-            f32 cdist2 = cdx * cdx + cdz * cdz;
-            if (cdist2 > capture_range * capture_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != ctarget->position().x ||
-                    navigator_.goal().z != ctarget->position().z) {
-                    navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: fixed, not MaxBuildDistance (Moho's CUnitCaptureTask). A
+            // footprint gap over 5 sends the unit just clear of its target's
+            // skirt; there it captures within 10, or gives up. A moving
+            // target is lost beyond 10.
+            {
+                const auto& cunit = static_cast<const Unit&>(*ctarget);
+                const f32 gap = work_gap(*this, ctarget->position(), footprint_extent(*ctarget));
+                if (capture_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && gap > kCaptureReach) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, ctarget->position(),
+                                                           cunit.skirt_size_x() * 0.5f,
+                                                           cunit.skirt_size_z() * 0.5f),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > kCaptureHold) {
+                        if (is_capturing()) stop_capturing(L, registry, true);
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > kCaptureHold && cunit.effective_speed() > 0) {
+                    stop_capturing(L, registry, true);
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 
@@ -826,38 +910,69 @@ void Unit::update(f64 dt, SimContext& ctx) {
             }
             auto* target_unit = static_cast<Unit*>(target);
 
-            // Follow: stay within guard_range of the target
-            constexpr f32 guard_range = 10.0f;
-            f32 gdx = target->position().x - position().x;
-            f32 gdz = target->position().z - position().z;
-            f32 gdist2 = gdx * gdx + gdz * gdz;
-            if (gdist2 > guard_range * guard_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != target->position().x ||
-                    navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Help only within reach of the work (M206e): Moho's guard hands
+            // it to a repair or reclaim task. A build, a silo or a repair
+            // measures the gap to that unit's skirt (MaxBuildDistance to
+            // begin, twice that to go on); a reclaim, to its footprint. Out
+            // of reach, the unit walks just clear of the work, helping with
+            // nothing meanwhile.
+            const auto within_reach = [&](const Entity& work, bool skirt, bool helping) {
+                f32 extent = footprint_extent(work);
+                f32 half_x = work.footprint_size_x() * 0.5f;
+                f32 half_z = work.footprint_size_z() * 0.5f;
+                if (skirt && work.is_unit()) {
+                    const auto& wu = static_cast<const Unit&>(work);
+                    extent = skirt_extent(wu);
+                    half_x = wu.skirt_size_x() * 0.5f + 1;
+                    half_z = wu.skirt_size_z() * 0.5f + 1;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-            } else {
-                navigator_.abort_move();
-            }
+                const f32 limit = helping && skirt ? 2 * max_build_distance_ : max_build_distance_;
+                if (work_gap(*this, work.position(), extent) <= limit) {
+                    navigator_.abort_move();
+                    return true;
+                }
+                if (effective_speed() > 0) {
+                    const Vector3 goal = approach_point(*this, work.position(), half_x, half_z);
+                    const Vector3 heading = navigator_.goal();
+                    if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
+                        std::abs(heading.z - goal.z) > 1.0f) {
+                        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    nav_update(dt, ctx.terrain);
+                }
+                return false;
+            };
+            bool working = false;
+            // Who helps (Moho's guard dispatches repair and reclaim tasks): a
+            // unit that repairs helps builds, silos and repairs; one that
+            // reclaims, reclaims. Others (a tank guarding an engineer, a
+            // factory assisting a factory) only follow.
+            const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+            const bool reclaims = has_category("RECLAIM") && build_rate_ > 0;
 
             // Assist: if target is building, contribute build power
-            if (target_unit->is_building()) {
+            const Entity* guarded_build = repairs && target_unit->is_building()
+                                              ? registry.find(target_unit->build_target_id())
+                                              : nullptr;
+            const Entity* guarded_reclaim = reclaims && target_unit->is_reclaiming()
+                                                ? registry.find(target_unit->reclaim_target_id())
+                                                : nullptr;
+            if (guarded_build && !guarded_build->destroyed()) {
+                working = true;
                 u32 target_build_id = target_unit->build_target_id();
-
-                if (build_target_id_ != target_build_id) {
-                    // Switch to new assist target
+                if (!within_reach(*guarded_build, true, build_target_id_ == target_build_id)) {
                     if (is_building()) stop_assisting();
+                } else {
+                    if (build_target_id_ != target_build_id) {
+                        // Switch to new assist target
+                        if (is_building()) stop_assisting();
 
-                    auto* build_target = registry.find(target_build_id);
-                    if (build_target && !build_target->destroyed()) {
                         build_target_id_ = target_build_id;
                         build_time_ = target_unit->build_time();
                         build_cost_mass_ = target_unit->build_cost_mass();
                         build_cost_energy_ = target_unit->build_cost_energy();
-                        work_progress_ = build_target->fraction_complete();
+                        work_progress_ = guarded_build->fraction_complete();
 
                         if (build_time_ > 0 && build_rate_ > 0) {
                             economy_.consumption_mass =
@@ -871,33 +986,34 @@ void Unit::update(f64 dt, SimContext& ctx) {
                                      "building target #{}",
                                      entity_id(), cmd.target_id, target_build_id);
                     }
-                }
 
-                // Progress the build with our own build rate
-                if (build_target_id_ != 0) {
-                    if (!progress_build_assist(dt, registry, econ_eff)) {
-                        stop_assisting();
+                    // Progress the build with our own build rate
+                    if (build_target_id_ != 0) {
+                        if (!progress_build_assist(dt, registry, econ_eff)) {
+                            stop_assisting();
+                        }
                     }
                 }
-            } else if (target_unit->is_reclaiming()) {
+            } else if (guarded_reclaim && !guarded_reclaim->destroyed() &&
+                       guarded_reclaim->reclaimable()) {
                 // Assist reclaim: contribute reclaim power
+                working = true;
+                if (is_building()) stop_assisting();
                 u32 target_reclaim_id = target_unit->reclaim_target_id();
-
-                if (reclaim_target_id_ != target_reclaim_id) {
-                    // Switch to new reclaim target
+                if (!within_reach(*guarded_reclaim, false, false)) {
                     if (is_reclaiming()) stop_reclaiming();
-                    if (is_building()) stop_assisting();
+                } else {
+                    if (reclaim_target_id_ != target_reclaim_id) {
+                        // Switch to new reclaim target
+                        if (is_reclaiming()) stop_reclaiming();
 
-                    auto* reclaim_target = registry.find(target_reclaim_id);
-                    if (reclaim_target && !reclaim_target->destroyed() &&
-                        reclaim_target->reclaimable()) {
                         reclaim_target_id_ = target_reclaim_id;
 
                         // Compute own reclaim rate based on own build_rate
                         // (assister contributes speed but NOT duplicate resources
                         //  — only the primary reclaimer sets production rates)
-                        const ReclaimCosts costs =
-                            reclaim_costs(L, *this, *reclaim_target, static_cast<f64>(build_rate_));
+                        const ReclaimCosts costs = reclaim_costs(L, *this, *guarded_reclaim,
+                                                                 static_cast<f64>(build_rate_));
                         if (std::max(costs.mass, costs.energy) > 0 && build_rate_ > 0) {
                             f64 reclaim_time = costs.time;
                             if (reclaim_time <= 0) reclaim_time = 0.01;
@@ -908,52 +1024,80 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
                         spdlog::info("Guard reclaim assist: entity #{} "
                                      "assisting #{} reclaiming #{}",
-                                     entity_id(), cmd.target_id,
-                                     target_reclaim_id);
+                                     entity_id(), cmd.target_id, target_reclaim_id);
                     }
-                }
 
-                if (reclaim_target_id_ != 0) {
-                    if (!progress_reclaim_assist(dt, registry)) {
-                        stop_reclaiming();
+                    if (reclaim_target_id_ != 0) {
+                        if (!progress_reclaim_assist(dt, registry)) {
+                            stop_reclaiming();
+                        }
                     }
                 }
-            } else if (target_unit->silo_building() && !target_unit->is_paused() &&
-                       build_rate_ > 0) {
+            } else if (repairs && target_unit->silo_building() && !target_unit->is_paused()) {
                 // Assist a silo's missile: this unit's build power on it, at
                 // its share of the cost (retail's UpdateConsumptionValues
                 // for a SiloBuildingAmmo focus). A paused silo's helpers
-                // wait, paying nothing.
+                // wait, paying nothing; so do helpers out of reach.
+                working = true;
                 if (is_building()) stop_assisting();
                 if (is_reclaiming()) stop_reclaiming();
-                const SiloBuild& missile = target_unit->silo_build();
-                const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
-                economy_.consumption_energy = missile.energy * per_second;
-                economy_.consumption_mass = missile.mass * per_second;
-                economy_.consumption_active = true;
-                assisting_silo_ = true;
-                target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+                if (within_reach(*target_unit, true, false)) {
+                    const SiloBuild& missile = target_unit->silo_build();
+                    const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+                    economy_.consumption_energy = missile.energy * per_second;
+                    economy_.consumption_mass = missile.mass * per_second;
+                    economy_.consumption_active = true;
+                    assisting_silo_ = true;
+                    target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+                }
             } else {
                 // Target not building/reclaiming — stop if we were
                 if (is_building()) stop_assisting();
                 if (is_reclaiming()) stop_reclaiming();
 
                 // Auto-repair: if target is damaged and we have build_rate
-                if (target_unit->health() < target_unit->max_health() &&
-                    build_rate_ > 0) {
-                    if (repair_target_id_ != cmd.target_id) {
+                if (repairs && target_unit->health() < target_unit->max_health()) {
+                    working = true;
+                    if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                         if (is_repairing()) stop_repairing(L, registry);
-                        UnitCommand repair_cmd;
-                        repair_cmd.type = CommandType::Repair;
-                        repair_cmd.target_id = cmd.target_id;
-                        repair_cmd.target_pos = target->position();
-                        start_repair(repair_cmd, registry, L);
-                    }
-                    if (repair_target_id_ != 0) {
-                        progress_repair(dt, registry, L, econ_eff);
+                    } else {
+                        if (repair_target_id_ != cmd.target_id) {
+                            if (is_repairing()) stop_repairing(L, registry);
+                            UnitCommand repair_cmd;
+                            repair_cmd.type = CommandType::Repair;
+                            repair_cmd.target_id = cmd.target_id;
+                            repair_cmd.target_pos = target->position();
+                            start_repair(repair_cmd, registry, L);
+                        }
+                        if (repair_target_id_ != 0) {
+                            progress_repair(dt, registry, L, econ_eff);
+                        }
                     }
                 } else {
                     if (is_repairing()) stop_repairing(L, registry);
+                }
+            }
+
+            // Otherwise follow: an engineer stays put within twice its
+            // MaxBuildDistance of what it guards (Moho's CUnitGuardTask),
+            // other units within 10; past that, back just clear of it.
+            if (!working && !destroyed() && in_registry()) {
+                const f32 follow = has_category("ENGINEER") ? 2 * max_build_distance_ : 10.0f;
+                const f32 gdx = target->position().x - position().x;
+                const f32 gdz = target->position().z - position().z;
+                if (gdx * gdx + gdz * gdz > follow * follow) {
+                    const Vector3 goal = approach_point(*this, target->position(),
+                                                        target_unit->skirt_size_x() * 0.5f,
+                                                        target_unit->skirt_size_z() * 0.5f);
+                    const Vector3 heading = navigator_.goal();
+                    if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
+                        std::abs(heading.z - goal.z) > 1.0f) {
+                        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    nav_update(dt, ctx.terrain);
+                } else if (navigator_.is_moving()) {
+                    navigator_.abort_move();
                 }
             }
 
@@ -1102,10 +1246,27 @@ void Unit::update(f64 dt, SimContext& ctx) {
             const f32 dx = at.x - position().x;
             const f32 dz = at.z - position().z;
             const f32 dist2 = dx * dx + dz * dz;
-            // Too close to fire at (a mobile launcher backing off is M206e's).
+            cmd.in_band = dist2 >= weapon->min_range * weapon->min_range &&
+                          dist2 <= weapon->max_range * weapon->max_range;
+            // Too close: a launcher that can move backs off along the line
+            // from its target through itself, to 1.1 x its minimum range
+            // (Moho's CUnitFireAtTask); one that can't gives up.
             if (dist2 < weapon->min_range * weapon->min_range) {
-                command_queue_.pop_front();
-                continue;
+                if (immobile_ || effective_speed() <= 0) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+                if (!navigator_.is_moving()) {
+                    const f32 dist = std::sqrt(dist2);
+                    const f32 ox = dist > 1e-3f ? -dx / dist : 0.0f;
+                    const f32 oz = dist > 1e-3f ? -dz / dist : -1.0f;
+                    const f32 back = weapon->min_range * 1.1f;
+                    navigator_.set_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx.pathfinder,
+                                        position(), layer_, naval_draft_,
+                                        is_amphibious() || is_hover());
+                }
+                nav_update(dt, ctx.terrain);
+                goto done_commands;
             }
             if (dist2 > weapon->max_range * weapon->max_range) {
                 // Out of range: a launcher that can move goes closer; a
@@ -1127,6 +1288,25 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     overcharge_armed_ = true;
                     weapon->call_script(L, "OnEnableWeapon");
                     if (destroyed() || !in_registry()) return;
+                } else if (!overcharge) {
+                    // With no missile, the order asks the silo for one when
+                    // it is neither building one of the kind nor full (Moho's
+                    // fire-at task); a silo that can't build one ends it.
+                    const bool nuke = cmd.type == CommandType::Nuke;
+                    if (silo_ammo(nuke) <= 0 && silo_build_count(nuke) == 0 &&
+                        silo_ammo(nuke) < silo_max_storage(nuke)) {
+                        if (!silo_weapon(nuke)) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        order_silo_build(nuke);
+                    }
+                    // A nuke's unit hears OnNukeLaunched as it fires.
+                    if (nuke && !cmd.started && silo_ammo(true) > 0) {
+                        cmd.started = true;
+                        call_lua_method(L, "OnNukeLaunched");
+                        if (destroyed() || !in_registry()) return;
+                    }
                 }
             }
             goto done_commands;
@@ -3393,7 +3573,7 @@ const UnitCommand* Unit::launch_order_for(const Weapon& w) const {
     if (head.type == CommandType::Overcharge)
         return head.started && overcharge_weapon() == &w ? &head : nullptr;
     if (head.type != CommandType::Nuke && head.type != CommandType::Tactical) return nullptr;
-    return launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
+    return head.in_band && launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
 }
 
 UnitCommand* Unit::launch_order_for(const Weapon& w) {

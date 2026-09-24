@@ -4,6 +4,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/lua_state.hpp"
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
@@ -12,9 +13,14 @@
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
 
+extern "C" {
+#include <lua.h>
+}
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using Catch::Approx;
@@ -65,6 +71,28 @@ Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velo
 }
 
 } // namespace
+
+TEST_CASE("a blueprint's footprint is its own, else its size rounded up", "[collision]") {
+    // Moho's REntityBlueprint default: most units and props have no
+    // Footprint table.
+    osc::lua::LuaState lua;
+    lua_State* L = lua.raw();
+    REQUIRE(lua.do_string("fp_small = {SizeX = 0.6, SizeZ = 1.2}\n"
+                          "fp_own = {SizeX = 3, SizeZ = 3, Footprint = {SizeX = 5, SizeZ = 5}}\n"
+                          "fp_half = {SizeX = 0.5, SizeZ = 3.2, Footprint = {SizeX = 2}}\n"
+                          "fp_none = {}\n"));
+    const auto footprint = [&](const char* name) {
+        lua_pushstring(L, name);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto fp = osc::sim::blueprint_footprint(L, lua_gettop(L));
+        lua_pop(L, 1);
+        return fp;
+    };
+    CHECK(footprint("fp_small") == std::pair<f32, f32>{1.0f, 2.0f});
+    CHECK(footprint("fp_own") == std::pair<f32, f32>{5.0f, 5.0f});
+    CHECK(footprint("fp_half") == std::pair<f32, f32>{2.0f, 4.0f});
+    CHECK(footprint("fp_none") == std::pair<f32, f32>{0.0f, 0.0f});
+}
 
 TEST_CASE("a segment enters a box where it crosses its face", "[collision]") {
     const auto s = box(1, 1, 1);

@@ -58,6 +58,18 @@ struct UnitCommand {
     /// The order has handed its unit to the script (a teleport's
     /// OnTeleportUnit, an OverCharge's OnEnableWeapon); runtime state.
     bool started = false;
+    /// Out of reach, the unit was sent just clear of its target, and works
+    /// from where it arrives or gives up (build, repair, reclaim, capture;
+    /// see sim/work_range.hpp); runtime state.
+    bool approached = false;
+    /// A build's site skirt, looked up once from its blueprint (runtime
+    /// state; 0 until then).
+    f32 site_skirt_x = 0;
+    f32 site_skirt_z = 0;
+    /// A launch order's target is within its weapon's range band this tick:
+    /// only then does the weapon take it, as Moho's fire-at task hands the
+    /// weapon its target (runtime state).
+    bool in_band = false;
 };
 
 } // namespace osc::sim
