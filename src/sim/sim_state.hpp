@@ -538,6 +538,11 @@ private:
     /// Partition all non-civilian armies into alliance-connected teams.
     std::vector<std::vector<i32>> alliance_teams() const;
     void update_entities();
+    /// Ground units that overlap are pushed apart (M203b): an idle unit
+    /// makes way for a moving one, otherwise the smaller gives more, and a
+    /// held one (SetImmobile) doesn't move. Submerged units meet only each
+    /// other. A push never takes a unit where its layer can't go.
+    void separate_ground_units();
     void update_visibility();
     void dispatch_due_commands();
     /// A Stop order: the unit drops its orders, and the one under way (a

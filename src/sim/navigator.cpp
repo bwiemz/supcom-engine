@@ -18,6 +18,8 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
     goal_ = pos;
     waypoints_.clear();
     waypoint_index_ = 0;
+    best_dist_ = 1e30f;
+    stalled_ = 0;
 
     // Air units skip pathfinding — straight line
     if (layer == "Air" || !pathfinder) {
@@ -73,6 +75,8 @@ void Navigator::set_goal(const Vector3& pos) {
     goal_ = pos;
     waypoints_.clear();
     waypoint_index_ = 0;
+    best_dist_ = 1e30f;
+    stalled_ = 0;
     waypoints_.push_back(pos);
     status_ = Status::Moving;
 }
@@ -158,11 +162,24 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     f32 err = dist > 1e-4f ? wrap_angle(osc::dmath::atan2(dx, dz) - heading) : 0.0f;
     const f32 brake = (d.max_brake > 0 ? d.max_brake : d.max_accel) * unit.accel_mult();
 
+    // In a crowd others may hold its spot: jostled near it without getting
+    // nearer, it is as close as it will get.
+    if (final) {
+        if (dist < best_dist_ - 0.1f) {
+            best_dist_ = dist;
+            stalled_ = 0;
+        } else if (unit.jostled()) {
+            ++stalled_;
+        }
+    }
+    const bool crowded =
+        final && stalled_ >= CROWD_TICKS && dist <= 2.0f + 3.0f * unit.separation_radius();
+
     // There: within reach, and slow enough to stop in a tick (or the goal
     // has fallen behind it).
-    if (final && dist <= ARRIVAL_TOLERANCE &&
-        (std::abs(speed) <= brake * step + 1e-3f || std::abs(err) > REVERSE_ANGLE ||
-         dist <= 0.05f)) {
+    if (crowded || (final && dist <= ARRIVAL_TOLERANCE &&
+                    (std::abs(speed) <= brake * step + 1e-3f || std::abs(err) > REVERSE_ANGLE ||
+                     dist <= 0.05f))) {
         unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
         arrive();
         return false;
