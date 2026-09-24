@@ -6555,6 +6555,7 @@ void test_aim(TestContext& ctx) {
         -- A tank facing +Z, its target behind it: the turret turns 180 deg at
         -- 100 deg/s before the first shot.
         __osc_tank = spawn('uel0201', 'ARMY_1', 220, 790)
+        __osc_tank_id = __osc_tank:GetEntityId()
         __osc_behind = spawn('ueb1101', 'ARMY_2', 220, 776)
         __osc_events, __osc_shots, __osc_headings = {}, {}, {}
         local w = __osc_tank:GetWeapon(1)
@@ -6626,6 +6627,32 @@ void test_aim(TestContext& ctx) {
                   math.abs(s.at[3] - s.muzzle[3])
         if d > 0.05 then error('spawned ' .. d .. ' from the muzzle') end
     )");
+    // M200d-2: the turn reaches the renderer. Turned half round, the turret
+    // bone's skinning matrix maps its local X to -X.
+    {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_tank_id");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        const auto* e = ctx.sim.entity_registry().find(id);
+        const auto* tank = e && e->is_unit() ? static_cast<const osc::sim::Unit*>(e) : nullptr;
+        const osc::i32 bone =
+            tank && tank->bone_data() ? tank->bone_data()->find_bone("Turret") : -1;
+        const auto& skin =
+            tank ? tank->animated_bone_matrices() : std::vector<std::array<osc::f32, 16>>{};
+        if (bone >= 0 && static_cast<size_t>(bone) < skin.size() &&
+            skin[static_cast<size_t>(bone)][0] < -0.99f) {
+            pass++;
+            spdlog::info("[PASS] Test 4b: the renderer's turret matrix is turned half round");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4b: the turret's render matrix isn't turned ({})",
+                                   bone >= 0 && static_cast<size_t>(bone) < skin.size()
+                                       ? skin[static_cast<size_t>(bone)][0]
+                                       : 99.0f);
+        }
+    }
     lua_check("Test 5: TrackingRadius tracks a target beyond MaxRadius without firing", R"(
         local w = __osc_tracker:GetWeapon(1)
         if w:GetCurrentTarget() ~= __osc_far then error('not tracking') end

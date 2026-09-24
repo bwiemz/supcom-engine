@@ -53,9 +53,9 @@ public:
     /// Whether the manipulator has reached its goal (for WaitFor).
     virtual bool is_at_goal() const = 0;
 
-    /// This manipulator's effect on its bones in the sim pose (see
-    /// Unit::bone_pose). Animators write render matrices instead (M200d-2).
-    virtual void contribute_pose(PoseDeltas& /*deltas*/) const {}
+    /// Apply this manipulator to its bones in the unit's pose (see
+    /// Unit::bone_pose), on top of the lower-precedence ones before it.
+    virtual void apply_pose(PoseLocals& /*pose*/) {}
 
     // Waitable interface
     bool is_done() const override { return is_at_goal(); }
@@ -90,7 +90,7 @@ public:
     f32 current_angle() const { return current_angle_; }
     void set_spin_down(bool sd) { spin_down_ = sd; }
     bool has_goal() const { return has_goal_; }
-    void contribute_pose(PoseDeltas& deltas) const override;
+    void apply_pose(PoseLocals& pose) override;
 
 private:
     char axis_ = 'y';
@@ -133,9 +133,11 @@ public:
     void set_blend_time(f32 seconds) { blend_time_ = seconds; }
     f32 blend_time() const { return blend_time_; }
 
-private:
-    void compute_bone_matrices();
+    /// Set the animated bones' transforms (relative to their parents) for
+    /// the current frame, cross-faded from the previous animation.
+    void apply_pose(PoseLocals& pose) override;
 
+private:
     std::string current_anim_;
     f32 rate_ = 0.0f;         // default 0 = paused until SetRate called
     f32 fraction_ = 0.0f;     // 0.0-1.0
@@ -145,12 +147,19 @@ private:
 
     const SCAData* sca_data_ = nullptr;
     std::vector<i32> sca_to_scm_map_;  // SCA bone → SCM bone index
+    std::vector<i32> scm_to_sca_map_;  // SCM bone → SCA bone index (-1: not animated)
     std::unordered_set<i32> disabled_bones_;  // SCM bone indices to skip
 
     // Cross-fade blending state
     f32 blend_time_ = 0.2f;        // default cross-fade duration (seconds)
     f32 blend_remaining_ = 0.0f;   // time left in current cross-fade (0 = no blend)
-    std::vector<std::array<f32, 16>> blend_from_matrices_; // snapshot of "from" pose
+    // The transforms this animator set last (by SCM bone), and at a switch
+    // of animation the ones it cross-fades from.
+    std::vector<BonePose> last_;
+    std::vector<u8> last_set_;
+    std::vector<BonePose> blend_from_;
+    std::vector<u8> blend_from_set_;
+    std::vector<BonePose> frame_world_; // scratch: the frame in model space
 };
 
 // ---------------------------------------------------------------------------
@@ -168,7 +177,7 @@ public:
 
     const Vector3& current() const { return current_; }
     const Vector3& goal() const { return goal_; }
-    void contribute_pose(PoseDeltas& deltas) const override;
+    void apply_pose(PoseLocals& pose) override;
 
 private:
     Vector3 current_ = {0, 0, 0};
@@ -188,7 +197,7 @@ public:
     /// time. On target within the tolerance the weapon gave.
     void tick(f32 dt) override;
     bool is_at_goal() const override { return on_target_; }
-    void contribute_pose(PoseDeltas& deltas) const override;
+    void apply_pose(PoseLocals& pose) override;
 
     /// Arc limits in degrees (relative to the bones' rest pose) and slew
     /// speeds in degrees per second, as SetFiringArc takes them.

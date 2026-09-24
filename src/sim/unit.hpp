@@ -506,9 +506,9 @@ public:
     void destroy_all_manipulators();
     const std::vector<std::unique_ptr<Manipulator>>& manipulators() const { return manipulators_; }
 
-    /// A bone's model-space transform in the sim pose: the bind pose with
-    /// the manipulators' rotations and slides (aim controllers, rotators,
-    /// sliders; animators aside), recomputed each tick after they move.
+    /// A bone's model-space transform in the unit's pose: the bind pose as
+    /// its manipulators leave it (animators, aim controllers, rotators,
+    /// sliders, in precedence order), recomputed each tick after they move.
     BonePose bone_pose(i32 bone) const;
     /// A bone's world position in the sim pose (the unit's position if the
     /// bone doesn't exist).
@@ -642,6 +642,9 @@ private:
     // Manipulator system
     std::vector<std::unique_ptr<Manipulator>> manipulators_;
     std::vector<BonePose> pose_; // empty: the bind pose
+    // Reused each tick by update_pose (no allocation once sized).
+    std::vector<Manipulator*> pose_order_;
+    PoseLocals pose_locals_;
     void update_pose();
     // Transport system
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
