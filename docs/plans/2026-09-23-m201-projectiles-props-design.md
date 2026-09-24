@@ -283,6 +283,31 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
 - **Shields** absorb through `OnGetDamageAbsorption` and `ArtilleryShieldBlocks`, and spill over.
 - **Open question:** whether area damage touches projectiles.
 
+**What building M201f established:**
+
+- **FAF's Lua copy of `DamageArea`** (`/lua/sim/DamageArea.lua`, written for
+  nukes) is the best description of Moho's. It shows:
+  - no falloff: every target within the radius takes the whole amount;
+  - distance measured in three dimensions from each target's position, so a
+    ground blast leaves aircraft overhead alone;
+  - allies spared by alliance, not only the instigator's army;
+  - the instigator itself spared unless `damageSelf`;
+  - props damaged;
+  - projectiles not damaged. That settles the open question.
+- **Shields absorb in the engine.** FAF wrote that copy to get past the
+  native shield absorption, and retail's `shield.lua` says native code asks
+  `OnGetDamageAbsorption` and subtracts the result from the damage to the
+  units under the shield. A blast that meets a shield from outside now
+  damages the shield, and the units under it take only the rest. A blast
+  inside a shield reaches them whole.
+- **Shields could not be hit by blasts before.** A shield's position is its
+  centre, and a shot landing on the bubble is up to its radius away from
+  it. So the engine looks for shields whose shape the blast reaches.
+- **Area damage now credits its instigator** in each victim's damage
+  record, as direct damage did. Kills by blasts used to go unrecorded.
+- **`DamageRing`** spares its inner circle; before, it used only the outer
+  radius.
+
 M201a and M201b stand apart from the projectile work. M201c needs the terrain types. M201e is largely independent.
 
 ## Risks

@@ -28,4 +28,10 @@ std::optional<f32> segment_enters(const CollisionShape& shape, const Vector3& po
 /// The centre of `e`'s collision shape in the world (its position without one).
 Vector3 collision_centre(const Entity& e);
 
+/// How far `point` lies outside `shape` (worn at `position`, facing
+/// `orientation`): negative inside, by the depth to its nearest face. None
+/// is infinitely far.
+f32 shape_distance(const CollisionShape& shape, const Vector3& position,
+                   const Quaternion& orientation, const Vector3& point);
+
 } // namespace osc::sim

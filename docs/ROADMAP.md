@@ -236,8 +236,13 @@ In order of how much they change what the player feels:
 - Shots aimed where a unit was now miss. `FiringRandomness` scatters over Moho's circle, 12 times narrower than before.
 - Expiring shots burst in the air, tracking shots end at their ground target, bombs fall, and script-made projectiles take their blueprint's physics.
 
-`--collide-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
-| M202 | Shields | Bubble interception, overspill, `OnCollisionCheck`. |
+`--collide-test` (gate). **M201f ✅** Blasts reach what stands in them, as FAF's Lua copy of `DamageArea` describes Moho's:
+- Every unit and prop within the radius, measured in three dimensions, takes the whole amount. Allies and the instigator are spared unless the blast says otherwise, and projectiles are untouched. `DamageRing` spares its inner circle.
+- A shield the blast meets from outside takes it, and the units under the shield take only what its `OnGetDamageAbsorption` leaves.
+- Area kills are credited to their instigator.
+
+`--area-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
+| M202 | Shields | Bubble interception, overspill, `OnCollisionCheck`. *Largely delivered by M201:* shots stop at enemy shields and only coming in (M201d), and blasts spend a shield before the units under it (M201f). *Left:* beam weapons (`OnCollisionCheckWeapon`), and FAF's overspill between overlapping shields if FAF's rules are adopted. |
 | M203 | Ground locomotion | Turn rate, acceleration and braking. Motion follows heading. Unit–unit avoidance and pushing. Footprint occupancy. |
 | M204 | Formations | `IssueFormMove` / `IssueFormAttack` / `IssueFormAggressiveMove`, and attack-move semantics. |
 | M205 | Pathfinding | Queued throttling. Hierarchical/cluster A*. Seabed layer for amphibious units. `CanPathTo` answers from grid connectivity (done in M185); what remains is making it agree with the hierarchical search. |

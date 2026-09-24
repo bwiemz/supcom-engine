@@ -7729,6 +7729,164 @@ void test_collide(TestContext& ctx) {
     spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 
+void test_area(TestContext& ctx) {
+    spdlog::info("=== AREA TEST: blasts reach what stands in them ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z, up) return {x, GetTerrainHeight(x, z) + (up or 0), z} end
+        -- What a blast took from each: health before less health after.
+        function __osc_loss(units, blast)
+            local before = {}
+            for k, u in units do before[k] = u:GetHealth() end
+            blast()
+            local lost = {}
+            for k, u in units do lost[k] = before[k] - u:GetHealth() end
+            return lost
+        end
+        __osc_gunner = __osc_spawn('uel0201', 'ARMY_1', 700, 170)
+    )");
+
+    // A blast reaches the units within its radius, in three dimensions,
+    // each taking it whole; it spares allies and leaves projectiles be.
+    lua_check("Test 1: a blast reaches enemies within its radius, not beyond or above", R"(
+        local near = __osc_spawn('uel0201', 'ARMY_2', 652, 90)
+        local far = __osc_spawn('uel0201', 'ARMY_2', 658, 90)
+        local ally = __osc_spawn('uel0201', 'ARMY_1', 650, 92)
+        SetAlliance('ARMY_1', 'ARMY_3', 'Ally')
+        SetAlliance('ARMY_3', 'ARMY_1', 'Ally')
+        local team = __osc_spawn('uel0201', 'ARMY_3', 648, 90)
+        local under = __osc_spawn('uel0201', 'ARMY_2', 650, 110)
+        local lost = __osc_loss({near = near, far = far, ally = ally, team = team, under = under},
+                                function()
+            DamageArea(__osc_gunner, __osc_at(650, 90), 5, 50, 'Normal', false)
+            DamageArea(__osc_gunner, __osc_at(650, 110, 8), 5, 50, 'Normal', false)
+        end)
+        if math.abs(lost.near - 50) > 1e-3 then error('near lost ' .. lost.near) end
+        if lost.far ~= 0 then error('beyond the radius lost ' .. lost.far) end
+        if lost.ally ~= 0 then error('its own army lost ' .. lost.ally) end
+        if lost.team ~= 0 then error('an allied army lost ' .. lost.team) end
+        if lost.under ~= 0 then error('8 below an air burst lost ' .. lost.under) end
+    )");
+    lua_check("Test 2: friendly fire reaches allies; the instigator only with damageSelf", R"(
+        local ally = __osc_spawn('uel0201', 'ARMY_1', 670, 90)
+        local me = __osc_spawn('uel0201', 'ARMY_1', 671, 90)
+        local lost = __osc_loss({ally = ally, me = me}, function()
+            DamageArea(me, __osc_at(670, 90), 4, 20, 'Normal', true, false)
+        end)
+        if math.abs(lost.ally - 20) > 1e-3 then error('the ally lost ' .. lost.ally) end
+        if lost.me ~= 0 then error('the instigator lost ' .. lost.me) end
+        lost = __osc_loss({me = me}, function()
+            DamageArea(me, __osc_at(670, 90), 4, 20, 'Normal', true, true)
+        end)
+        if math.abs(lost.me - 20) > 1e-3 then error('with damageSelf it lost ' .. lost.me) end
+    )");
+    lua_check("Test 3: a ring spares its inner circle", R"(
+        local inner = __osc_spawn('uel0201', 'ARMY_2', 691, 90)
+        local outer = __osc_spawn('uel0201', 'ARMY_2', 695, 90)
+        local lost = __osc_loss({inner = inner, outer = outer}, function()
+            DamageRing(__osc_gunner, __osc_at(690, 90), 3, 6, 30, 'Normal', false)
+        end)
+        if lost.inner ~= 0 then error('inside the ring lost ' .. lost.inner) end
+        if math.abs(lost.outer - 30) > 1e-3 then error('in the ring lost ' .. lost.outer) end
+    )");
+    lua_check("Test 4: props in it are damaged; projectiles are not", R"(
+        local rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
+                                   660, GetTerrainHeight(660, 120), 120, 0, 0, 0)
+        -- An enemy's projectile, which the ally rule would not spare.
+        local enemy = __osc_spawn('uel0201', 'ARMY_2', 640, 140)
+        local shot = enemy:CreateProjectile('/projectiles/aantorpedo01/aantorpedo01_proj.bp',
+                                            0, 1, 0, 0, 0, 1)
+        Warp(shot, __osc_at(662, 120, 1))
+        local before = rock:GetHealth()
+        DamageArea(__osc_gunner, __osc_at(660, 120), 5, 10, 'Normal', false)
+        if rock:GetHealth() >= before then error('the rock took nothing') end
+        if shot:BeenDestroyed() or shot:GetHealth() < shot:GetMaxHealth() then
+            error('the projectile was hit')
+        end
+        shot:Destroy()
+    )");
+
+    // A shield the blast meets from outside takes it; the units under it
+    // take only what it could not absorb.
+    lua_check("setup: a shield over a tank", R"(
+        __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
+        __osc_under = __osc_spawn('uel0201', 'ARMY_2', 335, 800)
+    )");
+    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    lua_check("Test 5: a strong shield absorbs a blast on its surface", R"(
+        local shield = __osc_gen.MyShield
+        if not shield or not shield:IsOn() then error('the shield is down') end
+        local lost = __osc_loss({shield = shield, under = __osc_under}, function()
+            DamageArea(__osc_gunner, __osc_at(343, 800), 10, 100, 'Normal', false)
+        end)
+        if math.abs(lost.shield - 100) > 1e-3 then error('the shield lost ' .. lost.shield) end
+        if lost.under ~= 0 then error('the tank under it lost ' .. lost.under) end
+    )");
+    lua_check("Test 6: a weak shield passes on the rest", R"(
+        local shield = __osc_gen.MyShield
+        shield:SetHealth(shield, 30)
+        local lost = __osc_loss({under = __osc_under}, function()
+            DamageArea(__osc_gunner, __osc_at(343, 800), 10, 100, 'Normal', false)
+        end)
+        if math.abs(lost.under - 70) > 1e-3 then error('the tank lost ' .. lost.under .. ', not 70') end
+    )");
+    lua_check("Test 7: a blast inside the shield reaches the tank whole", R"(
+        local lost = __osc_loss({under = __osc_under}, function()
+            DamageArea(__osc_gunner, __osc_at(334, 800), 4, 25, 'Normal', false)
+        end)
+        if math.abs(lost.under - 25) > 1e-3 then error('the tank lost ' .. lost.under) end
+    )");
+
+    // An area kill is credited: the victim knows who hurt it.
+    {
+        (void)ctx.lua_state.do_string(
+            "__osc_victim = __osc_spawn('uel0201', 'ARMY_2', 720, 100)"
+            " DamageArea(__osc_gunner, __osc_at(720, 100), 3, 5, 'Normal', false)"
+            " __osc_victim_id, __osc_gunner_id = __osc_victim:GetEntityId(), "
+            "__osc_gunner:GetEntityId()");
+        auto* L = ctx.lua_state.raw();
+        const auto global = [L](const char* name) {
+            lua_pushstring(L, name);
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            const auto v = static_cast<osc::u32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            return v;
+        };
+        const auto* victim = ctx.sim.entity_registry().find(global("__osc_victim_id"));
+        const osc::u32 gunner = global("__osc_gunner_id");
+        check(victim && victim->is_unit() &&
+                  static_cast<const osc::sim::Unit*>(victim)->last_attacker_id() == gunner,
+              "Test 8: area damage credits its instigator");
+    }
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 9: no script errors");
+    spdlog::info("Area test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

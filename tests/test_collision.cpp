@@ -205,3 +205,17 @@ TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision
     REQUIRE(shot);
     CHECK(shot->ballistic_accel == 0.0f);
 }
+
+TEST_CASE("a point's distance from a shape is negative inside it", "[collision]") {
+    const Quaternion level{};
+    const auto s = sphere(10);
+    CHECK(osc::sim::shape_distance(s, {0, 0, 0}, level, {13, 0, 0}) == Approx(3.0f));
+    CHECK(osc::sim::shape_distance(s, {0, 0, 0}, level, {0, 4, 0}) == Approx(-6.0f));
+    // A box 2 x 2 x 2 standing on the ground (centre 1 up).
+    const auto b = box(1, 1, 1, 1);
+    CHECK(osc::sim::shape_distance(b, {0, 0, 0}, level, {4, 1, 0}) == Approx(3.0f));
+    CHECK(osc::sim::shape_distance(b, {0, 0, 0}, level, {4, 6, 0}) ==
+          Approx(5.0f)); // past a corner: 3-4-5
+    CHECK(osc::sim::shape_distance(b, {0, 0, 0}, level, {0, 1.5f, 0}) == Approx(-0.5f));
+    CHECK(osc::sim::shape_distance(CollisionShape{}, {0, 0, 0}, level, {0, 0, 0}) > 1e30f);
+}
