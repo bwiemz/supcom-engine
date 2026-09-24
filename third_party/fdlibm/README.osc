@@ -29,5 +29,8 @@ Changed:
   (e_exp.c, e_hypot.c, e_pow.c twice, e_sqrt.c: k<<20 and the like) shift
   it as unsigned instead: the same bits, without C's undefined behaviour
   (UBSan reports it; compilers could exploit it).
+- e_atan2.c's test for x = 1.0 subtracts from the signed high word, which
+  overflows for a negative x. It subtracts as unsigned instead: zero in
+  exactly the same case, without the undefined behaviour.
 - CMakeLists.txt, README.osc (new).
 No algorithm is changed.
