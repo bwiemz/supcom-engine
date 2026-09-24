@@ -4543,7 +4543,7 @@ static int l_IssueAttack(lua_State* L) {
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4559,7 +4559,7 @@ static int l_IssueGuard(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4577,7 +4577,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4593,14 +4593,14 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
 static int l_IssueDive(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Dive;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4672,7 +4672,7 @@ static int l_IssueUpgrade(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Upgrade;
     cmd.blueprint_id = bp_id;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4732,7 +4732,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -4768,7 +4768,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5037,7 +5037,7 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
 
     return 0;
 }
@@ -5051,8 +5051,19 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
 
+    return 0;
+}
+
+// IssueTransportUnloadSpecific(transports, units, position): its position is
+// the third argument. Which units it drops is not modelled yet: it unloads
+// them all there.
+static int l_IssueTransportUnloadSpecific(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::TransportUnload;
+    cmd.target_pos = extract_position(L, 3);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5110,7 +5121,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5123,7 +5134,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5133,7 +5144,7 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5473,7 +5484,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueClearFactoryCommands", l_IssueClearFactoryCommands);
     state.register_function("IssueTransportLoad", l_IssueTransportLoad);
     state.register_function("IssueTransportUnload", l_IssueTransportUnload);
-    state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnload);
+    state.register_function("IssueTransportUnloadSpecific", l_IssueTransportUnloadSpecific);
     state.register_function("IssueFerry", l_IssueFerry);
     state.register_function("IssueNuke", l_IssueNuke);
     state.register_function("IssueTactical", l_IssueTactical);
