@@ -138,6 +138,42 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
 - **Retail makes the wrecks.** `CreateWreckageProp` works end to end: a `Wreckage` prop with reclaim values, health and the wreck mesh.
 - **The engine's unit-as-wreck path goes**, as victory's did in M189. The tests that assert it change deliberately: `test_death_anim` and enhance-wreck Test 9.
 
+**What building M201b established:**
+
+- **The wreck was the easy part; death was not the script's.** Once props
+  were script objects, `CreateWreckageProp` needed only two things: mesh
+  blueprints that resolve and `TryCopyPose`. The real gap was the death
+  itself. `Kill` ran `OnKilled`, but the unit went on moving and firing
+  until its death thread destroyed it, and `IsDead()` stayed false.
+  Several deaths never reached the script at all:
+  - `Destroy()` on a unit with a death animation made the unit its own
+    wreck, registered forever.
+  - Self-destruct, defeat and crash splash damage started the engine's
+    own timed death.
+  - Running out of fuel crashed aircraft, which retail never does: its
+    `OnRunOutOfFuel` only slows them.
+  - Half of all aircraft killed in flight (`DestroyNoFallRandomChance`)
+    wait for Moho to drop them and call `OnImpact`, which we never did,
+    so they would have hung in the air, dead.
+- **Moho's `Kill` passes typed values.** It reads its arguments into C++
+  before calling the script, so a bare `Kill()` reaches `OnKilled` as
+  `(nil, 'Normal', 0)`. With a nil ratio, `CreateWreckageProp` computes
+  `mass - mass * 1` and leaves a worthless wreck.
+- **`SetMesh` takes mesh blueprints**: wreck, build and enhancement meshes,
+  and a unit's own mesh after construction. None resolved before. They
+  fell back to the entity's blueprint, or drew as cubes, and scripted
+  units showed as green boxes. A mesh blueprint has no scale, so an
+  override takes the entity's own blueprint's scale.
+- **Every posed unit was skinned wrong, since M52.** The SCM reader
+  transposed the inverse bind matrices. It showed first as a Mech
+  Marine's death pose, and its wreck, exploding into wedges. The fix
+  is rendering only: the sim never used these matrices.
+- **Left:**
+  - `AddBoundedProp` (Moho's cap on wreck count) is a no-op.
+  - Wreckage draws with a burnt approximation of the Wreckage shader.
+  - Retail effect meshes, now resolved, draw with the unit shader until
+    Phase F gives them their own.
+
 ### M201c: OnImpact
 
 - **Terrain types:** `GetTerrainType` returns `/lua/TerrainTypes.lua`'s entries.
