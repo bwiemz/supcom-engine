@@ -80,8 +80,8 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   is verified only in a live window (no GUI automation in CI) and is fully
   `pcall`-guarded so any UI mismatch logs a warning rather than breaking the menu.
   See `docs/superpowers/specs/2026-07-04-lan-ip-entry-ui-design.md`.
-- `build/Debug/opensupcom.exe --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
-- `build/Debug/opensupcom.exe --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
+- `osc_integration --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
+- `osc_integration --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.
 
 ## Implemented Since The Older Plans
