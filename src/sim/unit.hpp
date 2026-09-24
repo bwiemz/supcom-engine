@@ -256,6 +256,12 @@ public:
     }
 
     // Command queue
+    /// A ferry takes this unit, waiting at its beacon (its head order a
+    /// WaitForFerry): it boards that ferry.
+    void board_ferry(u32 ferry_id) {
+        if (!command_queue_.empty() && command_queue_.front().type == CommandType::WaitForFerry)
+            command_queue_.front().assigned_id = ferry_id;
+    }
     const std::deque<UnitCommand>& command_queue() const {
         return command_queue_;
     }
@@ -790,6 +796,19 @@ private:
     bool teleporting_ = false;
     u32 teleport_snap_ = 0;
     bool overcharge_armed_ = false;
+    // A ferry's cycle (M206f, Moho's CUnitFerryTask): loading at its beacon,
+    // flying out along its route, unloading at its end, flying back; which
+    // route point it heads for, and whether that leg's path is asked for.
+    enum class FerryPhase : u8 { Load, Out, Unload, Back };
+    FerryPhase ferry_phase_ = FerryPhase::Load;
+    i32 ferry_index_ = 0;
+    bool ferry_leg_set_ = false;
+    u32 ferry_for_ = 0; // the beacon the cycle runs from: a new route starts afresh
+    /// The beacon a ferry route loads at: the one a transport of its army
+    /// already keeps there, else a new one from AI.BeaconName. 0 without one.
+    u32 ferry_beacon(SimContext& ctx, UnitCommand& head);
+    /// Fly a ferry leg toward `to`; true while under way.
+    bool ferry_fly(f64 dt, SimContext& ctx, const Vector3& to);
     /// A teleport or an OverCharge whose order went unfinished: the script
     /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
     void settle_interrupted_orders(lua_State* L);

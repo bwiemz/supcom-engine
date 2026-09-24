@@ -9528,6 +9528,204 @@ void test_range(TestContext& ctx) {
     spdlog::info("Range test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Ferry test (M206f): beacons, waiting units, the ferry's round trip ──
+void test_ferry(TestContext& ctx) {
+    spdlog::info("=== FERRY TEST: a ferry carries units from its beacon to its drop-off ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    // Ticks, with the watcher noting what happens after each.
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            ctx.lua_state.do_string("__osc_watch()");
+        }
+    };
+
+    // A UEF T1 transport ferries from (610, 100) by way of (625, 80) to
+    // (640, 115), on the flat ground east of the map's centre. The watcher
+    // notes, per group of tanks, when all of them wait at the beacon, are
+    // aboard, and are set down at the drop-off, and when the ferry passes
+    // its waypoint on the way out and back.
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
+        function __osc_from(u, x, z)
+            local p = u:GetPosition()
+            return VDist2(p[1], p[3], x, z)
+        end
+        function __osc_beacons_near(x, z)
+            local n, found = 0, nil
+            for _, b in GetArmyBrain('ARMY_1'):GetListOfUnits(categories.FERRYBEACON, false) do
+                if __osc_from(b, x, z) <= 1 then n = n + 1; found = b end
+            end
+            return n, found
+        end
+        __osc_groups = {}
+        function __osc_follow(name, tanks, drop, waypoint)
+            __osc_groups[name] = {tanks = tanks, drop = drop or {640, 115}, waypoint = waypoint or {625, 80}}
+        end
+        function __osc_all(tanks, test)
+            for _, t in tanks do
+                if t:IsDead() or not test(t) then return false end
+            end
+            return true
+        end
+        function __osc_watch()
+            for _, g in __osc_groups do
+                if not g.waited and __osc_all(g.tanks, function(t)
+                        return t:IsUnitState('WaitForFerry') and __osc_from(t, 610, 100) <= 5 end) then
+                    g.waited = GetGameTick()
+                end
+                if not g.boarded and __osc_all(g.tanks, function(t) return t:IsUnitState('Attached') end) then
+                    g.boarded = GetGameTick()
+                end
+                if __osc_from(__osc_ferry, g.waypoint[1], g.waypoint[2]) <= 6 then
+                    if g.boarded and not g.dropped then g.out_by = true end
+                    if g.dropped and not g.returned then g.back_by = true end
+                end
+                if g.on_unload and g.out_by and not g.dropped and
+                   __osc_from(__osc_ferry, g.drop[1], g.drop[2]) <= 12 then
+                    local act = g.on_unload
+                    g.on_unload = nil
+                    act(g)
+                end
+                if g.boarded and not g.dropped and __osc_all(g.tanks, function(t)
+                        return not t:IsUnitState('Attached') and __osc_from(t, g.drop[1], g.drop[2]) <= 8 end) then
+                    g.dropped = GetGameTick()
+                    g.home_by = nil
+                end
+                if g.dropped and not g.returned and __osc_from(__osc_ferry, 610, 100) <= 12 then
+                    g.returned = GetGameTick()
+                end
+            end
+        end
+        __osc_ferry = __osc_spawn('uea0107', 'ARMY_1', 600, 100)
+        IssueFerry({__osc_ferry}, __osc_at(610, 100))
+        IssueFerry({__osc_ferry}, __osc_at(625, 80))
+        IssueFerry({__osc_ferry}, __osc_at(640, 115))
+
+        -- Two transports ordered together, elsewhere.
+        __osc_pair = {__osc_spawn('uea0107', 'ARMY_1', 700, 100), __osc_spawn('uea0107', 'ARMY_1', 704, 100)}
+        IssueFerry(__osc_pair, __osc_at(710, 110))
+        IssueFerry(__osc_pair, __osc_at(740, 120))
+    )");
+    run(2);
+    lua_check("Test 1: a ferry route makes one beacon at its first point, and stays queued", R"(
+        local n, beacon = __osc_beacons_near(610, 100)
+        if n ~= 1 then error(n .. ' beacons') end
+        __osc_beacon = beacon
+        if table.getn(__osc_ferry:GetCommandQueue()) ~= 3 then error('the route was not kept') end
+        if not __osc_ferry:IsUnitState('Ferrying') then error('the transport is not ferrying') end
+        __osc_first = {__osc_spawn('uel0201', 'ARMY_1', 585, 90), __osc_spawn('uel0201', 'ARMY_1', 585, 94)}
+        IssueTransportLoad(__osc_first, __osc_beacon)
+        __osc_follow('first', __osc_first)
+    )");
+    lua_check("Test 2: transports ordered together share one beacon", R"(
+        local n = __osc_beacons_near(710, 110)
+        if n ~= 1 then error(n .. ' beacons') end
+    )");
+    run(300);
+    lua_check("Test 3: units sent to the beacon wait there, then board the ferry", R"(
+        local g = __osc_groups.first
+        if not g.waited then error('they never waited at the beacon') end
+        if not g.boarded then error('they never boarded') end
+        if g.boarded < g.waited then error('they boarded before they waited') end
+    )");
+    lua_check(
+        "Test 4: the ferry flies its waypoint out and back, and sets them down at its drop-off", R"(
+        local g = __osc_groups.first
+        if not g.out_by then error('the ferry went out without its waypoint') end
+        if not g.dropped then error('they were not set down at the drop-off') end
+        if not g.back_by then error('the ferry came back without its waypoint') end
+        if not g.returned then error('the ferry did not come back') end
+        for _, t in __osc_first do
+            if table.getn(t:GetCommandQueue()) ~= 0 then error('a tank still has orders') end
+        end
+    )");
+
+    // A tank that comes later goes on the next trip.
+    lua_check("setup: a latecomer", R"(
+        __osc_late = {__osc_spawn('uel0201', 'ARMY_1', 585, 98)}
+        IssueTransportLoad(__osc_late, __osc_beacon)
+        __osc_follow('late', __osc_late)
+    )");
+    run(400);
+    lua_check("Test 5: a unit that comes later goes on the next trip", R"(
+        local g = __osc_groups.late
+        if not (g.waited and g.boarded and g.dropped) then
+            error(string.format('waited %s, boarded %s, dropped %s', tostring(g.waited),
+                                tostring(g.boarded), tostring(g.dropped)))
+        end
+    )");
+
+    // Another tank; as the ferry closes on its drop-off with it (past the
+    // waypoint, on its last leg), the route is cleared and a new one given
+    // in the same tick, from (600, 120) by way of (560, 100) to (590, 80).
+    lua_check("setup: a tank carried when the route changes", R"(
+        __osc_moved = {__osc_spawn('uel0201', 'ARMY_1', 585, 102)}
+        IssueTransportLoad(__osc_moved, __osc_beacon)
+        __osc_follow('moved', __osc_moved)
+        __osc_groups.moved.on_unload = function(g)
+            IssueClearCommands({__osc_ferry})
+            IssueFerry({__osc_ferry}, __osc_at(600, 120))
+            IssueFerry({__osc_ferry}, __osc_at(560, 100))
+            IssueFerry({__osc_ferry}, __osc_at(590, 80))
+            g.drop = {590, 80}
+            g.waypoint = {560, 100}
+            g.out_by = nil
+        end
+    )");
+    run(500);
+    lua_check("Test 6: a new route given mid-trip starts afresh: its waypoint, then its drop-off",
+              R"(
+        local g = __osc_groups.moved
+        if g.on_unload then error('the ferry never took the tank out') end
+        if not g.out_by then error('the ferry skipped the new waypoint') end
+        if not g.dropped then error('the tank was not set down at the new drop-off') end
+    )");
+
+    lua_check("setup: the orders are cleared", R"(
+        IssueClearCommands({__osc_ferry})
+        IssueClearCommands({__osc_pair[1]})
+    )");
+    run(2);
+    lua_check("Test 7: a beacon goes with the last route that holds it", R"(
+        if __osc_beacons_near(610, 100) ~= 0 then error('the first route left its beacon') end
+        if __osc_beacons_near(600, 120) ~= 0 then error('the lone ferry left its beacon') end
+        if __osc_ferry:IsUnitState('Ferrying') then error('the transport still ferries') end
+        if __osc_beacons_near(710, 110) ~= 1 then error('the pair lost its beacon with one route left') end
+        IssueClearCommands({__osc_pair[2]})
+    )");
+    run(2);
+    lua_check("Test 8: ... and with the last of a shared one", R"(
+        if __osc_beacons_near(710, 110) ~= 0 then error('the pair left its beacon') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 9: no script errors");
+    spdlog::info("Ferry test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

@@ -33,6 +33,9 @@ enum class CommandType : u8 {
     // not queued, so ordering a missile does not cancel what it is doing.
     SiloBuildNuke = 76,
     SiloBuildTactical = 77,
+    // A land unit waiting at a ferry beacon to be carried (IssueTransportLoad
+    // at a beacon; Moho's CUnitWaitForFerryTask). target_id = the beacon.
+    WaitForFerry = 78,
 };
 
 struct UnitCommand {
@@ -70,6 +73,12 @@ struct UnitCommand {
     /// only then does the weapon take it, as Moho's fire-at task hands the
     /// weapon its target (runtime state).
     bool in_band = false;
+    /// A ferry route's first order: the beacon it loads at (runtime state; 0
+    /// until the route starts).
+    u32 beacon_id = 0;
+    /// A WaitForFerry order: the ferry that took the unit, which it boards
+    /// (runtime state; 0 while it waits).
+    u32 assigned_id = 0;
 };
 
 } // namespace osc::sim

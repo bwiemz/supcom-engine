@@ -325,6 +325,41 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 
 - **Beacons:** ferry beacons, and transports that load at the beacon and unload at its destination.
 
+**What the decompiled engine shows** (faf-re's `CUnitFerryTask`, `CUnitWaitForFerryTask`, `IAiCommandDispatchImpl`, `CUnitCommand::CreateFerryBeacon`):
+- **The route:** a transport's run of `Ferry` orders. The first is the pickup point, the last the drop-off, and those between are waypoints. The route stays in the queue.
+- **The beacon:**
+  - When a transport starts its route, it makes a beacon unit at the first point. The blueprint is its `AI.BeaconName`, e.g. `UEB5102` (FERRYBEACON, UNTARGETABLE).
+  - The beacon belongs to the order, so transports ordered together share it.
+  - The transport's script hears `OnFerryPointSet` when it makes one; no retail script has the handler.
+  - Ten retail transports name a beacon.
+- **Waiting units:** a load-transport order aimed at a beacon (`IssueTransportLoad(units, beacon)`) becomes a wait. The unit walks to the beacon and waits there (`WaitForFerry`), focused on it.
+- **The ferry's cycle:**
+  - **Load:** it picks up the army's land units waiting at its beacon that it can carry and has room for. While none are left and it carries nothing, it lands at the beacon and waits.
+  - **Out:** with cargo aboard, it flies the waypoints to the last point and unloads there.
+  - **Back:** it flies the waypoints in reverse to the beacon, lands, and loads again.
+
+**What the engine does:** a `Ferry` order re-queues itself like a patrol. There are no beacons, and a load order aimed at one would send units to board a beacon.
+
+**The slice:**
+- **Beacons:** made at the route's first point from `AI.BeaconName`. A transport of the same army starting a route there takes the existing beacon. A beacon no route holds is destroyed.
+- **Waiting:** `IssueTransportLoad` at a beacon becomes a `WaitForFerry` order: walk to the beacon and wait. A ferry assigns the unit to itself, and the unit then boards as for a load order.
+- **Ferry:** the cycle above, on the engine's load and unload; a ferry's units wait no longer than it has room.
+- **Proof:** `--ferry-test`:
+  - **Setup:** a transport ordered to ferry between two points makes one beacon.
+  - **Trips:** tanks sent to the beacon wait there. The ferry carries them to the far point, unloads them, and returns.
+  - **Second trip:** a tank arriving later goes on the next trip.
+  - **Clearing:** clearing the ferry's orders removes the beacon.
+
+**What building M206f established:**
+- **The engine's transports don't land.** A Moho ferry lands at its beacon to load. Ours circles it, and waiting units board as it passes within the engine's load range (5), as they do for a load order.
+- **Retail transports have no capacity number.** Their room is their attach points (`TransportHasSpaceFor`), which the engine doesn't read. A capacity of 0 counts as no limit, as it does for a load order.
+- **A replaced route starts afresh.** Moho makes a new ferry task for each order. Ours keeps the cycle's state on the unit, so a route cleared and reissued in one tick could have resumed the old one's leg. The cycle now restarts when the route's beacon changes.
+- **`OnFerryPointSet`** has no retail listener. The call is kept for mods.
+
+**Risks:**
+- **Readings, not measurements:** sharing a beacon by position (Moho's orders share one command object; script orders here carry no shared id), and hovering instead of landing.
+- **Cost:** a ferry scans the army's units twice a tick while loading. Ferries are rare, and the AI doesn't use them.
+
 ## Risks
 
 - **Missiles now fly.** Long AI games reach nukes and tactical missiles, which play differently. The cross-OS replay and the long AI games check them.

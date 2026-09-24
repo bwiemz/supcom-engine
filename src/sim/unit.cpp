@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
@@ -364,6 +365,113 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     return result;
 }
 
+u32 Unit::ferry_beacon(SimContext& ctx, UnitCommand& head) {
+    auto& registry = ctx.registry;
+    if (head.beacon_id != 0) {
+        const Entity* beacon = registry.find(head.beacon_id);
+        if (beacon && !beacon->destroyed()) return head.beacon_id;
+        head.beacon_id = 0;
+    }
+    // A transport of the army ferrying from here keeps one already: an order
+    // given to several shares its beacon, as Moho's shared command does.
+    u32 shared = 0;
+    registry.for_each_unit([&](const Entity& e) {
+        if (shared != 0 || e.destroyed() || !e.is_unit() || e.army() != army() ||
+            e.entity_id() == entity_id())
+            return;
+        for (const UnitCommand& c : static_cast<const Unit&>(e).command_queue()) {
+            if (c.type != CommandType::Ferry || c.beacon_id == 0) continue;
+            const Entity* beacon = registry.find(c.beacon_id);
+            const f32 dx = c.target_pos.x - head.target_pos.x;
+            const f32 dz = c.target_pos.z - head.target_pos.z;
+            if (beacon && !beacon->destroyed() && dx * dx + dz * dz <= 1.0f) {
+                shared = c.beacon_id;
+                return;
+            }
+        }
+    });
+    if (shared != 0) {
+        head.beacon_id = shared;
+        return shared;
+    }
+    // Else a new one, of its blueprint's AI.BeaconName.
+    lua_State* L = ctx.L;
+    if (!L || !ctx.sim) return 0;
+    std::string key = blueprint_id();
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::string beacon_bp;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, key.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "AI");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "BeaconName");
+                lua_rawget(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) beacon_bp = lua_tostring(L, -1);
+            }
+        }
+    }
+    lua_settop(L, top);
+    if (beacon_bp.empty()) return 0;
+    lua_pushstring(L, "CreateUnitHPR");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return 0;
+    }
+    const f32 y = ctx.terrain
+                      ? ctx.terrain->get_terrain_height(head.target_pos.x, head.target_pos.z)
+                      : head.target_pos.y;
+    lua_pushstring(L, beacon_bp.c_str());
+    lua_pushnumber(L, army() + 1);
+    lua_pushnumber(L, head.target_pos.x);
+    lua_pushnumber(L, y);
+    lua_pushnumber(L, head.target_pos.z);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    u32 made = 0;
+    if (lua_pcall(L, 8, 1, 0) == 0) {
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "EntityId");
+            lua_rawget(L, -2);
+            if (lua_isnumber(L, -1)) made = static_cast<u32>(lua_tonumber(L, -1));
+        }
+    } else {
+        const char* err = lua_tostring(L, -1);
+        const std::string message =
+            std::string("ferry beacon ") + beacon_bp + ": " + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
+    }
+    lua_settop(L, top);
+    if (made == 0) return 0;
+    head.beacon_id = made;
+    ctx.sim->track_ferry_beacon(made);
+    // Its script hears the route set (no retail script listens).
+    call_lua_method(L, "OnFerryPointSet");
+    return made;
+}
+
+bool Unit::ferry_fly(f64 dt, SimContext& ctx, const Vector3& to) {
+    const Vector3 heading = navigator_.goal();
+    if (!ferry_leg_set_ || std::abs(heading.x - to.x) > 1.0f || std::abs(heading.z - to.z) > 1.0f ||
+        navigator_.status() == Navigator::Status::WaitingForPath) {
+        navigator_.set_goal(to, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+        ferry_leg_set_ = true;
+    }
+    const bool going = nav_update(dt, ctx.terrain);
+    if (!going) ferry_leg_set_ = false;
+    return going;
+}
+
 bool Unit::approach_update(f64 dt, SimContext& ctx) {
     if (navigator_.status() == Navigator::Status::WaitingForPath) {
         const Vector3 goal = navigator_.goal();
@@ -476,6 +584,20 @@ void Unit::update(f64 dt, SimContext& ctx) {
     if (teleporting_ || overcharge_armed_) {
         settle_interrupted_orders(L);
         if (destroyed() || !in_registry()) return;
+    }
+    // A ferry, or a unit waiting for one, whose order is gone from the head
+    // of its queue stops being one.
+    {
+        const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
+        if (has_unit_state("Ferrying") && !(head && head->type == CommandType::Ferry)) {
+            set_unit_state("Ferrying", false);
+            ferry_phase_ = FerryPhase::Load;
+            ferry_index_ = 0;
+            ferry_leg_set_ = false;
+            ferry_for_ = 0;
+        }
+        if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
+            set_unit_state("WaitForFerry", false);
     }
 
     // Paused units skip command processing but still update weapons
@@ -1397,20 +1519,176 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
 
         case CommandType::Ferry: {
-            // Ferry: patrol-like looping waypoint for transports
-            if (!navigator_.is_moving() ||
-                navigator_.goal().x != cmd.target_pos.x ||
-                navigator_.goal().z != cmd.target_pos.z) {
-                navigator_.set_goal(cmd.target_pos, ctx.pathfinder,
-                                    position(), layer_,
+            // A ferry route (Moho's CUnitFerryTask): the leading Ferry orders,
+            // which stay queued. The first is where it loads, at a beacon;
+            // the last where it unloads; those between are waypoints, flown
+            // out and back.
+            const u32 beacon_id = ferry_beacon(ctx, cmd);
+            if (destroyed() || !in_registry()) return;
+            if (beacon_id == 0) {
+                command_queue_.pop_front();
+                continue;
+            }
+            // A new route (Moho makes a new task for each order) starts from
+            // loading, even one given in the tick its last was cleared.
+            if (beacon_id != ferry_for_) {
+                ferry_phase_ = FerryPhase::Load;
+                ferry_index_ = 0;
+                ferry_leg_set_ = false;
+                ferry_for_ = beacon_id;
+            }
+            set_unit_state("Ferrying", true);
+            const Vector3 home = registry.find(beacon_id)->position();
+            i32 route = 0;
+            while (route < static_cast<i32>(command_queue_.size()) &&
+                   command_queue_[static_cast<size_t>(route)].type == CommandType::Ferry)
+                ++route;
+            const auto point = [&](i32 i) {
+                return command_queue_[static_cast<size_t>(std::clamp(i, 0, route - 1))].target_pos;
+            };
+
+            if (ferry_phase_ == FerryPhase::Load) {
+                // The army's land units waiting at the beacon, as many as it
+                // has room for, board it; with none left and cargo aboard, it
+                // sets out. Meanwhile it keeps to the beacon.
+                i32 boarding = 0;
+                registry.for_each_unit([&](const Entity& e) {
+                    if (e.destroyed() || !e.is_unit() || e.army() != army()) return;
+                    const auto& u = static_cast<const Unit&>(e);
+                    if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty()) return;
+                    const UnitCommand& wait = u.command_queue().front();
+                    if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
+                        ++boarding;
+                });
+                // (A capacity of 0 is unknown, and not a limit, as for a load
+                // order: retail transports count attach points, not read here.)
+                i32 room =
+                    transport_capacity() > 0
+                        ? transport_capacity() - static_cast<i32>(cargo_ids_.size()) - boarding
+                        : std::numeric_limits<i32>::max();
+                if (room > 0) {
+                    registry.for_each_unit([&](Entity& e) {
+                        if (room <= 0 || e.destroyed() || !e.is_unit() || e.army() != army())
+                            return;
+                        auto& u = static_cast<Unit&>(e);
+                        if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty() ||
+                            !u.has_category("LAND") || !u.has_unit_state("WaitForFerry"))
+                            return;
+                        if (u.has_category("COMMAND") && !has_category("CANTRANSPORTCOMMANDER"))
+                            return;
+                        const UnitCommand& wait = u.command_queue().front();
+                        if (wait.type != CommandType::WaitForFerry || wait.target_id != beacon_id ||
+                            wait.assigned_id != 0)
+                            return;
+                        u.board_ferry(entity_id());
+                        --room;
+                        ++boarding;
+                    });
+                }
+                if (boarding == 0 && !cargo_ids_.empty()) {
+                    ferry_phase_ = FerryPhase::Out;
+                    ferry_index_ = 1;
+                    ferry_leg_set_ = false;
+                } else {
+                    ferry_fly(dt, ctx, home);
+                    goto done_commands;
+                }
+            }
+            if (ferry_phase_ == FerryPhase::Out) {
+                // Out along the waypoints, then to the drop-off.
+                if (ferry_index_ < route - 1) {
+                    if (!ferry_fly(dt, ctx, point(ferry_index_))) ++ferry_index_;
+                    goto done_commands;
+                }
+                ferry_phase_ = FerryPhase::Unload;
+            }
+            if (ferry_phase_ == FerryPhase::Unload) {
+                constexpr f32 unload_range = 5.0f;
+                const Vector3 drop = point(route - 1);
+                const f32 udx = drop.x - position().x;
+                const f32 udz = drop.z - position().z;
+                if (udx * udx + udz * udz > unload_range * unload_range && !cargo_ids_.empty()) {
+                    ferry_fly(dt, ctx, drop);
+                    goto done_commands;
+                }
+                navigator_.abort_move();
+                ferry_leg_set_ = false;
+                detach_all_cargo(registry, L);
+                if (destroyed() || !in_registry()) return;
+                ferry_phase_ = FerryPhase::Back;
+                ferry_index_ = route - 1;
+                goto done_commands;
+            }
+            // Back along the waypoints, then to the beacon to load again.
+            if (ferry_index_ > 1) {
+                if (!ferry_fly(dt, ctx, point(ferry_index_ - 1))) --ferry_index_;
+                goto done_commands;
+            }
+            if (!ferry_fly(dt, ctx, home)) {
+                ferry_phase_ = FerryPhase::Load;
+                ferry_index_ = 0;
+            }
+            goto done_commands;
+        }
+
+        case CommandType::WaitForFerry: {
+            // Waiting for a ferry (Moho's CUnitWaitForFerryTask): walk to the
+            // beacon and wait there. A ferry with room takes the unit
+            // (assigned_id), and it boards as for a load order.
+            const Entity* beacon = registry.find(cmd.target_id);
+            if (!beacon || beacon->destroyed()) {
+                command_queue_.pop_front();
+                continue;
+            }
+            if (cmd.assigned_id != 0) {
+                Entity* e = registry.find(cmd.assigned_id);
+                auto* ferry =
+                    e && !e->destroyed() && e->is_unit() ? static_cast<Unit*>(e) : nullptr;
+                const bool ferrying_here =
+                    ferry && !ferry->is_dying() && !ferry->command_queue().empty() &&
+                    ferry->command_queue().front().type == CommandType::Ferry &&
+                    ferry->command_queue().front().beacon_id == cmd.target_id;
+                if (!ferrying_here) {
+                    cmd.assigned_id = 0;
+                } else {
+                    constexpr f32 load_range = 5.0f;
+                    const f32 ldx = ferry->position().x - position().x;
+                    const f32 ldz = ferry->position().z - position().z;
+                    if (ldx * ldx + ldz * ldz <= load_range * load_range) {
+                        navigator_.abort_move();
+                        set_unit_state("WaitForFerry", false);
+                        attach_to_transport(ferry, registry, L);
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                    const Vector3 heading = navigator_.goal();
+                    if (!navigator_.is_moving() ||
+                        std::abs(heading.x - ferry->position().x) > 1.0f ||
+                        std::abs(heading.z - ferry->position().z) > 1.0f) {
+                        navigator_.set_goal(ferry->position(), ctx.pathfinder, position(), layer_,
+                                            naval_draft_, is_amphibious() || is_hover());
+                    }
+                    nav_update(dt, ctx.terrain);
+                    goto done_commands;
+                }
+            }
+            constexpr f32 wait_range = 4.0f;
+            const f32 bdx = beacon->position().x - position().x;
+            const f32 bdz = beacon->position().z - position().z;
+            if (has_unit_state("WaitForFerry") ||
+                bdx * bdx + bdz * bdz <= wait_range * wait_range) {
+                navigator_.abort_move();
+                set_unit_state("WaitForFerry", true);
+                goto done_commands;
+            }
+            if (!navigator_.is_moving()) {
+                navigator_.set_goal(beacon->position(), ctx.pathfinder, position(), layer_,
                                     naval_draft_, is_amphibious() || is_hover());
             }
-            navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-            if (!navigator_.busy()) {
-                // Reached waypoint — cycle to end of queue
-                auto finished = cmd;
-                command_queue_.pop_front();
-                command_queue_.push_back(finished);
+            if (!nav_update(dt, ctx.terrain) && effective_speed() > 0 &&
+                navigator_.status() == Navigator::Status::Idle) {
+                // As near as it gets.
+                set_unit_state("WaitForFerry", true);
             }
             goto done_commands;
         }
