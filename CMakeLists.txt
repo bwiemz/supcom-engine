@@ -35,24 +35,12 @@ add_subdirectory(src/ui)
 add_subdirectory(src/renderer)
 add_subdirectory(src/lua)
 add_subdirectory(src/blueprints)
+add_subdirectory(src/app)
 
-# Main executable
-add_executable(opensupcom src/app/app.cpp src/integration_tests.cpp src/audio_data_test.cpp)
-target_link_libraries(opensupcom PRIVATE
-    osc::warnings
-    osc::platform
-    osc::core
-    osc::vfs
-    osc::sim
-    osc::map
-    osc::audio
-    osc::video
-    osc::ui
-    osc::renderer
-    osc::lua
-    osc::lua_user
-    osc::blueprints
-)
+# The game. Its test modes are in the integration runner, osc_integration
+# (tests/integration/runner).
+add_executable(opensupcom src/main.cpp)
+target_link_libraries(opensupcom PRIVATE osc::warnings osc::app)
 
 # Export symbols from the executable so crash backtraces show function names.
 set_target_properties(opensupcom PROPERTIES ENABLE_EXPORTS ON)

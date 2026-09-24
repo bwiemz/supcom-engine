@@ -1,11 +1,11 @@
 # clang-tidy findings accepted when the ratchet started; they may only go down.
 # Rewritten by tools/clang_tidy_ratchet.py --update. Format: count path check
 # clang-tidy 22
-24 src/integration_tests.cpp readability-redundant-string-cstr
+2 src/app/app.cpp bugprone-unchecked-string-to-number-conversion
 1 src/lua/engine_bindings.cpp bugprone-unchecked-string-to-number-conversion
 2 src/lua/moho_bindings.cpp performance-no-int-to-ptr
-2 src/main.cpp bugprone-unchecked-string-to-number-conversion
 1 src/renderer/overlay_renderer.hpp bugprone-throwing-static-initialization
 1 src/renderer/unit_renderer.cpp bugprone-nondeterministic-pointer-iteration-order
 1 src/sim/armor_definition.cpp bugprone-unchecked-string-to-number-conversion
 1 src/ui/ui_dispatch.cpp clang-analyzer-deadcode.DeadStores
+24 tests/integration/runner/integration_tests.cpp readability-redundant-string-cstr
