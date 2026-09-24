@@ -1246,10 +1246,27 @@ void Unit::update(f64 dt, SimContext& ctx) {
             const f32 dx = at.x - position().x;
             const f32 dz = at.z - position().z;
             const f32 dist2 = dx * dx + dz * dz;
-            // Too close to fire at (a mobile launcher backing off is M206e's).
+            cmd.in_band = dist2 >= weapon->min_range * weapon->min_range &&
+                          dist2 <= weapon->max_range * weapon->max_range;
+            // Too close: a launcher that can move backs off along the line
+            // from its target through itself, to 1.1 x its minimum range
+            // (Moho's CUnitFireAtTask); one that can't gives up.
             if (dist2 < weapon->min_range * weapon->min_range) {
-                command_queue_.pop_front();
-                continue;
+                if (immobile_ || effective_speed() <= 0) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+                if (!navigator_.is_moving()) {
+                    const f32 dist = std::sqrt(dist2);
+                    const f32 ox = dist > 1e-3f ? -dx / dist : 0.0f;
+                    const f32 oz = dist > 1e-3f ? -dz / dist : -1.0f;
+                    const f32 back = weapon->min_range * 1.1f;
+                    navigator_.set_goal({at.x + ox * back, at.y, at.z + oz * back}, ctx.pathfinder,
+                                        position(), layer_, naval_draft_,
+                                        is_amphibious() || is_hover());
+                }
+                nav_update(dt, ctx.terrain);
+                goto done_commands;
             }
             if (dist2 > weapon->max_range * weapon->max_range) {
                 // Out of range: a launcher that can move goes closer; a
@@ -1271,6 +1288,25 @@ void Unit::update(f64 dt, SimContext& ctx) {
                     overcharge_armed_ = true;
                     weapon->call_script(L, "OnEnableWeapon");
                     if (destroyed() || !in_registry()) return;
+                } else if (!overcharge) {
+                    // With no missile, the order asks the silo for one when
+                    // it is neither building one of the kind nor full (Moho's
+                    // fire-at task); a silo that can't build one ends it.
+                    const bool nuke = cmd.type == CommandType::Nuke;
+                    if (silo_ammo(nuke) <= 0 && silo_build_count(nuke) == 0 &&
+                        silo_ammo(nuke) < silo_max_storage(nuke)) {
+                        if (!silo_weapon(nuke)) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        order_silo_build(nuke);
+                    }
+                    // A nuke's unit hears OnNukeLaunched as it fires.
+                    if (nuke && !cmd.started && silo_ammo(true) > 0) {
+                        cmd.started = true;
+                        call_lua_method(L, "OnNukeLaunched");
+                        if (destroyed() || !in_registry()) return;
+                    }
                 }
             }
             goto done_commands;
@@ -3537,7 +3573,7 @@ const UnitCommand* Unit::launch_order_for(const Weapon& w) const {
     if (head.type == CommandType::Overcharge)
         return head.started && overcharge_weapon() == &w ? &head : nullptr;
     if (head.type != CommandType::Nuke && head.type != CommandType::Tactical) return nullptr;
-    return launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
+    return head.in_band && launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
 }
 
 UnitCommand* Unit::launch_order_for(const Weapon& w) {

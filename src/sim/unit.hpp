@@ -409,7 +409,8 @@ public:
     /// Its OverChargeWeapon (switched off until an OverCharge order), if any.
     Weapon* overcharge_weapon() const;
     /// The launch or OverCharge order at the head of the queue, if `w` is
-    /// the weapon it fires; else null.
+    /// the weapon it fires and the order has handed it its target (a launch
+    /// within the weapon's range band, an OverCharge switched on); else null.
     const UnitCommand* launch_order_for(const Weapon& w) const;
     UnitCommand* launch_order_for(const Weapon& w);
 

@@ -66,6 +66,10 @@ struct UnitCommand {
     /// state; 0 until then).
     f32 site_skirt_x = 0;
     f32 site_skirt_z = 0;
+    /// A launch order's target is within its weapon's range band this tick:
+    /// only then does the weapon take it, as Moho's fire-at task hands the
+    /// weapon its target (runtime state).
+    bool in_band = false;
 };
 
 } // namespace osc::sim

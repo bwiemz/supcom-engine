@@ -8692,10 +8692,12 @@ void test_missile(TestContext& ctx) {
         local miss = math.sqrt((last[1] - __osc_spot[1]) ^ 2 + (last[3] - __osc_spot[3]) ^ 2)
         if miss > 4 then error('it came down ' .. miss .. ' from the spot') end
     )");
+    // C's launch, ordered with its silo empty, asked the silo for a missile
+    // (M206e); the build outlives the cancelled order.
     lua_check("Test 13: a launch cancelled while it waited fires nothing when the missile comes",
               R"(
         if __osc_c.__osc.launched ~= 0 then error('C launched') end
-        if __osc_c:GetTacticalSiloAmmoCount() ~= 1 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
+        if __osc_c:GetTacticalSiloAmmoCount() ~= 2 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
         if __osc_e2:IsDead() then error('its old target died') end
     )");
 
@@ -8728,7 +8730,7 @@ void test_missile(TestContext& ctx) {
     run(89);
     lua_check("Test 15: a launch cancelled as the launcher opens packs it up, missile kept", R"(
         if __osc_c.__osc.launched ~= 0 then error('C launched') end
-        if __osc_c:GetTacticalSiloAmmoCount() ~= 1 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
+        if __osc_c:GetTacticalSiloAmmoCount() ~= 2 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
         IssueTactical({__osc_c}, __osc_spot2)
     )");
     run(300);
