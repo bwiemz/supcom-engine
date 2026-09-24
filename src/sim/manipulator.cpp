@@ -494,6 +494,10 @@ void AimManipulator::tick(f32 dt) {
                                       quat_rotate(to_local, sub(target_, from)));
         want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
         if (!full_circle) {
+            // Measured about the arc's centre, so an arc across +-180 deg
+            // (a rear turret) still contains the headings it should.
+            const f32 centre = 0.5f * (yaw_min_ + yaw_max_);
+            want_heading = centre + wrap_angle(want_heading - centre);
             reachable = want_heading >= yaw_min_ && want_heading <= yaw_max_;
             want_heading = std::clamp(want_heading, yaw_min_, yaw_max_);
         }

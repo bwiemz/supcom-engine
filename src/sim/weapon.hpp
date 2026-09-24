@@ -86,9 +86,9 @@ public:
         return script_class && lua_table_ref >= 0 && !counted_projectile && !overcharge && !beam;
     }
 
-    /// Moho's CanFire: a target, the weapon enabled, the unit free (not
-    /// Busy) and above water if it must be, and a bomber over its drop
-    /// zone. Aim is always on target until turrets exist (M200d).
+    /// Moho's CanFire: a target within MaxRadius, the weapon enabled, its
+    /// fire control on target (see fire_control), the unit free (not Busy)
+    /// and above water if it must be, and a bomber over its drop zone.
     bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
 
     /// Whether this weapon may shoot `target` from where `owner` stands: an
