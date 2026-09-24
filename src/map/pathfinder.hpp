@@ -46,6 +46,8 @@ public:
     void reset_request_count() const { requests_this_tick_ = 0; }
     int requests_this_tick() const { return requests_this_tick_; }
     static constexpr int MAX_REQUESTS_PER_TICK = 8;
+    /// Cells the last search expanded (its cost, for tests and profiling).
+    u32 last_nodes_explored() const { return last_nodes_explored_; }
 
     /// Can a unit on `layer` get from start to goal at all? Answered from
     /// connected-component labels of the passability grid (cached per
@@ -125,6 +127,7 @@ private:
 
     static constexpr u32 MAX_NODES_EXPLORED = 50000;
     mutable int requests_this_tick_ = 0;
+    mutable u32 last_nodes_explored_ = 0;
 
     // Reusable buffers for A*. A cell's cost and parent hold for this search
     // only where its seen stamp is the search's; it is closed where its

@@ -388,3 +388,19 @@ TEST_CASE("a unit's velocity is its last tick's movement, and none across a tele
     CHECK(u->velocity().x == 0.0f);
     CHECK(u->velocity().z == 0.0f);
 }
+
+TEST_CASE("A path across open ground expands about its length, not the plain", "[nav][m205]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    const auto* pf = sim.pathfinder();
+    REQUIRE(pf != nullptr);
+    // Across a flat 64 x 64-cell map, off the diagonal: ~60 steps, a mix of
+    // diagonal and straight ones, which many paths of equal cost share.
+    // Without the heuristic's weight A* expands that whole plateau.
+    pf->reset_request_count();
+    const auto path = pf->find_path(3.0f, 3.0f, 124.0f, 50.0f, "Land");
+    REQUIRE(path.found);
+    INFO("expanded " << pf->last_nodes_explored());
+    CHECK(pf->last_nodes_explored() < 300);
+}
