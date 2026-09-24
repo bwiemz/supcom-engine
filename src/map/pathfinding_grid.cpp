@@ -91,45 +91,31 @@ CellPassability PathfindingGrid::get(u32 gx, u32 gz) const {
 
 bool PathfindingGrid::is_passable_for(u32 gx, u32 gz,
                                        const std::string& layer) const {
-    if (gx >= grid_width_ || gz >= grid_height_) return false;
-    auto cell = cells_[gz * grid_width_ + gx];
-
-    if (layer == "Air") return true;
-
-    if (layer == "Water" || layer == "Seabed" || layer == "Sub") {
-        return cell == CellPassability::Water;
-    }
-
-    // Land (default): only passable terrain
-    return cell == CellPassability::Passable;
+    return is_passable_for(gx, gz, layer, 0, false);
 }
 
-bool PathfindingGrid::passable(CellPassability cell, u32 gx, u32 gz, const std::string& layer,
-                               f32 draft, bool amphibious) const {
-    if (layer == "Air") return true;
-    if (amphibious) {
-        return cell == CellPassability::Passable || cell == CellPassability::Water;
+PathfindingGrid::MoveClass PathfindingGrid::classify(const std::string& layer, f32 draft,
+                                                     bool amphibious) {
+    MoveClass m;
+    if (layer == "Air") m.kind = MoveClass::Kind::Air;
+    else if (amphibious) m.kind = MoveClass::Kind::Amphibious;
+    else if (layer == "Water" || layer == "Seabed" || layer == "Sub") {
+        m.kind = MoveClass::Kind::Water;
+        m.draft = draft;
     }
-    if (layer == "Water" || layer == "Seabed" || layer == "Sub") {
-        if (cell != CellPassability::Water) return false;
-        if (draft > 0) {
-            return water_depth_[gz * grid_width_ + gx] >= draft;
-        }
-        return true;
-    }
-    return cell == CellPassability::Passable;
+    return m;
 }
 
 bool PathfindingGrid::is_passable_for(u32 gx, u32 gz, const std::string& layer, f32 draft,
                                       bool amphibious) const {
     if (gx >= grid_width_ || gz >= grid_height_) return false;
-    return passable(cells_[gz * grid_width_ + gx], gx, gz, layer, draft, amphibious);
+    return passable_at(gz * grid_width_ + gx, classify(layer, draft, amphibious));
 }
 
 bool PathfindingGrid::terrain_passable_for(u32 gx, u32 gz, const std::string& layer, f32 draft,
                                            bool amphibious) const {
     if (gx >= grid_width_ || gz >= grid_height_) return false;
-    return passable(base_cells_[gz * grid_width_ + gx], gx, gz, layer, draft, amphibious);
+    return terrain_passable_at(gz * grid_width_ + gx, classify(layer, draft, amphibious));
 }
 
 f32 PathfindingGrid::water_depth(u32 gx, u32 gz) const {

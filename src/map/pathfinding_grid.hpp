@@ -17,6 +17,26 @@ enum class CellPassability : u8 {
 
 class PathfindingGrid {
 public:
+    /// How a mover passes cells, resolved once from its layer, draft and
+    /// amphibiousness (a search asks per cell, and a layer name per cell was
+    /// the costliest part of it).
+    struct MoveClass {
+        enum class Kind : u8 { Air, Land, Water, Amphibious };
+        Kind kind = Kind::Land;
+        f32 draft = 0; ///< Water only: the depth it needs (0: any water)
+    };
+    static MoveClass classify(const std::string& layer, f32 draft, bool amphibious);
+
+    /// is_passable_for on a cell index (z * grid_width + x), for a resolved
+    /// mover.
+    bool passable_at(u32 index, const MoveClass& m) const {
+        return passable_cell(cells_[index], index, m);
+    }
+    /// As passable_at, on the terrain alone.
+    bool terrain_passable_at(u32 index, const MoveClass& m) const {
+        return passable_cell(base_cells_[index], index, m);
+    }
+
     /// Build passability grid from heightmap + water data.
     /// cell_size: world units per grid cell (default 2).
     /// slope_threshold: max height diff per world unit that is passable.
@@ -66,8 +86,18 @@ public:
     u64 version() const { return version_; }
 
 private:
-    bool passable(CellPassability cell, u32 gx, u32 gz, const std::string& layer, f32 draft,
-                  bool amphibious) const;
+    bool passable_cell(CellPassability cell, u32 index, const MoveClass& m) const {
+        switch (m.kind) {
+        case MoveClass::Kind::Air: return true;
+        case MoveClass::Kind::Amphibious:
+            return cell == CellPassability::Passable || cell == CellPassability::Water;
+        case MoveClass::Kind::Water:
+            return cell == CellPassability::Water &&
+                   (m.draft <= 0 || water_depth_[index] >= m.draft);
+        case MoveClass::Kind::Land: break;
+        }
+        return cell == CellPassability::Passable;
+    }
 
     u32 grid_width_;
     u32 grid_height_;

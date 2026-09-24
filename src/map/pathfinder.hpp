@@ -126,10 +126,15 @@ private:
     static constexpr u32 MAX_NODES_EXPLORED = 50000;
     mutable int requests_this_tick_ = 0;
 
-    // Reusable buffers for A* to avoid per-call heap allocations.
+    // Reusable buffers for A*. A cell's cost and parent hold for this search
+    // only where its seen stamp is the search's; it is closed where its
+    // closed stamp is. So a search starts without clearing the grid-sized
+    // buffers (which had cost more than the search itself on long paths).
     mutable std::vector<f32> g_cost_buf_;
     mutable std::vector<u32> parent_buf_;
-    mutable std::vector<bool> closed_buf_;
+    mutable std::vector<u32> seen_stamp_;
+    mutable std::vector<u32> closed_stamp_;
+    mutable u32 stamp_ = 0;
     mutable std::vector<u8> escape_buf_; ///< the footprint a start is inside
 };
 
