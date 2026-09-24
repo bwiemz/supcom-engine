@@ -58,6 +58,13 @@ struct UnitEconomy {
     f64 silo_energy = 0.0;
 };
 
+/// What an order did this tick (Unit::run_order, M193).
+enum class OrderStep : u8 {
+    Next, ///< finished or dropped (taken off the queue): run the next order now
+    Hold, ///< goes on next tick
+    Gone, ///< a script destroyed the unit: stop updating it
+};
+
 class Unit : public Entity {
 public:
     bool is_unit() const override { return true; }
@@ -269,7 +276,10 @@ public:
     void clear_commands(const char* source = "?");
     void clear_queued_commands(); // remove all but current command
 
-    /// Per-tick update: process command queue + movement + weapons.
+    /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
+    /// orders (tick_orders), coasting, layer changes and fuel
+    /// (tick_after_orders), then the silo, regeneration, weapons and
+    /// manipulators (tick_upkeep).
     void update(f64 dt, SimContext& ctx);
 
     /// Lua callback helpers: call self:method() or self:method(entity)
@@ -277,7 +287,7 @@ public:
     void call_lua_method_with_entity(lua_State* L, const char* method_name,
                                       Entity* arg_entity);
 
-    /// Build helpers called from update()
+    /// Build helpers called from the order handlers (unit_orders.cpp)
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
     bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
@@ -689,6 +699,52 @@ private:
     /// off (the navigator keeps a throttled request without retrying it).
     /// True until the unit gets there.
     bool approach_update(f64 dt, SimContext& ctx);
+
+    // update's phases. Each but the last says whether the tick goes on.
+    /// Dying (the death animation), or carried (following the transport):
+    /// nothing else this tick.
+    bool tick_lifecycle(f64 dt, SimContext& ctx);
+    /// Run orders from the head of the queue until one holds (unit_orders.cpp).
+    bool tick_orders(f64 dt, SimContext& ctx, f32 econ_eff);
+    /// Coasting, amphibious layer changes, air separation, fuel.
+    bool tick_after_orders(f64 dt, SimContext& ctx);
+    /// A silo assist ended, regeneration, the silo, motion events, weapons,
+    /// manipulators. Runs while paused too.
+    void tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting_silo);
+
+    // The order handlers (unit_orders.cpp), one per kind of order.
+    OrderStep run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    OrderStep order_stop();
+    OrderStep order_move(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// Close to the best weapon's range of the target, and stay on it.
+    OrderStep order_attack(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// Reach the site, start the structure, build it.
+    OrderStep order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A factory's build, or an upgrade: started where the unit stands.
+    OrderStep order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// Go to the point, then queue it again at the back.
+    OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// Help with what the guarded unit works on, or follow it. Never ends.
+    OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A submarine dives or surfaces.
+    OrderStep order_dive(lua_State* L);
+    OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// Cargo walks to its transport and boards.
+    OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A transport flies to the point and drops all its cargo.
+    OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A nuke, a tactical missile or an OverCharge, by its weapon.
+    OrderStep order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    OrderStep order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// Handed to the script, and held until the warp.
+    OrderStep order_teleport(UnitCommand& cmd, lua_State* L);
+    /// A ferry's cycle along its route (the leading Ferry orders).
+    OrderStep order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// Wait at a beacon until a ferry takes the unit, then board it.
+    OrderStep order_wait_for_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx);
     void apply_vet_buffs(lua_State* L);
     void fire_on_veteran(lua_State* L);
 
