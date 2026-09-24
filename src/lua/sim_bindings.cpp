@@ -3654,6 +3654,9 @@ static void push_vec3(lua_State* L, f32 x, f32 y, f32 z) {
 }
 
 static void read_vec3(lua_State* L, int idx, f32& x, f32& y, f32& z) {
+    // A script passing nothing gets Moho's error, not a crash: rawgeti
+    // assumes a table.
+    luaL_checktype(L, idx, LUA_TTABLE);
     lua_rawgeti(L, idx, 1); x = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
     lua_rawgeti(L, idx, 2); y = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
     lua_rawgeti(L, idx, 3); z = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
