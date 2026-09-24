@@ -1,4 +1,5 @@
 #include "sim/collision.hpp"
+#include "map/terrain.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -130,6 +131,32 @@ f32 shape_distance(const CollisionShape& shape, const Vector3& position,
     const f32 oy = std::max(qy, 0.0f);
     const f32 oz = std::max(qz, 0.0f);
     return std::sqrt(ox * ox + oy * oy + oz * oz) + std::min(std::max({qx, qy, qz}), 0.0f);
+}
+
+std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,
+                                    const Vector3& to) {
+    const auto at = [&](f32 t) {
+        return Vector3{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t,
+                       from.z + (to.z - from.z) * t};
+    };
+    const auto below = [&terrain](const Vector3& p) {
+        return p.y < terrain.get_terrain_height(p.x, p.z);
+    };
+    const f32 dx = to.x - from.x;
+    const f32 dz = to.z - from.z;
+    const auto samples = std::max(1, static_cast<int>(std::ceil(std::sqrt(dx * dx + dz * dz))));
+    for (int i = 1; i <= samples; ++i) {
+        const f32 t = static_cast<f32>(i) / static_cast<f32>(samples);
+        if (!below(at(t))) continue;
+        f32 lo = static_cast<f32>(i - 1) / static_cast<f32>(samples);
+        f32 hi = t;
+        for (int pass = 0; pass < 8; ++pass) {
+            const f32 mid = 0.5f * (lo + hi);
+            (below(at(mid)) ? hi : lo) = mid;
+        }
+        return hi;
+    }
+    return std::nullopt;
 }
 
 } // namespace osc::sim

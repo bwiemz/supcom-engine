@@ -395,10 +395,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                         lua_pop(L, 1);
                     }
 
-                    // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
-                    lua_pushstring(L, "BeamLifetime");
+                    // A beam weapon is known by the beams its script makes
+                    // (CollisionBeamEntity.__init); how far they reach:
+                    lua_pushstring(L, "MaximumBeamLength");
                     lua_gettable(L, we);
-                    weapon->beam = lua_isnumber(L, -1) != 0;
+                    if (lua_isnumber(L, -1))
+                        weapon->max_beam_length = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
                     // RackBones[1].MuzzleBones[1] → muzzle bone name (string)
@@ -2153,17 +2155,31 @@ static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
         if (const sim::Entity* e = registry.find(c.id); e && !e->destroyed())
             c.absorbed = shield_absorption(L, *e, blast);
 
-    // What stands in it, and what reaches each past the shields over it.
+    // What stands in it, and what reaches each past the shields over it. A
+    // blast reaches what its radius touches: the distance is to a unit's or
+    // prop's shape, not its position (its feet), or a beam ending on a
+    // Galactic Colossus's hull, or a shell on a tall structure's roof, would
+    // miss them. One with no shape is measured from its position.
+    std::vector<u32> candidates = registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer);
+    candidates.insert(candidates.end(), near.begin(), near.end());
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
     std::vector<std::pair<u32, f32>> hits;
-    for (const u32 id : registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer)) {
+    for (const u32 id : candidates) {
         const sim::Entity* e = registry.find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
         if (!e->is_unit() && !e->is_prop()) continue;
         if (e->is_unit() && !static_cast<const sim::Unit*>(e)->can_take_damage()) continue;
-        const f32 dx = e->position().x - blast.at.x;
-        const f32 dy = e->position().y - blast.at.y;
-        const f32 dz = e->position().z - blast.at.z;
-        const f32 d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        f32 d = 0;
+        if (e->collision_shape().type != sim::CollisionShapeType::NONE) {
+            d = std::max(0.0f, sim::shape_distance(e->collision_shape(), e->position(),
+                                                   e->orientation(), blast.at));
+        } else {
+            const f32 dx = e->position().x - blast.at.x;
+            const f32 dy = e->position().y - blast.at.y;
+            const f32 dz = e->position().z - blast.at.z;
+            d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        }
         if (d > blast.outer || d < blast.inner || spared(*e)) continue;
         f32 amount = blast.amount;
         for (const auto& c : covers)
@@ -4921,7 +4937,10 @@ static int l_SplitProp(lua_State* L) {
     int n = 0;
     for (i32 b = 1; b < count; ++b) {
         const sim::BoneInfo& bone = bones->bones[static_cast<size_t>(b)];
-        const sim::Vector3 offset = sim::quat_rotate(prop->orientation(), bone.world_position);
+        const f32 s = bones->model_scale;
+        const sim::Vector3 offset = sim::quat_rotate(
+            prop->orientation(), sim::Vector3{bone.world_position.x * s, bone.world_position.y * s,
+                                              bone.world_position.z * s});
         const sim::Vector3 at{prop->position().x + offset.x, prop->position().y + offset.y,
                               prop->position().z + offset.z};
         if (sim::spawn_prop(L, *sim, bp, at,

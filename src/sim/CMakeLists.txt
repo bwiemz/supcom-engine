@@ -8,6 +8,7 @@ add_library(osc_sim STATIC
     bone_cache.cpp
     bone_data.cpp
     collision.cpp
+    collision_beam.cpp
     entity.cpp
     formation.cpp
     manipulator.cpp

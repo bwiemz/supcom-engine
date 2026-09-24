@@ -3139,7 +3139,10 @@ BonePose Unit::bone_pose(i32 bone) const {
 Vector3 Unit::bone_world_position(i32 bone) const {
     const BoneData* bd = bone_data();
     if (!bd || !bd->is_valid(bone)) return position();
-    const Vector3 offset = quat_rotate(orientation(), bone_pose(bone).position);
+    const Vector3 model = bone_pose(bone).position;
+    const f32 s = bd->model_scale;
+    const Vector3 offset =
+        quat_rotate(orientation(), Vector3{model.x * s, model.y * s, model.z * s});
     return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
 }
 

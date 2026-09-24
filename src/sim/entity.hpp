@@ -307,6 +307,22 @@ public:
     void set_beam_launcher_id(u32 id) { beam_launcher_id_ = id; }
     int beam_fx_ref() const { return beam_fx_ref_; }
     void set_beam_fx_ref(int r) { beam_fx_ref_ = r; }
+    /// Where a collision beam fires from and how often it checks (M206c):
+    /// its launcher's weapon and the muzzle bone (spec.OtherBone) it sits
+    /// on, the ticks between checks (spec.CollisionCheckInterval; a check
+    /// every interval + 1 ticks), the countdown to the next, how far it
+    /// reaches (MaximumBeamLength, else MaxRadius), and how far its last
+    /// check reached.
+    struct BeamSetup {
+        i32 weapon = -1;
+        i32 muzzle_bone = -1;
+        u32 check_interval = 0;
+        u32 check_clock = 0;
+        f32 length = 0;
+        f32 reached = 0;
+    };
+    BeamSetup& beam_setup() { return beam_setup_; }
+    const BeamSetup& beam_setup() const { return beam_setup_; }
 
 private:
     u32 entity_id_ = 0;
@@ -356,6 +372,7 @@ private:
     Vector3 beam_endpoint_;
     u32 beam_launcher_id_ = 0;
     int beam_fx_ref_ = -2; // LUA_NOREF — stored IEffect Lua table ref
+    BeamSetup beam_setup_;
 };
 
 } // namespace osc::sim

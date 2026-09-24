@@ -62,9 +62,31 @@ const BoneData* BoneCache::get(const std::string& blueprint_id,
                    bone_data->bone_count(), blueprint_id, mesh_path);
 
     auto ptr = std::make_unique<BoneData>(std::move(*bone_data));
+    ptr->model_scale = resolve_uniform_scale(blueprint_id, L);
     auto* raw = ptr.get();
     cache_[blueprint_id] = std::move(ptr);
     return raw;
+}
+
+f32 BoneCache::resolve_uniform_scale(const std::string& bp_id, lua_State* L) {
+    if (!store_ || !L) return 1.0f;
+    auto* entry = store_->find(bp_id);
+    if (!entry) return 1.0f;
+    const int top = lua_gettop(L);
+    store_->push_lua_table(*entry, L);
+    f32 scale = 1.0f;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Display");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "UniformScale");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TNUMBER && lua_tonumber(L, -1) > 0)
+                scale = static_cast<f32>(lua_tonumber(L, -1));
+        }
+    }
+    lua_settop(L, top);
+    return scale;
 }
 
 std::string BoneCache::resolve_mesh_path(const std::string& bp_id,

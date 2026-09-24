@@ -25,6 +25,11 @@ struct BoneInfo {
 struct BoneData {
     std::vector<BoneInfo> bones;
     std::unordered_map<std::string, i32> name_to_index; // lowercase → index
+    /// The blueprint's Display.UniformScale. Bones (and their animations)
+    /// are in the model's own units; a bone's place in the world is its
+    /// model position times this (a Striker's muzzle is 5.65 model units
+    /// ahead, 0.4 in the world).
+    f32 model_scale = 1.0f;
 
     /// Look up bone index by name (case-insensitive). Returns -1 if not found.
     i32 find_bone(const std::string& name) const;

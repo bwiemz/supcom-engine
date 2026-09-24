@@ -146,6 +146,10 @@ public:
 
     blueprints::BlueprintStore* blueprint_store() { return blueprint_store_; }
     blueprints::BlueprintStore* blueprint_store() const { return blueprint_store_; }
+    /// Collision beams, in the order they were made (their ids'): the beam
+    /// pass poses and checks them each tick (M206c).
+    void track_collision_beam(u32 id) { collision_beams_.push_back(id); }
+    std::vector<u32>& collision_beams() { return collision_beams_; }
     /// What a projectile blueprint says of its projectiles as targets (its
     /// categories, its DesiredShooterCap), read once per blueprint (M206b).
     std::shared_ptr<const ProjectileBlueprintInfo>
@@ -599,6 +603,7 @@ private:
     blueprints::BlueprintStore* blueprint_store_;
     std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>>
         projectile_info_;
+    std::vector<u32> collision_beams_;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

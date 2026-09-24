@@ -62,7 +62,10 @@ public:
     /// (missiles, torpedoes), never units (M206b).
     bool targets_projectiles = false;
     bool overcharge = false;         // OverChargeWeapon
-    bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
+    /// It fires collision beams (a DefaultBeamWeapon made them for it, M206c).
+    bool beam = false;
+    /// MaximumBeamLength: how far its beams reach (0: its MaxRadius).
+    f32 max_beam_length = 0;
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
     f32 firing_randomness = 0;    // spread circle r x distance / 12 across
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
@@ -113,12 +116,10 @@ public:
     /// Retail's firing cycle drives this weapon: the engine picks targets and
     /// runs the fire clock, and the weapon's script state machine gets
     /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos
-    /// (a silo weapon's script also takes its ammunition). OverCharge and
-    /// beam weapons keep the engine's own firing until their scripts' needs
-    /// exist (M206c, M206d).
-    bool fires_through_script() const {
-        return script_class && lua_table_ref >= 0 && !overcharge && !beam;
-    }
+    /// (a silo weapon's script also takes its ammunition; a beam weapon's
+    /// switches its beams on). OverCharge keeps the engine's own firing until
+    /// its script's needs exist (M206d).
+    bool fires_through_script() const { return script_class && lua_table_ref >= 0 && !overcharge; }
 
     bool has_target() const { return target_entity_id != 0 || has_ground_target; }
     /// Aim at a point on the ground (dropping any unit target).
