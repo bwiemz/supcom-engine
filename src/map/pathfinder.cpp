@@ -75,7 +75,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
             }
         }
         if (!found_alt) {
-            spdlog::debug("Pathfinder: no passable cell near goal ({}, {})", goal_x, goal_z);
+            spdlog::trace("Pathfinder: no passable cell near goal ({}, {})", goal_x, goal_z);
             return result; // found = false
         }
     }
@@ -95,7 +95,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     if (grid_path.cells.empty() && grid_.get(sx, sz) != CellPassability::Obstacle)
         grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious, true);
     if (grid_path.cells.empty()) {
-        spdlog::debug("Pathfinder: A* found no path from ({},{}) to ({},{})",
+        spdlog::trace("Pathfinder: A* found no path from ({},{}) to ({},{})",
                        sx, sz, gx, gz);
         return result; // found = false
     }
@@ -230,7 +230,7 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
         }
 
         if (++nodes_explored > MAX_NODES_EXPLORED) {
-            spdlog::debug("Pathfinder: A* hit search limit ({} nodes)", MAX_NODES_EXPLORED);
+            spdlog::trace("Pathfinder: A* hit search limit ({} nodes)", MAX_NODES_EXPLORED);
             break; // fall through to the closest cell found so far
         }
 

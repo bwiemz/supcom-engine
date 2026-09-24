@@ -45,20 +45,20 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
 
     if (result.found && !result.waypoints.empty()) {
         waypoints_ = std::move(result.waypoints);
-        spdlog::debug("Navigator: path found with {} waypoints", waypoints_.size());
+        spdlog::trace("Navigator: path found with {} waypoints", waypoints_.size());
     } else if (result.throttled) {
         // Budget exhausted — don't fall back to straight-line (would clip walls).
         // Keep the goal and report "busy" so the command survives; its handler
         // re-requests the path next tick because is_moving() is false. (Going
         // Idle here made Move orders pop as if arrived and spun Patrol forever.)
-        spdlog::debug("Navigator: pathfinding throttled, will retry next tick");
+        spdlog::trace("Navigator: pathfinding throttled, will retry next tick");
         status_ = Status::WaitingForPath;
         return;
     } else {
         // Nowhere reachable to go (enclosed, or no passable cell near the
         // goal). Stay put: the old straight-line fallback drove units
         // through cliffs and buildings.
-        spdlog::debug("Navigator: no reachable destination, not moving");
+        spdlog::trace("Navigator: no reachable destination, not moving");
         has_failed_request_ = true;
         failed_goal_ = pos;
         failed_from_ = current_pos;
