@@ -276,28 +276,9 @@ void Unit::clear_on_given_callbacks(lua_State* L) {
     on_given_callbacks_.clear();
 }
 
-void Unit::begin_dying(f32 duration) {
-    if (dying_) return;
-    if (is_air_unit()) {
-        begin_air_crash(crash_damage_);
-        return;
-    }
-    dying_ = true;
-    death_timer_ = duration;
-    death_duration_ = duration;
-    command_queue_.clear();
-    set_do_not_target(true);
-}
-
-void Unit::begin_air_crash(f32 crash_dmg) {
+void Unit::begin_dying() {
     if (dying_) return;
     dying_ = true;
-    crashing_ = true;
-    crash_damage_ = crash_dmg;
-    crash_velocity_y_ = 0;
-    death_duration_ = 5.0f;
-    death_timer_ = 5.0f;
-    crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
     clear_commands();
     set_do_not_target(true);
     economy_.consumption_mass = 0;
@@ -306,6 +287,18 @@ void Unit::begin_air_crash(f32 crash_dmg) {
     economy_.production_mass = 0;
     economy_.production_energy = 0;
     economy_.production_active = false;
+    // Killed in flight: it falls, tumbling, until it lands.
+    if (is_air_unit()) {
+        crashing_ = true;
+        crash_velocity_y_ = 0;
+        crash_spin_rate_ = (static_cast<f32>(entity_id() % 100) / 100.0f - 0.5f) * 4.0f;
+    }
+}
+
+bool Unit::take_crash_impact() {
+    const bool landed = crash_impacted_;
+    crash_impacted_ = false;
+    return landed;
 }
 
 void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
@@ -328,8 +321,8 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
         p.z += osc::dmath::cos(heading_) * fwd * dt;
         p.y += crash_velocity_y_ * dt;
 
-        // Terrain impact check
-        f32 ground = terrain ? terrain->get_terrain_height(p.x, p.z) : 0.0f;
+        // It lands on the ground, or on the water over it.
+        f32 ground = terrain ? terrain->get_surface_height(p.x, p.z) : 0.0f;
         if (p.y <= ground) {
             p.y = ground;
             set_position(p);
@@ -340,15 +333,6 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
 
         set_position(p);
         current_airspeed_ *= (1.0f - 0.5f * dt); // decelerate forward speed
-        return;
-    }
-
-    // Normal death
-    death_timer_ -= dt;
-    if (death_timer_ <= 0.0f) {
-        death_timer_ = 0.0f;
-        set_is_wreckage(true);
-        dying_ = false;
     }
 }
 
@@ -1267,15 +1251,16 @@ done_commands:
         }
     }
 
-    // Fuel consumption for air units
-    if (is_air_unit() && fuel_ratio_ >= 0 && fuel_use_time_ > 0) {
-        fuel_ratio_ -= static_cast<f32>(dt) / fuel_use_time_;
-        if (fuel_ratio_ <= 0) {
-            fuel_ratio_ = 0;
-            // Auto-crash: begin dying (no fuel = crash)
-            if (!dying_) {
-                begin_dying(3.0f); // longer death for fuel crash
-            }
+    // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
+    // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel).
+    if (fuel_ratio_ >= 0 && fuel_use_time_ > 0) {
+        if (is_air_unit())
+            fuel_ratio_ = std::max(0.0f, fuel_ratio_ - static_cast<f32>(dt) / fuel_use_time_);
+        const bool dry = fuel_ratio_ <= 0;
+        if (dry != out_of_fuel_) {
+            out_of_fuel_ = dry;
+            if (L) call_lua_method(L, dry ? "OnRunOutOfFuel" : "OnGotFuel");
+            if (destroyed() || dying_) return;
         }
     }
 

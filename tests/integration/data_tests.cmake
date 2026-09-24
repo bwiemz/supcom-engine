@@ -32,7 +32,7 @@ set(OSC_DATA_TESTS_GATE
     beam-test bitmap-test blend-test bone-test border-render-test build-test
     canpath-test capture-test chain-test cmd-test collision-test combat-test
     construction-test controls-test cursor-render-test damage-test decal-test
-    decalsplat-test deposit-test drag-render-test draw-test dualstate-test
+    death-test decalsplat-test deposit-test drag-render-test draw-test dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
     gameui-test
     enhance-wreck-test fire-test flags-test font-test fow-test full-smoke-test

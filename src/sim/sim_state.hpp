@@ -377,6 +377,10 @@ public:
     /// result on the other peers.
     void defeat_army(i32 army);
 
+    /// Kill a unit as Moho does: its script's Kill (OnKilled plays the death
+    /// out and destroys it). A unit without a script object is removed.
+    void kill_unit(Unit& unit);
+
     /// Number of alliance-connected "teams" still in the game (non-civilian,
     /// non-defeated armies grouped by their alliance graph). Exposed for tests
     /// and diagnostics.

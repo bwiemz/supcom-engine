@@ -792,21 +792,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
         }
 
-        // Read General.CrashDamage for air units
-        if (unit->is_air_unit()) {
-            store->push_lua_table(*entry, L);
-            lua_pushstring(L, "General");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "CrashDamage");
-                lua_rawget(L, -2);
-                if (lua_isnumber(L, -1))
-                    unit->set_crash_damage(static_cast<f32>(lua_tonumber(L, -1)));
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 2); // General table (or nil) + bp table
-        }
-
         // Read Physics.FuelUseTime for air units
         if (unit->is_air_unit()) {
             store->push_lua_table(*entry, L);
@@ -4820,13 +4805,23 @@ static int l_CreateVisibleAreaAtPoint(lua_State* L) {
     return 0;
 }
 
-// IssueKillSelf(units_table) — ctrl+K self-destruct
+// IssueKillSelf(units_table) — ctrl+K self-destruct: each unit is killed, so
+// its script plays the death out (death weapon, wreck) as for any other.
 static int l_IssueKillSelf(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        if (u && !u->is_dying() && !u->destroyed()) {
-            u->begin_dying(0.1f); // near-instant death
-        }
-    }, nullptr);
+    std::vector<u32> ids;
+    for_each_unit_in_table(
+        L, 1,
+        [](sim::Unit* u, void* out) {
+            if (u && !u->is_dying() && !u->destroyed())
+                static_cast<std::vector<u32>*>(out)->push_back(u->entity_id());
+        },
+        &ids);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    for (const u32 id : ids) {
+        auto* e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) sim->kill_unit(static_cast<sim::Unit&>(*e));
+    }
     return 0;
 }
 

@@ -166,7 +166,7 @@ TEST_CASE("a crashed aircraft is removed from the registry", "[lifetime][m183]")
     const osc::u32 id = sim.entity_registry().register_entity(std::move(u));
     const size_t before = sim.entity_registry().count();
 
-    plane->begin_air_crash(50.0f);
+    plane->begin_dying(); // killed in flight; with no script it goes on landing
     for (int t = 0; t < 300 && sim.entity_registry().find(id); ++t) sim.tick();
 
     CHECK(sim.entity_registry().find(id) == nullptr); // impacted and removed

@@ -458,7 +458,7 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
     unit.set_current_altitude(50.0f);
     unit.set_position({100, 50, 100});
 
-    unit.begin_air_crash(100.0f);
+    unit.begin_dying(); // killed in flight: it falls
     CHECK(unit.is_crashing());
     CHECK(unit.is_dying());
 
@@ -468,10 +468,12 @@ TEST_CASE("Air crash physics: gravity pulls unit down", "[m159]") {
         if (!unit.is_crashing()) break;
     }
 
-    // Should have fallen and impacted
+    // Should have fallen and impacted, and reports the landing once
     CHECK(unit.position().y <= 0.1f);
     CHECK(unit.crash_impacted());
     CHECK_FALSE(unit.is_crashing());
+    CHECK(unit.take_crash_impact());
+    CHECK_FALSE(unit.take_crash_impact());
 }
 
 TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
@@ -482,7 +484,6 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     unit.set_accel_rate(10.0f);
     unit.set_elevation_target(20.0f);
     unit.set_climb_rate(10.0f);
-    unit.set_crash_damage(100.0f);
     unit.set_position({50, 20, 50});
     unit.set_current_altitude(20.0f);
 
@@ -494,8 +495,8 @@ TEST_CASE("Air unit full lifecycle: spawn, fly, die, crash", "[m159]") {
     CHECK(unit.position().x > 50);
     CHECK(unit.current_airspeed() > 0);
 
-    // Kill it via begin_dying — should auto-redirect to crash
-    unit.begin_dying(2.0f);
+    // Killed in flight, it falls
+    unit.begin_dying();
     CHECK(unit.is_crashing());
 
     // Run crash ticks

@@ -375,9 +375,9 @@ TEST_CASE("ShareUntilDeath destroys a defeated army's remaining units",
     destroy(sim, enemy_acu);
     tick_n(sim, 2);
 
-    auto* tank = static_cast<Unit*>(sim.entity_registry().find(enemy_tank));
-    REQUIRE(tank != nullptr);
-    CHECK(tank->is_dying());               // leftover unit is being destroyed
+    // The leftover unit is killed; with no script to play its death out,
+    // it goes at once.
+    CHECK(sim.entity_registry().find(enemy_tank) == nullptr);
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
 }
 
@@ -456,13 +456,11 @@ TEST_CASE("PartialShare transfers structures/engineers to an ally, kills the res
     tick_n(sim, 2);
 
     auto* f = static_cast<Unit*>(sim.entity_registry().find(factory));
-    auto* t = static_cast<Unit*>(sim.entity_registry().find(tank));
     REQUIRE(f != nullptr);
-    REQUIRE(t != nullptr);
     CHECK(f->army() == 1);        // structure handed to the ally
     CHECK_FALSE(f->is_dying());
-    CHECK(t->army() == 0);        // the tank is destroyed, not transferred
-    CHECK(t->is_dying());
+    // The tank is killed, not transferred (with no script, it goes at once).
+    CHECK(sim.entity_registry().find(tank) == nullptr);
 }
 
 TEST_CASE("Defectors hand a defeated army's units to a surviving enemy",
@@ -552,9 +550,8 @@ TEST_CASE("A peer dropping mid-match is defeated", "[victory][drop]") {
     sim.defeat_army(1);
 
     CHECK(sim.get_army(1)->state() == BrainState::Defeat);
-    auto* acu = static_cast<Unit*>(sim.entity_registry().find(dropped_acu));
-    REQUIRE(acu != nullptr);
-    CHECK(acu->is_dying());
+    // Its units are killed (with no script, they go at once).
+    CHECK(sim.entity_registry().find(dropped_acu) == nullptr);
 }
 
 TEST_CASE("A peer dropping after the engine decided the match changes nothing",
