@@ -147,6 +147,37 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     f32 speed = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
     f32 step = speed * static_cast<f32>(dt);
 
+    // Crossing the water's surface tells the script: a torpedo dropped from
+    // the air starts tracking as it enters. One that SetDestroyOnWater ends
+    // there.
+    if (terrain && terrain->has_water()) {
+        const bool wet = pos.y < terrain->water_elevation() &&
+                         terrain->get_terrain_height(pos.x, pos.z) < terrain->water_elevation();
+        if (wet != in_water) {
+            in_water = wet;
+            if (wet && destroy_on_water) {
+                pos.y = terrain->water_elevation(); // it hit the surface
+                set_position(pos);
+                on_impact(L, nullptr, registry, terrain, "Water");
+                return;
+            }
+            if (!call_script(L, registry, wet ? "OnEnterWater" : "OnExitWater")) return;
+        }
+    }
+
+    // Air bursts: flak detonates on reaching its target's height above the
+    // surface (DetonatesAtTargetHeight sets it); an artillery shell, once it
+    // has risen above its burst height, on coming back down past it.
+    {
+        const f32 height = pos.y - (terrain ? terrain->get_surface_height(pos.x, pos.z) : 0.0f);
+        if (detonate_below_height > 0 && height > detonate_below_height) burst_armed = true;
+        if ((detonate_above_height > 0 && height >= detonate_above_height) ||
+            (burst_armed && height <= detonate_below_height)) {
+            on_impact(L, nullptr, registry, terrain, "Air");
+            return;
+        }
+    }
+
     // Check collision with target entity
     if (target_entity_id > 0) {
         auto* target = registry.find(target_entity_id);
@@ -158,8 +189,13 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
                 on_impact(L, target, registry, terrain);
                 return;
             }
+        } else {
+            // Its target is gone: the script decides (a homing missile's
+            // OnLostTarget shortens its lifetime). It flies on to where the
+            // target was.
+            target_entity_id = 0;
+            if (!call_script(L, registry, "OnLostTarget")) return;
         }
-        // Target destroyed — fall through to ground target check
     }
 
     // Check if reached target position (ground impact)
@@ -195,8 +231,30 @@ const char* Projectile::impact_type(const Entity* target, const map::Terrain* te
     return "Terrain";
 }
 
+bool Projectile::call_script(lua_State* L, EntityRegistry& registry, const char* method) {
+    const u32 id = entity_id();
+    if (!L || lua_table_ref() < 0) return true;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, top + 1);
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                std::string("Projectile ") + method + " error: " + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+    }
+    lua_settop(L, top);
+    const Entity* self = registry.find(id);
+    return self && !self->destroyed();
+}
+
 void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registry,
-                           const map::Terrain* terrain) {
+                           const map::Terrain* terrain, const char* type_override) {
     if (!L) {
         mark_destroyed();
         registry.unregister_entity(entity_id());
@@ -205,7 +263,7 @@ void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registr
     impacted = true;
     const u32 id = entity_id();
     const u32 target_id = target ? target->entity_id() : 0;
-    const char* type = impact_type(target, terrain);
+    const char* type = type_override ? type_override : impact_type(target, terrain);
 
     // Its script's OnImpact plays the impact out, as in retail: damage from
     // the DamageData its weapon passed (friendly fire, damage over time and

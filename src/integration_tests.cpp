@@ -7207,6 +7207,73 @@ void test_impact(TestContext& ctx) {
                       "(before {}, with {}, after {})",
                       !dark_before, lit, !dark_after));
 
+    // A projectile's life: air bursts, the water's surface, a lost target.
+    lua_check("setup: shells in flight", R"(
+        local w = __osc_tank:GetWeapon(1)
+        __osc_events = {}
+        local function shell(name)
+            local p = w:CreateProjectile('Turret_Muzzle')
+            local log = {}
+            __osc_events[name] = log
+            for _, event in {'OnImpact', 'OnEnterWater', 'OnExitWater', 'OnLostTarget'} do
+                local e, base = event, p[event]
+                p[e] = function(self, a, b)
+                    table.insert(log, e .. (type(a) == 'string' and (':' .. a) or ''))
+                    if base then return base(self, a, b) end
+                end
+            end
+            return p
+        end
+        -- Straight up, bursting 5 above the ground.
+        local burst = shell('burst')
+        burst:SetVelocity(0, 15, 0)
+        burst:ChangeDetonateAboveHeight(5)
+        -- Two dropping onto the water: one ends there, one goes under.
+        local wx, wz
+        for z = 20, 1000, 20 do
+            for x = 20, 1000, 20 do
+                if not wx and GetTerrainHeight(x, z) < GetSurfaceHeight(x, z) - 2 then wx, wz = x, z end
+            end
+        end
+        if not wx then error('no water on the map') end
+        local top = GetSurfaceHeight(wx, wz) + 3
+        local splash = shell('splash')
+        Warp(splash, {wx, top, wz})
+        splash:SetVelocity(0, -10, 0)
+        splash:SetDestroyOnWater(true)
+        local dive = shell('dive')
+        Warp(dive, {wx + 4, top, wz})
+        dive:SetVelocity(0, -10, 0)
+        dive:SetDestroyOnWater(false)
+        -- Homing on a unit that is then destroyed.
+        local mark = CreateUnitHPR('ueb1101', 'ARMY_2', 300, GetTerrainHeight(300, 700), 700, 0, 0, 0)
+        local lost = shell('lost')
+        lost:SetVelocity(0, 0, 0)
+        lost:SetNewTarget(mark)
+        __osc_mark = mark
+    )");
+    ctx.sim.tick();
+    (void)ctx.lua_state.do_string("__osc_mark:Destroy()");
+    for (int i = 0; i < 10; ++i) ctx.sim.tick();
+    lua_check("Test 7: a shell bursting at its height impacts 'Air'", R"(
+        if __osc_events.burst[1] ~= 'OnImpact:Air' then
+            error('events: ' .. table.concat(__osc_events.burst, ','))
+        end
+    )");
+    lua_check("Test 8: the water's surface ends one shell and takes the other under", R"(
+        if __osc_events.splash[1] ~= 'OnImpact:Water' then
+            error('splash: ' .. table.concat(__osc_events.splash, ','))
+        end
+        if __osc_events.dive[1] ~= 'OnEnterWater' then
+            error('dive: ' .. table.concat(__osc_events.dive, ','))
+        end
+    )");
+    lua_check("Test 9: a shell whose target is destroyed hears OnLostTarget", R"(
+        if __osc_events.lost[1] ~= 'OnLostTarget' then
+            error('events: ' .. table.concat(__osc_events.lost, ','))
+        end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
     spdlog::info("Impact test: {}/{} passed", pass, pass + fail);
 }
