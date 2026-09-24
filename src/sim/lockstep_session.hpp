@@ -2,8 +2,11 @@
 
 #include "core/types.hpp"
 #include "sim/command_scheduler.hpp"
+#include "sim/sim_state.hpp"
 
+#include <array>
 #include <map>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -49,6 +52,10 @@ public:
     u32 local_source() const { return local_source_; }
     u32 current_frame() const { return next_frame_; }
     bool desynced() const { return desynced_; }
+    /// The first desync seen: its tick, and the checksum domains that
+    /// differed (SimState::ChecksumParts::kNames), which say where to look.
+    u32 desync_tick() const { return desync_tick_; }
+    const std::vector<std::string>& desync_domains() const { return desync_domains_; }
 
     // --- Peer drop, by agreement (M198b) ---
     // A peer more than `frames` command frames behind in confirmations
@@ -87,8 +94,11 @@ private:
     std::map<u32, DropVote> drop_votes_;       // sources being dropped, by source
     u32 next_frame_ = 1;                       // frame currently accepting input
     std::vector<ScheduledCommand> pending_;      // local commands for next_frame_
-    std::unordered_map<u32, u32> my_checksums_;   // tick -> local checksum
-    std::unordered_map<u32, u32> peer_checksums_; // tick -> a peer's reported checksum
+    using Parts = std::array<u64, SimState::ChecksumParts::kCount>;
+    std::unordered_map<u32, Parts> my_checksums_;   // tick -> local checksum, by domain
+    std::unordered_map<u32, Parts> peer_checksums_; // tick -> a peer's reported one
+    u32 desync_tick_ = 0;
+    std::vector<std::string> desync_domains_;
     bool desynced_ = false;
     u32 drop_timeout_frames_ = 30;
     std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
@@ -101,8 +111,10 @@ private:
     void finalize_drops();
     void finalize_drop(u32 source, const DropVote& vote);
 
-    void note_peer_checksum(u32 tick, u32 checksum);
-    void record_local_checksum(u32 tick, u32 checksum);
+    void note_peer_checksum(u32 tick, const Parts& parts);
+    void record_local_checksum(u32 tick, const Parts& parts);
+    /// Compare a tick's checksums; on the first desync, note its domains.
+    void compare_checksums(u32 tick, const Parts& mine, const Parts& theirs);
 };
 
 } // namespace osc::sim

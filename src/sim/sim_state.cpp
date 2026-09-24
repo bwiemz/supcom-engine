@@ -16,6 +16,7 @@
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/shield.hpp"
 #include "sim/unit.hpp"
 
 extern "C" {
@@ -936,10 +937,17 @@ void SimState::tick() {
         tick_observer_(*this);
     }
     if (checksum_trace_ || recording_) {
-        const ChecksumParts parts = checksum_parts();
+        const ChecksumParts& parts = tick_checksum();
         if (checksum_trace_) {
-            *checksum_trace_ << fmt::format("{} {:08x} {:016x} {:016x} {:016x}\n", tick_count_,
-                                            parts.total(), parts.rng, parts.armies, parts.entities);
+            if (!checksum_trace_header_) {
+                std::string header = "# tick total";
+                for (const char* name : ChecksumParts::kNames) header += fmt::format(" {}", name);
+                *checksum_trace_ << header << '\n';
+                checksum_trace_header_ = true;
+            }
+            std::string line = fmt::format("{} {:08x}", tick_count_, parts.total());
+            for (const u64 part : parts.values()) line += fmt::format(" {:016x}", part);
+            *checksum_trace_ << line << '\n';
         }
         if (recording_) {
             recorded_replay_.final_tick = tick_count_;
@@ -1885,49 +1893,150 @@ struct Fnv {
 
 } // namespace
 
+std::array<u64, SimState::ChecksumParts::kCount> SimState::ChecksumParts::values() const {
+    return {rng,     armies,      entities, units,          orders, navigation,
+            weapons, projectiles, shields,  economy_events, threads};
+}
+
 u32 SimState::ChecksumParts::total() const {
     Fnv f;
-    f.mix(rng);
-    f.mix(armies);
-    f.mix(entities);
+    for (const u64 part : values()) f.mix(part);
     return static_cast<u32>(f.h ^ (f.h >> 32));
 }
 
 SimState::ChecksumParts SimState::checksum_parts() const {
     ChecksumParts parts;
     parts.rng = sim_random_.state();
+    const auto mix_vec = [](Fnv& f, const Vector3& v) {
+        f.mix_f32(v.x);
+        f.mix_f32(v.y);
+        f.mix_f32(v.z);
+    };
+    const auto mix_str = [](Fnv& f, const std::string& str) {
+        f.mix(static_cast<u64>(str.size()));
+        for (const char ch : str) f.mix(static_cast<u8>(ch));
+    };
 
     Fnv armies;
     armies.mix(tick_count_);
     for (const auto& a : armies_) {
         armies.mix(static_cast<u64>(a->state()));
-        armies.mix_f32(static_cast<f32>(a->economy().mass.stored));
-        armies.mix_f32(static_cast<f32>(a->economy().energy.stored));
+        const auto& econ = a->economy();
+        for (const auto* res : {&econ.mass, &econ.energy}) {
+            armies.mix_f32(static_cast<f32>(res->stored));
+            armies.mix_f32(static_cast<f32>(res->max_storage));
+            armies.mix_f32(static_cast<f32>(res->income));
+            armies.mix_f32(static_cast<f32>(res->requested));
+        }
     }
     parts.armies = armies.h;
 
     // The registry walks in id order.
-    Fnv entities;
+    Fnv entities, units, orders, navigation, weapons, projectiles, shields;
     entity_registry_.for_each([&](const Entity& e) {
         entities.mix(e.entity_id());
         entities.mix(static_cast<u64>(static_cast<u32>(e.army())));
         entities.mix(e.destroyed() ? 1u : 0u);
-        const auto& p = e.position();
-        entities.mix_f32(p.x);
-        entities.mix_f32(p.y);
-        entities.mix_f32(p.z);
+        mix_vec(entities, e.position());
+        const auto& q = e.orientation();
+        entities.mix_f32(q.x);
+        entities.mix_f32(q.y);
+        entities.mix_f32(q.z);
+        entities.mix_f32(q.w);
         entities.mix_f32(e.health());
+        entities.mix_f32(e.fraction_complete());
+
+        if (e.is_projectile()) {
+            const auto& p = static_cast<const Projectile&>(e);
+            projectiles.mix(e.entity_id());
+            mix_vec(projectiles, p.velocity);
+            projectiles.mix(p.target_entity_id);
+            mix_vec(projectiles, p.target_position);
+            projectiles.mix_f32(p.lifetime);
+            projectiles.mix((p.impacted ? 1u : 0u) | (p.tracking ? 2u : 0u));
+        }
+        if (e.is_shield()) {
+            shields.mix(e.entity_id());
+            shields.mix(static_cast<const Shield&>(e).is_on ? 1u : 0u);
+        }
+        if (!e.is_unit()) return;
+        const auto& u = static_cast<const Unit&>(e);
+
         // The player's settings: a pause or fire state that differs between
         // peers is a desync before it moves anything.
-        if (e.is_unit()) {
-            const auto& u = static_cast<const Unit&>(e);
-            entities.mix(u.script_bits());
-            entities.mix(static_cast<u64>(static_cast<u32>(u.fire_state())));
-            entities.mix((u.is_paused() ? 1u : 0u) | (u.auto_mode() ? 2u : 0u) |
-                         (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u));
+        units.mix(e.entity_id());
+        units.mix(u.script_bits());
+        units.mix(static_cast<u64>(static_cast<u32>(u.fire_state())));
+        units.mix((u.is_paused() ? 1u : 0u) | (u.auto_mode() ? 2u : 0u) |
+                  (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u) |
+                  (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u));
+        mix_str(units, u.layer());
+        units.mix(u.transport_id());
+        units.mix(static_cast<u64>(u.cargo_ids().size()));
+        units.mix(u.build_target_id());
+        units.mix(u.reclaim_target_id());
+        units.mix(u.repair_target_id());
+        units.mix(u.capture_target_id());
+        units.mix_f32(u.work_progress());
+        units.mix(static_cast<u64>(static_cast<u32>(u.nuke_silo_ammo())));
+        units.mix(static_cast<u64>(static_cast<u32>(u.tactical_silo_ammo())));
+        units.mix(static_cast<u64>(static_cast<u32>(u.silo_build().weapon)));
+        units.mix_f32(static_cast<f32>(u.silo_build().progress));
+        const auto& econ = u.economy();
+        units.mix_f32(static_cast<f32>(econ.consumption_mass));
+        units.mix_f32(static_cast<f32>(econ.consumption_energy));
+        units.mix_f32(static_cast<f32>(econ.production_mass));
+        units.mix_f32(static_cast<f32>(econ.production_energy));
+
+        orders.mix(e.entity_id());
+        orders.mix(static_cast<u64>(u.command_queue().size()));
+        for (const UnitCommand& cmd : u.command_queue()) {
+            orders.mix(static_cast<u64>(cmd.type));
+            orders.mix(cmd.target_id);
+            mix_vec(orders, cmd.target_pos);
+            orders.mix(cmd.command_id);
+            mix_str(orders, cmd.blueprint_id);
+            orders.mix((cmd.launched ? 1u : 0u) | (cmd.started ? 2u : 0u) |
+                       (cmd.approached ? 4u : 0u) | (cmd.in_band ? 8u : 0u));
+            orders.mix(cmd.beacon_id);
+            orders.mix(cmd.assigned_id);
+        }
+
+        navigation.mix(e.entity_id());
+        navigation.mix(static_cast<u64>(u.navigator().status()));
+        mix_vec(navigation, u.navigator().goal());
+        mix_vec(navigation, u.velocity());
+
+        weapons.mix(e.entity_id());
+        for (const auto& w : u.weapons()) {
+            weapons.mix(w->target_entity_id);
+            weapons.mix((w->has_ground_target ? 1u : 0u) | (w->enabled ? 2u : 0u));
+            if (w->has_ground_target) mix_vec(weapons, w->ground_target);
+            weapons.mix(w->fire_clock);
         }
     });
     parts.entities = entities.h;
+    parts.units = units.h;
+    parts.orders = orders.h;
+    parts.navigation = navigation.h;
+    parts.weapons = weapons.h;
+    parts.projectiles = projectiles.h;
+    parts.shields = shields.h;
+
+    Fnv events;
+    economy_events_.for_each([&](const EconomyEvent& evt) {
+        events.mix(evt.unit_id());
+        events.mix_f32(static_cast<f32>(evt.progress()));
+        events.mix((evt.is_done() ? 1u : 0u) | (evt.is_cancelled() ? 2u : 0u));
+    });
+    parts.economy_events = events.h;
+
+    Fnv threads;
+    thread_manager_.for_each_live([&](u64 serial, i32 wake) {
+        threads.mix(serial);
+        threads.mix(static_cast<u64>(static_cast<u32>(wake)));
+    });
+    parts.threads = threads.h;
     return parts;
 }
 
@@ -1972,6 +2081,15 @@ void SimState::write_entity_trace() const {
         out += '\n';
     });
     *entity_trace_ << out;
+}
+
+const SimState::ChecksumParts& SimState::tick_checksum() const {
+    if (!tick_checksum_valid_ || tick_checksum_tick_ != tick_count_) {
+        tick_checksum_ = checksum_parts();
+        tick_checksum_tick_ = tick_count_;
+        tick_checksum_valid_ = true;
+    }
+    return tick_checksum_;
 }
 
 u32 SimState::compute_sync_checksum() const {

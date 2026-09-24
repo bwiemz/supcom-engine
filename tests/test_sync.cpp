@@ -8,12 +8,15 @@
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 
 extern "C" {
 #include <lua.h>
 }
 
 #include <memory>
+#include <string>
+#include <vector>
 
 using osc::sim::SimState;
 using osc::sim::Unit;
@@ -84,5 +87,70 @@ TEST_CASE("A state divergence changes the checksum", "[sync]") {
     SECTION("tick count") {
         a.tick();
         CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
+    }
+}
+
+TEST_CASE("Each checksum domain covers its own state, and only it", "[sync]") {
+    // A change of one kind moves its own domain and no other, so a desync
+    // report points at the right state.
+    const auto differing = [](const SimState& a, const SimState& b) {
+        const auto va = a.checksum_parts().values();
+        const auto vb = b.checksum_parts().values();
+        std::vector<std::string> out;
+        for (size_t i = 0; i < va.size(); ++i)
+            if (va[i] != vb[i]) out.emplace_back(SimState::ChecksumParts::kNames[i]);
+        return out;
+    };
+    const auto first_unit = [](SimState& sim) {
+        Unit* found = nullptr;
+        sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!found) found = static_cast<Unit*>(&e);
+        });
+        return found;
+    };
+    using Names = std::vector<std::string>;
+
+    SECTION("a player setting: units") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        populate(a);
+        populate(b);
+        first_unit(b)->set_fire_state(1);
+        CHECK(differing(a, b) == Names{"units"});
+    }
+    SECTION("an order: orders") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        populate(a);
+        populate(b);
+        osc::sim::UnitCommand move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {30.0f, 0.0f, 0.0f};
+        first_unit(b)->push_command(move, true);
+        CHECK(differing(a, b) == Names{"orders"});
+    }
+    SECTION("a position: entities") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        populate(a);
+        populate(b);
+        first_unit(b)->set_position({1.0f, 0.0f, 0.0f});
+        CHECK(differing(a, b) == Names{"entities"});
+    }
+    SECTION("an economy event: economy_events") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        populate(a);
+        populate(b);
+        b.economy_events().create(first_unit(b)->entity_id(), 0.0, 10.0, 1.0);
+        CHECK(differing(a, b) == Names{"economy_events"});
+    }
+    SECTION("stored resources: armies") {
+        LuaGuard ga, gb;
+        SimState a(ga.L, nullptr), b(gb.L, nullptr);
+        populate(a);
+        populate(b);
+        b.army_at(0)->set_stored_resources(100.0, 0.0);
+        CHECK(differing(a, b) == Names{"armies"});
     }
 }

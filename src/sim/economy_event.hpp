@@ -114,6 +114,11 @@ public:
             if (events_[i]) fn(*events_[i]);
         }
     }
+    template <typename F> void for_each(F&& fn) const {
+        for (const auto& evt : events_) {
+            if (evt) fn(static_cast<const EconomyEvent&>(*evt));
+        }
+    }
 
 private:
     std::vector<std::unique_ptr<EconomyEvent>> events_;

@@ -54,14 +54,15 @@ void LockstepSession::send_frame() {
     // Attach the most recent executed-tick checksum for desync detection.
     u32 last_tick = sim_.tick_count();
     auto it = my_checksums_.find(last_tick);
+    // By domain, so a peer that differs can say what differs.
     if (last_tick > 0 && it != my_checksums_.end()) {
         w.u8v(1);
         w.u32v(last_tick);
-        w.u32v(it->second);
+        for (const u64 part : it->second) w.u64v(part);
     } else {
         w.u8v(0);
         w.u32v(0);
-        w.u32v(0);
+        for (size_t i = 0; i < SimState::ChecksumParts::kCount; ++i) w.u64v(0);
     }
 
     w.u32v(static_cast<u32>(pending_.size()));
@@ -90,7 +91,8 @@ void LockstepSession::receive_and_advance() {
         u32 frame = r.u32v();
         u8 has_cs = r.u8v();
         u32 cs_tick = r.u32v();
-        u32 cs_val = r.u32v();
+        Parts cs_parts{};
+        for (u64& part : cs_parts) part = r.u64v();
         u32 count = r.u32v();
         // Parse the whole frame before applying any of it: a malformed frame
         // must not leave half its commands scheduled.
@@ -107,7 +109,7 @@ void LockstepSession::receive_and_advance() {
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
         if (frame > pc) pc = frame; // arms the drop timer after first contact
-        if (has_cs) note_peer_checksum(cs_tick, cs_val);
+        if (has_cs) note_peer_checksum(cs_tick, cs_parts);
         // Kept to relay, should this peer drop before every survivor has it.
         auto& kept = recent_frames_[source];
         kept[frame] = std::move(commands);
@@ -139,7 +141,7 @@ void LockstepSession::receive_and_advance() {
     // Advance as far as every peer's confirmations allow.
     while (sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
         sim_.tick();
-        record_local_checksum(sim_.tick_count(), sim_.compute_sync_checksum());
+        record_local_checksum(sim_.tick_count(), sim_.tick_checksum().values());
     }
 }
 
@@ -281,16 +283,29 @@ bool LockstepSession::has_dropped(u32 src) const {
     return std::find(dropped_.begin(), dropped_.end(), src) != dropped_.end();
 }
 
-void LockstepSession::note_peer_checksum(u32 tick, u32 checksum) {
-    peer_checksums_[tick] = checksum;
+void LockstepSession::note_peer_checksum(u32 tick, const Parts& parts) {
+    peer_checksums_[tick] = parts;
     auto it = my_checksums_.find(tick);
-    if (it != my_checksums_.end() && it->second != checksum) desynced_ = true;
+    if (it != my_checksums_.end()) compare_checksums(tick, it->second, parts);
 }
 
-void LockstepSession::record_local_checksum(u32 tick, u32 checksum) {
-    my_checksums_[tick] = checksum;
+void LockstepSession::record_local_checksum(u32 tick, const Parts& parts) {
+    my_checksums_[tick] = parts;
     auto it = peer_checksums_.find(tick);
-    if (it != peer_checksums_.end() && it->second != checksum) desynced_ = true;
+    if (it != peer_checksums_.end()) compare_checksums(tick, parts, it->second);
+}
+
+void LockstepSession::compare_checksums(u32 tick, const Parts& mine, const Parts& theirs) {
+    if (mine == theirs || desynced_) return;
+    desynced_ = true;
+    desync_tick_ = tick;
+    std::string names;
+    for (size_t i = 0; i < mine.size(); ++i) {
+        if (mine[i] == theirs[i]) continue;
+        desync_domains_.emplace_back(SimState::ChecksumParts::kNames[i]);
+        names += (names.empty() ? "" : ", ") + desync_domains_.back();
+    }
+    spdlog::error("[lockstep] desync at tick {}: {} differ", tick, names);
 }
 
 } // namespace osc::sim
