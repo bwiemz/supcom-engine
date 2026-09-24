@@ -33,6 +33,8 @@ public:
     void remove_unit(u32 entity_id);
     bool has_unit(u32 entity_id) const;
     const std::vector<u32>& unit_ids() const { return unit_ids_; }
+    /// It has held a unit: once they are all gone, Moho destroys it.
+    bool had_units() const { return had_units_; }
 
     // Compute centroid position of all living units
     Vector3 get_position(const EntityRegistry& registry) const;
@@ -59,6 +61,7 @@ private:
     std::string name_;
     int lua_table_ref_ = -2; // LUA_NOREF
     bool destroyed_ = false;
+    bool had_units_ = false;
     std::string plan_name_;
     std::vector<u32> unit_ids_;
     std::unordered_map<u32, std::string> squad_map_;

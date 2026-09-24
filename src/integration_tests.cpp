@@ -1267,6 +1267,45 @@ void test_platoon(TestContext& ctx) {
     spdlog::info("Platoon test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
+
+    // A platoon whose units are all gone is destroyed, as Moho's are: its
+    // OnDestroy empties its trash, ending its AI thread (retail's AI loops
+    // run while PlatoonExists). One that never held a unit stays.
+    const auto reap_check = [&](const char* what, const char* code) {
+        if (auto r = ctx.lua_state.do_string(code); r) spdlog::info("[PASS] {}", what);
+        else osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+    };
+    reap_check("setup: a platoon about to lose its only unit", R"(
+        local brain = ArmyBrains[2]
+        local tank = CreateUnitHPR('uel0201', 'ARMY_2', 640, GetTerrainHeight(640, 150), 150, 0, 0, 0)
+        __osc_doomed = brain:MakePlatoon('Doomed', 'none')
+        brain:AssignUnitsToPlatoon(__osc_doomed, {tank}, 'Attack', 'none')
+        __osc_doomed_ticks = 0
+        __osc_doomed:ForkThread(function(self)
+            while true do
+                __osc_doomed_ticks = __osc_doomed_ticks + 1
+                WaitTicks(1)
+            end
+        end)
+        __osc_never = brain:MakePlatoon('NeverManned', 'none')
+        __osc_tank = tank
+    )");
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    reap_check("setup: its unit goes", R"(
+        if __osc_doomed_ticks == 0 then error('its thread never ran') end
+        __osc_tank:Destroy()
+    )");
+    for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    reap_check("Platoon test: an emptied platoon is destroyed and its thread ends", R"(
+        local brain = ArmyBrains[2]
+        if brain:PlatoonExists(__osc_doomed) then error('it still exists') end
+        if not brain:PlatoonExists(__osc_never) then error('a platoon that never held a unit went too') end
+        __osc_doomed_seen = __osc_doomed_ticks
+    )");
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    reap_check("Platoon test: its AI thread no longer runs", R"(
+        if __osc_doomed_ticks ~= __osc_doomed_seen then error('its thread still runs') end
+    )");
 }
 
 // Repair test: ACU builds pgen, damage it, repair it

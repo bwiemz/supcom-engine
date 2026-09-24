@@ -544,6 +544,10 @@ private:
     /// factory's build, an enhancement).
     void stop_unit(Unit& unit);
     void enforce_no_rush();
+    /// A platoon whose units are all gone is destroyed, as Moho does: its
+    /// script's OnDestroy empties its trash, ending its AI thread. (The
+    /// army's pool, and platoons that never held a unit, stay.)
+    void reap_empty_platoons();
     /// Clamp a Move/Attack target to a unit's no-rush zone when the rule is
     /// active. Returns the (possibly clamped) position.
     Vector3 clamp_to_no_rush(const Unit& unit, const Vector3& target) const;
