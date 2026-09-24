@@ -9345,6 +9345,189 @@ void test_charge(TestContext& ctx) {
     spdlog::info("Charge test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Range test (M206e): Moho's work ranges, guard reach, the queue ──
+void test_range(TestContext& ctx) {
+    spdlog::info("=== RANGE TEST: builders reach as far as Moho's gap rule, orders append ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // On the flat ground east of the map's centre. A gap is the distance
+    // between centres less the worker's largest footprint side and the
+    // target's (its skirt, for a build or a repair). Every unit here has a
+    // footprint of 1; T1 point defence a skirt of 1, a land factory 8.
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
+        function __osc_from(u, x, z)
+            local p = u:GetPosition()
+            return VDist2(p[1], p[3], x, z)
+        end
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 100000)
+        brain:GiveStorage('ENERGY', 1000000)
+        brain:GiveResource('MASS', 100000)
+        brain:GiveResource('ENERGY', 1000000)
+
+        -- Builds: a T1 engineer (MaxBuildDistance 5) reaches 7 from point
+        -- defence and 14 from a land factory; an ACU (10) 12 from point
+        -- defence.
+        __osc_near = __osc_spawn('uel0105', 'ARMY_1', 600.5, 100.5)
+        IssueBuildMobile({__osc_near}, __osc_at(607, 100.5), 'ueb2101', {})
+        __osc_far = __osc_spawn('uel0105', 'ARMY_1', 600.5, 110.5)
+        IssueBuildMobile({__osc_far}, __osc_at(609.5, 110.5), 'ueb2101', {})
+        __osc_fac = __osc_spawn('uel0105', 'ARMY_1', 600.5, 120.5)
+        IssueBuildMobile({__osc_fac}, __osc_at(614, 120.5), 'ueb0101', {})
+        __osc_acu = __osc_spawn('uel0001', 'ARMY_1', 650.5, 100.5)
+        IssueBuildMobile({__osc_acu}, __osc_at(662, 100.5), 'ueb2101', {})
+
+        -- Guard: an engineer beside an ACU that builds 11 away, beyond the
+        -- engineer's reach.
+        __osc_boss = __osc_spawn('uel0001', 'ARMY_1', 650.5, 120.5)
+        __osc_helper = __osc_spawn('uel0105', 'ARMY_1', 646.5, 120.5)
+        IssueBuildMobile({__osc_boss}, __osc_at(661.5, 120.5), 'ueb2101', {})
+        IssueGuard({__osc_helper}, __osc_boss)
+
+        -- Repair, reclaim and capture, each in reach.
+        __osc_mender = __osc_spawn('uel0105', 'ARMY_1', 575.5, 80.5)
+        __osc_hurt = __osc_spawn('uel0201', 'ARMY_1', 581.5, 80.5)
+        __osc_hurt:SetHealth(__osc_hurt, 20)
+        IssueRepair({__osc_mender}, __osc_hurt)
+        __osc_reclaimer = __osc_spawn('uel0105', 'ARMY_1', 620.5, 80.5)
+        __osc_scrap = __osc_spawn('ueb2101', 'ARMY_1', 627, 80.5)
+        IssueReclaim({__osc_reclaimer}, __osc_scrap)
+        __osc_walker = __osc_spawn('uel0105', 'ARMY_1', 620.5, 90.5)
+        __osc_scrap2 = __osc_spawn('ueb2101', 'ARMY_1', 629.5, 90.5)
+        IssueReclaim({__osc_walker}, __osc_scrap2)
+        __osc_taker = __osc_spawn('uel0105', 'ARMY_1', 640.5, 80.5)
+        __osc_prize = __osc_spawn('uel0201', 'ARMY_2', 647, 80.5)
+        __osc_prize:SetFireState(1)
+        IssueCapture({__osc_taker}, __osc_prize)
+
+        -- The queue: orders after the first wait their turn.
+        __osc_queued = __osc_spawn('uel0201', 'ARMY_1', 680.5, 100.5)
+        IssueMove({__osc_queued}, __osc_at(690, 100.5))
+        IssueGuard({__osc_queued}, __osc_acu)
+
+        -- Footprints: a blueprint without one rounds its size up (a T2
+        -- tank is 1.2 long: 2 cells); a prop has one too, so an engineer
+        -- reaches an oak grove (8 by 10) from 16.
+        __osc_long = __osc_spawn('uel0202', 'ARMY_1', 700.5, 140.5)
+        __osc_cutter = __osc_spawn('uel0105', 'ARMY_1', 726, 110.5)
+        __osc_grove = CreatePropHPR('/env/evergreen/props/trees/groups/oak01_group1_prop.bp', 740,
+                                    GetTerrainHeight(740, 110.5), 110.5, 0, 0, 0)
+        IssueReclaim({__osc_cutter}, __osc_grove)
+
+        -- Launches: an empty launcher ordered to fire; an ACU's tactical
+        -- missile (MinRadius 5) ordered at a point 3 away.
+        __osc_tml = __osc_spawn('ueb2108', 'ARMY_1', 700.5, 90.5)
+        IssueTactical({__osc_tml}, __osc_at(780, 90.5))
+        __osc_lobber = __osc_spawn('uel0001', 'ARMY_1', 720.5, 130.5)
+        __osc_lobber:CreateEnhancement('TacticalMissile')
+        __osc_lobber:GiveTacticalSiloAmmo(1)
+        __osc_mark = {723.5, 130.5}
+        IssueTactical({__osc_lobber}, __osc_at(723.5, 130.5))
+    )");
+    run(3);
+    lua_check("Test 1: builders in reach build where they stand", R"(
+        for name, u in {near = __osc_near, fac = __osc_fac, acu = __osc_acu} do
+            if not u:IsUnitState('Building') then error(name .. ' is not building') end
+        end
+        if __osc_from(__osc_near, 600.5, 100.5) > 0.1 then error('near moved') end
+        if __osc_from(__osc_fac, 600.5, 120.5) > 0.1 then error('the factory builder moved') end
+        if __osc_from(__osc_acu, 650.5, 100.5) > 0.1 then error('the ACU moved') end
+    )");
+    lua_check("Test 2: repair, reclaim and capture in reach start where they stand", R"(
+        if not __osc_mender:IsUnitState('Repairing') then error('the mender is not repairing') end
+        if not __osc_reclaimer:IsUnitState('Reclaiming') then error('the reclaimer is not reclaiming') end
+        if not __osc_taker:IsUnitState('Capturing') then error('the taker is not capturing') end
+        if __osc_from(__osc_mender, 575.5, 80.5) > 0.1 then error('the mender moved') end
+        if __osc_from(__osc_reclaimer, 620.5, 80.5) > 0.1 then error('the reclaimer moved') end
+        if __osc_from(__osc_taker, 640.5, 80.5) > 0.1 then error('the taker moved') end
+    )");
+    lua_check("Test 3: a guard out of reach of the build helps with nothing yet", R"(
+        if not __osc_boss:IsUnitState('Building') then error('the boss is not building') end
+        if __osc_helper:GetConsumptionPerSecondEnergy() > 0 then error('the helper already pays') end
+    )");
+    lua_check("Test 4: orders append to the queue", R"(
+        local n = table.getn(__osc_queued:GetCommandQueue())
+        if n ~= 2 then error('its queue holds ' .. n) end
+    )");
+    lua_check("Test 5: footprints round up, and props have them", R"(
+        if __osc_long:GetFootPrintSize() ~= 2 then error('the tank spans ' .. __osc_long:GetFootPrintSize()) end
+        if not __osc_cutter:IsUnitState('Reclaiming') then error('the grove is not being reclaimed') end
+        if __osc_from(__osc_cutter, 726, 110.5) > 0.1 then error('the cutter moved') end
+    )");
+    lua_check("Test 6: a launch with an empty silo asks it for a missile", R"(
+        if not __osc_tml:IsUnitState('SiloBuildingAmmo') then error('the launcher is not building') end
+        local n = __osc_tml:GetMissileInfo().tacticalSiloBuildCount
+        if n ~= 1 then error(n .. ' missiles ordered') end
+    )");
+
+    // The repair's target moves off: within twice the reach it goes on.
+    lua_check("setup: the hurt tank moves 11 off", "Warp(__osc_hurt, __osc_at(586.5, 80.5))");
+    run(2);
+    lua_check("Test 7: a repair goes on out to twice its reach", R"(
+        if not __osc_mender:IsUnitState('Repairing') then error('the mender stopped') end
+    )");
+    lua_check("setup: the hurt tank moves 14 off", "Warp(__osc_hurt, __osc_at(589.5, 80.5))");
+    run(2);
+    lua_check("Test 8: past that it stops", R"(
+        if __osc_mender:IsUnitState('Repairing') then error('the mender repairs from 14') end
+        if table.getn(__osc_mender:GetCommandQueue()) ~= 0 then error('the order is still queued') end
+    )");
+
+    run(60);
+    lua_check("Test 9: a builder out of reach walks just clear of the site's skirt, and builds",
+              R"(
+        if not __osc_far:IsUnitState('Building') then error('far is not building') end
+        local d = __osc_from(__osc_far, 609.5, 110.5)
+        if d < 1.5 or d > 3 then error(string.format('far builds from %.2f', d)) end
+    )");
+    lua_check("Test 10: a reclaimer out of reach walks up, and reclaims", R"(
+        if not __osc_walker:IsUnitState('Reclaiming') then error('the walker is not reclaiming') end
+        if __osc_from(__osc_walker, 620.5, 90.5) < 1 then error('the walker never moved') end
+    )");
+    lua_check("Test 11: the guard walked into reach, and helps", R"(
+        if __osc_helper:GetConsumptionPerSecondEnergy() <= 0 then error('the helper pays nothing') end
+        local d = __osc_from(__osc_helper, 661.5, 120.5)
+        if d > 7 then error(string.format('the helper is %.2f from the build', d)) end
+    )");
+
+    run(140);
+    lua_check("Test 12: a launcher too close backs off, and fires", R"(
+        local d = __osc_from(__osc_lobber, __osc_mark[1], __osc_mark[2])
+        if d < 5 then error(string.format('the ACU is %.2f from its target', d)) end
+        if __osc_lobber:GetTacticalSiloAmmoCount() ~= 0 then error('the ACU never fired') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 13: no script errors");
+    spdlog::info("Range test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 
