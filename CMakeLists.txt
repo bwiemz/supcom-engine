@@ -50,6 +50,7 @@ target_link_libraries(opensupcom PRIVATE
     osc::ui
     osc::renderer
     osc::lua
+    osc::lua_user
     osc::blueprints
 )
 
@@ -63,6 +64,18 @@ if(OSC_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
     add_subdirectory(tests/integration)
+
+    # The library targets link without a cycle or a layer crossing (M191):
+    # the sim and its Lua library never reach the renderer.
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        include(cmake/OscLinkGraph.cmake)
+        osc_write_link_graph(${CMAKE_BINARY_DIR}/osc_link_graph.txt)
+        add_test(NAME arch.link_layers
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_link_cycles.py
+                         ${CMAKE_BINARY_DIR}/osc_link_graph.txt)
+        set_tests_properties(arch.link_layers PROPERTIES LABELS "arch" TIMEOUT 60)
+    endif()
 endif()
 
 # Static analysis (label `lint`, off by default: it needs clang-tidy, the

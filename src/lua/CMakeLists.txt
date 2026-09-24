@@ -25,8 +25,18 @@ add_library(osc::lua ALIAS osc_lua)
 target_include_directories(osc_lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_lua
     PUBLIC osc::core osc::vfs osc::sim osc::map osc::audio osc::ui osc::video lua50
-           osc::platform
-    PRIVATE osc::renderer
+           osc::platform osc::blueprints
 )
 
 target_link_libraries(osc_lua PRIVATE osc::warnings)
+
+# The UI state's bindings that reach the game's view and input (M191): apart
+# from osc_lua, so the sim's Lua library needs no renderer.
+add_library(osc_lua_user STATIC
+    user_bindings.cpp
+)
+add_library(osc::lua_user ALIAS osc_lua_user)
+target_link_libraries(osc_lua_user
+    PUBLIC osc::lua
+    PRIVATE osc::renderer spdlog::spdlog osc::warnings
+)
