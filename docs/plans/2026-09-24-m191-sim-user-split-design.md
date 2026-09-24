@@ -27,7 +27,14 @@ Besides the renderer and input-handler getters, they use 13 of the file's genera
    - **The result:** `osc_lua` no longer links the renderer.
    - **The guard:** a test labelled `arch` (`tools/check_link_cycles.py`, over `cmake --graphviz`) fails if the targets form a cycle again, or if the sim, its Lua library or the blueprints come to depend on a layer above them.
    - An interface the renderer implements would also free the user bindings from the renderer. It isn't worth it until a second renderer exists.
-2. **Split `moho_bindings.cpp` by class** into `src/lua/bindings/sim/` and `src/lua/bindings/ui/`. Only files change, not behaviour; the binding-coverage ratchet and the gate show nothing is lost.
+2. **Split `moho_bindings.cpp` by class** into `src/lua/bindings/sim/` and `src/lua/bindings/ui/`. Only files change, not behaviour; the binding-coverage ratchet and the gate show nothing is lost. **Done:**
+   - **Where things went:**
+     - Each class's methods and method table moved to its own file: 11 sim files (entity, unit, navigator, projectile, weapon, aibrain, platoon, shield, manipulators, effects, blip) and 5 UI files (controls, text, lists, world, lobby).
+     - A helper moved with its users when they all live in one file. Otherwise it stayed shared. `moho_bindings_internal.hpp` now declares 35 more helpers and the 38 method tables.
+     - `moho_bindings.cpp` keeps the shared helpers, the UI state's globals and the registration: 4.2k lines, from 16k.
+   - **How:** a script cut the file into top-level items, skipping strings, raw Lua strings and comments. It assigned each item by name and by its users, and wrote the items back unchanged. The only edits: a shared item loses `static`; a shared function's default arguments move to its declaration; the hand-laid method tables are fenced from the formatter, as `moho_classes` is.
+   - **The check:** a token count of before and after differs by exactly those edits.
+   - **The format ratchet:** it now counts a block moved between files as moved, not changed.
 3. **The UI reads snapshots.** `UserUnit` methods read the tick's `WorldSnapshot` (M190b) rather than live units. The user side then reaches the sim only through commands and `SimCallback`, as in Moho.
 
 ## Proof

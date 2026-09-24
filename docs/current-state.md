@@ -189,10 +189,10 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Architecture (Phase C):**
   - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
   - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
+  - `moho_bindings.cpp` is split by class into `src/lua/bindings/{sim,ui}/` (M191 step 2).
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
   - Next:
     - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
-    - M191 step 2: split `moho_bindings.cpp` by class;
     - M191 step 3: the UI's unit methods read snapshots.
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** in review (PR #63), a cap on wire message size, and orders limited to the sender's army. Peers are not yet authenticated.
