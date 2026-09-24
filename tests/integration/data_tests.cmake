@@ -34,7 +34,7 @@ set(OSC_DATA_TESTS_GATE
     construction-test controls-test cursor-render-test damage-test decal-test
     death-test decalsplat-test deposit-test drag-render-test draw-test dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
-    gameui-test
+    gameui-test impact-test
     enhance-wreck-test fire-test flags-test font-test fow-test full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test

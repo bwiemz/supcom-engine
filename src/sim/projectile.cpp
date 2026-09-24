@@ -1,10 +1,13 @@
 #include "sim/projectile.hpp"
 #include "core/dmath.hpp"
+#include "core/test_status.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/unit.hpp"
 #include "map/terrain.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -43,6 +46,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         registry.unregister_entity(entity_id());
         return;
     }
+    if (impacted) return;
 
     // Apply ballistic acceleration (gravity)
     if (ballistic_accel != 0) {
@@ -151,7 +155,7 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
             f32 dz = target->position().z - pos.z;
             f32 dist = std::sqrt(dx * dx + dz * dz);
             if (dist < step + HIT_RADIUS) {
-                on_impact(L, target, registry);
+                on_impact(L, target, registry, terrain);
                 return;
             }
         }
@@ -164,20 +168,104 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         f32 dz = target_position.z - pos.z;
         f32 dist = std::sqrt(dx * dx + dz * dz);
         if (dist < step + HIT_RADIUS) {
-            on_impact(L, nullptr, registry);
+            on_impact(L, nullptr, registry, terrain);
             return;
         }
     }
 }
 
-void Projectile::on_impact(lua_State* L, Entity* target,
-                           EntityRegistry& registry) {
+const char* Projectile::impact_type(const Entity* target, const map::Terrain* terrain) const {
+    const Vector3 pos = position();
+    const bool wet = terrain && terrain->has_water();
+    const bool under = wet && (stay_underwater || pos.y < terrain->water_elevation() - 0.5f);
+    if (target) {
+        if (target->is_unit()) {
+            const std::string& layer = static_cast<const Unit*>(target)->layer();
+            if (layer == "Air") return "UnitAir";
+            if (layer == "Sub" || layer == "Seabed") return "UnitUnderwater";
+            return "Unit";
+        }
+        if (target->is_prop()) return "Prop";
+        if (target->is_shield()) return "Shield";
+        if (target->is_projectile()) return under ? "ProjectileUnderwater" : "Projectile";
+        return "Unit";
+    }
+    if (wet && terrain->get_terrain_height(pos.x, pos.z) < terrain->water_elevation())
+        return under ? "Underwater" : "Water";
+    return "Terrain";
+}
+
+void Projectile::on_impact(lua_State* L, Entity* target, EntityRegistry& registry,
+                           const map::Terrain* terrain) {
     if (!L) {
         mark_destroyed();
         registry.unregister_entity(entity_id());
         return;
     }
+    impacted = true;
+    const u32 id = entity_id();
+    const u32 target_id = target ? target->entity_id() : 0;
+    const char* type = impact_type(target, terrain);
 
+    // Its script's OnImpact plays the impact out, as in retail: damage from
+    // the DamageData its weapon passed (friendly fire, damage over time and
+    // buffs included), effects chosen by the terrain, sound, and its own
+    // destruction. A projectile no weapon passed damage to keeps the
+    // engine's damage, so every hit counts once.
+    bool scripted = false;
+    bool script_damages = false;
+    if (lua_table_ref() >= 0) {
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+        lua_pushstring(L, "OnImpact");
+        lua_gettable(L, -2);
+        scripted = lua_isfunction(L, -1);
+        lua_pop(L, 1);
+        lua_pushstring(L, "DamageData");
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "DamageAmount");
+            lua_rawget(L, -2);
+            script_damages = scripted && lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0;
+            lua_pop(L, 1);
+        }
+        lua_settop(L, top);
+    }
+    if (!script_damages) deal_engine_damage(L, target, registry);
+
+    if (scripted) {
+        Entity* self = registry.find(id);
+        if (!self || self->destroyed()) return;
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, self->lua_table_ref());
+        lua_pushstring(L, "OnImpact");
+        lua_gettable(L, -2);
+        lua_pushvalue(L, top + 1);
+        lua_pushstring(L, type);
+        Entity* hit = target_id ? registry.find(target_id) : nullptr;
+        if (hit && !hit->destroyed() && hit->lua_table_ref() >= 0)
+            lua_rawgeti(L, LUA_REGISTRYINDEX, hit->lua_table_ref());
+        else lua_pushnil(L);
+        const bool ok = lua_pcall(L, 3, 0, 0) == 0;
+        if (!ok) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                std::string("Projectile OnImpact error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+        lua_settop(L, top);
+        if (ok) return; // the script destroys it, now or after its ImpactTimeout
+    }
+
+    // No script to finish it (or it broke): it goes now.
+    if (Entity* self = registry.find(id); self && !self->destroyed()) {
+        self->mark_destroyed();
+        registry.unregister_entity(id);
+    }
+}
+
+void Projectile::deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry) {
     auto pos = position();
 
     // Resolve launcher's Lua ref once (avoids stale pointer if launcher is
@@ -252,10 +340,6 @@ void Projectile::on_impact(lua_State* L, Entity* target,
             lua_pop(L, 1);
         }
     }
-
-    // Destroy projectile (the unregister hook detaches its Lua table)
-    mark_destroyed();
-    registry.unregister_entity(entity_id());
 }
 
 } // namespace osc::sim

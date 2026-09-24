@@ -88,6 +88,7 @@ void test_weapon(TestContext& ctx);
 void test_targeting(TestContext& ctx);
 void test_aim(TestContext& ctx);
 void test_death(TestContext& ctx);
+void test_impact(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);

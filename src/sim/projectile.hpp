@@ -42,13 +42,26 @@ public:
     bool collision_enabled = true;   // SetCollision
     bool collide_surface = true;     // SetCollideSurface
     bool stay_underwater = false;    // StayUnderwater
+    /// It hit something: it no longer moves or collides, and its script plays
+    /// the rest out (a projectile with an ImpactTimeout lingers for it).
+    bool impacted = false;
 
     /// Per-tick: move, check collision, impact.
     void update(f64 dt, EntityRegistry& registry, lua_State* L,
                 const map::Terrain* terrain = nullptr);
 
+    /// What retail's Projectile.OnImpact calls the thing hit: 'Unit',
+    /// 'UnitAir', 'UnitUnderwater', 'Prop', 'Shield', 'Projectile',
+    /// 'ProjectileUnderwater', or, reaching the ground, 'Terrain', 'Water' or
+    /// 'Underwater'.
+    const char* impact_type(const Entity* target, const map::Terrain* terrain) const;
+
 private:
-    void on_impact(lua_State* L, Entity* target, EntityRegistry& registry);
+    void on_impact(lua_State* L, Entity* target, EntityRegistry& registry,
+                   const map::Terrain* terrain);
+    /// The engine's own damage, for projectiles no weapon passed DamageData to
+    /// (the engine-fired silo and OverCharge shots).
+    void deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry);
     static constexpr f32 HIT_RADIUS = 1.5f;
 };
 

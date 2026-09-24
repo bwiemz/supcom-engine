@@ -26,6 +26,7 @@
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
+#include "map/visibility_grid.hpp"
 #include "sim/shield.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -7059,6 +7060,155 @@ void test_death(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 9: script errors while dying");
     }
     spdlog::info("Death test: {}/{} passed", pass, pass + fail);
+}
+
+// M201c: a projectile's impact is its script's. The engine names what it hit
+// ('Unit', 'Terrain', 'Water', ...) and calls OnImpact, whose DoDamage deals
+// the damage its weapon passed -- once; the engine deals none of its own.
+// GetTerrainType gives the map's terrain types for the impact effects, and a
+// VizMarker's intel reveals an area.
+void test_impact(TestContext& ctx) {
+    spdlog::info("=== IMPACT TEST: projectiles impact through their scripts ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+
+    lua_check("setup", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- A tank shelling a power generator; each shell's impact is logged
+        -- with the target's health around its OnImpact.
+        __osc_tank = spawn('uel0201', 'ARMY_1', 220, 790)
+        __osc_target = spawn('ueb1101', 'ARMY_2', 232, 790)
+        __osc_impacts = {}
+        local w = __osc_tank:GetWeapon(1)
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            local proj = fire(self, muzzle)
+            local impact = proj.OnImpact
+            proj.OnImpact = function(p, type, target)
+                local rec = {type = type, target = target, amount = p.DamageData.DamageAmount}
+                rec.before = __osc_target:GetHealth()
+                impact(p, type, target)
+                rec.after = __osc_target:GetHealth()
+                table.insert(__osc_impacts, rec)
+            end
+            return proj
+        end
+    )");
+    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+
+    lua_check("Test 1: a shell hitting a unit calls OnImpact('Unit', unit)", R"(
+        local r = __osc_impacts[1]
+        if not r then error('no impact') end
+        if r.type ~= 'Unit' then error('type ' .. tostring(r.type)) end
+        if r.target ~= __osc_target then error('target is not the generator') end
+    )");
+    lua_check("Test 2: each hit deals its DamageData once, and the engine none", R"(
+        local dealt = 0
+        for _, r in __osc_impacts do
+            if math.abs((r.before - r.after) - r.amount) > 1e-3 then
+                error('an impact dealt ' .. (r.before - r.after) .. ' of ' .. r.amount)
+            end
+            dealt = dealt + (r.before - r.after)
+        end
+        local lost = __osc_target:GetMaxHealth() - __osc_target:GetHealth()
+        if table.getn(__osc_impacts) < 2 then error('only ' .. table.getn(__osc_impacts) .. ' hits') end
+        if math.abs(lost - dealt) > 1e-3 then
+            error('lost ' .. lost .. ' but the scripts dealt ' .. dealt)
+        end
+    )");
+
+    // Impact types on the map's own ground and water.
+    {
+        auto* terrain = ctx.sim.terrain();
+        osc::f32 wx = -1, wz = -1;
+        for (int iz = 1; iz < 50 && wx < 0; ++iz)
+            for (int ix = 1; ix < 50; ++ix) {
+                const auto x = static_cast<osc::f32>(ix * 20);
+                const auto z = static_cast<osc::f32>(iz * 20);
+                if (terrain && terrain->has_water() &&
+                    terrain->get_terrain_height(x, z) < terrain->water_elevation() - 1.0f) {
+                    wx = x;
+                    wz = z;
+                    break;
+                }
+            }
+        osc::sim::Projectile shot;
+        shot.set_position({220.0f, terrain ? terrain->get_terrain_height(220, 790) : 0.0f, 790.0f});
+        const std::string land = shot.impact_type(nullptr, terrain);
+        std::string water = "(no water)";
+        std::string under = "(no water)";
+        if (wx >= 0) {
+            shot.set_position({wx, terrain->water_elevation(), wz});
+            water = shot.impact_type(nullptr, terrain);
+            shot.stay_underwater = true;
+            shot.set_position({wx, terrain->water_elevation() - 2.0f, wz});
+            under = shot.impact_type(nullptr, terrain);
+        }
+        osc::sim::Unit plane;
+        plane.set_layer("Air");
+        const std::string air = shot.impact_type(&plane, terrain);
+        check(land == "Terrain" && water == "Water" && under == "Underwater" && air == "UnitAir",
+              fmt::format("Test 3: ground impacts are 'Terrain' ({}), 'Water' ({}) and "
+                          "'Underwater' ({}), a plane 'UnitAir' ({})",
+                          land, water, under, air));
+    }
+
+    lua_check("Test 4: GetTerrainType gives the map's TerrainTypes.lua entries", R"(
+        local here = GetTerrainType(220, 790)
+        if not here.TypeCode or type(here.FXImpact) ~= 'table' then
+            error('entry ' .. tostring(here.Name))
+        end
+        if GetTerrainType(-1, -1).Name ~= 'Default' then error('off the map is not Default') end
+        local names = {}
+        for x = 50, 1000, 100 do
+            for z = 50, 1000, 100 do names[GetTerrainType(x, z).Name] = true end
+        end
+        local n = 0
+        for _ in names do n = n + 1 end
+        if n < 3 then error('only ' .. n .. ' terrain types across the map') end
+    )");
+
+    // A VizMarker (a script entity) reveals an area with InitIntel.
+    auto* vis = ctx.sim.visibility_grid();
+    const bool dark_before = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    lua_check("setup: a VizMarker", R"(
+        local VizMarker = import('/lua/sim/vizmarker.lua').VizMarker
+        __osc_marker = VizMarker({X = 450, Z = 600, Radius = 12, LifeTime = 0, Army = 1,
+                                  Omni = false, Radar = false, Vision = true, WaterVision = false})
+    )");
+    ctx.sim.tick();
+    const bool lit = vis && vis->has_vision(450.0f, 600.0f, 0);
+    (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
+    ctx.sim.tick();
+    const bool dark_after = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    check(dark_before && lit && dark_after,
+          fmt::format("Test 5: a VizMarker reveals its area while it lives "
+                      "(before {}, with {}, after {})",
+                      !dark_before, lit, !dark_after));
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
+    spdlog::info("Impact test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {
