@@ -100,6 +100,7 @@ void test_defence(TestContext& ctx);
 void test_beam_weapon(TestContext& ctx);
 void test_charge(TestContext& ctx);
 void test_range(TestContext& ctx);
+void test_ferry(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);
