@@ -2955,6 +2955,66 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
         std::remove_if(manipulators_.begin(), manipulators_.end(),
                         [](const auto& m) { return m->is_destroyed(); }),
         manipulators_.end());
+    update_pose();
+}
+
+void Unit::update_pose() {
+    const BoneData* bd = bone_data();
+    if (!bd || manipulators_.empty()) {
+        pose_.clear();
+        return;
+    }
+    const size_t count = bd->bones.size();
+    // Lower precedence first, so a higher one's delta on a bone replaces it.
+    std::vector<const Manipulator*> order;
+    for (const auto& m : manipulators_) {
+        if (!m->is_destroyed() && m->enabled()) order.push_back(m.get());
+    }
+    std::stable_sort(order.begin(), order.end(), [](const Manipulator* a, const Manipulator* b) {
+        return a->precedence() < b->precedence();
+    });
+    PoseDeltas deltas(count);
+    for (const Manipulator* m : order) m->contribute_pose(deltas);
+    if (!deltas.any()) {
+        pose_.clear();
+        return;
+    }
+    // Bones are stored parents first (see the SCM parser).
+    pose_.resize(count);
+    for (size_t i = 0; i < count; ++i) {
+        const BoneInfo& bone = bd->bones[i];
+        Quaternion rotation = bone.local_rotation;
+        Vector3 position = bone.local_position;
+        if (deltas.rotated[i]) rotation = quat_multiply(rotation, deltas.rotation[i]);
+        if (deltas.offset_set[i]) {
+            const Vector3 slide = quat_rotate(bone.local_rotation, deltas.offset[i]);
+            position = {position.x + slide.x, position.y + slide.y, position.z + slide.z};
+        }
+        const i32 parent = bone.parent_index;
+        if (parent < 0 || static_cast<size_t>(parent) >= i) {
+            pose_[i] = {position, rotation};
+            continue;
+        }
+        const BonePose& p = pose_[static_cast<size_t>(parent)];
+        const Vector3 offset = quat_rotate(p.rotation, position);
+        pose_[i] = {{p.position.x + offset.x, p.position.y + offset.y, p.position.z + offset.z},
+                    quat_multiply(p.rotation, rotation)};
+    }
+}
+
+BonePose Unit::bone_pose(i32 bone) const {
+    const BoneData* bd = bone_data();
+    if (!bd || !bd->is_valid(bone)) return {};
+    if (static_cast<size_t>(bone) < pose_.size()) return pose_[static_cast<size_t>(bone)];
+    const BoneInfo& info = bd->bones[static_cast<size_t>(bone)];
+    return {info.world_position, info.world_rotation};
+}
+
+Vector3 Unit::bone_world_position(i32 bone) const {
+    const BoneData* bd = bone_data();
+    if (!bd || !bd->is_valid(bone)) return position();
+    const Vector3 offset = quat_rotate(orientation(), bone_pose(bone).position);
+    return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
 }
 
 void Unit::destroy_all_manipulators() {

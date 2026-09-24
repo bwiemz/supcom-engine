@@ -504,8 +504,10 @@ static i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg) {
     return 0; // default to root
 }
 
-/// Compute world-space bone position for an entity.
+/// Compute world-space bone position for an entity: a unit's as posed by
+/// its manipulators (turrets, rotators), anything else's in bind pose.
 static sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx) {
+    if (e->is_unit()) return static_cast<const sim::Unit*>(e)->bone_world_position(bone_idx);
     auto* bd = e->bone_data();
     if (!bd || !bd->is_valid(bone_idx)) return e->position();
 
@@ -569,9 +571,13 @@ static int entity_GetBoneDirection(lua_State* L) {
         push_vector3(L, fwd);
         return 1;
     }
+    // The bone's forward (+Z) in the world: a unit's as posed (turrets,
+    // rotators), anything else's in bind pose.
     i32 idx = resolve_bone_index(e, L, 2);
-    auto& bone = bd->bones[static_cast<size_t>(idx)];
-    auto bone_world_rot = sim::quat_multiply(e->orientation(), bone.local_rotation);
+    const sim::Quaternion model_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(idx).rotation
+                     : bd->bones[static_cast<size_t>(idx)].world_rotation;
+    auto bone_world_rot = sim::quat_multiply(e->orientation(), model_rot);
     auto dir = sim::quat_rotate(bone_world_rot, {0, 0, 1});
     push_vector3(L, dir);
     return 1;
@@ -4515,15 +4521,27 @@ static int weapon_SetTargetGround(lua_State* L) {
     return 0;
 }
 
+// weapon:SetFireControl(label): the aim controller of that label gates
+// firing (OnTarget) instead of the first one created.
 static int weapon_SetFireControl(lua_State* L) {
     auto* w = check_weapon(L);
-    if (w) w->fire_control = (lua_toboolean(L, 2) != 0);
+    if (w) w->fire_control_label = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
     return 0;
 }
 
+// weapon:IsFireControl(label): whether that aim controller gates firing.
 static int weapon_IsFireControl(lua_State* L) {
     auto* w = check_weapon(L);
-    lua_pushboolean(L, (w && w->fire_control) ? 1 : 0);
+    bool is = false;
+    if (w && lua_type(L, 2) == LUA_TSTRING) {
+        lua_pushstring(L, "_c_unit");
+        lua_rawget(L, 1);
+        const auto* unit = static_cast<const sim::Unit*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        const sim::AimManipulator* aim = unit ? w->fire_control(*unit) : nullptr;
+        is = aim && aim->label() == lua_tostring(L, 2);
+    }
+    lua_pushboolean(L, is ? 1 : 0);
     return 1;
 }
 

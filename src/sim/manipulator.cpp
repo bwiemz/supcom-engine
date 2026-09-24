@@ -396,31 +396,152 @@ bool SlideManipulator::is_at_goal() const {
 }
 
 // ---------------------------------------------------------------------------
+// Pose contributions
+// ---------------------------------------------------------------------------
+
+namespace {
+
+constexpr f32 kPi = 3.14159265358979f;
+constexpr f32 kDegToRad = kPi / 180.0f;
+
+/// An angle difference wrapped to [-pi, pi].
+f32 wrap_angle(f32 a) {
+    while (a > kPi) a -= 2.0f * kPi;
+    while (a < -kPi) a += 2.0f * kPi;
+    return a;
+}
+
+Vector3 sub(const Vector3& a, const Vector3& b) {
+    return {a.x - b.x, a.y - b.y, a.z - b.z};
+}
+
+/// Move `value` toward `goal` by at most `step`.
+f32 approach(f32 value, f32 goal, f32 step) {
+    if (goal > value) return std::min(goal, value + step);
+    return std::max(goal, value - step);
+}
+
+/// A bone's rest frame in world space: its parent as currently posed,
+/// composed with the bone's own bind transform (so without its own delta).
+BonePose rest_frame_world(const Unit& unit, i32 bone) {
+    const BoneInfo& info = unit.bone_data()->bones[static_cast<size_t>(bone)];
+    BonePose parent;
+    if (info.parent_index >= 0) parent = unit.bone_pose(info.parent_index);
+    const Quaternion model_rot = quat_multiply(parent.rotation, info.local_rotation);
+    const Vector3 offset = quat_rotate(parent.rotation, info.local_position);
+    const Vector3 model_pos{parent.position.x + offset.x, parent.position.y + offset.y,
+                            parent.position.z + offset.z};
+    const Vector3 world = quat_rotate(unit.orientation(), model_pos);
+    return {{unit.position().x + world.x, unit.position().y + world.y, unit.position().z + world.z},
+            quat_multiply(unit.orientation(), model_rot)};
+}
+
+} // namespace
+
+void RotateManipulator::contribute_pose(PoseDeltas& deltas) const {
+    deltas.rotate(bone_index_, quat_axis_angle(axis_, current_angle_ * kDegToRad));
+}
+
+void SlideManipulator::contribute_pose(PoseDeltas& deltas) const {
+    deltas.slide(bone_index_, current_);
+}
+
+// ---------------------------------------------------------------------------
 // AimManipulator
 // ---------------------------------------------------------------------------
 
-void AimManipulator::set_firing_arc(f32 yaw_min, f32 yaw_max, f32 yaw_speed,
-                                     f32 pitch_min, f32 pitch_max, f32 pitch_speed) {
-    yaw_min_ = yaw_min;
-    yaw_max_ = yaw_max;
-    yaw_speed_ = yaw_speed;
-    pitch_min_ = pitch_min;
-    pitch_max_ = pitch_max;
-    pitch_speed_ = pitch_speed;
+void AimManipulator::set_firing_arc(f32 yaw_min, f32 yaw_max, f32 yaw_speed, f32 pitch_min,
+                                    f32 pitch_max, f32 pitch_speed) {
+    yaw_min_ = yaw_min * kDegToRad;
+    yaw_max_ = yaw_max * kDegToRad;
+    yaw_speed_ = yaw_speed * kDegToRad;
+    pitch_min_ = pitch_min * kDegToRad;
+    pitch_max_ = pitch_max * kDegToRad;
+    pitch_speed_ = pitch_speed * kDegToRad;
 }
 
 void AimManipulator::set_heading_pitch(f32 h, f32 p) {
-    heading_ = h;
-    pitch_ = p;
-    // Clamp to firing arc
-    heading_ = std::clamp(heading_, yaw_min_, yaw_max_);
-    pitch_ = std::clamp(pitch_, pitch_min_, pitch_max_);
-    on_target_ = true;
+    const bool full_circle = yaw_max_ - yaw_min_ >= 2.0f * kPi - 1e-4f;
+    heading_ = full_circle ? wrap_angle(h) : std::clamp(h, yaw_min_, yaw_max_);
+    pitch_ = std::clamp(p, pitch_min_, pitch_max_);
 }
 
-void AimManipulator::tick(f32 /*dt*/) {
-    // AimManipulator state is set externally via set_heading_pitch.
-    // Future: could interpolate toward target heading/pitch at yaw_speed/pitch_speed.
+void AimManipulator::tick(f32 dt) {
+    const Unit* unit = owner_;
+    const bool bones = unit && unit->bone_data() && unit->bone_data()->is_valid(yaw_bone_);
+    const bool pitches = bones && unit->bone_data()->is_valid(pitch_bone_);
+    const bool full_circle = yaw_max_ - yaw_min_ >= 2.0f * kPi - 1e-4f;
+
+    // No bones to turn: nothing to wait for.
+    if (!bones) {
+        on_target_ = has_target_;
+        return;
+    }
+
+    f32 want_heading = 0;
+    f32 want_pitch = 0;
+    bool reachable = true;
+    if (has_target_) {
+        idle_time_ = 0;
+        // The target in the yaw bone's rest frame: heading about its Y axis
+        // from its forward (+Z); pitch from the pitch bone, once turned.
+        const BonePose yaw = rest_frame_world(*unit, yaw_bone_);
+        const Quaternion to_local = quat_conjugate(yaw.rotation);
+        const Vector3 v = quat_rotate(to_local, sub(target_, yaw.position));
+        want_heading = osc::dmath::atan2(v.x, v.z);
+        const Vector3 from = pitches ? unit->bone_world_position(pitch_bone_) : yaw.position;
+        const Vector3 w = quat_rotate(quat_axis_angle('y', -want_heading),
+                                      quat_rotate(to_local, sub(target_, from)));
+        want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
+        if (!full_circle) {
+            // Measured about the arc's centre, so an arc across +-180 deg
+            // (a rear turret) still contains the headings it should.
+            const f32 centre = 0.5f * (yaw_min_ + yaw_max_);
+            want_heading = centre + wrap_angle(want_heading - centre);
+            reachable = want_heading >= yaw_min_ && want_heading <= yaw_max_;
+            want_heading = std::clamp(want_heading, yaw_min_, yaw_max_);
+        }
+        if (pitches) {
+            reachable = reachable && want_pitch >= pitch_min_ && want_pitch <= pitch_max_;
+            want_pitch = std::clamp(want_pitch, pitch_min_, pitch_max_);
+        }
+    } else {
+        // Hold the pose for the reset time, then return to rest.
+        on_target_ = false;
+        idle_time_ += dt;
+        if (idle_time_ < reset_pose_time_) return;
+        want_heading = full_circle ? 0.0f : std::clamp(0.0f, yaw_min_, yaw_max_);
+        want_pitch = std::clamp(0.0f, pitch_min_, pitch_max_);
+    }
+
+    if (full_circle) {
+        const f32 diff = wrap_angle(want_heading - heading_);
+        heading_ = wrap_angle(heading_ + approach(0.0f, diff, yaw_speed_ * dt));
+    } else {
+        heading_ = approach(heading_, want_heading, yaw_speed_ * dt);
+    }
+    if (pitches) pitch_ = approach(pitch_, want_pitch, pitch_speed_ * dt);
+
+    if (!has_target_) return;
+    const f32 heading_error =
+        std::fabs(full_circle ? wrap_angle(want_heading - heading_) : want_heading - heading_);
+    const f32 pitch_error = pitches ? std::fabs(want_pitch - pitch_) : 0.0f;
+    on_target_ = reachable && heading_error <= tolerance_ && pitch_error <= tolerance_;
+}
+
+void AimManipulator::contribute_pose(PoseDeltas& deltas) const {
+    if (yaw_bone_ < 0) return;
+    const Quaternion yaw = quat_axis_angle('y', heading_);
+    // Pitch turns the barrel's forward (+Z) up: about local X, negated.
+    const Quaternion pitch = quat_axis_angle('x', -pitch_);
+    if (pitch_bone_ < 0) {
+        deltas.rotate(yaw_bone_, yaw);
+    } else if (pitch_bone_ == yaw_bone_) {
+        deltas.rotate(yaw_bone_, quat_multiply(yaw, pitch));
+    } else {
+        deltas.rotate(yaw_bone_, yaw);
+        deltas.rotate(pitch_bone_, pitch);
+    }
 }
 
 } // namespace osc::sim

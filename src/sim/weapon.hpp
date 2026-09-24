@@ -15,6 +15,7 @@ class VisibilityGrid;
 
 namespace osc::sim {
 
+class AimManipulator;
 class EntityRegistry;
 class Projectile;
 class SimState;
@@ -40,10 +41,13 @@ public:
     f32 firing_randomness = 0;    // angular scatter in radians
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
     f32 max_height_diff = 0;               // MaxHeightDiff / ChangeMaxHeightDiff (<= 0: unlimited)
-    f32 firing_tolerance = 0;       // ChangeFiringTolerance
+    f32 firing_tolerance = 0;              // FiringTolerance (degrees) / ChangeFiringTolerance
+    f32 tracking_radius = 1;               // TrackingRadius: acquire out to MaxRadius * this
+    f32 heading_arc_center = 0;            // HeadingArcCenter (degrees from the unit's facing)
+    f32 heading_arc_range = 180;           // HeadingArcRange (degrees either side)
     std::string projectile_bp_id;   // ChangeProjectileBlueprint
     bool target_ground = false;       // SetTargetGround
-    bool fire_control = false;        // SetFireControl / IsFireControl
+    std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
     f32 bomb_drop_threshold = 25.0f;     // BombDropThreshold (default 25)
     // Targeting: SetTargetingPriorities (compiled; a candidate must match
@@ -82,9 +86,9 @@ public:
         return script_class && lua_table_ref >= 0 && !counted_projectile && !overcharge && !beam;
     }
 
-    /// Moho's CanFire: a target, the weapon enabled, the unit free (not
-    /// Busy) and above water if it must be, and a bomber over its drop
-    /// zone. Aim is always on target until turrets exist (M200d).
+    /// Moho's CanFire: a target within MaxRadius, the weapon enabled, its
+    /// fire control on target (see fire_control), the unit free (not Busy)
+    /// and above water if it must be, and a bomber over its drop zone.
     bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
 
     /// Whether this weapon may shoot `target` from where `owner` stands: an
@@ -99,6 +103,11 @@ public:
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.
     int priority_of(const Unit& target) const;
+
+    /// The aim controller whose OnTarget gates this weapon's fire: the one
+    /// SetFireControl named, else the first created for it; null when the
+    /// weapon has none (it then fires without aiming).
+    const AimManipulator* fire_control(const Unit& owner) const;
 
     /// Per tick: advance the fire clock, pick targets, fire when ready.
     void update(Unit& owner, EntityRegistry& registry, lua_State* L,
@@ -119,9 +128,14 @@ private:
     void update_targeting(Unit& owner, EntityRegistry& registry,
                           const map::VisibilityGrid* visibility_grid, const SimState* sim);
     void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, u32 previous_target);
-    /// Call the weapon script's `method(self)`, if it has one. Returns its
-    /// first result's truth (true when there is no such method).
-    bool call_script(lua_State* L, const char* method) const;
+    /// Call the weapon script's `method(self [, arg])`, if it has one.
+    /// Returns its first result's truth (true when there is no such method).
+    bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
+    /// Hand the target to this weapon's aim controllers (or take it away),
+    /// telling the script OnStartTracking/OnStopTracking(label).
+    void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
+    /// The target is within MaxRadius (it may be tracked from farther).
+    bool in_firing_range(const Unit& owner, const Entity& target) const;
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.

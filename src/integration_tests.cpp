@@ -3684,10 +3684,11 @@ void test_manip(TestContext& ctx) {
             local e = GetEntityById(__osc_test_acu_id(1))
             if not e then WARN('Manip test 6: entity #1 not found'); return end
             local aim = CreateAimController(e, 'Default', 0)
+            -- The arc is in degrees; heading and pitch are radians.
             aim:SetFiringArc(-180, 180, 90, -45, 45, 45)
-            aim:SetHeadingPitch(30, 15)
+            aim:SetHeadingPitch(0.5, 0.25)
             local h, p = aim:GetHeadingPitch()
-            if math.abs(h - 30) < 0.1 and math.abs(p - 15) < 0.1 then
+            if math.abs(h - 0.5) < 1e-4 and math.abs(p - 0.25) < 1e-4 then
                 LOG('Manip test 6: PASS - heading=' .. h .. ' pitch=' .. p)
             else
                 WARN('Manip test 6: FAIL - heading=' .. tostring(h) .. ' pitch=' .. tostring(p))
@@ -4935,27 +4936,33 @@ void test_massstub2(TestContext& ctx) {
 
     // Test 4: Weapon targeting — GetProjectileBlueprint, SetTargetGround, SetFireControl/IsFireControl, TransferTarget
     {
-        auto r = ctx.lua_state.do_string(
-            "local u = GetEntityById(__osc_test_acu_id(1))\n"
-            "local w = u:GetWeapon(1)\n"
-            "if not w then error('no weapon') end\n"
-            "local bp = w:GetProjectileBlueprint()\n"
-            "if type(bp) ~= 'string' then\n"
-            "    if bp ~= nil then error('GetProjectileBlueprint expected string or nil, got ' .. type(bp)) end\n"
-            "end\n"
-            "w:SetTargetGround(true)\n"
-            "w:SetFireControl(true)\n"
-            "local fc = w:IsFireControl()\n"
-            "if fc ~= true then error('IsFireControl expected true, got ' .. tostring(fc)) end\n"
-            "w:SetFireControl(false)\n"
-            "fc = w:IsFireControl()\n"
-            "if fc ~= false then error('IsFireControl expected false after set') end\n"
-            // TransferTarget: test with self weapon
-            "w:TransferTarget(w)\n"
-            // SetTargetingPriorities / SetWeaponPriorities accept tables
-            "w:SetTargetingPriorities({categories.ALLUNITS})\n"
-            "w:SetWeaponPriorities({categories.ALLUNITS})\n"
-            "LOG('MassStub2 test 4: weapon targeting OK')\n");
+        auto r = ctx.lua_state.do_string(R"(
+            local u = GetEntityById(__osc_test_acu_id(1))
+            local w = u:GetWeapon(1)
+            if not w then error('no weapon') end
+            local bp = w:GetProjectileBlueprint()
+            if type(bp) ~= 'string' and bp ~= nil then
+                error('GetProjectileBlueprint expected string or nil, got ' .. type(bp))
+            end
+            w:SetTargetGround(true)
+            -- SetFireControl/IsFireControl name an aim controller by label.
+            local aimed
+            for i = 1, u:GetWeaponCount() do
+                local cand = u:GetWeapon(i)
+                if cand.AimControl then aimed = cand break end
+            end
+            if not aimed then error('no turreted weapon') end
+            local label = aimed.AimRight and 'Right' or 'Default'
+            aimed:SetFireControl(label)
+            if not aimed:IsFireControl(label) then error('IsFireControl(' .. label .. ') is false') end
+            if aimed:IsFireControl('NoSuchLabel') then error('IsFireControl of an unknown label') end
+            -- TransferTarget: test with self weapon
+            w:TransferTarget(w)
+            -- SetTargetingPriorities / SetWeaponPriorities accept tables
+            w:SetTargetingPriorities({categories.ALLUNITS})
+            w:SetWeaponPriorities({categories.ALLUNITS})
+            LOG('MassStub2 test 4: weapon targeting OK')
+        )");
         if (r) { pass++; spdlog::info("[PASS] Test 4: Weapon targeting + control"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
@@ -6522,6 +6529,136 @@ void test_targeting(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 13: script errors while targeting");
     }
     spdlog::info("Targeting test: {}/{} passed", pass, pass + fail);
+}
+
+// M200d-1: turrets aim. A weapon's aim controllers turn toward its target
+// at their slew speeds and it fires once on target, from the turned muzzle.
+void test_aim(TestContext& ctx) {
+    spdlog::info("=== AIM TEST: turrets turn before they fire ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    lua_check("setup", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- A tank facing +Z, its target behind it: the turret turns 180 deg at
+        -- 100 deg/s before the first shot.
+        __osc_tank = spawn('uel0201', 'ARMY_1', 220, 790)
+        __osc_behind = spawn('ueb1101', 'ARMY_2', 220, 776)
+        __osc_events, __osc_shots, __osc_headings = {}, {}, {}
+        local w = __osc_tank:GetWeapon(1)
+        for _, event in {'OnStartTracking', 'OnStopTracking'} do
+            local name, base = event, w[event]
+            w[name] = function(self, label)
+                table.insert(__osc_events, {name = name, label = label, tick = GetGameTick()})
+                return base(self, label)
+            end
+        end
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            local proj = fire(self, muzzle)
+            local heading = self:GetAimManipulator():GetHeadingPitch()
+            table.insert(__osc_shots, {tick = GetGameTick(), heading = heading,
+                                       at = proj:GetPosition(),
+                                       muzzle = __osc_tank:GetPosition('Turret_Muzzle')})
+            return proj
+        end
+        -- TrackingRadius 1.15: a target 20 away (MaxRadius 18) is tracked,
+        -- not fired at.
+        __osc_tracker = spawn('uel0201', 'ARMY_1', 220, 850)
+        __osc_far = spawn('ueb1101', 'ARMY_2', 240, 850)
+        -- Heading arcs: an Othuum's RightTurret (100 +-145 deg) covers its
+        -- right side; its LeftTurret (-100 +-140 deg) doesn't.
+        __osc_othuum = spawn('xsl0303', 'ARMY_1', 300, 790)
+        __osc_right = spawn('ueb1101', 'ARMY_2', 315, 790)
+        -- The Othuum would destroy it; its wreck needs props as script
+        -- instances (Prop.SetReclaimValues), which is later work.
+        __osc_right:SetCanTakeDamage(false)
+    )");
+    for (int i = 0; i < 40; ++i) {
+        ctx.sim.tick();
+        (void)ctx.lua_state.do_string(
+            "table.insert(__osc_headings, "
+            "(__osc_tank:GetWeapon(1):GetAimManipulator():GetHeadingPitch()))");
+    }
+
+    lua_check("Test 1: the weapon starts tracking with its aim controller's label", R"(
+        local e = __osc_events[1]
+        if not e or e.name ~= 'OnStartTracking' or e.label ~= 'Default' then
+            error('first event: ' .. tostring(e and (e.name .. ' ' .. tostring(e.label))))
+        end
+    )");
+    lua_check("Test 2: the turret turns at most 100 deg/s (10 deg a tick)", R"(
+        local h, limit, turned = __osc_headings, math.rad(10) + 1e-4, 0
+        for i = 2, table.getn(h) do
+            local d = math.abs(h[i] - h[i - 1])
+            if d > math.pi then d = 2 * math.pi - d end -- across +-180
+            if d > limit then error('tick ' .. i .. ' turned ' .. math.deg(d) .. ' deg') end
+            turned = turned + d
+        end
+        if turned < math.rad(170) then error('turned only ' .. math.deg(turned) .. ' deg') end
+    )");
+    lua_check("Test 3: the first shot waits until the turret faces the target", R"(
+        local s = __osc_shots[1]
+        if not s then error('no shot') end
+        if math.abs(s.heading) < math.pi - math.rad(2) - 1e-3 then
+            error('fired at heading ' .. math.deg(s.heading))
+        end
+        if s.tick - __osc_events[1].tick < 17 then
+            error('fired ' .. (s.tick - __osc_events[1].tick) .. ' ticks after tracking began')
+        end
+    )");
+    lua_check("Test 4: the shot leaves the turned muzzle, behind the tank", R"(
+        local s, t = __osc_shots[1], __osc_tank:GetPosition()
+        if s.at[3] >= t[3] then error('spawned ahead of the tank: z ' .. s.at[3]) end
+        local d = math.abs(s.at[1] - s.muzzle[1]) + math.abs(s.at[2] - s.muzzle[2]) +
+                  math.abs(s.at[3] - s.muzzle[3])
+        if d > 0.05 then error('spawned ' .. d .. ' from the muzzle') end
+    )");
+    lua_check("Test 5: TrackingRadius tracks a target beyond MaxRadius without firing", R"(
+        local w = __osc_tracker:GetWeapon(1)
+        if w:GetCurrentTarget() ~= __osc_far then error('not tracking') end
+        if __osc_far:GetHealth() < __osc_far:GetMaxHealth() then error('it fired') end
+    )");
+    lua_check("Test 6: heading arcs keep a turret to its side", R"(
+        if __osc_othuum:GetWeapon(3):GetCurrentTarget() ~= __osc_right then
+            error('the right turret has no target')
+        end
+        if __osc_othuum:GetWeapon(4):WeaponHasTarget() then error('the left turret targets right') end
+        -- Take the tank's target away.
+        local p = __osc_behind:GetPosition()
+        Warp(__osc_behind, {p[1], p[2], p[3] - 100})
+        __osc_lost_at = GetGameTick()
+    )");
+    for (int i = 0; i < 45; ++i) ctx.sim.tick();
+    lua_check("Test 7: losing the target stops tracking, and the turret goes back to rest", R"(
+        local last = __osc_events[table.getn(__osc_events)]
+        if last.name ~= 'OnStopTracking' or last.label ~= 'Default' then
+            error('last event ' .. last.name)
+        end
+        local h = __osc_tank:GetWeapon(1):GetAimManipulator():GetHeadingPitch()
+        if math.abs(h) > 1e-3 then error('heading ' .. math.deg(h) .. ' deg') end
+    )");
+
+    if (osc::test_status::failure_count() - fail == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 8: no script errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 8: script errors while aiming");
+    }
+    spdlog::info("Aim test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {

@@ -180,6 +180,84 @@ projectile scripts extracted from the retail `.scd` archives.
 - `OnStartTracking`/`OnStopTracking` fire.
 - Muzzles fire from the animated bone.
 
+**What the survey for M200d found.**
+
+- **Aim controllers are stubs.** `tick` does nothing, and `SetHeadingPitch`
+  snaps and reports on-target. `CreateAimController` records neither the
+  weapon nor the label.
+- **No manipulator moves a bone.** Only the skeletal animator writes bone
+  matrices, straight into the skinning matrices the renderer reads.
+  Rotators and aim controllers change nothing, so radar dishes don't spin.
+  `GetPosition(bone)`, weapon muzzles and `CreateProjectileAtBone` all use
+  the bind pose.
+- **Retail's data.**
+  - 284 of 494 weapons are turreted, and every one sets `FiringTolerance`
+    (0–60°, mostly 2).
+  - `TrackingRadius` multiplies the range, usually by 1.15–1.4.
+  - 47 turrets can't yaw (`TurretYawSpeed` 0).
+  - 66 weapons have heading arcs.
+  - 7 use `TurretDualManipulators`, a torso yaw plus two arms with
+    `SetFireControl('Right')`.
+
+The slice splits in two, because a pose pipeline that renders turrets must
+also take over how animators write bones, and the golden images depend on
+that:
+
+- **M200d-1: aim in the sim.**
+  - **Link:** each aim controller knows its weapon and label, and the
+    weapon's fire control is the first created or the one `SetFireControl`
+    names.
+  - **Aiming:** the weapon hands each of its aim controllers the target.
+    Each tick the controller turns its heading (at the yaw bone) and pitch
+    (at the pitch bone) toward it, at the arc's slew speeds and within its
+    limits (a full 360° arc wraps), using `osc::dmath`.
+  - **Firing:** it is on target within the weapon's `FiringTolerance`, and
+    `CanFire` requires the fire control to be on target. With no target it
+    returns to rest after `SetResetPoseTime`.
+  - **Tracking:** the weapon gets `OnStartTracking(label)` and
+    `OnStopTracking(label)`. `TrackingRadius` widens target acquisition, but
+    firing still needs `MaxRadius`. `HeadingArcCenter`/`HeadingArcRange`
+    filter targets by the unit's facing.
+  - **Sim pose:** each tick a unit's bind-pose locals take its aim, rotator
+    and slide deltas (animators aside), composed root-down.
+    `GetPosition(bone)`, muzzles and projectile spawns read it, so a shot
+    leaves the turned barrel.
+- **M200d-2: the pose renders.** One pose per unit per tick:
+  1. animators produce local transforms instead of skinning matrices;
+  2. every manipulator applies in precedence order;
+  3. skinning matrices come from the result.
+
+  Turrets and rotators turn on screen, and animated bones feed the sim pose
+  too.
+
+**What building M200d-1 established:**
+
+- **The SCM bone reader was wrong.** It read each bone's quaternion as
+  `(x, y, z, w)`, but SCM stores `(w, x, y, z)` as SCA does. It also took
+  the name offset for the parent index. Every sim bone transform was wrong:
+  `GetPosition(bone)`, muzzles and `CreateProjectileAtBone`. Rendering
+  never showed it, because skinning uses only the inverse bind matrices and
+  animation builds its own transforms. The first aimed turret turned the
+  wrong way.
+- **Aim frames.** Heading turns about the yaw bone's own Y axis, and pitch
+  about the pitch bone's X axis (negated, so a positive pitch raises +Z).
+  Both are measured from the bone's rest pose.
+  - Heading and pitch are radians; `SetFiringArc` takes degrees, as
+    blueprints give them.
+  - Retail only copies heading and pitch between controllers, for example
+    the build arm to the gun, so the unit is ours to choose.
+- **Precedence overrides.** On a shared bone, the higher-precedence
+  manipulator wins. The UEF commander's OverCharge and main gun aim at the
+  same arm, and the one not in use sits at precedence 0.
+- **A disabled aim holds fire.** Retail disables an aim controller together
+  with its weapon (OverCharge, `SetWeaponEnabledByLabel`), so a disabled
+  fire control can simply block `CanFire`.
+- **Found for M201: props are not script instances.** A destroyed unit's
+  wreck (`/lua/wreckage.lua` `Wreckage`) has none of `Prop.lua`'s methods,
+  so retail's `CreateWreckageProp` errors on `SetReclaimValues`. The gap
+  predates M200, and now that units really die in combat, every wreck hits
+  it.
+
 ## Risks
 
 - **Gate failures from script errors.** Every AI mode counts script errors,

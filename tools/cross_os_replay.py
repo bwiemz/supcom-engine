@@ -11,12 +11,19 @@ run, fetched with `gh`) or a local directory holding opensupcom.exe and its
 DLLs. The replay is a file, or is recorded first with the Linux build from
 game arguments given after `--`.
 
+With --direct, nothing is recorded: both builds run the game arguments as
+they are, each writing its trace. That suits scripted scenarios such as the
+integration tests (`--weapon-test`, `--aim-test`), which fight from the first
+tick, where a recorded AI game may never see a shot.
+
 Examples:
     cross_os_replay.py --run-id 123456789 --linux-exe build/linux-debug/opensupcom \\
         -- --map /maps/SCMP_009/SCMP_009_scenario.lua --ai-skirmish --ai-armies 4 \\
            --ticks 1200 --seed 4242 --scripted-orders
     cross_os_replay.py --windows-dir win/ --linux-exe build/linux-debug/opensupcom \\
         --replay game.oscreplay
+    cross_os_replay.py --run-id 123456789 --linux-exe build/linux-release/opensupcom \\
+        --direct -- --map /maps/SCMP_009/SCMP_009_scenario.lua --aim-test
 
 Needs Forged Alliance (--fa-path, or OSC_FA_PATH, or the Steam install the
 engine finds by itself) and Wine. It isn't a CI test: CI has no game data.
@@ -96,6 +103,7 @@ class Args(argparse.Namespace):
     replay: str | None = None
     fa_path: str | None = None
     wine_prefix: str = DEFAULT_WINE_PREFIX
+    direct: bool = False
 
 
 def main() -> int:
@@ -108,6 +116,11 @@ def main() -> int:
     _ = parser.add_argument("--repo", help="GitHub repository of --run-id (default: this one)")
     _ = parser.add_argument("--linux-exe", required=True, help="the Linux opensupcom")
     _ = parser.add_argument("--replay", help="replay to play (else one is recorded first)")
+    _ = parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="run the game arguments on both builds instead of recording and replaying",
+    )
     _ = parser.add_argument("--fa-path", help="Forged Alliance install (default: found)")
     _ = parser.add_argument(
         "--wine-prefix", help=f"Wine prefix to run the Windows build in ({DEFAULT_WINE_PREFIX})"
@@ -117,6 +130,8 @@ def main() -> int:
         game_args = game_args[1:]
     if not args.replay and not game_args:
         parser.error("give --replay, or game arguments after -- to record one")
+    if args.direct and (args.replay or not game_args):
+        parser.error("--direct runs game arguments given after --, not a replay")
 
     for tool in ("wine", "winepath"):
         if not shutil.which(tool):
@@ -145,7 +160,12 @@ def main() -> int:
             sys.exit(f"no opensupcom.exe in {win_dir}")
 
         replay = Path(args.replay).resolve() if args.replay else tmp / "game.oscreplay"
-        if not args.replay:
+        # What each build runs: the replay, or with --direct the game itself.
+        linux_run = ["--replay", str(replay)]
+        windows_run = ["--replay", windows_path(replay, env)] if not args.direct else []
+        if args.direct:
+            linux_run = windows_run = game_args
+        elif not args.replay:
             code = play(
                 [str(linux_exe), "--fa-path", str(fa_path), *game_args, "--record", str(replay)],
                 None,
@@ -160,8 +180,7 @@ def main() -> int:
                 str(linux_exe),
                 "--fa-path",
                 str(fa_path),
-                "--replay",
-                str(replay),
+                *linux_run,
                 "--checksum-trace",
                 str(linux_trace),
             ],
@@ -174,8 +193,7 @@ def main() -> int:
                 str(win_exe),
                 "--fa-path",
                 windows_path(fa_path, env),
-                "--replay",
-                windows_path(replay, env),
+                *windows_run,
                 "--checksum-trace",
                 windows_path(windows_trace, env),
             ],

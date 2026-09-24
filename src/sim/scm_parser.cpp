@@ -185,17 +185,17 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
         bone.local_position.y = reader.read_f32();
         bone.local_position.z = reader.read_f32();
 
-        // Rotation quaternion relative to parent (x, y, z, w)
+        // Rotation relative to parent, stored (w, x, y, z) as in SCA files.
+        bone.local_rotation.w = reader.read_f32();
         bone.local_rotation.x = reader.read_f32();
         bone.local_rotation.y = reader.read_f32();
         bone.local_rotation.z = reader.read_f32();
-        bone.local_rotation.w = reader.read_f32();
 
-        // Parent bone index (i32, -1 = root)
+        // Name offset (names come from the name block in order), then the
+        // parent bone index (-1 = root), then two reserved ints.
+        reader.skip(4);
         bone.parent_index = reader.read_i32();
-
-        // Skip 3 unused ints (12 bytes)
-        reader.skip(12);
+        reader.skip(8);
     }
 
     // Build name_to_index map (lowercase keys for case-insensitive lookup)
