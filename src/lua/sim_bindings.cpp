@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/script_class.hpp"
 #include "sim/prop.hpp"
+#include "core/test_status.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -1805,9 +1806,20 @@ static sim::Entity* extract_entity(lua_State* L, int idx) {
 
 // Helper: call OnDamage on a target entity via its Lua table registry ref.
 // Returns true if the call succeeded (regardless of whether OnDamage existed).
-static bool call_ondamage(lua_State* L, int target_ref,
-                          int instigator_idx, f32 amount,
-                          int damageType_idx) {
+static void push_vec3(lua_State* L, f32 x, f32 y, f32 z);
+
+/// Area damage's direction: from the blast's centre to the target, level
+/// and of unit length (straight up at the centre). Trees fall along it.
+static sim::Vector3 area_direction(const sim::Entity& target, f32 cx, f32 cz) {
+    const f32 dx = target.position().x - cx;
+    const f32 dz = target.position().z - cz;
+    const f32 len = std::sqrt(dx * dx + dz * dz);
+    if (len < 1e-4f) return {0.0f, 1.0f, 0.0f};
+    return {dx / len, 0.0f, dz / len};
+}
+
+static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 amount,
+                          int damageType_idx, const sim::Vector3* direction = nullptr) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, target_ref);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
@@ -1846,13 +1858,17 @@ static bool call_ondamage(lua_State* L, int target_ref,
     else
         lua_pushnil(L);              // no instigator
     lua_pushnumber(L, amount);
-    lua_pushnil(L);                  // vector (nil for area damage)
+    if (direction) push_vec3(L, direction->x, direction->y, direction->z);
+    else lua_pushnil(L);
     if (damageType_idx > 0)
         lua_pushvalue(L, damageType_idx);
     else
         lua_pushnil(L);
     if (lua_pcall(L, 5, 0, 0) != 0) {
-        spdlog::warn("OnDamage error: {}", lua_tostring(L, -1));
+        const char* err = lua_tostring(L, -1);
+        const std::string message = std::string("OnDamage error: ") + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
         lua_pop(L, 1);
     }
 
@@ -1896,7 +1912,8 @@ static int l_DamageArea(lua_State* L) {
         // Skip self
         if (!damage_self && instigator && target == instigator) continue;
 
-        call_ondamage(L, ref, 1, amount, 5);
+        const sim::Vector3 direction = area_direction(*target, px, pz);
+        call_ondamage(L, ref, 1, amount, 5, &direction);
     }
     return 0;
 }
@@ -1947,7 +1964,8 @@ static int l_DamageRing(lua_State* L) {
             continue;
         if (!damage_self && instigator && target == instigator) continue;
 
-        call_ondamage(L, ref, 1, amount, 6);
+        const sim::Vector3 direction = area_direction(*target, px, pz);
+        call_ondamage(L, ref, 1, amount, 6, &direction);
     }
     return 0;
 }
