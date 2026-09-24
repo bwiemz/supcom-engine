@@ -95,8 +95,7 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     if (grid_path.cells.empty() && grid_.get(sx, sz) != CellPassability::Obstacle)
         grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious, true);
     if (grid_path.cells.empty()) {
-        spdlog::trace("Pathfinder: A* found no path from ({},{}) to ({},{})",
-                       sx, sz, gx, gz);
+        spdlog::trace("Pathfinder: A* found no path from ({},{}) to ({},{})", sx, sz, gx, gz);
         return result; // found = false
     }
     result.partial = !grid_path.reached_goal;
