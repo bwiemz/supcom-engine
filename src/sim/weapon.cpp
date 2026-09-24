@@ -64,17 +64,17 @@ bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
     const u32 cap = proj.desired_shooter_cap();
     if (cap == 0) return true;
     auto& shooters = proj.shooters;
-    shooters.erase(std::remove_if(shooters.begin(), shooters.end(),
-                                  [&](const std::pair<u32, i32>& s) {
-                                      const Entity* e = registry.find(s.first);
-                                      if (!e || e->destroyed() || !e->is_unit()) return true;
-                                      const auto& weapons = static_cast<const Unit*>(e)->weapons();
-                                      return s.second < 0 ||
-                                             static_cast<size_t>(s.second) >= weapons.size() ||
-                                             weapons[static_cast<size_t>(s.second)]
-                                                     ->target_entity_id != proj.entity_id();
-                                  }),
-                   shooters.end());
+    shooters.erase(
+        std::remove_if(shooters.begin(), shooters.end(),
+                       [&](const std::pair<u32, i32>& s) {
+                           const Entity* e = registry.find(s.first);
+                           if (!e || e->destroyed() || !e->is_unit()) return true;
+                           const auto& weapons = static_cast<const Unit*>(e)->weapons();
+                           return s.second < 0 || static_cast<size_t>(s.second) >= weapons.size() ||
+                                  weapons[static_cast<size_t>(s.second)]->target_entity_id !=
+                                      proj.entity_id();
+                       }),
+        shooters.end());
     return shooters.size() < cap;
 }
 
@@ -612,8 +612,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     // blueprint says half a second, its weapon four).
     if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0)
         proj->lifetime = projectile_lifetime_multiplier * max_range / muzzle_velocity;
-    else if (projectile_lifetime > 0)
-        proj->lifetime = projectile_lifetime;
+    else if (projectile_lifetime > 0) proj->lifetime = projectile_lifetime;
     if (counted_projectile) {
         // Facing along its muzzle, even at rest: it accelerates that way.
         const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);

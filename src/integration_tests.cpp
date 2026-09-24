@@ -8837,7 +8837,8 @@ void test_defence(TestContext& ctx) {
         IssueNuke({__osc_s}, __osc_zero)
     )");
     run(500);
-    lua_check("Test 1: an anti-nuke shot the nuke down, and nothing about its target was harmed", R"(
+    lua_check("Test 1: an anti-nuke shot the nuke down, and nothing about its target was harmed",
+              R"(
         local nuke = __osc_shot_of(__osc_s, 1)
         if not nuke then error('no nuke was launched') end
         if not nuke.gone then error('the nuke is still flying') end
@@ -8946,7 +8947,9 @@ void test_defence(TestContext& ctx) {
         local kept = EntityCategoryFilterDown(categories.MISSILE, {m, __osc_shell, tank})
         if table.getn(kept) ~= 1 or kept[1] ~= m then error('FilterDown kept ' .. table.getn(kept)) end
     )");
-    lua_check("Test 9: an enemy shell can't hit a missile; an interceptor, only the one it was sent at", R"(
+    lua_check(
+        "Test 9: an enemy shell can't hit a missile; an interceptor, only the one it was sent at",
+        R"(
         if __osc_missile:OnCollisionCheck(__osc_shell) then error('the shell may hit the missile') end
         if __osc_missile:OnCollisionCheck(__osc_interceptor) then error('an unassigned interceptor may') end
         __osc_interceptor:SetNewTarget(__osc_missile)

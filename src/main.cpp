@@ -1856,19 +1856,19 @@ int main(int argc, char* argv[]) {
         teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
         terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
         targeting_test || aim_test || death_test || impact_test || arc_test || collide_test ||
-        area_test || drive_test || crowd_test || formation_test || missile_test ||
-        defence_test || shadow_test ||
-        massstub4_test || spatial_test || unitsound_test || medstub_test || lowstub_test ||
-        blend_test || ui_test || bitmap_test || text_test || edit_test || controls_test ||
-        uiboot_test || gameui_test || lobby_flow_test || uirender_test || font_test ||
-        scissor_test || border_render_test || edit_render_test || itemlist_render_test ||
-        scrollbar_render_test || anim_render_test || tiled_render_test || input_test ||
-        onframe_test || cursor_render_test || drag_render_test || emitter_test || collision_test ||
-        decalsplat_test || cmd_test || deposit_test || beam_test || shield_render_test ||
-        vet_adj_render_test || intel_overlay_test || enhance_wreck_test || vfx_render_test ||
-        transport_silo_test || dualstate_test || construction_test || phase2_test || phase3_test ||
-        phase4_test || phase5_test || profile_test || smoke_test || ai_skirmish || draw_test ||
-        stress_test || full_smoke_test || audio_data_test || victory_test;
+        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test ||
+        shadow_test || massstub4_test || spatial_test || unitsound_test || medstub_test ||
+        lowstub_test || blend_test || ui_test || bitmap_test || text_test || edit_test ||
+        controls_test || uiboot_test || gameui_test || lobby_flow_test || uirender_test ||
+        font_test || scissor_test || border_render_test || edit_render_test ||
+        itemlist_render_test || scrollbar_render_test || anim_render_test || tiled_render_test ||
+        input_test || onframe_test || cursor_render_test || drag_render_test || emitter_test ||
+        collision_test || decalsplat_test || cmd_test || deposit_test || beam_test ||
+        shield_render_test || vet_adj_render_test || intel_overlay_test || enhance_wreck_test ||
+        vfx_render_test || transport_silo_test || dualstate_test || construction_test ||
+        phase2_test || phase3_test || phase4_test || phase5_test || profile_test || smoke_test ||
+        ai_skirmish || draw_test || stress_test || full_smoke_test || audio_data_test ||
+        victory_test;
     bool headless = (tick_count > 0) || any_test || replay_to_play.has_value();
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
