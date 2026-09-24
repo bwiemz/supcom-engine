@@ -6,6 +6,7 @@ extern "C" {
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace osc::sim {
@@ -112,6 +113,23 @@ Vector3 collision_centre(const Entity& e) {
     if (s.type == CollisionShapeType::NONE) return p;
     const Vector3 c = quat_rotate(e.orientation(), {s.cx, s.cy, s.cz});
     return {p.x + c.x, p.y + c.y, p.z + c.z};
+}
+
+f32 shape_distance(const CollisionShape& shape, const Vector3& position,
+                   const Quaternion& orientation, const Vector3& point) {
+    if (shape.type == CollisionShapeType::NONE) return std::numeric_limits<f32>::infinity();
+    Vector3 p = to_local(point, position, orientation);
+    p = {p.x - shape.cx, p.y - shape.cy, p.z - shape.cz};
+    if (shape.type == CollisionShapeType::SPHERE)
+        return std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z) - shape.sx;
+    // Box: outside, the distance to it; inside, minus the depth.
+    const f32 qx = std::abs(p.x) - shape.sx;
+    const f32 qy = std::abs(p.y) - shape.sy;
+    const f32 qz = std::abs(p.z) - shape.sz;
+    const f32 ox = std::max(qx, 0.0f);
+    const f32 oy = std::max(qy, 0.0f);
+    const f32 oz = std::max(qz, 0.0f);
+    return std::sqrt(ox * ox + oy * oy + oz * oz) + std::min(std::max({qx, qy, qz}), 0.0f);
 }
 
 } // namespace osc::sim

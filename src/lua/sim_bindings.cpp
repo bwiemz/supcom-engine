@@ -1867,19 +1867,6 @@ static int l_Damage(lua_State* L) {
     return 0;
 }
 
-// Helper: extract x/z from a Lua position table (array-style [1],[2],[3])
-static void extract_position_xz(lua_State* L, int idx, f32& x, f32& z) {
-    if (!lua_istable(L, idx)) return;
-    lua_pushnumber(L, 1);
-    lua_gettable(L, idx);
-    x = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_pushnumber(L, 3);
-    lua_gettable(L, idx);
-    z = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-}
-
 // Helper: get the C++ Entity* from a Lua entity table
 static sim::Entity* extract_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
@@ -1930,6 +1917,13 @@ static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 
             amount *= sim->armor_definition().get_multiplier(
                 u->armor_type(), dtype);
         }
+        // Credit the instigator, as Damage does: its share of the kill.
+        if (const sim::Entity* by =
+                instigator_idx > 0 ? extract_entity(L, instigator_idx) : nullptr;
+            by && amount > 0) {
+            u->set_last_attacker_id(by->entity_id());
+            u->record_damage(by->entity_id(), amount);
+        }
     }
     if (amount <= 0) { lua_pop(L, 1); return true; }
 
@@ -1964,97 +1958,186 @@ static bool call_ondamage(lua_State* L, int target_ref, int instigator_idx, f32 
     return true;
 }
 
-// DamageArea(instigator, position, radius, amount, damageType, damageFriendly, damageSelf)
+namespace {
+
+/// A DamageArea or DamageRing, its arguments read off the Lua stack (the
+/// instigator at 1, the location at 2).
+struct Blast {
+    sim::Vector3 at;
+    f32 inner = 0;
+    f32 outer = 0;
+    f32 amount = 0;
+    int type_idx = 0; ///< the damage type's stack index
+    bool friendly = false;
+    bool self = false;
+};
+
+/// A shield the blast meets from outside, and how much of it it absorbs.
+struct Cover {
+    u32 id = 0;
+    f32 absorbed = 0;
+    sim::CollisionShape shape;
+    sim::Vector3 position;
+    sim::Quaternion orientation;
+};
+
+/// A blast on a shield's surface counts as outside it (shots stop there).
+constexpr f32 kShieldSurface = 0.01f;
+
+} // namespace
+
+/// shield:OnGetDamageAbsorption(instigator, amount, type), which Moho asks
+/// to learn how much of a blast passes to the units under the shield: all
+/// its health can hold without one.
+static f32 shield_absorption(lua_State* L, const sim::Entity& shield, const Blast& blast) {
+    f32 absorbed = std::min(shield.health(), blast.amount);
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, shield.lua_table_ref());
+    lua_pushstring(L, "OnGetDamageAbsorption");
+    lua_gettable(L, -2);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, top + 1);
+        lua_pushvalue(L, 1);
+        lua_pushnumber(L, blast.amount);
+        lua_pushvalue(L, blast.type_idx);
+        if (lua_pcall(L, 4, 1, 0) == 0) {
+            if (lua_type(L, -1) == LUA_TNUMBER) absorbed = static_cast<f32>(lua_tonumber(L, -1));
+        } else {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                std::string("OnGetDamageAbsorption error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+    }
+    lua_settop(L, top);
+    return std::max(absorbed, 0.0f);
+}
+
+/// Moho's DamageArea and DamageRing, as FAF's Lua copy of it
+/// (/lua/sim/DamageArea.lua) and retail's shields describe it:
+/// - It reaches the units and props whose positions lie within the
+///   radius, measured in three dimensions, all taking the full amount.
+///   Projectiles are untouched.
+/// - Allies are spared unless damageFriendly, and the instigator unless
+///   damageSelf.
+/// - A shield the blast meets from outside takes the blast, and the units
+///   under it take only what its OnGetDamageAbsorption leaves.
+static void deal_blast(lua_State* L, sim::SimState& sim, const Blast& blast) {
+    auto& registry = sim.entity_registry();
+    const sim::Entity* instigator = extract_entity(L, 1);
+    const u32 instigator_id = instigator ? instigator->entity_id() : 0;
+    const i32 instigator_army = instigator ? instigator->army() : -1;
+    const auto spared = [&](const sim::Entity& e) {
+        if (instigator_id != 0 && e.entity_id() == instigator_id) return !blast.self;
+        return !blast.friendly && instigator_army >= 0 && e.army() >= 0 &&
+               sim.is_ally(instigator_army, e.army());
+    };
+
+    // The shields it meets from outside, and what each absorbs (asked before
+    // any damage, as a script may drop a shield when it is spent). A shield
+    // takes part as any target does: one the blast spares (an ally's, without
+    // friendly fire) neither takes it nor shields anyone from it, so it gives
+    // no protection for free.
+    std::vector<u32> near;
+    registry.collect_colliders(blast.at.x - blast.outer, blast.at.z - blast.outer,
+                               blast.at.x + blast.outer, blast.at.z + blast.outer, near);
+    std::vector<Cover> covers;
+    for (const u32 id : near) {
+        const sim::Entity* e = registry.find(id);
+        if (!e || e->destroyed() || !e->is_shield() || e->lua_table_ref() < 0 || spared(*e))
+            continue;
+        const f32 d =
+            sim::shape_distance(e->collision_shape(), e->position(), e->orientation(), blast.at);
+        if (d < -kShieldSurface || d > blast.outer) continue; // inside it, or out of reach
+        covers.push_back({id, 0, e->collision_shape(), e->position(), e->orientation()});
+    }
+    for (auto& c : covers)
+        if (const sim::Entity* e = registry.find(c.id); e && !e->destroyed())
+            c.absorbed = shield_absorption(L, *e, blast);
+
+    // What stands in it, and what reaches each past the shields over it.
+    std::vector<std::pair<u32, f32>> hits;
+    for (const u32 id : registry.collect_in_radius(blast.at.x, blast.at.z, blast.outer)) {
+        const sim::Entity* e = registry.find(id);
+        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
+        if (!e->is_unit() && !e->is_prop()) continue;
+        if (e->is_unit() && !static_cast<const sim::Unit*>(e)->can_take_damage()) continue;
+        const f32 dx = e->position().x - blast.at.x;
+        const f32 dy = e->position().y - blast.at.y;
+        const f32 dz = e->position().z - blast.at.z;
+        const f32 d = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (d > blast.outer || d < blast.inner || spared(*e)) continue;
+        f32 amount = blast.amount;
+        for (const auto& c : covers)
+            if (sim::shape_distance(c.shape, c.position, c.orientation, e->position()) < 0)
+                amount -= c.absorbed;
+        if (amount > 0) hits.emplace_back(id, amount);
+    }
+
+    // The shields first. Retail's shields set their impact where the blast
+    // was, the vector running from it to their centre.
+    for (const auto& c : covers) {
+        const sim::Entity* e = registry.find(c.id);
+        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
+        const sim::Vector3 v{e->position().x - blast.at.x, e->position().y - blast.at.y,
+                             e->position().z - blast.at.z};
+        call_ondamage(L, e->lua_table_ref(), 1, blast.amount, blast.type_idx, &v);
+    }
+    for (const auto& [id, amount] : hits) {
+        const sim::Entity* e = registry.find(id);
+        if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
+        const sim::Vector3 direction = area_direction(*e, blast.at.x, blast.at.z);
+        call_ondamage(L, e->lua_table_ref(), 1, amount, blast.type_idx, &direction);
+    }
+}
+
+static sim::Vector3 lua_position(lua_State* L, int idx) {
+    sim::Vector3 v;
+    if (!lua_istable(L, idx)) return v;
+    for (int i = 1; i <= 3; ++i) {
+        lua_pushnumber(L, i);
+        lua_gettable(L, idx);
+        const auto c = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        (i == 1 ? v.x : i == 2 ? v.y : v.z) = c;
+    }
+    return v;
+}
+
+// DamageArea(instigator, location, radius, amount, damageType, damageFriendly, damageSelf)
 static int l_DamageArea(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
-
-    f32 px = 0, pz = 0;
-    extract_position_xz(L, 2, px, pz);
-    f32 radius = static_cast<f32>(lua_tonumber(L, 3));
-    f32 amount = static_cast<f32>(lua_tonumber(L, 4));
-    if (amount <= 0 || radius <= 0) return 0;
-
-    auto targets = sim->entity_registry().collect_in_radius(px, pz, radius);
-
-    // Get instigator info for friendly-fire checks
-    auto* instigator = extract_entity(L, 1);
-    i32 instigator_army = instigator ? instigator->army() : -1;
-    bool damage_friendly = lua_toboolean(L, 6) != 0;
-    bool damage_self = lua_isboolean(L, 7) ? (lua_toboolean(L, 7) != 0) : false;
-
-    for (u32 eid : targets) {
-        auto* target = sim->entity_registry().find(eid);
-        if (!target || target->destroyed()) continue;
-        int ref = target->lua_table_ref();
-        if (ref < 0) continue;
-        // can_take_damage guard
-        if (target->is_unit() &&
-            !static_cast<sim::Unit*>(target)->can_take_damage()) continue;
-
-        // Skip friendly units if damageFriendly is false
-        if (!damage_friendly && instigator_army >= 0 &&
-            target->army() == instigator_army)
-            continue;
-
-        // Skip self
-        if (!damage_self && instigator && target == instigator) continue;
-
-        const sim::Vector3 direction = area_direction(*target, px, pz);
-        call_ondamage(L, ref, 1, amount, 5, &direction);
-    }
+    lua_settop(L, 7);
+    Blast blast;
+    blast.at = lua_position(L, 2);
+    blast.outer = static_cast<f32>(lua_tonumber(L, 3));
+    blast.amount = static_cast<f32>(lua_tonumber(L, 4));
+    blast.type_idx = 5;
+    blast.friendly = lua_toboolean(L, 6) != 0;
+    blast.self = lua_toboolean(L, 7) != 0;
+    if (blast.amount <= 0 || blast.outer <= 0) return 0;
+    deal_blast(L, *sim, blast);
     return 0;
 }
 
-// DamageRing(instigator, position, innerRadius, outerRadius, amount, damageType, damageFriendly, damageSelf)
-// Same as DamageArea but args shift by 1 (innerRadius at 3, outerRadius at 4).
-// For now, use outer radius only (inner radius filtering is a refinement).
+// DamageRing(instigator, location, innerRadius, outerRadius, amount, damageType,
+//            damageFriendly, damageSelf): DamageArea sparing the inner circle.
 static int l_DamageRing(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
-
-    f32 px = 0, pz = 0;
-    extract_position_xz(L, 2, px, pz);
-    // innerRadius at 3, outerRadius at 4
-    f32 inner_radius = static_cast<f32>(lua_tonumber(L, 3));
-    f32 outer_radius = static_cast<f32>(lua_tonumber(L, 4));
-    f32 amount = static_cast<f32>(lua_tonumber(L, 5));
-    if (amount <= 0 || outer_radius <= 0) return 0;
-    f32 inner_r2 = inner_radius * inner_radius;
-
-    auto targets =
-        sim->entity_registry().collect_in_radius(px, pz, outer_radius);
-
-    auto* instigator = extract_entity(L, 1);
-    i32 instigator_army = instigator ? instigator->army() : -1;
-    bool damage_friendly = lua_toboolean(L, 7) != 0;
-    bool damage_self =
-        lua_isboolean(L, 8) ? (lua_toboolean(L, 8) != 0) : false;
-
-    for (u32 eid : targets) {
-        auto* target = sim->entity_registry().find(eid);
-        if (!target || target->destroyed()) continue;
-        int ref = target->lua_table_ref();
-        if (ref < 0) continue;
-        // can_take_damage guard
-        if (target->is_unit() &&
-            !static_cast<sim::Unit*>(target)->can_take_damage()) continue;
-
-        // Exclude entities inside the inner radius
-        if (inner_r2 > 0) {
-            f32 dx = target->position().x - px;
-            f32 dz = target->position().z - pz;
-            if (dx * dx + dz * dz < inner_r2) continue;
-        }
-
-        if (!damage_friendly && instigator_army >= 0 &&
-            target->army() == instigator_army)
-            continue;
-        if (!damage_self && instigator && target == instigator) continue;
-
-        const sim::Vector3 direction = area_direction(*target, px, pz);
-        call_ondamage(L, ref, 1, amount, 6, &direction);
-    }
+    lua_settop(L, 8);
+    Blast blast;
+    blast.at = lua_position(L, 2);
+    blast.inner = static_cast<f32>(lua_tonumber(L, 3));
+    blast.outer = static_cast<f32>(lua_tonumber(L, 4));
+    blast.amount = static_cast<f32>(lua_tonumber(L, 5));
+    blast.type_idx = 6;
+    blast.friendly = lua_toboolean(L, 7) != 0;
+    blast.self = lua_toboolean(L, 8) != 0;
+    if (blast.amount <= 0 || blast.outer <= 0) return 0;
+    deal_blast(L, *sim, blast);
     return 0;
 }
 
