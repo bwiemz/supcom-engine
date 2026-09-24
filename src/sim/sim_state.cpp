@@ -661,6 +661,10 @@ void SimState::tick() {
     PROFILE_ZONE("Sim::tick");
     tick_count_++;
     game_time_ = tick_count_ * SECONDS_PER_TICK;
+    if (rng_trace_) {
+        const bool on = tick_count_ >= rng_trace_from_ && tick_count_ <= rng_trace_to_;
+        sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);
+    }
 
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
@@ -1580,6 +1584,22 @@ SimState::ChecksumParts SimState::checksum_parts() const {
     });
     parts.entities = entities.h;
     return parts;
+}
+
+void SimState::trace_rng_draw(void* ctx, u64 value) {
+    auto& sim = *static_cast<SimState*>(ctx);
+    std::string where = "engine";
+    if (auto* L = static_cast<lua_State*>(sim.sim_random_.caller())) {
+        where.clear();
+        lua_Debug ar;
+        for (int level = 1; level <= 4 && lua_getstack(L, level, &ar); ++level) {
+            if (!lua_getinfo(L, "Sl", &ar)) break;
+            if (!where.empty()) where += " < ";
+            where += fmt::format("{}:{}", ar.short_src, ar.currentline);
+        }
+    }
+    *sim.rng_trace_ << fmt::format("{} {} {:016x} {}\n", sim.tick_count_, sim.rng_trace_draws_++,
+                                   value, where);
 }
 
 void SimState::write_entity_trace() const {

@@ -3593,12 +3593,22 @@ static sim::SimRandom* session_random(lua_State* L) {
     return sim ? &sim->random() : nullptr;
 }
 
+/// While a script draws: which Lua state it is, for --rng-trace.
+struct RandomCaller {
+    sim::SimRandom& rng;
+    RandomCaller(sim::SimRandom& r, lua_State* L) : rng(r) { rng.set_caller(L); }
+    ~RandomCaller() { rng.set_caller(nullptr); }
+    RandomCaller(const RandomCaller&) = delete;
+    RandomCaller& operator=(const RandomCaller&) = delete;
+};
+
 /// Random() -> [0, 1); Random(n) -> an integer in [1, n]; Random(a, b) ->
 /// an integer in [a, b] (either order).
 static int l_Random(lua_State* L) {
     auto* session = session_random(L);
     if (!session) return luaL_error(L, "Random: no sim");
     auto& rng = *session;
+    const RandomCaller caller(rng, L);
     const int n = lua_gettop(L);
     if (n == 0) {
         lua_pushnumber(L, rng.next_double());
@@ -3622,6 +3632,7 @@ static int l_sim_math_random(lua_State* L) {
     auto* session = session_random(L);
     if (!session) return luaL_error(L, "math.random: no sim");
     auto& rng = *session;
+    const RandomCaller caller(rng, L);
     switch (lua_gettop(L)) {
     case 0: lua_pushnumber(L, rng.next_double()); break;
     case 1: {

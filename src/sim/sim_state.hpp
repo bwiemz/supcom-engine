@@ -412,6 +412,14 @@ public:
     /// Write every entity's synced state, and the RNG's, at ticks [from, to]
     /// to `out`, floats as their exact bits. Two platforms' dumps diff to
     /// the entity where their games part (--entity-trace).
+    /// Write every random number drawn at ticks [from, to] to `out`, with
+    /// the script call site that drew it (--rng-trace): where two
+    /// platforms' draws part, their games did.
+    void set_rng_trace(std::ostream* out, u32 from, u32 to) {
+        rng_trace_ = out;
+        rng_trace_from_ = from;
+        rng_trace_to_ = to;
+    }
     void set_entity_trace(std::ostream* out, u32 from, u32 to) {
         entity_trace_ = out;
         entity_trace_from_ = from;
@@ -567,6 +575,11 @@ private:
     std::function<void(const SimState&)> tick_observer_;
     std::ostream* checksum_trace_ = nullptr;
     std::ostream* entity_trace_ = nullptr;
+    std::ostream* rng_trace_ = nullptr;
+    u32 rng_trace_from_ = 0;
+    u32 rng_trace_to_ = 0;
+    u64 rng_trace_draws_ = 0;
+    static void trace_rng_draw(void* ctx, u64 value);
     u32 entity_trace_from_ = 0;
     u32 entity_trace_to_ = 0;
     void write_entity_trace() const;
