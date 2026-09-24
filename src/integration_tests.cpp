@@ -859,6 +859,38 @@ void test_threat(TestContext& ctx) {
         ctx.sim.tick();
     }
 
+    // Attack vectors: the AI groups an army's structures (its own, to find
+    // its bases) with SetUpAttackVectorsToArmy and reads GetAttackVectors.
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local brain = ArmyBrains[2]
+            local function build(x, z)
+                return CreateUnitHPR('ueb1101', 'ARMY_2', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            end
+            build(300, 700)
+            build(304, 700)   -- the same group
+            build(420, 700)   -- another
+            local enemy = brain:GetCurrentEnemy()
+            brain:SetCurrentEnemy(brain)
+            brain:SetUpAttackVectorsToArmy(categories.STRUCTURE - categories.MASSEXTRACTION)
+            local vecs = brain:GetAttackVectors()
+            brain:SetCurrentEnemy(enemy)
+            local near = {}
+            for _, v in vecs do
+                if math.abs(v.pz - 700) < 16 and (math.abs(v.px - 302) < 16 or math.abs(v.px - 420) < 16) then
+                    table.insert(near, v)
+                end
+                local len = math.sqrt(v.vx * v.vx + v.vz * v.vz)
+                if math.abs(len - 1) > 1e-3 or v.vy ~= 0 then error('heading not level and unit') end
+            end
+            if table.getn(near) ~= 2 then
+                error(table.getn(near) .. ' groups near the three generators, of ' .. table.getn(vecs))
+            end
+        )");
+        if (r) spdlog::info("[PASS] Threat test: attack vectors group an army's structures");
+        else osc::test_status::fail("[FAIL] Threat test: attack vectors: {}", r.error().message);
+    }
+
     spdlog::info("Threat test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());

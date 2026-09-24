@@ -59,7 +59,6 @@ M CalculateWorldPositionFromRelative
 M CreateResourceBuildingNearest
 M CreateUnitNearSpot
 M EnableTerrainCheck
-M GetAttackVectors
 M GetCollisionExtents
 M GetRate
 M GetUnit
