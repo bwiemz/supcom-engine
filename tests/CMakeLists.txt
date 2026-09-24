@@ -37,6 +37,7 @@ add_executable(osc_tests
     test_xact.cpp
     test_sound_engine.cpp
     test_thread_wait.cpp
+    test_economy_event.cpp
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp

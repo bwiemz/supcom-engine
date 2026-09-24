@@ -579,6 +579,7 @@ private:
     i32 find_share_recipient(i32 defeated_army) const;
     /// Count alliance-connected components among the given (alive) army indices.
     i32 count_alliance_components(const std::vector<i32>& army_indices) const;
+    void request_economy_events();
     void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);

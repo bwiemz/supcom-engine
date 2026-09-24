@@ -202,6 +202,12 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
         total_storage_energy += econ.storage_energy;
     });
 
+    // Its economy events' requests (M206d).
+    mass_consumption += event_mass_;
+    energy_consumption += event_energy_;
+    event_mass_ = 0.0;
+    event_energy_ = 0.0;
+
     // Lobby handicap reduces this army's resource income.
     if (handicap_ > 0.0) {
         const f64 factor = 1.0 - handicap_;

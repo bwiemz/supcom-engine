@@ -16147,6 +16147,14 @@ void test_commands(TestContext& ctx) {
 
     // Test 7: CreateEconomyEvent returns handle table
     {
+        // The events below draw on their army's economy (M206d): make sure it
+        // can pay, so they run on time.
+        (void)ctx.lua_state.do_string(
+            ("local brain = GetEntityById(" + u1 +
+             "):GetAIBrain()\n"
+             "brain:GiveStorage('MASS', 10000) brain:GiveStorage('ENERGY', 10000)\n"
+             "brain:GiveResource('MASS', 10000) brain:GiveResource('ENERGY', 10000)\n")
+                .c_str());
         auto r = ctx.lua_state.do_string(
             ("local u = GetEntityById(" + u1 + ")\n"
             "if not u then error('no entity') end\n"
@@ -16174,8 +16182,9 @@ void test_commands(TestContext& ctx) {
 
     // Test 9: EconomyEventIsDone true after duration
     {
-        // Duration is 1.0s — tick economy events directly (12 × 0.1s = 1.2s)
-        for (int i = 0; i < 12; i++) ctx.sim.economy_events().tick(0.1);
+        // Duration is 1.0s: its cost is drawn over 10 ticks, from the tick
+        // after it was made (the army has plenty).
+        for (int i = 0; i < 12; i++) ctx.sim.tick();
         auto r = ctx.lua_state.do_string(
             "local evt = rawget(_G, '_cmd7_evt')\n"
             "if not evt then error('no event from test 7') end\n"
@@ -16210,7 +16219,7 @@ void test_commands(TestContext& ctx) {
             "-- Zero duration should be done immediately after next tick\n"
             "rawset(_G, '_cmd11_evt', evt)\n").c_str());
         if (r) {
-            ctx.sim.economy_events().tick(0.1);
+            ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local evt = rawget(_G, '_cmd11_evt')\n"
                 "if EconomyEventIsDone(evt) then LOG('PASS') else error('not done') end\n");
@@ -16229,7 +16238,7 @@ void test_commands(TestContext& ctx) {
             "rawset(_G, '_cmd12_evt', evt)\n").c_str());
         if (r) {
             // Tick economy events to complete (0.2s = 2 ticks, do 3 for safety)
-            for (int i = 0; i < 3; i++) ctx.sim.economy_events().tick(0.1);
+            for (int i = 0; i < 3; i++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local evt = rawget(_G, '_cmd12_evt')\n"
                 "if EconomyEventIsDone(evt) then LOG('PASS')\n"
@@ -16262,8 +16271,8 @@ void test_commands(TestContext& ctx) {
             "rawset(_G, '_cmd14_evt1', evt1)\n"
             "rawset(_G, '_cmd14_evt2', evt2)\n").c_str());
         if (r) {
-            // 0.3s = 3 ticks — tick economy events directly
-            for (int i = 0; i < 5; i++) ctx.sim.economy_events().tick(0.1);
+            // 0.3 s: 3 ticks of real economy
+            for (int i = 0; i < 5; i++) ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
                 "local d1 = EconomyEventIsDone(rawget(_G, '_cmd14_evt1'))\n"
                 "local d2 = EconomyEventIsDone(rawget(_G, '_cmd14_evt2'))\n"

@@ -3333,7 +3333,7 @@ static int l_WaitFor(lua_State* L) {
 }
 
 // ====================================================================
-// CreateEconomyEvent(unit, massAmount, energyAmount, duration) -> handle
+// CreateEconomyEvent(unit, energy, mass, duration[, callback]) -> handle
 // ====================================================================
 static int l_CreateEconomyEvent(lua_State* L) {
     auto* sim = get_sim(L);
@@ -3346,6 +3346,11 @@ static int l_CreateEconomyEvent(lua_State* L) {
     f64 duration = luaL_optnumber(L, 4, 0.0);
 
     auto* evt = sim->economy_events().create(unit_id, mass, energy, duration);
+    // callback(unit, progress) as it moves on (a teleport's SetWorkProgress).
+    if (lua_isfunction(L, 5)) {
+        lua_pushvalue(L, 5);
+        evt->set_callback_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+    }
 
     // Return a Lua table with _c_object = lightuserdata(EconomyEvent*); the
     // event keeps a ref to it so it can detach it before being freed.

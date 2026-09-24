@@ -800,6 +800,7 @@ void SimState::tick() {
         thread_manager_.resume_all(tick_count_);
     }
 
+    request_economy_events();
     update_economies();
     update_entities();
     // Beams reach from where their muzzles have moved to (M206c).
@@ -1056,10 +1057,68 @@ void SimState::share_team_economy() {
     }
 }
 
+void SimState::request_economy_events() {
+    // Each event asks its unit's army for its cost over its duration; one
+    // whose unit is gone is cancelled.
+    economy_events_.for_each([&](EconomyEvent& evt) {
+        evt.set_counted(false);
+        if (!evt.active() || evt.unit_id() == 0) return;
+        const Entity* unit = entity_registry_.find(evt.unit_id());
+        if (!unit || unit->destroyed()) {
+            evt.cancel();
+            return;
+        }
+        if (ArmyBrain* brain = get_army(unit->army())) {
+            brain->add_event_request(evt.mass_per_second(), evt.energy_per_second());
+            evt.set_counted(true);
+        }
+    });
+}
+
 void SimState::tick_economy_events() {
-    economy_events_.tick(SECONDS_PER_TICK);
+    // Events counted in this tick's economy move on as it granted them (a
+    // stall slows them), and tell their script how far they are. One made
+    // since asks next tick. An event with no unit runs on time alone.
+    economy_events_.for_each([&](EconomyEvent& evt) {
+        if (!evt.active()) return;
+        f64 efficiency = 1.0;
+        u32 unit_id = evt.unit_id();
+        if (unit_id != 0) {
+            if (!evt.counted()) return;
+            const Entity* unit = entity_registry_.find(unit_id);
+            const ArmyBrain* brain = unit ? get_army(unit->army()) : nullptr;
+            if (brain) {
+                if (evt.mass_per_second() > 0)
+                    efficiency = std::min(efficiency, brain->mass_efficiency());
+                if (evt.energy_per_second() > 0)
+                    efficiency = std::min(efficiency, brain->energy_efficiency());
+            }
+        }
+        evt.advance(SECONDS_PER_TICK, efficiency);
+        if (evt.callback_ref() < 0 || unit_id == 0) return;
+        const Entity* unit = entity_registry_.find(unit_id);
+        if (!unit || unit->destroyed() || unit->lua_table_ref() < 0) return;
+        const int top = lua_gettop(L_);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, evt.callback_ref());
+        if (lua_isfunction(L_, -1)) {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, unit->lua_table_ref());
+            lua_pushnumber(L_, evt.progress());
+            if (lua_pcall(L_, 2, 0, 0) != 0) {
+                const char* err = lua_tostring(L_, -1);
+                const std::string message =
+                    std::string("EconomyEvent callback error: ") + (err ? err : "(unknown)");
+                spdlog::warn("{}", message);
+                if (test_status::count_lua_failures()) test_status::record_failure(message);
+            }
+        }
+        lua_settop(L_, top);
+    });
     // Wake threads waiting on completed/cancelled events
     economy_events_.for_each([&](EconomyEvent& evt) {
+        if ((evt.is_done() || evt.is_cancelled()) && evt.callback_ref() >= 0) {
+            luaL_unref(L_, LUA_REGISTRYINDEX, evt.callback_ref());
+            evt.set_callback_ref(LUA_NOREF);
+        }
         if ((evt.is_done() || evt.is_cancelled()) && evt.has_waiting_thread())
             thread_manager_.wake(evt, tick_count_);
         // gc() frees finished events now; detach the script's handle first.
