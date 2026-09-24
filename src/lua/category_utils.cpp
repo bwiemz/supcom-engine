@@ -23,7 +23,9 @@ static bool match_impl(lua_State* L, int cat_idx,
     if (lua_isstring(L, -1)) {
         std::string name = lua_tostring(L, -1);
         lua_pop(L, 1);
-        if (name == "ALLUNITS") return true;
+        // Every entity with categories but a projectile (whose set holds
+        // ALLPROJECTILES).
+        if (name == "ALLUNITS") return cats.count("ALLPROJECTILES") == 0;
         return cats.count(name) > 0;
     }
     lua_pop(L, 1);

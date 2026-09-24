@@ -33,6 +33,11 @@ public:
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
     f32 muzzle_velocity = 25;
+    /// How long its shots live, overriding their projectile blueprint's
+    /// Lifetime (FAF's notes on the engine): ProjectileLifetimeUsesMultiplier
+    /// x MaxRadius / MuzzleVelocity, else ProjectileLifetime; 0 leaves it.
+    f32 projectile_lifetime = 0;
+    f32 projectile_lifetime_multiplier = 0;
     /// How a shot flies to its target (BallisticArc): straight, or on the
     /// low or the high of the two arcs gravity allows at its muzzle velocity.
     enum class Arc : u8 { None, Low, High };
@@ -53,6 +58,9 @@ public:
     bool counted_projectile = false;
     bool nuke_weapon = false;        ///< NukeWeapon: its missiles are nukes, else tactical
     i32 max_projectile_storage = 0;  ///< MaxProjectileStorage: the silo builds up to this
+    /// TargetType RULEWTT_Projectile: it shoots the other side's projectiles
+    /// (missiles, torpedoes), never units (M206b).
+    bool targets_projectiles = false;
     bool overcharge = false;         // OverChargeWeapon
     bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
@@ -145,7 +153,7 @@ public:
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.
-    int priority_of(const Unit& target) const;
+    int priority_of(const Entity& target) const;
 
     /// The aim controller whose OnTarget gates this weapon's fire: the one
     /// SetFireControl named, else the first created for it; null when the

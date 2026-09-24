@@ -12,6 +12,8 @@ namespace osc::sim {
 /// An entity category expression, compiled so the sim can test units
 /// against it without Lua: a name, ALLUNITS, or a union, intersection or
 /// difference of two expressions. An empty expression matches nothing.
+/// ALLUNITS matches every set but a projectile's (which holds
+/// ALLPROJECTILES).
 ///
 /// Moho copies categories when a script hands them over (FAF's
 /// SetWeaponPriorities reuses and clears its table right after calling

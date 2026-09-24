@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/blueprint_categories.hpp"
 #include "sim/platoon.hpp"
 #include "sim/formation.hpp"
 #include "sim/build_info.hpp"
@@ -651,6 +652,33 @@ void SimState::queue_replay(const Replay& replay) {
     if (!replay.victory_condition.empty())
         set_victory_condition(replay.victory_condition);
     for (const auto& c : replay.commands) command_scheduler_.submit(c);
+}
+
+std::shared_ptr<const ProjectileBlueprintInfo>
+SimState::projectile_blueprint_info(const std::string& bp_id) {
+    if (auto it = projectile_info_.find(bp_id); it != projectile_info_.end()) return it->second;
+    auto info = std::make_shared<ProjectileBlueprintInfo>();
+    info->categories.insert("ALLPROJECTILES");
+    if (L_ && !bp_id.empty()) {
+        const int top = lua_gettop(L_);
+        lua_pushstring(L_, "__blueprints");
+        lua_rawget(L_, LUA_GLOBALSINDEX);
+        if (lua_istable(L_, -1)) {
+            lua_pushstring(L_, bp_id.c_str());
+            lua_rawget(L_, -2);
+        }
+        if (lua_istable(L_, -1)) {
+            const int bp = lua_gettop(L_);
+            collect_blueprint_categories(L_, bp, info->categories);
+            lua_pushstring(L_, "DesiredShooterCap");
+            lua_rawget(L_, bp);
+            if (lua_type(L_, -1) == LUA_TNUMBER && lua_tonumber(L_, -1) > 0)
+                info->desired_shooter_cap = static_cast<u32>(lua_tonumber(L_, -1));
+        }
+        lua_settop(L_, top);
+    }
+    projectile_info_.emplace(bp_id, info);
+    return info;
 }
 
 void SimState::stop_unit(Unit& unit) {

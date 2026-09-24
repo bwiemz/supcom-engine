@@ -15,6 +15,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/script_class.hpp"
+#include "sim/projectile.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "core/test_status.hpp"
@@ -66,12 +67,25 @@ static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
 // Entity creation
 // ====================================================================
 
+static sim::Entity* extract_entity(lua_State* L, int idx);
+
 /// _c_CreateEntity(self, spec) — creates a C++ Entity and stores it.
 static int l_c_CreateEntity(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "_c_CreateEntity: no SimState");
 
     auto entity = std::make_unique<sim::Entity>();
+    // It belongs to its spec's Owner's army: a Flare or DepthCharge lures
+    // only the other side's missiles and torpedoes.
+    if (lua_istable(L, 2)) {
+        lua_pushstring(L, "Owner");
+        lua_gettable(L, 2);
+        if (lua_istable(L, -1)) {
+            if (const auto* owner = extract_entity(L, lua_gettop(L)); owner && !owner->destroyed())
+                entity->set_army(owner->army());
+        }
+        lua_pop(L, 1);
+    }
     u32 id = sim->entity_registry().register_entity(std::move(entity));
     auto* ent = sim->entity_registry().find(id);
 
@@ -316,6 +330,13 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         weapon->max_projectile_storage = static_cast<i32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
+                    // Missile defence (M206b).
+                    lua_pushstring(L, "TargetType");
+                    lua_gettable(L, we);
+                    weapon->targets_projectiles =
+                        lua_type(L, -1) == LUA_TSTRING &&
+                        std::string_view(lua_tostring(L, -1)) == "RULEWTT_Projectile";
+                    lua_pop(L, 1);
 
                     lua_pushstring(L, "OverChargeWeapon");
                     lua_gettable(L, we);
@@ -364,6 +385,15 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         weapon->max_height_diff = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
+                    for (auto [field, value] :
+                         {std::pair{"ProjectileLifetime", &weapon->projectile_lifetime},
+                          std::pair{"ProjectileLifetimeUsesMultiplier",
+                                    &weapon->projectile_lifetime_multiplier}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, we);
+                        if (lua_isnumber(L, -1)) *value = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
 
                     // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
                     lua_pushstring(L, "BeamLifetime");
@@ -3414,19 +3444,23 @@ static int l_GetUnitBlueprintByName(lua_State* L) {
     return 1;
 }
 
+/// The categories an entity answers to: a unit's, or a projectile's
+/// (M206b); null for anything else.
+static const std::unordered_set<std::string>* entity_categories(const sim::Entity* entity) {
+    if (!entity || entity->destroyed()) return nullptr;
+    if (entity->is_unit()) return &static_cast<const sim::Unit*>(entity)->categories();
+    if (entity->is_projectile()) return &static_cast<const sim::Projectile*>(entity)->categories();
+    return nullptr;
+}
+
 // EntityCategoryContains(category, entity) -> bool
 static int l_EntityCategoryContains(lua_State* L) {
     if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
         lua_pushboolean(L, 0);
         return 1;
     }
-    auto* entity = extract_entity(L, 2);
-    if (!entity || !entity->is_unit() || entity->destroyed()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    auto* unit = static_cast<sim::Unit*>(entity);
-    bool match = osc::lua::unit_matches_category(L, 1, unit->categories());
+    const auto* cats = entity_categories(extract_entity(L, 2));
+    const bool match = cats && osc::lua::unit_matches_category(L, 1, *cats);
     lua_pushboolean(L, match ? 1 : 0);
     return 1;
 }
@@ -3447,13 +3481,8 @@ static int category_filter(lua_State* L, bool keep_matches) {
         if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
         int unit_tbl = lua_gettop(L);
-        auto* entity = extract_entity(L, unit_tbl);
-        bool matches = false;
-        if (entity && entity->is_unit() && !entity->destroyed()) {
-            auto* unit = static_cast<sim::Unit*>(entity);
-            matches =
-                osc::lua::unit_matches_category(L, 1, unit->categories());
-        }
+        const auto* cats = entity_categories(extract_entity(L, unit_tbl));
+        const bool matches = cats && osc::lua::unit_matches_category(L, 1, *cats);
 
         if (matches == keep_matches) {
             lua_pushnumber(L, out_idx++);

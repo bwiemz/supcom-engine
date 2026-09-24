@@ -50,6 +50,34 @@ bool is_underwater(const std::string& layer) {
     return layer == "Sub" || layer == "Seabed";
 }
 
+/// The categories a target answers to: a unit's or a projectile's.
+const std::unordered_set<std::string>& target_categories(const Entity& target) {
+    static const std::unordered_set<std::string> kNone;
+    if (target.is_unit()) return static_cast<const Unit&>(target).categories();
+    if (target.is_projectile()) return static_cast<const Projectile&>(target).categories();
+    return kNone;
+}
+
+/// Whether `proj` has room for another shooter under its DesiredShooterCap.
+/// Its list of shooters is pruned first of weapons that have let it go.
+bool shooter_room(Projectile& proj, const EntityRegistry& registry) {
+    const u32 cap = proj.desired_shooter_cap();
+    if (cap == 0) return true;
+    auto& shooters = proj.shooters;
+    shooters.erase(
+        std::remove_if(shooters.begin(), shooters.end(),
+                       [&](const std::pair<u32, i32>& s) {
+                           const Entity* e = registry.find(s.first);
+                           if (!e || e->destroyed() || !e->is_unit()) return true;
+                           const auto& weapons = static_cast<const Unit*>(e)->weapons();
+                           return s.second < 0 || static_cast<size_t>(s.second) >= weapons.size() ||
+                                  weapons[static_cast<size_t>(s.second)]->target_entity_id !=
+                                      proj.entity_id();
+                       }),
+        shooters.end());
+    return shooters.size() < cap;
+}
+
 /// The unit an attack order at the head of the queue names, or 0.
 u32 attack_order_target(const Unit& owner) {
     const auto& queue = owner.command_queue();
@@ -210,19 +238,33 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
 
 bool Weapon::can_target(const Unit& owner, const Entity& target,
                         const map::VisibilityGrid* visibility_grid, const SimState* sim) const {
-    if (target.destroyed() || !target.is_unit() || target.entity_id() == owner.entity_id())
-        return false;
+    // A weapon shoots units, or, with TargetType RULEWTT_Projectile, the
+    // other side's projectiles (M206b).
+    if (target.destroyed() || target.entity_id() == owner.entity_id()) return false;
+    if (targets_projectiles ? !target.is_projectile() : !target.is_unit()) return false;
     if (target.do_not_target() || target.army() < 0) return false;
     if (sim ? !sim->is_enemy(owner.army(), target.army()) : target.army() == owner.army())
         return false;
-    if (!is_weapon_targetable(owner, target, visibility_grid)) return false;
-    const auto& unit = static_cast<const Unit&>(target);
-    if (fire_target_layer_caps != 0xFF && !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
-        return false;
-    if (above_water_targets_only && is_underwater(unit.layer())) return false;
-    if (!restrict_only_allow.empty() && !restrict_only_allow.matches(unit.categories()))
-        return false;
-    if (restrict_disallow.matches(unit.categories())) return false;
+    if (target.is_unit()) {
+        if (!is_weapon_targetable(owner, target, visibility_grid)) return false;
+        const auto& unit = static_cast<const Unit&>(target);
+        if (fire_target_layer_caps != 0xFF &&
+            !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
+            return false;
+        if (above_water_targets_only && is_underwater(unit.layer())) return false;
+    } else {
+        // A projectile in flight is on the Air layer, or Water below the
+        // surface.
+        const auto& proj = static_cast<const Projectile&>(target);
+        if (proj.impacted) return false;
+        if (fire_target_layer_caps != 0xFF &&
+            !(layer_to_bit(proj.layer()) & fire_target_layer_caps))
+            return false;
+        if (above_water_targets_only && proj.in_water) return false;
+    }
+    const auto& categories = target_categories(target);
+    if (!restrict_only_allow.empty() && !restrict_only_allow.matches(categories)) return false;
+    if (restrict_disallow.matches(categories)) return false;
 
     const f32 dx = target.position().x - owner.position().x;
     const f32 dz = target.position().z - owner.position().z;
@@ -245,10 +287,11 @@ bool Weapon::can_target(const Unit& owner, const Entity& target,
     return true;
 }
 
-int Weapon::priority_of(const Unit& target) const {
+int Weapon::priority_of(const Entity& target) const {
     if (target_priorities.empty()) return 0;
+    const auto& categories = target_categories(target);
     for (size_t i = 0; i < target_priorities.size(); ++i) {
-        if (target_priorities[i].matches(target.categories())) return static_cast<int>(i);
+        if (target_priorities[i].matches(categories)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -285,7 +328,7 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     int current_priority = -1;
     if (target_entity_id != 0) {
         if (!always_recheck_target) return;
-        current_priority = priority_of(static_cast<const Unit&>(*registry.find(target_entity_id)));
+        current_priority = priority_of(*registry.find(target_entity_id));
     }
 
     // Best: the earliest priority, then the nearest, then the lowest id
@@ -295,9 +338,12 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     f32 best_dist2 = 0;
     const f32 reach = max_range * std::max(1.0f, tracking_radius);
     for (const u32 id : registry.collect_in_radius(owner.position().x, owner.position().z, reach)) {
-        const Entity* e = registry.find(id);
+        Entity* e = registry.find(id);
         if (!e || !can_target(owner, *e, visibility_grid, sim)) continue;
-        const int priority = priority_of(static_cast<const Unit&>(*e));
+        // A missile already held by as many weapons as it wants shooting at
+        // it (a nuke's DesiredShooterCap is 1) is left to them.
+        if (e->is_projectile() && !shooter_room(static_cast<Projectile&>(*e), registry)) continue;
+        const int priority = priority_of(*e);
         if (priority < 0) continue;
         const f32 dx = e->position().x - owner.position().x;
         const f32 dz = e->position().z - owner.position().z;
@@ -311,7 +357,10 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
     }
     // A recheck changes target only for a better priority.
     if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
-    if (best_id != 0) target_entity_id = best_id;
+    if (best_id == 0) return;
+    target_entity_id = best_id;
+    if (Entity* target = registry.find(best_id); target && target->is_projectile())
+        static_cast<Projectile&>(*target).shooters.emplace_back(owner.entity_id(), weapon_index);
 }
 
 bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {
@@ -442,10 +491,13 @@ f32 Weapon::launch_elevation(f32 dist, f32 rise) const {
 Vector3 Weapon::aim_point(const Entity& target, const Vector3& from) const {
     // The middle of what it is shooting at, not its feet.
     Vector3 at = collision_centre(target);
-    if (!lead_target || !target.is_unit() || muzzle_velocity <= 0) return at;
-    // Where it will be when the shot arrives: the flight time to where it is
-    // now, once refined.
-    const Vector3& v = static_cast<const Unit&>(target).velocity();
+    if (!lead_target || muzzle_velocity <= 0) return at;
+    // Where it will be when the shot arrives (a unit, or a missile): the
+    // flight time to where it is now, once refined.
+    Vector3 v;
+    if (target.is_unit()) v = static_cast<const Unit&>(target).velocity();
+    else if (target.is_projectile()) v = static_cast<const Projectile&>(target).velocity;
+    else return at;
     for (int pass = 0; pass < 2; ++pass) {
         const f32 dx = at.x - from.x;
         const f32 dz = at.z - from.z;
@@ -556,6 +608,11 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics = proj->apply_blueprint_physics(L);
     if (physics.lifetime) proj->lifetime = *physics.lifetime;
+    // The weapon's own lifetime for its shots wins (an anti-torpedo's
+    // blueprint says half a second, its weapon four).
+    if (projectile_lifetime_multiplier > 0 && muzzle_velocity > 0)
+        proj->lifetime = projectile_lifetime_multiplier * max_range / muzzle_velocity;
+    else if (projectile_lifetime > 0) proj->lifetime = projectile_lifetime;
     if (counted_projectile) {
         // Facing along its muzzle, even at rest: it accelerates that way.
         const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);
