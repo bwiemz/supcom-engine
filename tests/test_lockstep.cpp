@@ -21,6 +21,7 @@ extern "C" {
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <vector>
 
 using osc::sim::CommandType;
@@ -136,6 +137,35 @@ TEST_CASE("Exchanged checksums flag a desync", "[lockstep]") {
 
     CHECK(a.compute_sync_checksum() != b.compute_sync_checksum());
     CHECK((sa.desynced() || sb.desynced())); // divergence detected in-protocol
+    // ...and named: an extra entity.
+    const auto& domains = sa.desynced() ? sa.desync_domains() : sb.desync_domains();
+    CHECK(std::find(domains.begin(), domains.end(), "entities") != domains.end());
+}
+
+TEST_CASE("A desync names the domain that diverged", "[lockstep]") {
+    // Only a unit's fire state differs: a player setting, before it moves
+    // or fires anything. The report says `units`, and nothing else.
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr);
+    SimState b(gb.L, nullptr);
+    const auto ida = spawn_mover(a, 5.0f);
+    spawn_mover(b, 5.0f);
+    static_cast<Unit*>(a.entity_registry().find(ida))->set_fire_state(1);
+
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+    for (int round = 0; round < 4; ++round) {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+    REQUIRE(sa.desynced());
+    CHECK(sa.desync_domains() == std::vector<std::string>{"units"});
+    CHECK(sa.desync_tick() >= 1);
 }
 
 TEST_CASE("LockstepSession times out a silent peer", "[lockstep][drop]") {
@@ -200,9 +230,9 @@ TEST_CASE("A peer's frame carries only its own commands", "[lockstep]") {
         w.u8v(0); // a frame message
         w.u32v(from);
         w.u32v(1); // frame
-        w.u8v(0);  // no checksum
+        w.u8v(0);  // no checksum: its tick, and each domain's
         w.u32v(0);
-        w.u32v(0);
+        for (size_t i = 0; i < SimState::ChecksumParts::kCount; ++i) w.u64v(0);
         w.u32v(1); // one command
         osc::sim::ScheduledCommand c;
         c.exec_tick = 1;
