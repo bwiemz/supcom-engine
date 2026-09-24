@@ -4383,6 +4383,23 @@ static int l_IssueAggressiveMove(lua_State* L) {
     return l_IssueMove(L);
 }
 
+// IssueFormMove(units, position, formation, degrees) and
+// IssueFormAggressiveMove: a move laid out in a /lua/formations.lua
+// formation about the position, facing `degrees` (south 0, east 90: the
+// engine's heading), held to the slowest unit's pace (M204).
+static int l_IssueFormMove(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Move;
+    cmd.target_pos = extract_position(L, 2);
+    if (lua_type(L, 3) == LUA_TSTRING) cmd.formation = lua_tostring(L, 3);
+    if (lua_isnumber(L, 4)) {
+        cmd.has_facing = true;
+        cmd.facing = static_cast<f32>(lua_tonumber(L, 4)) * 3.14159265358979f / 180.0f;
+    }
+    route_units_command(L, 1, cmd, false);
+    return 0;
+}
+
 // IssueStop(units_table) — routed as a Stop command so a networked player's
 // stop is broadcast + scheduled; single-player still clears immediately via
 // route_command's direct Stop branch.
@@ -5133,8 +5150,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueOverCharge", l_IssueOvercharge);
     // Formation orders: the formation shape itself is roadmap M204; until
     // then units receive the plain order instead of silently nothing.
-    state.register_function("IssueFormMove", l_IssueMove);
-    state.register_function("IssueFormAggressiveMove", l_IssueAggressiveMove);
+    state.register_function("IssueFormMove", l_IssueFormMove);
+    state.register_function("IssueFormAggressiveMove", l_IssueFormMove);
     state.register_function("IssueFormPatrol", l_IssuePatrol);
     state.register_function("IssueFormAttack", l_IssueAttack);
 

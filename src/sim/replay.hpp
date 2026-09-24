@@ -18,8 +18,8 @@ namespace osc::sim {
 /// scripts roll numbers too.
 struct Replay {
     // 2: the game's seed; 3: SimCallbacks; 4: the game's setup, the build,
-    // and a checksum trail
-    static constexpr u32 kVersion = 4;
+    // and a checksum trail; 5: formation orders
+    static constexpr u32 kVersion = 5;
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers

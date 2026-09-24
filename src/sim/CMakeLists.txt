@@ -9,6 +9,7 @@ add_library(osc_sim STATIC
     bone_data.cpp
     collision.cpp
     entity.cpp
+    formation.cpp
     manipulator.cpp
     platoon.cpp
     sca_parser.cpp

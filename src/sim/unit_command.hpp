@@ -37,6 +37,17 @@ struct UnitCommand {
     u32 target_id = 0;          // entity ID for Attack/Guard
     std::string blueprint_id;   // for Build commands (empty for non-build)
     u32 command_id = 0;         // unique ID for IsCommandsActive tracking
+    /// A group order's formation (a /lua/formations.lua function, e.g.
+    /// AttackFormation): the sim lays its units out in slots about the target
+    /// when it applies the order (M204). Empty: every unit to the target.
+    std::string formation;
+    /// The formation's facing, as IssueFormMove's degrees give it (south 0,
+    /// east 90: the engine's heading). Unset: from the group to the target.
+    bool has_facing = false;
+    f32 facing = 0;
+    /// Held to this speed (a formation keeps its slowest unit's pace); 0:
+    /// the unit's own. Set when a formation order is laid out.
+    f32 speed_cap = 0;
 };
 
 } // namespace osc::sim

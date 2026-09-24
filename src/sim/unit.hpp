@@ -614,7 +614,9 @@ public:
 
 private:
     void call_on_reclaimed(u32 target_id, EntityRegistry& registry, lua_State* L);
-    bool nav_update(f64 dt, const map::Terrain* terrain);
+    /// Move along the navigator's path, no faster than `speed_cap` if set (a
+    /// formation keeping its slowest unit's pace).
+    bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
     void apply_vet_buffs(lua_State* L);
     void fire_on_veteran(lua_State* L);
 

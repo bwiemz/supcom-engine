@@ -8223,6 +8223,179 @@ void test_crowd(TestContext& ctx) {
     spdlog::info("Crowd test: {}/{} passed", pass, pass + fail);
 }
 
+void test_formation(TestContext& ctx) {
+    spdlog::info("=== FORMATION TEST: groups move in formation ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                for _, t in __osc_tracks do
+                    local p = t.u:GetPosition()
+                    if t.last then
+                        local v = math.sqrt((p[1] - t.last[1]) ^ 2 + (p[3] - t.last[3]) ^ 2) * 10
+                        if v > t.top then t.top = v end
+                    end
+                    t.last = p
+                    if t.near then
+                        local d = math.sqrt((p[1] - t.near[1]) ^ 2 + (p[3] - t.near[3]) ^ 2)
+                        if d < t.closest then t.closest = d end
+                    end
+                end
+            )");
+        }
+    };
+
+    // On the flat plain east of the map's centre: eight Strikers and two
+    // Lobos ordered in AttackFormation facing south (+Z), and the same
+    // facing east (+X).
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_tracks = {}
+        function __osc_group(x0, z0)
+            local g = {tanks = {}, arty = {}, all = {}}
+            for i = 0, 7 do
+                local u = __osc_spawn('uel0201', 'ARMY_1', x0 + 2 * i, z0)
+                table.insert(g.tanks, u)
+                table.insert(g.all, u)
+                table.insert(__osc_tracks, {u = u, top = 0})
+            end
+            for i = 0, 1 do
+                local u = __osc_spawn('uel0103', 'ARMY_1', x0 + 2 * i, z0 - 4)
+                table.insert(g.arty, u)
+                table.insert(g.all, u)
+                table.insert(__osc_tracks, {u = u, top = 0})
+            end
+            return g
+        end
+        __osc_south = __osc_group(600, 75)
+        __osc_south_goal = {620, GetTerrainHeight(620, 115), 115}
+        IssueFormMove(__osc_south.all, __osc_south_goal, 'AttackFormation', 0)
+        __osc_east = __osc_group(660, 150)
+        __osc_east_goal = {705, GetTerrainHeight(705, 165), 165}
+        IssueFormMove(__osc_east.all, __osc_east_goal, 'AttackFormation', 90)
+    )");
+    run(300);
+    lua_check("Test 1: a formation order ends with every unit in its slot, none moving", R"(
+        for _, g in {__osc_south, __osc_east} do
+            for i, u in g.all do
+                if u:IsMoving() then error('unit ' .. i .. ' still moving') end
+            end
+        end
+    )");
+    lua_check("Test 2: the front row runs across the facing, the footprint + 2 apart", R"(
+        -- Facing south: the Strikers' row runs along x at one z; spaced 3
+        -- (a footprint of 1, plus 2).
+        local xs, zs = {}, {}
+        for _, u in __osc_south.tanks do
+            local p = u:GetPosition()
+            table.insert(xs, p[1])
+            table.insert(zs, p[3])
+        end
+        table.sort(xs)
+        local zmin, zmax = math.min(unpack(zs)), math.max(unpack(zs))
+        if zmax - zmin > 1.5 then error('the front row spans ' .. (zmax - zmin) .. ' in z') end
+        for i = 2, table.getn(xs) do
+            local gap = xs[i] - xs[i - 1]
+            if gap < 2.4 or gap > 3.6 then error('slots ' .. gap .. ' apart') end
+        end
+        if math.abs((xs[1] + xs[8]) / 2 - __osc_south_goal[1]) > 1.0 then
+            error('the row is centred on ' .. ((xs[1] + xs[8]) / 2))
+        end
+    )");
+    lua_check("Test 3: artillery forms up behind the tanks", R"(
+        local front = __osc_south.tanks[1]:GetPosition()[3]
+        for _, u in __osc_south.arty do
+            if u:GetPosition()[3] > front - 1.5 then error('a Lobo stands at z ' .. u:GetPosition()[3]) end
+        end
+    )");
+    lua_check("Test 4: facing east, the row runs along z and the Lobos stand west of it", R"(
+        local xs, zs = {}, {}
+        for _, u in __osc_east.tanks do
+            local p = u:GetPosition()
+            table.insert(xs, p[1])
+            table.insert(zs, p[3])
+        end
+        local xspan = math.max(unpack(xs)) - math.min(unpack(xs))
+        local zspan = math.max(unpack(zs)) - math.min(unpack(zs))
+        if xspan > 1.5 or zspan < 18 then error('row spans x ' .. xspan .. ', z ' .. zspan) end
+        for _, u in __osc_east.arty do
+            if u:GetPosition()[1] > xs[1] - 1.5 then error('a Lobo stands at x ' .. u:GetPosition()[1]) end
+        end
+    )");
+    lua_check("Test 5: the group keeps its slowest unit's pace (a Lobo's 2.8)", R"(
+        -- Measured from positions, which neighbours' pushes add to: a
+        -- Striker alone would reach 3.4.
+        for _, t in __osc_tracks do
+            if t.top > 2.8 + 0.25 then error(t.u:GetUnitId() .. ' reached ' .. t.top) end
+        end
+    )");
+
+    // A platoon queues its moves: it passes the first waypoint on the way
+    // to the second. MoveToTarget goes to a unit.
+    lua_check("setup: a platoon on a two-waypoint route", R"(
+        local brain = ArmyBrains[1]
+        local units = {}
+        for i = 0, 1 do table.insert(units, __osc_spawn('uel0201', 'ARMY_1', 700 + 2 * i, 75)) end
+        __osc_route = brain:MakePlatoon('Route', 'none')
+        brain:AssignUnitsToPlatoon(__osc_route, units, 'Attack', 'AttackFormation')
+        __osc_wp1 = {700, GetTerrainHeight(700, 125), 125}
+        __osc_wp2 = {740, GetTerrainHeight(740, 125), 125}
+        __osc_route:MoveToLocation(__osc_wp1, false)
+        __osc_route:MoveToLocation(__osc_wp2, false)
+        __osc_tracks = {}
+        for _, u in units do table.insert(__osc_tracks, {u = u, top = 0, near = __osc_wp1, closest = 1e9}) end
+        __osc_route_units = units
+        -- A friendly structure, so nothing fights on the way.
+        local chaser = __osc_spawn('uel0201', 'ARMY_1', 610, 140)
+        __osc_chase = brain:MakePlatoon('Chase', 'none')
+        brain:AssignUnitsToPlatoon(__osc_chase, {chaser}, 'Attack', 'none')
+        __osc_quarry = __osc_spawn('ueb1101', 'ARMY_1', 640, 140)
+        __osc_chase:MoveToTarget(__osc_quarry)
+        __osc_chaser = chaser
+    )");
+    run(400);
+    lua_check("Test 6: a platoon passes its first waypoint on the way to the second", R"(
+        for i, t in __osc_tracks do
+            if t.closest > 5 then error('unit ' .. i .. ' came no nearer than ' .. t.closest .. ' to the first waypoint') end
+            local p = t.u:GetPosition()
+            local d = math.sqrt((p[1] - __osc_wp2[1]) ^ 2 + (p[3] - __osc_wp2[3]) ^ 2)
+            if d > 5 then error('unit ' .. i .. ' ended ' .. d .. ' from the second') end
+        end
+    )");
+    lua_check("Test 7: MoveToTarget heads for the unit", R"(
+        local p = __osc_chaser:GetPosition()
+        local q = __osc_quarry:GetPosition()
+        local d = math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2)
+        if d > 4 then error('the chaser is ' .. d .. ' from its target') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 8: no script errors");
+    spdlog::info("Formation test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

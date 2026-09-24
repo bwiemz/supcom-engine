@@ -10,7 +10,7 @@ std::vector<u8> Replay::serialize() const {
     std::vector<u8> b;
     ByteWriter w(b);
     for (char c : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<u8>(c));
-    w.u32v(version);
+    w.u32v(kVersion); // the layout written below, whatever version was read
     w.u32v(final_tick);
     w.u32v(command_delay);
     w.u64v(seed);
@@ -52,7 +52,8 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
     const u32 count = r.u32v();
     for (u32 i = 0; i < count && r.ok(); ++i) {
         ScheduledCommand c;
-        if (read_command(r, c, /*with_callback=*/out.version >= 3))
+        if (read_command(r, c, /*with_callback=*/out.version >= 3,
+                         /*with_formation=*/out.version >= 5))
             out.commands.push_back(std::move(c));
     }
     if (!r.ok()) {

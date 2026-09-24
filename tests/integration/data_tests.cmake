@@ -36,7 +36,7 @@ set(OSC_DATA_TESTS_GATE
     death-test decalsplat-test drive-test deposit-test drag-render-test draw-test dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
     gameui-test impact-test
-    enhance-wreck-test fire-test flags-test font-test fow-test full-smoke-test
+    enhance-wreck-test fire-test flags-test formation-test font-test fow-test full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test
     layercap-test los-test lowstub-test manip-test massstub-test massstub2-test

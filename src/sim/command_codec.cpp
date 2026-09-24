@@ -87,6 +87,9 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.u32v(c.command.target_id);
     w.u32v(c.command.command_id);
     w.str(c.command.blueprint_id);
+    w.str(c.command.formation);
+    w.u8v(c.command.has_facing ? 1 : 0);
+    w.f32v(c.command.facing);
     w.u32v(static_cast<u32>(c.unit_ids.size()));
     for (u32 id : c.unit_ids) w.u32v(id);
 
@@ -106,7 +109,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     for (u32 id : cb.unit_ids) w.u32v(id);
 }
 
-bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback) {
+bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation) {
     c = ScheduledCommand{};
     c.exec_tick = r.u32v();
     c.source = r.u32v();
@@ -118,6 +121,11 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback) {
     c.command.target_id = r.u32v();
     c.command.command_id = r.u32v();
     c.command.blueprint_id = r.str();
+    if (with_formation) {
+        c.command.formation = r.str();
+        c.command.has_facing = r.u8v() != 0;
+        c.command.facing = r.f32v();
+    }
     const u32 n = r.u32v();
     for (u32 i = 0; i < n && r.ok(); ++i) c.unit_ids.push_back(r.u32v());
 

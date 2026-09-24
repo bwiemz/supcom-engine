@@ -320,6 +320,12 @@ public:
     /// deterministic AI/sim order under multiplayer) applies directly now.
     void route_command(const std::vector<u32>& unit_ids,
                        const UnitCommand& command, bool clear_existing);
+    /// What each unit of a group order gets: a formation order is laid out in
+    /// its slots, the group held to its slowest member's speed (M204); any
+    /// other order goes to every unit as it is. Done where the sim applies
+    /// the order, so every peer and replay computes the same.
+    std::vector<std::pair<u32, UnitCommand>> expand_group_command(const std::vector<u32>& unit_ids,
+                                                                  const UnitCommand& command) const;
 
     // --- Replay recording / playback ---
     // With recording on, every scheduled command is captured into a Replay that

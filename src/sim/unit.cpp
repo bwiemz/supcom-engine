@@ -336,10 +336,11 @@ void Unit::tick_dying(f32 dt, const map::Terrain* terrain) {
     }
 }
 
-bool Unit::nav_update(f64 dt, const map::Terrain* terrain) {
+bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     if (is_air_unit())
         return navigator_.update_air(*this, dt, terrain);
-    bool result = navigator_.update(*this, effective_speed(), dt, terrain);
+    const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
+    bool result = navigator_.update(*this, speed, dt, terrain);
 
     // Sub units: smooth transition to dive depth below water surface
     if (terrain && layer_ == "Sub") {
@@ -476,7 +477,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
                                     naval_draft_, is_amphibious() || is_hover());
             }
-            if (!nav_update(dt, ctx.terrain)) {
+            if (!nav_update(dt, ctx.terrain, cmd.speed_cap)) {
                 command_queue_.pop_front();
                 continue;
             }
