@@ -409,6 +409,14 @@ public:
     /// ("tick total rng armies entities", hex) -- a trace two runs can be
     /// compared by (tools/checksum_diff.py). Null stops it.
     void set_checksum_trace(std::ostream* out) { checksum_trace_ = out; }
+    /// Write every entity's synced state, and the RNG's, at ticks [from, to]
+    /// to `out`, floats as their exact bits. Two platforms' dumps diff to
+    /// the entity where their games part (--entity-trace).
+    void set_entity_trace(std::ostream* out, u32 from, u32 to) {
+        entity_trace_ = out;
+        entity_trace_from_ = from;
+        entity_trace_to_ = to;
+    }
 
     // --- Deterministic sim RNG ---
     // Any sim randomness (e.g. weapon firing spread) must draw from this seeded
@@ -558,6 +566,10 @@ private:
     audio::SoundManager* sound_manager_ = nullptr;
     std::function<void(const SimState&)> tick_observer_;
     std::ostream* checksum_trace_ = nullptr;
+    std::ostream* entity_trace_ = nullptr;
+    u32 entity_trace_from_ = 0;
+    u32 entity_trace_to_ = 0;
+    void write_entity_trace() const;
     std::unique_ptr<BoneCache> bone_cache_;
     std::unique_ptr<AnimCache> anim_cache_;
     ArmorDefinition armor_def_;

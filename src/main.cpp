@@ -312,6 +312,8 @@ static void print_usage() {
               << "  --seed <n>         The game's random seed (default: fixed for tests and\n"
               << "                     headless runs, fresh for an interactive game)\n"
               << "  --checksum-trace <f>  Write each tick's sync checksum and its parts\n"
+              << "  --entity-trace <f>    Write every entity's synced state each tick\n"
+              << "  --entity-trace-ticks <from>-<to>  ...only for these ticks\n"
               << "  --record <file>    Record the game as a replay, written when the run ends\n"
               << "  --watch <file>     Watch a replay in the game\n"
               << "  --user-dir <dir>   Replays and saved games folder (default: FA's user folder\n"
@@ -570,6 +572,12 @@ static void attach_sound(osc::lua::LuaState& sim_lua, osc::sim::SimState& sim,
 /// here (see SimState::set_checksum_trace); null when not asked for.
 static std::ofstream* g_checksum_trace = nullptr;
 
+/// --entity-trace <file> [--entity-trace-ticks <from>-<to>]: every entity's
+/// synced state at those ticks (see SimState::set_entity_trace).
+static std::ofstream* g_entity_trace = nullptr;
+static osc::u32 g_entity_trace_from = 0;
+static osc::u32 g_entity_trace_to = 0xFFFFFFFFu;
+
 /// --record <file>: each game records (SimState::set_recording), and the
 /// run writes the last one's replay here as it ends. Empty: no recording.
 static std::string g_record_path;
@@ -771,6 +779,7 @@ static bool execute_reload_sequence(
     if (replay) seed = replay->setup.seed;
     sim_state->set_seed(seed);
     sim_state->set_checksum_trace(g_checksum_trace);
+    sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     spdlog::info("Game seed {:#018x}", seed);
 
     // 7. Audio (the application's engine, kept in the UI state), bone
@@ -1916,6 +1925,20 @@ int main(int argc, char* argv[]) {
         }
         g_checksum_trace = &checksum_trace;
     }
+    std::ofstream entity_trace;
+    if (const auto trace = parse_string_arg(argc, argv, "--entity-trace", ""); !trace.empty()) {
+        entity_trace.open(trace, std::ios::trunc);
+        if (!entity_trace) {
+            spdlog::error("--entity-trace: cannot write {}", trace);
+            return 1;
+        }
+        g_entity_trace = &entity_trace;
+        const auto range = parse_string_arg(argc, argv, "--entity-trace-ticks", "");
+        if (const auto dash = range.find('-'); dash != std::string::npos) {
+            g_entity_trace_from = static_cast<osc::u32>(std::stoul(range.substr(0, dash)));
+            g_entity_trace_to = static_cast<osc::u32>(std::stoul(range.substr(dash + 1)));
+        }
+    }
     sound.set_sim_clocked(headless);
 
     // Phase 3: Map + Sim boot (only when --map provided)
@@ -1962,6 +1985,7 @@ int main(int argc, char* argv[]) {
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
     sim_state->set_seed(game_setup.seed);
     sim_state->set_checksum_trace(g_checksum_trace);
+    sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
     spdlog::info("Game seed {:#018x}", game_setup.seed);
 
     attach_sound(*sim_lua_state, *sim_state, &sound);

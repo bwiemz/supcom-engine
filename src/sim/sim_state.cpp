@@ -22,6 +22,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <bit>
 #include <ostream>
 #include <string>
 #include <cmath>
@@ -814,6 +815,8 @@ void SimState::tick() {
             recorded_replay_.checksums.push_back(parts.total());
         }
     }
+    if (entity_trace_ && tick_count_ >= entity_trace_from_ && tick_count_ <= entity_trace_to_)
+        write_entity_trace();
     // Death flashes and camera shakes are shown from the tick's capture;
     // the sim is done with them (events raised between ticks wait for the
     // next one).
@@ -1577,6 +1580,33 @@ SimState::ChecksumParts SimState::checksum_parts() const {
     });
     parts.entities = entities.h;
     return parts;
+}
+
+void SimState::write_entity_trace() const {
+    const auto bits = [](f32 v) { return std::bit_cast<u32>(v); };
+    std::string out = fmt::format("T {} rng {:016x}\n", tick_count_, sim_random_.state());
+    entity_registry_.for_each([&](const Entity& e) {
+        const auto& p = e.position();
+        const auto& q = e.orientation();
+        const char kind = e.is_unit()         ? 'u'
+                          : e.is_prop()       ? 'p'
+                          : e.is_projectile() ? 'j'
+                          : e.is_shield()     ? 's'
+                                              : 'e';
+        out += fmt::format("{} {} {} a{} d{} p {:08x} {:08x} {:08x} q {:08x} {:08x} {:08x} {:08x} "
+                           "h {:08x}",
+                           e.entity_id(), kind, e.blueprint_id(), e.army(), e.destroyed() ? 1 : 0,
+                           bits(p.x), bits(p.y), bits(p.z), bits(q.x), bits(q.y), bits(q.z),
+                           bits(q.w), bits(e.health()));
+        if (e.is_unit()) {
+            const auto& u = static_cast<const Unit&>(e);
+            out += fmt::format(" L{} s{:x} f{} c{} k{} b{:08x}", u.layer(), u.script_bits(),
+                               u.fire_state(), u.command_queue().size(), u.is_dying() ? 1 : 0,
+                               bits(u.fraction_complete()));
+        }
+        out += '\n';
+    });
+    *entity_trace_ << out;
 }
 
 u32 SimState::compute_sync_checksum() const {
