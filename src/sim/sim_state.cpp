@@ -695,7 +695,26 @@ void SimState::stop_unit(Unit& unit) {
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
-    command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& sc) {
+    command_scheduler_.dispatch_due(tick_count_, [&](const ScheduledCommand& scheduled) {
+        // A player's order, or UI callback, moves only its own army's units.
+        ScheduledCommand sc = scheduled;
+        if (const auto owner = source_armies_.find(sc.source); owner != source_armies_.end()) {
+            const auto own_only = [&](std::vector<u32>& ids) {
+                const size_t named = ids.size();
+                ids.erase(std::remove_if(ids.begin(), ids.end(),
+                                         [&](u32 id) {
+                                             const Entity* e = entity_registry_.find(id);
+                                             return !e || e->army() != owner->second;
+                                         }),
+                          ids.end());
+                if (ids.size() != named)
+                    spdlog::warn("[commands] source {} named {} units outside its army {}; "
+                                 "ignored",
+                                 sc.source, named - ids.size(), owner->second);
+            };
+            own_only(sc.unit_ids);
+            if (sc.callback) own_only(sc.callback->unit_ids);
+        }
         // A recording keeps what the sim applies, where it applies it: local
         // and networked commands alike, on the tick they ran.
         if (recording_) {

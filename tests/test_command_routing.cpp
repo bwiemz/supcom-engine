@@ -7,6 +7,7 @@
 
 #include "sim/manipulator.hpp"
 #include "sim/shield.hpp"
+#include "sim/sim_callback_queue.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -197,4 +198,49 @@ TEST_CASE("clear_local_command_sink returns to single-player behavior",
     CHECK(unit_of(sim, id)->command_queue().empty()); // scheduled, not sent
     sim.tick();
     CHECK(unit_of(sim, id)->command_queue().size() == 1);
+}
+
+TEST_CASE("A mapped source's orders move only its own army's units", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto mine = spawn_unit(sim); // army 0
+    const auto theirs = spawn_unit(sim);
+    unit_of(sim, theirs)->set_army(1);
+    sim.set_recording(true);
+
+    // Source 1 plays army 1; its frame names a unit of army 0 as well.
+    sim.set_source_army(1, 1);
+    sim.schedule_command(1, {mine, theirs}, move_to(100.0f, 0.0f), true);
+    sim.tick();
+    CHECK(unit_of(sim, mine)->command_queue().empty());
+    REQUIRE(unit_of(sim, theirs)->command_queue().size() == 1);
+    // The recording keeps the order as applied, so a replay needs no mapping.
+    REQUIRE(sim.recorded_replay().commands.size() == 1);
+    CHECK(sim.recorded_replay().commands[0].unit_ids == std::vector<osc::u32>{theirs});
+
+    // An unmapped source (the single-player player) is not limited.
+    sim.schedule_command(0, {mine, theirs}, move_to(50.0f, 0.0f), true);
+    sim.tick();
+    CHECK(unit_of(sim, mine)->command_queue().size() == 1);
+}
+
+TEST_CASE("A mapped source's UI callbacks touch only its own army's units", "[routing]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const auto mine = spawn_unit(sim); // army 0
+    const auto theirs = spawn_unit(sim);
+    unit_of(sim, theirs)->set_army(1);
+
+    // Source 1 (army 1) sets hold fire on its selection, which names a unit
+    // of army 0 too.
+    sim.set_source_army(1, 1);
+    osc::sim::SimCallbackEntry hold;
+    hold.func_name = osc::sim::kUnitSettingCallback;
+    hold.args["Setting"] = std::string("FireState");
+    hold.args["Value"] = 1.0;
+    hold.unit_ids = {mine, theirs};
+    sim.schedule_callback(1, hold);
+    sim.tick();
+    CHECK(unit_of(sim, mine)->fire_state() == 0);
+    CHECK(unit_of(sim, theirs)->fire_state() == 1);
 }

@@ -274,6 +274,12 @@ public:
     u32 schedule_command(u32 source, const std::vector<u32>& unit_ids,
                          const UnitCommand& command, bool clear_existing);
 
+    /// The army a command source plays. A source with one moves only that
+    /// army's units: a peer can't order another's by naming them (a lockstep
+    /// frame is checked only against its sender). Unmapped sources (the
+    /// single-player player, the engine) are not limited.
+    void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+
     /// Whether the next tick may run yet (always true in single-player; in
     /// lockstep, false until every peer has confirmed its command frame).
     bool ready_to_run_next_tick() const {
@@ -640,6 +646,7 @@ private:
     mutable ChecksumParts tick_checksum_;
     mutable u32 tick_checksum_tick_ = 0;
     mutable bool tick_checksum_valid_ = false;
+    std::map<u32, i32> source_armies_; // see set_source_army
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

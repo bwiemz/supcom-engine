@@ -88,6 +88,11 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     if (!s.transport_ready || !s.mux) return false;
     s.session = std::make_unique<osc::sim::LockstepSession>(
         sim, s.mux->game_channel(), s.local_source, s.all_sources);
+    // Source s plays army s (as a dropped peer's defeat and GetFocusArmy
+    // take it): each peer's orders move only its own army's units.
+    for (const osc::u32 source : s.all_sources)
+        sim.set_source_army(source, static_cast<osc::i32>(source));
+    sim.set_source_army(s.local_source, static_cast<osc::i32>(s.local_source));
     auto* session = s.session.get();
     // Route local human orders through the session (broadcast + schedule).
     sim.set_local_command_sink(
