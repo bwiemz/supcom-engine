@@ -211,6 +211,48 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
 - **Swept tests:** each tick's path is swept against the terrain heightfield, the water plane, units (their box or sphere from `SizeX/Y/Z`, `CollisionOffset*` and `SizeSphere`), props, projectiles with health, and shields (sphere or box, `None` when down).
 - **Both ways:** the engine calls `OnCollisionCheck` on both parties and honours `SetCollision`, `SetCollideSurface` and `SetCollideEntity`.
 
+**What building M201d established:**
+
+- **A unit's box stands on its offset.** The engine's shape for a unit or
+  prop is a box `SizeX` by `SizeY` by `SizeZ` whose base is at
+  `CollisionOffsetY`: retail's `GetRandomOffset` reads the height that way.
+  Retail sets spheres itself: `AirUnit.OnStopBeingBuilt` for `SizeSphere`,
+  and shields at half their `Size`.
+- **The scripts decide who meets whom.** `Projectile.OnCollisionCheck`
+  refuses its own army, so friends never block a shot. A tree group refuses
+  and breaks into trees, so the shot flies on. A wreck refuses units but
+  takes shots. A shield takes only enemy shots, and only coming in: units
+  inside a dome fire out of it.
+- **Shots now miss.** They used to hit anything within 1.5 of the target in
+  plan view. Now a shot aimed where a unit was flies past it once the unit
+  moves.
+- **Firing randomness was 12 times too wide.** The engine turned the shot
+  by up to `FiringRandomness` radians, 28 degrees for a typical 0.5. FAF
+  measured Moho's spread as a circle `FiringRandomness × distance / 12`
+  across (`FixedSpreadRadius`), and shots now land in it.
+- **Weapons aim at the middle of a target**, not at its feet: a straight
+  shot at a unit's base would graze the ground on the way.
+- **Where shots end without a target:**
+  - A shot whose time runs out impacts `'Air'` (`'Underwater'` below the
+    surface), as FAF documents.
+  - Strategic missiles have `CollideSurface = false` (they rise from their
+    silos through the ground), so a tracking shot also ends on reaching its
+    ground target.
+  - Bombs fall at Moho's default gravity. None of retail's bomb blueprints
+    has `UseGravity`, and they would otherwise hang where they were
+    dropped.
+- **Script-made projectiles take their blueprint's physics.** Debris and
+  cluster bomblets fall, and effect projectiles stay put: their blueprints
+  say `UseGravity = false` and `CollideSurface = false`.
+- **Cost.** The sweep is about 5% of sim time in a four-AI game. It asks
+  the spatial grid for shapes near the path, and keeps shields and
+  experimentals (shapes reaching past 8) on a list of their own.
+- **Left:**
+  - Weapons don't target projectiles yet, so anti-missile defence waits:
+    missiles have shapes, and interceptors would meet them.
+  - Beams still hit from the engine (`OnCollisionCheckWeapon`).
+  - Bombs drop straight down, without the bomber's speed.
+
 ### M201e: ballistic arc
 
 - **The solution:** `BallisticArc` Low or High, from `tanθ = (v² ∓ √(v⁴ − g(gd² + 2hv²))) / (gd)`.
