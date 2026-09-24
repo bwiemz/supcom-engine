@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-09-24 (through M206f, merged as PR #62; see `docs/ROADMAP.md` for the plan)
+Last reviewed: 2026-09-24 (through M192 step 1; M193, M191 step 1 and the checksum domains merged as PRs #65–#68; see `docs/ROADMAP.md` for the plan)
 
 ## What This Codebase Is
 
@@ -16,7 +16,7 @@ OpenSupCom is a C++20/CMake reimplementation of the Supreme Commander: Forged Al
 
 The code runs against real FA/FAF data via the VFS and currently boots Seton's Clutch far enough to load blueprints, parse the map, start FA AI code, spawn armies, build structures, and execute sim ticks.
 
-## Platforms, Data Targets and Measured Status (2026-09-24, main at M206f)
+## Platforms, Data Targets and Measured Status (2026-09-24, main at M193, M192 in review)
 
 | | Status |
 |---|---|
@@ -28,10 +28,10 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 441 cases / 38,978 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | 443 cases / 38,987 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
-| Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format`. |
-| Data-backed gate on retail (`ctest -L gate`) | All 127 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically), `data.replay_roundtrip` and `data.replay_flow`, the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
+| Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format` (a moved file only where it changed). The library targets link without a cycle or a layer reaching up (`ctest -L arch`). |
+| Data-backed gate on retail (`ctest -L gate`) | All 127 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically, compared domain by domain), `data.replay_roundtrip` and `data.replay_flow`, the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
 | Retail-only engine API still unbound | 45 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 | Benchmark (Release, four retail AIs, SCMP_009) | About 21 s for 6,000 ticks (it was 25.2 s before M205's path-cost fix). An 18,000-tick game runs without Lua errors. |
@@ -186,8 +186,15 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   still read the live sim; they move over with M191's split of the bindings
   into sim and user sides. `InputHandler` (picking, orders, the build
   ghost) works on the live sim by design.
-- **Architecture debt (Phase C, next):** `Unit::update` is over 1,000 lines of order handling (M193 splits it). `integration_tests.cpp` (18k lines) is built into the `opensupcom` executable (M192 moves it out). The renderer, blueprints and Lua libraries link in a cycle (M191 breaks it).
-- **Determinism diagnostics:** the per-tick checksum covers RNG, armies' resources and each entity's position and health. It does not cover weapons, orders, projectiles, economy events or scripts, so a divergence shows only when it reaches those. Splitting it by domain is next after the architecture work begins.
+- **Architecture (Phase C):**
+  - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
+  - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
+  - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
+  - Next:
+    - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
+    - M191 step 2: split `moho_bindings.cpp` by class;
+    - M191 step 3: the UI's unit methods read snapshots.
+- **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
   - A factory assisting a factory lends nothing; Moho copies its queue.
@@ -210,11 +217,11 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 
 After M206, as agreed on 2026-09-24:
 1. Keep these docs current.
-2. Network hardening (PR #63).
-3. A checksum split by domain.
-4. M193: split `Unit::update`.
-5. M192: split the executable.
-6. M191: break the library cycle and finish the Sim/User split.
+2. ~~Network hardening.~~ Done (#63).
+3. ~~A checksum split by domain.~~ Done (#65).
+4. ~~M193: split `Unit::update`.~~ Done (#68).
+5. M192: split the executable. Step 1 in review; step 2 decomposes `app.cpp`.
+6. M191: finish the Sim/User split. The cycle is broken (#66); next, the bindings by class, then UI snapshots.
 7. M206's remaining gaps, and M207.
 8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
 
