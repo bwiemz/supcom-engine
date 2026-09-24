@@ -2282,11 +2282,8 @@ static int l_sim_ResumeSim(lua_State* L) {
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 static int (*const stub_false)(lua_State*) = lua_stubs::return_false;
-static int (*const stub_true)(lua_State*) = lua_stubs::return_true;
 static int (*const stub_zero)(lua_State*) = lua_stubs::return_zero;
 static int (*const stub_nil)(lua_State*) = lua_stubs::return_nil;
-static int (*const stub_empty_table)(lua_State*) = lua_stubs::return_empty_table;
-static int (*const stub_return_1000)(lua_State*) = lua_stubs::return_1000;
 
 // Returns a dummy object (table) whose methods are no-ops that return self
 // for chaining (e.g., CreateAnimator(self):PlayAnim(anim):SetRate(1)).

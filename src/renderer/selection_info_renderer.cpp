@@ -14,27 +14,30 @@ namespace osc::renderer {
 
 static const char* command_name(sim::CommandType type) {
     switch (type) {
-        case sim::CommandType::Stop:           return "Stop";
-        case sim::CommandType::Move:           return "Moving";
-        case sim::CommandType::Attack:         return "Attacking";
-        case sim::CommandType::Guard:          return "Guarding";
-        case sim::CommandType::Patrol:         return "Patrolling";
-        case sim::CommandType::BuildMobile:    return "Building";
-        case sim::CommandType::BuildFactory:   return "Producing";
-        case sim::CommandType::Reclaim:        return "Reclaiming";
-        case sim::CommandType::Repair:         return "Repairing";
-        case sim::CommandType::Upgrade:        return "Upgrading";
-        case sim::CommandType::Capture:        return "Capturing";
-        case sim::CommandType::Enhance:        return "Enhancing";
-        case sim::CommandType::TransportLoad:  return "Loading";
-        case sim::CommandType::TransportUnload:return "Unloading";
-        case sim::CommandType::Nuke:           return "Nuke";
-        case sim::CommandType::Tactical:       return "Tactical";
-        case sim::CommandType::Overcharge:     return "Overcharge";
-        case sim::CommandType::Sacrifice:      return "Sacrificing";
-        case sim::CommandType::Teleport:       return "Teleporting";
-        case sim::CommandType::Ferry:          return "Ferrying";
-        case sim::CommandType::Dive:           return "Diving";
+    case sim::CommandType::Stop: return "Stop";
+    case sim::CommandType::Move: return "Moving";
+    case sim::CommandType::Attack: return "Attacking";
+    case sim::CommandType::Guard: return "Guarding";
+    case sim::CommandType::Patrol: return "Patrolling";
+    case sim::CommandType::BuildMobile: return "Building";
+    case sim::CommandType::BuildFactory: return "Producing";
+    case sim::CommandType::Reclaim: return "Reclaiming";
+    case sim::CommandType::Repair: return "Repairing";
+    case sim::CommandType::Upgrade: return "Upgrading";
+    case sim::CommandType::Capture: return "Capturing";
+    case sim::CommandType::Enhance: return "Enhancing";
+    case sim::CommandType::TransportLoad: return "Loading";
+    case sim::CommandType::TransportUnload: return "Unloading";
+    case sim::CommandType::Nuke: return "Nuke";
+    case sim::CommandType::Tactical: return "Tactical";
+    case sim::CommandType::Overcharge: return "Overcharge";
+    case sim::CommandType::Sacrifice: return "Sacrificing";
+    case sim::CommandType::Teleport: return "Teleporting";
+    case sim::CommandType::Ferry: return "Ferrying";
+    case sim::CommandType::Dive: return "Diving";
+    case sim::CommandType::SiloBuildNuke: return "Building Nuke";
+    case sim::CommandType::SiloBuildTactical: return "Building Missile";
+    case sim::CommandType::WaitForFerry: return "Waiting for Ferry";
     }
     return "Idle";
 }
