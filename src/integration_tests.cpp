@@ -9162,6 +9162,185 @@ void test_beam_weapon(TestContext& ctx) {
     spdlog::info("Beam weapon test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Charge test (M206d): economy events, OverCharge, teleport ──
+void test_charge(TestContext& ctx) {
+    spdlog::info(
+        "=== CHARGE TEST: economy events, OverCharge and teleports cost and take time ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 100000)
+        brain:GiveStorage('ENERGY', 1000000)
+        brain:GiveResource('MASS', 100000)
+        brain:GiveResource('ENERGY', 1000000)
+        function __osc_consumed(kind)
+            return GetArmyBrain('ARMY_1'):GetArmyStat('Economy_TotalConsumed_' .. kind, 0).Value
+        end
+        __osc_holder = __osc_spawn('uel0105', 'ARMY_1', 560, 120)
+        __osc_progress = {}
+        __osc_spent0 = {energy = __osc_consumed('Energy'), mass = __osc_consumed('Mass')}
+        __osc_event = CreateEconomyEvent(__osc_holder, 1000, 50, 1.0, function(u, p)
+            if u ~= __osc_holder then error('the callback was given another unit') end
+            table.insert(__osc_progress, p)
+        end)
+        -- Another army's, so its stall starves only that army.
+        __osc_poor = __osc_spawn('uel0105', 'ARMY_2', 560, 140)
+        __osc_big = CreateEconomyEvent(__osc_poor, 1e9, 0, 1.0)
+    )");
+    run(12);
+    lua_check(
+        "Test 1: an economy event draws its cost over its time, telling its script how far it is",
+        R"(
+        if not EconomyEventIsDone(__osc_event) then error('it is not done') end
+        local n = table.getn(__osc_progress)
+        if n ~= 10 then error('its callback ran ' .. n .. ' times') end
+        if math.abs(__osc_progress[1] - 0.1) > 1e-6 or math.abs(__osc_progress[n] - 1) > 1e-6 then
+            error('its progress went ' .. __osc_progress[1] .. ' .. ' .. __osc_progress[n])
+        end
+        local mass = __osc_consumed('Mass') - __osc_spent0.mass
+        if math.abs(mass - 50) > 0.5 then error('the army spent ' .. mass .. ' mass') end
+    )");
+    lua_check("Test 2: one the economy cannot pay runs slower", R"(
+        if EconomyEventIsDone(__osc_big) then error('a billion energy came in a second') end
+        RemoveEconomyEvent(__osc_poor, __osc_big)
+    )");
+
+    // OverCharge: an ACU on hold fire (its main gun quiet), an enemy tank in
+    // reach of its OverCharge, on flat ground between them.
+    lua_check("setup: an OverCharge", R"(
+        __osc_acu = __osc_spawn('uel0001', 'ARMY_1', 580, 105)
+        __osc_acu:SetFireState(1)
+        -- Its script swaps the main gun out for the OverCharge and back.
+        local enable = __osc_acu.SetWeaponEnabledByLabel
+        __osc_acu.SetWeaponEnabledByLabel = function(self, label, on)
+            if label == 'RightZephyr' then __osc_zephyr = on end
+            return enable(self, label, on)
+        end
+        __osc_oc_shots = 0
+        local oc = __osc_acu:GetWeaponByLabel('OverCharge')
+        local create = oc.CreateProjectileAtMuzzle
+        oc.CreateProjectileAtMuzzle = function(self, muzzle)
+            __osc_oc_shots = __osc_oc_shots + 1
+            return create(self, muzzle)
+        end
+        __osc_victim = __osc_spawn('uel0201', 'ARMY_2', 595, 105)
+        __osc_victim:SetFireState(1)
+        __osc_oc_spent = __osc_consumed('Energy')
+        IssueOvercharge({__osc_acu}, __osc_victim)
+    )");
+    run(60);
+    lua_check("Test 3: OverCharge fires the OverCharge weapon, and it draws its energy", R"(
+        if __osc_oc_shots ~= 1 then error('the OverCharge fired ' .. __osc_oc_shots) end
+        if not __osc_victim:IsDead() then error('the tank lives') end
+        if table.getn(__osc_acu:GetCommandQueue()) ~= 0 then error('the order is still queued') end
+        if __osc_zephyr ~= true then error('the main gun is still off') end
+        local spent = __osc_consumed('Energy') - __osc_oc_spent
+        if spent < 4999 then error('it drew ' .. spent .. ' energy') end
+    )");
+
+    // An OverCharge held back (paused), then called off: its weapon is
+    // switched off again.
+    lua_check("setup: an OverCharge called off", R"(
+        __osc_acu:SetOverchargePaused(true)
+        __osc_disabled = 0
+        __osc_zephyr = nil
+        local oc = __osc_acu:GetWeaponByLabel('OverCharge')
+        local off = oc.OnDisableWeapon
+        oc.OnDisableWeapon = function(self)
+            __osc_disabled = __osc_disabled + 1
+            return off(self)
+        end
+        __osc_victim2 = __osc_spawn('uel0201', 'ARMY_2', 595, 112)
+        __osc_victim2:SetFireState(1)
+        IssueOvercharge({__osc_acu}, __osc_victim2)
+    )");
+    run(5);
+    lua_check("setup: called off", "IssueClearCommands({__osc_acu})");
+    run(2);
+    lua_check("Test 4: an OverCharge called off before it fires switches its weapon off", R"(
+        if __osc_disabled ~= 1 then error('OnDisableWeapon ran ' .. __osc_disabled .. ' times') end
+        if __osc_zephyr ~= true then error('the main gun is still off') end
+        if __osc_victim2:IsDead() then error('it fired anyway') end
+    )");
+
+    // Teleports: an engineer's costs 91 energy over 0.91 s.
+    lua_check("setup: a teleport with a move queued behind it", R"(
+        __osc_porter = __osc_spawn('uel0105', 'ARMY_1', 560, 180)
+        __osc_home = __osc_porter:GetPosition()
+        __osc_there = __osc_at(620, 180)
+        IssueTeleport({__osc_porter}, __osc_there)
+        IssueMove({__osc_porter}, __osc_at(620, 200))
+    )");
+    run(5);
+    lua_check("Test 5: a teleport charges before it warps, and what is queued waits", R"(
+        local p = __osc_porter:GetPosition()
+        if VDist2(p[1], p[3], __osc_home[1], __osc_home[3]) > 0.5 then error('it left before its charge') end
+        if table.getn(__osc_porter:GetCommandQueue()) ~= 2 then
+            error('its queue holds ' .. table.getn(__osc_porter:GetCommandQueue()))
+        end
+    )");
+    run(20);
+    lua_check("Test 6: then it warps, and goes on to its move", R"(
+        local p = __osc_porter:GetPosition()
+        if VDist2(p[1], p[3], __osc_there[1], __osc_there[3]) > 6 then
+            error(string.format('it is at %.1f,%.1f', p[1], p[3]))
+        end
+        if table.getn(__osc_porter:GetCommandQueue()) > 1 then error('the teleport is still queued') end
+    )");
+    lua_check("setup: a teleport called off while charging", R"(
+        __osc_failer = __osc_spawn('uel0105', 'ARMY_1', 560, 220)
+        __osc_failed = 0
+        local failed = __osc_failer.OnFailedTeleport
+        __osc_failer.OnFailedTeleport = function(self)
+            __osc_failed = __osc_failed + 1
+            return failed(self)
+        end
+        __osc_failer_home = __osc_failer:GetPosition()
+        IssueTeleport({__osc_failer}, __osc_at(620, 220))
+    )");
+    run(3);
+    lua_check("setup: called off", "IssueClearCommands({__osc_failer})");
+    run(20);
+    lua_check("Test 7: a teleport called off while charging fails: the unit stays, free to move",
+              R"(
+        if __osc_failed ~= 1 then error('OnFailedTeleport ran ' .. __osc_failed .. ' times') end
+        local p = __osc_failer:GetPosition()
+        if VDist2(p[1], p[3], __osc_failer_home[1], __osc_failer_home[3]) > 0.5 then error('it teleported anyway') end
+        if __osc_failer:IsUnitState('Immobile') then error('it is still held') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 8: no script errors");
+    spdlog::info("Charge test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 
