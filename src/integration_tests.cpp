@@ -8534,8 +8534,10 @@ void test_missile(TestContext& ctx) {
         IssueTactical({__osc_a}, __osc_e1)
         __osc_b = __osc_watch(__osc_spawn('ueb2108', 'ARMY_3', 620, 170))
         __osc_engineers = {}
+        -- Within reach: 8 of B's centre (MaxBuildDistance 5 past a
+        -- footprint of 1 and B's skirt of 2).
         for i = 1, 4 do
-            table.insert(__osc_engineers, __osc_spawn('uel0105', 'ARMY_3', 612 + 4 * i, 163))
+            table.insert(__osc_engineers, __osc_spawn('uel0105', 'ARMY_3', 614 + 3 * i, 165))
         end
         IssueGuard(__osc_engineers, __osc_b)
         IssueSiloBuildTactical({__osc_b})

@@ -910,38 +910,69 @@ void Unit::update(f64 dt, SimContext& ctx) {
             }
             auto* target_unit = static_cast<Unit*>(target);
 
-            // Follow: stay within guard_range of the target
-            constexpr f32 guard_range = 10.0f;
-            f32 gdx = target->position().x - position().x;
-            f32 gdz = target->position().z - position().z;
-            f32 gdist2 = gdx * gdx + gdz * gdz;
-            if (gdist2 > guard_range * guard_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != target->position().x ||
-                    navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Help only within reach of the work (M206e): Moho's guard hands
+            // it to a repair or reclaim task. A build, a silo or a repair
+            // measures the gap to that unit's skirt (MaxBuildDistance to
+            // begin, twice that to go on); a reclaim, to its footprint. Out
+            // of reach, the unit walks just clear of the work, helping with
+            // nothing meanwhile.
+            const auto within_reach = [&](const Entity& work, bool skirt, bool helping) {
+                f32 extent = footprint_extent(work);
+                f32 half_x = work.footprint_size_x() * 0.5f;
+                f32 half_z = work.footprint_size_z() * 0.5f;
+                if (skirt && work.is_unit()) {
+                    const auto& wu = static_cast<const Unit&>(work);
+                    extent = skirt_extent(wu);
+                    half_x = wu.skirt_size_x() * 0.5f + 1;
+                    half_z = wu.skirt_size_z() * 0.5f + 1;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-            } else {
-                navigator_.abort_move();
-            }
+                const f32 limit = helping && skirt ? 2 * max_build_distance_ : max_build_distance_;
+                if (work_gap(*this, work.position(), extent) <= limit) {
+                    navigator_.abort_move();
+                    return true;
+                }
+                if (effective_speed() > 0) {
+                    const Vector3 goal = approach_point(*this, work.position(), half_x, half_z);
+                    const Vector3 heading = navigator_.goal();
+                    if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
+                        std::abs(heading.z - goal.z) > 1.0f) {
+                        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    nav_update(dt, ctx.terrain);
+                }
+                return false;
+            };
+            bool working = false;
+            // Who helps (Moho's guard dispatches repair and reclaim tasks): a
+            // unit that repairs helps builds, silos and repairs; one that
+            // reclaims, reclaims. Others (a tank guarding an engineer, a
+            // factory assisting a factory) only follow.
+            const bool repairs = has_category("REPAIR") && build_rate_ > 0;
+            const bool reclaims = has_category("RECLAIM") && build_rate_ > 0;
 
             // Assist: if target is building, contribute build power
-            if (target_unit->is_building()) {
+            const Entity* guarded_build = repairs && target_unit->is_building()
+                                              ? registry.find(target_unit->build_target_id())
+                                              : nullptr;
+            const Entity* guarded_reclaim = reclaims && target_unit->is_reclaiming()
+                                                ? registry.find(target_unit->reclaim_target_id())
+                                                : nullptr;
+            if (guarded_build && !guarded_build->destroyed()) {
+                working = true;
                 u32 target_build_id = target_unit->build_target_id();
-
-                if (build_target_id_ != target_build_id) {
-                    // Switch to new assist target
+                if (!within_reach(*guarded_build, true, build_target_id_ == target_build_id)) {
                     if (is_building()) stop_assisting();
+                } else {
+                    if (build_target_id_ != target_build_id) {
+                        // Switch to new assist target
+                        if (is_building()) stop_assisting();
 
-                    auto* build_target = registry.find(target_build_id);
-                    if (build_target && !build_target->destroyed()) {
                         build_target_id_ = target_build_id;
                         build_time_ = target_unit->build_time();
                         build_cost_mass_ = target_unit->build_cost_mass();
                         build_cost_energy_ = target_unit->build_cost_energy();
-                        work_progress_ = build_target->fraction_complete();
+                        work_progress_ = guarded_build->fraction_complete();
 
                         if (build_time_ > 0 && build_rate_ > 0) {
                             economy_.consumption_mass =
@@ -955,33 +986,34 @@ void Unit::update(f64 dt, SimContext& ctx) {
                                      "building target #{}",
                                      entity_id(), cmd.target_id, target_build_id);
                     }
-                }
 
-                // Progress the build with our own build rate
-                if (build_target_id_ != 0) {
-                    if (!progress_build_assist(dt, registry, econ_eff)) {
-                        stop_assisting();
+                    // Progress the build with our own build rate
+                    if (build_target_id_ != 0) {
+                        if (!progress_build_assist(dt, registry, econ_eff)) {
+                            stop_assisting();
+                        }
                     }
                 }
-            } else if (target_unit->is_reclaiming()) {
+            } else if (guarded_reclaim && !guarded_reclaim->destroyed() &&
+                       guarded_reclaim->reclaimable()) {
                 // Assist reclaim: contribute reclaim power
+                working = true;
+                if (is_building()) stop_assisting();
                 u32 target_reclaim_id = target_unit->reclaim_target_id();
-
-                if (reclaim_target_id_ != target_reclaim_id) {
-                    // Switch to new reclaim target
+                if (!within_reach(*guarded_reclaim, false, false)) {
                     if (is_reclaiming()) stop_reclaiming();
-                    if (is_building()) stop_assisting();
+                } else {
+                    if (reclaim_target_id_ != target_reclaim_id) {
+                        // Switch to new reclaim target
+                        if (is_reclaiming()) stop_reclaiming();
 
-                    auto* reclaim_target = registry.find(target_reclaim_id);
-                    if (reclaim_target && !reclaim_target->destroyed() &&
-                        reclaim_target->reclaimable()) {
                         reclaim_target_id_ = target_reclaim_id;
 
                         // Compute own reclaim rate based on own build_rate
                         // (assister contributes speed but NOT duplicate resources
                         //  — only the primary reclaimer sets production rates)
-                        const ReclaimCosts costs =
-                            reclaim_costs(L, *this, *reclaim_target, static_cast<f64>(build_rate_));
+                        const ReclaimCosts costs = reclaim_costs(L, *this, *guarded_reclaim,
+                                                                 static_cast<f64>(build_rate_));
                         if (std::max(costs.mass, costs.energy) > 0 && build_rate_ > 0) {
                             f64 reclaim_time = costs.time;
                             if (reclaim_time <= 0) reclaim_time = 0.01;
@@ -992,52 +1024,80 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
                         spdlog::info("Guard reclaim assist: entity #{} "
                                      "assisting #{} reclaiming #{}",
-                                     entity_id(), cmd.target_id,
-                                     target_reclaim_id);
+                                     entity_id(), cmd.target_id, target_reclaim_id);
                     }
-                }
 
-                if (reclaim_target_id_ != 0) {
-                    if (!progress_reclaim_assist(dt, registry)) {
-                        stop_reclaiming();
+                    if (reclaim_target_id_ != 0) {
+                        if (!progress_reclaim_assist(dt, registry)) {
+                            stop_reclaiming();
+                        }
                     }
                 }
-            } else if (target_unit->silo_building() && !target_unit->is_paused() &&
-                       build_rate_ > 0) {
+            } else if (repairs && target_unit->silo_building() && !target_unit->is_paused()) {
                 // Assist a silo's missile: this unit's build power on it, at
                 // its share of the cost (retail's UpdateConsumptionValues
                 // for a SiloBuildingAmmo focus). A paused silo's helpers
-                // wait, paying nothing.
+                // wait, paying nothing; so do helpers out of reach.
+                working = true;
                 if (is_building()) stop_assisting();
                 if (is_reclaiming()) stop_reclaiming();
-                const SiloBuild& missile = target_unit->silo_build();
-                const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
-                economy_.consumption_energy = missile.energy * per_second;
-                economy_.consumption_mass = missile.mass * per_second;
-                economy_.consumption_active = true;
-                assisting_silo_ = true;
-                target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+                if (within_reach(*target_unit, true, false)) {
+                    const SiloBuild& missile = target_unit->silo_build();
+                    const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+                    economy_.consumption_energy = missile.energy * per_second;
+                    economy_.consumption_mass = missile.mass * per_second;
+                    economy_.consumption_active = true;
+                    assisting_silo_ = true;
+                    target_unit->assist_silo_build(build_rate_, dt, econ_eff);
+                }
             } else {
                 // Target not building/reclaiming — stop if we were
                 if (is_building()) stop_assisting();
                 if (is_reclaiming()) stop_reclaiming();
 
                 // Auto-repair: if target is damaged and we have build_rate
-                if (target_unit->health() < target_unit->max_health() &&
-                    build_rate_ > 0) {
-                    if (repair_target_id_ != cmd.target_id) {
+                if (repairs && target_unit->health() < target_unit->max_health()) {
+                    working = true;
+                    if (!within_reach(*target_unit, true, repair_target_id_ == cmd.target_id)) {
                         if (is_repairing()) stop_repairing(L, registry);
-                        UnitCommand repair_cmd;
-                        repair_cmd.type = CommandType::Repair;
-                        repair_cmd.target_id = cmd.target_id;
-                        repair_cmd.target_pos = target->position();
-                        start_repair(repair_cmd, registry, L);
-                    }
-                    if (repair_target_id_ != 0) {
-                        progress_repair(dt, registry, L, econ_eff);
+                    } else {
+                        if (repair_target_id_ != cmd.target_id) {
+                            if (is_repairing()) stop_repairing(L, registry);
+                            UnitCommand repair_cmd;
+                            repair_cmd.type = CommandType::Repair;
+                            repair_cmd.target_id = cmd.target_id;
+                            repair_cmd.target_pos = target->position();
+                            start_repair(repair_cmd, registry, L);
+                        }
+                        if (repair_target_id_ != 0) {
+                            progress_repair(dt, registry, L, econ_eff);
+                        }
                     }
                 } else {
                     if (is_repairing()) stop_repairing(L, registry);
+                }
+            }
+
+            // Otherwise follow: an engineer stays put within twice its
+            // MaxBuildDistance of what it guards (Moho's CUnitGuardTask),
+            // other units within 10; past that, back just clear of it.
+            if (!working && !destroyed() && in_registry()) {
+                const f32 follow = has_category("ENGINEER") ? 2 * max_build_distance_ : 10.0f;
+                const f32 gdx = target->position().x - position().x;
+                const f32 gdz = target->position().z - position().z;
+                if (gdx * gdx + gdz * gdz > follow * follow) {
+                    const Vector3 goal = approach_point(*this, target->position(),
+                                                        target_unit->skirt_size_x() * 0.5f,
+                                                        target_unit->skirt_size_z() * 0.5f);
+                    const Vector3 heading = navigator_.goal();
+                    if (!navigator_.is_moving() || std::abs(heading.x - goal.x) > 1.0f ||
+                        std::abs(heading.z - goal.z) > 1.0f) {
+                        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    nav_update(dt, ctx.terrain);
+                } else if (navigator_.is_moving()) {
+                    navigator_.abort_move();
                 }
             }
 
