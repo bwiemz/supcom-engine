@@ -189,10 +189,10 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Architecture (Phase C):**
   - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
   - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
+  - `moho_bindings.cpp` is split by class into `src/lua/bindings/{sim,ui}/` (M191 step 2).
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
   - Next:
     - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
-    - M191 step 2: split `moho_bindings.cpp` by class;
     - M191 step 3: the UI's unit methods read snapshots.
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
@@ -220,8 +220,8 @@ After M206, as agreed on 2026-09-24:
 2. ~~Network hardening.~~ Done (#63).
 3. ~~A checksum split by domain.~~ Done (#65).
 4. ~~M193: split `Unit::update`.~~ Done (#68).
-5. M192: split the executable. Step 1 in review; step 2 decomposes `app.cpp`.
-6. M191: finish the Sim/User split. The cycle is broken (#66); next, the bindings by class, then UI snapshots.
+5. M192: split the executable. Step 1 in review (#69, with M191 step 2); step 2 decomposes `app.cpp`.
+6. M191: finish the Sim/User split. The cycle is broken (#66) and the bindings are split by class (step 2); next, UI changes through the command stream and UI reads from snapshots (step 3).
 7. M206's remaining gaps, and M207.
 8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
 
