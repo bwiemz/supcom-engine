@@ -50,6 +50,12 @@ Unit* spawn_land_unit(SimState& sim, osc::f32 x, osc::f32 z) {
     u->set_army(0);
     u->set_max_speed(5.0f);
     u->set_position({x, 0.0f, z});
+    // These tests are about the path budget, not driving: it faces +X, the
+    // way the orders go, and is at speed within a tick.
+    u->set_orientation(osc::sim::euler_to_quat(1.5707964f, 0.0f, 0.0f));
+    Unit::Drive drive;
+    drive.max_accel = 50.0f;
+    u->set_drive(drive);
     auto* raw = u.get();
     sim.entity_registry().register_entity(std::move(u));
     return raw;

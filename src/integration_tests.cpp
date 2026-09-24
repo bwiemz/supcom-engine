@@ -7926,6 +7926,187 @@ void test_area(TestContext& ctx) {
     spdlog::info("Area test: {}/{} passed", pass, pass + fail);
 }
 
+void test_drive(TestContext& ctx) {
+    spdlog::info("=== DRIVE TEST: ground units turn, accelerate and brake ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    // Ticks the sim, sampling each tracked unit's position and heading.
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                for _, t in __osc_tracks do
+                    if not t.u:IsDead() then
+                        local p = t.u:GetPosition()
+                        table.insert(t.samples, {p[1], p[3], t.u:GetHeading()})
+                    end
+                end
+            )");
+        }
+    };
+
+    // On the flat plain east of the map's centre.
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z, heading)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, heading or 0, 0)
+        end
+        __osc_tracks = {}
+        function __osc_track(u)
+            local t = {u = u, samples = {}, events = {}}
+            local on = u.OnMotionHorzEventChange
+            u.OnMotionHorzEventChange = function(self, new, old)
+                table.insert(t.events, old .. '>' .. new)
+                return on(self, new, old)
+            end
+            table.insert(__osc_tracks, t)
+            return t
+        end
+        -- Speed over each tick, from the samples.
+        function __osc_speeds(t)
+            local out = {}
+            for i = 2, table.getn(t.samples) do
+                local a, b = t.samples[i - 1], t.samples[i]
+                table.insert(out, math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) * 10)
+            end
+            return out
+        end
+        function __osc_turned(from, to)
+            local d = math.mod(to - from + 3 * math.pi, 2 * math.pi) - math.pi
+            return math.abs(d)
+        end
+    )");
+    lua_check("Test 1: CreateUnitHPR gives a unit its heading", R"(
+        local u = __osc_spawn('uel0201', 'ARMY_1', 640, 80, 1.2)
+        if math.abs(u:GetHeading() - 1.2) > 1e-3 then error('heading ' .. u:GetHeading()) end
+        u:Destroy()
+    )");
+
+    // A Striker (3.4 u/s, 3.4 u/s^2, 90 degrees a second, pivots) ordered to
+    // a point 15 behind it.
+    lua_check("setup: a Striker turning back", R"(
+        __osc_striker = __osc_track(__osc_spawn('uel0201', 'ARMY_1', 620, 100, 0))
+        __osc_goal = {620, GetTerrainHeight(620, 85), 85}
+        IssueMove({__osc_striker.u}, __osc_goal)
+    )");
+    run(120);
+    lua_check("Test 2: it turns round on the spot before it drives", R"(
+        local s = __osc_striker.samples
+        -- While the goal is more than 45 degrees off its heading it pivots.
+        for i = 1, table.getn(s) do
+            local off = __osc_turned(s[i][3], math.pi)
+            if off > math.rad(50) then
+                local moved = math.sqrt((s[i][1] - 620) ^ 2 + (s[i][2] - 100) ^ 2)
+                if moved > 0.3 then error('it moved ' .. moved .. ' before turning, at tick ' .. i) end
+            end
+        end
+        if __osc_turned(s[table.getn(s)][3], math.pi) > math.rad(3) then error('it never faced the goal') end
+    )");
+    lua_check("Test 3: it speeds up at its acceleration, to its top speed", R"(
+        local v = __osc_speeds(__osc_striker)
+        local top = 0
+        for i = 2, table.getn(v) do
+            if v[i] - v[i - 1] > 3.4 * 0.1 + 1e-3 then error('sped up by ' .. (v[i] - v[i - 1]) .. ' in a tick') end
+            if v[i] > top then top = v[i] end
+        end
+        if top > 3.4 + 1e-3 or top < 3.3 then error('top speed ' .. top) end
+    )");
+    lua_check("Test 4: it brakes to a stop on its goal", R"(
+        local s = __osc_striker.samples
+        local last = s[table.getn(s)]
+        local miss = math.sqrt((last[1] - __osc_goal[1]) ^ 2 + (last[2] - __osc_goal[3]) ^ 2)
+        if miss > 0.5 then error('stopped ' .. miss .. ' from the goal') end
+        local v = __osc_speeds(__osc_striker)
+        local slowing = 0
+        for i = 2, table.getn(v) do
+            if v[i] < v[i - 1] - 1e-3 and v[i - 1] - v[i] > 3.4 * 0.1 + 0.02 then
+                error('braked by ' .. (v[i - 1] - v[i]) .. ' in a tick')
+            end
+        end
+    )");
+    lua_check("Test 5: its motion events come in order", R"(
+        local got = table.concat(__osc_striker.events, ' ')
+        local want = 'Stopped>Cruise Cruise>TopSpeed TopSpeed>Stopping Stopping>Stopped'
+        if got ~= want then error(got) end
+    )");
+
+    // A Fatboy backs up to a goal just behind it; a Mantis (no pivoting)
+    // turns as it drives.
+    lua_check("setup: backing up and turning on the move", R"(
+        __osc_fatboy = __osc_track(__osc_spawn('uel0401', 'ARMY_1', 660, 110, 0))
+        IssueMove({__osc_fatboy.u}, {660, GetTerrainHeight(660, 102), 102})
+        __osc_mantis = __osc_track(__osc_spawn('url0107', 'ARMY_1', 700, 80, 0))
+        __osc_mantis_goal = {712, GetTerrainHeight(712, 80), 80}
+        IssueMove({__osc_mantis.u}, __osc_mantis_goal)
+    )");
+    run(100);
+    lua_check("Test 6: a Fatboy backs up to a goal just behind it", R"(
+        local s = __osc_fatboy.samples
+        local last = s[table.getn(s)]
+        if math.abs(last[2] - 102) > 0.6 then error('it ended at z ' .. last[2]) end
+        for i = 1, table.getn(s) do
+            if __osc_turned(s[i][3], 0) > math.rad(5) then error('it turned ' .. math.deg(__osc_turned(s[i][3], 0))) end
+        end
+    )");
+    lua_check("Test 7: a unit that can't pivot turns as it drives, and arrives", R"(
+        local s = __osc_mantis.samples
+        -- Halfway through its turn it has already moved off.
+        for i = 1, table.getn(s) do
+            if __osc_turned(s[i][3], 0) >= math.rad(45) then
+                local moved = math.sqrt((s[i][1] - 700) ^ 2 + (s[i][2] - 80) ^ 2)
+                if moved < 0.3 then error('it pivoted: moved ' .. moved .. ' turning 45 degrees') end
+                break
+            end
+        end
+        local last = s[table.getn(s)]
+        local miss = math.sqrt((last[1] - __osc_mantis_goal[1]) ^ 2 + (last[2] - __osc_mantis_goal[3]) ^ 2)
+        if miss > 0.5 then error('it ended ' .. miss .. ' from its goal') end
+    )");
+
+    // SetImmobile holds it; GetCurrentMoveLocation is where it is going.
+    lua_check("setup: an immobile tank", R"(
+        __osc_held = __osc_track(__osc_spawn('uel0201', 'ARMY_1', 640, 125, 1.5707964))
+        __osc_held.u:SetImmobile(true)
+        __osc_held_goal = {655, GetTerrainHeight(655, 125), 125}
+        IssueMove({__osc_held.u}, __osc_held_goal)
+    )");
+    run(20);
+    lua_check("Test 8: SetImmobile holds it; GetCurrentMoveLocation is its goal", R"(
+        local p = __osc_held.u:GetPosition()
+        if math.abs(p[1] - 640) > 1e-3 then error('an immobile unit moved to x ' .. p[1]) end
+        local at = __osc_held.u:GetCurrentMoveLocation()
+        if math.abs(at[1] - 655) > 0.5 or math.abs(at[3] - 125) > 0.5 then
+            error('move location ' .. at[1] .. ',' .. at[3])
+        end
+        __osc_held.u:SetImmobile(false)
+    )");
+    run(20);
+    lua_check("Test 9: released, it drives", R"(
+        if __osc_held.u:GetPosition()[1] < 641 then error('still held') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 10: no script errors");
+    spdlog::info("Drive test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

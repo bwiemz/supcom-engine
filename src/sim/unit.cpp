@@ -441,8 +441,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
             transport_id_ = 0;
             set_unit_state("Attached", false);
         }
+        ground_speed_ = 0; // carried, not driving
         return; // Skip commands and weapons while loaded
     }
+    drove_ = false;
 
     // Compute economy efficiency for this unit's army
     f32 econ_eff = 1.0f;
@@ -1209,6 +1211,7 @@ void Unit::update(f64 dt, SimContext& ctx) {
     }
 done_commands:
     if (destroyed() || !in_registry()) return;
+    if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
     // Amphibious layer transition: auto-switch Land↔Water based on terrain
     if (is_amphibious() && !dying_ && ctx.terrain) {
@@ -1277,6 +1280,7 @@ weapons_only:
     // fights. A weapon's script may kill its own unit (KamikazeWeapon).
     if (!is_being_built()) {
         update_motion_horz(L);
+        update_motion_turn(L);
         for (auto& weapon : weapons_) {
             if (destroyed() || dying_) break;
             weapon->update(*this, registry, L, ctx.visibility_grid, ctx.sim);
@@ -2573,6 +2577,7 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     transport->add_cargo(entity_id());
     set_unit_state("Attached", true);
     navigator_.abort_move();
+    ground_speed_ = 0; // aboard, it no longer drives
     // Boarding pops the unit onto the transport; the renderer jumps it.
     set_position(transport->position());
     note_snap();
@@ -2666,20 +2671,29 @@ const char* motion_horz_name(Unit::MotionHorz motion) {
 /// move). Ground units here reach full speed at once, so a start is Cruise
 /// then TopSpeed a tick later, and a stop is Stopping then Stopped.
 void Unit::update_motion_horz(lua_State* L) {
-    const bool flying = is_air_unit();
-    const bool moving = flying ? current_airspeed_ > 0.01f : navigator_.is_moving();
-    const bool at_top = !flying || current_airspeed_ >= 0.99f * max_airspeed_;
     MotionHorz next = motion_horz_;
-    switch (motion_horz_) {
-    case MotionHorz::Stopped:
-        if (moving) next = MotionHorz::Cruise;
-        break;
-    case MotionHorz::Cruise:
-    case MotionHorz::TopSpeed:
-        if (!moving) next = MotionHorz::Stopping;
-        else next = at_top ? MotionHorz::TopSpeed : MotionHorz::Cruise;
-        break;
-    case MotionHorz::Stopping: next = moving ? MotionHorz::Cruise : MotionHorz::Stopped; break;
+    if (is_air_unit()) {
+        const bool moving = current_airspeed_ > 0.01f;
+        const bool at_top = current_airspeed_ >= 0.99f * max_airspeed_;
+        switch (motion_horz_) {
+        case MotionHorz::Stopped:
+            if (moving) next = MotionHorz::Cruise;
+            break;
+        case MotionHorz::Cruise:
+        case MotionHorz::TopSpeed:
+            if (!moving) next = MotionHorz::Stopping;
+            else next = at_top ? MotionHorz::TopSpeed : MotionHorz::Cruise;
+            break;
+        case MotionHorz::Stopping: next = moving ? MotionHorz::Cruise : MotionHorz::Stopped; break;
+        }
+    } else {
+        // From its speed: at rest, braking to a halt, at full speed, or on
+        // the way up to it.
+        const f32 speed = std::abs(ground_speed_);
+        if (speed <= 1e-3f) next = MotionHorz::Stopped;
+        else if (target_speed_ <= 1e-3f) next = MotionHorz::Stopping;
+        else if (speed >= 0.99f * top_speed_) next = MotionHorz::TopSpeed;
+        else next = MotionHorz::Cruise;
     }
     if (next == motion_horz_) return;
     const MotionHorz old = motion_horz_;
@@ -2704,6 +2718,66 @@ void Unit::update_motion_horz(lua_State* L) {
         }
     }
     lua_settop(L, top);
+}
+
+namespace {
+
+const char* motion_turn_name(Unit::MotionTurn turn) {
+    switch (turn) {
+    case Unit::MotionTurn::Straight: return "Straight";
+    case Unit::MotionTurn::Turn: return "Turn";
+    case Unit::MotionTurn::SharpTurn: return "SharpTurn";
+    }
+    return "Straight";
+}
+
+} // namespace
+
+void Unit::update_motion_turn(lua_State* L) {
+    const MotionTurn next = drove_ ? motion_turn_next_ : MotionTurn::Straight;
+    if (next == motion_turn_) return;
+    const MotionTurn old = motion_turn_;
+    motion_turn_ = next;
+    if (!L || lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, "OnMotionTurnEventChange");
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        lua_pushstring(L, motion_turn_name(next));
+        lua_pushstring(L, motion_turn_name(old));
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                "OnMotionTurnEventChange error: " + std::string(err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+    }
+    lua_settop(L, top);
+}
+
+void Unit::coast(f64 dt, const map::Terrain* terrain) {
+    target_speed_ = 0;
+    if (ground_speed_ == 0) return;
+    if (immobile_ || parent_entity_id() != 0) {
+        ground_speed_ = 0;
+        return;
+    }
+    const f32 step = static_cast<f32>(dt);
+    // A unit made without its blueprint's physics stops at once.
+    const f32 brake =
+        drive_.max_brake > 0 ? drive_.max_brake * accel_mult_ * step : std::abs(ground_speed_);
+    ground_speed_ = ground_speed_ > 0 ? std::max(0.0f, ground_speed_ - brake)
+                                      : std::min(0.0f, ground_speed_ + brake);
+    const f32 heading = quat_yaw(orientation());
+    Vector3 p = position();
+    p.x += osc::dmath::sin(heading) * ground_speed_ * step;
+    p.z += osc::dmath::cos(heading) * ground_speed_ * step;
+    if (terrain) p.y = terrain->get_surface_height(p.x, p.z);
+    set_position(p);
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {

@@ -83,8 +83,145 @@ void Navigator::abort_move() {
     waypoint_index_ = 0;
 }
 
-bool Navigator::update(Entity& entity, f32 max_speed, f64 dt,
-                        const map::Terrain* terrain) {
+bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+    if (unit.is_air_unit()) return slide(unit, max_speed, dt, terrain);
+    return drive(unit, max_speed, dt, terrain);
+}
+
+void Navigator::arrive() {
+    status_ = Status::Idle;
+    waypoints_.clear();
+    waypoint_index_ = 0;
+}
+
+namespace {
+
+constexpr f32 kPi = 3.14159265358979f;
+
+/// An angle brought into (-pi, pi].
+f32 wrap_angle(f32 a) {
+    while (a > kPi) a -= 2.0f * kPi;
+    while (a <= -kPi) a += 2.0f * kPi;
+    return a;
+}
+
+} // namespace
+
+bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
+    if (status_ == Status::WaitingForPath) return true; // not there yet
+    if (status_ == Status::Idle || max_speed <= 0) return false;
+    if (waypoints_.empty() || waypoint_index_ >= waypoints_.size()) {
+        arrive();
+        return false;
+    }
+    const auto step = static_cast<f32>(dt);
+    // A unit made without its blueprint's physics reaches its top speed in a
+    // second and turns 90 degrees in one.
+    Unit::Drive d = unit.drive();
+    if (d.max_accel <= 0) d.max_accel = max_speed;
+    if (d.turn_rate <= 0) d.turn_rate = kPi * 0.5f;
+    Vector3 pos = unit.position();
+    f32 heading = quat_yaw(unit.orientation());
+    f32 speed = unit.ground_speed();
+
+    // Held still (a weapon unpacking, a teleport): it keeps its orders.
+    if (unit.immobile()) {
+        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        return true;
+    }
+
+    // Waypoints along the way are passed within reach, or once crossed: past
+    // the line through them square to the path on.
+    while (waypoint_index_ + 1 < waypoints_.size()) {
+        const Vector3& wp = waypoints_[waypoint_index_];
+        const Vector3& next = waypoints_[waypoint_index_ + 1];
+        const f32 dx = wp.x - pos.x;
+        const f32 dz = wp.z - pos.z;
+        const bool reached = dx * dx + dz * dz <= WAYPOINT_TOLERANCE * WAYPOINT_TOLERANCE;
+        const bool crossed =
+            (pos.x - wp.x) * (next.x - wp.x) + (pos.z - wp.z) * (next.z - wp.z) > 0;
+        if (!reached && !crossed) break;
+        ++waypoint_index_;
+    }
+    const bool final = waypoint_index_ + 1 == waypoints_.size();
+    const Vector3& wp = waypoints_[waypoint_index_];
+    const f32 dx = wp.x - pos.x;
+    const f32 dz = wp.z - pos.z;
+    const f32 dist = std::sqrt(dx * dx + dz * dz);
+    f32 to_goal = dist; // along the path
+    for (size_t i = waypoint_index_ + 1; i < waypoints_.size(); ++i) {
+        const f32 sx = waypoints_[i].x - waypoints_[i - 1].x;
+        const f32 sz = waypoints_[i].z - waypoints_[i - 1].z;
+        to_goal += std::sqrt(sx * sx + sz * sz);
+    }
+    // Forward, or backing up to a goal close behind.
+    f32 err = dist > 1e-4f ? wrap_angle(osc::dmath::atan2(dx, dz) - heading) : 0.0f;
+    const f32 brake = (d.max_brake > 0 ? d.max_brake : d.max_accel) * unit.accel_mult();
+
+    // There: within reach, and slow enough to stop in a tick (or the goal
+    // has fallen behind it).
+    if (final && dist <= ARRIVAL_TOLERANCE &&
+        (std::abs(speed) <= brake * step + 1e-3f || std::abs(err) > REVERSE_ANGLE ||
+         dist <= 0.05f)) {
+        unit.note_drive(0, 0, max_speed, Unit::MotionTurn::Straight);
+        arrive();
+        return false;
+    }
+    const bool reverse = final && d.max_speed_reverse > 0 && std::abs(err) > REVERSE_ANGLE &&
+                         to_goal <= d.backup_distance;
+    if (reverse) err = wrap_angle(err + kPi);
+
+    // Turn: at its TurnRate, faster at speed where its TurnRadius allows.
+    f32 omega = d.turn_rate * unit.turn_mult();
+    if (d.turn_radius > 0 && dist > d.turn_radius)
+        omega = std::max(omega, std::abs(speed) / d.turn_radius);
+    const f32 max_turn = omega * step;
+    const f32 turn = std::clamp(err, -max_turn, max_turn);
+    heading = wrap_angle(heading + turn);
+    err -= turn;
+    const Unit::MotionTurn turning = std::abs(turn) < 1e-3f ? Unit::MotionTurn::Straight
+                                     : std::abs(turn) >= max_turn * 0.99f
+                                         ? Unit::MotionTurn::SharpTurn
+                                         : Unit::MotionTurn::Turn;
+
+    // How fast it wants to go: slower the farther off its heading the
+    // waypoint lies. One that can pivot stops to; one that can't keeps
+    // moving to turn. Always slow enough to stop on its goal.
+    const f32 top = reverse ? std::min(d.max_speed_reverse, max_speed) : max_speed;
+    f32 target = top * std::max(osc::dmath::cos(err), 0.0f);
+    if (d.rotate_on_spot && std::abs(err) > PIVOT_ANGLE) target = 0;
+    else if (!d.rotate_on_spot) target = std::max(target, top * TURNING_SPEED);
+    // No faster than lets it turn onto the waypoint: the circle along its
+    // heading through it has radius dist / (2 sin err). Else it would circle
+    // a goal inside its turn for ever.
+    if (const f32 side = std::abs(osc::dmath::sin(err)); side > 1e-3f)
+        target = std::min(target, omega * dist / (2.0f * side));
+    // Braking to stop on its goal, a tick ahead so it doesn't overrun.
+    const f32 stop_at =
+        brake > 0 ? std::sqrt(2.0f * brake * std::max(to_goal - std::abs(speed) * step, 0.0f))
+                  : target;
+    const bool stopping = stop_at < target;
+    target = std::min(target, stop_at);
+
+    // Speed up at its acceleration, slow down at its brake.
+    const f32 want = reverse ? -target : target;
+    const bool faster = want > 0 ? speed >= 0 && want > speed : speed <= 0 && want < speed;
+    const f32 rate = (faster ? d.max_accel * unit.accel_mult() : brake) * step;
+    speed = speed < want ? std::min(want, speed + rate) : std::max(want, speed - rate);
+    if (d.rotate_on_spot && target == 0 && std::abs(speed) <= d.rotate_threshold) speed = 0;
+
+    // Drive along its heading.
+    pos.x += osc::dmath::sin(heading) * speed * step;
+    pos.z += osc::dmath::cos(heading) * speed * step;
+    if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+    if (sim_) pos = sim_->clamp_to_playable(pos);
+    unit.set_position(pos);
+    unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+    unit.note_drive(speed, stopping ? 0.0f : target, top, turning);
+    return true;
+}
+
+bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain* terrain) {
     if (status_ == Status::WaitingForPath) return true; // not there yet
     if (status_ == Status::Idle || max_speed <= 0) return false;
     if (waypoints_.empty() || waypoint_index_ >= waypoints_.size()) {
