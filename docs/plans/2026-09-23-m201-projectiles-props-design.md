@@ -184,6 +184,28 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
   - `OnLostTarget`, `DestroyOnWater`, and the detonate heights.
 - **Bindings fixed:** `SetScaleVelocity`, the `CreateProjectile` arguments, and `CreateChildProjectile`'s blueprint.
 
+**What building M201c established:**
+
+- **Terrain types were in every map and never read.** The SCMAP's
+  terrain-type layer, a `TypeCode` per cell, was skipped. Seton's Clutch
+  has eleven types, half of them water.
+- **Once scripts handle impacts, their side effects arrive too.** Retail's
+  impact code creates `VizMarker`s, and those needed intel on plain
+  entities; UEA0107 needed `SetThrustingParam` on its thrust controllers.
+  Scripts also make random draws of their own, so trees burn and fall
+  differently, which changed the SCMP_009 goldens.
+- **Flat shots can't burst on the way down.** Artillery with a
+  `DetonateBelowHeight` bursts only after rising above that height, so
+  until the arc (M201e) its flat shots fly on to the ground.
+- **The creation bindings were wrong in ways that hid each other.**
+  `CreateProjectileAtBone` took its arguments reversed. `CreateProjectile`
+  read an offset as a velocity: the warp-in halo rose, where retail sets it
+  1.35 above the commander.
+- **Real battles found a desync.** With armies leaving their bases, a
+  replayed game parted between Windows and Linux at its first scouting
+  run: `GetThreatsAroundPosition` listed cells in hash-map order (fixed in
+  #47). `--entity-trace` and `--rng-trace` found it, and stay as tools.
+
 ### M201d: collision
 
 - **Swept tests:** each tick's path is swept against the terrain heightfield, the water plane, units (their box or sphere from `SizeX/Y/Z`, `CollisionOffset*` and `SizeSphere`), props, projectiles with health, and shields (sphere or box, `None` when down).

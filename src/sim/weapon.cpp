@@ -474,6 +474,21 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
                         proj->stay_underwater = lua_toboolean(L, -1) != 0;
                     }
                     lua_pop(L, 1);
+
+                    // Where it ends of itself: on the water (209 retail
+                    // shells), or bursting at a height above the surface.
+                    lua_pushstring(L, "DestroyOnWater");
+                    lua_gettable(L, -2);
+                    proj->destroy_on_water = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    for (const auto& [field, height] :
+                         {std::pair{"DetonateAboveHeight", &proj->detonate_above_height},
+                          std::pair{"DetonateBelowHeight", &proj->detonate_below_height}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, -2);
+                        if (lua_isnumber(L, -1)) *height = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
                 }
                 lua_pop(L, 1); // Physics
             }
@@ -484,6 +499,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     f32 heading = osc::dmath::atan2(vel.x, vel.z);
     proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
 
+    proj->in_water = in_water;
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));
     if (proj_ptr) create_projectile_object(L, *proj_ptr, in_water, false);

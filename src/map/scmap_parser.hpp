@@ -55,6 +55,9 @@ struct ScmapData {
     std::vector<char> blend_dds_0;      // strata 1-4 blend weights (raw DDS)
     std::vector<char> blend_dds_1;      // strata 5-8 blend weights (raw DDS)
     std::vector<char> preview_dds;      // lobby preview image (raw DDS, may be empty)
+    /// Each map cell's terrain type: a TypeCode of /lua/TerrainTypes.lua,
+    /// map_width x map_height, row by row.
+    std::vector<u8> terrain_types;
 };
 
 /// Parse a .scmap file and extract heightmap, water data, and props.

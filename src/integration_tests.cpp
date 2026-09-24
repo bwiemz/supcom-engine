@@ -26,6 +26,7 @@
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
+#include "map/visibility_grid.hpp"
 #include "sim/shield.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -7059,6 +7060,278 @@ void test_death(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 9: script errors while dying");
     }
     spdlog::info("Death test: {}/{} passed", pass, pass + fail);
+}
+
+// M201c: a projectile's impact is its script's. The engine names what it hit
+// ('Unit', 'Terrain', 'Water', ...) and calls OnImpact, whose DoDamage deals
+// the damage its weapon passed -- once; the engine deals none of its own.
+// GetTerrainType gives the map's terrain types for the impact effects, and a
+// VizMarker's intel reveals an area.
+void test_impact(TestContext& ctx) {
+    spdlog::info("=== IMPACT TEST: projectiles impact through their scripts ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+
+    lua_check("setup", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- A tank shelling a power generator; each shell's impact is logged
+        -- with the target's health around its OnImpact.
+        __osc_tank = spawn('uel0201', 'ARMY_1', 220, 790)
+        __osc_target = spawn('ueb1101', 'ARMY_2', 232, 790)
+        __osc_impacts = {}
+        local w = __osc_tank:GetWeapon(1)
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            local proj = fire(self, muzzle)
+            local impact = proj.OnImpact
+            proj.OnImpact = function(p, type, target)
+                local rec = {type = type, target = target, amount = p.DamageData.DamageAmount}
+                rec.before = __osc_target:GetHealth()
+                impact(p, type, target)
+                rec.after = __osc_target:GetHealth()
+                table.insert(__osc_impacts, rec)
+            end
+            return proj
+        end
+    )");
+    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+
+    lua_check("Test 1: a shell hitting a unit calls OnImpact('Unit', unit)", R"(
+        local r = __osc_impacts[1]
+        if not r then error('no impact') end
+        if r.type ~= 'Unit' then error('type ' .. tostring(r.type)) end
+        if r.target ~= __osc_target then error('target is not the generator') end
+    )");
+    lua_check("Test 2: each hit deals its DamageData once, and the engine none", R"(
+        local dealt = 0
+        for _, r in __osc_impacts do
+            if math.abs((r.before - r.after) - r.amount) > 1e-3 then
+                error('an impact dealt ' .. (r.before - r.after) .. ' of ' .. r.amount)
+            end
+            dealt = dealt + (r.before - r.after)
+        end
+        local lost = __osc_target:GetMaxHealth() - __osc_target:GetHealth()
+        if table.getn(__osc_impacts) < 2 then error('only ' .. table.getn(__osc_impacts) .. ' hits') end
+        if math.abs(lost - dealt) > 1e-3 then
+            error('lost ' .. lost .. ' but the scripts dealt ' .. dealt)
+        end
+    )");
+
+    // Impact types on the map's own ground and water.
+    {
+        auto* terrain = ctx.sim.terrain();
+        osc::f32 wx = -1, wz = -1;
+        for (int iz = 1; iz < 50 && wx < 0; ++iz)
+            for (int ix = 1; ix < 50; ++ix) {
+                const auto x = static_cast<osc::f32>(ix * 20);
+                const auto z = static_cast<osc::f32>(iz * 20);
+                if (terrain && terrain->has_water() &&
+                    terrain->get_terrain_height(x, z) < terrain->water_elevation() - 1.0f) {
+                    wx = x;
+                    wz = z;
+                    break;
+                }
+            }
+        osc::sim::Projectile shot;
+        shot.set_position({220.0f, terrain ? terrain->get_terrain_height(220, 790) : 0.0f, 790.0f});
+        const std::string land = shot.impact_type(nullptr, terrain);
+        std::string water = "(no water)";
+        std::string under = "(no water)";
+        if (wx >= 0) {
+            shot.set_position({wx, terrain->water_elevation(), wz});
+            water = shot.impact_type(nullptr, terrain);
+            shot.stay_underwater = true;
+            shot.set_position({wx, terrain->water_elevation() - 2.0f, wz});
+            under = shot.impact_type(nullptr, terrain);
+        }
+        osc::sim::Unit plane;
+        plane.set_layer("Air");
+        const std::string air = shot.impact_type(&plane, terrain);
+        check(land == "Terrain" && water == "Water" && under == "Underwater" && air == "UnitAir",
+              fmt::format("Test 3: ground impacts are 'Terrain' ({}), 'Water' ({}) and "
+                          "'Underwater' ({}), a plane 'UnitAir' ({})",
+                          land, water, under, air));
+    }
+
+    lua_check("Test 4: GetTerrainType gives the map's TerrainTypes.lua entries", R"(
+        local here = GetTerrainType(220, 790)
+        if not here.TypeCode or type(here.FXImpact) ~= 'table' then
+            error('entry ' .. tostring(here.Name))
+        end
+        if GetTerrainType(-1, -1).Name ~= 'Default' then error('off the map is not Default') end
+        local names = {}
+        for x = 50, 1000, 100 do
+            for z = 50, 1000, 100 do names[GetTerrainType(x, z).Name] = true end
+        end
+        local n = 0
+        for _ in names do n = n + 1 end
+        if n < 3 then error('only ' .. n .. ' terrain types across the map') end
+    )");
+
+    // A VizMarker (a script entity) reveals an area with InitIntel.
+    auto* vis = ctx.sim.visibility_grid();
+    const bool dark_before = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    lua_check("setup: a VizMarker", R"(
+        local VizMarker = import('/lua/sim/vizmarker.lua').VizMarker
+        __osc_marker = VizMarker({X = 450, Z = 600, Radius = 12, LifeTime = 0, Army = 1,
+                                  Omni = false, Radar = false, Vision = true, WaterVision = false})
+    )");
+    ctx.sim.tick();
+    const bool lit = vis && vis->has_vision(450.0f, 600.0f, 0);
+    (void)ctx.lua_state.do_string("__osc_marker:Destroy()");
+    ctx.sim.tick();
+    const bool dark_after = vis && !vis->has_vision(450.0f, 600.0f, 0);
+    check(dark_before && lit && dark_after,
+          fmt::format("Test 5: a VizMarker reveals its area while it lives "
+                      "(before {}, with {}, after {})",
+                      !dark_before, lit, !dark_after));
+
+    // A projectile's life: air bursts, the water's surface, a lost target.
+    lua_check("setup: shells in flight", R"(
+        local w = __osc_tank:GetWeapon(1)
+        __osc_events = {}
+        local function shell(name)
+            local p = w:CreateProjectile('Turret_Muzzle')
+            local log = {}
+            __osc_events[name] = log
+            for _, event in {'OnImpact', 'OnEnterWater', 'OnExitWater', 'OnLostTarget'} do
+                local e, base = event, p[event]
+                p[e] = function(self, a, b)
+                    table.insert(log, e .. (type(a) == 'string' and (':' .. a) or ''))
+                    if base then return base(self, a, b) end
+                end
+            end
+            return p
+        end
+        -- Straight up, bursting 5 above the ground.
+        local burst = shell('burst')
+        burst:SetVelocity(0, 15, 0)
+        burst:ChangeDetonateAboveHeight(5)
+        -- Two dropping onto the water: one ends there, one goes under.
+        local wx, wz
+        for z = 20, 1000, 20 do
+            for x = 20, 1000, 20 do
+                if not wx and GetTerrainHeight(x, z) < GetSurfaceHeight(x, z) - 2 then wx, wz = x, z end
+            end
+        end
+        if not wx then error('no water on the map') end
+        local top = GetSurfaceHeight(wx, wz) + 3
+        local splash = shell('splash')
+        Warp(splash, {wx, top, wz})
+        splash:SetVelocity(0, -10, 0)
+        splash:SetDestroyOnWater(true)
+        local dive = shell('dive')
+        Warp(dive, {wx + 4, top, wz})
+        dive:SetVelocity(0, -10, 0)
+        dive:SetDestroyOnWater(false)
+        -- Homing on a unit that is then destroyed.
+        local mark = CreateUnitHPR('ueb1101', 'ARMY_2', 300, GetTerrainHeight(300, 700), 700, 0, 0, 0)
+        local lost = shell('lost')
+        lost:SetVelocity(0, 0, 0)
+        lost:SetNewTarget(mark)
+        __osc_mark = mark
+    )");
+    ctx.sim.tick();
+    (void)ctx.lua_state.do_string("__osc_mark:Destroy()");
+    for (int i = 0; i < 10; ++i) ctx.sim.tick();
+    lua_check("Test 7: a shell bursting at its height impacts 'Air'", R"(
+        if __osc_events.burst[1] ~= 'OnImpact:Air' then
+            error('events: ' .. table.concat(__osc_events.burst, ','))
+        end
+    )");
+    lua_check("Test 8: the water's surface ends one shell and takes the other under", R"(
+        if __osc_events.splash[1] ~= 'OnImpact:Water' then
+            error('splash: ' .. table.concat(__osc_events.splash, ','))
+        end
+        if __osc_events.dive[1] ~= 'OnEnterWater' then
+            error('dive: ' .. table.concat(__osc_events.dive, ','))
+        end
+    )");
+    lua_check("Test 9: a shell whose target is destroyed hears OnLostTarget", R"(
+        if __osc_events.lost[1] ~= 'OnLostTarget' then
+            error('events: ' .. table.concat(__osc_events.lost, ','))
+        end
+    )");
+
+    // The projectile bindings take retail's arguments.
+    lua_check("Test 10: CreateProjectile takes an offset and a direction", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        local at = __osc_tank:GetPosition()
+        local p = __osc_tank:CreateProjectile(bp, 0, 2, 0, 1, 0, 0)
+        local pos = p:GetPosition()
+        if math.abs(pos[2] - (at[2] + 2)) > 1e-3 or math.abs(pos[1] - at[1]) > 1e-3 then
+            error('at ' .. pos[1] .. ',' .. pos[2] .. ' from ' .. at[1] .. ',' .. at[2])
+        end
+        local vx, vy, vz = p:GetVelocity()
+        local speed = __blueprints[bp].Physics.InitialSpeed or 0
+        if speed <= 0 then error('no InitialSpeed on ' .. bp) end
+        if math.abs(p:GetCurrentSpeed() - speed) > 1e-2 then
+            error('speed ' .. p:GetCurrentSpeed() .. ', blueprint ' .. speed)
+        end
+        if vx <= 0 or math.abs(vy) > 1e-3 or math.abs(vz) > 1e-3 then
+            error('heading ' .. vx .. ',' .. vy .. ',' .. vz .. ', not +X')
+        end
+        p:Destroy()
+    )");
+    lua_check("Test 11: CreateProjectileAtBone(bp, bone) starts at the bone", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        local p = __osc_tank:CreateProjectileAtBone(bp, 'Turret_Muzzle')
+        if string.lower(p:GetBlueprint().BlueprintId) ~= bp then
+            error('blueprint ' .. tostring(p:GetBlueprint().BlueprintId))
+        end
+        local m, pos = __osc_tank:GetPosition('Turret_Muzzle'), p:GetPosition()
+        local d = math.abs(m[1] - pos[1]) + math.abs(m[2] - pos[2]) + math.abs(m[3] - pos[3])
+        if d > 1e-3 then error(d .. ' from the muzzle') end
+        p:Destroy()
+    )");
+    lua_check("setup: a shell that grows, and a child", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        __osc_grow = __osc_tank:CreateProjectile(bp, 0, 30, 0, 0, 0, 1)
+        __osc_grow_speed = __osc_grow:GetCurrentSpeed()
+        __osc_grow:SetScaleVelocity(2)
+        __osc_child = __osc_grow:CreateChildProjectile('/projectiles/tdfgauss02/tdfgauss02_proj.bp')
+    )");
+    ctx.sim.tick();
+    lua_check("Test 12: SetScaleVelocity grows it, and leaves its speed", R"(
+        if math.abs(__osc_grow:GetCurrentSpeed() - __osc_grow_speed) > 1e-3 then
+            error('speed ' .. __osc_grow_speed .. ' -> ' .. __osc_grow:GetCurrentSpeed())
+        end
+    )");
+    lua_check("Test 13: a child projectile has its own blueprint and its parent's flight", R"(
+        local c = __osc_child
+        if string.lower(c:GetBlueprint().BlueprintId) ~= '/projectiles/tdfgauss02/tdfgauss02_proj.bp' then
+            error('blueprint ' .. tostring(c:GetBlueprint().BlueprintId))
+        end
+        local ax, ay, az = __osc_grow:GetVelocity()
+        local bx, by, bz = c:GetVelocity()
+        if math.abs(ax - bx) + math.abs(ay - by) + math.abs(az - bz) > 1e-3 then
+            error('child velocity differs')
+        end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
+    spdlog::info("Impact test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {

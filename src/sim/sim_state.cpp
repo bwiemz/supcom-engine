@@ -1006,37 +1006,18 @@ void SimState::update_visibility() {
         for (u32 a = 0; a < fn; ++a) visibility_grid_->reveal_all(a);
     }
 
-    // 2. Paint intel radii for each unit
-    entity_registry_.for_each_unit([&](Entity& e) {
-        if (e.destroyed() || !e.is_unit()) return;
-        auto* unit = static_cast<Unit*>(&e);
-        i32 army = unit->army();
-        if (army < 0 ||
-            army >= static_cast<i32>(map::VisibilityGrid::MAX_ARMIES))
-            return;
-
-        auto& pos = unit->position();
-        u32 ua = static_cast<u32>(army);
-
+    // 2. Paint intel radii: a source's radius for each intel type it has
+    // switched on (0 = none).
+    const auto paint_intel = [&](u32 ua, const Vector3& pos, const auto& radius_of) {
         // Vision: terrain LOS occlusion
-        if (unit->is_intel_enabled("Vision")) {
-            f32 r = unit->get_intel_radius("Vision");
-            if (r > 0.0f) {
-                f32 eye_h = terrain_->get_terrain_height(pos.x, pos.z) +
-                            map::VisibilityGrid::EYE_OFFSET;
-                visibility_grid_->paint_circle_los(ua, pos.x, pos.z, r,
-                                                    eye_h);
-            }
+        if (const f32 r = radius_of("Vision"); r > 0.0f) {
+            f32 eye_h =
+                terrain_->get_terrain_height(pos.x, pos.z) + map::VisibilityGrid::EYE_OFFSET;
+            visibility_grid_->paint_circle_los(ua, pos.x, pos.z, r, eye_h);
         }
-
         // WaterVision maps to Vision flag but no terrain LOS (underwater sensing)
-        if (unit->is_intel_enabled("WaterVision")) {
-            f32 r = unit->get_intel_radius("WaterVision");
-            if (r > 0.0f)
-                visibility_grid_->paint_circle(ua, pos.x, pos.z, r,
-                                               map::VisFlag::Vision);
-        }
-
+        if (const f32 r = radius_of("WaterVision"); r > 0.0f)
+            visibility_grid_->paint_circle(ua, pos.x, pos.z, r, map::VisFlag::Vision);
         // Radar/Sonar/Omni: simple circle (not blocked by terrain)
         struct IntelMapping {
             const char* type;
@@ -1047,14 +1028,23 @@ void SimState::update_visibility() {
             {"Sonar", map::VisFlag::Sonar},
             {"Omni", map::VisFlag::Omni},
         };
-        for (auto& m : non_los) {
-            if (unit->is_intel_enabled(m.type)) {
-                f32 r = unit->get_intel_radius(m.type);
-                if (r > 0.0f)
-                    visibility_grid_->paint_circle(ua, pos.x, pos.z, r,
-                                                   m.flag);
-            }
-        }
+        for (const auto& m : non_los)
+            if (const f32 r = radius_of(m.type); r > 0.0f)
+                visibility_grid_->paint_circle(ua, pos.x, pos.z, r, m.flag);
+    };
+    const auto valid_army = [](i32 army) {
+        return army >= 0 && army < static_cast<i32>(map::VisibilityGrid::MAX_ARMIES);
+    };
+
+    entity_registry_.for_each_unit([&](Entity& e) {
+        if (e.destroyed() || !e.is_unit()) return;
+        auto* unit = static_cast<Unit*>(&e);
+        if (!valid_army(unit->army())) return;
+        const auto& pos = unit->position();
+        const u32 ua = static_cast<u32>(unit->army());
+        paint_intel(ua, pos, [&](const char* type) {
+            return unit->is_intel_enabled(type) ? unit->get_intel_radius(type) : 0.0f;
+        });
 
         // Self-vision: own army always sees own unit cell
         visibility_grid_->paint_circle(
@@ -1062,6 +1052,23 @@ void SimState::update_visibility() {
             static_cast<f32>(map::VisibilityGrid::CELL_SIZE) * 0.5f,
             map::VisFlag::Vision);
     });
+
+    // Script entities' intel (VizMarkers), dropped once the entity is gone.
+    for (auto it = entity_intel_.begin(); it != entity_intel_.end();) {
+        const Entity* e = entity_registry_.find(it->first);
+        if (!e || e->destroyed()) {
+            it = entity_intel_.erase(it);
+            continue;
+        }
+        if (valid_army(it->second.army)) {
+            const auto& sources = it->second.sources;
+            paint_intel(static_cast<u32>(it->second.army), e->position(), [&](const char* type) {
+                const auto s = sources.find(type);
+                return s != sources.end() && s->second.enabled ? s->second.radius : 0.0f;
+            });
+        }
+        ++it;
+    }
 
     // 2b. Paint temporary vision areas (scrying, Eye of Rhianne)
     // Single-pass: paint, decrement, and compact in place

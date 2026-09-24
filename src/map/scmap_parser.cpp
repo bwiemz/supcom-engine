@@ -322,7 +322,10 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
     size_t terrain_type_size = static_cast<size_t>(map_width) *
                                static_cast<size_t>(map_height);
     if (!r.has_remaining(terrain_type_size)) return false;
-    r.skip(terrain_type_size);
+    {
+        const std::vector<char> types = r.read_bytes(terrain_type_size);
+        result.terrain_types.assign(types.begin(), types.end());
+    }
 
     // --- Version <53: extra i16 ---
     if (version_minor < 53) {

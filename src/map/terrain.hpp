@@ -66,6 +66,13 @@ public:
     void set_normal_decals(std::vector<NormalDecalInfo> decals);
     const std::vector<NormalDecalInfo>& normal_decals() const { return normal_decals_; }
 
+    /// The map's terrain types, one TypeCode per map cell, row by row.
+    void set_terrain_types(std::vector<u8> types);
+    /// The terrain type at a world position: its TypeCode in
+    /// /lua/TerrainTypes.lua. Off the map, or on a map without the layer,
+    /// it is 1 ('Default').
+    u8 terrain_type(f32 x, f32 z) const;
+
 private:
     Heightmap heightmap_;
     f32 water_elevation_;
@@ -75,6 +82,7 @@ private:
     std::vector<char> blend_dds_1_;
     std::vector<DecalInfo> decals_;
     std::vector<NormalDecalInfo> normal_decals_;
+    std::vector<u8> terrain_types_;
 };
 
 } // namespace osc::map

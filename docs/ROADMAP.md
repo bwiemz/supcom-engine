@@ -215,7 +215,16 @@ In order of how much they change what the player feels:
 - `SetMesh` draws mesh blueprints (wreck, build, enhancement), and wrecks draw burnt.
 - The SCM reader had transposed every inverse bind matrix, so every posed unit had been skinned wrong since M52.
 
-`--death-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
+`--death-test` (gate). **M201c ✅** Projectile impacts go through their scripts:
+- The engine names what a projectile hit, as retail does, and calls `OnImpact`. The script's damage, effects, sound and destruction follow; the engine deals no damage of its own except for shots no weapon passed damage to.
+- `GetTerrainType` returns the map's terrain types, which were in every SCMAP and never read.
+- Crossing the water's surface raises `OnEnterWater`/`OnExitWater`, and `DestroyOnWater` ends a projectile there.
+- Flak bursts at its target's height.
+- A homing projectile hears `OnLostTarget`.
+- Script entities carry intel, so `VizMarker`s reveal.
+- `CreateProjectile`, `CreateProjectileAtBone`, `CreateChildProjectile` and `SetScaleVelocity` take retail's arguments.
+
+`--impact-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
 | M202 | Shields | Bubble interception, overspill, `OnCollisionCheck`. |
 | M203 | Ground locomotion | Turn rate, acceleration and braking. Motion follows heading. Unit–unit avoidance and pushing. Footprint occupancy. |
 | M204 | Formations | `IssueFormMove` / `IssueFormAttack` / `IssueFormAggressiveMove`, and attack-move semantics. |
