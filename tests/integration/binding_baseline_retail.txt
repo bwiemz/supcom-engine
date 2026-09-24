@@ -46,7 +46,6 @@ G SetQueueGrid
 G SetQueueState
 G SetUIControlsAlpha
 G SoundIsPrepared
-G SplitProp
 G StartSound
 G UISelectAndZoomTo
 G UnProject
@@ -60,7 +59,6 @@ M CalculateWorldPositionFromRelative
 M CreateResourceBuildingNearest
 M CreateUnitNearSpot
 M EnableTerrainCheck
-M FallDown
 M GetAttackVectors
 M GetCollisionExtents
 M GetRate
@@ -76,7 +74,6 @@ M SetStrategicUnderlay
 M SetStunned
 M SetThrustingParam
 M SetWeaponDisableByLabel
-M SinkAway
 M StopSiloBuild
 M TakeResource
 M TransportHasAvailableStorage

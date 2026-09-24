@@ -10,6 +10,7 @@
 #include "map/visibility_grid.hpp"
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/unit.hpp"
 
 extern "C" {
@@ -633,7 +634,7 @@ Vector3 SimState::clamp_to_no_rush(const Unit& unit, const Vector3& target) cons
 void SimState::enforce_no_rush() {
     if (!no_rush_active()) return;
     PROFILE_ZONE("Sim::no_rush");
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto* unit = static_cast<Unit*>(&e);
         const ArmyBrain* brain = army_at(static_cast<size_t>(unit->army()));
@@ -677,7 +678,7 @@ void SimState::tick() {
     // Process air crash impacts
     {
         std::vector<u32> crash_impacts;
-        entity_registry_.for_each([&](Entity& e) {
+        entity_registry_.for_each_unit([&](Entity& e) {
             if (e.destroyed() || !e.is_unit()) return;
             auto* unit = static_cast<Unit*>(&e);
             if (unit->crash_impacted()) {
@@ -938,6 +939,14 @@ void SimState::update_entities() {
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
                                                  entity_registry_, L_, terrain_.get());
+        } else if (e->is_prop()) {
+            // A fallen tree sinking away (SinkAway) before its script destroys it.
+            auto* prop = static_cast<Prop*>(e);
+            if (prop->sink_rate != 0) {
+                Vector3 p = prop->position();
+                p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
+                prop->set_position(p);
+            }
         }
     }
 }
@@ -959,7 +968,7 @@ void SimState::update_visibility() {
     }
 
     // 2. Paint intel radii for each unit
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto* unit = static_cast<Unit*>(&e);
         i32 army = unit->army();
@@ -1048,7 +1057,7 @@ void SimState::update_visibility() {
     }
 
     // 3.5. Update blip cache (dead-reckoning positions)
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         u32 eid = e.entity_id();
         // Cache per-unit stealth state before the army loop to avoid
@@ -1085,7 +1094,7 @@ void SimState::update_visibility() {
     // 4. Detect changes and fire OnIntelChange (stealth-aware)
     std::vector<u32> ids;
     ids.reserve(entity_registry_.count());
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (!e.destroyed() && e.is_unit())
             ids.push_back(e.entity_id());
     });
@@ -1142,7 +1151,7 @@ void SimState::update_visibility() {
 
     // 5. Save current state for next tick (stealth-aware)
     prev_entity_vis_.clear();
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto& pos = e.position();
         auto* unit = static_cast<const Unit*>(&e);
@@ -1276,7 +1285,7 @@ void SimState::dispose_defeated_army(i32 army) {
     // PartialShare transfers only structures + engineers; the rest are destroyed.
     const bool partial = share_mode_ == ShareMode::PartialShare;
     bool transferred_any = false;
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (e.army() != army || e.destroyed() || !e.is_unit()) return;
         auto* u = static_cast<Unit*>(&e);
         bool transfer = recipient >= 0;
@@ -1362,7 +1371,7 @@ void SimState::update_victory() {
         bool has_command = false; // a living, non-dying ACU (demoralization)
     };
     std::vector<Tally> tally(n);
-    entity_registry_.for_each([&](Entity& e) {
+    entity_registry_.for_each_unit([&](Entity& e) {
         if (!e.is_unit() || e.destroyed()) return;
         i32 a = e.army();
         if (a < 0 || a >= static_cast<i32>(n)) return;

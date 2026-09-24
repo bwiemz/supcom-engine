@@ -23,9 +23,11 @@ std::string string_field(lua_State* L, int index, const char* key) {
 }
 
 /// Resolve without the cache: pushes the class table, or nil.
-void resolve(lua_State* L, const std::string& bp_id, std::string_view bp_suffix, const char* kind) {
+void resolve(lua_State* L, const std::string& bp_id, std::string_view bp_suffix, const char* kind,
+             bool warn_default_missing) {
     const int top = lua_gettop(L);
     std::string module, class_name;
+    bool default_module = false;
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
@@ -35,12 +37,32 @@ void resolve(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
             const int bp = lua_gettop(L);
             module = string_field(L, bp, "ScriptModule");
             class_name = string_field(L, bp, "ScriptClass");
-            if (module.empty())
+            if (module.empty()) {
                 module = default_script_module(string_field(L, bp, "Source"), bp_suffix);
+                default_module = true;
+            }
         }
     }
     lua_settop(L, top);
     if (class_name.empty()) class_name = "TypeClass";
+
+    // A default module (beside the .bp) often isn't there -- most props have
+    // none -- so ask the VFS before import logs a missing file.
+    if (default_module && !module.empty()) {
+        lua_pushstring(L, "exists");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_isfunction(L, -1)) {
+            lua_pushstring(L, module.c_str());
+            const bool there = lua_pcall(L, 1, 1, 0) == 0 && lua_toboolean(L, -1);
+            lua_settop(L, top);
+            if (!there) {
+                lua_pushnil(L);
+                return;
+            }
+        } else {
+            lua_settop(L, top);
+        }
+    }
 
     lua_pushstring(L, "import");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -51,8 +73,9 @@ void resolve(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
     }
     lua_pushstring(L, module.c_str());
     if (lua_pcall(L, 1, 1, 0) != 0) {
-        spdlog::warn("{} script {} ({}) failed to load: {}", kind, module, bp_id,
-                     lua_tostring(L, -1));
+        if (!default_module || warn_default_missing)
+            spdlog::warn("{} script {} ({}) failed to load: {}", kind, module, bp_id,
+                         lua_tostring(L, -1));
         lua_settop(L, top);
         lua_pushnil(L);
         return;
@@ -82,7 +105,8 @@ std::string default_script_module(std::string source, std::string_view bp_suffix
 }
 
 void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
-                                 const char* cache_key, const char* kind) {
+                                 const char* cache_key, const char* kind,
+                                 bool warn_default_missing) {
     lua_pushstring(L, cache_key);
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
@@ -97,7 +121,7 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
     lua_rawget(L, cache);
     if (lua_isnil(L, -1)) {
         lua_pop(L, 1);
-        resolve(L, bp_id, bp_suffix, kind);
+        resolve(L, bp_id, bp_suffix, kind, warn_default_missing);
         // Cache a miss as false, so a broken script is tried (and logged) once.
         lua_pushstring(L, bp_id.c_str());
         if (lua_istable(L, -2)) lua_pushvalue(L, -2);

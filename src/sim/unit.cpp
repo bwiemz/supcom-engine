@@ -374,6 +374,64 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain) {
     return result;
 }
 
+namespace {
+
+/// What reclaiming `target` takes and yields, as Moho asks the reclaimer's
+/// script: GetReclaimCosts(target) -> seconds, energy, mass (retail's Unit
+/// answers from a unit's build costs and asks a prop, whose Prop.lua answers
+/// from its blueprint's reclaim values and time multipliers). Without an
+/// answer: the values set on the target's table (MaxMassReclaim,
+/// MaxEnergyReclaim, TimeReclaim), with the time scaled as before.
+struct ReclaimCosts {
+    f64 time = 0;
+    f64 energy = 0;
+    f64 mass = 0;
+};
+
+ReclaimCosts reclaim_costs(lua_State* L, const Unit& reclaimer, const Entity& target,
+                           f64 build_rate) {
+    ReclaimCosts costs;
+    if (!L || target.lua_table_ref() < 0) return costs;
+    const int top = lua_gettop(L);
+    if (reclaimer.lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, reclaimer.lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "GetReclaimCosts");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
+            if (lua_pcall(L, 2, 3, 0) == 0 && lua_isnumber(L, -3)) {
+                costs.time = lua_tonumber(L, -3);
+                costs.energy = std::fabs(lua_tonumber(L, -2));
+                costs.mass = std::fabs(lua_tonumber(L, -1));
+                lua_settop(L, top);
+                return costs;
+            }
+            if (lua_isstring(L, -1)) spdlog::warn("GetReclaimCosts error: {}", lua_tostring(L, -1));
+        }
+        lua_settop(L, top);
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, target.lua_table_ref());
+    const int tbl = lua_gettop(L);
+    f64 time_mult = 1;
+    const auto number = [&](const char* key, f64& out) {
+        lua_pushstring(L, key);
+        lua_rawget(L, tbl);
+        if (lua_isnumber(L, -1)) out = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+    };
+    number("MaxMassReclaim", costs.mass);
+    number("MaxEnergyReclaim", costs.energy);
+    number("TimeReclaim", time_mult);
+    lua_settop(L, top);
+    if (build_rate > 0)
+        costs.time = time_mult * std::max(costs.mass, costs.energy) / build_rate / 10.0;
+    return costs;
+}
+
+} // namespace
+
 void Unit::update(f64 dt, SimContext& ctx) {
     if (destroyed()) return;
 
@@ -587,38 +645,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
             if (reclaim_target_id_ != cmd.target_id) {
                 if (is_reclaiming()) stop_reclaiming();
 
-                // Read reclaim values from target's Lua table
-                f64 max_mass = 0, max_energy = 0, time_mult = 1;
-                if (target->lua_table_ref() >= 0) {
-                    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                    int tbl = lua_gettop(L);
-
-                    lua_pushstring(L, "MaxMassReclaim");
-                    lua_rawget(L, tbl);
-                    if (lua_isnumber(L, -1)) max_mass = lua_tonumber(L, -1);
-                    lua_pop(L, 1);
-
-                    lua_pushstring(L, "MaxEnergyReclaim");
-                    lua_rawget(L, tbl);
-                    if (lua_isnumber(L, -1)) max_energy = lua_tonumber(L, -1);
-                    lua_pop(L, 1);
-
-                    lua_pushstring(L, "TimeReclaim");
-                    lua_rawget(L, tbl);
-                    if (lua_isnumber(L, -1)) time_mult = lua_tonumber(L, -1);
-                    lua_pop(L, 1);
-
-                    lua_pop(L, 1); // tbl
-                }
-
-                f64 max_value = std::max(max_mass, max_energy);
-                if (max_value <= 0 || build_rate_ <= 0) {
+                const ReclaimCosts costs =
+                    reclaim_costs(L, *this, *target, static_cast<f64>(build_rate_));
+                const f64 max_mass = costs.mass, max_energy = costs.energy;
+                if (std::max(max_mass, max_energy) <= 0 || build_rate_ <= 0) {
                     command_queue_.pop_front();
                     continue;
                 }
-
-                f64 reclaim_time = time_mult * max_value
-                                   / static_cast<f64>(build_rate_) / 10.0;
+                f64 reclaim_time = costs.time;
                 if (reclaim_time <= 0) reclaim_time = 0.01;
 
                 reclaim_target_id_ = cmd.target_id;
@@ -861,37 +895,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
                         // Compute own reclaim rate based on own build_rate
                         // (assister contributes speed but NOT duplicate resources
                         //  — only the primary reclaimer sets production rates)
-                        f64 max_mass = 0, max_energy = 0, time_mult = 1.0;
-                        if (reclaim_target->lua_table_ref() >= 0) {
-                            lua_rawgeti(L, LUA_REGISTRYINDEX,
-                                        reclaim_target->lua_table_ref());
-                            int rtbl = lua_gettop(L);
-
-                            lua_pushstring(L, "MaxMassReclaim");
-                            lua_rawget(L, rtbl);
-                            if (lua_isnumber(L, -1))
-                                max_mass = lua_tonumber(L, -1);
-                            lua_pop(L, 1);
-
-                            lua_pushstring(L, "MaxEnergyReclaim");
-                            lua_rawget(L, rtbl);
-                            if (lua_isnumber(L, -1))
-                                max_energy = lua_tonumber(L, -1);
-                            lua_pop(L, 1);
-
-                            lua_pushstring(L, "TimeReclaim");
-                            lua_rawget(L, rtbl);
-                            if (lua_isnumber(L, -1))
-                                time_mult = lua_tonumber(L, -1);
-                            lua_pop(L, 1);
-
-                            lua_pop(L, 1); // rtbl
-                        }
-
-                        f64 max_value = std::max(max_mass, max_energy);
-                        if (max_value > 0 && build_rate_ > 0) {
-                            f64 reclaim_time = time_mult * max_value
-                                / static_cast<f64>(build_rate_) / 10.0;
+                        const ReclaimCosts costs =
+                            reclaim_costs(L, *this, *reclaim_target, static_cast<f64>(build_rate_));
+                        if (std::max(costs.mass, costs.energy) > 0 && build_rate_ > 0) {
+                            f64 reclaim_time = costs.time;
                             if (reclaim_time <= 0) reclaim_time = 0.01;
                             reclaim_rate_ = static_cast<f32>(1.0 / reclaim_time);
                         } else {

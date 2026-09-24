@@ -2,6 +2,7 @@
 #include "lua/lua_state.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/platoon.hpp"
+#include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -263,6 +264,10 @@ Result<void> SessionManager::start_session(LuaState& state,
         spdlog::warn("  SetupSession() failed: {} (continuing anyway)",
                       setup_result.error().message);
     }
+
+    // The map's props were made before the sim's scripts loaded; now they
+    // get their script objects (trees, rocks...), before BeginSession.
+    sim::create_map_prop_objects(L, sim);
 
     bool has_ai = !ai_army_indices_.empty();
     for (size_t i = 0; i < army_slot_configs_.size() && !has_ai; ++i) {
