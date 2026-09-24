@@ -117,10 +117,62 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 
 ### M206b: missile defence
 
-- **Projectile targets:** weapons whose `TargetType` is `RULEWTT_Projectile` target enemy missiles: TMDs, anti-nukes, anti-torpedo.
-  - Missiles have to be targetable: `SetCollisionShape`, `Projectile` categories, `DoTakeDamage`.
-  - `HitAssignedTarget` interceptors must reach them.
-- **Proof:** a nuke fired at an anti-nuke's ground is shot down, and a TMD stops a tactical missile.
+**What a second survey found.** Retail's missile defence is mostly script, and the scripts can't work until projectiles have an identity.
+
+- **Projectiles have no categories.** `EntityCategoryContains` and the filters answer false for anything but a unit. Retail's `Projectile.OnCollisionCheck` then never refuses a collision:
+  - a tank shell hits an enemy missile it crosses;
+  - torpedoes hit each other;
+  - a nuke's `OnImpact` doesn't see that what it met was a projectile, so a nuke shot down would still detonate.
+- **The 43 anti-projectile weapons are four kinds** (`RangeCategory = 'UWRC_Countermeasure'`, all single-target):
+  - **Homing interceptors:** the anti-nukes' counted `HitAssignedTarget` missiles, the Seraphim TMD, and Aeon and Seraphim anti-torpedo.
+  - **Guns:** the UEF Phalanx fires Damage-1 shells at 100 u/s, at missiles of 1–3 health.
+  - **Beams:** the Cybran zappers. These are M206c's.
+  - **Lures:** the Aeon TMD's flare and the UEF and Cybran depth charges.
+    - They are Lua `Flare`/`DepthCharge` entities whose `OnCollisionCheck` calls `SetNewTarget` on an enemy missile or torpedo that touches them.
+    - They need the entity's army, which `Entity(spec)` takes from `spec.Owner`.
+- **Target categories:**
+  - Tactical missiles are `TACTICAL MISSILE`, nukes `STRATEGIC MISSILE`, and torpedoes `TORPEDO`.
+  - Interceptors are `ANTIMISSILE` or `ANTITORPEDO`, never `MISSILE`, so the collision rules let them hit.
+  - Nukes set `DesiredShooterCap = 1` (a top-level blueprint field), so only one anti-nuke fires at each.
+- **`OnCollisionCheck(self, other)`:** `self` is the entity struck and `other` the one hitting it (retail's comments, and its `HitAssignedTarget` test). The engine asked the mover first. So a lure's check ran second, and the mover's side errored on a blueprint-less Lua entity.
+
+**The slice:**
+
+- **Projectiles have their blueprint's categories,** plus `ALLPROJECTILES`.
+  - `EntityCategoryContains` and `EntityCategoryFilterDown/Out` accept them.
+  - `ALLUNITS` matches every entity except projectiles.
+- **Collision checks:** the struck side's `OnCollisionCheck` runs first, and the first refusal ends it. A Lua entity takes its army from `spec.Owner`.
+- **Weapons read `TargetType`.** A `RULEWTT_Projectile` weapon targets live enemy projectiles in range.
+  - The usual checks apply: its layer caps (a projectile is `Air` above the surface and `Water` below), its restrictions, and `TargetCheckInterval`.
+  - It skips a projectile already held by its `DesiredShooterCap` of weapons.
+- **Shots:** a leading weapon leads a projectile target. A weapon's `ProjectileLifetime` (or `ProjectileLifetimeUsesMultiplier` × MaxRadius / MuzzleVelocity) overrides its projectile blueprint's `Lifetime`. This holds for every weapon: 139 set the one and 174 the other.
+- **Proof:** `--defence-test`:
+  - an anti-nuke kills a nuke in flight, which then harms nothing, and a second anti-nuke holds its fire;
+  - the Phalanx and the Seraphim TMD stop tactical missiles;
+  - the Aeon flare lures an enemy missile and not its own side's;
+  - anti-torpedo stops a torpedo;
+  - a tank shell passes through an enemy missile.
+
+**What building M206b established:**
+
+- **Most of the defence was already in retail's scripts,** waiting for categories on projectiles and armies on Lua entities.
+  - The flare's lure, retail's collision rules and the nuke's "don't detonate when shot" check came to life with them.
+  - The engine's own part is the targeting: which enemy projectiles are in reach, and how many weapons take each.
+- **The anti-nuke intercepts high.** The nuke is killed 200 above its target, 4 from it horizontally, because the anti-nuke's 90 range is a horizontal cylinder.
+- **`DesiredShooterCap` is a top-level field.** The first reading looked in `Defense` and let both anti-nukes fire.
+- **The order of collision checks shows only as a side effect.**
+  - A flare refuses either way, so whether the struck side is asked first shows only in whether the missile is asked at all.
+  - The test pins it to retail's comment: "the thing hitting us has no idea".
+- **Torpedoes exposed two naval gaps,** left for a naval slice:
+  - A surfaced sub's torpedoes leave just above the water, aimed at their target's centre. They never dive, so anti-torpedo weapons, whose layer caps are water only, can't see them. Moho launches them along their muzzles, as M206a does for silo missiles only.
+  - A dived sub sinks only while it moves.
+  - The test puts its sub under water.
+
+**Risks:**
+- **The category fix is global:** every projectile collision follows retail's rules from now on. The long AI games will play differently.
+- **Readings, not measurements:**
+  - A projectile's layer, `DesiredShooterCap`'s default (none) and projectile targeting without intel are inferred from scripts, not measured.
+  - Comma is union, so the naval TMDs' `'TACTICAL,MISSILE'` admits enemy AA missiles too.
 
 ### M206c: beam weapons
 
