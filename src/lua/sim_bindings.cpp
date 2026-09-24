@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -2107,7 +2108,54 @@ static int l_SetIgnoreArmyCap(lua_State* /*L*/) { return 0; }
 
 /// TryCopyPose(unit, prop, bool): copy the dying unit's animation pose onto
 /// its wreckage mesh. stub: cosmetic (wrecks render in the bind pose).
-static int l_TryCopyPose(lua_State* /*L*/) { return 0; }
+/// TryCopyPose(unit, prop, copyWorldTransform): the prop takes the unit's
+/// current pose, so a wreck keeps the pose its unit died in. Moho copies it
+/// only when both draw the same skeleton -- here, when the prop's mesh is
+/// the unit's or a variant of it (its wreck) -- and otherwise does nothing.
+static int l_TryCopyPose(lua_State* L) {
+    auto* from = extract_entity(L, 1);
+    auto* to = extract_entity(L, 2);
+    auto* sim = get_sim(L);
+    if (!from || !to || !sim || from->destroyed() || to->destroyed() || !from->is_unit() ||
+        !to->is_prop())
+        return 0;
+    const auto& unit = static_cast<const sim::Unit&>(*from);
+    auto& prop = static_cast<sim::Prop&>(*to);
+    // "/units/x/x_mesh_wreck" -> "/units/x/x_mesh", lowercased.
+    const auto base_mesh = [](std::string id) {
+        std::transform(id.begin(), id.end(), id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        for (const std::string_view variant : {"_wreck", "_build"})
+            if (id.size() > variant.size() && id.ends_with(variant))
+                id.resize(id.size() - variant.size());
+        return id;
+    };
+    std::string unit_mesh = unit.mesh_override();
+    if (unit_mesh.empty()) {
+        auto* store = sim->blueprint_store();
+        const auto* entry = store ? store->find(unit.blueprint_id()) : nullptr;
+        if (!entry) return 0;
+        const int top = lua_gettop(L);
+        store->push_lua_table(*entry, L);
+        lua_pushstring(L, "Display");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "MeshBlueprint");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) unit_mesh = lua_tostring(L, -1);
+        }
+        lua_settop(L, top);
+    }
+    if (unit_mesh.empty() || prop.mesh_override().empty() ||
+        base_mesh(prop.mesh_override()) != base_mesh(unit_mesh))
+        return 0;
+    prop.pose = unit.animated_bone_matrices();
+    if (lua_toboolean(L, 3)) {
+        prop.set_position(unit.position());
+        prop.set_orientation(unit.orientation());
+    }
+    return 0;
+}
 
 /// NotifyUpgrade(from, to): tells the user layer that `from` is becoming
 /// `to` so selection and avatars follow the upgrade. stub: cosmetic until

@@ -1,6 +1,7 @@
 #include "sim/world_snapshot.hpp"
 
 #include "sim/army_brain.hpp"
+#include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
@@ -140,6 +141,14 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.max_health = e.max_health();
         r.custom_name = e.custom_name();
         if (e.is_unit()) capture_unit(static_cast<const Unit&>(e), r, out);
+        if (e.is_prop()) {
+            const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
+            if (!pose.empty()) {
+                r.bone_offset = static_cast<u32>(out.bones.size());
+                r.bone_count = static_cast<u32>(pose.size());
+                out.bones.insert(out.bones.end(), pose.begin(), pose.end());
+            }
+        }
         if (e.is_shield()) {
             const auto& s = static_cast<const Shield&>(e);
             r.shield_owner_id = s.owner_id;

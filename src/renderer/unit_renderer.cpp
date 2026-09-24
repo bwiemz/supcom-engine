@@ -288,8 +288,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             auto& gd = mesh_groups[gpu];
             gd.instances.push_back(inst);
 
-            // Track bone data for this instance (props have no bones)
-            if (entity.is_unit) {
+            // Track bone data for this instance (a prop has a pose only when
+            // TryCopyPose gave it its unit's)
+            if (entity.is_unit || entity.bone_count > 0) {
                 u32 bc = entity.bone_count;
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
                 gd.bones.push_back({entity.id, bc});
