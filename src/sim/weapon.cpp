@@ -65,21 +65,32 @@ u32 Weapon::fire_period() const {
     return static_cast<u32>(std::clamp(ticks, 1.0, 1.0e6));
 }
 
+std::optional<Vector3> Weapon::target_point(const EntityRegistry& registry) const {
+    if (target_entity_id != 0) {
+        const Entity* target = registry.find(target_entity_id);
+        if (!target || target->destroyed()) return std::nullopt;
+        return target->position();
+    }
+    if (has_ground_target) return ground_target;
+    return std::nullopt;
+}
+
 bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
-    if (!enabled || target_entity_id == 0 || owner.busy()) return false;
+    if (!enabled || !has_target() || owner.busy()) return false;
+    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return false;
     if (above_water_fire_only && is_underwater(owner.layer())) return false;
     // A script callback earlier this tick may have destroyed the target.
-    const Entity* target = registry.find(target_entity_id);
-    if (!target || target->destroyed()) return false;
+    const std::optional<Vector3> at = target_point(registry);
+    if (!at) return false;
     // Tracked from farther (TrackingRadius), fired at only within MaxRadius,
     // and only once the fire control is on target.
-    if (!in_firing_range(owner, *target)) return false;
+    if (!in_firing_range(owner, *at)) return false;
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return false;
     if (need_compute_bomb_drop) {
-        const f32 dx = target->position().x - owner.position().x;
-        const f32 dz = target->position().z - owner.position().z;
+        const f32 dx = at->x - owner.position().x;
+        const f32 dz = at->z - owner.position().z;
         if (dx * dx + dz * dz > bomb_drop_threshold * bomb_drop_threshold) return false;
     }
     return true;
@@ -115,42 +126,74 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
                     const map::VisibilityGrid* visibility_grid, const SimState* sim) {
     if (fire_clock > 0) --fire_clock;
 
-    if (!enabled || fire_on_death || manual_fire) return;
-    if (max_range <= 0 || damage <= 0) return;
-    // HoldFire (1) = don't auto-target or fire at all
-    if (owner.fire_state() == 1) return;
+    if (!enabled || fire_on_death) return;
+    // A nuke's damage is its script's (Damage 0): a manual weapon fires
+    // whatever its damage.
+    if (max_range <= 0 || (damage <= 0 && !manual_fire)) return;
 
-    const u32 previous_target = target_entity_id;
-    update_targeting(owner, registry, visibility_grid, sim);
+    const TargetMark previous = target_mark();
+    if (manual_fire) {
+        // It fires only at what its unit's launch order names, whatever the
+        // fire state.
+        take_order_target(owner, registry);
+    } else {
+        // HoldFire (1) = don't auto-target or fire at all
+        if (owner.fire_state() == 1) return;
+        update_targeting(owner, registry, visibility_grid, sim);
+    }
     update_aim(owner, registry, L);
     if (owner.destroyed() || owner.is_dying()) return; // a tracking callback may kill it
 
     if (L && fires_through_script()) {
-        update_scripted(owner, registry, L, previous_target);
+        update_scripted(owner, registry, L, previous);
         return;
     }
 
-    if (target_entity_id == 0 || fire_clock > 0) return;
-    const Entity* target = registry.find(target_entity_id);
-    if (!target || !in_firing_range(owner, *target)) return;
+    if (!has_target() || fire_clock > 0) return;
+    const std::optional<Vector3> at = target_point(registry);
+    if (!at || !in_firing_range(owner, *at)) return;
+    if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return;
     if (const AimManipulator* aim = fire_control(owner);
         aim && !(aim->enabled() && aim->on_target()))
         return;
     if (try_fire(owner, registry, L, visibility_grid)) fire_clock = fire_period();
 }
 
+void Weapon::take_order_target(const Unit& owner, const EntityRegistry& registry) {
+    const UnitCommand* order = owner.launch_order_for(*this);
+    if (!order) {
+        set_target_entity(0);
+        return;
+    }
+    if (order->target_id == 0) {
+        set_target_ground(order->target_pos);
+    } else {
+        // A unit it was sent at that is gone: nothing (the order ends).
+        const Entity* target = registry.find(order->target_id);
+        set_target_entity(target && !target->destroyed() ? order->target_id : 0);
+    }
+    if (const std::optional<Vector3> at = target_point(registry)) last_order_point = at;
+}
+
 void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
-                             u32 previous_target) {
+                             const TargetMark& previous) {
     // Each callback may kill the unit or disable the weapon.
     const auto still_firing = [&] {
         return !owner.destroyed() && !owner.is_dying() && fires_through_script();
     };
-    if (target_entity_id != previous_target) {
-        if (previous_target != 0) {
+    if (!(target_mark() == previous)) {
+        if (previous.entity != 0 || previous.ground) {
+            // A manual weapon whose order went: its script must not fire on
+            // (Moho's OnHaltFire, "so we won't fire if the target reticle is
+            // moved"); an unpacking launcher packs up on losing its target.
+            if (manual_fire) {
+                call_script(L, "OnHaltFire");
+                if (!still_firing()) return;
+            }
             call_script(L, "OnLostTarget");
             if (!still_firing()) return;
         }
-        if (target_entity_id != 0) {
+        if (has_target()) {
             call_script(L, "OnGotTarget");
             if (!still_firing()) return;
         }
@@ -224,10 +267,13 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
         if (ordered == target_entity_id) return;
         const Entity* target = registry.find(ordered);
         if (target && can_target(owner, *target, visibility_grid, sim)) {
-            target_entity_id = ordered;
+            set_target_entity(ordered);
             return;
         }
     }
+
+    // A ground target its script set stays until the script changes it.
+    if (has_ground_target) return;
 
     // Otherwise look for targets every TargetCheckInterval: when there is
     // none, or, with AlwaysRecheckTarget, for one of a better priority.
@@ -269,8 +315,12 @@ void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
 }
 
 bool Weapon::in_firing_range(const Unit& owner, const Entity& target) const {
-    const f32 dx = target.position().x - owner.position().x;
-    const f32 dz = target.position().z - owner.position().z;
+    return in_firing_range(owner, target.position());
+}
+
+bool Weapon::in_firing_range(const Unit& owner, const Vector3& at) const {
+    const f32 dx = at.x - owner.position().x;
+    const f32 dz = at.z - owner.position().z;
     const f32 dist2 = dx * dx + dz * dz;
     return dist2 <= max_range * max_range && dist2 >= min_range * min_range;
 }
@@ -297,14 +347,15 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
     }
     if (aims.empty()) return;
     const Entity* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    const bool aiming = target || has_ground_target;
     constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
     const bool scripted = script_class && L;
     for (AimManipulator* aim : aims) {
         if (aim->is_destroyed()) continue;
         const bool was_tracking = aim->has_target();
-        if (target) {
+        if (aiming) {
             const Vector3 from = owner.position();
-            const Vector3 at = aim_point(*target, from);
+            const Vector3 at = target ? aim_point(*target, from) : ground_target;
             aim->set_target(at, firing_tolerance * kDegToRad);
             if (ballistic_arc != Arc::None && !need_compute_bomb_drop) {
                 const f32 dx = at.x - from.x;
@@ -316,9 +367,9 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
         } else {
             aim->clear_target();
         }
-        if (!scripted || was_tracking == (target != nullptr)) continue;
+        if (!scripted || was_tracking == aiming) continue;
         const std::string label = aim->label(); // the callback may free the aim
-        call_script(L, target ? "OnStartTracking" : "OnStopTracking", label.c_str());
+        call_script(L, aiming ? "OnStartTracking" : "OnStopTracking", label.c_str());
         if (owner.destroyed() || owner.is_dying()) return;
     }
 }
@@ -326,19 +377,23 @@ void Weapon::update_aim(Unit& owner, EntityRegistry& registry, lua_State* L) {
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
                       lua_State* L,
                       const map::VisibilityGrid* visibility_grid) {
-    auto* target = registry.find(target_entity_id);
-    if (!target || target->destroyed() || target->do_not_target() ||
-        !is_weapon_targetable(owner, *target, visibility_grid) ||
-        (fire_target_layer_caps != 0xFF && target->is_unit() &&
-         !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps))) {
+    // At a unit, or at its ground target.
+    auto* target = target_entity_id != 0 ? registry.find(target_entity_id) : nullptr;
+    if (target_entity_id != 0 &&
+        (!target || target->destroyed() || target->do_not_target() ||
+         !is_weapon_targetable(owner, *target, visibility_grid) ||
+         (fire_target_layer_caps != 0xFF && target->is_unit() &&
+          !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)))) {
         target_entity_id = 0;
         return false;
     }
+    if (!target && !has_ground_target) return false;
+    const Vector3 at = target ? target->position() : ground_target;
 
     // Bomb drop check: only fire when directly overhead
     if (need_compute_bomb_drop) {
-        f32 dx = target->position().x - owner.position().x;
-        f32 dz = target->position().z - owner.position().z;
+        f32 dx = at.x - owner.position().x;
+        f32 dz = at.z - owner.position().z;
         f32 horiz_dist = std::sqrt(dx * dx + dz * dz);
         if (horiz_dist > bomb_drop_threshold)
             return false; // Not overhead yet — don't fire
@@ -347,15 +402,21 @@ bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,
     // Resolve muzzle bone position for projectile spawn
     // From the muzzle as the turret is posed now.
     Vector3 spawn_pos = owner.position();
+    std::optional<Vector3> muzzle_dir;
     if (!muzzle_bone_name.empty() && owner.bone_data()) {
         const i32 bone = owner.bone_data()->find_bone(muzzle_bone_name);
-        if (bone >= 0) spawn_pos = owner.bone_world_position(bone);
+        if (bone >= 0) {
+            spawn_pos = owner.bone_world_position(bone);
+            muzzle_dir = owner.bone_world_forward(bone);
+        }
     }
 
     const std::string& layer = owner.layer();
-    const Projectile* fired =
-        launch(owner, spawn_pos, target, registry, L, layer == "Sub" || layer == "Seabed");
+    const Projectile* fired = launch(owner, spawn_pos, target, registry, L,
+                                     layer == "Sub" || layer == "Seabed", muzzle_dir);
     if (!fired) return false;
+    // With no script to take it, the engine spends the missile.
+    if (counted_projectile) owner.remove_silo_ammo(nuke_weapon, 1);
     spdlog::debug("Weapon '{}' fired projectile #{} at entity #{}", label, fired->entity_id(),
                   target_entity_id);
     return true;
@@ -400,12 +461,18 @@ Vector3 Weapon::aim_point(const Entity& target, const Vector3& from) const {
 }
 
 Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
-                           EntityRegistry& registry, lua_State* L, bool in_water) {
+                           EntityRegistry& registry, lua_State* L, bool in_water,
+                           std::optional<Vector3> muzzle_dir) {
     // Where the shot goes: the target (where it will be, for a weapon that
-    // leads), or along the owner's facing to its reach with none.
+    // leads), its ground target, where a manual weapon's last order sent it,
+    // or along the owner's facing to its reach with none.
     Vector3 aim;
     if (target) {
         aim = aim_point(*target, spawn_pos);
+    } else if (has_ground_target) {
+        aim = ground_target;
+    } else if (manual_fire && last_order_point) {
+        aim = *last_order_point;
     } else {
         const Vector3 forward = quat_rotate(owner.orientation(), Vector3{0.0f, 0.0f, 1.0f});
         const f32 len = std::sqrt(forward.x * forward.x + forward.z * forward.z);
@@ -433,11 +500,21 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     f32 dist = std::sqrt(dx * dx + dz * dz);
     if (dist < 0.001f) dist = 0.001f;
 
-    // Straight at it, or up an arc that falls onto it (bombs just drop).
+    // Straight at it, or up an arc that falls onto it (bombs just drop). A
+    // silo weapon's missile leaves along its muzzle instead (a nuke rises
+    // from its silo) and steers itself onto its target: its blueprint's
+    // acceleration and turn rate and its script fly it.
     Vector3 vel;
     f32 flight_time = 0;
     const bool arcs = ballistic_arc != Arc::None && !need_compute_bomb_drop;
-    if (arcs) {
+    Vector3 facing{};
+    if (counted_projectile) {
+        facing = muzzle_dir.value_or(Vector3{0.0f, 1.0f, 0.0f});
+        const f32 len = std::sqrt(facing.x * facing.x + facing.y * facing.y + facing.z * facing.z);
+        facing = len > 0.001f ? Vector3{facing.x / len, facing.y / len, facing.z / len}
+                              : Vector3{0.0f, 1.0f, 0.0f};
+        vel = {facing.x * muzzle_velocity, facing.y * muzzle_velocity, facing.z * muzzle_velocity};
+    } else if (arcs) {
         const f32 elevation = launch_elevation(dist, dy);
         const f32 across = muzzle_velocity * osc::dmath::cos(elevation);
         vel = {dx / dist * across, muzzle_velocity * osc::dmath::sin(elevation),
@@ -464,8 +541,11 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->damage_amount = damage * owner.damage_multiplier();
     proj->damage_radius = damage_radius;
     proj->damage_type = damage_type;
-    // Bombs drop from altitude so need more time; normal projectiles use flight time
-    proj->lifetime = (need_compute_bomb_drop || muzzle_velocity <= 0)
+    // Bombs drop from altitude so need more time; normal projectiles use flight time.
+    // A missile's flight can't be foretold: a minute outlasts any tactical
+    // missile's (strategic ones give their own Lifetime).
+    proj->lifetime = counted_projectile ? 60.0f
+                     : (need_compute_bomb_drop || muzzle_velocity <= 0)
                          ? 10.0f // generous for high-altitude drops
                          : flight_time + 2.0f;
 
@@ -476,8 +556,15 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
 
     const Projectile::BlueprintPhysics physics = proj->apply_blueprint_physics(L);
     if (physics.lifetime) proj->lifetime = *physics.lifetime;
-    f32 heading = osc::dmath::atan2(vel.x, vel.z);
-    proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+    if (counted_projectile) {
+        // Facing along its muzzle, even at rest: it accelerates that way.
+        const f32 across = std::sqrt(facing.x * facing.x + facing.z * facing.z);
+        proj->set_orientation(euler_to_quat(osc::dmath::atan2(facing.x, facing.z),
+                                            osc::dmath::atan2(-facing.y, across), 0.0f));
+    } else {
+        f32 heading = osc::dmath::atan2(vel.x, vel.z);
+        proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
+    }
 
     // An arc is gravity's: its shot falls whatever its blueprint says. A
     // straight shot falls only if its blueprint says so, and a bomb unless it
@@ -488,6 +575,10 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->in_water = in_water;
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));
+    // The launch order it fired for is done.
+    if (manual_fire) {
+        if (UnitCommand* order = owner.launch_order_for(*this)) order->launched = true;
+    }
     if (proj_ptr) create_projectile_object(L, *proj_ptr, in_water, false);
     return proj_ptr;
 }

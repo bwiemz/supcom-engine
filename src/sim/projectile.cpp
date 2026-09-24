@@ -71,7 +71,12 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         f32 spd = std::sqrt(velocity.x * velocity.x +
                             velocity.y * velocity.y +
                             velocity.z * velocity.z);
-        if (spd > 0 && spd < max_speed) {
+        if (spd <= 0) {
+            // At rest (a nuke in its silo): it sets off the way it faces.
+            const Vector3 ahead = quat_rotate(orientation(), Vector3{0.0f, 0.0f, 1.0f});
+            const f32 start = std::min(max_speed, acceleration * static_cast<f32>(dt));
+            velocity = {ahead.x * start, ahead.y * start, ahead.z * start};
+        } else if (spd < max_speed) {
             f32 new_spd = std::min(max_speed,
                                     spd + acceleration * static_cast<f32>(dt));
             f32 scale = new_spd / spd;

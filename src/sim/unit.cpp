@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
+#include <utility>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -287,6 +289,8 @@ void Unit::begin_dying() {
     economy_.production_mass = 0;
     economy_.production_energy = 0;
     economy_.production_active = false;
+    // Its missile under way stops asking for resources.
+    abandon_silo_build();
     // Killed in flight: it falls, tumbling, until it lands.
     if (is_air_unit()) {
         crashing_ = true;
@@ -453,6 +457,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         const auto& ae = ctx.army_efficiency[static_cast<u32>(army())];
         econ_eff = static_cast<f32>(std::min(ae.mass, ae.energy));
     }
+
+    // Assisting a silo is renewed each tick (see Guard); one that stops
+    // stops paying below.
+    const bool was_assisting_silo = std::exchange(assisting_silo_, false);
 
     // Paused units skip command processing but still update weapons
     if (paused_) goto weapons_only;
@@ -904,6 +912,21 @@ void Unit::update(f64 dt, SimContext& ctx) {
                         stop_reclaiming();
                     }
                 }
+            } else if (target_unit->silo_building() && !target_unit->is_paused() &&
+                       build_rate_ > 0) {
+                // Assist a silo's missile: this unit's build power on it, at
+                // its share of the cost (retail's UpdateConsumptionValues
+                // for a SiloBuildingAmmo focus). A paused silo's helpers
+                // wait, paying nothing.
+                if (is_building()) stop_assisting();
+                if (is_reclaiming()) stop_reclaiming();
+                const SiloBuild& missile = target_unit->silo_build();
+                const f64 per_second = static_cast<f64>(build_rate_) / missile.build_time;
+                economy_.consumption_energy = missile.energy * per_second;
+                economy_.consumption_mass = missile.mass * per_second;
+                economy_.consumption_active = true;
+                assisting_silo_ = true;
+                target_unit->assist_silo_build(build_rate_, dt, econ_eff);
             } else {
                 // Target not building/reclaiming — stop if we were
                 if (is_building()) stop_assisting();
@@ -1044,39 +1067,51 @@ void Unit::update(f64 dt, SimContext& ctx) {
             continue;
         }
 
-        case CommandType::Nuke: {
-            // Fire nuke from silo — decrement ammo, fire via weapon
-            if (nuke_silo_ammo_ <= 0) {
-                command_queue_.pop_front();
-                continue;
-            }
-            remove_nuke_silo_ammo(1);
-            // Set weapon target to position & fire
-            if (!weapons_.empty()) {
-                weapons_[0]->target_entity_id = 0;
-                weapons_[0]->fire_clock = 0;
-                weapons_[0]->try_fire(*this, registry, L);
-            }
-            call_lua_method(L, "OnSiloBuildFinish");
-            command_queue_.pop_front();
-            continue;
-        }
-
+        case CommandType::Nuke:
         case CommandType::Tactical: {
-            // Fire tactical missile from silo
-            if (tactical_silo_ammo_ <= 0) {
+            // A launch: its weapon takes the order's target (see
+            // Weapon::take_order_target) and fires when it has a missile,
+            // and the weapon's script spends it. The order waits in range
+            // until then, and ends when the missile leaves.
+            const Weapon* weapon = launch_weapon(cmd.type == CommandType::Nuke);
+            if (!weapon || cmd.launched) {
                 command_queue_.pop_front();
                 continue;
             }
-            remove_tactical_silo_ammo(1);
-            if (!weapons_.empty()) {
-                weapons_[0]->target_entity_id = cmd.target_id;
-                weapons_[0]->fire_clock = 0;
-                weapons_[0]->try_fire(*this, registry, L);
+            Vector3 at = cmd.target_pos;
+            if (cmd.target_id != 0) {
+                const Entity* target = registry.find(cmd.target_id);
+                if (!target || target->destroyed()) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+                at = target->position();
             }
-            call_lua_method(L, "OnSiloBuildFinish");
-            command_queue_.pop_front();
-            continue;
+            const f32 dx = at.x - position().x;
+            const f32 dz = at.z - position().z;
+            const f32 dist2 = dx * dx + dz * dz;
+            // Too close to fire at (a mobile launcher backing off is M206e's).
+            if (dist2 < weapon->min_range * weapon->min_range) {
+                command_queue_.pop_front();
+                continue;
+            }
+            if (dist2 > weapon->max_range * weapon->max_range) {
+                // Out of range: a launcher that can move goes closer; a
+                // silo can't fire at it.
+                if (immobile_ || effective_speed() <= 0) {
+                    command_queue_.pop_front();
+                    continue;
+                }
+                if (!navigator_.is_moving() || navigator_.goal().x != at.x ||
+                    navigator_.goal().z != at.z) {
+                    navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
+                                        is_amphibious() || is_hover());
+                }
+                nav_update(dt, ctx.terrain);
+            } else {
+                navigator_.abort_move();
+            }
+            goto done_commands;
         }
 
         case CommandType::Overcharge: {
@@ -1269,6 +1304,12 @@ done_commands:
     }
 
 weapons_only:
+    if (was_assisting_silo && !assisting_silo_ && !is_building() && !is_reclaiming() &&
+        !is_repairing() && !is_capturing() && !enhancing_) {
+        economy_.consumption_energy = 0;
+        economy_.consumption_mass = 0;
+        economy_.consumption_active = false;
+    }
 
     // Per-tick health regeneration (base rate + veterancy buffs via SetRegenRate)
     if (regen_rate() > 0 && health() > 0 && health() < max_health()) {
@@ -1280,6 +1321,11 @@ weapons_only:
     // they fire this tick. A unit under construction neither moves nor
     // fights. A weapon's script may kill its own unit (KamikazeWeapon).
     if (!is_being_built()) {
+        // Its silo builds beside everything else (paused, it waits).
+        if (!dying_ && (silo_building() || !silo_orders_.empty() || auto_mode_)) {
+            update_silo(dt, econ_eff, L);
+            if (destroyed() || dying_) return;
+        }
         update_motion_horz(L);
         update_motion_turn(L);
         for (auto& weapon : weapons_) {
@@ -3095,6 +3141,239 @@ Vector3 Unit::bone_world_position(i32 bone) const {
     if (!bd || !bd->is_valid(bone)) return position();
     const Vector3 offset = quat_rotate(orientation(), bone_pose(bone).position);
     return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
+}
+
+Vector3 Unit::bone_world_forward(i32 bone) const {
+    constexpr Vector3 kAhead{0.0f, 0.0f, 1.0f};
+    const BoneData* bd = bone_data();
+    if (!bd || !bd->is_valid(bone)) return quat_rotate(orientation(), kAhead);
+    return quat_rotate(orientation(), quat_rotate(bone_pose(bone).rotation, kAhead));
+}
+
+// ---------------------------------------------------------------------------
+// Silo (M206)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// self:method(weapon) on the unit's script, recording a failure in tests.
+void call_with_weapon(lua_State* L, const Unit& unit, const char* method, const Weapon& weapon) {
+    if (!L || unit.lua_table_ref() < 0) return;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, unit.lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, self);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        if (weapon.lua_table_ref >= 0) lua_rawgeti(L, LUA_REGISTRYINDEX, weapon.lua_table_ref);
+        else lua_pushnil(L);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                std::string(method) + " error: " + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (test_status::count_lua_failures()) test_status::record_failure(message);
+        }
+    }
+    lua_settop(L, top);
+}
+
+/// self:method() on the unit's script as a number: `fallback` when it has no
+/// such method or it fails.
+f64 script_number(lua_State* L, const Unit& unit, const char* method, f64 fallback) {
+    if (!L || unit.lua_table_ref() < 0) return fallback;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, unit.lua_table_ref());
+    const int self = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, self);
+    f64 value = fallback;
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, self);
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_type(L, -1) == LUA_TNUMBER)
+            value = lua_tonumber(L, -1);
+    }
+    lua_settop(L, top);
+    return value;
+}
+
+/// A projectile blueprint's Economy: its build time and costs (zero when
+/// it has none).
+struct MissileCost {
+    f64 build_time = 0;
+    f64 energy = 0;
+    f64 mass = 0;
+};
+MissileCost missile_cost(lua_State* L, const std::string& projectile_bp_id) {
+    MissileCost cost;
+    if (!L || projectile_bp_id.empty()) return cost;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, projectile_bp_id.c_str());
+        lua_rawget(L, -2);
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Economy");
+        lua_rawget(L, -2);
+    }
+    if (lua_istable(L, -1)) {
+        const int econ = lua_gettop(L);
+        for (auto [key, out] :
+             {std::pair{"BuildTime", &cost.build_time}, std::pair{"BuildCostEnergy", &cost.energy},
+              std::pair{"BuildCostMass", &cost.mass}}) {
+            lua_pushstring(L, key);
+            lua_rawget(L, econ);
+            if (lua_type(L, -1) == LUA_TNUMBER) *out = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        }
+    }
+    lua_settop(L, top);
+    return cost;
+}
+
+} // namespace
+
+Weapon* Unit::silo_weapon(bool nuke) const {
+    for (const auto& w : weapons_) {
+        if (w->enabled && w->counted_projectile && w->nuke_weapon == nuke) return w.get();
+    }
+    return nullptr;
+}
+
+i32 Unit::silo_max_storage(bool nuke) const {
+    const Weapon* w = silo_weapon(nuke);
+    return w ? w->max_projectile_storage : 0;
+}
+
+i32 Unit::silo_build_count(bool nuke) const {
+    return static_cast<i32>(std::count(silo_orders_.begin(), silo_orders_.end(), nuke));
+}
+
+void Unit::update_silo(f64 dt, f32 efficiency, lua_State* L) {
+    if (!silo_building()) {
+        // A paused unit starts nothing.
+        if (paused_) return;
+        // Ordered builds come first, oldest first (one for a kind the unit
+        // can't build is dropped); in auto mode, then, a kind with room.
+        while (!silo_orders_.empty() && !silo_weapon(silo_orders_.front()))
+            silo_orders_.pop_front();
+        std::optional<bool> kind;
+        if (!silo_orders_.empty()) {
+            kind = silo_orders_.front();
+        } else if (auto_mode_) {
+            for (const bool nuke : {true, false}) {
+                if (silo_weapon(nuke) && silo_ammo(nuke) < silo_max_storage(nuke)) {
+                    kind = nuke;
+                    break;
+                }
+            }
+        }
+        // A full storage waits for a missile to be fired.
+        if (!kind || silo_ammo(*kind) >= silo_max_storage(*kind)) return;
+        Weapon* weapon = silo_weapon(*kind);
+        const MissileCost cost = missile_cost(L, weapon->projectile_bp_id);
+        if (cost.build_time <= 0) {
+            // Nothing to build: its projectile has no Economy.
+            if (!silo_orders_.empty()) silo_orders_.pop_front();
+            return;
+        }
+        silo_build_ = {weapon->weapon_index, *kind, 0.0, cost.build_time, cost.energy, cost.mass};
+        set_unit_state("SiloBuildingAmmo", true);
+        call_with_weapon(L, *this, "OnSiloBuildStart", *weapon);
+        if (destroyed() || !silo_building()) return;
+        // Its first block goes down next tick, once the economy has its
+        // request.
+    } else {
+        // Its weapon switched off: the missile is abandoned (the builds
+        // ordered wait for a weapon; retail's scripts StopSiloBuild when an
+        // enhancement removes one).
+        const auto index = static_cast<size_t>(silo_build_.weapon);
+        if (index >= weapons_.size() || !weapons_[index]->enabled) {
+            abandon_silo_build();
+            return;
+        }
+        if (paused_ || build_rate_ <= 0) {
+            economy_.silo_energy = 0;
+            economy_.silo_mass = 0;
+            return;
+        }
+        silo_build_.progress =
+            std::min(1.0, silo_build_.progress + static_cast<f64>(build_rate_) * dt /
+                                                     silo_build_.build_time * efficiency);
+        if (!is_building() && !enhancing_) work_progress_ = static_cast<f32>(silo_build_.progress);
+        // Done, allowing for the rounding of its blocks' sum.
+        if (silo_build_.progress >= 1.0 - 1e-9) {
+            // Done: into storage, and the order it was for is met.
+            const bool nuke = silo_build_.nuke;
+            give_silo_ammo(nuke, 1);
+            spdlog::info("Silo: {} #{} built a {} missile ({} stored)", unit_id_, entity_id(),
+                         nuke ? "nuclear" : "tactical", silo_ammo(nuke));
+            if (!silo_orders_.empty() && silo_orders_.front() == nuke) silo_orders_.pop_front();
+            end_silo_build(L);
+            return;
+        }
+    }
+    if (paused_ || build_rate_ <= 0) return;
+    // What it asks of the economy: the missile's cost over its build time at
+    // the unit's build rate, as adjacency adjusts it (the engine asks the
+    // unit's script for its EnergyBuildAdjMod and MassBuildAdjMod).
+    const f64 per_second = static_cast<f64>(build_rate_) / silo_build_.build_time;
+    economy_.silo_energy =
+        silo_build_.energy * script_number(L, *this, "GetEnergyBuildAdjMod", 1.0) * per_second;
+    economy_.silo_mass =
+        silo_build_.mass * script_number(L, *this, "GetMassBuildAdjMod", 1.0) * per_second;
+}
+
+void Unit::abandon_silo_build() {
+    if (!silo_building()) return;
+    silo_build_ = {};
+    economy_.silo_energy = 0;
+    economy_.silo_mass = 0;
+    set_unit_state("SiloBuildingAmmo", false);
+    if (!is_building() && !enhancing_) work_progress_ = 0;
+}
+
+void Unit::end_silo_build(lua_State* L) {
+    if (!silo_building()) return;
+    const auto index = static_cast<size_t>(silo_build_.weapon);
+    abandon_silo_build();
+    if (index < weapons_.size()) call_with_weapon(L, *this, "OnSiloBuildEnd", *weapons_[index]);
+}
+
+void Unit::stop_silo_build() {
+    silo_orders_.clear();
+    abandon_silo_build();
+}
+
+void Unit::assist_silo_build(f32 rate, f64 dt, f32 efficiency) {
+    if (!silo_building() || paused_) return;
+    silo_build_.progress =
+        std::min(1.0, silo_build_.progress +
+                          static_cast<f64>(rate) * dt / silo_build_.build_time * efficiency);
+}
+
+Weapon* Unit::launch_weapon(bool nuke) const {
+    for (const auto& w : weapons_) {
+        if (w->enabled && w->manual_fire && w->counted_projectile && !w->overcharge &&
+            w->nuke_weapon == nuke)
+            return w.get();
+    }
+    return nullptr;
+}
+
+const UnitCommand* Unit::launch_order_for(const Weapon& w) const {
+    if (command_queue_.empty()) return nullptr;
+    const UnitCommand& head = command_queue_.front();
+    if ((head.type != CommandType::Nuke && head.type != CommandType::Tactical) || head.launched)
+        return nullptr;
+    return launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
+}
+
+UnitCommand* Unit::launch_order_for(const Weapon& w) {
+    return const_cast<UnitCommand*>(std::as_const(*this).launch_order_for(w));
 }
 
 void Unit::destroy_all_manipulators() {

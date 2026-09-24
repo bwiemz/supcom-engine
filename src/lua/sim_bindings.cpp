@@ -295,14 +295,26 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isboolean(L, -1)) weapon->fire_on_death = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
 
+                    // Every retail nuke launcher writes ManualFire = 1.
                     lua_pushstring(L, "ManualFire");
                     lua_gettable(L, we);
-                    if (lua_isboolean(L, -1)) weapon->manual_fire = lua_toboolean(L, -1) != 0;
+                    weapon->manual_fire = lua_toboolean(L, -1) != 0 &&
+                                          !(lua_isnumber(L, -1) && lua_tonumber(L, -1) == 0);
                     lua_pop(L, 1);
 
+                    // Silo weapons (M206).
                     lua_pushstring(L, "CountedProjectile");
                     lua_gettable(L, we);
                     weapon->counted_projectile = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "NukeWeapon");
+                    lua_gettable(L, we);
+                    weapon->nuke_weapon = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "MaxProjectileStorage");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->max_projectile_storage = static_cast<i32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
                     lua_pushstring(L, "OverChargeWeapon");
@@ -4993,17 +5005,19 @@ static int l_IssueTransportUnload(lua_State* L) {
     return 0;
 }
 
-// IssueNuke(units_table, position) — fire nuke from silo
+// IssueNuke(units_table, position): launch a nuke at the position. Like
+// Moho's Issue* orders it queues (retail's NukeAI clears the queue itself).
 static int l_IssueNuke(lua_State* L) {
     auto target_pos = extract_position(L, 2);
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Nuke;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
-// IssueTactical(units_table, target) — fire tactical missile (entity or position)
+// IssueTactical(units_table, target): launch a tactical missile at a unit or
+// a position. It queues.
 static int l_IssueTactical(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Tactical;
@@ -5016,7 +5030,23 @@ static int l_IssueTactical(lua_State* L) {
     } else {
         cmd.target_pos = extract_position(L, 2);
     }
-    route_units_command(L, 1, cmd, true);
+    route_units_command(L, 1, cmd, false);
+    return 0;
+}
+
+// IssueSiloBuildNuke(units) / IssueSiloBuildTactical(units): one missile
+// more for each unit's silo to build (M206).
+static int l_IssueSiloBuildNuke(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::SiloBuildNuke;
+    route_units_command(L, 1, cmd, false);
+    return 0;
+}
+
+static int l_IssueSiloBuildTactical(lua_State* L) {
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::SiloBuildTactical;
+    route_units_command(L, 1, cmd, false);
     return 0;
 }
 
@@ -5396,6 +5426,8 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueFerry", l_IssueFerry);
     state.register_function("IssueNuke", l_IssueNuke);
     state.register_function("IssueTactical", l_IssueTactical);
+    state.register_function("IssueSiloBuildNuke", l_IssueSiloBuildNuke);
+    state.register_function("IssueSiloBuildTactical", l_IssueSiloBuildTactical);
     state.register_function("IssueOvercharge", l_IssueOvercharge);
     state.register_function("IssueSacrifice", l_IssueSacrifice);
     state.register_function("IssueTeleport", l_IssueTeleport);

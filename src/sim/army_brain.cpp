@@ -189,6 +189,9 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
             mass_consumption += econ.consumption_mass;
             energy_consumption += econ.consumption_energy;
         }
+        // A silo's missile under way (M206).
+        mass_consumption += econ.silo_mass;
+        energy_consumption += econ.silo_energy;
 
         if (econ.maintenance_active && econ.energy_maintenance_override >= 0.0) {
             energy_consumption += econ.energy_maintenance_override;

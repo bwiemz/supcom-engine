@@ -72,7 +72,6 @@ M SetDirectionalAnim
 M SetStrategicUnderlay
 M SetStunned
 M SetWeaponDisableByLabel
-M StopSiloBuild
 M TakeResource
 M TransportHasAvailableStorage
 M UnloadAllAtLocation

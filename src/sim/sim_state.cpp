@@ -555,6 +555,21 @@ void SimState::submit_callback(SimCallbackEntry callback) {
     else schedule_callback(0, std::move(callback));
 }
 
+namespace {
+
+/// A silo build order (IssueSiloBuildNuke/Tactical) goes to the unit's silo,
+/// which ignores it without a weapon to build for; its command queue never
+/// sees it. True if `cmd` was one.
+bool apply_silo_build(Unit& unit, const UnitCommand& cmd) {
+    if (cmd.type != CommandType::SiloBuildNuke && cmd.type != CommandType::SiloBuildTactical)
+        return false;
+    const bool nuke = cmd.type == CommandType::SiloBuildNuke;
+    if (unit.silo_weapon(nuke)) unit.order_silo_build(nuke);
+    return true;
+}
+
+} // namespace
+
 void SimState::route_command(const std::vector<u32>& unit_ids,
                              const UnitCommand& command, bool clear_existing) {
     // A player's order is a command, applied inside a tick as Moho applies
@@ -577,7 +592,7 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
         // Stop clears the queue outright (rather than queueing a Stop order), so
         // it matches the old IssueStop's immediate clear_commands() semantics.
         if (cmd.type == CommandType::Stop) stop_unit(*unit);
-        else unit->push_command(cmd, clear_existing);
+        else if (!apply_silo_build(*unit, cmd)) unit->push_command(cmd, clear_existing);
     }
 }
 
@@ -676,6 +691,7 @@ void SimState::dispatch_due_commands() {
                 stop_unit(*unit);
                 continue;
             }
+            if (apply_silo_build(*unit, sc.command)) continue;
             UnitCommand cmd = std::move(expanded);
             // A new enhancement replaces one under way, as IssueEnhancement does.
             if (cmd.type == CommandType::Enhance && unit->is_enhancing()) {
