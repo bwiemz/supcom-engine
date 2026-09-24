@@ -8,6 +8,7 @@
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
+#include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
 
@@ -52,6 +53,15 @@ u32 add_unit(EntityRegistry& reg, const Vector3& at, const CollisionShape& shape
     u->set_army(army);
     u->set_default_collision_shape(shape);
     return reg.register_entity(std::move(u));
+}
+
+Projectile* add_shot(EntityRegistry& reg, const Vector3& at, const Vector3& velocity,
+                     u32 launcher = 0) {
+    auto p = std::make_unique<Projectile>();
+    p->set_position(at);
+    p->velocity = velocity;
+    p->launcher_id = launcher;
+    return static_cast<Projectile*>(reg.find(reg.register_entity(std::move(p))));
 }
 
 } // namespace
@@ -114,6 +124,50 @@ TEST_CASE("the collider query finds shapes near a path, large ones from afar", "
     CHECK(out == std::vector<u32>{near, big});
 }
 
+TEST_CASE("a shot stops at the first thing in its way", "[collision]") {
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    const u32 shooter = add_unit(reg, {100, 0, 100}, box(1, 1, 1, 1));
+    add_unit(reg, {100, 0, 106}, box(1, 1, 1, 1));
+    add_unit(reg, {100, 0, 104}, box(1, 1, 1, 1)); // nearer, though registered later
+    // From inside its launcher, which it passes, at 60 u/s: both boxes lie
+    // on this tick's path (100..106).
+    Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 60}, shooter);
+    shot->update(0.1, reg, nullptr);
+    // It met the nearer box's face at z = 103.
+    CHECK(shot->destroyed());
+    CHECK(shot->position().z == Approx(103.0f));
+}
+
+TEST_CASE("a shot with entity collision off flies through", "[collision]") {
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    add_unit(reg, {100, 0, 102}, box(1, 1, 1, 1));
+    Projectile* shot = add_shot(reg, {100, 1, 100}, {0, 0, 40});
+    shot->collide_entity = false;
+    shot->update(0.1, reg, nullptr);
+    CHECK_FALSE(shot->destroyed());
+    CHECK(shot->position().z == Approx(104.0f));
+}
+
+TEST_CASE("a shield stops shots coming in, not going out", "[collision]") {
+    EntityRegistry reg;
+    reg.init_spatial_grid(512, 512);
+    auto shield = std::make_unique<osc::sim::Shield>();
+    shield->set_position({100, 0, 100});
+    shield->set_collision_shape(sphere(10));
+    reg.register_entity(std::move(shield));
+
+    Projectile* out = add_shot(reg, {100, 1, 105}, {0, 0, 80});
+    out->update(0.1, reg, nullptr);
+    CHECK_FALSE(out->destroyed());
+
+    Projectile* in = add_shot(reg, {100, 1, 115}, {0, 0, -80});
+    in->update(0.1, reg, nullptr);
+    CHECK(in->destroyed());
+    CHECK(in->position().z == Approx(100.0f + std::sqrt(100.0f - 1.0f)).margin(1e-3));
+}
+
 TEST_CASE("firing randomness scatters over a circle that grows with range", "[collision]") {
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
@@ -135,3 +189,19 @@ TEST_CASE("firing randomness scatters over a circle that grows with range", "[co
     CHECK(widest > 2.0f); // it fills the circle
 }
 
+TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 20, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon bomb;
+    bomb.need_compute_bomb_drop = true;
+    const Projectile* dropped = bomb.launch(owner, {0, 20, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(dropped);
+    CHECK(dropped->ballistic_accel == Approx(-Projectile::GRAVITY));
+
+    osc::sim::Weapon gun;
+    gun.muzzle_velocity = 30;
+    const Projectile* shot = gun.launch(owner, {0, 20, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(shot);
+    CHECK(shot->ballistic_accel == 0.0f);
+}

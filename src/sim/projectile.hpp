@@ -2,7 +2,9 @@
 
 #include "sim/entity.hpp"
 
+#include <optional>
 #include <string>
+#include <vector>
 
 struct lua_State;
 
@@ -16,9 +18,15 @@ class Projectile : public Entity {
 public:
     bool is_projectile() const override { return true; }
 
+    /// Moho's gravity, in world units per second squared.
+    static constexpr f32 GRAVITY = 4.9f;
+
     Vector3 velocity;
     u32 target_entity_id = 0;
     Vector3 target_position;
+    /// target_position is somewhere it was sent (a weapon's aim, a ground
+    /// target, where its target was): a tracking shot flies there.
+    bool has_target_position = false;
     u32 launcher_id = 0;
     f32 damage_amount = 0;
     f32 damage_radius = 0;
@@ -41,7 +49,8 @@ public:
     Vector3 angular_velocity;        // SetLocalAngularVelocity
     Vector3 scale_velocity;          // SetScaleVelocity: draw scale change per second
     bool collision_enabled = true;   // SetCollision
-    bool collide_surface = true;     // SetCollideSurface
+    bool collide_surface = true;     // SetCollideSurface: the terrain and water
+    bool collide_entity = true;      // SetCollideEntity: units, props, shields
     bool stay_underwater = false;    // StayUnderwater
     /// It hit something: it no longer moves or collides, and its script plays
     /// the rest out (a projectile with an ImpactTimeout lingers for it).
@@ -51,9 +60,21 @@ public:
     /// Risen above its DetonateBelowHeight: it bursts on coming back down.
     bool burst_armed = false;
 
+    /// Entities an OnCollisionCheck turned it away from: it passes them.
+    std::vector<u32> passed;
+
     /// Per-tick: move, check collision, impact.
     void update(f64 dt, EntityRegistry& registry, lua_State* L,
                 const map::Terrain* terrain = nullptr);
+
+    /// What its blueprint's Physics leaves to whoever creates it.
+    struct BlueprintPhysics {
+        std::optional<bool> use_gravity; ///< Moho's default is to fall
+        std::optional<f32> lifetime;
+    };
+    /// Take its blueprint's Physics: speed, acceleration, tracking, where it
+    /// ends of itself, what it collides with.
+    BlueprintPhysics apply_blueprint_physics(lua_State* L);
 
     /// What retail's Projectile.OnImpact calls the thing hit: 'Unit',
     /// 'UnitAir', 'UnitUnderwater', 'Prop', 'Shield', 'Projectile',
@@ -72,7 +93,13 @@ private:
     /// The engine's own damage, for projectiles no weapon passed DamageData to
     /// (the engine-fired silo and OverCharge shots).
     void deal_engine_damage(lua_State* L, Entity* target, EntityRegistry& registry);
-    static constexpr f32 HIT_RADIUS = 1.5f;
+    /// This tick's path, `from` to where it is now, against what it can hit:
+    /// true if it impacted (it may be gone).
+    bool collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
+                 const map::Terrain* terrain);
+    /// Whether its script and `other`'s both let them meet
+    /// (OnCollisionCheck, each given the other).
+    bool collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other);
 };
 
 } // namespace osc::sim

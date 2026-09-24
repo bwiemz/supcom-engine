@@ -7341,6 +7341,7 @@ void test_impact(TestContext& ctx) {
     lua_check("setup: a shell that grows, and a child", R"(
         local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
         __osc_grow = __osc_tank:CreateProjectile(bp, 0, 30, 0, 0, 0, 1)
+        __osc_grow:SetBallisticAcceleration(0) -- level: a fall would change its speed
         __osc_grow_speed = __osc_grow:GetCurrentSpeed()
         __osc_grow:SetScaleVelocity(2)
         __osc_child = __osc_grow:CreateChildProjectile('/projectiles/tdfgauss02/tdfgauss02_proj.bp')
@@ -7356,11 +7357,14 @@ void test_impact(TestContext& ctx) {
         if string.lower(c:GetBlueprint().BlueprintId) ~= '/projectiles/tdfgauss02/tdfgauss02_proj.bp' then
             error('blueprint ' .. tostring(c:GetBlueprint().BlueprintId))
         end
+        -- Its parent's heading and speed; its own blueprint's physics, by
+        -- which it falls where the (levelled) parent doesn't.
         local ax, ay, az = __osc_grow:GetVelocity()
         local bx, by, bz = c:GetVelocity()
-        if math.abs(ax - bx) + math.abs(ay - by) + math.abs(az - bz) > 1e-3 then
-            error('child velocity differs')
+        if math.abs(ax - bx) + math.abs(az - bz) > 1e-3 then
+            error('child heading differs')
         end
+        if by >= ay then error('the child does not fall') end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
@@ -7494,6 +7498,235 @@ void test_arc(TestContext& ctx) {
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
     spdlog::info("Arc test: {}/{} passed", pass, pass + fail);
+}
+
+void test_collide(TestContext& ctx) {
+    spdlog::info("=== COLLISION TEST: shots meet what is in their way ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- A level shell from `from` (a unit, `up` above its feet) at a point,
+        -- its impact recorded in `rec`.
+        function __osc_shoot(from, x, y, z, up, rec)
+            local at = from:GetPosition()
+            local p = from:CreateProjectile('/projectiles/tdfgauss01/tdfgauss01_proj.bp', 0, up, 0,
+                                            x - at[1], y - (at[2] + up), z - at[3])
+            p:SetBallisticAcceleration(0)
+            p:SetLifetime(5)
+            local impact = p.OnImpact
+            p.OnImpact = function(s, type, target)
+                if not rec.type then rec.type, rec.target, rec.at = type, target, s:GetPosition() end
+                return impact(s, type, target)
+            end
+            return p
+        end
+        function __osc_ground(x, z) return GetTerrainHeight(x, z) end
+    )");
+
+    // A unit's shape is its blueprint's box, standing on its offset; a
+    // script's 'None' clears it and RevertCollisionShape brings it back.
+    {
+        (void)ctx.lua_state.do_string("__osc_striker = __osc_spawn('uel0201', 'ARMY_1', 200, 740)"
+                                      " __osc_striker_id = __osc_striker:GetEntityId()");
+        auto* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_striker_id");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        const osc::sim::Entity* striker = ctx.sim.entity_registry().find(id);
+        const auto shape = striker ? striker->collision_shape() : osc::sim::CollisionShape{};
+        // UEL0201: SizeX 0.7, SizeY 0.5, SizeZ 0.9, no offset.
+        check(shape.type == osc::sim::CollisionShapeType::BOX &&
+                  std::abs(shape.sx - 0.35f) < 1e-4f && std::abs(shape.sy - 0.25f) < 1e-4f &&
+                  std::abs(shape.sz - 0.45f) < 1e-4f && std::abs(shape.cy - 0.25f) < 1e-4f,
+              fmt::format("Test 1: a Striker's box is its blueprint's ({:.2f} x {:.2f} x {:.2f} "
+                          "about {:.2f} up)",
+                          shape.sx * 2, shape.sy * 2, shape.sz * 2, shape.cy));
+        (void)ctx.lua_state.do_string("__osc_striker:SetCollisionShape('None')");
+        const bool cleared =
+            striker && striker->collision_shape().type == osc::sim::CollisionShapeType::NONE;
+        (void)ctx.lua_state.do_string("__osc_striker:RevertCollisionShape()");
+        const bool reverted =
+            striker && striker->collision_shape().type == osc::sim::CollisionShapeType::BOX &&
+            striker->collision_shape().sz == shape.sz;
+        check(cleared && reverted, "Test 2: 'None' clears it; RevertCollisionShape restores it");
+
+        std::size_t props = 0, boxed = 0;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (!e.is_prop()) return;
+            ++props;
+            if (e.collision_shape().type == osc::sim::CollisionShapeType::BOX) ++boxed;
+        });
+        check(props > 0 && boxed * 10 >= props * 9,
+              fmt::format("Test 3: the map's props have their blueprints' boxes ({} of {})", boxed,
+                          props));
+    }
+
+    // Three in a line on the flat plain: a shot from the first at the third
+    // meets an enemy in between, and passes a friend.
+    lua_check("setup: shooters, targets and what stands between", R"(
+        local line = function(z, blocker_army)
+            local t = {}
+            t.shooter = __osc_spawn('uel0201', 'ARMY_1', 600, z)
+            t.between = __osc_spawn('ueb2101', blocker_army, 614, z)
+            t.target = __osc_spawn('ueb1101', 'ARMY_2', 628, z)
+            t.between:SetCanTakeDamage(false)
+            t.target:SetCanTakeDamage(false)
+            t.rec = {}
+            return t
+        end
+        __osc_enemy = line(85, 'ARMY_2')
+        __osc_friend = line(105, 'ARMY_1')
+        for _, l in {__osc_enemy, __osc_friend} do
+            local tp = l.target:GetPosition()
+            __osc_shoot(l.shooter, tp[1], tp[2] + 0.2, tp[3], 1.0, l.rec)
+        end
+    )");
+    run(40);
+    lua_check("Test 4: an enemy in the way takes the shot", R"(
+        local r = __osc_enemy.rec
+        if r.type ~= 'Unit' or r.target ~= __osc_enemy.between then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target and r.target:GetUnitId()))
+        end
+    )");
+    lua_check("Test 5: a friend in the way lets it past, onto the target", R"(
+        local r = __osc_friend.rec
+        if r.type ~= 'Unit' or r.target ~= __osc_friend.target then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target and r.target:GetUnitId()))
+        end
+    )");
+
+    // The ground stops a shot, where it meets it; one aimed where a target
+    // was, after it moved, flies past.
+    lua_check("setup: a shot into the ground, and one at a target that moves", R"(
+        __osc_down = {}
+        local s = __osc_spawn('uel0201', 'ARMY_1', 200, 830)
+        __osc_shoot(s, 206, __osc_ground(206, 830), 830, 3.0, __osc_down)
+        __osc_moved = {}
+        local shooter = __osc_spawn('uel0201', 'ARMY_1', 200, 860)
+        __osc_mover = __osc_spawn('uel0201', 'ARMY_2', 220, 860)
+        __osc_mover:SetCanTakeDamage(false)
+        local mp = __osc_mover:GetPosition()
+        __osc_shoot(shooter, mp[1], mp[2] + 0.25, mp[3], 0.25, __osc_moved)
+        Warp(__osc_mover, {220, __osc_ground(220, 875), 875})
+    )");
+    run(60);
+    lua_check("Test 6: the ground stops a shot where it meets it", R"(
+        local r = __osc_down
+        if r.type ~= 'Terrain' then error('type ' .. tostring(r.type)) end
+        local off = math.abs(r.at[2] - __osc_ground(r.at[1], r.at[3]))
+        if off > 0.05 then error(off .. ' off the ground') end
+    )");
+    lua_check("Test 7: a target that moves is missed", R"(
+        local r = __osc_moved
+        if not r.type then error('never ended') end
+        if r.target == __osc_mover then error('it hit the target where it was') end
+    )");
+
+    // Its time runs out in the air: an 'Air' impact. A tracking shot sent to
+    // a place ends there, even one that skims no surface.
+    lua_check("setup: a shot into the sky, and one sent to a place", R"(
+        __osc_sky = {}
+        local s = __osc_spawn('uel0201', 'ARMY_1', 200, 890)
+        local sp = s:GetPosition()
+        __osc_shoot(s, sp[1], sp[2] + 100, sp[3], 1.0, __osc_sky):SetLifetime(0.5)
+        __osc_sent = {}
+        local t = __osc_spawn('uel0201', 'ARMY_1', 200, 920)
+        __osc_spot = {215, __osc_ground(215, 920), 920}
+        local p = __osc_shoot(t, 200, __osc_ground(200, 920) + 30, 930, 1.0, __osc_sent)
+        p:SetCollideSurface(false)
+        p:TrackTarget(true):SetTurnRate(720)
+        p:SetNewTargetGround(__osc_spot)
+    )");
+    run(60);
+    lua_check("Test 8: a shot out of time bursts in the air", R"(
+        if __osc_sky.type ~= 'Air' then error('type ' .. tostring(__osc_sky.type)) end
+    )");
+    lua_check("Test 9: a tracking shot sent to a place ends there", R"(
+        local r = __osc_sent
+        if not r.at then error('it never arrived') end
+        local d = VDist3(r.at, __osc_spot)
+        if d > 1.5 then error(r.type .. ' ' .. d .. ' from the spot') end
+    )");
+
+    // A rock stands in the way; a tree group breaks up into trees as a shot
+    // comes, and lets it through (retail's TreeGroup.OnCollisionCheck). A
+    // shield stops what comes in, not what goes out.
+    lua_check("setup: a rock, a tree group and a shield", R"(
+        __osc_rock = CreatePropHPR('/env/evergreen/props/rocks/fieldstone03_prop.bp',
+                                   660, __osc_ground(660, 90), 90, 0, 0, 0)
+        __osc_on_rock = {}
+        local s = __osc_spawn('uel0201', 'ARMY_1', 645, 90)
+        __osc_shoot(s, 675, __osc_ground(675, 90) + 0.5, 90, 0.5, __osc_on_rock)
+        __osc_trees = CreatePropHPR('/env/evergreen/props/trees/groups/pine06_big_groupa_prop.bp',
+                                    660, __osc_ground(660, 120), 120, 0, 0, 0)
+        __osc_through = {}
+        local t = __osc_spawn('uel0201', 'ARMY_1', 645, 120)
+        __osc_shoot(t, 675, __osc_ground(675, 120) + 0.5, 120, 0.5, __osc_through)
+        __osc_gen = __osc_spawn('ueb4202', 'ARMY_2', 330, 800)
+    )");
+    run(20);
+    lua_check("Test 10: a rock stops a low shot", R"(
+        local r = __osc_on_rock
+        if r.type ~= 'Prop' or r.target ~= __osc_rock then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
+    )");
+    lua_check("Test 11: a tree group breaks up and lets it through", R"(
+        if not __osc_trees:BeenDestroyed() then error('the group stands') end
+        if __osc_through.target == __osc_trees then error('it stopped the shot') end
+    )");
+    lua_check("setup: shots at the shield, from outside and from inside", R"(
+        local shield = __osc_gen.MyShield
+        if not shield then error('no shield') end
+        if not shield:IsOn() then error('the shield is down') end
+        __osc_in = {}
+        local out = __osc_spawn('uel0201', 'ARMY_1', 360, 800)
+        local gp = __osc_gen:GetPosition()
+        __osc_shoot(out, gp[1], gp[2] + 1.0, gp[3], 1.0, __osc_in)
+        __osc_out = {}
+        local inside = __osc_spawn('uel0201', 'ARMY_1', 334, 800)
+        __osc_shoot(inside, 380, __osc_ground(380, 800) + 1.0, 800, 1.0, __osc_out)
+    )");
+    run(40);
+    lua_check("Test 12: an enemy shield takes a shot from outside", R"(
+        local r = __osc_in
+        if r.type ~= 'Shield' or r.target ~= __osc_gen.MyShield then
+            error(tostring(r.type) .. ' on ' .. tostring(r.target))
+        end
+    )");
+    lua_check("Test 13: a shot from inside goes out through it", R"(
+        if __osc_out.type == 'Shield' then error('the shield stopped it') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 14: no script errors");
+    spdlog::info("Collide test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {

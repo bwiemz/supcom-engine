@@ -42,8 +42,8 @@ public:
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
-    /// Where to aim at `target` from `from`: where it will be when the shot
-    /// arrives, for a weapon that leads.
+    /// Where to aim at `target` from `from`: the middle of its collision
+    /// shape, where it will be when the shot arrives for a weapon that leads.
     Vector3 aim_point(const Entity& target, const Vector3& from) const;
     bool fire_on_death = false;
     bool manual_fire = false;
