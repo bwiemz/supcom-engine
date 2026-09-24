@@ -33,6 +33,11 @@ public:
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
     f32 muzzle_velocity = 25;
+    /// How long its shots live, overriding their projectile blueprint's
+    /// Lifetime (FAF's notes on the engine): ProjectileLifetimeUsesMultiplier
+    /// x MaxRadius / MuzzleVelocity, else ProjectileLifetime; 0 leaves it.
+    f32 projectile_lifetime = 0;
+    f32 projectile_lifetime_multiplier = 0;
     /// How a shot flies to its target (BallisticArc): straight, or on the
     /// low or the high of the two arcs gravity allows at its muzzle velocity.
     enum class Arc : u8 { None, Low, High };

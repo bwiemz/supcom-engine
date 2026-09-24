@@ -385,6 +385,15 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         weapon->max_height_diff = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
+                    for (auto [field, value] :
+                         {std::pair{"ProjectileLifetime", &weapon->projectile_lifetime},
+                          std::pair{"ProjectileLifetimeUsesMultiplier",
+                                    &weapon->projectile_lifetime_multiplier}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, we);
+                        if (lua_isnumber(L, -1)) *value = static_cast<f32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    }
 
                     // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
                     lua_pushstring(L, "BeamLifetime");

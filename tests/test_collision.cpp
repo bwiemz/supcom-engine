@@ -206,6 +206,29 @@ TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision
     CHECK(shot->ballistic_accel == 0.0f);
 }
 
+TEST_CASE("a weapon's lifetime for its shots overrides the default", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 20;
+    w.max_range = 40;
+    // With neither, a shot lives its flight to its reach and two seconds.
+    const Projectile* plain = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(plain);
+    CHECK(plain->lifetime == Approx(40.0f / 20.0f + 2.0f));
+    // ProjectileLifetime sets it.
+    w.projectile_lifetime = 7;
+    const Projectile* timed = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(timed);
+    CHECK(timed->lifetime == Approx(7.0f));
+    // The multiplier wins: 1.15 x 40 / 20.
+    w.projectile_lifetime_multiplier = 1.15f;
+    const Projectile* scaled = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+    REQUIRE(scaled);
+    CHECK(scaled->lifetime == Approx(1.15f * 40.0f / 20.0f));
+}
+
 TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
     EntityRegistry reg;
     const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
