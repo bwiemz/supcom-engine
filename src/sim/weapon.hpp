@@ -119,9 +119,7 @@ public:
     /// (a silo weapon's script also takes its ammunition; a beam weapon's
     /// switches its beams on). OverCharge keeps the engine's own firing until
     /// its script's needs exist (M206d).
-    bool fires_through_script() const {
-        return script_class && lua_table_ref >= 0 && !overcharge;
-    }
+    bool fires_through_script() const { return script_class && lua_table_ref >= 0 && !overcharge; }
 
     bool has_target() const { return target_entity_id != 0 || has_ground_target; }
     /// Aim at a point on the ground (dropping any unit target).

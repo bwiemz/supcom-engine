@@ -521,10 +521,9 @@ static sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx) {
 
     auto& bone = bd->bones[static_cast<size_t>(bone_idx)];
     const f32 s = bd->model_scale;
-    auto rotated = sim::quat_rotate(e->orientation(),
-                                    sim::Vector3{bone.world_position.x * s,
-                                                 bone.world_position.y * s,
-                                                 bone.world_position.z * s});
+    auto rotated = sim::quat_rotate(e->orientation(), sim::Vector3{bone.world_position.x * s,
+                                                                   bone.world_position.y * s,
+                                                                   bone.world_position.z * s});
     return {
         e->position().x + rotated.x,
         e->position().y + rotated.y,
@@ -9367,8 +9366,8 @@ static int collision_beam_init(lua_State* L) {
             if (auto* weapon = check_weapon(L, weapon_idx)) {
                 weapon->beam = true;
                 setup.weapon = weapon->weapon_index;
-                setup.length = weapon->max_beam_length > 0 ? weapon->max_beam_length
-                                                           : weapon->max_range;
+                setup.length =
+                    weapon->max_beam_length > 0 ? weapon->max_beam_length : weapon->max_range;
             }
             if (unit) {
                 lua_pushstring(L, "OtherBone");

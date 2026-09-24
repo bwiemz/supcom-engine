@@ -205,7 +205,8 @@ void check_collision_beam(SimState& sim, lua_State* L, u32 beam_id, bool before_
         lua_pushvalue(L, top + 1);
         lua_pushstring(L, type);
         const Entity* hit = hit_id != 0 ? registry.find(hit_id) : nullptr;
-        if (hit && hit->lua_table_ref() >= 0) lua_rawgeti(L, LUA_REGISTRYINDEX, hit->lua_table_ref());
+        if (hit && hit->lua_table_ref() >= 0)
+            lua_rawgeti(L, LUA_REGISTRYINDEX, hit->lua_table_ref());
         else lua_pushnil(L);
         if (lua_pcall(L, 3, 0, 0) != 0) {
             const char* err = lua_tostring(L, -1);

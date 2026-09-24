@@ -1858,11 +1858,11 @@ int main(int argc, char* argv[]) {
         teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
         terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
         targeting_test || aim_test || death_test || impact_test || arc_test || collide_test ||
-        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test || beam_weapon_test ||
-        shadow_test || massstub4_test || spatial_test || unitsound_test || medstub_test ||
-        lowstub_test || blend_test || ui_test || bitmap_test || text_test || edit_test ||
-        controls_test || uiboot_test || gameui_test || lobby_flow_test || uirender_test ||
-        font_test || scissor_test || border_render_test || edit_render_test ||
+        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test ||
+        beam_weapon_test || shadow_test || massstub4_test || spatial_test || unitsound_test ||
+        medstub_test || lowstub_test || blend_test || ui_test || bitmap_test || text_test ||
+        edit_test || controls_test || uiboot_test || gameui_test || lobby_flow_test ||
+        uirender_test || font_test || scissor_test || border_render_test || edit_render_test ||
         itemlist_render_test || scrollbar_render_test || anim_render_test || tiled_render_test ||
         input_test || onframe_test || cursor_render_test || drag_render_test || emitter_test ||
         collision_test || decalsplat_test || cmd_test || deposit_test || beam_test ||

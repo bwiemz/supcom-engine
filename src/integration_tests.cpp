@@ -9087,14 +9087,17 @@ void test_beam_weapon(TestContext& ctx) {
         IssueTactical({__osc_tml}, __osc_zap_target)
     )");
     run(300);
-    lua_check("Test 1: a Cerberus fires its three beams through its script, and kills with them", R"(
+    lua_check("Test 1: a Cerberus fires its three beams through its script, and kills with them",
+              R"(
         local w = __osc_cerberus:GetWeapon(1)
         if table.getn(w.Beams or {}) ~= 3 then error('it has ' .. table.getn(w.Beams or {}) .. ' beams') end
         if __osc_cerberus.__osc_shots ~= 0 then error('it fired ' .. __osc_cerberus.__osc_shots .. ' projectiles') end
         if __osc_count(__osc_cerberus, 'Unit', __osc_block) == 0 then error('no beam met the tank') end
         if not __osc_block:IsDead() then error('the tank lives') end
     )");
-    lua_check("Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, 1 + 6/3 times a shot", R"(
+    lua_check(
+        "Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, 1 + 6/3 times a shot",
+        R"(
         -- Cerberus: BeamLifetime 0.6 s, BeamCollisionDelay 0.2 s (2 ticks),
         -- RateOfFire 1.5 (a shot every 7 ticks).
         local first = __osc_cerberus.__osc_impacts[1].beam
@@ -9116,7 +9119,8 @@ void test_beam_weapon(TestContext& ctx) {
             if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
         end
     )");
-    lua_check("Test 4: the beam runs from the muzzle, past a friend, to the face of what it holds", R"(
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, to the face of what it holds",
+              R"(
         local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
         if i.target == __osc_friend then error('it stopped at the friendly structure') end
         if i.kind ~= 'Unit' or i.target ~= __osc_wall then error('it met ' .. i.kind) end
@@ -15683,8 +15687,13 @@ void test_collision_beam(TestContext& ctx) {
             rawset(_G, '_cbtest8', (hit ~= nil) == enabled and 'ok' or ('hit='..tostring(hit)))
         )");
         auto v = check_result("_cbtest8");
-        if (v == "ok") { pass++; spdlog::info("[PASS] Test 8: SetBeamFx(checkCollision) checks an enabled beam at once"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 8: result={}", v); }
+        if (v == "ok") {
+            pass++;
+            spdlog::info("[PASS] Test 8: SetBeamFx(checkCollision) checks an enabled beam at once");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8: result={}", v);
+        }
     }
 
     // Test 9: Destroy + BeenDestroyed
