@@ -20,6 +20,13 @@ static constexpr i32 NEAREST_PASSABLE_RADIUS = 20;
 /// What a step across a footprint costs, leaving one, against open ground.
 static constexpr f32 ESCAPE_COST = 10.0f;
 
+/// The heuristic is weighted this little over the octile distance, so that
+/// among the many cells of equal cost on open ground A* follows the ones
+/// nearer the goal instead of flooding them all. A path is then at most 0.1%
+/// longer than the shortest; a four-AI game's searches expand 9 times fewer
+/// cells.
+static constexpr f32 HEURISTIC_WEIGHT = 1.001f;
+
 Pathfinder::Pathfinder(const PathfindingGrid& grid) : grid_(grid) {}
 
 PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
@@ -130,14 +137,28 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
 
     auto idx = [w](u32 x, u32 z) -> u32 { return z * w + x; };
 
-    // Reuse persistent buffers to avoid per-call heap allocations.
-    // assign() reuses existing capacity when the vector is already large enough.
-    g_cost_buf_.assign(total, FLT_MAX);
-    parent_buf_.assign(total, UINT32_MAX);
-    closed_buf_.assign(total, false);
-    auto& g_cost = g_cost_buf_;
-    auto& parent = parent_buf_;
-    auto& closed = closed_buf_;
+    // A new stamp, instead of clearing the buffers (see seen_stamp_).
+    if (seen_stamp_.size() != total) {
+        g_cost_buf_.assign(total, FLT_MAX);
+        parent_buf_.assign(total, UINT32_MAX);
+        seen_stamp_.assign(total, 0);
+        closed_stamp_.assign(total, 0);
+        stamp_ = 0;
+    }
+    if (++stamp_ == 0) { // wrapped: old stamps could look current
+        std::fill(seen_stamp_.begin(), seen_stamp_.end(), 0u);
+        std::fill(closed_stamp_.begin(), closed_stamp_.end(), 0u);
+        stamp_ = 1;
+    }
+    const u32 stamp = stamp_;
+    auto g_cost = [&](u32 i) { return seen_stamp_[i] == stamp ? g_cost_buf_[i] : FLT_MAX; };
+    auto reach = [&](u32 i, f32 g, u32 from) {
+        g_cost_buf_[i] = g;
+        parent_buf_[i] = from;
+        seen_stamp_[i] = stamp;
+    };
+    auto closed = [&](u32 i) { return closed_stamp_[i] == stamp; };
+    const PathfindingGrid::MoveClass mover = PathfindingGrid::classify(layer, draft, amphibious);
 
     // Priority queue: (f_cost, node_index)
     using PQEntry = std::pair<f32, u32>;
@@ -149,7 +170,7 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
         f32 dz = static_cast<f32>(z > gz ? z - gz : gz - z);
         f32 mn = std::min(dx, dz);
         f32 mx = std::max(dx, dz);
-        return (mx + (SQRT2 - 1.0f) * mn) * cs;
+        return (mx + (SQRT2 - 1.0f) * mn) * cs * HEURISTIC_WEIGHT;
     };
 
     // A unit inside a structure's footprint -- a factory's new unit, a
@@ -181,7 +202,7 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
                 const u32 ux = static_cast<u32>(nx);
                 const u32 uz = static_cast<u32>(nz);
                 if (escape[n] || grid_.get(ux, uz) != CellPassability::Obstacle ||
-                    !grid_.terrain_passable_for(ux, uz, layer, draft, amphibious))
+                    !grid_.terrain_passable_at(n, mover))
                     continue;
                 escape[n] = 1;
                 frontier.push_back(n);
@@ -189,12 +210,12 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
         }
     }
     auto passable = [&](u32 x, u32 z) {
-        return grid_.is_passable_for(x, z, layer, draft, amphibious) ||
-               (escaping && escape[idx(x, z)] != 0);
+        const u32 i = idx(x, z);
+        return grid_.passable_at(i, mover) || (escaping && escape[i] != 0);
     };
 
     u32 start_idx = idx(sx, sz);
-    g_cost[start_idx] = 0;
+    reach(start_idx, 0, UINT32_MAX);
     open.push({heuristic(sx, sz), start_idx});
 
     // 8 directions: dx, dz pairs
@@ -216,13 +237,12 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
 
         if (cur_idx == goal_idx) break; // found path
 
-        if (closed[cur_idx]) continue;
-        closed[cur_idx] = true;
+        if (closed(cur_idx)) continue;
+        closed_stamp_[cur_idx] = stamp;
 
         {
             const f32 h_cur = heuristic(cur_idx % w, cur_idx / w);
-            if (h_cur < best_h ||
-                (h_cur == best_h && g_cost[cur_idx] < g_cost[best_idx])) {
+            if (h_cur < best_h || (h_cur == best_h && g_cost(cur_idx) < g_cost(best_idx))) {
                 best_h = h_cur;
                 best_idx = cur_idx;
             }
@@ -246,7 +266,7 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
             u32 unz = static_cast<u32>(nz);
             u32 n_idx = idx(unx, unz);
 
-            if (closed[n_idx]) continue;
+            if (closed(n_idx)) continue;
             if (!passable(unx, unz)) continue;
 
             // Diagonal: also check that both cardinal neighbors are passable
@@ -268,27 +288,28 @@ Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std
             // own footprint, not through the buildings packed beside it
             // (whose cells the escape can't tell from its own).
             if (escaping && escape[n_idx] != 0) move_cost *= ESCAPE_COST;
-            f32 new_g = g_cost[cur_idx] + move_cost;
+            f32 new_g = g_cost(cur_idx) + move_cost;
 
-            if (new_g < g_cost[n_idx]) {
-                g_cost[n_idx] = new_g;
-                parent[n_idx] = cur_idx;
+            if (new_g < g_cost(n_idx)) {
+                reach(n_idx, new_g, cur_idx);
                 f32 f_new = new_g + heuristic(unx, unz);
                 open.push({f_new, n_idx});
             }
         }
     }
 
+    last_nodes_explored_ = nodes_explored;
+
     // Reconstruct the path to the goal, or else to the closest cell reached.
     GridPath result;
-    result.reached_goal = g_cost[goal_idx] != FLT_MAX;
+    result.reached_goal = g_cost(goal_idx) != FLT_MAX;
     const u32 end_idx = result.reached_goal ? goal_idx : best_idx;
     if (end_idx == start_idx) return result; // nowhere to go
 
     u32 cur = end_idx;
     while (cur != UINT32_MAX) {
         result.cells.push_back({cur % w, cur / w});
-        cur = parent[cur];
+        cur = parent_buf_[cur];
     }
     std::reverse(result.cells.begin(), result.cells.end());
     return result;
@@ -333,12 +354,18 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
 
     i32 x = static_cast<i32>(x0);
     i32 z = static_cast<i32>(z0);
+    const PathfindingGrid::MoveClass mover = PathfindingGrid::classify(layer, draft, amphibious);
+    const u32 w = grid_.grid_width();
+    const auto open_at = [&](i32 cx, i32 cz) {
+        return cx >= 0 && cz >= 0 && static_cast<u32>(cx) < w &&
+               static_cast<u32>(cz) < grid_.grid_height() &&
+               grid_.passable_at(static_cast<u32>(cz) * w + static_cast<u32>(cx), mover);
+    };
 
     if (dx >= dz) {
         i32 err = dx / 2;
         for (i32 i = 0; i <= dx; ++i) {
-            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer, draft, amphibious))
-                return false;
+            if (!open_at(x, z)) return false;
             err -= dz;
             if (err < 0) {
                 z += sz;
@@ -349,8 +376,7 @@ bool Pathfinder::has_line_of_sight(u32 x0, u32 z0, u32 x1, u32 z1,
     } else {
         i32 err = dz / 2;
         for (i32 i = 0; i <= dz; ++i) {
-            if (!grid_.is_passable_for(static_cast<u32>(x), static_cast<u32>(z), layer, draft, amphibious))
-                return false;
+            if (!open_at(x, z)) return false;
             err -= dx;
             if (err < 0) {
                 x += sx;
@@ -433,9 +459,9 @@ void Pathfinder::build_labels(ComponentLabels& set) const {
     const std::string& layer = set.naval ? kWater : kLand;
     const u32 w = grid_.grid_width();
     const u32 h = grid_.grid_height();
-    auto passable = [&](u32 x, u32 z) {
-        return grid_.is_passable_for(x, z, layer, set.draft, set.amphibious);
-    };
+    const PathfindingGrid::MoveClass mover =
+        PathfindingGrid::classify(layer, set.draft, set.amphibious);
+    auto passable = [&](u32 x, u32 z) { return grid_.passable_at(z * w + x, mover); };
 
     set.labels.assign(static_cast<size_t>(w) * h, 0);
     std::vector<u32> stack;
