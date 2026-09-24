@@ -1,4 +1,5 @@
 #include "sim/entity_registry.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity.hpp"
 
 #include <algorithm>
@@ -18,6 +19,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
     entities_[id] = std::move(entity);
 
+    notify_collision_shape_changed(*entities_[id]);
     if (grid_initialized_) {
         auto* e = entities_[id].get();
         i32 cx, cz;
@@ -44,6 +46,7 @@ void EntityRegistry::unregister_entity(u32 id) {
         return true;
     };
     if (clear_slot(order_)) ++removed_slots_;
+    large_colliders_.erase(id);
     if (entity->is_unit()) clear_slot(unit_order_);
     if (grid_initialized_) {
         i32 cx = entity->grid_cell_x();
@@ -216,6 +219,42 @@ std::vector<u32> EntityRegistry::collect_in_rect(f32 x0, f32 z0,
     }
     std::sort(result.begin(), result.end());
     return result;
+}
+
+void EntityRegistry::notify_collision_shape_changed(const Entity& entity) {
+    if (collision_reach(entity.collision_shape()) > COLLIDER_REACH)
+        large_colliders_.insert(entity.entity_id());
+    else large_colliders_.erase(entity.entity_id());
+}
+
+void EntityRegistry::collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1,
+                                       std::vector<u32>& out) const {
+    out.clear();
+    if (x0 > x1) std::swap(x0, x1);
+    if (z0 > z1) std::swap(z0, z1);
+    const auto consider = [&](const Entity& e, f32 reach) {
+        if (e.destroyed() || e.collision_shape().type == CollisionShapeType::NONE) return;
+        const Vector3& p = e.position();
+        if (p.x >= x0 - reach && p.x <= x1 + reach && p.z >= z0 - reach && p.z <= z1 + reach)
+            out.push_back(e.entity_id());
+    };
+    if (!grid_initialized_) {
+        for_each([&](const Entity& e) { consider(e, COLLIDER_REACH); });
+    } else {
+        i32 cx_min, cz_min, cx_max, cz_max;
+        world_to_cell(x0 - COLLIDER_REACH, z0 - COLLIDER_REACH, cx_min, cz_min);
+        world_to_cell(x1 + COLLIDER_REACH, z1 + COLLIDER_REACH, cx_max, cz_max);
+        for (i32 cz = cz_min; cz <= cz_max; ++cz)
+            for (i32 cx = cx_min; cx <= cx_max; ++cx)
+                for (u32 id : grid_cells_[cell_index(cx, cz)])
+                    if (const Entity* e = find(id)) consider(*e, COLLIDER_REACH);
+    }
+    for (u32 id : large_colliders_)
+        if (const Entity* e = find(id)) consider(*e, collision_reach(e->collision_shape()));
+    // A cell lists ids in the order they moved in, and a large shape may be
+    // in a cell too: one canonical list.
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
 }
 
 } // namespace osc::sim

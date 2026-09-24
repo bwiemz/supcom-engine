@@ -2,6 +2,7 @@
 
 #include "core/test_status.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/prop.hpp"
 #include "sim/script_class.hpp"
@@ -118,7 +119,8 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
     lua_pushstring(L, "EntityId");
     lua_pushnumber(L, static_cast<lua_Number>(prop.entity_id()));
     lua_rawset(L, obj);
-    // self.Blueprint, as FAF's scripts read it (retail calls GetBlueprint).
+    // self.Blueprint, as FAF's scripts read it (retail calls GetBlueprint);
+    // and the collision box it gives, until a script sets another.
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
@@ -128,6 +130,7 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
             lua_pushstring(L, "Blueprint");
             lua_pushvalue(L, -2);
             lua_rawset(L, obj);
+            prop.set_default_collision_shape(blueprint_collision_shape(L, lua_gettop(L)));
         }
         lua_pop(L, 1);
     }

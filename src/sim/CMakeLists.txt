@@ -7,6 +7,7 @@ add_library(osc_sim STATIC
     army_brain.cpp
     bone_cache.cpp
     bone_data.cpp
+    collision.cpp
     entity.cpp
     manipulator.cpp
     platoon.cpp

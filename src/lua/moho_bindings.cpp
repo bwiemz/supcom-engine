@@ -1686,7 +1686,7 @@ static int entity_SetCollisionShape(lua_State* L) {
 
 static int entity_RevertCollisionShape(lua_State* L) {
     auto* e = check_entity(L); if (!e) return 0;
-    e->set_collision_shape(sim::CollisionShape{}); // reset to NONE
+    e->revert_collision_shape(); // back to its blueprint's
     return 0;
 }
 
