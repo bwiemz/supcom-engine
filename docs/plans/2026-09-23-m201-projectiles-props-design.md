@@ -106,6 +106,33 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
   - reclaim-test gains assertions: it currently asserts nothing.
   - A new `--prop-test` checks classes, `OnCreate`, map-prop objects and tree falls.
 
+**What building M201a established:**
+
+- **Warp-ins clear the ground, as in retail.** Once map props have
+  objects, area damage reaches them. A commander's warp-in
+  (`unitteleport01`) deals `Force` and `Fire` rings for several seconds, so
+  tree groups near every start split into single trees, trees fall, and
+  some burn. On Seton's Clutch that is about 3,400 new tree props at the
+  start of a four-player game.
+- **Prop blueprints need numeric defaults too.** 162 of retail's prop
+  blueprints give `ReclaimEnergyMax = ''`, as the default wreck does, and
+  `Prop.lua`'s `GetReclaimCosts` does arithmetic with it.
+  `RegisterPropBlueprint` now reads such strings as numbers (`''` is 0),
+  as Moho's typed blueprints do.
+- **Moho asks the reclaimer.** `reclaimer:GetReclaimCosts(target)` returns
+  the time in seconds, the energy and the mass. `Unit.lua` answers from a
+  unit's build costs and passes a prop's question to `Prop.lua`, which
+  applies its blueprint's time multipliers. We ignored those multipliers
+  before.
+- **Area damage has a direction:** from the blast to the target, level.
+  Retail's trees fall along it. `OnDamage` errors used to be only logged;
+  they now fail test modes too.
+- **A default module beside a `.bp` is looked for before it is imported.**
+  Most props have none, and `import` logs every miss.
+- **Falling is simplified.** `FallDown`'s motor tips a tree over at once,
+  away from the push. Moho animates the fall, which is presentation (Phase
+  F).
+
 ### M201b: retail wrecks
 
 - **Retail makes the wrecks.** `CreateWreckageProp` works end to end: a `Wreckage` prop with reclaim values, health and the wreck mesh.
