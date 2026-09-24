@@ -35,6 +35,9 @@ static const char* command_name(sim::CommandType type) {
         case sim::CommandType::Teleport:       return "Teleporting";
         case sim::CommandType::Ferry:          return "Ferrying";
         case sim::CommandType::Dive:           return "Diving";
+        case sim::CommandType::SiloBuildNuke:  return "Building Nuke";
+        case sim::CommandType::SiloBuildTactical: return "Building Missile";
+        case sim::CommandType::WaitForFerry:   return "Waiting for Ferry";
     }
     return "Idle";
 }

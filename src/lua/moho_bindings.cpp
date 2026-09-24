@@ -284,12 +284,7 @@ static void push_vector3(lua_State* L, const sim::Vector3& v) {
 #include "lua/lua_stubs.hpp"
 static int (*const stub_noop)(lua_State*) = lua_stubs::noop;
 static int (*const stub_return_nil)(lua_State*) = lua_stubs::return_nil;
-static int (*const stub_return_false)(lua_State*) = lua_stubs::return_false;
 static int (*const stub_return_true)(lua_State*) = lua_stubs::return_true;
-static int (*const stub_return_zero)(lua_State*) = lua_stubs::return_zero;
-static int (*const stub_return_one)(lua_State*) = lua_stubs::return_one;
-static int (*const stub_return_empty_table)(lua_State*) = lua_stubs::return_empty_table;
-static int (*const stub_return_self)(lua_State*) = lua_stubs::return_self;
 // ====================================================================
 // Threat helper
 // ====================================================================

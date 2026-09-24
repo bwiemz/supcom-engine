@@ -100,7 +100,6 @@ private:
     static constexpr f32 EXPLOSION_DURATION = 0.6f;
     static constexpr u32 MAX_EXPLOSIONS = 64;
     std::vector<Explosion> explosions_;
-    f32 last_dt_ = 0.0f;
 };
 
 } // namespace osc::renderer

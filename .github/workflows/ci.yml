@@ -94,7 +94,7 @@ jobs:
         # No GPU on CI runners: skip building the Vulkan validation layer.
         run: >
           cmake --preset ${{ matrix.preset }} -DVCPKG_MANIFEST_FEATURES=
-          -DOSC_LINT=${{ matrix.lint && 'ON' || 'OFF' }}
+          -DOSC_LINT=${{ matrix.lint && 'ON' || 'OFF' }} -DOSC_WERROR=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}

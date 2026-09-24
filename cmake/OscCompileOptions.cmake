@@ -39,6 +39,14 @@ else()
     target_compile_options(osc_warnings INTERFACE -Wall -Wextra -Wno-unused-parameter)
 endif()
 
+# Warnings as errors for first-party code on GCC/Clang. Off by default, so a
+# newer local compiler's new warnings don't stop a build; CI's Linux jobs
+# turn it on, so the code stays warning-clean on the compilers CI pins.
+option(OSC_WERROR "Treat first-party warnings as errors (GCC/Clang)" OFF)
+if(OSC_WERROR AND NOT MSVC)
+    target_compile_options(osc_warnings INTERFACE -Werror)
+endif()
+
 set(OSC_SANITIZE "" CACHE STRING
     "Sanitizers to enable on GCC/Clang, e.g. address;undefined")
 if(OSC_SANITIZE)
