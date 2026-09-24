@@ -413,6 +413,19 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
                                      spawn_pos.z + forward.z / len * reach}
                            : Vector3{spawn_pos.x, spawn_pos.y, spawn_pos.z + reach};
     }
+    // Firing randomness scatters where it goes over a circle about the aim,
+    // FiringRandomness x distance / 12 across: the relation FAF measured of
+    // Moho's (FixedSpreadRadius). Drawn from the sim's RNG, so every
+    // lockstep client rolls the same.
+    if (firing_randomness > 0) {
+        const f32 ox = aim.x - spawn_pos.x;
+        const f32 oz = aim.z - spawn_pos.z;
+        const f32 radius = firing_randomness * std::sqrt(ox * ox + oz * oz) / 12.0f;
+        const f32 angle = registry.sim_random().range(0.0f, 2.0f * kPi);
+        const f32 off = radius * std::sqrt(registry.sim_random().range(0.0f, 1.0f));
+        aim.x += off * osc::dmath::cos(angle);
+        aim.z += off * osc::dmath::sin(angle);
+    }
     f32 dx = aim.x - spawn_pos.x;
     f32 dz = aim.z - spawn_pos.z;
     const f32 dy = aim.y - spawn_pos.y;
@@ -436,18 +449,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         vel = {dx / span * muzzle_velocity, dy / span * muzzle_velocity,
                dz / span * muzzle_velocity};
         flight_time = muzzle_velocity > 0 ? span / muzzle_velocity : 0.0f;
-    }
-
-    // Apply firing randomness as angular offset to velocity direction.
-    // Drawn from the deterministic sim RNG so every lockstep client rolls the
-    // same spread (a per-process std::random_device would desync clients).
-    if (firing_randomness > 0) {
-        f32 angle = registry.sim_random().range(-firing_randomness, firing_randomness);
-        f32 c = osc::dmath::cos(angle), s = osc::dmath::sin(angle);
-        f32 nx = vel.x * c - vel.z * s;
-        f32 nz = vel.x * s + vel.z * c;
-        vel.x = nx;
-        vel.z = nz;
     }
 
     // Create projectile

@@ -7,8 +7,11 @@
 #include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/projectile.hpp"
 #include "sim/unit.hpp"
+#include "sim/weapon.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -19,6 +22,7 @@ using osc::u32;
 using osc::sim::CollisionShape;
 using osc::sim::CollisionShapeType;
 using osc::sim::EntityRegistry;
+using osc::sim::Projectile;
 using osc::sim::Quaternion;
 using osc::sim::Unit;
 using osc::sim::Vector3;
@@ -108,5 +112,26 @@ TEST_CASE("the collider query finds shapes near a path, large ones from afar", "
     reg.find(big)->revert_collision_shape();
     reg.collect_colliders(95, 100, 105, 100, out);
     CHECK(out == std::vector<u32>{near, big});
+}
+
+TEST_CASE("firing randomness scatters over a circle that grows with range", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    auto& owner = static_cast<Unit&>(*reg.find(owner_id));
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 30;
+    w.max_range = 24;
+    w.firing_randomness = 1.2f;
+    // With no target it fires along its facing (+z) to its reach: a circle
+    // of radius 1.2 x 24 / 12 = 2.4 about (0, 0, 24).
+    f32 widest = 0;
+    for (int i = 0; i < 200; ++i) {
+        const Projectile* p = w.launch(owner, {0, 0, 0}, nullptr, reg, nullptr, false);
+        REQUIRE(p);
+        const f32 off = std::hypot(p->target_position.x, p->target_position.z - 24.0f);
+        CHECK(off <= 2.4f + 1e-3f);
+        widest = std::max(widest, off);
+    }
+    CHECK(widest > 2.0f); // it fills the circle
 }
 

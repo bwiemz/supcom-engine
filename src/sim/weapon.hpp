@@ -51,7 +51,7 @@ public:
     bool overcharge = false;         // OverChargeWeapon
     bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
-    f32 firing_randomness = 0;    // angular scatter in radians
+    f32 firing_randomness = 0;    // spread circle r x distance / 12 across
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
     f32 max_height_diff = 0;               // MaxHeightDiff / ChangeMaxHeightDiff (<= 0: unlimited)
     f32 firing_tolerance = 0;              // FiringTolerance (degrees) / ChangeFiringTolerance
