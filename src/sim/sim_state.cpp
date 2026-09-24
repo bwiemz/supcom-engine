@@ -805,6 +805,7 @@ void SimState::tick() {
     update_entities();
     // Beams reach from where their muzzles have moved to (M206c).
     update_collision_beams(*this, L_);
+    sweep_ferry_beacons();
 
     // Aircraft killed in flight that landed this tick: Moho tells their
     // script, whose OnImpact deals the DeathImpact weapon's damage and plays
@@ -1054,6 +1055,50 @@ void SimState::share_team_economy() {
             distribute_overflow(mass_res, mass_overflow);
             distribute_overflow(energy_res, energy_overflow);
         }
+    }
+}
+
+void SimState::sweep_ferry_beacons() {
+    // A beacon belongs to its route's orders (Moho's CUnitCommand keeps it):
+    // once no living unit has a Ferry order holding it, it goes.
+    if (ferry_beacons_.empty()) return;
+    std::vector<u32> held;
+    entity_registry_.for_each_unit([&](const Entity& e) {
+        if (e.destroyed() || !e.is_unit()) return;
+        const auto& unit = static_cast<const Unit&>(e);
+        if (unit.is_dying() || unit.command_queue().empty()) return;
+        // Only a route's first order, at the head while the route runs, holds one.
+        const UnitCommand& head = unit.command_queue().front();
+        if (head.type == CommandType::Ferry && head.beacon_id != 0) held.push_back(head.beacon_id);
+    });
+    std::vector<u32> gone;
+    for (const u32 id : ferry_beacons_)
+        if (std::find(held.begin(), held.end(), id) == held.end()) gone.push_back(id);
+    if (gone.empty()) return;
+    ferry_beacons_.erase(std::remove_if(ferry_beacons_.begin(), ferry_beacons_.end(),
+                                        [&](u32 id) {
+                                            return std::find(gone.begin(), gone.end(), id) !=
+                                                   gone.end();
+                                        }),
+                         ferry_beacons_.end());
+    for (const u32 id : gone) {
+        Entity* beacon = entity_registry_.find(id);
+        if (!beacon || beacon->destroyed() || beacon->lua_table_ref() < 0) continue;
+        const int top = lua_gettop(L_);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, beacon->lua_table_ref());
+        lua_pushstring(L_, "Destroy");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, top + 1);
+            if (lua_pcall(L_, 1, 0, 0) != 0) {
+                const char* err = lua_tostring(L_, -1);
+                const std::string message =
+                    std::string("ferry beacon Destroy error: ") + (err ? err : "(unknown)");
+                spdlog::warn("{}", message);
+                if (test_status::count_lua_failures()) test_status::record_failure(message);
+            }
+        }
+        lua_settop(L_, top);
     }
 }
 

@@ -150,6 +150,9 @@ public:
     /// pass poses and checks them each tick (M206c).
     void track_collision_beam(u32 id) { collision_beams_.push_back(id); }
     std::vector<u32>& collision_beams() { return collision_beams_; }
+    /// Ferry beacons made for ferry routes (M206f); one no route holds any
+    /// more is destroyed at the end of the tick.
+    void track_ferry_beacon(u32 id) { ferry_beacons_.push_back(id); }
     /// What a projectile blueprint says of its projectiles as targets (its
     /// categories, its DesiredShooterCap), read once per blueprint (M206b).
     std::shared_ptr<const ProjectileBlueprintInfo>
@@ -580,6 +583,7 @@ private:
     /// Count alliance-connected components among the given (alive) army indices.
     i32 count_alliance_components(const std::vector<i32>& army_indices) const;
     void request_economy_events();
+    void sweep_ferry_beacons();
     void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);
@@ -605,6 +609,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>>
         projectile_info_;
     std::vector<u32> collision_beams_;
+    std::vector<u32> ferry_beacons_;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

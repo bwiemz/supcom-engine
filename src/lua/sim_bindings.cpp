@@ -5033,7 +5033,11 @@ static int l_IssueTransportLoad(lua_State* L) {
     if (!target || target->destroyed() || !target->is_unit()) return 0;
 
     sim::UnitCommand cmd;
-    cmd.type = sim::CommandType::TransportLoad;
+    // At a ferry beacon: wait there for a ferry (Moho's command dispatch
+    // sends a load order at a FERRYBEACON to CUnitWaitForFerryTask).
+    cmd.type = static_cast<sim::Unit*>(target)->has_category("FERRYBEACON")
+                   ? sim::CommandType::WaitForFerry
+                   : sim::CommandType::TransportLoad;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
