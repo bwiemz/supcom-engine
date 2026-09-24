@@ -219,6 +219,22 @@ Projectiles and shields don't interact at all. `DamageArea` hits a shield like a
 - **`LeadTarget` and `MuzzleVelocityReduceDistance`** are honoured.
 - **Proof:** artillery lands on its target.
 
+**What building M201e established:**
+
+- **Most "direct fire" is an arc.** 83 retail weapons are `LowArc`, and
+  among them is the MA12 Striker's gun, a few degrees up at its range. Only
+  `RULEUBA_None` weapons fly straight; they now aim at the target in three
+  dimensions, where every shot used to leave level.
+- **Arcs need exact gravity.** A shell stepped with velocity-then-position
+  lands short of the parabola its angle was solved for. The step now takes
+  half a tick's gravity back, so a Lobo's high arc (65.7 degrees at 14 u/s
+  over 30) comes down on its target.
+- **Leading needs a velocity.** Units didn't have one: each now keeps its
+  movement over the last tick. A `LeadTarget` weapon aims where the target
+  will be when the shot arrives, refined once.
+- **Left:** `MuzzleVelocityReduceDistance` (25 weapons) and a blueprint
+  `Lifetime` are not read yet.
+
 ### M201f: area damage and shields
 
 - **`DamageArea`:** retail's falloff and rings, and a real direction vector (a tree's `'Force'` reads `direction[1]`).
