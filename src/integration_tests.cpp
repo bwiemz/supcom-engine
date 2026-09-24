@@ -7274,6 +7274,62 @@ void test_impact(TestContext& ctx) {
         end
     )");
 
+    // The projectile bindings take retail's arguments.
+    lua_check("Test 10: CreateProjectile takes an offset and a direction", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        local at = __osc_tank:GetPosition()
+        local p = __osc_tank:CreateProjectile(bp, 0, 2, 0, 1, 0, 0)
+        local pos = p:GetPosition()
+        if math.abs(pos[2] - (at[2] + 2)) > 1e-3 or math.abs(pos[1] - at[1]) > 1e-3 then
+            error('at ' .. pos[1] .. ',' .. pos[2] .. ' from ' .. at[1] .. ',' .. at[2])
+        end
+        local vx, vy, vz = p:GetVelocity()
+        local speed = __blueprints[bp].Physics.InitialSpeed or 0
+        if speed <= 0 then error('no InitialSpeed on ' .. bp) end
+        if math.abs(p:GetCurrentSpeed() - speed) > 1e-2 then
+            error('speed ' .. p:GetCurrentSpeed() .. ', blueprint ' .. speed)
+        end
+        if vx <= 0 or math.abs(vy) > 1e-3 or math.abs(vz) > 1e-3 then
+            error('heading ' .. vx .. ',' .. vy .. ',' .. vz .. ', not +X')
+        end
+        p:Destroy()
+    )");
+    lua_check("Test 11: CreateProjectileAtBone(bp, bone) starts at the bone", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        local p = __osc_tank:CreateProjectileAtBone(bp, 'Turret_Muzzle')
+        if string.lower(p:GetBlueprint().BlueprintId) ~= bp then
+            error('blueprint ' .. tostring(p:GetBlueprint().BlueprintId))
+        end
+        local m, pos = __osc_tank:GetPosition('Turret_Muzzle'), p:GetPosition()
+        local d = math.abs(m[1] - pos[1]) + math.abs(m[2] - pos[2]) + math.abs(m[3] - pos[3])
+        if d > 1e-3 then error(d .. ' from the muzzle') end
+        p:Destroy()
+    )");
+    lua_check("setup: a shell that grows, and a child", R"(
+        local bp = '/projectiles/tdfgauss01/tdfgauss01_proj.bp'
+        __osc_grow = __osc_tank:CreateProjectile(bp, 0, 30, 0, 0, 0, 1)
+        __osc_grow_speed = __osc_grow:GetCurrentSpeed()
+        __osc_grow:SetScaleVelocity(2)
+        __osc_child = __osc_grow:CreateChildProjectile('/projectiles/tdfgauss02/tdfgauss02_proj.bp')
+    )");
+    ctx.sim.tick();
+    lua_check("Test 12: SetScaleVelocity grows it, and leaves its speed", R"(
+        if math.abs(__osc_grow:GetCurrentSpeed() - __osc_grow_speed) > 1e-3 then
+            error('speed ' .. __osc_grow_speed .. ' -> ' .. __osc_grow:GetCurrentSpeed())
+        end
+    )");
+    lua_check("Test 13: a child projectile has its own blueprint and its parent's flight", R"(
+        local c = __osc_child
+        if string.lower(c:GetBlueprint().BlueprintId) ~= '/projectiles/tdfgauss02/tdfgauss02_proj.bp' then
+            error('blueprint ' .. tostring(c:GetBlueprint().BlueprintId))
+        end
+        local ax, ay, az = __osc_grow:GetVelocity()
+        local bx, by, bz = c:GetVelocity()
+        if math.abs(ax - bx) + math.abs(ay - by) + math.abs(az - bz) > 1e-3 then
+            error('child velocity differs')
+        end
+    )");
+
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
     spdlog::info("Impact test: {}/{} passed", pass, pass + fail);
 }

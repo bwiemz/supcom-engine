@@ -53,6 +53,7 @@
 #include "lua/sim_sync.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <chrono>
 #include <cmath>
@@ -1444,6 +1445,49 @@ static bool under_water(const sim::SimState* sim, const sim::Vector3& p) {
 
 // entity:CreateProjectile(bp, dx, dy, dz) -> projectile Lua table
 // Creates a projectile at entity position with optional velocity direction
+/// A projectile blueprint's Physics.InitialSpeed (0 without one).
+static f32 projectile_initial_speed(lua_State* L, sim::SimState* sim, const std::string& bp_id) {
+    auto* store = sim ? sim->blueprint_store() : nullptr;
+    const auto* entry = store && !bp_id.empty() ? store->find(bp_id) : nullptr;
+    if (!entry) return 0;
+    const int top = lua_gettop(L);
+    store->push_lua_table(*entry, L);
+    f32 speed = 0;
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "InitialSpeed");
+        lua_rawget(L, -2);
+        if (lua_isnumber(L, -1)) speed = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_settop(L, top);
+    return speed;
+}
+
+/// Point a new projectile along `dir`, at its blueprint's InitialSpeed.
+static void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p,
+                           const sim::Vector3& dir) {
+    const f32 len = std::sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+    if (len < 1e-6f) return;
+    const sim::Vector3 d{dir.x / len, dir.y / len, dir.z / len};
+    p.set_orientation(sim::euler_to_quat(osc::dmath::atan2(d.x, d.z),
+                                         osc::dmath::atan2(-d.y, std::sqrt(d.x * d.x + d.z * d.z)),
+                                         0.0f));
+    const f32 speed = projectile_initial_speed(L, sim, p.blueprint_id());
+    p.velocity = {d.x * speed, d.y * speed, d.z * speed};
+}
+
+static std::string lowercase_arg(lua_State* L, int idx) {
+    if (lua_type(L, idx) != LUA_TSTRING) return {};
+    std::string s = lua_tostring(L, idx);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+// entity:CreateProjectile(bp, offX, offY, offZ, dirX, dirY, dirZ): a
+// projectile at the entity's centre plus the offset (each may be nil),
+// launched by it. A direction points it, at its blueprint's InitialSpeed.
 static int entity_CreateProjectile(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
@@ -1452,25 +1496,18 @@ static int entity_CreateProjectile(lua_State* L) {
     if (!sim) { lua_pushnil(L); return 1; }
 
     auto proj = std::make_unique<sim::Projectile>();
-    proj->set_position(e->position());
+    proj->set_blueprint_id(lowercase_arg(L, 2));
+    const sim::Vector3 at = e->position();
+    proj->set_position({at.x + static_cast<f32>(luaL_optnumber(L, 3, 0)),
+                        at.y + static_cast<f32>(luaL_optnumber(L, 4, 0)),
+                        at.z + static_cast<f32>(luaL_optnumber(L, 5, 0))});
     proj->set_army(e->army());
     proj->launcher_id = e->entity_id();
     proj->lifetime = 10.0f;
-
-    // Optional velocity direction (args 3,4,5 if bp is string; args 2,3,4 if no bp)
-    int vel_start = 2;
-    if (lua_type(L, 2) == LUA_TSTRING) {
-        std::string bp_id = lua_tostring(L, 2);
-        std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-        proj->set_blueprint_id(bp_id);
-        vel_start = 3; // bp string is arg 2, velocity starts at 3
-    }
-    if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
-        lua_isnumber(L, vel_start + 2)) {
-        proj->velocity.x = static_cast<f32>(lua_tonumber(L, vel_start));
-        proj->velocity.y = static_cast<f32>(lua_tonumber(L, vel_start + 1));
-        proj->velocity.z = static_cast<f32>(lua_tonumber(L, vel_start + 2));
+    if (lua_isnumber(L, 6) && lua_isnumber(L, 7) && lua_isnumber(L, 8)) {
+        aim_projectile(L, sim, *proj,
+                       {static_cast<f32>(lua_tonumber(L, 6)), static_cast<f32>(lua_tonumber(L, 7)),
+                        static_cast<f32>(lua_tonumber(L, 8))});
     }
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
@@ -1482,7 +1519,9 @@ static int entity_CreateProjectile(lua_State* L) {
     return 1;
 }
 
-// entity:CreateProjectileAtBone(bone, bp, dx, dy, dz) -> projectile Lua table
+// entity:CreateProjectileAtBone(bp, bone): a projectile at the bone, facing
+// as it does (a unit's as posed), launched along it at its blueprint's
+// InitialSpeed. Retail tosses a destroyed unit's parts this way.
 static int entity_CreateProjectileAtBone(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed()) { lua_pushnil(L); return 1; }
@@ -1490,31 +1529,20 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
-    // arg 2 = bone (name or index)
-    i32 bone_idx = resolve_bone_index(e, L, 2);
-    auto spawn_pos = bone_world_position(e, bone_idx);
-
+    const i32 bone_idx = resolve_bone_index(e, L, 3);
     auto proj = std::make_unique<sim::Projectile>();
-    proj->set_position(spawn_pos);
+    proj->set_blueprint_id(lowercase_arg(L, 2));
+    proj->set_position(bone_world_position(e, bone_idx));
     proj->set_army(e->army());
     proj->launcher_id = e->entity_id();
     proj->lifetime = 10.0f;
-
-    // arg 3 = bp (optional string), args 4,5,6 = velocity (or 3,4,5 if no bp)
-    int vel_start = 3;
-    if (lua_type(L, 3) == LUA_TSTRING) {
-        std::string bp_id = lua_tostring(L, 3);
-        std::transform(bp_id.begin(), bp_id.end(), bp_id.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
-        proj->set_blueprint_id(bp_id);
-        vel_start = 4; // bp string at arg 3
-    }
-    if (lua_isnumber(L, vel_start) && lua_isnumber(L, vel_start + 1) &&
-        lua_isnumber(L, vel_start + 2)) {
-        proj->velocity.x = static_cast<f32>(lua_tonumber(L, vel_start));
-        proj->velocity.y = static_cast<f32>(lua_tonumber(L, vel_start + 1));
-        proj->velocity.z = static_cast<f32>(lua_tonumber(L, vel_start + 2));
-    }
+    const auto* bd = e->bone_data();
+    const sim::Quaternion model_rot =
+        e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(bone_idx).rotation
+        : bd && bd->is_valid(bone_idx) ? bd->bones[static_cast<size_t>(bone_idx)].world_rotation
+                                       : sim::Quaternion{};
+    aim_projectile(L, sim, *proj,
+                   sim::quat_rotate(sim::quat_multiply(e->orientation(), model_rot), {0, 0, 1}));
 
     u32 proj_id = sim->entity_registry().register_entity(std::move(proj));
     auto* proj_ptr = static_cast<sim::Projectile*>(
@@ -4207,13 +4235,14 @@ static int proj_SetVelocityAlign(lua_State* L) {
     return 0;
 }
 
+// SetScaleVelocity(sv) or (svx, svy, svz): how fast its draw scale grows
+// (or shrinks) each second. Movement is untouched.
 static int proj_SetScaleVelocity(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) {
-        f32 s = static_cast<f32>(luaL_checknumber(L, 2));
-        p->velocity.x *= s;
-        p->velocity.y *= s;
-        p->velocity.z *= s;
+        const auto sx = static_cast<f32>(luaL_checknumber(L, 2));
+        p->scale_velocity = {sx, static_cast<f32>(luaL_optnumber(L, 3, sx)),
+                             static_cast<f32>(luaL_optnumber(L, 4, sx))};
     }
     lua_pushvalue(L, 1); // return self for chaining
     return 1;
@@ -4265,17 +4294,18 @@ static int proj_CreateChildProjectile(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
+    // Its own blueprint (script class, mesh), its parent's flight: speed,
+    // orientation and target. Retail's split missiles and cluster shells.
     auto child = std::make_unique<sim::Projectile>();
+    child->set_blueprint_id(lowercase_arg(L, 2));
     child->set_position(parent->position());
+    child->set_orientation(parent->orientation());
     child->set_army(parent->army());
     child->launcher_id = parent->launcher_id;
     child->velocity = parent->velocity;
+    child->target_entity_id = parent->target_entity_id;
+    child->target_position = parent->target_position;
     child->lifetime = 10.0f;
-
-    // Optional bp_id arg
-    if (lua_type(L, 2) == LUA_TSTRING) {
-        // bp_id provided but we don't parse projectile blueprints yet
-    }
 
     u32 child_id = sim->entity_registry().register_entity(std::move(child));
     auto* child_ptr = static_cast<sim::Projectile*>(

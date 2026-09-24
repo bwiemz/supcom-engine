@@ -39,6 +39,7 @@ public:
     bool stay_upright = false;       // SetStayUpright
     bool velocity_align = false;     // SetVelocityAlign
     Vector3 angular_velocity;        // SetLocalAngularVelocity
+    Vector3 scale_velocity;          // SetScaleVelocity: draw scale change per second
     bool collision_enabled = true;   // SetCollision
     bool collide_surface = true;     // SetCollideSurface
     bool stay_underwater = false;    // StayUnderwater

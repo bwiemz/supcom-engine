@@ -126,6 +126,15 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     pos.z += velocity.z * static_cast<f32>(dt);
     set_position(pos);
 
+    // SetScaleVelocity: an effect that grows or shrinks as it flies.
+    if (scale_velocity.x != 0 || scale_velocity.y != 0 || scale_velocity.z != 0) {
+        const auto grown = [dt](f32 s, f32 v) {
+            return std::max(0.0f, s + v * static_cast<f32>(dt));
+        };
+        set_scale(grown(scale_x(), scale_velocity.x), grown(scale_y(), scale_velocity.y),
+                  grown(scale_z(), scale_velocity.z));
+    }
+
     // Torpedo/underwater projectile: clamp Y to water surface
     if (stay_underwater && terrain) {
         if (pos.y > terrain->water_elevation()) {
