@@ -21,8 +21,21 @@ public:
         u64 z = (state_ += 0x9E3779B97F4A7C15ull);
         z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
         z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
-        return z ^ (z >> 31);
+        z ^= (z >> 31);
+        if (draw_hook_) draw_hook_(draw_hook_ctx_, z);
+        return z;
     }
+
+    /// Called with every value drawn (--rng-trace); null when off.
+    using DrawHook = void (*)(void* ctx, u64 value);
+    void set_draw_hook(DrawHook hook, void* ctx) {
+        draw_hook_ = hook;
+        draw_hook_ctx_ = ctx;
+    }
+    /// The Lua state drawing now (Random, math.random), so a trace can say
+    /// which script drew; null for the engine's own draws.
+    void set_caller(void* lua_state) { caller_ = lua_state; }
+    void* caller() const { return caller_; }
 
     u32 next_u32() { return static_cast<u32>(next_u64() >> 32); }
 
@@ -53,6 +66,9 @@ public:
 
 private:
     u64 state_;
+    DrawHook draw_hook_ = nullptr;
+    void* draw_hook_ctx_ = nullptr;
+    void* caller_ = nullptr;
 };
 
 } // namespace osc::sim
