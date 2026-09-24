@@ -7922,7 +7922,25 @@ void test_area(TestContext& ctx) {
               "Test 8: area damage credits its instigator");
     }
 
-    check(osc::test_status::failure_count() - fail == failures_before, "Test 9: no script errors");
+    // A blast reaches what its radius touches: a big unit's hull, far from
+    // its position at its feet (a beam ending on it, a shell on its roof).
+    lua_check("Test 9: a small blast on a big unit's roof reaches it; one just above doesn't", R"(
+        local big = __osc_spawn('ueb1301', 'ARMY_2', 760, 170)
+        local bp = big:GetBlueprint()
+        local p = big:GetPosition()
+        local roof = p[2] + (bp.CollisionOffsetY or 0) + bp.SizeY
+        if roof - p[2] < 2 then error('the structure is only ' .. (roof - p[2]) .. ' tall') end
+        local lost = __osc_loss({big = big}, function()
+            DamageArea(__osc_gunner, {p[1], roof + 0.3, p[3]}, 0.5, 40, 'Normal', false)
+        end)
+        if math.abs(lost.big - 40) > 1e-3 then error('on its roof it lost ' .. lost.big) end
+        lost = __osc_loss({big = big}, function()
+            DamageArea(__osc_gunner, {p[1], roof + 0.8, p[3]}, 0.5, 40, 'Normal', false)
+        end)
+        if lost.big ~= 0 then error('0.8 above its roof it lost ' .. lost.big) end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 10: no script errors");
     spdlog::info("Area test: {}/{} passed", pass, pass + fail);
 }
 
