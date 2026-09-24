@@ -248,26 +248,33 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             cam_dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         }
 
-        // Try mesh lookup (mesh_override from SetMesh takes priority)
+        // Try mesh lookup (mesh_override from SetMesh takes priority). An
+        // override is a mesh blueprint (a wreck, build or enhancement mesh),
+        // which has no scale of its own: the entity's blueprint gives it.
         const GPUMesh* gpu = nullptr;
-        if (!entity.mesh_override.empty())
+        f32 mesh_scale = 0.0f;
+        if (!entity.mesh_override.empty()) {
             gpu = mesh_cache.get_lod(entity.mesh_override, cam_dist, L);
-        if (!gpu && !entity.blueprint_id.empty())
+            if (gpu) mesh_scale = mesh_cache.blueprint_scale(entity.blueprint_id, L);
+        }
+        if (!gpu && !entity.blueprint_id.empty()) {
             gpu = mesh_cache.get_lod(entity.blueprint_id, cam_dist, L);
+            if (gpu) mesh_scale = gpu->uniform_scale;
+        }
 
         if (gpu) {
             if (mesh_count >= MAX_INSTANCES) continue;
             MeshInstance inst{};
-            f32 sx = entity.scale_x * gpu->uniform_scale;
-            f32 sy = entity.scale_y * gpu->uniform_scale;
-            f32 sz = entity.scale_z * gpu->uniform_scale;
+            f32 sx = entity.scale_x * mesh_scale;
+            f32 sy = entity.scale_y * mesh_scale;
+            f32 sz = entity.scale_z * mesh_scale;
             build_model_matrix(inst.model, pos, view.orientation(entity), sx, sy, sz);
-            // Wreckage: desaturate + darken to distinguish from live units
-            if (entity.is_wreckage) {
-                f32 lum = 0.299f * r + 0.587f * g + 0.114f * b;
-                r = lum * 0.5f + r * 0.15f;
-                g = lum * 0.5f + g * 0.15f;
-                b = lum * 0.5f + b * 0.15f;
+            // A wreck has no team colour: a negative red tells mesh.frag to
+            // draw it burnt, as the Wreckage shader does.
+            if (entity.is_wreckage || gpu->wreckage) {
+                r = -1.0f;
+                g = 0.0f;
+                b = 0.0f;
             }
             // Selection highlight: brighten team color
             if (selected_ids && entity.is_unit &&
@@ -281,8 +288,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             auto& gd = mesh_groups[gpu];
             gd.instances.push_back(inst);
 
-            // Track bone data for this instance (props have no bones)
-            if (entity.is_unit) {
+            // Track bone data for this instance (a prop has a pose only when
+            // TryCopyPose gave it its unit's)
+            if (entity.is_unit || entity.bone_count > 0) {
                 u32 bc = entity.bone_count;
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
                 gd.bones.push_back({entity.id, bc});

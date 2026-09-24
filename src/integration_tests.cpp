@@ -17,6 +17,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/pose.hpp"
 #include "sim/projectile.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
@@ -3556,6 +3557,39 @@ void test_bone(TestContext& ctx) {
         else { osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); fail++; }
     }
 
+    // Test 9: a skeleton at rest skins to the identity. The bind pose,
+    // times the inverse bind SCM stores for each bone, must give nothing
+    // back: every commander's bones, as the files hold them.
+    {
+        int checked = 0;
+        std::string worst;
+        for (size_t a = 0; a < ctx.sim.army_count(); ++a) {
+            const auto* acu =
+                ctx.sim.entity_registry().find(army_acu_id(ctx.sim, static_cast<osc::i32>(a)));
+            if (!acu || !acu->bone_data()) continue;
+            for (const auto& bone : acu->bone_data()->bones) {
+                std::array<osc::f32, 16> posed{};
+                std::array<osc::f32, 16> skin{};
+                osc::sim::pose_to_mat4(posed.data(), {bone.world_position, bone.world_rotation});
+                osc::sim::mat4_multiply(skin.data(), posed.data(), bone.inverse_bind_pose.data());
+                for (int i = 0; i < 16; ++i) {
+                    const osc::f32 want = i % 5 == 0 ? 1.0f : 0.0f;
+                    if (std::abs(skin[static_cast<size_t>(i)] - want) > 2e-3f && worst.empty())
+                        worst = fmt::format("{} bone {} element {} is {}", acu->blueprint_id(),
+                                            bone.name, i, skin[static_cast<size_t>(i)]);
+                }
+                ++checked;
+            }
+        }
+        if (checked > 0 && worst.empty()) {
+            spdlog::info("[PASS] Test 9: {} commander bones skin to the identity at rest", checked);
+            pass++;
+        } else {
+            osc::test_status::fail("[FAIL] Test 9: {}", worst.empty() ? "no bones" : worst);
+            fail++;
+        }
+    }
+
     spdlog::info("Bone test: {}/{} passed", pass, pass + fail);
     spdlog::info("Bone test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -6812,6 +6846,219 @@ void test_aim(TestContext& ctx) {
         osc::test_status::fail("[FAIL] Test 8: script errors while aiming");
     }
     spdlog::info("Aim test: {}/{} passed", pass, pass + fail);
+}
+
+// M201b: a unit's death is its script's. Kill hands it to OnKilled; the
+// unit is dead at once (IsDead, orders gone); retail's death thread makes
+// the wreck -- a Wreckage prop with the unit's wreck mesh and, after a
+// death animation, its last pose -- and destroys the unit. Self-destruct
+// kills the same way; an aircraft killed in flight falls and dies on
+// landing (OnImpact); running out of fuel only slows an aircraft.
+void test_death(TestContext& ctx) {
+    spdlog::info("=== DEATH TEST: units die through their scripts, leaving retail wrecks ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    lua_State* L = ctx.lua_state.raw();
+    const auto global_id = [L](const char* name) {
+        lua_pushstring(L, name);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return id;
+    };
+
+    lua_check("setup", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- What each death does, through its script's own methods.
+        __osc_deaths = {}
+        local function watch(unit, name)
+            local rec = {}
+            __osc_deaths[name] = rec
+            local killed = unit.OnKilled
+            unit.OnKilled = function(self, instigator, type, overkill)
+                rec.killed, rec.type, rec.overkill = GetGameTick(), type, overkill
+                return killed(self, instigator, type, overkill)
+            end
+            local wreck = unit.CreateWreckageProp
+            unit.CreateWreckageProp = function(self, overkill)
+                local prop = wreck(self, overkill)
+                rec.wreck, rec.wrecked = prop, GetGameTick()
+                return prop
+            end
+            local impact = unit.OnImpact
+            unit.OnImpact = function(self, with, other)
+                rec.impact, rec.landed = with, GetGameTick()
+                return impact(self, with, other)
+            end
+            return unit
+        end
+        __osc_tank = watch(spawn('uel0201', 'ARMY_1', 260, 800), 'tank')
+        IssueMove({__osc_tank}, {300, 0, 800})
+        __osc_selfd = watch(spawn('uel0201', 'ARMY_1', 280, 780), 'selfd')
+        -- A Mech Marine has a death animation.
+        __osc_marine = watch(spawn('uel0106', 'ARMY_1', 270, 820), 'marine')
+        -- Killed in flight, an aircraft falls half the time (AirUnit.OnKilled):
+        -- here always.
+        __osc_plane = watch(spawn('uea0102', 'ARMY_1', 300, 840), 'plane')
+        __osc_plane.DestroyNoFallRandomChance = 2
+        IssueMove({__osc_plane}, {500, 0, 840})
+        -- One whose script can't play the landing out (no OnImpact).
+        __osc_bare_plane = spawn('uea0102', 'ARMY_1', 300, 870)
+        __osc_bare_plane.DestroyNoFallRandomChance = 2
+        __osc_bare_plane.OnImpact = false
+        IssueMove({__osc_bare_plane}, {500, 0, 870})
+        __osc_scout = spawn('uea0101', 'ARMY_1', 320, 860)
+        IssueMove({__osc_scout}, {520, 0, 860})
+        __osc_fuel = {}
+        for _, event in {'OnRunOutOfFuel', 'OnGotFuel'} do
+            local name, base = event, __osc_scout[event]
+            __osc_scout[name] = function(self)
+                table.insert(__osc_fuel, name)
+                return base(self)
+            end
+        end
+        __osc_marine_id = __osc_marine:GetEntityId()
+    )");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick(); // the marine walks, the plane climbs
+
+    lua_check("Test 1: Kill makes a unit dead at once, its orders gone", R"(
+        local p = __osc_plane:GetPosition()
+        __osc_plane_height = p[2] - GetTerrainHeight(p[1], p[3])
+        if __osc_plane_height < 5 then error('the plane is not up: ' .. __osc_plane_height) end
+        __osc_tank:Kill()
+        if not __osc_tank:IsDead() then error('not dead after Kill') end
+        local rec = __osc_deaths.tank
+        if not rec.killed then error('OnKilled not called') end
+        -- A bare Kill reaches OnKilled as Moho passes it: a type and a ratio.
+        if rec.type ~= 'Normal' or rec.overkill ~= 0 then
+            error('OnKilled got ' .. tostring(rec.type) .. ', ' .. tostring(rec.overkill))
+        end
+        if table.getn(__osc_tank:GetCommandQueue()) ~= 0 then error('orders kept') end
+    )");
+    lua_check("Test 2: self-destruct kills through the script", R"(
+        IssueKillSelf({__osc_selfd})
+        if not __osc_deaths.selfd.killed then error('OnKilled not called') end
+        if not __osc_selfd:IsDead() then error('not dead') end
+    )");
+    (void)ctx.lua_state.do_string(R"(
+        __osc_marine:Kill()
+        __osc_plane:Kill()
+        __osc_bare_plane:Kill()
+        __osc_scout:SetFuelRatio(0.0005)
+    )");
+    const osc::u32 marine_id = global_id("__osc_marine_id");
+    std::vector<std::array<osc::f32, 16>> marine_pose;
+    for (int i = 0; i < 120; ++i) {
+        // The marine's pose just before its script destroys it.
+        if (const auto* m = ctx.sim.entity_registry().find(marine_id); m && m->is_unit())
+            marine_pose = static_cast<const osc::sim::Unit*>(m)->animated_bone_matrices();
+        ctx.sim.tick();
+    }
+
+    lua_check("Test 3: the death thread leaves a retail wreck and destroys the unit", R"(
+        local rec = __osc_deaths.tank
+        local w = rec.wreck
+        if not w then error('no wreck') end
+        if getmetatable(w) ~= import('/lua/wreckage.lua').Wreckage then error('not a Wreckage') end
+        local bp = __blueprints.uel0201 -- the tank is gone, and its GetBlueprint with it
+        local mass = bp.Economy.BuildCostMass * bp.Wreckage.MassMult
+        if math.abs(w.MaxMassReclaim - mass) > 1e-3 or math.abs(w.MassReclaim - mass) > 1e-3 then
+            error('reclaim ' .. tostring(w.MassReclaim) .. ' of ' .. tostring(w.MaxMassReclaim) ..
+                  ', expected ' .. mass)
+        end
+        if not __osc_tank:BeenDestroyed() then error('the tank was not destroyed') end
+        if not __osc_deaths.selfd.wreck or not __osc_selfd:BeenDestroyed() then
+            error('the self-destructed tank left no wreck')
+        end
+    )");
+    {
+        // The wreck draws the tank's wreck mesh.
+        lua_pushstring(L, "__osc_deaths");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto wreck_of = [&](const char* name) -> const osc::sim::Entity* {
+            if (!lua_istable(L, -1)) return nullptr;
+            lua_pushstring(L, name);
+            lua_rawget(L, -2);
+            const osc::sim::Entity* e = nullptr;
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "wreck");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "_c_object");
+                    lua_rawget(L, -2);
+                    e = static_cast<const osc::sim::Entity*>(lua_touserdata(L, -1));
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+            return e;
+        };
+        const auto* tank_wreck = wreck_of("tank");
+        const auto* marine_wreck = wreck_of("marine");
+        lua_pop(L, 1);
+        if (tank_wreck && tank_wreck->mesh_override() == "/units/uel0201/uel0201_mesh_wreck") {
+            pass++;
+            spdlog::info("[PASS] Test 4: the wreck draws the tank's wreck mesh");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: wreck mesh '{}'",
+                                   tank_wreck ? tank_wreck->mesh_override() : "(no wreck)");
+        }
+        // A death animation's last pose stays on the wreck (TryCopyPose).
+        const auto* pose = marine_wreck && marine_wreck->is_prop()
+                               ? &static_cast<const osc::sim::Prop*>(marine_wreck)->pose
+                               : nullptr;
+        if (pose && !pose->empty() && *pose == marine_pose) {
+            pass++;
+            spdlog::info("[PASS] Test 5: the marine's wreck keeps its death pose ({} bones)",
+                         pose->size());
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 5: wreck pose {} bones, unit's last {}",
+                                   pose ? pose->size() : 0, marine_pose.size());
+        }
+    }
+    lua_check("Test 6: an aircraft killed in flight falls, lands and dies", R"(
+        local rec = __osc_deaths.plane
+        if rec.impact ~= 'Terrain' then error('impact: ' .. tostring(rec.impact)) end
+        -- Falling from its height takes a moment.
+        if rec.landed - rec.killed < 5 then error('landed after ' .. (rec.landed - rec.killed) .. ' ticks') end
+        if not rec.wreck then error('no wreck on land') end
+        if not __osc_plane:BeenDestroyed() then error('not destroyed') end
+        -- With nothing to play its landing out, it still goes.
+        if not __osc_bare_plane:BeenDestroyed() then error('the plane without OnImpact lies dead') end
+    )");
+    lua_check("Test 7: running out of fuel slows an aircraft, and refuelling restores it", R"(
+        if __osc_fuel[1] ~= 'OnRunOutOfFuel' then error('events: ' .. table.concat(__osc_fuel, ',')) end
+        if __osc_scout:IsDead() then error('the scout died') end
+        __osc_scout:SetFuelRatio(1)
+    )");
+    ctx.sim.tick();
+    lua_check("Test 8: ...OnGotFuel", R"(
+        if __osc_fuel[2] ~= 'OnGotFuel' then error('events: ' .. table.concat(__osc_fuel, ',')) end
+    )");
+
+    if (osc::test_status::failure_count() - fail == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 9: no script errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 9: script errors while dying");
+    }
+    spdlog::info("Death test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {

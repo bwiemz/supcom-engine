@@ -758,6 +758,69 @@ static int entity_GetFractionComplete(lua_State* L) {
     return 1;
 }
 
+// A unit's death, counted once: the loss for its army (Moho's Units_Killed),
+// veterancy for those that damaged it, and the kill for the army that did
+// the most. Kill counts it when the unit dies; Destroy, for a unit removed
+// without being killed.
+static void record_unit_death(lua_State* L, sim::Unit* dying_unit) {
+    auto* sim_ptr = get_sim(L);
+
+    // A loss for its army (Moho's Units_Killed)
+    if (sim_ptr) {
+        auto* victim_brain = sim_ptr->get_army(dying_unit->army());
+        if (victim_brain) {
+            victim_brain->record_unit_lost(dying_unit->blueprint_id(),
+                                           dying_unit->build_cost_mass(),
+                                           dying_unit->build_cost_energy());
+        }
+    }
+
+    // Distribute veterancy XP to attackers
+    f32 xp_value = dying_unit->xp_value();
+    if (xp_value > 0 && !dying_unit->damage_contributions().empty()) {
+        f32 total_damage = 0;
+        for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
+            total_damage += dmg;
+        }
+        if (total_damage > 0 && sim_ptr) {
+            for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
+                auto* attacker = sim_ptr->entity_registry().find(aid);
+                if (attacker && !attacker->destroyed() && attacker->is_unit()) {
+                    f32 xp_share = xp_value * (dmg / total_damage);
+                    static_cast<sim::Unit*>(attacker)->add_xp(xp_share, L,
+                                                              sim_ptr->entity_registry());
+                }
+            }
+        }
+    }
+
+    // Credit kill to army that dealt the most damage
+    if (sim_ptr && !dying_unit->damage_contributions().empty()) {
+        i32 victim_army = dying_unit->army();
+        i32 killer_army = -1;
+        f32 max_dmg = 0;
+        for (const auto& [attacker_id, dmg] : dying_unit->damage_contributions()) {
+            if (dmg > max_dmg) {
+                auto* attacker = sim_ptr->entity_registry().find(attacker_id);
+                if (attacker && !attacker->destroyed()) {
+                    max_dmg = dmg;
+                    killer_army = attacker->army();
+                }
+            }
+        }
+        if (killer_army >= 0 && killer_army != victim_army) {
+            auto* killer_brain = sim_ptr->get_army(killer_army);
+            if (killer_brain) {
+                killer_brain->record_enemy_killed(
+                    dying_unit->blueprint_id(), dying_unit->build_cost_mass(),
+                    dying_unit->build_cost_energy(), dying_unit->has_category("COMMAND"));
+            }
+        }
+    }
+
+    dying_unit->clear_damage_contributions();
+}
+
 static int entity_Destroy(lua_State* L) {
     auto* e = check_entity(L);
     if (e && e->destroyed()) return 0; // re-entry from its own OnDestroy
@@ -832,69 +895,10 @@ static int entity_Destroy(lua_State* L) {
         // Guard against recursive destruction from OnNotAdjacentTo callbacks
         if (e->destroyed()) return 0;
 
-        // Veterancy + score tracking on first death (not during death animation)
-        if (e->is_unit()) {
-            auto* dying_unit = static_cast<sim::Unit*>(e);
-            if (!dying_unit->is_dying() && !dying_unit->is_crashing()) {
-                auto* sim_ptr = get_sim(L);
-
-                // A loss for its army (Moho's Units_Killed)
-                if (sim_ptr) {
-                    auto* victim_brain = sim_ptr->get_army(e->army());
-                    if (victim_brain) {
-                        victim_brain->record_unit_lost(dying_unit->blueprint_id(),
-                                                       dying_unit->build_cost_mass(),
-                                                       dying_unit->build_cost_energy());
-                    }
-                }
-
-                // Distribute veterancy XP to attackers
-                f32 xp_value = dying_unit->xp_value();
-                if (xp_value > 0 && !dying_unit->damage_contributions().empty()) {
-                    f32 total_damage = 0;
-                    for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
-                        total_damage += dmg;
-                    }
-                    if (total_damage > 0 && sim_ptr) {
-                        for (const auto& [aid, dmg] : dying_unit->damage_contributions()) {
-                            auto* attacker = sim_ptr->entity_registry().find(aid);
-                            if (attacker && !attacker->destroyed() && attacker->is_unit()) {
-                                f32 xp_share = xp_value * (dmg / total_damage);
-                                static_cast<sim::Unit*>(attacker)->add_xp(
-                                    xp_share, L, sim_ptr->entity_registry());
-                            }
-                        }
-                    }
-                }
-
-                // Credit kill to army that dealt the most damage
-                if (sim_ptr && !dying_unit->damage_contributions().empty()) {
-                    i32 victim_army = e->army();
-                    i32 killer_army = -1;
-                    f32 max_dmg = 0;
-                    for (const auto& [attacker_id, dmg] : dying_unit->damage_contributions()) {
-                        if (dmg > max_dmg) {
-                            auto* attacker = sim_ptr->entity_registry().find(attacker_id);
-                            if (attacker && !attacker->destroyed()) {
-                                max_dmg = dmg;
-                                killer_army = attacker->army();
-                            }
-                        }
-                    }
-                    if (killer_army >= 0 && killer_army != victim_army) {
-                        auto* killer_brain = sim_ptr->get_army(killer_army);
-                        if (killer_brain) {
-                            killer_brain->record_enemy_killed(
-                                dying_unit->blueprint_id(), dying_unit->build_cost_mass(),
-                                dying_unit->build_cost_energy(),
-                                dying_unit->has_category("COMMAND"));
-                        }
-                    }
-                }
-
-                dying_unit->clear_damage_contributions();
-            }
-        }
+        // A unit destroyed without being killed is lost all the same (a
+        // killed one was counted when it died).
+        if (e->is_unit() && !static_cast<sim::Unit*>(e)->is_dying())
+            record_unit_death(L, static_cast<sim::Unit*>(e));
 
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
@@ -909,47 +913,6 @@ static int entity_Destroy(lua_State* L) {
             auto* sim = get_sim(L);
             if (sim)
                 sim->add_death_event(pos.x, pos.y, pos.z, scale, e->army());
-        }
-
-        // Check if unit should enter dying state (death animation) instead of
-        // immediate destruction. Must be a fully-built unit that isn't already
-        // dying or wreckage, with a blueprint AnimationDeath path -- and whose
-        // death the script isn't already playing out (see entity_Kill).
-        if (e->is_unit() && !e->is_wreckage() && !e->script_owns_death() &&
-            e->fraction_complete() >= 1.0f) {
-            auto* dying_unit = static_cast<sim::Unit*>(e);
-            if (!dying_unit->is_dying()) {
-                auto* sim = get_sim(L);
-                auto* store = sim ? sim->blueprint_store() : nullptr;
-                auto* entry = store ? store->find(e->blueprint_id()) : nullptr;
-                bool has_death_anim = false;
-                if (entry) {
-                    store->push_lua_table(*entry, L);
-                    lua_pushstring(L, "Display");
-                    lua_rawget(L, -2);
-                    if (lua_istable(L, -1)) {
-                        lua_pushstring(L, "AnimationDeath");
-                        lua_rawget(L, -2);
-                        if (lua_type(L, -1) == LUA_TSTRING)
-                            has_death_anim = true;
-                        lua_pop(L, 1); // AnimationDeath
-                    }
-                    lua_pop(L, 2); // Display + bp table
-                }
-                if (has_death_anim) {
-                    dying_unit->begin_dying(2.0f);
-                    return 0;
-                }
-            }
-        }
-
-        // Air units always crash on death, even without AnimationDeath
-        if (e->is_unit() && !e->script_owns_death()) {
-            auto* air_unit = static_cast<sim::Unit*>(e);
-            if (air_unit->is_air_unit() && !air_unit->is_dying() && !air_unit->is_crashing()) {
-                air_unit->begin_air_crash(air_unit->crash_damage());
-                return 0;
-            }
         }
 
         // If dying unit was capturing, clear being_captured on its target
@@ -993,8 +956,10 @@ static int entity_Destroy(lua_State* L) {
 
 // entity:Kill([instigator, damageType, excessDamageRatio]). Moho hands the
 // death to the script's OnKilled, which plays the death sequence (death
-// weapon, animation, wreckage) and calls Destroy() when it ends. Without an
-// OnKilled the entity is destroyed at once. SetCanBeKilled(false) blocks it.
+// weapon, animation, wreckage) and calls Destroy() when it ends. A unit is
+// dead from here on (IsDead; no orders, weapons or economy; one in flight
+// falls) and its death is counted now. Without an OnKilled the entity is
+// destroyed at once. SetCanBeKilled(false) blocks it.
 static int entity_Kill(lua_State* L) {
     auto* e = check_entity(L);
     if (!e || e->destroyed() || e->script_owns_death()) return 0;
@@ -1008,6 +973,17 @@ static int entity_Kill(lua_State* L) {
         if (blocked) return 0;
     }
     lua_settop(L, 4); // self, instigator, damageType, excessDamageRatio
+    // Moho reads these into typed values before calling the script, so a
+    // bare Kill() reaches OnKilled as (nil, 'Normal', 0): a whole wreck,
+    // where a nil ratio would leave CreateWreckageProp a worthless one.
+    if (lua_type(L, 3) != LUA_TSTRING) {
+        lua_pushstring(L, "Normal");
+        lua_replace(L, 3);
+    }
+    if (!lua_isnumber(L, 4)) {
+        lua_pushnumber(L, 0);
+        lua_replace(L, 4);
+    }
     lua_pushstring(L, "OnKilled");
     lua_gettable(L, 1);
     if (!lua_isfunction(L, -1)) {
@@ -1015,6 +991,14 @@ static int entity_Kill(lua_State* L) {
         return entity_Destroy(L);
     }
     e->set_script_owns_death();
+    if (e->is_unit()) {
+        auto* u = static_cast<sim::Unit*>(e);
+        record_unit_death(L, u);
+        // Recording may run scripts (veterancy): re-validate.
+        e = check_entity(L);
+        if (!e || e->destroyed()) return 0;
+        static_cast<sim::Unit*>(e)->begin_dying();
+    }
     // Stack: self, instigator, type, ratio, OnKilled -> call OnKilled(self, ...)
     lua_insert(L, 1);
     lua_pushvalue(L, 2);
@@ -1023,7 +1007,10 @@ static int entity_Kill(lua_State* L) {
         // The death sequence broke before it could Destroy() the unit (e.g.
         // a failing death weapon); finish the job rather than leave it
         // half-dead forever.
-        spdlog::warn("OnKilled error: {}", lua_tostring(L, -1));
+        const char* err = lua_tostring(L, -1);
+        const std::string message = std::string("OnKilled error: ") + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
         lua_settop(L, 1);
         if (auto* still = check_entity(L); still && !still->destroyed())
             return entity_Destroy(L);

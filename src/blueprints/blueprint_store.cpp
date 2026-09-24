@@ -1,6 +1,7 @@
 #include "blueprints/blueprint_store.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <spdlog/spdlog.h>
 
@@ -110,7 +111,49 @@ void apply_unit_defaults(lua_State* L, int bp) {
         lua_pushnumber(L, std::max(1.0, std::floor(size + 0.5)));
         lua_rawset(L, footprint);
     }
-    lua_pop(L, 1); // Footprint
+
+    // A skirt the .bp leaves out is the footprint (at least 1, as FAF's
+    // loader reads a missing one), with no offset. Mobile units have none,
+    // and the AI's AIBuildAdjacency reads Physics.SkirtSizeX unguarded on
+    // whatever it builds beside, a commander included.
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Physics");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, bp);
+    }
+    const int physics = lua_gettop(L);
+    for (const auto& [skirt, offset, foot] :
+         {std::array<const char*, 3>{"SkirtSizeX", "SkirtOffsetX", "SizeX"},
+          std::array<const char*, 3>{"SkirtSizeZ", "SkirtOffsetZ", "SizeZ"}}) {
+        lua_pushstring(L, skirt);
+        lua_rawget(L, physics);
+        const bool sized = lua_isnumber(L, -1) != 0;
+        lua_pop(L, 1);
+        if (!sized) {
+            lua_pushstring(L, foot);
+            lua_rawget(L, footprint);
+            const double size = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 1.0;
+            lua_pop(L, 1);
+            lua_pushstring(L, skirt);
+            lua_pushnumber(L, std::max(1.0, size));
+            lua_rawset(L, physics);
+        }
+        lua_pushstring(L, offset);
+        lua_rawget(L, physics);
+        const bool placed = lua_isnumber(L, -1) != 0;
+        lua_pop(L, 1);
+        if (!placed) {
+            lua_pushstring(L, offset);
+            lua_pushnumber(L, 0);
+            lua_rawset(L, physics);
+        }
+    }
+    lua_pop(L, 2); // Physics, Footprint
 }
 
 /// Moho reads a prop's reclaim values as numbers, so an empty string (162

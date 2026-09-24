@@ -174,11 +174,10 @@ std::optional<BoneData> parse_scm_bones(const std::vector<char>& file_data) {
             bone.name = "bone_" + std::to_string(i);
         }
 
-        // Read 4x4 rest_pose_inverse matrix (64 bytes, row-major in file)
-        // Transpose to column-major for our convention
-        for (int row = 0; row < 4; row++)
-            for (int col = 0; col < 4; col++)
-                bone.inverse_bind_pose[col * 4 + row] = reader.read_f32();
+        // 4x4 rest_pose_inverse matrix (64 bytes). Direct3D's row-major
+        // layout for row vectors, with the translation last: in memory that
+        // is our column-major layout for column vectors, so it reads as is.
+        for (auto& v : bone.inverse_bind_pose) v = reader.read_f32();
 
         // Position relative to parent (3 floats)
         bone.local_position.x = reader.read_f32();

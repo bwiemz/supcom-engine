@@ -404,16 +404,14 @@ public:
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
 
-    // Air crash state (M159)
+    // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
     bool crash_impacted() const { return crash_impacted_; }
     f32 crash_velocity_y() const { return crash_velocity_y_; }
     f32 crash_spin_rate() const { return crash_spin_rate_; }
-    f32 crash_damage() const { return crash_damage_; }
-    void set_crash_damage(f32 d) { crash_damage_ = d; }
-
-    /// Start air crash sequence (overrides normal death for air units).
-    void begin_air_crash(f32 crash_dmg);
+    /// The landing a falling aircraft made, taken once (SimState then calls
+    /// its script's OnImpact).
+    bool take_crash_impact();
 
     // Misc flags
     u32 creator_id() const { return creator_id_; }
@@ -441,10 +439,13 @@ public:
     u32 focus_entity_id() const { return focus_entity_id_; }
     void set_focus_entity_id(u32 id) { focus_entity_id_ = id; }
 
-    // Death animation state
+    /// Dead: Moho's Kill hands the death to the unit's script, whose death
+    /// thread plays it out (animation, death weapon, wreck) and destroys the
+    /// unit. Until then the unit is dead (IsDead): no orders, weapons,
+    /// economy or targeting, only its manipulators run. One killed in flight
+    /// falls until it lands.
     bool is_dying() const { return dying_; }
-    f32 death_timer() const { return death_timer_; }
-    void begin_dying(f32 duration);
+    void begin_dying();
     void tick_dying(f32 dt, const map::Terrain* terrain);
 
     // Damage/kill flags
@@ -678,6 +679,7 @@ private:
     // Fuel system
     f32 fuel_ratio_ = -1.0f;     // -1 = no fuel system (sentinel)
     f32 fuel_use_time_ = 0.0f;   // seconds of flight time
+    bool out_of_fuel_ = false;   // OnRunOutOfFuel raised, OnGotFuel not yet
     // Air movement state
     f32 heading_ = 0;            // yaw in radians
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)
@@ -691,10 +693,9 @@ private:
     f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
     // Air crash state
     bool crashing_ = false;
-    bool crash_impacted_ = false; // set once on terrain impact, consumed by SimState
+    bool crash_impacted_ = false; // set on landing, taken by SimState
     f32 crash_velocity_y_ = 0;
     f32 crash_spin_rate_ = 0;
-    f32 crash_damage_ = 100.0f;  // from blueprint General.CrashDamage
     // Misc flags
     u32 creator_id_ = 0;
     bool auto_overcharge_ = false;
@@ -717,10 +718,7 @@ private:
     std::unordered_set<std::string> build_restrictions_;
     // Elevation override
     f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
-    // Death animation
-    bool dying_ = false;
-    f32 death_timer_ = 0.0f;
-    f32 death_duration_ = 0.0f;
+    bool dying_ = false;             ///< killed; see begin_dying
     // OnGiven callbacks (Lua registry refs)
     std::vector<int> on_given_callbacks_;
     // OnUnitBuilt callbacks (function + category filter)

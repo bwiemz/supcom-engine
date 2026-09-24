@@ -29,6 +29,7 @@ struct GPUMesh {
     std::string texture_path;   // VFS path to albedo DDS (empty = no texture)
     std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
     std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)
+    bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
 };
 
 /// A single LOD level: mesh data + camera distance cutoff.
@@ -65,6 +66,11 @@ public:
     /// Get the full LODSet for introspection. Returns nullptr if not loaded.
     const LODSet* get_lod_set(const std::string& blueprint_id) const;
 
+    /// A blueprint's Display.UniformScale (1 without one), cached. A mesh
+    /// set with SetMesh is a mesh blueprint, which has no scale: the
+    /// entity's own blueprint gives it.
+    f32 blueprint_scale(const std::string& blueprint_id, lua_State* L);
+
     void destroy(VkDevice device, VmaAllocator allocator);
 
 private:
@@ -73,9 +79,12 @@ private:
     std::string resolve_specteam_path(const std::string& bp_id, lua_State* L);
     std::string resolve_normal_path(const std::string& bp_id, lua_State* L);
     f32 resolve_uniform_scale(const std::string& bp_id, lua_State* L);
-    /// Get Display.MeshBlueprint ID from a unit blueprint.
+    /// The mesh blueprint a blueprint draws with: a unit's or prop's
+    /// Display.MeshBlueprint, or the id itself when it names a mesh
+    /// blueprint (SetMesh's wreck, build and enhancement meshes).
     std::string resolve_mesh_bp_id(const std::string& bp_id, lua_State* L);
-    /// Derive base path from mesh bp ID: "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001"
+    /// Derive base path from mesh bp ID: "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001".
+    /// The variants Blueprints.lua derives ("_mesh_wreck", "_mesh_build") share the files.
     static std::string derive_base_path(const std::string& mesh_bp_id);
 
     /// Load all LOD levels for a blueprint. Returns true if at least one LOD loaded.
@@ -106,6 +115,7 @@ private:
     GPUMesh upload_scm_mesh(const std::string& mesh_path);
 
     std::unordered_map<std::string, LODSet> lod_cache_;
+    std::unordered_map<std::string, f32> scale_cache_;
     std::unordered_set<std::string> failed_;
 
     VkDevice device_ = VK_NULL_HANDLE;

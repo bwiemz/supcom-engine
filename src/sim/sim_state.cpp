@@ -4,6 +4,7 @@
 #include "sim/bone_cache.hpp"
 #include "audio/sound_manager.hpp"
 #include "core/profiler.hpp"
+#include "core/test_status.hpp"
 #include "map/pathfinder.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
@@ -22,6 +23,7 @@ extern "C" {
 
 #include <algorithm>
 #include <ostream>
+#include <string>
 #include <cmath>
 #include <cctype>
 #include <cstring>
@@ -675,45 +677,75 @@ void SimState::tick() {
     update_economies();
     update_entities();
 
-    // Process air crash impacts
+    // Aircraft killed in flight that landed this tick: Moho tells their
+    // script, whose OnImpact deals the DeathImpact weapon's damage and plays
+    // the death out (or sinks it, in water). One without a script just goes.
     {
-        std::vector<u32> crash_impacts;
+        std::vector<u32> landed;
         entity_registry_.for_each_unit([&](Entity& e) {
-            if (e.destroyed() || !e.is_unit()) return;
-            auto* unit = static_cast<Unit*>(&e);
-            if (unit->crash_impacted()) {
-                crash_impacts.push_back(e.entity_id());
-            }
+            if (!e.destroyed() && static_cast<Unit&>(e).take_crash_impact())
+                landed.push_back(e.entity_id());
         });
-
-        for (u32 crash_id : crash_impacts) {
-            auto* ce = entity_registry_.find(crash_id);
-            if (!ce || ce->destroyed()) continue;
-            auto* crash_unit = static_cast<Unit*>(ce);
-
-            f32 crash_radius = crash_unit->footprint_size_x() * 1.5f;
-            if (crash_radius < 2.0f) crash_radius = 2.0f;
-            f32 dmg = crash_unit->crash_damage();
-            auto nearby = entity_registry_.collect_in_radius(
-                ce->position().x, ce->position().z, crash_radius);
-            for (u32 nid : nearby) {
-                if (nid == crash_id) continue;
-                auto* ne = entity_registry_.find(nid);
-                if (!ne || ne->destroyed()) continue;
-                f32 new_hp = ne->health() - dmg;
-                ne->set_health(new_hp);
-                if (new_hp <= 0 && ne->is_unit()) {
-                    static_cast<Unit*>(ne)->begin_dying(0.1f);
+        for (const u32 id : landed) {
+            Entity* e = entity_registry_.find(id);
+            if (!e || e->destroyed()) continue;
+            if (!L_ || e->lua_table_ref() < 0) {
+                e->mark_destroyed();
+                entity_registry_.unregister_entity(id);
+                continue;
+            }
+            const Vector3 p = e->position();
+            const bool water = terrain_ && terrain_->has_water() &&
+                               terrain_->get_terrain_height(p.x, p.z) < terrain_->water_elevation();
+            // On the ground it is a land unit now: its wreck follows the
+            // blueprint's WreckageLayers.Land.
+            if (!water) {
+                static_cast<Unit*>(e)->set_layer_with_callback("Land", L_);
+                e = entity_registry_.find(id);
+                if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
+            }
+            const int top = lua_gettop(L_);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+            lua_pushstring(L_, "OnImpact");
+            lua_gettable(L_, -2);
+            bool handled = false;
+            if (lua_isfunction(L_, -1)) {
+                lua_pushvalue(L_, top + 1);
+                lua_pushstring(L_, water ? "Water" : "Terrain");
+                lua_pushnil(L_);
+                if (lua_pcall(L_, 3, 0, 0) == 0) {
+                    handled = true;
+                } else {
+                    const char* err = lua_tostring(L_, -1);
+                    const std::string message =
+                        std::string("OnImpact error: ") + (err ? err : "(unknown)");
+                    spdlog::warn("{}", message);
+                    if (test_status::count_lua_failures()) test_status::record_failure(message);
                 }
             }
-
-            add_death_event(ce->position().x, ce->position().y,
-                            ce->position().z, crash_radius, ce->army());
-            // Remove the wreck of the aircraft: it used to stay registered
-            // (marked destroyed) forever, iterated every tick, with its Lua
-            // table still pointing at it. The unregister hook severs that.
-            ce->mark_destroyed();
-            entity_registry_.unregister_entity(crash_id);
+            lua_settop(L_, top);
+            // Nothing will play this death out (no OnImpact, or it broke):
+            // finish it, as Kill does when OnKilled fails, rather than leave
+            // a dead unit lying there forever.
+            e = entity_registry_.find(id);
+            if (!handled && e && !e->destroyed()) {
+                if (e->lua_table_ref() >= 0) {
+                    lua_rawgeti(L_, LUA_REGISTRYINDEX, e->lua_table_ref());
+                    lua_pushstring(L_, "Destroy");
+                    lua_gettable(L_, -2);
+                    if (lua_isfunction(L_, -1)) {
+                        lua_pushvalue(L_, top + 1);
+                        if (lua_pcall(L_, 1, 0, 0) != 0)
+                            spdlog::warn("Destroy error: {}", lua_tostring(L_, -1));
+                    }
+                    lua_settop(L_, top);
+                }
+                e = entity_registry_.find(id);
+                if (e && !e->destroyed()) {
+                    e->mark_destroyed();
+                    entity_registry_.unregister_entity(id);
+                }
+            }
         }
     }
 
@@ -1226,7 +1258,6 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
 namespace {
 constexpr u32 kVictoryGraceTicks = 50; // ~5s: let armies spawn before eliminating
-constexpr f32 kDefeatDeathDuration = 2.0f; // death animation for destroyed units
 } // namespace
 
 i32 SimState::find_share_recipient(i32 defeated_army) const {
@@ -1280,11 +1311,35 @@ void SimState::defeat_army(i32 army) {
     spdlog::info("Army {} ({}) defeated (player drop)", army, b->name());
 }
 
+void SimState::kill_unit(Unit& unit) {
+    if (unit.destroyed() || unit.is_dying()) return;
+    const u32 id = unit.entity_id();
+    if (L_ && unit.lua_table_ref() >= 0) {
+        const int top = lua_gettop(L_);
+        lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
+        lua_pushstring(L_, "Kill");
+        lua_gettable(L_, -2);
+        if (lua_isfunction(L_, -1)) {
+            lua_pushvalue(L_, top + 1);
+            if (lua_pcall(L_, 1, 0, 0) != 0) {
+                const char* err = lua_tostring(L_, -1);
+                spdlog::warn("Kill error: {}", err ? err : "(unknown)");
+            }
+            lua_settop(L_, top);
+            return;
+        }
+        lua_settop(L_, top);
+    }
+    unit.mark_destroyed();
+    entity_registry_.unregister_entity(id);
+}
+
 void SimState::dispose_defeated_army(i32 army) {
     const i32 recipient = find_share_recipient(army);
     // PartialShare transfers only structures + engineers; the rest are destroyed.
     const bool partial = share_mode_ == ShareMode::PartialShare;
     bool transferred_any = false;
+    std::vector<u32> to_kill;
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.army() != army || e.destroyed() || !e.is_unit()) return;
         auto* u = static_cast<Unit*>(&e);
@@ -1304,9 +1359,14 @@ void SimState::dispose_defeated_army(i32 army) {
             }
             transferred_any = true;
         } else if (!u->is_dying()) {
-            u->begin_dying(kDefeatDeathDuration);
+            to_kill.push_back(u->entity_id());
         }
     });
+    // Killed after the walk: a death runs scripts, which may kill others.
+    for (const u32 id : to_kill) {
+        Entity* e = entity_registry_.find(id);
+        if (e && !e->destroyed() && e->is_unit()) kill_unit(static_cast<Unit&>(*e));
+    }
     if (transferred_any) {
         armies_[recipient]->note_has_units();
         spdlog::info("Army {} units transferred to army {} on defeat", army,

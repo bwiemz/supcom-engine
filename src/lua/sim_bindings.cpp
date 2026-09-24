@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -789,21 +790,6 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
             lua_pop(L, 2); // General (or nil) + bp table
             unit->snapshot_command_caps(); // what RestoreCommandCaps returns to
-        }
-
-        // Read General.CrashDamage for air units
-        if (unit->is_air_unit()) {
-            store->push_lua_table(*entry, L);
-            lua_pushstring(L, "General");
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "CrashDamage");
-                lua_rawget(L, -2);
-                if (lua_isnumber(L, -1))
-                    unit->set_crash_damage(static_cast<f32>(lua_tonumber(L, -1)));
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 2); // General table (or nil) + bp table
         }
 
         // Read Physics.FuelUseTime for air units
@@ -2107,7 +2093,54 @@ static int l_SetIgnoreArmyCap(lua_State* /*L*/) { return 0; }
 
 /// TryCopyPose(unit, prop, bool): copy the dying unit's animation pose onto
 /// its wreckage mesh. stub: cosmetic (wrecks render in the bind pose).
-static int l_TryCopyPose(lua_State* /*L*/) { return 0; }
+/// TryCopyPose(unit, prop, copyWorldTransform): the prop takes the unit's
+/// current pose, so a wreck keeps the pose its unit died in. Moho copies it
+/// only when both draw the same skeleton -- here, when the prop's mesh is
+/// the unit's or a variant of it (its wreck) -- and otherwise does nothing.
+static int l_TryCopyPose(lua_State* L) {
+    auto* from = extract_entity(L, 1);
+    auto* to = extract_entity(L, 2);
+    auto* sim = get_sim(L);
+    if (!from || !to || !sim || from->destroyed() || to->destroyed() || !from->is_unit() ||
+        !to->is_prop())
+        return 0;
+    const auto& unit = static_cast<const sim::Unit&>(*from);
+    auto& prop = static_cast<sim::Prop&>(*to);
+    // "/units/x/x_mesh_wreck" -> "/units/x/x_mesh", lowercased.
+    const auto base_mesh = [](std::string id) {
+        std::transform(id.begin(), id.end(), id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        for (const std::string_view variant : {"_wreck", "_build"})
+            if (id.size() > variant.size() && id.ends_with(variant))
+                id.resize(id.size() - variant.size());
+        return id;
+    };
+    std::string unit_mesh = unit.mesh_override();
+    if (unit_mesh.empty()) {
+        auto* store = sim->blueprint_store();
+        const auto* entry = store ? store->find(unit.blueprint_id()) : nullptr;
+        if (!entry) return 0;
+        const int top = lua_gettop(L);
+        store->push_lua_table(*entry, L);
+        lua_pushstring(L, "Display");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "MeshBlueprint");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TSTRING) unit_mesh = lua_tostring(L, -1);
+        }
+        lua_settop(L, top);
+    }
+    if (unit_mesh.empty() || prop.mesh_override().empty() ||
+        base_mesh(prop.mesh_override()) != base_mesh(unit_mesh))
+        return 0;
+    prop.pose = unit.animated_bone_matrices();
+    if (lua_toboolean(L, 3)) {
+        prop.set_position(unit.position());
+        prop.set_orientation(unit.orientation());
+    }
+    return 0;
+}
 
 /// NotifyUpgrade(from, to): tells the user layer that `from` is becoming
 /// `to` so selection and avatars follow the upgrade. stub: cosmetic until
@@ -4772,13 +4805,23 @@ static int l_CreateVisibleAreaAtPoint(lua_State* L) {
     return 0;
 }
 
-// IssueKillSelf(units_table) — ctrl+K self-destruct
+// IssueKillSelf(units_table) — ctrl+K self-destruct: each unit is killed, so
+// its script plays the death out (death weapon, wreck) as for any other.
 static int l_IssueKillSelf(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        if (u && !u->is_dying() && !u->destroyed()) {
-            u->begin_dying(0.1f); // near-instant death
-        }
-    }, nullptr);
+    std::vector<u32> ids;
+    for_each_unit_in_table(
+        L, 1,
+        [](sim::Unit* u, void* out) {
+            if (u && !u->is_dying() && !u->destroyed())
+                static_cast<std::vector<u32>*>(out)->push_back(u->entity_id());
+        },
+        &ids);
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    for (const u32 id : ids) {
+        auto* e = sim->entity_registry().find(id);
+        if (e && !e->destroyed() && e->is_unit()) sim->kill_unit(static_cast<sim::Unit&>(*e));
+    }
     return 0;
 }
 

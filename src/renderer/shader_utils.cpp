@@ -663,15 +663,21 @@ void main() {
     vec4 texColor = texture(texAlbedo, fragUV);
     vec4 specTeam = texture(texSpecTeam, fragUV);
 
-    // Team color mask from SpecTeam alpha channel
+    // Team color mask from SpecTeam alpha channel. A wreck (red < 0) has
+    // none: its albedo is burnt dark and grey instead, and barely shines.
+    bool wreck = fragColor.r < 0.0;
     float teamMask = specTeam.a;
-    vec3 blended = mix(texColor.rgb, fragColor.rgb, teamMask);
+    vec3 blended = wreck ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, teamMask);
+    if (wreck) {
+        float lum = dot(blended, vec3(0.299, 0.587, 0.114));
+        blended = mix(vec3(lum), blended, 0.3) * 0.45;
+    }
 
     // Specular lighting (Blinn-Phong)
     vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
     vec3 halfDir = normalize(lightDir + viewDir);
     float NdotH = max(dot(worldNormal, halfDir), 0.0);
-    float specIntensity = specTeam.r;
+    float specIntensity = wreck ? specTeam.r * 0.25 : specTeam.r;
     float spec = pow(NdotH, 32.0) * specIntensity * shadow;
 
     vec3 lit = blended * lighting + vec3(spec);

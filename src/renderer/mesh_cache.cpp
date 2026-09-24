@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <string_view>
 
 extern "C" {
 #include "lua.h"
@@ -129,6 +130,20 @@ GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path) {
     return result;
 }
 
+namespace {
+/// The shaders Blueprints.lua gives a unit's wreck mesh (ExtractWreckageBlueprint).
+bool is_wreckage_shader(const std::string& shader) {
+    return shader == "Wreckage" || shader == "BlackenedNormalMappedAlpha";
+}
+} // namespace
+
+f32 MeshCache::blueprint_scale(const std::string& blueprint_id, lua_State* L) {
+    if (auto it = scale_cache_.find(blueprint_id); it != scale_cache_.end()) return it->second;
+    const f32 scale = resolve_uniform_scale(blueprint_id, L);
+    scale_cache_.emplace(blueprint_id, scale);
+    return scale;
+}
+
 bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
     std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) {
@@ -156,6 +171,8 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.specteam_path = resolve_specteam_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.normal_path = resolve_normal_path_for_lod(mesh_bp_id, lod_index, L);
+        gpu.wreckage =
+            is_wreckage_shader(read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L));
 
         f32 cutoff = read_lod_cutoff(mesh_bp_id, lod_index, L);
 
@@ -190,6 +207,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path(bp_id, L);
         gpu.specteam_path = resolve_specteam_path(bp_id, L);
         gpu.normal_path = resolve_normal_path(bp_id, L);
+        gpu.wreckage = is_wreckage_shader(read_lod_string_field(mesh_bp_id, 1, "ShaderName", L));
 
         LODEntry entry;
         entry.mesh = std::move(gpu);
@@ -390,30 +408,8 @@ std::string MeshCache::resolve_normal_path_for_lod(const std::string& mesh_bp_id
 std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
                                           lua_State* L) {
     // Same strategy as BoneCache::resolve_mesh_path
-    if (!store_ || !L) return {};
-
-    auto* entry = store_->find(bp_id);
-    if (!entry) return {};
-
-    store_->push_lua_table(*entry, L);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
-    int bp_table = lua_gettop(L);
-
-    lua_pushstring(L, "Display");
-    lua_rawget(L, bp_table);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); return {}; }
-    int display_table = lua_gettop(L);
-
-    lua_pushstring(L, "MeshBlueprint");
-    lua_rawget(L, display_table);
-    if (!lua_isstring(L, -1)) { lua_pop(L, 3); return {}; }
-    std::string mesh_bp_id = lua_tostring(L, -1);
-    lua_pop(L, 3);
-
+    std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) return {};
-
-    // __blueprints keys are lowercased — normalize before lookup
-    to_lower(mesh_bp_id);
 
     lua_pushstring(L, "__blueprints");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -460,15 +456,9 @@ std::string MeshCache::resolve_mesh_path(const std::string& bp_id,
     lua_pushstring(L, "BlueprintId");
     lua_rawget(L, mesh_bp);
     std::string result;
-    if (lua_isstring(L, -1)) {
-        std::string bp_path = lua_tostring(L, -1);
-        const std::string suffix = "_mesh";
-        if (bp_path.size() > suffix.size() &&
-            bp_path.compare(bp_path.size() - suffix.size(), suffix.size(),
-                            suffix) == 0) {
-            result = bp_path.substr(0, bp_path.size() - suffix.size()) +
-                     "_lod0.scm";
-        }
+    if (lua_type(L, -1) == LUA_TSTRING) {
+        const std::string base = derive_base_path(lua_tostring(L, -1));
+        if (!base.empty()) result = base + "_lod0.scm";
     }
     lua_pop(L, 3);
     return result;
@@ -479,6 +469,7 @@ std::string MeshCache::resolve_mesh_bp_id(const std::string& bp_id,
     if (!store_ || !L) return {};
     auto* entry = store_->find(bp_id);
     if (!entry) return {};
+    if (entry->type == blueprints::BlueprintType::Mesh) return entry->id;
     store_->push_lua_table(*entry, L);
     if (!lua_istable(L, -1)) { lua_pop(L, 1); return {}; }
     int bp_table = lua_gettop(L);
@@ -499,12 +490,15 @@ std::string MeshCache::resolve_mesh_bp_id(const std::string& bp_id,
 
 std::string MeshCache::derive_base_path(const std::string& mesh_bp_id) {
     // "/units/uel0001/uel0001_mesh" -> "/units/uel0001/uel0001"
-    const std::string suffix = "_mesh";
-    if (mesh_bp_id.size() > suffix.size() &&
-        mesh_bp_id.compare(mesh_bp_id.size() - suffix.size(),
-                           suffix.size(), suffix) == 0) {
-        return mesh_bp_id.substr(0, mesh_bp_id.size() - suffix.size());
-    }
+    const auto ends_with = [](std::string_view s, std::string_view suffix) {
+        return s.size() > suffix.size() &&
+               s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    std::string_view id = mesh_bp_id;
+    for (const std::string_view variant : {"_wreck", "_build"})
+        if (ends_with(id, variant)) id.remove_suffix(variant.size());
+    const std::string_view suffix = "_mesh";
+    if (ends_with(id, suffix)) return std::string(id.substr(0, id.size() - suffix.size()));
     return {};
 }
 
@@ -726,6 +720,7 @@ void MeshCache::destroy(VkDevice device, VmaAllocator allocator) {
     }
     lod_cache_.clear();
     failed_.clear();
+    scale_cache_.clear();
 }
 
 } // namespace osc::renderer
