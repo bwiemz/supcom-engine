@@ -107,5 +107,5 @@ TEST_CASE("A synthetic game reaches the same checksum on every platform",
     // changes, a rule or the sim's arithmetic changed: update it on purpose,
     // from a run on any one platform.
     INFO("checksum " << std::hex << first.checksum);
-    CHECK(first.checksum == 0x069feec7u);
+    CHECK(first.checksum == 0x516d560du);
 }

@@ -1998,6 +1998,8 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             mix_str(orders, cmd.blueprint_id);
             orders.mix((cmd.launched ? 1u : 0u) | (cmd.started ? 2u : 0u) |
                        (cmd.approached ? 4u : 0u) | (cmd.in_band ? 8u : 0u));
+            orders.mix(cmd.beacon_id);
+            orders.mix(cmd.assigned_id);
         }
 
         navigation.mix(e.entity_id());
