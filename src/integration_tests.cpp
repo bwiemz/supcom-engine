@@ -17,6 +17,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
+#include "sim/pose.hpp"
 #include "sim/projectile.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
@@ -3554,6 +3555,39 @@ void test_bone(TestContext& ctx) {
         )");
         if (r) { spdlog::info("[PASS] Test 8: All bones enumerated"); pass++; }
         else { osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); fail++; }
+    }
+
+    // Test 9: a skeleton at rest skins to the identity. The bind pose,
+    // times the inverse bind SCM stores for each bone, must give nothing
+    // back: every commander's bones, as the files hold them.
+    {
+        int checked = 0;
+        std::string worst;
+        for (size_t a = 0; a < ctx.sim.army_count(); ++a) {
+            const auto* acu =
+                ctx.sim.entity_registry().find(army_acu_id(ctx.sim, static_cast<osc::i32>(a)));
+            if (!acu || !acu->bone_data()) continue;
+            for (const auto& bone : acu->bone_data()->bones) {
+                std::array<osc::f32, 16> posed{};
+                std::array<osc::f32, 16> skin{};
+                osc::sim::pose_to_mat4(posed.data(), {bone.world_position, bone.world_rotation});
+                osc::sim::mat4_multiply(skin.data(), posed.data(), bone.inverse_bind_pose.data());
+                for (int i = 0; i < 16; ++i) {
+                    const osc::f32 want = i % 5 == 0 ? 1.0f : 0.0f;
+                    if (std::abs(skin[static_cast<size_t>(i)] - want) > 2e-3f && worst.empty())
+                        worst = fmt::format("{} bone {} element {} is {}", acu->blueprint_id(),
+                                            bone.name, i, skin[static_cast<size_t>(i)]);
+                }
+                ++checked;
+            }
+        }
+        if (checked > 0 && worst.empty()) {
+            spdlog::info("[PASS] Test 9: {} commander bones skin to the identity at rest", checked);
+            pass++;
+        } else {
+            osc::test_status::fail("[FAIL] Test 9: {}", worst.empty() ? "no bones" : worst);
+            fail++;
+        }
     }
 
     spdlog::info("Bone test: {}/{} passed", pass, pass + fail);

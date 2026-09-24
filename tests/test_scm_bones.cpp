@@ -1,7 +1,10 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "sim/pose.hpp"
 #include "sim/scm_parser.hpp"
+
+#include <array>
 
 #include <cstring>
 #include <string>
@@ -26,6 +29,9 @@ struct TestBone {
     float px, py, pz;
     float qw, qx, qy, qz; // as SCM stores it: w first
     int parent;
+    /// The bind pose's inverse as SCM stores it: Direct3D's row-major
+    /// matrix for row vectors, the translation in floats 12-14.
+    std::array<float, 16> inverse_bind = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
 };
 
 /// An SCM v5 file holding just a skeleton: header, NAME block, SKEL block.
@@ -48,8 +54,7 @@ std::vector<char> scm_with(const std::vector<TestBone>& bones) {
     w.raw("SKEL", 4);
     for (size_t i = 0; i < bones.size(); ++i) {
         const auto& b = bones[i];
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c) w.f32(r == c ? 1.0f : 0.0f); // inverse bind
+        for (const float v : b.inverse_bind) w.f32(v);
         w.f32(b.px);
         w.f32(b.py);
         w.f32(b.pz);
@@ -94,4 +99,32 @@ TEST_CASE("SCM bones: rotation is stored w first, then the name offset, then the
     CHECK(bones[2].world_position.x == Catch::Approx(1.0f).margin(1e-5));
     CHECK(bones[2].world_position.y == Catch::Approx(0.0f).margin(1e-5));
     CHECK(bones[2].world_position.z == Catch::Approx(2.0f).margin(1e-5));
+}
+
+TEST_CASE("SCM bones: the inverse bind reads as stored and undoes the bind pose", "[scm]") {
+    // A root raised 3 units, and a child 2 ahead of it turned 90 degrees
+    // about Y (+Z to +X): in world space at (0, 3, 2). Each bone's inverse
+    // bind, as the file stores it, maps it back to the origin.
+    const float h = 0.70710678f;
+    const auto data = scm_with({
+        {"root", 0, 3, 0, 1, 0, 0, 0, -1, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -3, 0, 1}},
+        {"child", 0, 0, 2, h, 0, h, 0, 0, {0, 0, 1, 0, 0, 1, 0, 0, -1, 0, 0, 0, 2, -3, 0, 1}},
+    });
+    const auto parsed = osc::sim::parse_scm_bones(data);
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->bones.size() == 2);
+    // Its translation stays in the last column (a transposed read put it in
+    // the bottom row: every posed vertex then got a w of its own).
+    CHECK(parsed->bones[0].inverse_bind_pose[13] == Catch::Approx(-3.0f));
+    CHECK(parsed->bones[0].inverse_bind_pose[7] == Catch::Approx(0.0f));
+    for (const auto& bone : parsed->bones) {
+        // In the bind pose every bone's skinning matrix is the identity.
+        std::array<float, 16> posed{};
+        std::array<float, 16> skin{};
+        osc::sim::pose_to_mat4(posed.data(), {bone.world_position, bone.world_rotation});
+        osc::sim::mat4_multiply(skin.data(), posed.data(), bone.inverse_bind_pose.data());
+        for (int i = 0; i < 16; ++i)
+            CHECK(skin[static_cast<size_t>(i)] ==
+                  Catch::Approx(i % 5 == 0 ? 1.0f : 0.0f).margin(1e-5));
+    }
 }
