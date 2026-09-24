@@ -11,6 +11,18 @@
 
 namespace osc::sim {
 
+/// Wire framing for the TCP transport: each message is a little-endian u32
+/// length, then that many bytes. Lockstep frames and drop reports are far
+/// smaller than this; a peer that announces more is malformed or hostile (it
+/// would have us buffer gigabytes waiting for the rest), and its connection
+/// is dropped.
+inline constexpr u32 kMaxWireMessage = 4u << 20;
+
+/// Move every whole message at the front of `buf` into `out`, leaving a
+/// partial one. False when the next message announces more than
+/// kMaxWireMessage (the caller drops the connection).
+bool extract_wire_frames(std::vector<u8>& buf, std::vector<std::vector<u8>>& out);
+
 /// Abstract message transport for lockstep multiplayer. Messages are opaque
 /// byte buffers broadcast to all other peers. A real implementation wraps
 /// UDP/TCP/ICE; the loopback implementation below drives in-process peers for

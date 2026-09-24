@@ -1,6 +1,9 @@
 #include "sim/net_transport.hpp"
 
 #include <cstring>
+#include <utility>
+
+#include <spdlog/spdlog.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -85,6 +88,26 @@ void frame_message(std::vector<u8>& out, const std::vector<u8>& msg) {
 
 } // namespace
 
+bool extract_wire_frames(std::vector<u8>& buf, std::vector<std::vector<u8>>& out) {
+    size_t off = 0;
+    bool ok = true;
+    while (buf.size() - off >= 4) {
+        const u32 len = static_cast<u32>(buf[off]) | (static_cast<u32>(buf[off + 1]) << 8) |
+                        (static_cast<u32>(buf[off + 2]) << 16) |
+                        (static_cast<u32>(buf[off + 3]) << 24);
+        if (len > kMaxWireMessage) {
+            ok = false;
+            break;
+        }
+        if (buf.size() - off - 4 < len) break; // incomplete
+        out.emplace_back(buf.begin() + static_cast<long>(off + 4),
+                         buf.begin() + static_cast<long>(off + 4 + len));
+        off += 4 + len;
+    }
+    if (off > 0) buf.erase(buf.begin(), buf.begin() + static_cast<long>(off));
+    return ok;
+}
+
 struct TcpTransport::Impl {
     bool is_host = false;
     socket_t listen_fd = kInvalidSocket;
@@ -93,30 +116,14 @@ struct TcpTransport::Impl {
 
     struct Conn {
         socket_t fd = kInvalidSocket;
-        std::vector<u8> rbuf; // accumulates until whole frames are available
+        std::vector<u8> rbuf;                // at most one partial message
+        std::vector<std::vector<u8>> frames; // whole messages, not yet handed out
     };
     std::vector<Conn> conns;
 
     ~Impl() {
         for (auto& c : conns) close_socket(c.fd);
         close_socket(listen_fd);
-    }
-
-    // Pull all complete frames out of a connection buffer.
-    static void extract_frames(std::vector<u8>& buf,
-                               std::vector<std::vector<u8>>& out) {
-        size_t off = 0;
-        while (buf.size() - off >= 4) {
-            u32 len = static_cast<u32>(buf[off]) |
-                      (static_cast<u32>(buf[off + 1]) << 8) |
-                      (static_cast<u32>(buf[off + 2]) << 16) |
-                      (static_cast<u32>(buf[off + 3]) << 24);
-            if (buf.size() - off - 4 < len) break; // frame incomplete
-            out.emplace_back(buf.begin() + static_cast<long>(off + 4),
-                             buf.begin() + static_cast<long>(off + 4 + len));
-            off += 4 + len;
-        }
-        if (off > 0) buf.erase(buf.begin(), buf.begin() + static_cast<long>(off));
     }
 };
 
@@ -165,7 +172,7 @@ std::unique_ptr<TcpTransport> TcpTransport::join(const std::string& address,
         return std::unique_ptr<TcpTransport>(new TcpTransport(std::move(impl)));
     }
     configure_stream(s);
-    impl->conns.push_back({s, {}});
+    impl->conns.push_back({s, {}, {}});
     impl->bound_port = port;
     impl->ok = true;
     return std::unique_ptr<TcpTransport>(new TcpTransport(std::move(impl)));
@@ -185,12 +192,18 @@ int TcpTransport::poll_connections() {
         socket_t c = accept(impl_->listen_fd, nullptr, nullptr);
         if (c == kInvalidSocket) break;
         configure_stream(c);
-        impl_->conns.push_back({c, {}});
+        impl_->conns.push_back({c, {}, {}});
     }
     return peer_count();
 }
 
 void TcpTransport::broadcast(const std::vector<u8>& msg) {
+    // The other end would drop us for it (see extract_wire_frames).
+    if (msg.size() > kMaxWireMessage) {
+        spdlog::error("[net] not sending a {}-byte message: over the {}-byte limit", msg.size(),
+                      kMaxWireMessage);
+        return;
+    }
     std::vector<u8> framed;
     frame_message(framed, msg);
     for (auto& c : impl_->conns) {
@@ -233,6 +246,15 @@ std::vector<std::vector<u8>> TcpTransport::receive() {
             if (n > 0) {
                 c.rbuf.insert(c.rbuf.end(), tmp, tmp + n);
                 progressed = true;
+                // Take whole messages out as they arrive, so a connection holds
+                // at most one partial one; an oversized one drops it.
+                if (!extract_wire_frames(c.rbuf, c.frames)) {
+                    spdlog::warn("[net] a peer announced a message over {} bytes; dropping it",
+                                 kMaxWireMessage);
+                    close_socket(c.fd);
+                    c.fd = kInvalidSocket;
+                    c.rbuf.clear();
+                }
             } else {
                 // Peer closed or errored — drop the connection.
                 close_socket(c.fd);
@@ -242,10 +264,10 @@ std::vector<std::vector<u8>> TcpTransport::receive() {
         if (!progressed) break;
     }
 
-    // Extract complete frames; the host relays each to the other peers.
+    // Hand out the whole messages; the host relays each to the other peers.
     for (size_t i = 0; i < impl_->conns.size(); ++i) {
         std::vector<std::vector<u8>> frames;
-        Impl::extract_frames(impl_->conns[i].rbuf, frames);
+        std::swap(frames, impl_->conns[i].frames);
         for (auto& f : frames) {
             if (impl_->is_host) {
                 std::vector<u8> framed;

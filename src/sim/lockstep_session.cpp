@@ -154,19 +154,34 @@ void LockstepSession::begin_drop(u32 source) {
     auto kept = recent_frames_.find(source);
     if (kept != recent_frames_.end()) vote.frames = kept->second;
 
-    // Report it: the last frame this peer holds, and the frames it has kept.
+    // Report it: the last frame this peer holds, and the frames it has kept,
+    // as many of the newest as fit one wire message (the newest are the ones
+    // another survivor may have missed; a message over the limit would get
+    // this peer dropped as hostile).
+    std::vector<std::vector<u8>> encoded;
+    size_t room = kMaxWireMessage - 64; // the report's header
+    for (auto it = vote.frames.rbegin(); it != vote.frames.rend(); ++it) {
+        std::vector<u8> one;
+        ByteWriter fw(one);
+        fw.u32v(it->first);
+        fw.u32v(static_cast<u32>(it->second.size()));
+        for (const auto& c : it->second) write_command(fw, c);
+        if (one.size() > room) break;
+        room -= one.size();
+        encoded.push_back(std::move(one));
+    }
+    if (encoded.size() < vote.frames.size())
+        spdlog::warn("[lockstep] drop report for source {} relays its newest {} of {} frames",
+                     source, encoded.size(), vote.frames.size());
     std::vector<u8> msg;
     ByteWriter w(msg);
     w.u8v(kDropMessage);
     w.u32v(local_source_);
     w.u32v(source);
     w.u32v(last);
-    w.u32v(static_cast<u32>(vote.frames.size()));
-    for (const auto& [frame, commands] : vote.frames) {
-        w.u32v(frame);
-        w.u32v(static_cast<u32>(commands.size()));
-        for (const auto& c : commands) write_command(w, c);
-    }
+    w.u32v(static_cast<u32>(encoded.size()));
+    for (auto it = encoded.rbegin(); it != encoded.rend(); ++it)
+        msg.insert(msg.end(), it->begin(), it->end());
     transport_.broadcast(msg);
     spdlog::warn("[lockstep] dropping peer source {}: reported its frame {} to the survivors",
                  source, last);
