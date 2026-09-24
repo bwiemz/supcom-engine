@@ -9,8 +9,10 @@
 
 namespace osc::sim {
 
-/// A temporary resource drain that completes after a set duration.
-/// Used by teleport, weapon energy requirements, overcharge, remote viewing.
+/// A resource drain that completes once it has drawn its whole cost (M206d).
+/// It asks its unit's army for its cost spread over its duration, and moves
+/// on as the economy grants it: a stall slows it. Used by teleports and by
+/// weapons with EnergyRequired (OverCharge).
 /// Pattern: CreateEconomyEvent → WaitFor → RemoveEconomyEvent
 class EconomyEvent : public Waitable {
 public:
@@ -30,27 +32,33 @@ public:
     f64 duration() const { return duration_; }
     f64 elapsed() const { return elapsed_; }
 
-    /// Advance the event by dt seconds. Returns true when completed.
-    bool tick(f64 dt) {
-        if (done_ || cancelled_) return done_;
+    bool active() const { return !done_ && !cancelled_; }
+    /// How far it is: 0 to 1.
+    f64 progress() const { return progress_; }
+    /// What it asks for per second: its cost over its duration (a tick at
+    /// least).
+    f64 mass_per_second() const { return total_mass_ / span(); }
+    f64 energy_per_second() const { return total_energy_ / span(); }
+    /// Move it on by `dt` seconds at the economy's `efficiency` (1: all it
+    /// asked was granted). Done when its whole cost has been drawn.
+    void advance(f64 dt, f64 efficiency) {
+        if (!active()) return;
         elapsed_ += dt;
-        if (duration_ <= 0.0 || elapsed_ >= duration_) {
+        progress_ = std::min(1.0, progress_ + dt / span() * efficiency);
+        if (progress_ >= 1.0 - 1e-9) { // ten 0.1 s steps sum just short of 1
+            progress_ = 1.0;
             done_ = true;
         }
-        return done_;
     }
-
-    /// Per-tick resource drain amounts (proportional to dt/duration).
-    f64 mass_drain_per_tick(f64 dt) const {
-        if (duration_ <= 0.0) return total_mass_;
-        return total_mass_ * (dt / duration_);
-    }
-    f64 energy_drain_per_tick(f64 dt) const {
-        if (duration_ <= 0.0) return total_energy_;
-        return total_energy_ * (dt / duration_);
-    }
+    /// Its request was counted in this tick's economy: it may move on.
+    bool counted() const { return counted_; }
+    void set_counted(bool v) { counted_ = v; }
 
     void cancel() { cancelled_ = true; }
+
+    /// The script's progress callback, callback(unit, progress), or LUA_NOREF.
+    int callback_ref() const { return callback_ref_; }
+    void set_callback_ref(int ref) { callback_ref_ = ref; }
 
     /// Registry ref to the script's handle table (LUA_NOREF if none): the
     /// handle's _c_object is nulled before the registry frees a finished
@@ -58,14 +66,19 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 private:
+    f64 span() const { return std::max(duration_, 0.1); }
+
     u32 unit_id_ = 0;
     f64 total_mass_ = 0.0;
     f64 total_energy_ = 0.0;
     f64 duration_ = 0.0;
     f64 elapsed_ = 0.0;
+    f64 progress_ = 0.0;
     bool done_ = false;
     bool cancelled_ = false;
+    bool counted_ = false;
     int lua_table_ref_ = -2; // LUA_NOREF
+    int callback_ref_ = -2;  // LUA_NOREF
 };
 
 /// Owns all active economy events.
@@ -76,15 +89,6 @@ public:
         auto* ptr = evt.get();
         events_.push_back(std::move(evt));
         return ptr;
-    }
-
-    /// Tick all events, returns list of newly-completed events for thread waking.
-    void tick(f64 dt) {
-        for (auto& evt : events_) {
-            if (evt && !evt->is_done() && !evt->is_cancelled()) {
-                evt->tick(dt);
-            }
-        }
     }
 
     /// Remove completed/cancelled events.
@@ -99,10 +103,15 @@ public:
 
     size_t count() const { return events_.size(); }
 
+    /// Visit every event there was when the pass began. `fn` may run a
+    /// script that makes events (a progress callback): they are appended,
+    /// which may move the list, so the pass goes by index and leaves them
+    /// for the next pass. Events stay in place, so `fn`'s reference holds.
     template<typename F>
     void for_each(F&& fn) {
-        for (auto& evt : events_) {
-            if (evt) fn(*evt);
+        const size_t n = events_.size();
+        for (size_t i = 0; i < n; ++i) {
+            if (events_[i]) fn(*events_[i]);
         }
     }
 

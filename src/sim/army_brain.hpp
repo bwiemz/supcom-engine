@@ -94,6 +94,12 @@ public:
 
     /// Per-tick economy update: sum unit production/consumption, update stored.
     void update_economy(const EntityRegistry& registry, f64 dt);
+    /// A request beyond its units' own, per second, for the next
+    /// update_economy only: its economy events' (M206d).
+    void add_event_request(f64 mass, f64 energy) {
+        event_mass_ += mass;
+        event_energy_ += energy;
+    }
 
     /// aibrain:GiveStorage — permanent storage on top of what the army's
     /// units provide. Kept apart because update_economy recounts the unit
@@ -235,6 +241,8 @@ private:
 
     EconomyState economy_;
     f64 mass_efficiency_ = 1.0;
+    f64 event_mass_ = 0.0; // add_event_request, spent by update_economy
+    f64 event_energy_ = 0.0;
     f64 energy_efficiency_ = 1.0;
     i32 unit_cap_ = 1000;
     f64 handicap_ = 0.0;

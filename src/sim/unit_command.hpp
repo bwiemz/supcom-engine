@@ -55,6 +55,9 @@ struct UnitCommand {
     /// A launch order's weapon has fired for it (runtime state: not sent
     /// with the order). The order then ends.
     bool launched = false;
+    /// The order has handed its unit to the script (a teleport's
+    /// OnTeleportUnit, an OverCharge's OnEnableWeapon); runtime state.
+    bool started = false;
 };
 
 } // namespace osc::sim

@@ -407,8 +407,10 @@ public:
     /// The weapon a launch order uses: the first enabled one with ManualFire
     /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
     Weapon* launch_weapon(bool nuke) const;
-    /// The launch order at the head of the queue, if `w` is the weapon it
-    /// uses; else null.
+    /// Its OverChargeWeapon (switched off until an OverCharge order), if any.
+    Weapon* overcharge_weapon() const;
+    /// The launch or OverCharge order at the head of the queue, if `w` is
+    /// the weapon it fires; else null.
     const UnitCommand* launch_order_for(const Weapon& w) const;
     UnitCommand* launch_order_for(const Weapon& w);
 
@@ -779,6 +781,14 @@ private:
     std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
     SiloBuild silo_build_;
     bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
+    // Orders handed to the script (M206d): a teleport charging (and the snap
+    // count its warp will change), an OverCharge weapon switched on.
+    bool teleporting_ = false;
+    u32 teleport_snap_ = 0;
+    bool overcharge_armed_ = false;
+    /// A teleport or an OverCharge whose order went unfinished: the script
+    /// hears OnFailedTeleport, or the weapon OnDisableWeapon.
+    void settle_interrupted_orders(lua_State* L);
     /// Take the missile under way off the silo: its request, the unit
     /// state. The script hears nothing: it was not finished (the Yolona
     /// Oss's tells a cancel by the state going without OnSiloBuildEnd).

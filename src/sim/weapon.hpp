@@ -115,11 +115,14 @@ public:
 
     /// Retail's firing cycle drives this weapon: the engine picks targets and
     /// runs the fire clock, and the weapon's script state machine gets
-    /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos
-    /// (a silo weapon's script also takes its ammunition; a beam weapon's
-    /// switches its beams on). OverCharge keeps the engine's own firing until
-    /// its script's needs exist (M206d).
-    bool fires_through_script() const { return script_class && lua_table_ref >= 0 && !overcharge; }
+    /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos (a
+    /// silo weapon's script also takes its ammunition; a beam weapon's
+    /// switches its beams on; an OverCharge weapon's draws its energy).
+    bool fires_through_script() const { return script_class && lua_table_ref >= 0; }
+
+    /// The weapon script's `method(self [, arg])`, if it has one. Returns
+    /// its first result's truth (true when there is no such method).
+    bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
 
     bool has_target() const { return target_entity_id != 0 || has_ground_target; }
     /// Aim at a point on the ground (dropping any unit target).
@@ -201,9 +204,6 @@ private:
     /// A manual weapon's target: what its unit's launch order names, if the
     /// order is for this weapon; else none.
     void take_order_target(const Unit& owner, const EntityRegistry& registry);
-    /// Call the weapon script's `method(self [, arg])`, if it has one.
-    /// Returns its first result's truth (true when there is no such method).
-    bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
     /// Hand the target to this weapon's aim controllers (or take it away),
     /// telling the script OnStartTracking/OnStopTracking(label).
     void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);

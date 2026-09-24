@@ -228,6 +228,29 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 - **OverCharge:** the order fires the OverCharge weapon through its script (`OnEnableWeapon`, the energy drain).
 - **Teleport:** the order stays until the warp, and a cancel calls `OnFailedTeleport`.
 
+**What retail's scripts do with them:**
+- **`CreateEconomyEvent(unit, energy, mass, time, callback)`** asks the unit's army for its cost over `time` and calls `callback(unit, progress)` as it goes. `WaitFor` on it returns when it is paid.
+- **Teleport:** `InitiateTeleportThread` makes an event of mass × `TeleportMassMod` + energy × `TeleportEnergyMod` energy, over that times `TeleportTimeMod` seconds, waits for it, then `Warp`s. An engineer's costs 91 energy over 0.9 s, a Titan's 1290 over 12.9 s, an ACU's 150,000 over 15 s.
+- **OverCharge:** the weapon starts switched off. Its `OnEnableWeapon` switches it on and the main gun off; firing switches them back and pauses it for 1/`RateOfFire` (3.3 s). With `EnergyChargeForFirstShot = false` the shot is free and its 5000 energy is drawn over the next second, as the weapon's recharge.
+
+**The slice:**
+- **Economy events:** each tick, before the economy, every live event asks its army for cost ÷ time per second. After the economy it moves on as far as its army paid: the lower of the efficiencies of the resources it asks for. Then its callback hears its progress. An event whose unit is gone is cancelled.
+- **OverCharge:** the order uses the unit's `OverChargeWeapon`, at a unit. In range, the engine calls the weapon's `OnEnableWeapon` once; the weapon takes the order's target and fires through its script, and the order ends with the shot. Called off before the shot, a weapon still on hears `OnDisableWeapon`.
+- **Teleport:** the order holds the head of the queue from `OnTeleportUnit` until the unit warps, so what is queued waits. Removed first, the unit hears `OnFailedTeleport`, which frees it.
+- **Proof:** `--charge-test`:
+  - An event draws its cost, calling its script ten times a second up to 1; an army that can't pay runs its event slower.
+  - An ACU's OverCharge kills a tank, draws 5000 energy, and gives the main gun back; called off, it switches the OverCharge off.
+  - An engineer's teleport charges in place with a move queued, warps, then moves; called off, it fails and the engineer can move.
+  - Seven mutations (no request, no stall, no callback, no `OnEnableWeapon`, the order popping at once, no `OnFailedTeleport`, no `OnDisableWeapon`) each fail it.
+
+**What building M206d established:**
+- **Free events had hidden an economy in the tests.** `--cmd-test`'s enhancement and teleport checks ran on an army with nothing stored; they now give it storage and resources.
+- **One unaffordable event starves its army.** The first test draft asked a billion energy on the army it then checked: its store emptied in a tick, and every later check stalled. The test puts that event on another army.
+- **A ridge hid a correct shot.** The first OverCharge scene fired over a 1-unit crest and hit it. The shot was aimed right; the test moved to flat ground.
+
+**Risks:**
+- **Readings, not measurements:** an event's pace under a stall (the lower efficiency), when a new event first asks (the next economy step), and the engine switching off an OverCharge called off before its shot are readings of retail's scripts, not measurements of Moho.
+
 ### M206e: ranges and the queue
 
 - **Ranges:** build, reclaim, repair and capture ranges run from the target's footprint edge, with `MaxBuildDistance` where it is set. The default is to be confirmed against Moho.

@@ -462,6 +462,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
     // stops paying below.
     const bool was_assisting_silo = std::exchange(assisting_silo_, false);
 
+    // A teleport or an OverCharge whose order was taken away unfinished.
+    if (teleporting_ || overcharge_armed_) {
+        settle_interrupted_orders(L);
+        if (destroyed() || !in_registry()) return;
+    }
+
     // Paused units skip command processing but still update weapons
     if (paused_) goto weapons_only;
 
@@ -1068,13 +1074,19 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
 
         case CommandType::Nuke:
-        case CommandType::Tactical: {
+        case CommandType::Tactical:
+        case CommandType::Overcharge: {
             // A launch: its weapon takes the order's target (see
             // Weapon::take_order_target) and fires when it has a missile,
             // and the weapon's script spends it. The order waits in range
-            // until then, and ends when the missile leaves.
-            const Weapon* weapon = launch_weapon(cmd.type == CommandType::Nuke);
-            if (!weapon || cmd.launched) {
+            // until then, and ends when the missile leaves. An OverCharge is
+            // the same with the unit's OverCharge weapon, at a unit: in
+            // range, the weapon is switched on (its script's OnEnableWeapon)
+            // and its script fires it, drawing its energy.
+            const bool overcharge = cmd.type == CommandType::Overcharge;
+            Weapon* weapon =
+                overcharge ? overcharge_weapon() : launch_weapon(cmd.type == CommandType::Nuke);
+            if (!weapon || cmd.launched || (overcharge && cmd.target_id == 0)) {
                 command_queue_.pop_front();
                 continue;
             }
@@ -1110,47 +1122,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 nav_update(dt, ctx.terrain);
             } else {
                 navigator_.abort_move();
+                if (overcharge && !cmd.started) {
+                    cmd.started = true;
+                    overcharge_armed_ = true;
+                    weapon->call_script(L, "OnEnableWeapon");
+                    if (destroyed() || !in_registry()) return;
+                }
             }
             goto done_commands;
-        }
-
-        case CommandType::Overcharge: {
-            // Overcharge: attack with special damage
-            if (cmd.target_id == 0) {
-                command_queue_.pop_front();
-                continue;
-            }
-            auto* target = registry.find(cmd.target_id);
-            if (!target || target->destroyed()) {
-                command_queue_.pop_front();
-                continue;
-            }
-            // Move into weapon range first
-            f32 range = weapons_.empty() ? 22.0f : weapons_[0]->max_range;
-            f32 dx = target->position().x - position().x;
-            f32 dz = target->position().z - position().z;
-            f32 dist2 = dx * dx + dz * dz;
-            if (dist2 > range * range) {
-                if (!navigator_.is_moving()) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder,
-                                        position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
-                }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
-            }
-            navigator_.abort_move();
-            // Fire the first available weapon at target
-            for (auto& w : weapons_) {
-                if (w->max_range > 0) {
-                    w->target_entity_id = cmd.target_id;
-                    w->fire_clock = 0;
-                    w->try_fire(*this, registry, L);
-                    break;
-                }
-            }
-            command_queue_.pop_front();
-            continue;
         }
 
         case CommandType::Sacrifice: {
@@ -1211,14 +1190,30 @@ void Unit::update(f64 dt, SimContext& ctx) {
             // Moho hands the teleport to the script: OnTeleportUnit(teleporter,
             // location, orientation) charges it (an economy event sized from
             // the blueprint's cost) and Warp()s the unit when it completes.
-            // Only a unit without the handler moves at once.
-            if (!call_on_teleport_unit(L, cmd.target_pos)) {
-                set_position(cmd.target_pos);
-                note_snap();
+            // The order waits for the warp, so what is queued behind it waits
+            // too; removed before, the script hears OnFailedTeleport. Only a
+            // unit without the handler moves at once.
+            if (!cmd.started) {
+                cmd.started = true;
+                const Vector3 to = cmd.target_pos;
+                teleport_snap_ = snap_serial();
+                teleporting_ = true;
+                if (!call_on_teleport_unit(L, to)) {
+                    teleporting_ = false;
+                    set_position(to);
+                    note_snap();
+                    command_queue_.pop_front();
+                    continue;
+                }
+                if (destroyed() || !in_registry()) return;
+                goto done_commands;
             }
-            command_queue_.pop_front();
-            if (destroyed() || !in_registry()) return;
-            continue;
+            if (snap_serial() != teleport_snap_) {
+                teleporting_ = false; // warped
+                command_queue_.pop_front();
+                continue;
+            }
+            goto done_commands;
         }
 
         case CommandType::Ferry: {
@@ -3358,6 +3353,30 @@ void Unit::assist_silo_build(f32 rate, f64 dt, f32 efficiency) {
                           static_cast<f64>(rate) * dt / silo_build_.build_time * efficiency);
 }
 
+Weapon* Unit::overcharge_weapon() const {
+    for (const auto& w : weapons_) {
+        if (w->overcharge) return w.get();
+    }
+    return nullptr;
+}
+
+void Unit::settle_interrupted_orders(lua_State* L) {
+    const UnitCommand* head = command_queue_.empty() ? nullptr : &command_queue_.front();
+    if (teleporting_ && !(head && head->type == CommandType::Teleport && head->started)) {
+        teleporting_ = false;
+        call_lua_method(L, "OnFailedTeleport");
+        if (destroyed() || !in_registry()) return;
+        head = command_queue_.empty() ? nullptr : &command_queue_.front();
+    }
+    if (overcharge_armed_ &&
+        !(head && head->type == CommandType::Overcharge && head->started && !head->launched)) {
+        overcharge_armed_ = false;
+        // Its script switches it off once it has fired; one left on goes off.
+        if (Weapon* oc = overcharge_weapon(); oc && oc->enabled && L)
+            oc->call_script(L, "OnDisableWeapon");
+    }
+}
+
 Weapon* Unit::launch_weapon(bool nuke) const {
     for (const auto& w : weapons_) {
         if (w->enabled && w->manual_fire && w->counted_projectile && !w->overcharge &&
@@ -3370,8 +3389,10 @@ Weapon* Unit::launch_weapon(bool nuke) const {
 const UnitCommand* Unit::launch_order_for(const Weapon& w) const {
     if (command_queue_.empty()) return nullptr;
     const UnitCommand& head = command_queue_.front();
-    if ((head.type != CommandType::Nuke && head.type != CommandType::Tactical) || head.launched)
-        return nullptr;
+    if (head.launched) return nullptr;
+    if (head.type == CommandType::Overcharge)
+        return head.started && overcharge_weapon() == &w ? &head : nullptr;
+    if (head.type != CommandType::Nuke && head.type != CommandType::Tactical) return nullptr;
     return launch_weapon(head.type == CommandType::Nuke) == &w ? &head : nullptr;
 }
 
