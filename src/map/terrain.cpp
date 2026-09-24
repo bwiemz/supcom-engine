@@ -24,6 +24,20 @@ void Terrain::set_strata(std::vector<StratumInfo> strata,
     blend_dds_1_ = std::move(blend1);
 }
 
+void Terrain::set_terrain_types(std::vector<u8> types) {
+    const size_t cells = static_cast<size_t>(map_width()) * map_height();
+    terrain_types_ = types.size() == cells ? std::move(types) : std::vector<u8>{};
+}
+
+u8 Terrain::terrain_type(f32 x, f32 z) const {
+    constexpr u8 kDefault = 1;
+    if (terrain_types_.empty() || x < 0 || z < 0) return kDefault;
+    const auto cx = static_cast<u32>(x);
+    const auto cz = static_cast<u32>(z);
+    if (cx >= map_width() || cz >= map_height()) return kDefault;
+    return terrain_types_[static_cast<size_t>(cz) * map_width() + cx];
+}
+
 void Terrain::set_decals(std::vector<DecalInfo> decals) {
     decals_ = std::move(decals);
 }

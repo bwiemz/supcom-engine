@@ -220,6 +220,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     f32 water_elev = scmap.has_water ? scmap.water_elevation : 0.0f;
     auto terrain = std::make_unique<map::Terrain>(
         std::move(heightmap), water_elev, scmap.has_water);
+    terrain->set_terrain_types(std::move(scmap.terrain_types));
 
     // Pass stratum texture data for rendering
     if (!scmap.strata.empty()) {
