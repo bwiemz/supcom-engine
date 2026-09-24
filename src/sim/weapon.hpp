@@ -53,6 +53,9 @@ public:
     bool counted_projectile = false;
     bool nuke_weapon = false;        ///< NukeWeapon: its missiles are nukes, else tactical
     i32 max_projectile_storage = 0;  ///< MaxProjectileStorage: the silo builds up to this
+    /// TargetType RULEWTT_Projectile: it shoots the other side's projectiles
+    /// (missiles, torpedoes), never units (M206b).
+    bool targets_projectiles = false;
     bool overcharge = false;         // OverChargeWeapon
     bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
@@ -145,7 +148,7 @@ public:
 
     /// Index of the first priority `target` matches (0 when the weapon has
     /// none), or -1 when it matches none.
-    int priority_of(const Unit& target) const;
+    int priority_of(const Entity& target) const;
 
     /// The aim controller whose OnTarget gates this weapon's fire: the one
     /// SetFireControl named, else the first created for it; null when the

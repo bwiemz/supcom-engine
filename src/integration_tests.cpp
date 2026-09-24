@@ -8725,6 +8725,252 @@ void test_missile(TestContext& ctx) {
     spdlog::info("Missile test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Missile defence test (M206b) ──
+void test_defence(TestContext& ctx) {
+    spdlog::info("=== DEFENCE TEST: anti-missile weapons shoot missiles down ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    // Each tick every watched weapon's shots are followed: where each went,
+    // and when it was gone.
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                for _, m in __osc_shots do
+                    if not m.gone then
+                        if m.proj:BeenDestroyed() then
+                            m.gone = GetGameTick()
+                        else
+                            table.insert(m.path, m.proj:GetPosition())
+                        end
+                    end
+                end
+            )");
+        }
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
+        -- Every shot a unit's weapons fire, followed each tick.
+        __osc_shots = {}
+        function __osc_watch(u)
+            u.__osc_fired = 0
+            for i = 1, u:GetWeaponCount() do
+                local w = u:GetWeapon(i)
+                local create = w.CreateProjectileAtMuzzle
+                w.CreateProjectileAtMuzzle = function(self, muzzle)
+                    local proj = create(self, muzzle)
+                    if proj then
+                        u.__osc_fired = u.__osc_fired + 1
+                        local rec = {owner = u, proj = proj, path = {proj:GetPosition()}, tick = GetGameTick(),
+                                     torpedo = EntityCategoryContains(categories.TORPEDO, proj)}
+                        -- Whether it was ever asked about meeting a Lua entity
+                        -- (a flare): retail's scripts say what refuses a
+                        -- collision leaves the hitter none the wiser.
+                        local on_check = proj.OnCollisionCheck
+                        proj.OnCollisionCheck = function(p, other)
+                            if other.RedirectCat then rec.asked_by_flare = true end
+                            return on_check(p, other)
+                        end
+                        local on_impact = proj.OnImpact
+                        proj.OnImpact = function(p, kind, what)
+                            rec.impact = kind
+                            rec.hit = what and (what.GetBlueprint and what:GetBlueprint() and what:GetBlueprint().BlueprintId or 'entity')
+                            return on_impact(p, kind, what)
+                        end
+                        table.insert(__osc_shots, rec)
+                    end
+                    return proj
+                end
+            end
+            return u
+        end
+        function __osc_shot_of(u, n)
+            local seen = 0
+            for _, m in __osc_shots do
+                if m.owner == u then
+                    seen = seen + 1
+                    if seen == n then return m end
+                end
+            end
+        end
+        function __osc_last(m) return m.path[table.getn(m.path)] end
+        function __osc_dist2d(a, b) return math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2) end
+    )");
+
+    // A nuke launched at power generators two anti-nukes cover, each holding
+    // one missile.
+    lua_check("setup: a nuke, and anti-nukes about its target", R"(
+        __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
+        __osc_s:GiveNukeSiloAmmo(1)
+        __osc_zero = __osc_at(560, 600)
+        __osc_victims = {}
+        for i = -1, 1 do
+            table.insert(__osc_victims, __osc_spawn('ueb1101', 'ARMY_2', 560 + 8 * i, 600))
+        end
+        __osc_d1 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 580, 620))
+        __osc_d2 = __osc_watch(__osc_spawn('ueb4302', 'ARMY_2', 540, 620))
+        __osc_d1:GiveTacticalSiloAmmo(1)
+        __osc_d2:GiveTacticalSiloAmmo(1)
+        IssueNuke({__osc_s}, __osc_zero)
+    )");
+    run(500);
+    lua_check("Test 1: an anti-nuke shot the nuke down, and nothing about its target was harmed", R"(
+        local nuke = __osc_shot_of(__osc_s, 1)
+        if not nuke then error('no nuke was launched') end
+        if not nuke.gone then error('the nuke is still flying') end
+        if nuke.impact then error('the nuke impacted: ' .. nuke.impact) end
+        for i, v in __osc_victims do
+            if v:IsDead() or v:GetHealth() < v:GetMaxHealth() then error('victim ' .. i .. ' was hit') end
+        end
+    )");
+    lua_check("Test 2: only one anti-nuke fired at it", R"(
+        local fired = __osc_d1.__osc_fired + __osc_d2.__osc_fired
+        if fired ~= 1 then error(fired .. ' interceptors were fired') end
+        local left = __osc_d1:GetTacticalSiloAmmoCount() + __osc_d2:GetTacticalSiloAmmoCount()
+        if left ~= 1 then error(left .. ' interceptors are left') end
+    )");
+
+    // Tactical missiles at power generators: one undefended, one by a UEF
+    // Phalanx, one by a Seraphim TMD, one by an Aeon TMD's flare.
+    lua_check("setup: tactical missiles at defended and undefended targets", R"(
+        __osc_lanes = {}
+        for i, tmd in {false, 'ueb4201', 'xsb4201', 'uab4201'} do
+            local z = 50 + 40 * i
+            local lane = {}
+            lane.tml = __osc_watch(__osc_spawn('ueb2108', 'ARMY_1', 620, z))
+            lane.tml:GiveTacticalSiloAmmo(1)
+            lane.target = __osc_spawn('ueb1101', 'ARMY_2', 740, z)
+            if tmd then lane.tmd = __osc_watch(__osc_spawn(tmd, 'ARMY_2', 734, z + 6)) end
+            IssueTactical({lane.tml}, lane.target)
+            __osc_lanes[i] = lane
+        end
+    )");
+    run(450);
+    lua_check("Test 3: the undefended target was killed", R"(
+        if not __osc_lanes[1].target:IsDead() then error('it lives') end
+    )");
+    lua_check("Test 4: the Phalanx shot its missile down", R"(
+        local lane = __osc_lanes[2]
+        if lane.tml.__osc_fired ~= 1 then error('the launcher fired ' .. lane.tml.__osc_fired) end
+        if lane.tmd.__osc_fired == 0 then error('the Phalanx never fired') end
+        if lane.target:IsDead() then error('the target died') end
+    )");
+    lua_check("Test 5: the Seraphim TMD shot its missile down", R"(
+        local lane = __osc_lanes[3]
+        if lane.tml.__osc_fired ~= 1 then error('the launcher fired ' .. lane.tml.__osc_fired) end
+        if lane.tmd.__osc_fired == 0 then error('the TMD never fired') end
+        if lane.target:IsDead() then error('the target died') end
+    )");
+    lua_check("Test 6: the Aeon flare drew its missile away", R"(
+        local lane = __osc_lanes[4]
+        local m = __osc_shot_of(lane.tml, 1)
+        if lane.tml.__osc_fired ~= 1 then error('the launcher fired ' .. lane.tml.__osc_fired) end
+        if lane.target:IsDead() then error('the target died') end
+        if not m.gone then error('the missile is still flying') end
+        local off = __osc_dist2d(__osc_last(m), lane.target:GetPosition())
+        if off < 10 then error('the missile came down ' .. off .. ' from its target') end
+        if m.asked_by_flare then error('the missile was asked about the flare that turned it') end
+    )");
+
+    // In the western sea: a torpedo sub sent at an Aeon frigate, whose
+    // anti-torpedo shoots torpedoes.
+    lua_check("setup: torpedoes at a frigate", R"(
+        local function float(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_sub = __osc_watch(float('ues0203', 'ARMY_1', 150, 260))
+        __osc_frigate = __osc_watch(float('uas0103', 'ARMY_2', 150, 300))
+        IssueDive({__osc_sub})
+    )");
+    run(40);
+    // A dived sub sinks only while it moves: put it under.
+    lua_check("setup: the sub, dived, attacks", R"(
+        if __osc_sub:GetCurrentLayer() ~= 'Sub' then error('the sub is on ' .. __osc_sub:GetCurrentLayer()) end
+        local p = __osc_sub:GetPosition()
+        Warp(__osc_sub, {p[1], GetSurfaceHeight(p[1], p[3]) - 5, p[3]})
+        IssueAttack({__osc_sub}, __osc_frigate)
+    )");
+    run(300);
+    lua_check("Test 7: the frigate's anti-torpedo shot torpedoes down", R"(
+        -- Stopped: it met a projectile, or was killed (no impact at all).
+        local torpedoes, stopped = 0, 0
+        for _, m in __osc_shots do
+            if m.owner == __osc_sub and m.gone and m.torpedo then
+                torpedoes = torpedoes + 1
+                if not m.impact or string.find(m.impact, 'Projectile') then stopped = stopped + 1 end
+            end
+        end
+        if torpedoes == 0 then error('no torpedo was fired') end
+        if stopped == 0 then error('no torpedo was stopped') end
+    )");
+
+    // Projectiles answer category tests, so retail's collision rules and
+    // lures work: an enemy tank's shell may not hit a missile, an
+    // interceptor may, and a flare lures only the other side's missiles.
+    lua_check("Test 8: projectiles have their blueprint's categories", R"(
+        local tml = __osc_spawn('ueb2108', 'ARMY_1', 300, 800)
+        local tank = __osc_spawn('uel0201', 'ARMY_2', 310, 800)
+        __osc_missile = tml:CreateProjectile('/projectiles/TIFMissileCruise01/TIFMissileCruise01_proj.bp', 0, 5, 0, 0, 0, 1)
+        __osc_shell = tank:CreateProjectile('/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 2, 0, 0, 0, 1)
+        __osc_interceptor = tank:CreateProjectile('/projectiles/TIMMissileIntercerptor01/TIMMissileIntercerptor01_proj.bp', 0, 2, 0, 0, 0, 1)
+        local m = __osc_missile
+        for _, c in {'MISSILE', 'TACTICAL', 'PROJECTILE', 'ALLPROJECTILES'} do
+            if not EntityCategoryContains(categories[c], m) then error('the missile is not ' .. c) end
+        end
+        if EntityCategoryContains(categories.ALLUNITS, m) then error('the missile is a unit') end
+        if EntityCategoryContains(categories.ALLPROJECTILES, tank) then error('the tank is a projectile') end
+        if not EntityCategoryContains(categories.ALLUNITS, tank) then error('the tank is not a unit') end
+        local kept = EntityCategoryFilterDown(categories.MISSILE, {m, __osc_shell, tank})
+        if table.getn(kept) ~= 1 or kept[1] ~= m then error('FilterDown kept ' .. table.getn(kept)) end
+    )");
+    lua_check("Test 9: an enemy shell can't hit a missile; an interceptor, only the one it was sent at", R"(
+        if __osc_missile:OnCollisionCheck(__osc_shell) then error('the shell may hit the missile') end
+        if __osc_missile:OnCollisionCheck(__osc_interceptor) then error('an unassigned interceptor may') end
+        __osc_interceptor:SetNewTarget(__osc_missile)
+        if not __osc_missile:OnCollisionCheck(__osc_interceptor) then error('its interceptor may not') end
+    )");
+    lua_check("Test 10: a flare is its owner's side, and lures only the other side's missiles", R"(
+        local Flare = import('/lua/defaultantiprojectile.lua').Flare
+        local own = __osc_spawn('uel0201', 'ARMY_1', 320, 800):CreateProjectile(
+            '/projectiles/TDFGauss01/TDFGauss01_proj.bp', 0, 2, 0, 0, 0, 1)
+        local flare = Flare { Owner = own, Radius = 15 }
+        if flare:GetArmy() ~= own:GetArmy() then
+            error('the flare is army ' .. tostring(flare:GetArmy()) .. ', its owner ' .. own:GetArmy())
+        end
+        local enemy_flare = Flare { Owner = __osc_shell, Radius = 15 }
+        flare:OnCollisionCheck(__osc_missile)
+        if __osc_missile:GetTrackingTarget() == own then error('its own side\'s flare lured the missile') end
+        enemy_flare:OnCollisionCheck(__osc_missile)
+        if __osc_missile:GetTrackingTarget() ~= __osc_shell then error('the enemy flare did not lure it') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 11: no script errors");
+    spdlog::info("Defence test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

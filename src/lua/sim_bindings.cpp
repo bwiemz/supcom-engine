@@ -330,6 +330,13 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         weapon->max_projectile_storage = static_cast<i32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
+                    // Missile defence (M206b).
+                    lua_pushstring(L, "TargetType");
+                    lua_gettable(L, we);
+                    weapon->targets_projectiles =
+                        lua_type(L, -1) == LUA_TSTRING &&
+                        std::string_view(lua_tostring(L, -1)) == "RULEWTT_Projectile";
+                    lua_pop(L, 1);
 
                     lua_pushstring(L, "OverChargeWeapon");
                     lua_gettable(L, we);

@@ -206,6 +206,22 @@ TEST_CASE("a bomb falls at Moho's gravity; a straight shot doesn't", "[collision
     CHECK(shot->ballistic_accel == 0.0f);
 }
 
+TEST_CASE("a leading weapon aims where a missile will be", "[collision]") {
+    EntityRegistry reg;
+    const u32 owner_id = add_unit(reg, {0, 0, 0}, box(1, 1, 1));
+    const auto& owner = static_cast<const Unit&>(*reg.find(owner_id));
+    // A missile 40 east, flying north at 10.
+    Projectile* missile = add_shot(reg, {40, 0, 0}, {0, 0, 10});
+    osc::sim::Weapon w;
+    w.muzzle_velocity = 100;
+    CHECK(w.aim_point(*missile, owner.position()).z == Approx(0.0f));
+    // Leading: 0.4 s to it, then refined once, a little further north.
+    w.lead_target = true;
+    const Vector3 at = w.aim_point(*missile, owner.position());
+    CHECK(at.z > 4.0f);
+    CHECK(at.z < 4.2f);
+}
+
 TEST_CASE("a point's distance from a shape is negative inside it", "[collision]") {
     const Quaternion level{};
     const auto s = sphere(10);
