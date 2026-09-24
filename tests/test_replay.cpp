@@ -290,6 +290,58 @@ TEST_CASE("A version 3 replay still loads, without a setup", "[replay]") {
     CHECK(out.checksums.empty());
 }
 
+TEST_CASE("A formation order round-trips; a version 4 command loads without one", "[replay]") {
+    Replay r;
+    ScheduledCommand c;
+    c.exec_tick = 5;
+    c.command.type = CommandType::Move;
+    c.command.target_pos = {10.0f, 0.0f, 20.0f};
+    c.command.formation = "AttackFormation";
+    c.command.has_facing = true;
+    c.command.facing = 1.5f;
+    c.unit_ids = {3, 4};
+    r.commands.push_back(c);
+    Replay out;
+    REQUIRE(Replay::deserialize(r.serialize(), out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK(out.commands[0].command.formation == "AttackFormation");
+    CHECK(out.commands[0].command.has_facing);
+    CHECK(out.commands[0].command.facing == 1.5f);
+    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3, 4});
+
+    // Version 4 wrote no formation fields.
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char ch : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<osc::u8>(ch));
+    w.u32v(4);  // version
+    w.u32v(12); // final tick
+    w.u32v(0);  // command delay
+    w.u64v(77); // seed
+    w.str("domination");
+    w.str("build");
+    w.u8v(0);  // no setup
+    w.u32v(0); // checksums from
+    w.u32v(0); // no checksums
+    w.u32v(1); // one command
+    w.u32v(5); // exec tick
+    w.u32v(0); // source
+    w.u8v(1);  // clear
+    w.u8v(static_cast<osc::u8>(CommandType::Move));
+    w.f32v(10.0f);
+    w.f32v(0.0f);
+    w.f32v(20.0f);
+    w.u32v(0); // target id
+    w.u32v(9); // command id
+    w.str(""); // blueprint
+    w.u32v(1); // one unit
+    w.u32v(3);
+    w.u8v(0); // no callback
+    REQUIRE(Replay::deserialize(bytes, out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK(out.commands[0].command.formation.empty());
+    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+}
+
 TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     // --- Record ---
     LuaGuard ga;

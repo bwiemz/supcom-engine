@@ -16,6 +16,17 @@ void Platoon::remove_unit(u32 entity_id) {
         std::remove(unit_ids_.begin(), unit_ids_.end(), entity_id),
         unit_ids_.end());
     squad_map_.erase(entity_id);
+    formation_map_.erase(entity_id);
+}
+
+void Platoon::set_unit_formation(u32 entity_id, const std::string& formation) {
+    formation_map_[entity_id] = formation;
+}
+
+std::string Platoon::unit_formation(u32 entity_id) const {
+    if (!formation_override_.empty()) return formation_override_;
+    const auto it = formation_map_.find(entity_id);
+    return it != formation_map_.end() ? it->second : std::string();
 }
 
 bool Platoon::has_unit(u32 entity_id) const {

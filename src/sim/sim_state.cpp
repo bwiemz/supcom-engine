@@ -1,5 +1,6 @@
 #include "sim/sim_state.hpp"
 #include "sim/platoon.hpp"
+#include "sim/formation.hpp"
 #include "sim/build_info.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
@@ -569,15 +570,44 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
     // An AI or script order, issued inside a tick: apply now. (AI runs
     // identically on every client, so its orders stay in sync without being
     // sent over the wire.)
-    for (u32 uid : unit_ids) {
+    for (const auto& [uid, cmd] : expand_group_command(unit_ids, command)) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
         // Stop clears the queue outright (rather than queueing a Stop order), so
         // it matches the old IssueStop's immediate clear_commands() semantics.
-        if (command.type == CommandType::Stop) stop_unit(*unit);
-        else unit->push_command(command, clear_existing);
+        if (cmd.type == CommandType::Stop) stop_unit(*unit);
+        else unit->push_command(cmd, clear_existing);
     }
+}
+
+std::vector<std::pair<u32, UnitCommand>>
+SimState::expand_group_command(const std::vector<u32>& unit_ids, const UnitCommand& command) const {
+    std::vector<std::pair<u32, UnitCommand>> out;
+    if (!command.formation.empty() && command.type == CommandType::Move) {
+        const auto slots = plan_formation(
+            L_, entity_registry_, terrain_.get(), unit_ids, command.formation, command.target_pos,
+            command.has_facing ? std::optional<f32>(command.facing) : std::nullopt);
+        if (!slots.empty()) {
+            // The formation keeps its slowest surface unit's pace.
+            f32 pace = 0;
+            for (const auto& slot : slots) {
+                const auto* u = static_cast<const Unit*>(entity_registry_.find(slot.unit_id));
+                if (!u || u->is_air_unit() || u->effective_speed() <= 0) continue;
+                pace = pace > 0 ? std::min(pace, u->effective_speed()) : u->effective_speed();
+            }
+            for (const auto& slot : slots) {
+                UnitCommand cmd = command;
+                cmd.target_pos = slot.position;
+                cmd.formation.clear();
+                cmd.speed_cap = pace;
+                out.emplace_back(slot.unit_id, std::move(cmd));
+            }
+            return out;
+        }
+    }
+    for (const u32 id : unit_ids) out.emplace_back(id, command);
+    return out;
 }
 
 void SimState::set_recording(bool on) {
@@ -636,7 +666,7 @@ void SimState::dispatch_due_commands() {
         // arrived with was the issuer's.
         UnitCommand base = sc.command;
         base.command_id = next_command_id();
-        for (u32 uid : sc.unit_ids) {
+        for (auto& [uid, expanded] : expand_group_command(sc.unit_ids, base)) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<Unit*>(e);
@@ -646,7 +676,7 @@ void SimState::dispatch_due_commands() {
                 stop_unit(*unit);
                 continue;
             }
-            UnitCommand cmd = base;
+            UnitCommand cmd = std::move(expanded);
             // A new enhancement replaces one under way, as IssueEnhancement does.
             if (cmd.type == CommandType::Enhance && unit->is_enhancing()) {
                 unit->cancel_enhance(L_);

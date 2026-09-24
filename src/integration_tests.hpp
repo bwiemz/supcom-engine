@@ -94,6 +94,7 @@ void test_collide(TestContext& ctx);
 void test_area(TestContext& ctx);
 void test_drive(TestContext& ctx);
 void test_crowd(TestContext& ctx);
+void test_formation(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);

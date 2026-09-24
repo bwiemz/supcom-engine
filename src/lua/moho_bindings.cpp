@@ -6745,6 +6745,7 @@ static int brain_AssignUnitsToPlatoon(lua_State* L) {
     if (!platoon) return 0;
 
     const char* squad = lua_isstring(L, 4) ? lua_tostring(L, 4) : "Unassigned";
+    const std::string formation = lua_type(L, 5) == LUA_TSTRING ? lua_tostring(L, 5) : "";
 
     // Iterate units table (arg 3)
     if (!lua_istable(L, 3)) return 0;
@@ -6775,6 +6776,7 @@ static int brain_AssignUnitsToPlatoon(lua_State* L) {
             }
             platoon->add_unit(e->entity_id());
             platoon->set_unit_squad(e->entity_id(), squad);
+            platoon->set_unit_formation(e->entity_id(), formation);
 
             // Set unit_lua_table.PlatoonHandle = platoon_lua_table
             lua_pushstring(L, "PlatoonHandle");
@@ -7109,6 +7111,17 @@ static int platoon_Stop(lua_State* L) {
     return 0;
 }
 
+/// Whether `name` asks for no formation (retail passes these for a squad
+/// that moves loose).
+static bool no_formation(const std::string& name) {
+    return name.empty() || name == "NoFormation" || name == "None" || name == "none";
+}
+
+// platoon:MoveToLocation(position, useTransports), AggressiveMoveToLocation,
+// and MoveToTarget(unit): a move for every unit, queued after its current
+// orders (retail's AI queues one per waypoint of the route it chose, after a
+// Stop). Units move in the formation they were assigned (the platoon's
+// override first), each group laid out in its slots (M204).
 static int platoon_MoveToLocation(lua_State* L) {
     auto* platoon = check_platoon(L);
     auto* sim = get_sim(L);
@@ -7117,17 +7130,17 @@ static int platoon_MoveToLocation(lua_State* L) {
         return 1;
     }
 
-    // Extract position from arg 2
     sim::Vector3 pos{};
-    lua_rawgeti(L, 2, 1);
-    if (lua_isnumber(L, -1)) pos.x = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_rawgeti(L, 2, 2);
-    if (lua_isnumber(L, -1)) pos.y = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_rawgeti(L, 2, 3);
-    if (lua_isnumber(L, -1)) pos.z = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
+    if (const auto* target = check_entity(L, 2)) {
+        pos = target->position(); // MoveToTarget(unit)
+    } else {
+        for (int i = 1; i <= 3; ++i) {
+            lua_rawgeti(L, 2, i);
+            const auto v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+            lua_pop(L, 1);
+            (i == 1 ? pos.x : i == 2 ? pos.y : pos.z) = v;
+        }
+    }
 
     u32 cmd_id = sim->next_command_id();
     sim::UnitCommand cmd;
@@ -7135,10 +7148,25 @@ static int platoon_MoveToLocation(lua_State* L) {
     cmd.target_pos = pos;
     cmd.command_id = cmd_id;
 
+    // One order per formation, in order of first appearance.
+    std::vector<std::pair<std::string, std::vector<u32>>> groups;
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
-        if (e && !e->destroyed() && e->is_unit())
-            static_cast<sim::Unit*>(e)->push_command(cmd, true);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        std::string formation = platoon->unit_formation(id);
+        if (no_formation(formation)) formation.clear();
+        auto it = std::find_if(groups.begin(), groups.end(),
+                               [&](const auto& g) { return g.first == formation; });
+        if (it == groups.end()) {
+            groups.emplace_back(formation, std::vector<u32>{});
+            it = groups.end() - 1;
+        }
+        it->second.push_back(id);
+    }
+    for (auto& [formation, ids] : groups) {
+        sim::UnitCommand order = cmd;
+        order.formation = formation;
+        sim->route_command(ids, order, false);
     }
     lua_pushnumber(L, cmd_id);
     return 1;
@@ -7757,9 +7785,12 @@ static int platoon_FormPlatoon(lua_State* L) {
                             : multiplier;
         lua_pop(L, 1);
 
-        // sub[4] = squad name
+        // sub[4] = squad name, sub[5] = its formation
         lua_rawgeti(L, sub, 4);
         std::string squad = lua_isstring(L, -1) ? lua_tostring(L, -1) : "Unassigned";
+        lua_pop(L, 1);
+        lua_rawgeti(L, sub, 5);
+        const std::string formation = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
         lua_pop(L, 1);
 
         // Find matching units and transfer
@@ -7790,6 +7821,7 @@ static int platoon_FormPlatoon(lua_State* L) {
 
             new_platoon->add_unit(id);
             new_platoon->set_unit_squad(id, squad);
+            new_platoon->set_unit_formation(id, formation);
             transferred.push_back(id);
             taken++;
         }
