@@ -8,6 +8,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
+#include "sim/work_range.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 
@@ -363,6 +364,15 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     return result;
 }
 
+bool Unit::approach_update(f64 dt, SimContext& ctx) {
+    if (navigator_.status() == Navigator::Status::WaitingForPath) {
+        const Vector3 goal = navigator_.goal();
+        navigator_.set_goal(goal, ctx.pathfinder, position(), layer_, naval_draft_,
+                            is_amphibious() || is_hover());
+    }
+    return nav_update(dt, ctx.terrain);
+}
+
 namespace {
 
 /// What reclaiming `target` takes and yields, as Moho asks the reclaimer's
@@ -540,21 +550,42 @@ void Unit::update(f64 dt, SimContext& ctx) {
 
         case CommandType::BuildMobile: {
             if (build_target_id_ == 0) {
-                // Phase 1: Move to build site
-                f32 dx = cmd.target_pos.x - position().x;
-                f32 dz = cmd.target_pos.z - position().z;
-                f32 dist2 = dx * dx + dz * dz;
-                f32 build_range = 6.0f;
-
-                if (dist2 > build_range * build_range) {
-                    if (!navigator_.is_moving() ||
-                        navigator_.goal().x != cmd.target_pos.x ||
-                        navigator_.goal().z != cmd.target_pos.z) {
-                        navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_,
-                                            naval_draft_, is_amphibious() || is_hover());
+                // Phase 1: reach the site. In range when the gap to its skirt
+                // is within MaxBuildDistance and the builder is off the
+                // skirt (Moho's CUnitMobileBuildTask); else it walks just
+                // clear of the skirt, one cell out, and builds from there or
+                // gives up.
+                if (cmd.site_skirt_x <= 0) {
+                    const auto [sx, sz] = blueprint_skirt(L, cmd.blueprint_id);
+                    cmd.site_skirt_x = sx;
+                    cmd.site_skirt_z = sz;
+                }
+                const f32 half_x = cmd.site_skirt_x * 0.5f;
+                const f32 half_z = cmd.site_skirt_z * 0.5f;
+                const auto reachable = [&] {
+                    const f32 skirt = std::max(cmd.site_skirt_x, cmd.site_skirt_z);
+                    const f32 room = footprint_extent(*this) * 0.5f;
+                    const bool on_site =
+                        std::abs(position().x - cmd.target_pos.x) <= half_x + room &&
+                        std::abs(position().z - cmd.target_pos.z) <= half_z + room;
+                    return !on_site &&
+                           work_gap(*this, cmd.target_pos, skirt) <= max_build_distance_;
+                };
+                if (!cmd.approached && !reachable()) {
+                    if (effective_speed() <= 0) {
+                        command_queue_.pop_front();
+                        continue;
                     }
-                    navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                    goto done_commands;
+                    cmd.approached = true;
+                    navigator_.set_goal(
+                        approach_point(*this, cmd.target_pos, half_x + 1, half_z + 1),
+                        ctx.pathfinder, position(), layer_, naval_draft_,
+                        is_amphibious() || is_hover());
+                }
+                if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                if (!reachable()) {
+                    command_queue_.pop_front();
+                    continue;
                 }
                 navigator_.abort_move();
 
@@ -625,20 +656,39 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target
-            constexpr f32 reclaim_range = 5.0f;
-            f32 rdx = target->position().x - position().x;
-            f32 rdz = target->position().z - position().z;
-            f32 rdist2 = rdx * rdx + rdz * rdz;
-            if (rdist2 > reclaim_range * reclaim_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != target->position().x ||
-                    navigator_.goal().z != target->position().z) {
-                    navigator_.set_goal(target->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: the gap to its footprint within MaxBuildDistance (Moho's
+            // CUnitReclaimTask). Out of reach, or standing on it, the unit
+            // walks up to it, and reclaims from there or gives up.
+            {
+                const f32 extent = footprint_extent(*target);
+                const f32 gap = work_gap(*this, target->position(), extent);
+                const f32 rdx = target->position().x - position().x;
+                const f32 rdz = target->position().z - position().z;
+                const bool on_top = rdx * rdx + rdz * rdz < 1.0f;
+                if (reclaim_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && (gap > max_build_distance_ || on_top)) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, target->position(),
+                                                           target->footprint_size_x() * 0.5f,
+                                                           target->footprint_size_z() * 0.5f),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > max_build_distance_) {
+                        if (is_reclaiming()) stop_reclaiming();
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > max_build_distance_) {
+                    stop_reclaiming();
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 
@@ -719,20 +769,37 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target if out of range
-            constexpr f32 repair_range = 6.0f;
-            f32 rdx = rtarget->position().x - position().x;
-            f32 rdz = rtarget->position().z - position().z;
-            f32 rdist2 = rdx * rdx + rdz * rdz;
-            if (rdist2 > repair_range * repair_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != rtarget->position().x ||
-                    navigator_.goal().z != rtarget->position().z) {
-                    navigator_.set_goal(rtarget->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: the gap to its skirt within MaxBuildDistance to begin,
+            // twice that to go on (Moho's CUnitRepairTask). Out of reach, the
+            // unit walks just clear of its skirt, and repairs from there or
+            // gives up.
+            {
+                const auto& runit = static_cast<const Unit&>(*rtarget);
+                const f32 gap = work_gap(*this, rtarget->position(), skirt_extent(runit));
+                if (repair_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && gap > max_build_distance_) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, rtarget->position(),
+                                                           runit.skirt_size_x() * 0.5f + 1,
+                                                           runit.skirt_size_z() * 0.5f + 1),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > max_build_distance_) {
+                        if (is_repairing()) stop_repairing(L, registry);
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > 2 * max_build_distance_) {
+                    stop_repairing(L, registry);
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 
@@ -773,20 +840,37 @@ void Unit::update(f64 dt, SimContext& ctx) {
                 continue;
             }
 
-            // Move to target if out of range
-            constexpr f32 capture_range = 6.0f;
-            f32 cdx = ctarget->position().x - position().x;
-            f32 cdz = ctarget->position().z - position().z;
-            f32 cdist2 = cdx * cdx + cdz * cdz;
-            if (cdist2 > capture_range * capture_range) {
-                if (!navigator_.is_moving() ||
-                    navigator_.goal().x != ctarget->position().x ||
-                    navigator_.goal().z != ctarget->position().z) {
-                    navigator_.set_goal(ctarget->position(), ctx.pathfinder, position(), layer_,
-                                        naval_draft_, is_amphibious() || is_hover());
+            // Reach: fixed, not MaxBuildDistance (Moho's CUnitCaptureTask). A
+            // footprint gap over 5 sends the unit just clear of its target's
+            // skirt; there it captures within 10, or gives up. A moving
+            // target is lost beyond 10.
+            {
+                const auto& cunit = static_cast<const Unit&>(*ctarget);
+                const f32 gap = work_gap(*this, ctarget->position(), footprint_extent(*ctarget));
+                if (capture_target_id_ != cmd.target_id) {
+                    if (!cmd.approached && gap > kCaptureReach) {
+                        if (effective_speed() <= 0) {
+                            command_queue_.pop_front();
+                            continue;
+                        }
+                        cmd.approached = true;
+                        navigator_.set_goal(approach_point(*this, ctarget->position(),
+                                                           cunit.skirt_size_x() * 0.5f,
+                                                           cunit.skirt_size_z() * 0.5f),
+                                            ctx.pathfinder, position(), layer_, naval_draft_,
+                                            is_amphibious() || is_hover());
+                    }
+                    if (cmd.approached && approach_update(dt, ctx)) goto done_commands;
+                    if (gap > kCaptureHold) {
+                        if (is_capturing()) stop_capturing(L, registry, true);
+                        command_queue_.pop_front();
+                        continue;
+                    }
+                } else if (gap > kCaptureHold && cunit.effective_speed() > 0) {
+                    stop_capturing(L, registry, true);
+                    command_queue_.pop_front();
+                    continue;
                 }
-                navigator_.update(*this, effective_speed(), dt, ctx.terrain);
-                goto done_commands;
             }
             navigator_.abort_move();
 

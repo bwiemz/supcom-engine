@@ -69,6 +69,10 @@ public:
         return static_cast<i32>(weapons_.size());
     }
     f32 build_rate() const { return build_rate_; }
+    /// Economy.MaxBuildDistance: how far past the footprints it builds,
+    /// reclaims and repairs (see sim/work_range.hpp).
+    f32 max_build_distance() const { return max_build_distance_; }
+    void set_max_build_distance(f32 d) { max_build_distance_ = d; }
     void set_build_rate(f32 r) { build_rate_ = r; }
 
     const std::string& layer() const { return layer_; }
@@ -673,12 +677,18 @@ private:
     /// Move along the navigator's path, no faster than `speed_cap` if set (a
     /// formation keeping its slowest unit's pace).
     bool nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap = 0);
+    /// Walk toward work out of reach (the goal set when the order sent the
+    /// unit): nav_update, first asking again for a path the pathfinder put
+    /// off (the navigator keeps a throttled request without retrying it).
+    /// True until the unit gets there.
+    bool approach_update(f64 dt, SimContext& ctx);
     void apply_vet_buffs(lua_State* L);
     void fire_on_veteran(lua_State* L);
 
     std::string unit_id_;
     std::string armor_type_ = "Default";
     f32 build_rate_ = 1.0f;
+    f32 max_build_distance_ = 5.0f; // Moho's RUnitBlueprint default
     std::string layer_ = "Land";
     std::string motion_type_;       // raw MotionType from blueprint
     f32 naval_draft_ = 0;           // abs(Physics.Elevation) for naval units

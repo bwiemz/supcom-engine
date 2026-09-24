@@ -542,7 +542,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             lua_pop(L, 1);
         }
 
-        // Read BuildRate from blueprint Economy.BuildRate
+        // Economy.BuildRate, and MaxBuildDistance: how far past its footprint
+        // it builds, reclaims and repairs (Moho's default 5).
         {
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Economy");
@@ -552,6 +553,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1))
                     unit->set_build_rate(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
+                lua_pushstring(L, "MaxBuildDistance");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_max_build_distance(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
             }
             lua_pop(L, 2);
