@@ -1,9 +1,11 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/category_expr.hpp"
 #include "sim/entity.hpp" // Vector3
 
 #include <string>
+#include <vector>
 
 struct lua_State;
 
@@ -15,6 +17,7 @@ namespace osc::sim {
 
 class EntityRegistry;
 class Projectile;
+class SimState;
 class Unit;
 
 class Weapon {
@@ -36,14 +39,23 @@ public:
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
     f32 firing_randomness = 0;    // angular scatter in radians
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
-    f32 max_height_diff = 0;        // ChangeMaxHeightDiff
+    f32 max_height_diff = 0;               // MaxHeightDiff / ChangeMaxHeightDiff (<= 0: unlimited)
     f32 firing_tolerance = 0;       // ChangeFiringTolerance
     std::string projectile_bp_id;   // ChangeProjectileBlueprint
     bool target_ground = false;       // SetTargetGround
     bool fire_control = false;        // SetFireControl / IsFireControl
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
     f32 bomb_drop_threshold = 25.0f;     // BombDropThreshold (default 25)
-    int targeting_priorities_ref = -2; // LUA_NOREF: SetTargetingPriorities Lua table ref
+    // Targeting: SetTargetingPriorities (compiled; a candidate must match
+    // one, and earlier ones win), the blueprint's restrictions (empty: none)
+    // and how often targets are looked for.
+    std::vector<CategoryExpr> target_priorities;
+    CategoryExpr restrict_disallow;        // TargetRestrictDisallow
+    CategoryExpr restrict_only_allow;      // TargetRestrictOnlyAllow
+    bool above_water_targets_only = false; // AboveWaterTargetsOnly
+    bool above_water_fire_only = false;    // AboveWaterFireOnly
+    bool always_recheck_target = false;    // AlwaysRecheckTarget
+    u32 target_check_period = 1;           // TargetCheckInterval, in ticks
     int weapon_priorities_ref = -2;    // LUA_NOREF: SetWeaponPriorities Lua table ref
     int blueprint_ref = -2;     // LUA_NOREF = Lua registry ref to weapon bp table
     int lua_table_ref = -2;     // LUA_NOREF = Lua ref to weapon Lua table
@@ -55,6 +67,7 @@ public:
     u32 target_entity_id = 0;   // 0 = no target
     bool enabled = true;
     u32 fire_clock = 0; // ticks until the fire clock is ready again
+    u32 target_check_clock = 0; // ticks until the next target scan
 
     /// Ticks between shots: 1/RateOfFire, rounded to whole ticks as Moho
     /// does (at least one).
@@ -70,13 +83,27 @@ public:
     }
 
     /// Moho's CanFire: a target, the weapon enabled, the unit free (not
-    /// Busy), and a bomber over its drop zone. Aim is always on target
-    /// until turrets exist (M200d).
+    /// Busy) and above water if it must be, and a bomber over its drop
+    /// zone. Aim is always on target until turrets exist (M200d).
     bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
+
+    /// Whether this weapon may shoot `target` from where `owner` stands: an
+    /// enemy (by alliance, when `sim` is given), targetable, on a layer the
+    /// weapon can hit, allowed by its restrictions, and in range. Range is a
+    /// cylinder, as Moho's is: horizontal distance within the min and max
+    /// radius, and height within MaxHeightDiff when that is set.
+    /// Priorities are not checked: an attack order can pick any such unit.
+    bool can_target(const Unit& owner, const Entity& target,
+                    const map::VisibilityGrid* visibility_grid, const SimState* sim) const;
+
+    /// Index of the first priority `target` matches (0 when the weapon has
+    /// none), or -1 when it matches none.
+    int priority_of(const Unit& target) const;
 
     /// Per tick: advance the fire clock, pick targets, fire when ready.
     void update(Unit& owner, EntityRegistry& registry, lua_State* L,
-                const map::VisibilityGrid* visibility_grid = nullptr);
+                const map::VisibilityGrid* visibility_grid = nullptr,
+                const SimState* sim = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
     /// Fire one projectile from `spawn_pos` at `target` (along the owner's
@@ -90,7 +117,7 @@ public:
 
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry,
-                          const map::VisibilityGrid* visibility_grid);
+                          const map::VisibilityGrid* visibility_grid, const SimState* sim);
     void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, u32 previous_target);
     /// Call the weapon script's `method(self)`, if it has one. Returns its
     /// first result's truth (true when there is no such method).

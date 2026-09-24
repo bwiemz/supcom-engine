@@ -2,6 +2,7 @@ add_library(osc_sim STATIC
     anim_cache.cpp
     armor_definition.cpp
     blueprint_categories.cpp
+    category_expr.cpp
     build_placement.cpp
     army_brain.cpp
     bone_cache.cpp

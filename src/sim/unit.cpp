@@ -1287,7 +1287,7 @@ weapons_only:
         update_motion_horz(L);
         for (auto& weapon : weapons_) {
             if (destroyed() || dying_) break;
-            weapon->update(*this, registry, L, ctx.visibility_grid);
+            weapon->update(*this, registry, L, ctx.visibility_grid, ctx.sim);
         }
     }
 
@@ -2898,7 +2898,6 @@ void Unit::release_weapon_scripts(lua_State* L) {
         }
         unref(w->lua_table_ref);
         unref(w->blueprint_ref);
-        unref(w->targeting_priorities_ref);
         unref(w->weapon_priorities_ref);
     }
     clear_on_given_callbacks(L);

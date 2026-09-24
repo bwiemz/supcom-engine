@@ -5,6 +5,7 @@
 #include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/projectile.hpp"
+#include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "map/visibility_grid.hpp"
 
@@ -40,6 +41,17 @@ bool is_weapon_targetable(const Unit& owner, const Entity& target,
     return true;
 }
 
+bool is_underwater(const std::string& layer) {
+    return layer == "Sub" || layer == "Seabed";
+}
+
+/// The unit an attack order at the head of the queue names, or 0.
+u32 attack_order_target(const Unit& owner) {
+    const auto& queue = owner.command_queue();
+    if (queue.empty() || queue.front().type != CommandType::Attack) return 0;
+    return queue.front().target_id;
+}
+
 } // namespace
 
 u32 Weapon::fire_period() const {
@@ -50,6 +62,7 @@ u32 Weapon::fire_period() const {
 
 bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
     if (!enabled || target_entity_id == 0 || owner.busy()) return false;
+    if (above_water_fire_only && is_underwater(owner.layer())) return false;
     // A script callback earlier this tick may have destroyed the target.
     const Entity* target = registry.find(target_entity_id);
     if (!target || target->destroyed()) return false;
@@ -87,7 +100,7 @@ bool Weapon::call_script(lua_State* L, const char* method) const {
 }
 
 void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
-                    const map::VisibilityGrid* visibility_grid) {
+                    const map::VisibilityGrid* visibility_grid, const SimState* sim) {
     if (fire_clock > 0) --fire_clock;
 
     if (!enabled || fire_on_death || manual_fire) return;
@@ -96,7 +109,7 @@ void Weapon::update(Unit& owner, EntityRegistry& registry, lua_State* L,
     if (owner.fire_state() == 1) return;
 
     const u32 previous_target = target_entity_id;
-    update_targeting(owner, registry, visibility_grid);
+    update_targeting(owner, registry, visibility_grid, sim);
 
     if (L && fires_through_script()) {
         update_scripted(owner, registry, L, previous_target);
@@ -133,69 +146,96 @@ void Weapon::update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L
     fire_clock = fire_period();
 }
 
+bool Weapon::can_target(const Unit& owner, const Entity& target,
+                        const map::VisibilityGrid* visibility_grid, const SimState* sim) const {
+    if (target.destroyed() || !target.is_unit() || target.entity_id() == owner.entity_id())
+        return false;
+    if (target.do_not_target() || target.army() < 0) return false;
+    if (sim ? !sim->is_enemy(owner.army(), target.army()) : target.army() == owner.army())
+        return false;
+    if (!is_weapon_targetable(owner, target, visibility_grid)) return false;
+    const auto& unit = static_cast<const Unit&>(target);
+    if (fire_target_layer_caps != 0xFF && !(layer_to_bit(unit.layer()) & fire_target_layer_caps))
+        return false;
+    if (above_water_targets_only && is_underwater(unit.layer())) return false;
+    if (!restrict_only_allow.empty() && !restrict_only_allow.matches(unit.categories()))
+        return false;
+    if (restrict_disallow.matches(unit.categories())) return false;
+
+    const f32 dx = target.position().x - owner.position().x;
+    const f32 dz = target.position().z - owner.position().z;
+    const f32 dist2 = dx * dx + dz * dz;
+    if (dist2 > max_range * max_range || dist2 < min_range * min_range) return false;
+    if (max_height_diff > 0 &&
+        std::fabs(target.position().y - owner.position().y) > max_height_diff)
+        return false;
+    return true;
+}
+
+int Weapon::priority_of(const Unit& target) const {
+    if (target_priorities.empty()) return 0;
+    for (size_t i = 0; i < target_priorities.size(); ++i) {
+        if (target_priorities[i].matches(target.categories())) return static_cast<int>(i);
+    }
+    return -1;
+}
+
 void Weapon::update_targeting(Unit& owner, EntityRegistry& registry,
-                              const map::VisibilityGrid* visibility_grid) {
-    // Check if current target is still valid
-    if (target_entity_id > 0) {
-        auto* target = registry.find(target_entity_id);
-        if (target && !target->destroyed() && target->is_unit() &&
-            !target->do_not_target() &&
-            is_weapon_targetable(owner, *target, visibility_grid)) {
-            // Layer cap check on existing target
-            if (fire_target_layer_caps != 0xFF &&
-                !(layer_to_bit(static_cast<Unit*>(target)->layer()) & fire_target_layer_caps)) {
-                target_entity_id = 0;
-            } else {
-                // Check range (3D distance)
-                f32 dx = target->position().x - owner.position().x;
-                f32 dy = target->position().y - owner.position().y;
-                f32 dz = target->position().z - owner.position().z;
-                f32 dist2 = dx * dx + dy * dy + dz * dz;
-                f32 max2 = max_range * max_range;
-                f32 min2 = min_range * min_range;
-                if (dist2 <= max2 && dist2 >= min2 &&
-                    target->army() != owner.army()) {
-                    return; // Current target still valid
-                }
-                target_entity_id = 0;
-            }
-        } else {
-            target_entity_id = 0; // Invalid — clear
+                              const map::VisibilityGrid* visibility_grid, const SimState* sim) {
+    // A target this weapon can no longer shoot is dropped at once.
+    if (target_entity_id != 0) {
+        const Entity* target = registry.find(target_entity_id);
+        if (!target || !can_target(owner, *target, visibility_grid, sim)) target_entity_id = 0;
+    }
+
+    // An attack order's target comes first, for every weapon that can hit
+    // it, whatever the priorities say.
+    if (const u32 ordered = attack_order_target(owner); ordered != 0) {
+        if (ordered == target_entity_id) return;
+        const Entity* target = registry.find(ordered);
+        if (target && can_target(owner, *target, visibility_grid, sim)) {
+            target_entity_id = ordered;
+            return;
         }
     }
 
-    // Find nearest enemy in range
-    auto candidates = registry.collect_in_radius(
-        owner.position().x, owner.position().z, max_range);
+    // Otherwise look for targets every TargetCheckInterval: when there is
+    // none, or, with AlwaysRecheckTarget, for one of a better priority.
+    if (target_check_clock > 0) {
+        --target_check_clock;
+        return;
+    }
+    target_check_clock = target_check_period > 0 ? target_check_period - 1 : 0;
+    int current_priority = -1;
+    if (target_entity_id != 0) {
+        if (!always_recheck_target) return;
+        current_priority = priority_of(static_cast<const Unit&>(*registry.find(target_entity_id)));
+    }
 
-    f32 best_dist2 = max_range * max_range + 1.0f;
+    // Best: the earliest priority, then the nearest, then the lowest id
+    // (candidates come in id order, so ties keep the first).
     u32 best_id = 0;
-    f32 min2 = min_range * min_range;
-
-    for (u32 id : candidates) {
-        auto* e = registry.find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
-        if (e->army() == owner.army() || e->army() < 0) continue;
-        if (e->entity_id() == owner.entity_id()) continue;
-        if (e->do_not_target()) continue;
-        if (!is_weapon_targetable(owner, *e, visibility_grid)) continue;
-        // Layer cap filter
-        if (fire_target_layer_caps != 0xFF &&
-            !(layer_to_bit(static_cast<Unit*>(e)->layer()) & fire_target_layer_caps))
-            continue;
-
-        f32 dx = e->position().x - owner.position().x;
-        f32 dy = e->position().y - owner.position().y;
-        f32 dz = e->position().z - owner.position().z;
-        f32 dist2 = dx * dx + dy * dy + dz * dz;
-        if (dist2 < min2) continue;
-        if (dist2 < best_dist2) {
-            best_dist2 = dist2;
+    int best_priority = 0;
+    f32 best_dist2 = 0;
+    for (const u32 id :
+         registry.collect_in_radius(owner.position().x, owner.position().z, max_range)) {
+        const Entity* e = registry.find(id);
+        if (!e || !can_target(owner, *e, visibility_grid, sim)) continue;
+        const int priority = priority_of(static_cast<const Unit&>(*e));
+        if (priority < 0) continue;
+        const f32 dx = e->position().x - owner.position().x;
+        const f32 dz = e->position().z - owner.position().z;
+        const f32 dist2 = dx * dx + dz * dz;
+        if (best_id == 0 || priority < best_priority ||
+            (priority == best_priority && dist2 < best_dist2)) {
             best_id = id;
+            best_priority = priority;
+            best_dist2 = dist2;
         }
     }
-
-    target_entity_id = best_id;
+    // A recheck changes target only for a better priority.
+    if (current_priority >= 0 && (best_id == 0 || best_priority >= current_priority)) return;
+    if (best_id != 0) target_entity_id = best_id;
 }
 
 bool Weapon::try_fire(Unit& owner, EntityRegistry& registry,

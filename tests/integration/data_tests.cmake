@@ -44,7 +44,8 @@ set(OSC_DATA_TESTS_GATE
     platoon-test profile-test projectile-test prop-test reclaim-test
     repair-test scale-test scissor-test scrollbar-render-test shadow-test
     shield-render-test shield-test silo-test smoke-test spatial-test
-    specular-test stall-test stats-test stress-test stub-test teamcolor-test
+    specular-test stall-test stats-test stress-test stub-test targeting-test
+    teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test
     tiled-render-test toggle-test transport-silo-test transport-test ui-test
     uiboot-test uirender-test unitsound-test upgrade-test vet-adj-render-test

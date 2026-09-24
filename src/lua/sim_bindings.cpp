@@ -263,6 +263,39 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     weapon->overcharge = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
 
+                    // Targeting restrictions and cadence.
+                    for (auto [field, expr] :
+                         {std::pair{"TargetRestrictDisallow", &weapon->restrict_disallow},
+                          std::pair{"TargetRestrictOnlyAllow", &weapon->restrict_only_allow}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, we);
+                        if (lua_type(L, -1) == LUA_TSTRING)
+                            *expr = sim::parse_category_list(lua_tostring(L, -1));
+                        lua_pop(L, 1);
+                    }
+                    for (auto [field, flag] :
+                         {std::pair{"AboveWaterTargetsOnly", &weapon->above_water_targets_only},
+                          std::pair{"AboveWaterFireOnly", &weapon->above_water_fire_only},
+                          std::pair{"AlwaysRecheckTarget", &weapon->always_recheck_target}}) {
+                        lua_pushstring(L, field);
+                        lua_gettable(L, we);
+                        *flag = lua_toboolean(L, -1) != 0;
+                        lua_pop(L, 1);
+                    }
+                    lua_pushstring(L, "TargetCheckInterval");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1)) {
+                        const f64 ticks = std::floor(lua_tonumber(L, -1) * 10.0 + 0.5);
+                        weapon->target_check_period =
+                            static_cast<u32>(std::clamp(ticks, 1.0, 1.0e4));
+                    }
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "MaxHeightDiff");
+                    lua_gettable(L, we);
+                    if (lua_isnumber(L, -1))
+                        weapon->max_height_diff = static_cast<f32>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+
                     // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
                     lua_pushstring(L, "BeamLifetime");
                     lua_gettable(L, we);

@@ -142,6 +142,35 @@ projectile scripts extracted from the retail `.scd` archives.
 - Category matching moves where the sim can reach it, or categories are
   compiled when priorities are set.
 
+**What building M200c established:**
+
+- **Categories are copied when set.** FAF's `SetWeaponPriorities` passes a
+  recycled table to `SetTargetingPriorities` and clears it right after, so
+  Moho must copy it; we kept a reference, which would have lost FAF's
+  priorities. `SetTargetingPriorities` now compiles a `CategoryExpr` tree
+  that the sim tests without Lua.
+- **Unmatched units are not targets.** All 337 retail priority lists end in
+  `ALLUNITS`, which only makes sense if a unit outside every priority can't
+  be targeted.
+- **Range is a cylinder.** FAF's notes call `MaxHeightDiff` "cylindrical
+  range": horizontal distance against the radii, height only against
+  `MaxHeightDiff`. Our old 3D distance shortened every weapon's reach
+  against aircraft.
+- **Alliances.** Targets must be enemies by alliance. Before, only a unit's
+  own army was spared, so team-mates shot each other.
+- **Blueprint lists** such as `TargetRestrictDisallow` read commas as
+  alternatives and spaces as a conjunction (`'TACTICAL MISSILE'`).
+- **Footprints.** 205 retail units leave `Footprint.SizeX`/`SizeZ` out, and
+  retail's `GetSkirtRect` reads them unguarded; the UEF TMD errored in
+  `OnCreate`. Moho sizes such a footprint from the unit's `SizeX`/`SizeZ`.
+- **Left for later:**
+  - Countermeasure weapons (`OnlyAllow` `TACTICAL MISSILE`, `TORPEDO`) now
+    have no targets instead of shooting units. Intercepting projectiles
+    needs projectile targets.
+  - `TrackingRadius` (turrets that track beyond their range) belongs to
+    M200d.
+  - `HeadingArcCenter`/`HeadingArcRange` are M200d as well.
+
 ### M200d — turrets aim
 
 - Aim controllers belong to their weapon and slew heading and pitch toward
