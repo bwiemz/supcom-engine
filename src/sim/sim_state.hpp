@@ -427,13 +427,34 @@ public:
     /// says what diverged: the random stream (an extra or missing roll
     /// shows the tick it happens), the armies (state, stored economy), and
     /// the entities (id, army, position, health, in id order).
+    /// The sim's authoritative state, hashed by domain, so a desync report
+    /// names what diverged, not only that something did. Each is FNV-1a over
+    /// its state in id order; the total covers them all.
     struct ChecksumParts {
-        u64 rng = 0;
-        u64 armies = 0;
-        u64 entities = 0;
+        u64 rng = 0;            ///< the sim's random stream
+        u64 armies = 0;         ///< the tick; each army's state, resources and rates
+        u64 entities = 0;       ///< every entity: id, army, destroyed, pose, health, build
+        u64 units = 0;          ///< settings, layer, dying, transport, work, silo, economy
+        u64 orders = 0;         ///< every unit's command queue, runtime state included
+        u64 navigation = 0;     ///< navigator goals and status, velocities
+        u64 weapons = 0;        ///< targets, ground targets, fire clocks, enabled
+        u64 projectiles = 0;    ///< velocity, target, lifetime, impacted
+        u64 shields = 0;        ///< on or off (their health is an entity's)
+        u64 economy_events = 0; ///< progress, done, cancelled
+        u64 threads = 0;        ///< live script threads: which, and when they wake
         u32 total() const;
+        static constexpr size_t kCount = 11;
+        /// The domains in order, with their names (kNames).
+        std::array<u64, kCount> values() const;
+        static constexpr std::array<const char*, kCount> kNames = {
+            "rng",     "armies",      "entities", "units",          "orders", "navigation",
+            "weapons", "projectiles", "shields",  "economy_events", "threads"};
     };
     ChecksumParts checksum_parts() const;
+    /// The checksum of the tick just run: computed once however many ask
+    /// (the trace, the recording, the lockstep session), as it walks every
+    /// unit's weapons and orders.
+    const ChecksumParts& tick_checksum() const;
 
     /// Deterministic checksum of the authoritative sim state (the parts
     /// above, and the tick). Two sims fed identical inputs on the same
@@ -443,9 +464,14 @@ public:
     u32 compute_sync_checksum() const;
 
     /// Write each tick's checksum and its parts as a line of text
-    /// ("tick total rng armies entities", hex) -- a trace two runs can be
-    /// compared by (tools/checksum_diff.py). Null stops it.
-    void set_checksum_trace(std::ostream* out) { checksum_trace_ = out; }
+    /// ("tick total" and each domain of ChecksumParts, hex, after a "#"
+    /// header naming them) -- a trace two runs can be compared by
+    /// (tools/checksum_diff.py names the first domain that differs). Null
+    /// stops it.
+    void set_checksum_trace(std::ostream* out) {
+        checksum_trace_ = out;
+        checksum_trace_header_ = false;
+    }
     /// Write every entity's synced state, and the RNG's, at ticks [from, to]
     /// to `out`, floats as their exact bits. Two platforms' dumps diff to
     /// the entity where their games part (--entity-trace).
@@ -610,6 +636,10 @@ private:
         projectile_info_;
     std::vector<u32> collision_beams_;
     std::vector<u32> ferry_beacons_;
+    bool checksum_trace_header_ = false;
+    mutable ChecksumParts tick_checksum_;
+    mutable u32 tick_checksum_tick_ = 0;
+    mutable bool tick_checksum_valid_ = false;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

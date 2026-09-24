@@ -52,6 +52,13 @@ public:
     /// Number of active (non-dead) threads.
     size_t active_count() const;
 
+    /// Each live thread's serial and wake tick, in order (the sim checksum's
+    /// threads domain: what the scripts will run, and when).
+    template <typename F> void for_each_live(F&& fn) const {
+        for (const auto& t : threads_)
+            if (!t.dead) fn(t.serial, t.wait_until_tick);
+    }
+
     /// One line per live thread: where it was forked, where it is suspended
     /// now (innermost Lua frames), and when it next runs. A debugging aid
     /// for "the scripts run without errors but nothing happens".
