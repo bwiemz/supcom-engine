@@ -211,30 +211,6 @@ Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
     return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
 }
 
-/// Where along `from` to `to` it first goes below the terrain, sampled
-/// about every unit (the heightmap's spacing) and refined by halving.
-std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,
-                                    const Vector3& to) {
-    const auto below = [&terrain](const Vector3& p) {
-        return p.y < terrain.get_terrain_height(p.x, p.z);
-    };
-    const f32 dx = to.x - from.x;
-    const f32 dz = to.z - from.z;
-    const auto samples = std::max(1, static_cast<int>(std::ceil(std::sqrt(dx * dx + dz * dz))));
-    for (int i = 1; i <= samples; ++i) {
-        const f32 t = static_cast<f32>(i) / static_cast<f32>(samples);
-        if (!below(lerp(from, to, t))) continue;
-        f32 lo = static_cast<f32>(i - 1) / static_cast<f32>(samples);
-        f32 hi = t;
-        for (int pass = 0; pass < 8; ++pass) {
-            const f32 mid = 0.5f * (lo + hi);
-            (below(lerp(from, to, mid)) ? hi : lo) = mid;
-        }
-        return hi;
-    }
-    return std::nullopt;
-}
-
 } // namespace
 
 bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,

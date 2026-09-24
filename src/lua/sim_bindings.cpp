@@ -395,10 +395,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                         lua_pop(L, 1);
                     }
 
-                    // DefaultBeamWeapon refuses a blueprint without BeamLifetime.
-                    lua_pushstring(L, "BeamLifetime");
+                    // A beam weapon is known by the beams its script makes
+                    // (CollisionBeamEntity.__init); how far they reach:
+                    lua_pushstring(L, "MaximumBeamLength");
                     lua_gettable(L, we);
-                    weapon->beam = lua_isnumber(L, -1) != 0;
+                    if (lua_isnumber(L, -1))
+                        weapon->max_beam_length = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
                     // RackBones[1].MuzzleBones[1] → muzzle bone name (string)

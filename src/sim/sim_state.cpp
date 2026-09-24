@@ -1,5 +1,6 @@
 #include "sim/sim_state.hpp"
 #include "sim/blueprint_categories.hpp"
+#include "sim/collision_beam.hpp"
 #include "sim/platoon.hpp"
 #include "sim/formation.hpp"
 #include "sim/build_info.hpp"
@@ -801,6 +802,8 @@ void SimState::tick() {
 
     update_economies();
     update_entities();
+    // Beams reach from where their muzzles have moved to (M206c).
+    update_collision_beams(*this, L_);
 
     // Aircraft killed in flight that landed this tick: Moho tells their
     // script, whose OnImpact deals the DeathImpact weapon's damage and plays

@@ -6,6 +6,10 @@
 
 struct lua_State;
 
+namespace osc::map {
+class Terrain;
+}
+
 namespace osc::sim {
 
 /// The shape a unit or prop blueprint (the table at `bp_index`) gives an
@@ -33,5 +37,11 @@ Vector3 collision_centre(const Entity& e);
 /// is infinitely far.
 f32 shape_distance(const CollisionShape& shape, const Vector3& position,
                    const Quaternion& orientation, const Vector3& point);
+
+/// Where along the segment `from` to `to` (0 to 1) it first goes below the
+/// terrain, sampled about every unit (the heightmap's spacing) and refined
+/// by halving. None if it stays above.
+std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,
+                                    const Vector3& to);
 
 } // namespace osc::sim

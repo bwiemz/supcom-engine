@@ -387,6 +387,7 @@ static void print_usage() {
               << "  --formation-test   Groups move in formation\n"
               << "  --missile-test     Silos build missiles; launchers fire them\n"
               << "  --defence-test     Anti-missile weapons shoot missiles down\n"
+              << "  --beam-weapon-test Beam weapons reach, hit and damage\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
@@ -1761,6 +1762,7 @@ int main(int argc, char* argv[]) {
     bool formation_test = parse_flag(argc, argv, "--formation-test");
     bool missile_test = parse_flag(argc, argv, "--missile-test");
     bool defence_test = parse_flag(argc, argv, "--defence-test");
+    bool beam_weapon_test = parse_flag(argc, argv, "--beam-weapon-test");
     bool shadow_test = parse_flag(argc, argv, "--shadow-test");
     bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
     bool spatial_test = parse_flag(argc, argv, "--spatial-test");
@@ -1856,7 +1858,7 @@ int main(int argc, char* argv[]) {
         teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
         terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
         targeting_test || aim_test || death_test || impact_test || arc_test || collide_test ||
-        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test ||
+        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test || beam_weapon_test ||
         shadow_test || massstub4_test || spatial_test || unitsound_test || medstub_test ||
         lowstub_test || blend_test || ui_test || bitmap_test || text_test || edit_test ||
         controls_test || uiboot_test || gameui_test || lobby_flow_test || uirender_test ||
@@ -4007,6 +4009,7 @@ int main(int argc, char* argv[]) {
     if (formation_test && !map_path.empty()) osc::test::test_formation(test_ctx);
     if (missile_test && !map_path.empty()) osc::test::test_missile(test_ctx);
     if (defence_test && !map_path.empty()) osc::test::test_defence(test_ctx);
+    if (beam_weapon_test && !map_path.empty()) osc::test::test_beam_weapon(test_ctx);
     if (terrain_tex_test && !map_path.empty()) osc::test::test_terrain_tex(test_ctx);
     if (shadow_test && !map_path.empty()) osc::test::test_shadow(test_ctx);
     if (massstub4_test && !map_path.empty()) osc::test::test_massstub4(test_ctx);

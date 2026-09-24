@@ -9006,6 +9006,158 @@ void test_defence(TestContext& ctx) {
     spdlog::info("Defence test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Beam weapon test (M206c) ──
+void test_beam_weapon(TestContext& ctx) {
+    spdlog::info("=== BEAM WEAPON TEST: beams reach, hit and damage ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        -- Every impact of a unit's beams, and every projectile its weapons
+        -- make (a beam weapon makes none).
+        function __osc_watch(u)
+            u.__osc_impacts = {}
+            u.__osc_shots = 0
+            for i = 1, u:GetWeaponCount() do
+                local w = u:GetWeapon(i)
+                local create = w.CreateProjectile
+                w.CreateProjectile = function(self, muzzle)
+                    local proj = create(self, muzzle)
+                    if proj then u.__osc_shots = u.__osc_shots + 1 end
+                    return proj
+                end
+                for _, b in (w.Beams or {}) do
+                    local beam = b.Beam
+                    local on_impact = beam.OnImpact
+                    beam.OnImpact = function(self, kind, target)
+                        table.insert(u.__osc_impacts, {tick = GetGameTick(), kind = kind, target = target,
+                                                       beam = self, ['end'] = self:GetPosition(1)})
+                        return on_impact(self, kind, target)
+                    end
+                end
+            end
+            return u
+        end
+        function __osc_count(u, kind, target)
+            local n = 0
+            for _, i in u.__osc_impacts do
+                if (not kind or i.kind == kind) and (not target or i.target == target) then n = n + 1 end
+            end
+            return n
+        end
+    )");
+    lua_check("setup: a Cerberus, a Monkeylord and a zapper, each with a target", R"(
+        __osc_cerberus = __osc_watch(__osc_spawn('urb2301', 'ARMY_1', 470, 60))
+        __osc_block = __osc_spawn('uel0201', 'ARMY_2', 490, 60)
+        __osc_block:SetFireState(1)
+        __osc_ml = __osc_watch(__osc_spawn('url0402', 'ARMY_1', 620, 250))
+        __osc_wall = __osc_spawn('ueb1301', 'ARMY_2', 642, 250)
+        __osc_wall:SetCanTakeDamage(false)
+        -- A friendly structure in its line (CollideFriendly = false): passed.
+        __osc_friend = __osc_spawn('ueb1301', 'ARMY_1', 632, 250)
+        __osc_zapper = __osc_watch(__osc_spawn('urb4201', 'ARMY_2', 734, 330))
+        __osc_zap_target = __osc_spawn('ueb1101', 'ARMY_2', 740, 330)
+        __osc_tml = __osc_spawn('urb2108', 'ARMY_1', 620, 330)
+        __osc_tml:GiveTacticalSiloAmmo(1)
+        IssueTactical({__osc_tml}, __osc_zap_target)
+    )");
+    run(300);
+    lua_check("Test 1: a Cerberus fires its three beams through its script, and kills with them", R"(
+        local w = __osc_cerberus:GetWeapon(1)
+        if table.getn(w.Beams or {}) ~= 3 then error('it has ' .. table.getn(w.Beams or {}) .. ' beams') end
+        if __osc_cerberus.__osc_shots ~= 0 then error('it fired ' .. __osc_cerberus.__osc_shots .. ' projectiles') end
+        if __osc_count(__osc_cerberus, 'Unit', __osc_block) == 0 then error('no beam met the tank') end
+        if not __osc_block:IsDead() then error('the tank lives') end
+    )");
+    lua_check("Test 2: a pulsed beam hits every CollisionCheckInterval + 1 ticks, 1 + 6/3 times a shot", R"(
+        -- Cerberus: BeamLifetime 0.6 s, BeamCollisionDelay 0.2 s (2 ticks),
+        -- RateOfFire 1.5 (a shot every 7 ticks).
+        local first = __osc_cerberus.__osc_impacts[1].beam
+        local ticks = {}
+        for _, i in __osc_cerberus.__osc_impacts do
+            if i.beam == first then table.insert(ticks, i.tick) end
+        end
+        if table.getn(ticks) < 4 then error('only ' .. table.getn(ticks) .. ' pulses') end
+        if ticks[2] - ticks[1] ~= 3 or ticks[3] - ticks[2] ~= 3 then
+            error('pulses at ' .. table.concat(ticks, ',', 1, 4))
+        end
+        if ticks[4] - ticks[1] ~= 7 then error('the next shot came ' .. (ticks[4] - ticks[1]) .. ' ticks on') end
+    )");
+    lua_check("Test 3: a continuous beam checks every other tick (interval 1)", R"(
+        local ticks = {}
+        for _, i in __osc_ml.__osc_impacts do table.insert(ticks, i.tick) end
+        if table.getn(ticks) < 50 then error('only ' .. table.getn(ticks) .. ' checks') end
+        for k = 2, 50 do
+            if ticks[k] - ticks[k - 1] ~= 2 then error('checks at ' .. ticks[k - 1] .. ' and ' .. ticks[k]) end
+        end
+    )");
+    lua_check("Test 4: the beam runs from the muzzle, past a friend, to the face of what it holds", R"(
+        local i = __osc_ml.__osc_impacts[table.getn(__osc_ml.__osc_impacts)]
+        if i.target == __osc_friend then error('it stopped at the friendly structure') end
+        if i.kind ~= 'Unit' or i.target ~= __osc_wall then error('it met ' .. i.kind) end
+        local start = i.beam:GetPosition(0)
+        local muzzle = __osc_ml:GetPosition('Center_Turret_Muzzle')
+        if VDist3(start, muzzle) > 0.01 then error('it starts ' .. VDist3(start, muzzle) .. ' from the muzzle') end
+        local wall = __osc_wall:GetPosition()
+        local face = wall[1] - __osc_wall:GetBlueprint().SizeX / 2
+        if math.abs(i['end'][1] - face) > 0.05 then
+            error('it ends at x ' .. i['end'][1] .. ', the face is at ' .. face)
+        end
+    )");
+    lua_check("setup: the structure can be hurt now", R"(
+        rawset(_G, '__osc_wall_hp', __osc_wall:GetHealth())
+        __osc_wall:SetCanTakeDamage(true)
+    )");
+    run(10);
+    lua_check("Test 5: its small blast on the hull hurts a big target", R"(
+        -- The Monkeylord's beam deals DamageArea (radius 0.5) at its end, on
+        -- the structure's face, far from its position at its feet.
+        local lost = __osc_wall_hp - __osc_wall:GetHealth()
+        if lost < 800 then error('the structure lost ' .. lost .. ' in 10 ticks') end
+    )");
+    lua_check("Test 6: bones are placed at the model's scale", R"(
+        -- A Striker's muzzle is 5.65 model units ahead and 3.77 up; its
+        -- UniformScale is 0.07.
+        local tank = __osc_spawn('uel0201', 'ARMY_1', 470, 120)
+        local p, m = tank:GetPosition(), tank:GetPosition('Turret_Muzzle')
+        if math.abs((m[3] - p[3]) - 5.65 * 0.07) > 0.02 or math.abs((m[2] - p[2]) - 3.77 * 0.07) > 0.02 then
+            error(string.format('its muzzle is %.2f ahead and %.2f up', m[3] - p[3], m[2] - p[2]))
+        end
+    )");
+    lua_check("Test 7: a zapper's beam meets the missile", R"(
+        if __osc_count(__osc_zapper, 'Projectile') == 0 then error('it never met a projectile') end
+        if __osc_zapper.__osc_shots ~= 0 then error('it fired projectiles') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 8: no script errors");
+    spdlog::info("Beam weapon test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 
@@ -15513,7 +15665,8 @@ void test_collision_beam(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: result={}", v); }
     }
 
-    // Test 8: SetBeamFx with bCollideOnStart fires OnImpact
+    // Test 8: SetBeamFx with checkCollision checks at once: OnImpact with
+    // what the beam really meets.
     {
         run_lua(R"(
             local beam = rawget(_G, '_cbtest_beam')
@@ -15526,10 +15679,11 @@ void test_collision_beam(TestContext& ctx) {
             local fx = CreateBeamEmitter('/effects/emitters/beam.bp', 1)
             moho.CollisionBeamEntity.SetBeamFx(beam, fx, true)
             local hit = rawget(_G, '_cbtest8_impact')
-            rawset(_G, '_cbtest8', hit == 'Terrain' and 'ok' or ('hit='..tostring(hit)))
+            local enabled = moho.CollisionBeamEntity.IsEnabled(beam)
+            rawset(_G, '_cbtest8', (hit ~= nil) == enabled and 'ok' or ('hit='..tostring(hit)))
         )");
         auto v = check_result("_cbtest8");
-        if (v == "ok") { pass++; spdlog::info("[PASS] Test 8: SetBeamFx(collideOnStart) fires OnImpact"); }
+        if (v == "ok") { pass++; spdlog::info("[PASS] Test 8: SetBeamFx(checkCollision) checks an enabled beam at once"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 8: result={}", v); }
     }
 

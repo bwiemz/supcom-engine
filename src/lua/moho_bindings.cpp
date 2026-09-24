@@ -22,6 +22,7 @@
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
 #include "map/visibility_grid.hpp"
@@ -602,6 +603,12 @@ static int entity_GetPosition(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) {
         push_vector3(L, {0, 0, 0});
+        return 1;
+    }
+    // A collision beam's end 1 is where its last check reached; end 0 its
+    // muzzle (its position).
+    if (e->is_collision_beam() && lua_type(L, 2) == LUA_TNUMBER && lua_tonumber(L, 2) == 1) {
+        push_vector3(L, e->beam_endpoint());
         return 1;
     }
     // Optional bone argument (arg 2): name or index
@@ -4711,6 +4718,25 @@ static int weapon_FireWeapon(lua_State* L) {
         lua_pushboolean(L, 0); return 1;
     }
     auto& unit = static_cast<sim::Unit&>(*owner);
+    // A weapon its script fires hears OnFire, as the fire clock would give
+    // it (the Othuy's beam fires this way); the engine fires the rest.
+    if (w->fires_through_script() && w->lua_table_ref >= 0) {
+        lua_pushstring(L, "OnFire");
+        lua_gettable(L, 1);
+        bool fired = false;
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, 1);
+            fired = lua_pcall(L, 1, 0, 0) == 0;
+            if (!fired) {
+                spdlog::warn("FireWeapon OnFire error: {}", lua_tostring(L, -1));
+                lua_pop(L, 1);
+            }
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pushboolean(L, fired ? 1 : 0);
+        return 1;
+    }
     bool fired = w->try_fire(unit, sim->entity_registry(), L);
     lua_pushboolean(L, fired ? 1 : 0);
     return 1;
@@ -9314,9 +9340,13 @@ static int collision_beam_init(lua_State* L) {
     if (!sim) return 0;
     if (!lua_istable(L, 1)) return luaL_error(L, "CollisionBeamEntity.__init: self must be table");
 
-    // Extract launcher (weapon's unit) from spec.Weapon.unit
+    // Extract launcher (weapon's unit) from spec.Weapon.unit, and what it
+    // fires from (M206c): the weapon, spec.OtherBone on the launcher (the
+    // retail engine's own note: "bone of weapon's unit to attach to"), and
+    // spec.CollisionCheckInterval in ticks.
     u32 launcher_id = 0;
     i32 army = 0;
+    sim::Entity::BeamSetup setup;
     if (lua_istable(L, 2)) {
         lua_pushstring(L, "Weapon");
         lua_rawget(L, 2);
@@ -9324,17 +9354,36 @@ static int collision_beam_init(lua_State* L) {
             int weapon_idx = lua_gettop(L); // absolute index of Weapon table
             lua_pushstring(L, "unit");
             lua_rawget(L, weapon_idx);
+            sim::Entity* unit = nullptr;
             if (lua_istable(L, -1)) {
                 int unit_idx = lua_gettop(L); // absolute index of unit table
-                auto* unit = check_entity(L, unit_idx);
+                unit = check_entity(L, unit_idx);
                 if (unit) {
                     launcher_id = unit->entity_id();
                     army = unit->army();
                 }
             }
             lua_pop(L, 1); // pop unit
+            if (auto* weapon = check_weapon(L, weapon_idx)) {
+                weapon->beam = true;
+                setup.weapon = weapon->weapon_index;
+                setup.length = weapon->max_beam_length > 0 ? weapon->max_beam_length
+                                                           : weapon->max_range;
+            }
+            if (unit) {
+                lua_pushstring(L, "OtherBone");
+                lua_rawget(L, 2);
+                if (!lua_isnil(L, -1) && unit->bone_data())
+                    setup.muzzle_bone = resolve_bone_index(unit, L, lua_gettop(L));
+                lua_pop(L, 1);
+            }
         }
         lua_pop(L, 1); // pop Weapon
+        lua_pushstring(L, "CollisionCheckInterval");
+        lua_rawget(L, 2);
+        if (lua_isnumber(L, -1) && lua_tonumber(L, -1) > 0)
+            setup.check_interval = static_cast<u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
     }
 
     // Create entity in registry
@@ -9343,6 +9392,7 @@ static int collision_beam_init(lua_State* L) {
     entity->set_collision_beam(true);
     entity->set_army(army);
     entity->set_beam_launcher_id(launcher_id);
+    entity->beam_setup() = setup;
     // Copy launcher position as initial beam origin
     if (launcher_id) {
         auto* launcher = reg.find(launcher_id);
@@ -9362,9 +9412,30 @@ static int collision_beam_init(lua_State* L) {
     lua_pushstring(L, "_c_object");
     lua_pushlightuserdata(L, ent);
     lua_rawset(L, 1);
+    sim->track_collision_beam(id);
 
     spdlog::debug("CollisionBeamEntity.__init: entity #{} army={} launcher={}",
                   id, army, launcher_id);
+
+    // Its script's OnCreate(spec) (CollisionBeam's makes its Trash): the
+    // engine calls it, as no Lua __post_init does for a CollisionBeamEntity.
+    lua_pushstring(L, "OnCreate");
+    lua_gettable(L, 1);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, 1);
+        if (lua_istable(L, 2)) lua_pushvalue(L, 2);
+        else lua_pushnil(L);
+        if (lua_pcall(L, 2, 0, 0) != 0) {
+            const char* err = lua_tostring(L, -1);
+            const std::string message =
+                std::string("CollisionBeam OnCreate error: ") + (err ? err : "(unknown)");
+            spdlog::warn("{}", message);
+            if (osc::test_status::count_lua_failures()) osc::test_status::record_failure(message);
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
     return 0;
 }
 
@@ -9374,6 +9445,7 @@ static int collision_beam_Enable(lua_State* L) {
     if (!ent || !ent->is_collision_beam()) return 0;
     if (ent->beam_enabled()) return 0; // already enabled
     ent->set_beam_enabled(true);
+    ent->beam_setup().check_clock = 0; // its first check is this tick's
 
     // Fire OnEnable callback on Lua table
     if (lua_istable(L, 1)) {
@@ -9433,22 +9505,11 @@ static int collision_beam_SetBeamFx(lua_State* L) {
         ent->set_beam_fx_ref(ref);
     }
 
-    // arg3 = bCollideOnStart (bool) — if true, trigger immediate collision check
-    // For now we store the flag; actual raycast collision comes in a future milestone
-    if (lua_toboolean(L, 3)) {
-        // Fire OnImpact('Terrain', nil) as initial collision
-        if (lua_istable(L, 1)) {
-            lua_pushstring(L, "OnImpact");
-            lua_rawget(L, 1);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, 1);       // self
-                lua_pushstring(L, "Terrain"); // impactType
-                lua_pushnil(L);            // targetEntity
-                if (lua_pcall(L, 3, 0, 0) != 0) { lua_pop(L, 1); }
-            } else {
-                lua_pop(L, 1);
-            }
-        }
+    // arg3 = checkCollision: a continuous beam checks at once, and the next
+    // check comes its interval + 1 ticks later.
+    if (lua_toboolean(L, 3) && ent->beam_enabled()) {
+        if (auto* sim = get_sim(L))
+            sim::check_collision_beam(*sim, L, ent->entity_id(), /*before_pass=*/true);
     }
     return 0;
 }
@@ -9471,16 +9532,14 @@ static int collision_beam_GetLauncher(lua_State* L) {
     return 1;
 }
 
-/// Destroy — mark entity destroyed + set _destroyed on Lua table + unref beam fx
+/// Destroy — its beam fx let go, then gone as any entity goes: its
+/// OnDestroy (its trash, scorch threads), its ambient loop stopped, and out
+/// of the registry.
 static int collision_beam_Destroy(lua_State* L) {
     auto* ent = check_entity(L);
-    if (ent && ent->is_collision_beam()) {
-        ent->mark_destroyed();
-        // Unref beam fx
-        if (ent->beam_fx_ref() >= 0) {
-            luaL_unref(L, LUA_REGISTRYINDEX, ent->beam_fx_ref());
-            ent->set_beam_fx_ref(-2);
-        }
+    if (ent && ent->is_collision_beam() && ent->beam_fx_ref() >= 0) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ent->beam_fx_ref());
+        ent->set_beam_fx_ref(-2);
     }
     // Also set _destroyed on Lua table
     if (lua_istable(L, 1)) {
@@ -9488,7 +9547,7 @@ static int collision_beam_Destroy(lua_State* L) {
         lua_pushboolean(L, 1);
         lua_rawset(L, 1);
     }
-    return 0;
+    return entity_Destroy(L);
 }
 
 static const MethodEntry collision_beam_methods[] = {

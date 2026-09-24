@@ -97,6 +97,7 @@ void test_crowd(TestContext& ctx);
 void test_formation(TestContext& ctx);
 void test_missile(TestContext& ctx);
 void test_defence(TestContext& ctx);
+void test_beam_weapon(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);
