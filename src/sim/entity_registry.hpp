@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -62,6 +63,17 @@ public:
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
     /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
+
+    /// Shapes reaching this far from their entity are found by the grid;
+    /// larger ones (shields, experimentals) are kept on their own list.
+    static constexpr f32 COLLIDER_REACH = 8.0f;
+
+    /// Into `out`, in ascending id order: every entity with a collision
+    /// shape that could meet the segment from (x0, z0) to (x1, z1).
+    void collect_colliders(f32 x0, f32 z0, f32 x1, f32 z1, std::vector<u32>& out) const;
+
+    /// Called by Entity::set_collision_shape.
+    void notify_collision_shape_changed(const Entity& entity);
 
     /// Iterate all entities in id order: the same order on every platform,
     /// as lockstep needs (a hash map's order is the standard library's).
@@ -129,6 +141,8 @@ private:
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;
     std::vector<std::vector<u32>> grid_cells_;
+    /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
+    std::set<u32> large_colliders_;
 
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;

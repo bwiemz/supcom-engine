@@ -12,6 +12,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
@@ -1478,6 +1479,14 @@ static void aim_projectile(lua_State* L, sim::SimState* sim, sim::Projectile& p,
     p.velocity = {d.x * speed, d.y * speed, d.z * speed};
 }
 
+/// A projectile a script creates takes its blueprint's Physics, falling at
+/// Moho's gravity unless that says not (debris and cluster bomblets fall).
+static void apply_script_projectile_physics(lua_State* L, sim::Projectile& p) {
+    const sim::Projectile::BlueprintPhysics physics = p.apply_blueprint_physics(L);
+    if (physics.use_gravity.value_or(true)) p.ballistic_accel = -sim::Projectile::GRAVITY;
+    p.lifetime = physics.lifetime.value_or(10.0f);
+}
+
 static std::string lowercase_arg(lua_State* L, int idx) {
     if (lua_type(L, idx) != LUA_TSTRING) return {};
     std::string s = lua_tostring(L, idx);
@@ -1504,7 +1513,7 @@ static int entity_CreateProjectile(lua_State* L) {
                         at.z + static_cast<f32>(luaL_optnumber(L, 5, 0))});
     proj->set_army(e->army());
     proj->launcher_id = e->entity_id();
-    proj->lifetime = 10.0f;
+    apply_script_projectile_physics(L, *proj);
     if (lua_isnumber(L, 6) && lua_isnumber(L, 7) && lua_isnumber(L, 8)) {
         aim_projectile(L, sim, *proj,
                        {static_cast<f32>(lua_tonumber(L, 6)), static_cast<f32>(lua_tonumber(L, 7)),
@@ -1536,7 +1545,7 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     proj->set_position(bone_world_position(e, bone_idx));
     proj->set_army(e->army());
     proj->launcher_id = e->entity_id();
-    proj->lifetime = 10.0f;
+    apply_script_projectile_physics(L, *proj);
     const auto* bd = e->bone_data();
     const sim::Quaternion model_rot =
         e->is_unit() ? static_cast<const sim::Unit*>(e)->bone_pose(bone_idx).rotation
@@ -1686,7 +1695,7 @@ static int entity_SetCollisionShape(lua_State* L) {
 
 static int entity_RevertCollisionShape(lua_State* L) {
     auto* e = check_entity(L); if (!e) return 0;
-    e->set_collision_shape(sim::CollisionShape{}); // reset to NONE
+    e->revert_collision_shape(); // back to its blueprint's
     return 0;
 }
 
@@ -4079,7 +4088,8 @@ static int proj_SetNewTarget(lua_State* L) {
     auto* target = check_entity(L, 2);
     if (target && !target->destroyed()) {
         p->target_entity_id = target->entity_id();
-        p->target_position = target->position();
+        p->target_position = sim::collision_centre(*target);
+        p->has_target_position = true;
     }
     return 0;
 }
@@ -4098,6 +4108,7 @@ static int proj_SetNewTargetGround(lua_State* L) {
         p->target_position.z = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
         p->target_entity_id = 0; // ground target
+        p->has_target_position = true;
     }
     return 0;
 }
@@ -4177,7 +4188,8 @@ static int proj_GetTrackingTarget(lua_State* L) {
 static int proj_TrackTarget(lua_State* L) {
     auto* p = check_projectile(L);
     if (p) p->tracking = (lua_toboolean(L, 2) != 0);
-    return 0;
+    lua_pushvalue(L, 1); // chains: TrackTarget(true):StayUnderwater(true)
+    return 1;
 }
 
 static int proj_ChangeMaxZigZag(lua_State* L) {
@@ -4269,7 +4281,8 @@ static int proj_SetCollision(lua_State* L) {
 }
 
 static int proj_SetCollideEntity(lua_State* L) {
-    // No-op + chaining (collision system not fully implemented)
+    auto* p = check_projectile(L);
+    if (p) p->collide_entity = (lua_toboolean(L, 2) != 0);
     lua_pushvalue(L, 1); // setters return self for chaining
     return 1;
 }
@@ -4306,7 +4319,8 @@ static int proj_CreateChildProjectile(lua_State* L) {
     child->velocity = parent->velocity;
     child->target_entity_id = parent->target_entity_id;
     child->target_position = parent->target_position;
-    child->lifetime = 10.0f;
+    child->has_target_position = parent->has_target_position;
+    apply_script_projectile_physics(L, *child);
 
     u32 child_id = sim->entity_registry().register_entity(std::move(child));
     auto* child_ptr = static_cast<sim::Projectile*>(

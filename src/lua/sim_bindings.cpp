@@ -8,6 +8,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/bone_cache.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/ieffect.hpp"
@@ -530,6 +531,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
             }
             lua_pop(L, 2);
         }
+
+        // Its collision box, until a script sets another.
+        store->push_lua_table(*entry, L);
+        unit->set_default_collision_shape(sim::blueprint_collision_shape(L, lua_gettop(L)));
+        lua_pop(L, 1);
 
         // Footprint.SizeX / SizeZ (for pathfinding obstacle marking)
         {

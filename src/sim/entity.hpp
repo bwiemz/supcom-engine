@@ -225,9 +225,15 @@ public:
     void set_viz_focus_player(VizMode m) { viz_focus_player_ = m; }
     void set_viz_neutrals(VizMode m) { viz_neutrals_ = m; }
 
-    // Collision shape
+    // Collision shape: its blueprint's until a script sets one ('None'
+    // included); RevertCollisionShape goes back to the blueprint's.
     const CollisionShape& collision_shape() const { return collision_shape_; }
-    void set_collision_shape(const CollisionShape& s) { collision_shape_ = s; }
+    void set_collision_shape(const CollisionShape& s); // entity.cpp: tells the registry
+    void set_default_collision_shape(const CollisionShape& s) {
+        default_collision_shape_ = s;
+        set_collision_shape(s);
+    }
+    void revert_collision_shape() { set_collision_shape(default_collision_shape_); }
 
     // Mesh override (runtime mesh switching via SetMesh)
     const std::string& mesh_override() const { return mesh_override_; }
@@ -324,6 +330,7 @@ private:
     VizMode viz_focus_player_ = VizMode::ALWAYS;
     VizMode viz_neutrals_ = VizMode::INTEL;
     CollisionShape collision_shape_;
+    CollisionShape default_collision_shape_;
     std::string mesh_override_;
     bool unselectable_ = false;
     bool is_wreckage_ = false;

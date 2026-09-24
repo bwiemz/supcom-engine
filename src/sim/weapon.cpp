@@ -3,6 +3,7 @@
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
 #include "sim/bone_data.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
@@ -23,8 +24,7 @@ namespace osc::sim {
 
 namespace {
 
-/// Moho's gravity, in world units per second squared.
-constexpr f32 kGravity = 4.9f;
+constexpr f32 kGravity = Projectile::GRAVITY;
 constexpr f32 kPi = 3.14159265358979f;
 
 bool has_omni_detection(const Unit& owner, const Entity& target,
@@ -379,7 +379,8 @@ f32 Weapon::launch_elevation(f32 dist, f32 rise) const {
 }
 
 Vector3 Weapon::aim_point(const Entity& target, const Vector3& from) const {
-    Vector3 at = target.position();
+    // The middle of what it is shooting at, not its feet.
+    Vector3 at = collision_centre(target);
     if (!lead_target || !target.is_unit() || muzzle_velocity <= 0) return at;
     // Where it will be when the shot arrives: the flight time to where it is
     // now, once refined.
@@ -392,7 +393,7 @@ Vector3 Weapon::aim_point(const Entity& target, const Vector3& from) const {
         if (ballistic_arc != Arc::None)
             across *= osc::dmath::cos(launch_elevation(dist, at.y - from.y));
         const f32 time = across > 0.001f ? dist / across : 0.0f;
-        const Vector3& now = target.position();
+        const Vector3 now = collision_centre(target);
         at = {now.x + v.x * time, now.y + v.y * time, now.z + v.z * time};
     }
     return at;
@@ -412,6 +413,19 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         aim = len > 0.001f ? Vector3{spawn_pos.x + forward.x / len * reach, spawn_pos.y,
                                      spawn_pos.z + forward.z / len * reach}
                            : Vector3{spawn_pos.x, spawn_pos.y, spawn_pos.z + reach};
+    }
+    // Firing randomness scatters where it goes over a circle about the aim,
+    // FiringRandomness x distance / 12 across: the relation FAF measured of
+    // Moho's (FixedSpreadRadius). Drawn from the sim's RNG, so every
+    // lockstep client rolls the same.
+    if (firing_randomness > 0) {
+        const f32 ox = aim.x - spawn_pos.x;
+        const f32 oz = aim.z - spawn_pos.z;
+        const f32 radius = firing_randomness * std::sqrt(ox * ox + oz * oz) / 12.0f;
+        const f32 angle = registry.sim_random().range(0.0f, 2.0f * kPi);
+        const f32 off = radius * std::sqrt(registry.sim_random().range(0.0f, 1.0f));
+        aim.x += off * osc::dmath::cos(angle);
+        aim.z += off * osc::dmath::sin(angle);
     }
     f32 dx = aim.x - spawn_pos.x;
     f32 dz = aim.z - spawn_pos.z;
@@ -438,18 +452,6 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         flight_time = muzzle_velocity > 0 ? span / muzzle_velocity : 0.0f;
     }
 
-    // Apply firing randomness as angular offset to velocity direction.
-    // Drawn from the deterministic sim RNG so every lockstep client rolls the
-    // same spread (a per-process std::random_device would desync clients).
-    if (firing_randomness > 0) {
-        f32 angle = registry.sim_random().range(-firing_randomness, firing_randomness);
-        f32 c = osc::dmath::cos(angle), s = osc::dmath::sin(angle);
-        f32 nx = vel.x * c - vel.z * s;
-        f32 nz = vel.x * s + vel.z * c;
-        vel.x = nx;
-        vel.z = nz;
-    }
-
     // Create projectile
     auto proj = std::make_unique<Projectile>();
     proj->set_position(spawn_pos);
@@ -457,6 +459,7 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
     proj->velocity = vel;
     proj->target_entity_id = (need_compute_bomb_drop || !target) ? 0 : target->entity_id();
     proj->target_position = aim;
+    proj->has_target_position = true;
     proj->launcher_id = owner.entity_id();
     proj->damage_amount = damage * owner.damage_multiplier();
     proj->damage_radius = damage_radius;
@@ -471,100 +474,17 @@ Projectile* Weapon::launch(Unit& owner, const Vector3& spawn_pos, const Entity* 
         proj->set_blueprint_id(projectile_bp_id);
     }
 
-    // Velocity-align: read from projectile blueprint, default true
-    proj->velocity_align = true;
-    if (L && !projectile_bp_id.empty()) {
-        lua_pushstring(L, "__blueprints");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, projectile_bp_id.c_str());
-            lua_rawget(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "Physics");
-                lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    lua_pushstring(L, "VelocityAlign");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
-                        proj->velocity_align = lua_toboolean(L, -1) != 0;
-                    }
-                    lua_pop(L, 1); // VelocityAlign
-
-                    // Read ballistic acceleration (gravity) from projectile bp
-                    lua_pushstring(L, "UseGravity");
-                    lua_gettable(L, -2);
-                    bool use_gravity = lua_isboolean(L, -1) && lua_toboolean(L, -1);
-                    lua_pop(L, 1); // UseGravity
-
-                    if (use_gravity) {
-                        // Default FA gravity is -4.9
-                        proj->ballistic_accel = -4.9f;
-                    }
-
-                    lua_pushstring(L, "Acceleration");
-                    lua_gettable(L, -2);
-                    if (lua_isnumber(L, -1)) {
-                        proj->acceleration = static_cast<f32>(lua_tonumber(L, -1));
-                    }
-                    lua_pop(L, 1); // Acceleration
-
-                    lua_pushstring(L, "MaxSpeed");
-                    lua_gettable(L, -2);
-                    if (lua_isnumber(L, -1)) {
-                        proj->max_speed = static_cast<f32>(lua_tonumber(L, -1));
-                    }
-                    lua_pop(L, 1); // MaxSpeed
-
-                    // Read TrackTarget
-                    lua_pushstring(L, "TrackTarget");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
-                        proj->tracking = lua_toboolean(L, -1) != 0;
-                    }
-                    lua_pop(L, 1);
-
-                    // Read TurnRate (degrees/sec for homing)
-                    lua_pushstring(L, "TurnRate");
-                    lua_gettable(L, -2);
-                    if (lua_isnumber(L, -1)) {
-                        proj->turn_rate = static_cast<f32>(lua_tonumber(L, -1));
-                    }
-                    lua_pop(L, 1);
-
-                    // Read StayUnderwater
-                    lua_pushstring(L, "StayUnderwater");
-                    lua_gettable(L, -2);
-                    if (lua_type(L, -1) == LUA_TBOOLEAN) {
-                        proj->stay_underwater = lua_toboolean(L, -1) != 0;
-                    }
-                    lua_pop(L, 1);
-
-                    // Where it ends of itself: on the water (209 retail
-                    // shells), or bursting at a height above the surface.
-                    lua_pushstring(L, "DestroyOnWater");
-                    lua_gettable(L, -2);
-                    proj->destroy_on_water = lua_toboolean(L, -1) != 0;
-                    lua_pop(L, 1);
-                    for (const auto& [field, height] :
-                         {std::pair{"DetonateAboveHeight", &proj->detonate_above_height},
-                          std::pair{"DetonateBelowHeight", &proj->detonate_below_height}}) {
-                        lua_pushstring(L, field);
-                        lua_gettable(L, -2);
-                        if (lua_isnumber(L, -1)) *height = static_cast<f32>(lua_tonumber(L, -1));
-                        lua_pop(L, 1);
-                    }
-                }
-                lua_pop(L, 1); // Physics
-            }
-            lua_pop(L, 1); // bp table
-        }
-        lua_pop(L, 1); // __blueprints
-    }
+    const Projectile::BlueprintPhysics physics = proj->apply_blueprint_physics(L);
+    if (physics.lifetime) proj->lifetime = *physics.lifetime;
     f32 heading = osc::dmath::atan2(vel.x, vel.z);
     proj->set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
 
-    // An arc is gravity's: its shot falls whatever its blueprint says.
-    if (arcs) proj->ballistic_accel = -kGravity;
+    // An arc is gravity's: its shot falls whatever its blueprint says. A
+    // straight shot falls only if its blueprint says so, and a bomb unless it
+    // says not (none of retail's does: they fall at Moho's default).
+    if (arcs || (need_compute_bomb_drop ? physics.use_gravity.value_or(true)
+                                        : physics.use_gravity.value_or(false)))
+        proj->ballistic_accel = -kGravity;
     proj->in_water = in_water;
     u32 proj_id = registry.register_entity(std::move(proj));
     auto* proj_ptr = static_cast<Projectile*>(registry.find(proj_id));

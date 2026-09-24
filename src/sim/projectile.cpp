@@ -1,13 +1,17 @@
 #include "sim/projectile.hpp"
 #include "core/dmath.hpp"
 #include "core/test_status.hpp"
+#include "sim/collision.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/unit.hpp"
 #include "map/terrain.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -38,6 +42,15 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     // Tick lifetime
     lifetime -= static_cast<f32>(dt);
     if (lifetime <= 0) {
+        // Its time is up. In flight it bursts where it is, as retail's
+        // scripts expect of an 'Air' (or 'Underwater') impact; one that has
+        // already impacted, lingering for its ImpactTimeout, just goes.
+        if (!impacted) {
+            const Vector3 at = position();
+            const bool under = terrain && terrain->has_water() && at.y < terrain->water_elevation();
+            on_impact(L, nullptr, registry, terrain, under ? "Underwater" : "Air");
+            return;
+        }
         mark_destroyed();
         // The unregister hook nulls the Lua table's _c_object and releases
         // its ref; releasing the ref here first left scripts holding a
@@ -68,52 +81,60 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         }
     }
 
-    // Homing/tracking: steer velocity toward target
-    if (tracking && target_entity_id > 0) {
+    // A tracking shot follows its target (the middle of it), and flies on to
+    // where it last was once it is gone; with no target, to its ground target.
+    if (target_entity_id > 0) {
         auto* target = registry.find(target_entity_id);
         if (target && !target->destroyed()) {
-            auto pos = position();
-            f32 tx = target->position().x - pos.x;
-            f32 ty = target->position().y - pos.y;
-            f32 tz = target->position().z - pos.z;
-            f32 to_len = std::sqrt(tx * tx + ty * ty + tz * tz);
-            if (to_len > 0.01f) {
-                f32 spd = std::sqrt(velocity.x * velocity.x +
-                                    velocity.y * velocity.y +
-                                    velocity.z * velocity.z);
-                if (spd < 0.01f) spd = max_speed > 0 ? max_speed : 1.0f;
+            target_position = collision_centre(*target);
+            has_target_position = true;
+        } else {
+            // Its target is gone: the script decides (a homing missile's
+            // OnLostTarget shortens its lifetime).
+            target_entity_id = 0;
+            if (!call_script(L, registry, "OnLostTarget")) return;
+        }
+    }
+    if (tracking && has_target_position) {
+        auto pos = position();
+        f32 tx = target_position.x - pos.x;
+        f32 ty = target_position.y - pos.y;
+        f32 tz = target_position.z - pos.z;
+        f32 to_len = std::sqrt(tx * tx + ty * ty + tz * tz);
+        if (to_len > 0.01f) {
+            f32 spd = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y +
+                                velocity.z * velocity.z);
+            if (spd < 0.01f) spd = max_speed > 0 ? max_speed : 1.0f;
 
-                // Desired velocity: direction to target * current speed
-                f32 inv_len = 1.0f / to_len;
-                f32 dx = tx * inv_len * spd;
-                f32 dy = ty * inv_len * spd;
-                f32 dz = tz * inv_len * spd;
+            // Desired velocity: direction to target * current speed
+            f32 inv_len = 1.0f / to_len;
+            f32 dx = tx * inv_len * spd;
+            f32 dy = ty * inv_len * spd;
+            f32 dz = tz * inv_len * spd;
 
-                // Turn rate: degrees/sec -> radians/sec
-                f32 turn_rad = turn_rate * 3.14159265f / 180.0f;
-                f32 max_turn = turn_rad * static_cast<f32>(dt);
+            // Turn rate: degrees/sec -> radians/sec
+            f32 turn_rad = turn_rate * 3.14159265f / 180.0f;
+            f32 max_turn = turn_rad * static_cast<f32>(dt);
 
-                // Angle between current velocity and desired
-                f32 dot = (velocity.x * dx + velocity.y * dy + velocity.z * dz) / (spd * spd);
-                dot = std::clamp(dot, -1.0f, 1.0f);
-                f32 angle = osc::dmath::acos(dot);
+            // Angle between current velocity and desired
+            f32 dot = (velocity.x * dx + velocity.y * dy + velocity.z * dz) / (spd * spd);
+            dot = std::clamp(dot, -1.0f, 1.0f);
+            f32 angle = osc::dmath::acos(dot);
 
-                if (angle > 0.001f) {
-                    f32 t = std::min(1.0f, max_turn / angle);
-                    velocity.x += (dx - velocity.x) * t;
-                    velocity.y += (dy - velocity.y) * t;
-                    velocity.z += (dz - velocity.z) * t;
+            if (angle > 0.001f) {
+                f32 t = std::min(1.0f, max_turn / angle);
+                velocity.x += (dx - velocity.x) * t;
+                velocity.y += (dy - velocity.y) * t;
+                velocity.z += (dz - velocity.z) * t;
 
-                    // Normalize to maintain speed
-                    f32 new_spd = std::sqrt(velocity.x * velocity.x +
-                                            velocity.y * velocity.y +
-                                            velocity.z * velocity.z);
-                    if (new_spd > 0.01f) {
-                        f32 scale = spd / new_spd;
-                        velocity.x *= scale;
-                        velocity.y *= scale;
-                        velocity.z *= scale;
-                    }
+                // Normalize to maintain speed
+                f32 new_spd = std::sqrt(velocity.x * velocity.x + velocity.y * velocity.y +
+                                        velocity.z * velocity.z);
+                if (new_spd > 0.01f) {
+                    f32 scale = spd / new_spd;
+                    velocity.x *= scale;
+                    velocity.y *= scale;
+                    velocity.z *= scale;
                 }
             }
         }
@@ -121,11 +142,16 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
 
     // Move. Gravity was added to the velocity above; taking half of it back
     // keeps the fall on the parabola an arc's launch angle was solved for.
-    auto pos = position();
+    const Vector3 from = position();
+    auto pos = from;
     const auto step_dt = static_cast<f32>(dt);
     pos.x += velocity.x * step_dt;
     pos.y += velocity.y * step_dt - 0.5f * ballistic_accel * step_dt * step_dt;
     pos.z += velocity.z * step_dt;
+
+    // Torpedo/underwater projectile: clamp Y to water surface
+    if (stay_underwater && terrain && pos.y > terrain->water_elevation())
+        pos.y = terrain->water_elevation();
     set_position(pos);
 
     // SetScaleVelocity: an effect that grows or shrinks as it flies.
@@ -135,14 +161,6 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         };
         set_scale(grown(scale_x(), scale_velocity.x), grown(scale_y(), scale_velocity.y),
                   grown(scale_z(), scale_velocity.z));
-    }
-
-    // Torpedo/underwater projectile: clamp Y to water surface
-    if (stay_underwater && terrain) {
-        if (pos.y > terrain->water_elevation()) {
-            pos.y = terrain->water_elevation();
-            set_position(pos);
-        }
     }
 
     // Velocity-align orientation for rendering
@@ -155,23 +173,15 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         }
     }
 
-    f32 speed = std::sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-    f32 step = speed * static_cast<f32>(dt);
+    if (collide(from, registry, L, terrain)) return;
 
     // Crossing the water's surface tells the script: a torpedo dropped from
-    // the air starts tracking as it enters. One that SetDestroyOnWater ends
-    // there.
+    // the air starts tracking as it enters.
     if (terrain && terrain->has_water()) {
         const bool wet = pos.y < terrain->water_elevation() &&
                          terrain->get_terrain_height(pos.x, pos.z) < terrain->water_elevation();
         if (wet != in_water) {
             in_water = wet;
-            if (wet && destroy_on_water) {
-                pos.y = terrain->water_elevation(); // it hit the surface
-                set_position(pos);
-                on_impact(L, nullptr, registry, terrain, "Water");
-                return;
-            }
             if (!call_script(L, registry, wet ? "OnEnterWater" : "OnExitWater")) return;
         }
     }
@@ -188,37 +198,214 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
             return;
         }
     }
+}
 
-    // Check collision with target entity
-    if (target_entity_id > 0) {
-        auto* target = registry.find(target_entity_id);
-        if (target && !target->destroyed()) {
-            f32 dx = target->position().x - pos.x;
-            f32 dz = target->position().z - pos.z;
-            f32 dist = std::sqrt(dx * dx + dz * dz);
-            if (dist < step + HIT_RADIUS) {
-                on_impact(L, target, registry, terrain);
-                return;
+namespace {
+
+Vector3 lerp(const Vector3& a, const Vector3& b, f32 t) {
+    return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
+}
+
+/// Where along `from` to `to` it first goes below the terrain, sampled
+/// about every unit (the heightmap's spacing) and refined by halving.
+std::optional<f32> terrain_crossing(const map::Terrain& terrain, const Vector3& from,
+                                    const Vector3& to) {
+    const auto below = [&terrain](const Vector3& p) {
+        return p.y < terrain.get_terrain_height(p.x, p.z);
+    };
+    const f32 dx = to.x - from.x;
+    const f32 dz = to.z - from.z;
+    const auto samples = std::max(1, static_cast<int>(std::ceil(std::sqrt(dx * dx + dz * dz))));
+    for (int i = 1; i <= samples; ++i) {
+        const f32 t = static_cast<f32>(i) / static_cast<f32>(samples);
+        if (!below(lerp(from, to, t))) continue;
+        f32 lo = static_cast<f32>(i - 1) / static_cast<f32>(samples);
+        f32 hi = t;
+        for (int pass = 0; pass < 8; ++pass) {
+            const f32 mid = 0.5f * (lo + hi);
+            (below(lerp(from, to, mid)) ? hi : lo) = mid;
+        }
+        return hi;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+bool Projectile::collide(const Vector3& from, EntityRegistry& registry, lua_State* L,
+                         const map::Terrain* terrain) {
+    if (!collision_enabled) return false;
+    const Vector3 to = position();
+
+    // The surface: the ground, or for a shell that ends there, the water.
+    f32 surface_t = 2.0f;
+    const char* surface_type = nullptr;
+    if (terrain && collide_surface) {
+        if (const auto t = terrain_crossing(*terrain, from, to)) surface_t = *t;
+        const f32 water = terrain->water_elevation();
+        if (destroy_on_water && terrain->has_water() && from.y >= water && to.y < water) {
+            const f32 t = (from.y - water) / (from.y - to.y);
+            const Vector3 at = lerp(from, to, t);
+            if (t < surface_t && terrain->get_terrain_height(at.x, at.z) < water) {
+                surface_t = t;
+                surface_type = "Water";
             }
-        } else {
-            // Its target is gone: the script decides (a homing missile's
-            // OnLostTarget shortens its lifetime). It flies on to where the
-            // target was.
-            target_entity_id = 0;
-            if (!call_script(L, registry, "OnLostTarget")) return;
         }
     }
 
-    // Check if reached target position (ground impact)
-    {
-        f32 dx = target_position.x - pos.x;
-        f32 dz = target_position.z - pos.z;
-        f32 dist = std::sqrt(dx * dx + dz * dz);
-        if (dist < step + HIT_RADIUS) {
-            on_impact(L, nullptr, registry, terrain);
-            return;
+    // A tracking shot sent to a place (a strategic missile, which skims no
+    // surface, or a missile whose target died) ends on reaching it.
+    if (tracking && has_target_position && target_entity_id == 0) {
+        const Vector3 d{to.x - from.x, to.y - from.y, to.z - from.z};
+        const Vector3 w{target_position.x - from.x, target_position.y - from.y,
+                        target_position.z - from.z};
+        const f32 dd = d.x * d.x + d.y * d.y + d.z * d.z;
+        const f32 t =
+            dd > 0 ? std::clamp((w.x * d.x + w.y * d.y + w.z * d.z) / dd, 0.0f, 1.0f) : 0.0f;
+        const Vector3 near = lerp(from, to, t);
+        const f32 mx = target_position.x - near.x;
+        const f32 my = target_position.y - near.y;
+        const f32 mz = target_position.z - near.z;
+        constexpr f32 kArrived = 1.0f;
+        if (mx * mx + my * my + mz * mz <= kArrived * kArrived && t < surface_t) {
+            surface_t = t;
+            surface_type = nullptr;
         }
     }
+
+    // What it meets on the way, nearest first.
+    if (collide_entity) {
+        std::vector<u32> candidates;
+        registry.collect_colliders(from.x, from.z, to.x, to.z, candidates);
+        std::vector<std::pair<f32, u32>> hits;
+        for (const u32 id : candidates) {
+            if (id == entity_id() || id == launcher_id) continue;
+            if (std::find(passed.begin(), passed.end(), id) != passed.end()) continue;
+            const Entity* e = registry.find(id);
+            if (!e || e->destroyed()) continue;
+            if (e->is_unit()) {
+                // Dying, or carried in a transport's hold: not in the way.
+                const auto* u = static_cast<const Unit*>(e);
+                if (u->is_dying() || u->transport_id() != 0) continue;
+            }
+            // A shield stops what comes in, not what goes out.
+            const auto t = segment_enters(e->collision_shape(), e->position(), e->orientation(),
+                                          from, to, !e->is_shield());
+            if (t && *t < surface_t) hits.emplace_back(*t, id);
+        }
+        std::sort(hits.begin(), hits.end());
+        for (const auto& [t, id] : hits) {
+            Entity* e = registry.find(id);
+            if (!e || e->destroyed()) continue;
+            if (!collision_allowed(L, registry, *e)) {
+                passed.push_back(id);
+                continue;
+            }
+            // The checks ran scripts: both may be gone.
+            if (!registry.find(entity_id()) || destroyed()) return true;
+            e = registry.find(id);
+            if (!e || e->destroyed()) continue;
+            set_position(lerp(from, to, t));
+            on_impact(L, e, registry, terrain);
+            return true;
+        }
+        if (!registry.find(entity_id()) || destroyed()) return true;
+    }
+
+    if (surface_t > 1.0f) return false;
+    Vector3 at = lerp(from, to, surface_t);
+    if (surface_type && terrain) at.y = terrain->water_elevation(); // on the surface
+    set_position(at);
+    on_impact(L, nullptr, registry, terrain, surface_type);
+    return true;
+}
+
+bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other) {
+    if (!L) return true;
+    const u32 self_id = entity_id();
+    const u32 other_id = other.entity_id();
+    // Each side's OnCollisionCheck(self, other); a missing one allows it.
+    const auto check = [&](u32 self, u32 with) {
+        const Entity* a = registry.find(self);
+        const Entity* b = registry.find(with);
+        if (!a || !b || a->destroyed() || b->destroyed()) return false;
+        if (a->lua_table_ref() < 0 || b->lua_table_ref() < 0) return true;
+        const int top = lua_gettop(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, a->lua_table_ref());
+        lua_pushstring(L, "OnCollisionCheck");
+        lua_gettable(L, -2);
+        bool allowed = true;
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, top + 1);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, b->lua_table_ref());
+            if (lua_pcall(L, 2, 1, 0) == 0) {
+                allowed = lua_toboolean(L, -1) != 0;
+            } else {
+                const char* err = lua_tostring(L, -1);
+                const std::string message =
+                    std::string("OnCollisionCheck error: ") + (err ? err : "(unknown)");
+                spdlog::warn("{}", message);
+                if (test_status::count_lua_failures()) test_status::record_failure(message);
+            }
+        }
+        lua_settop(L, top);
+        return allowed;
+    };
+    return check(self_id, other_id) && check(other_id, self_id);
+}
+
+Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
+    BlueprintPhysics found;
+    velocity_align = true;
+    if (!L || blueprint_id().empty()) return found;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, blueprint_id().c_str());
+        lua_rawget(L, -2);
+    }
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, -2);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return found;
+    }
+    const int physics = lua_gettop(L);
+    const auto field = [&](const char* key) {
+        lua_pushstring(L, key);
+        lua_rawget(L, physics);
+        return lua_type(L, -1);
+    };
+    const auto flag = [&](const char* key, bool& out) {
+        if (field(key) == LUA_TBOOLEAN) out = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+    };
+    const auto number = [&](const char* key, f32& out) {
+        if (field(key) == LUA_TNUMBER) out = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    };
+    flag("VelocityAlign", velocity_align);
+    number("Acceleration", acceleration);
+    number("MaxSpeed", max_speed);
+    flag("TrackTarget", tracking);
+    number("TurnRate", turn_rate);
+    flag("StayUnderwater", stay_underwater);
+    // Where it ends of itself: on the water (209 retail shells), or
+    // bursting at a height above the surface.
+    flag("DestroyOnWater", destroy_on_water);
+    number("DetonateAboveHeight", detonate_above_height);
+    number("DetonateBelowHeight", detonate_below_height);
+    // Strategic missiles rise from their silos through the ground.
+    flag("CollideSurface", collide_surface);
+    if (field("UseGravity") == LUA_TBOOLEAN) found.use_gravity = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (field("Lifetime") == LUA_TNUMBER) found.lifetime = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    lua_settop(L, top);
+    return found;
 }
 
 const char* Projectile::impact_type(const Entity* target, const map::Terrain* terrain) const {

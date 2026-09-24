@@ -42,8 +42,8 @@ public:
     /// `rise` above: its arc's, at its muzzle velocity under gravity (45
     /// degrees, the furthest, when out of reach).
     f32 launch_elevation(f32 dist, f32 rise) const;
-    /// Where to aim at `target` from `from`: where it will be when the shot
-    /// arrives, for a weapon that leads.
+    /// Where to aim at `target` from `from`: the middle of its collision
+    /// shape, where it will be when the shot arrives for a weapon that leads.
     Vector3 aim_point(const Entity& target, const Vector3& from) const;
     bool fire_on_death = false;
     bool manual_fire = false;
@@ -51,7 +51,7 @@ public:
     bool overcharge = false;         // OverChargeWeapon
     bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
-    f32 firing_randomness = 0;    // angular scatter in radians
+    f32 firing_randomness = 0;    // spread circle r x distance / 12 across
     uint8_t fire_target_layer_caps = 0xFF; // bitmask: default = all layers
     f32 max_height_diff = 0;               // MaxHeightDiff / ChangeMaxHeightDiff (<= 0: unlimited)
     f32 firing_tolerance = 0;              // FiringTolerance (degrees) / ChangeFiringTolerance
