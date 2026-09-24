@@ -72,6 +72,9 @@ public:
     static constexpr f32 PIVOT_ANGLE = 0.7853982f; // 45 degrees
     /// One that can't keeps this share of its speed to turn.
     static constexpr f32 TURNING_SPEED = 0.3f;
+    /// Jostled this many ticks near its goal without getting nearer, a unit
+    /// in a crowd counts itself there (others hold the spot).
+    static constexpr int CROWD_TICKS = 5;
 
 private:
     /// A surface unit's drive: turn toward the next waypoint at its
@@ -92,6 +95,9 @@ private:
     bool speed_through_goal_ = false;
     std::vector<Vector3> waypoints_;
     size_t waypoint_index_ = 0;
+    // Progress toward the goal, for arriving in a crowd (see CROWD_TICKS).
+    f32 best_dist_ = 1e30f;
+    int stalled_ = 0;
 
     // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
     bool has_failed_request_ = false;

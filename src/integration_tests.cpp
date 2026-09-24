@@ -8107,6 +8107,122 @@ void test_drive(TestContext& ctx) {
     spdlog::info("Drive test: {}/{} passed", pass, pass + fail);
 }
 
+void test_crowd(TestContext& ctx) {
+    spdlog::info("=== CROWD TEST: ground units keep apart ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // On the flat plain east of the map's centre: six Strikers sent to one
+    // point from a line, and a tank driving through an idle friend.
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z, heading)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, heading or 0, 0)
+        end
+        __osc_group = {}
+        for i = 0, 5 do
+            table.insert(__osc_group, __osc_spawn('uel0201', 'ARMY_1', 610 + 3 * i, 80, 0))
+        end
+        __osc_spot = {620, GetTerrainHeight(620, 110), 110}
+        IssueMove(__osc_group, __osc_spot)
+        __osc_idle = __osc_spawn('uel0201', 'ARMY_1', 680, 100, 0)
+        __osc_mover = __osc_spawn('uel0201', 'ARMY_1', 680, 90, 0)
+        __osc_through = {680, GetTerrainHeight(680, 112), 112}
+        IssueMove({__osc_mover}, __osc_through)
+        -- A held tank (SetImmobile) a passing one brushes against.
+        __osc_held = __osc_spawn('uel0201', 'ARMY_1', 700.4, 100, 0)
+        __osc_held:SetImmobile(true)
+        __osc_passer = __osc_spawn('uel0201', 'ARMY_1', 700, 90, 0)
+        IssueMove({__osc_passer}, {700, GetTerrainHeight(700, 112), 112})
+        -- Two submarines side by side in deep water, diving.
+        __osc_subs = {}
+        __osc_sea = false
+        for x = 20, 1000, 20 do
+            for z = 20, 1000, 20 do
+                if not __osc_sea and GetTerrainHeight(x, z) < GetSurfaceHeight(x, z) - 8 then
+                    __osc_sea = {x, z}
+                end
+            end
+        end
+        if __osc_sea then
+            for i = 0, 1 do
+                table.insert(__osc_subs, __osc_spawn('uas0203', 'ARMY_1', __osc_sea[1] + 0.1 * i,
+                                                     __osc_sea[2], 0))
+            end
+            IssueDive(__osc_subs)
+        end
+    )");
+    run(200);
+    lua_check("Test 1: a group sent to one point settles round it, none on another", R"(
+        local n = table.getn(__osc_group)
+        for i = 1, n do
+            local p = __osc_group[i]:GetPosition()
+            local d = math.sqrt((p[1] - __osc_spot[1]) ^ 2 + (p[3] - __osc_spot[3]) ^ 2)
+            if d > 6 then error('a tank stopped ' .. d .. ' from the point') end
+            for j = i + 1, n do
+                local q = __osc_group[j]:GetPosition()
+                local apart = math.sqrt((p[1] - q[1]) ^ 2 + (p[3] - q[3]) ^ 2)
+                -- A Striker is 0.9 long: two apart by less than 0.8 overlap.
+                if apart < 0.8 then error('tanks ' .. i .. ' and ' .. j .. ' are ' .. apart .. ' apart') end
+            end
+        end
+    )");
+    lua_check("Test 2: their orders are done: none still jostling for the spot", R"(
+        for i, u in __osc_group do
+            if u:IsMoving() then error('tank ' .. i .. ' is still trying to reach it') end
+        end
+    )");
+    lua_check("Test 3: a moving tank pushes an idle friend out of its way, and arrives", R"(
+        local p = __osc_idle:GetPosition()
+        if math.abs(p[1] - 680) < 0.3 and math.abs(p[3] - 100) < 0.3 then error('the idle tank never moved') end
+        local m = __osc_mover:GetPosition()
+        local miss = math.sqrt((m[1] - __osc_through[1]) ^ 2 + (m[3] - __osc_through[3]) ^ 2)
+        if miss > 0.6 then error('the mover stopped ' .. miss .. ' short') end
+    )");
+
+    lua_check("Test 4: a held tank isn't moved; the passing one goes round it", R"(
+        local p = __osc_held:GetPosition()
+        if math.abs(p[1] - 700.4) > 1e-3 or math.abs(p[3] - 100) > 1e-3 then
+            error('the held tank moved to ' .. p[1] .. ',' .. p[3])
+        end
+        if __osc_passer:GetPosition()[3] < 110 then error('the passing tank never got by') end
+    )");
+    lua_check("Test 5: submarines keep apart below the surface", R"(
+        if not __osc_sea then error('no deep water on the map') end
+        local a, b = __osc_subs[1]:GetPosition(), __osc_subs[2]:GetPosition()
+        local surface = GetSurfaceHeight(__osc_sea[1], __osc_sea[2])
+        if a[2] > surface - 0.5 or b[2] > surface - 0.5 then
+            error('a submarine is at ' .. a[2] .. ' / ' .. b[2] .. ', the surface ' .. surface)
+        end
+        local apart = math.sqrt((a[1] - b[1]) ^ 2 + (a[3] - b[3]) ^ 2)
+        if apart < 0.3 then error('they stayed ' .. apart .. ' apart') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
+    spdlog::info("Crowd test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 

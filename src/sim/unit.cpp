@@ -2759,6 +2759,16 @@ void Unit::update_motion_turn(lua_State* L) {
     lua_settop(L, top);
 }
 
+f32 Unit::separation_radius() const {
+    const CollisionShape& s = collision_shape();
+    switch (s.type) {
+    case CollisionShapeType::BOX: return std::max(s.sx, s.sz);
+    case CollisionShapeType::SPHERE: return s.sx;
+    case CollisionShapeType::NONE: break;
+    }
+    return 0;
+}
+
 void Unit::coast(f64 dt, const map::Terrain* terrain) {
     target_speed_ = 0;
     if (ground_speed_ == 0) return;

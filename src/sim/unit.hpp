@@ -204,6 +204,12 @@ public:
     void set_drive(const Drive& d) { drive_ = d; }
     /// Its speed along its heading, negative backing up.
     f32 ground_speed() const { return ground_speed_; }
+    /// How far it keeps others off in plan view: the larger half-extent of
+    /// its collision box (0 without one).
+    f32 separation_radius() const;
+    /// Pushed aside by a neighbour in the last separation pass (M203b).
+    bool jostled() const { return jostled_; }
+    void set_jostled(bool j) { jostled_ = j; }
     /// What the navigator drove it at this tick: the speed, the speed it was
     /// steering for (0 braking to a stop), its top speed, and how it turned.
     void note_drive(f32 speed, f32 target, f32 top, MotionTurn turn) {
@@ -656,6 +662,7 @@ private:
     f32 target_speed_ = 0;
     f32 top_speed_ = 0;
     bool drove_ = false; ///< the navigator drove it this tick
+    bool jostled_ = false;
     /// With no navigator driving it, it brakes to a stop along its heading.
     void coast(f64 dt, const map::Terrain* terrain);
     u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)

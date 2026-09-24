@@ -23,6 +23,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <unordered_map>
 #include <bit>
 #include <ostream>
 #include <string>
@@ -1046,6 +1047,103 @@ void SimState::update_entities() {
                 prop->set_position(p);
             }
         }
+    }
+    separate_ground_units();
+}
+
+void SimState::separate_ground_units() {
+    PROFILE_ZONE("Sim::separation");
+    struct Body {
+        Unit* unit;
+        f32 x, z, r;
+        bool moving;
+        bool fixed; ///< held (SetImmobile): others make all the way
+        bool sub;   ///< submerged: it meets only other submerged units
+    };
+    std::vector<Body> bodies;
+    f32 widest = 0;
+    entity_registry_.for_each_unit([&](Entity& e) {
+        auto& u = static_cast<Unit&>(e);
+        u.set_jostled(false);
+        if (u.destroyed() || u.is_dying() || u.is_air_unit() || u.max_speed() <= 0 ||
+            u.is_being_built() || u.transport_id() != 0 || u.parent_entity_id() != 0)
+            return;
+        const f32 r = u.separation_radius();
+        if (r <= 0) return;
+        const Vector3& p = u.position();
+        bodies.push_back({&u, p.x, p.z, r, std::abs(u.ground_speed()) > 0.01f, u.immobile(),
+                          u.layer() == "Sub"});
+        widest = std::max(widest, r);
+    });
+    if (bodies.size() < 2) return;
+
+    // Buckets of kCell units; each holds its bodies in id order, and cells are
+    // walked in a fixed order, so every sum below runs in the same order.
+    constexpr f32 kCell = 8.0f;
+    const auto cell_of = [](f32 v) { return static_cast<i32>(std::floor(v / kCell)); };
+    const auto key = [](i32 cx, i32 cz) {
+        return (static_cast<i64>(cx) << 32) ^ static_cast<i64>(static_cast<u32>(cz));
+    };
+    std::unordered_map<i64, std::vector<u32>> buckets; // lookup only
+    for (u32 i = 0; i < bodies.size(); ++i)
+        buckets[key(cell_of(bodies[i].x), cell_of(bodies[i].z))].push_back(i);
+
+    // Each overlapping pair is pushed apart by half the overlap a tick, which
+    // settles a crowd without jitter.
+    constexpr f32 kRelax = 0.5f;
+    std::vector<f32> push_x(bodies.size(), 0.0f), push_z(bodies.size(), 0.0f);
+    for (u32 i = 0; i < bodies.size(); ++i) {
+        const Body& a = bodies[i];
+        const i32 reach = static_cast<i32>(std::ceil((a.r + widest) / kCell));
+        const i32 cx = cell_of(a.x), cz = cell_of(a.z);
+        for (i32 dz = -reach; dz <= reach; ++dz) {
+            for (i32 dx = -reach; dx <= reach; ++dx) {
+                const auto it = buckets.find(key(cx + dx, cz + dz));
+                if (it == buckets.end()) continue;
+                for (const u32 j : it->second) {
+                    if (j <= i) continue; // each pair once
+                    const Body& b = bodies[j];
+                    if (a.sub != b.sub || (a.fixed && b.fixed)) continue;
+                    const f32 ox = a.x - b.x, oz = a.z - b.z;
+                    const f32 reach_ab = a.r + b.r;
+                    const f32 d2 = ox * ox + oz * oz;
+                    if (d2 >= reach_ab * reach_ab) continue;
+                    const f32 d = std::sqrt(d2);
+                    // Exactly on top of each other: apart along x, the
+                    // lower id to the east.
+                    const f32 nx = d > 1e-4f ? ox / d : 1.0f;
+                    const f32 nz = d > 1e-4f ? oz / d : 0.0f;
+                    const f32 overlap = (reach_ab - d) * kRelax;
+                    f32 share_a;
+                    if (a.fixed != b.fixed) share_a = a.fixed ? 0.0f : 1.0f;
+                    else if (a.moving != b.moving) share_a = a.moving ? 0.0f : 1.0f;
+                    else share_a = (b.r * b.r) / (a.r * a.r + b.r * b.r);
+                    push_x[i] += nx * overlap * share_a;
+                    push_z[i] += nz * overlap * share_a;
+                    push_x[j] -= nx * overlap * (1.0f - share_a);
+                    push_z[j] -= nz * overlap * (1.0f - share_a);
+                }
+            }
+        }
+    }
+
+    for (u32 i = 0; i < bodies.size(); ++i) {
+        if (push_x[i] == 0 && push_z[i] == 0) continue;
+        Unit& u = *bodies[i].unit;
+        Vector3 p = u.position();
+        p.x += push_x[i];
+        p.z += push_z[i];
+        if (pathfinding_grid_) {
+            u32 gx = 0, gz = 0;
+            pathfinding_grid_->world_to_grid(p.x, p.z, gx, gz);
+            if (!pathfinding_grid_->is_passable_for(gx, gz, u.layer(), u.naval_draft(),
+                                                    u.is_amphibious() || u.is_hover()))
+                continue;
+        }
+        // On the surface as it drives; a submarine keeps its depth.
+        if (terrain_ && !bodies[i].sub) p.y = terrain_->get_surface_height(p.x, p.z);
+        u.set_position(clamp_to_playable(p));
+        u.set_jostled(true);
     }
 }
 
