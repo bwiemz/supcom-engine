@@ -15,6 +15,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/script_class.hpp"
 #include "sim/prop.hpp"
+#include "sim/prop_script.hpp"
 #include "core/test_status.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
@@ -4428,84 +4429,7 @@ static int l_CreateProp(lua_State* L) {
     }
 
     const char* bp_path = lua_isstring(L, 2) ? lua_tostring(L, 2) : "";
-
-    auto prop = std::make_unique<sim::Prop>();
-    prop->set_blueprint_id(bp_path);
-    prop->set_position({x, y, z});
-    prop->set_fraction_complete(1.0f);
-
-    u32 id = sim->entity_registry().register_entity(std::move(prop));
-    auto* prop_ptr = sim->entity_registry().find(id);
-    if (!prop_ptr) { lua_pushnil(L); return 1; }
-
-    // Create Lua table
-    lua_newtable(L);
-
-    // Set metatable: prefer __prop_class, fall back to moho.prop_methods
-    lua_pushstring(L, "__prop_class");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "prop_methods");
-            lua_rawget(L, -2);
-            lua_remove(L, -2);
-        }
-    }
-    if (lua_istable(L, -1)) {
-        lua_setmetatable(L, -2);
-    } else {
-        lua_pop(L, 1);
-    }
-
-    // _c_object lightuserdata
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, prop_ptr);
-    lua_rawset(L, -3);
-
-    // EntityId
-    lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, id);
-    lua_rawset(L, -3);
-
-    // Store Lua table ref on entity
-    lua_pushvalue(L, -1);
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    prop_ptr->set_lua_table_ref(ref);
-
-    spdlog::info("CreateProp: entity #{} at ({:.1f}, {:.1f}, {:.1f}) bp={}",
-                 id, x, y, z, bp_path);
-
-    // Try to look up prop blueprint and set GetBlueprint support
-    auto* store = sim->blueprint_store();
-    if (store) {
-        auto* entry = store->find(bp_path);
-        if (entry) {
-            // Blueprint found — store ref for GetBlueprint
-            store->push_lua_table(*entry, L);
-            lua_pushstring(L, "Blueprint");
-            lua_pushvalue(L, -2);
-            lua_rawset(L, -4); // set prop_table.Blueprint = bp_table
-            lua_pop(L, 1);
-        }
-    }
-
-    // Call OnCreate if available
-    int tbl = lua_gettop(L);
-    lua_pushstring(L, "OnCreate");
-    lua_gettable(L, tbl);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, tbl); // self
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("Prop OnCreate error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
-
+    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, {}, true);
     return 1; // prop Lua table on stack
 }
 
@@ -4634,79 +4558,48 @@ static int l_CreatePropHPR(lua_State* L) {
     f32 pitch   = lua_isnumber(L, 6) ? static_cast<f32>(lua_tonumber(L, 6)) : 0;
     f32 roll    = lua_isnumber(L, 7) ? static_cast<f32>(lua_tonumber(L, 7)) : 0;
 
-    auto prop = std::make_unique<sim::Prop>();
-    prop->set_blueprint_id(bp_path);
-    prop->set_position({x, y, z});
-    prop->set_orientation(sim::euler_to_quat(heading, pitch, roll));
-    prop->set_fraction_complete(1.0f);
+    sim::spawn_prop(L, *sim, bp_path, {x, y, z}, sim::euler_to_quat(heading, pitch, roll), true);
+    return 1;
+}
 
-    u32 id = sim->entity_registry().register_entity(std::move(prop));
-    auto* prop_ptr = sim->entity_registry().find(id);
-    if (!prop_ptr) { lua_pushnil(L); return 1; }
-
-    // Create Lua table with same pattern as l_CreateProp
+// SplitProp(prop, blueprint) -> {props}: a prop of `blueprint` at each of
+// the prop's bones but the root, as tree groups break up into trees; the
+// original goes.
+static int l_SplitProp(lua_State* L) {
+    auto* sim = get_sim(L);
+    auto* prop = extract_entity(L, 1);
     lua_newtable(L);
-
-    lua_pushstring(L, "__prop_class");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "prop_methods");
-            lua_rawget(L, -2);
-            lua_remove(L, -2);
-        }
-    }
-    if (lua_istable(L, -1)) {
-        lua_setmetatable(L, -2);
-    } else {
-        lua_pop(L, 1);
-    }
-
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, prop_ptr);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, id);
-    lua_rawset(L, -3);
-
-    lua_pushvalue(L, -1);
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    prop_ptr->set_lua_table_ref(ref);
-
-    spdlog::debug("CreatePropHPR: entity #{} at ({:.1f}, {:.1f}, {:.1f}) bp={}",
-                  id, x, y, z, bp_path);
-
-    // Look up blueprint
-    auto* store = sim->blueprint_store();
-    if (store) {
-        auto* entry = store->find(bp_path);
-        if (entry) {
-            store->push_lua_table(*entry, L);
-            lua_pushstring(L, "Blueprint");
-            lua_pushvalue(L, -2);
-            lua_rawset(L, -4);
+    const int result = lua_gettop(L);
+    if (!sim || !prop || prop->destroyed() || lua_type(L, 2) != LUA_TSTRING) return 1;
+    const std::string bp = lua_tostring(L, 2);
+    const auto* bones = prop->bone_data();
+    const i32 count = bones ? bones->bone_count() : 0;
+    int n = 0;
+    for (i32 b = 1; b < count; ++b) {
+        const sim::BoneInfo& bone = bones->bones[static_cast<size_t>(b)];
+        const sim::Vector3 offset = sim::quat_rotate(prop->orientation(), bone.world_position);
+        const sim::Vector3 at{prop->position().x + offset.x, prop->position().y + offset.y,
+                              prop->position().z + offset.z};
+        if (sim::spawn_prop(L, *sim, bp, at,
+                            sim::quat_multiply(prop->orientation(), bone.world_rotation), true)) {
+            lua_rawseti(L, result, ++n);
+        } else {
             lua_pop(L, 1);
         }
     }
-
-    // Call OnCreate
-    int tbl = lua_gettop(L);
-    lua_pushstring(L, "OnCreate");
-    lua_gettable(L, tbl);
+    // The prop goes, as SplitOnBonesByName's does.
+    lua_pushstring(L, "Destroy");
+    lua_gettable(L, 1);
     if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, tbl);
+        lua_pushvalue(L, 1);
         if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("PropHPR OnCreate error: {}", lua_tostring(L, -1));
+            spdlog::warn("SplitProp: Destroy error: {}", lua_tostring(L, -1));
             lua_pop(L, 1);
         }
     } else {
         lua_pop(L, 1);
     }
-
+    lua_settop(L, result);
     return 1;
 }
 
@@ -5111,6 +5004,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("WaitFor", l_WaitFor);
     state.register_function("CreateProp", l_CreateProp);
     state.register_function("CreatePropHPR", l_CreatePropHPR);
+    state.register_function("SplitProp", l_SplitProp);
 
     // Economy events — real implementations
     state.register_function("CreateEconomyEvent", l_CreateEconomyEvent);

@@ -16,8 +16,11 @@ std::string default_script_module(std::string source, std::string_view bp_suffix
 /// ScriptModule/ScriptClass, else the default module beside its .bp and
 /// TypeClass -- or nil when it names none that loads. Resolved once per
 /// blueprint, cached in the registry under `cache_key` (a failure is
-/// logged once, then cached). `kind` names the objects in the log.
+/// logged once, then cached). `kind` names the objects in the log. Most
+/// props have no script beside their .bp, so for them a missing default
+/// module isn't worth a warning (`warn_default_missing` false).
 void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::string_view bp_suffix,
-                                 const char* cache_key, const char* kind);
+                                 const char* cache_key, const char* kind,
+                                 bool warn_default_missing = true);
 
 } // namespace osc::sim

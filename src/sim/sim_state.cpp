@@ -10,6 +10,7 @@
 #include "map/visibility_grid.hpp"
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
+#include "sim/prop.hpp"
 #include "sim/unit.hpp"
 
 extern "C" {
@@ -938,6 +939,14 @@ void SimState::update_entities() {
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
                                                  entity_registry_, L_, terrain_.get());
+        } else if (e->is_prop()) {
+            // A fallen tree sinking away (SinkAway) before its script destroys it.
+            auto* prop = static_cast<Prop*>(e);
+            if (prop->sink_rate != 0) {
+                Vector3 p = prop->position();
+                p.y += prop->sink_rate * static_cast<f32>(SECONDS_PER_TICK);
+                prop->set_position(p);
+            }
         }
     }
 }

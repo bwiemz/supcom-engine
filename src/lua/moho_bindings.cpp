@@ -16,6 +16,9 @@
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
+#include "core/test_status.hpp"
+#include "sim/prop.hpp"
+#include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/projectile_script.hpp"
 #include "sim/thread_manager.hpp"
@@ -4792,6 +4795,126 @@ static int prop_SetMaxReclaimValues(lua_State* L) {
     return 0;
 }
 
+// prop:Kill(instigator, type, overkill): the prop's OnKilled decides
+// (Prop.OnKilled destroys it; a tree's dies).
+static int prop_Kill(lua_State* L) {
+    auto* e = check_entity(L);
+    if (!e || e->destroyed()) return 0;
+    lua_settop(L, 4);
+    lua_pushstring(L, "OnKilled");
+    lua_gettable(L, 1);
+    const bool scripted = lua_isfunction(L, -1);
+    if (!scripted) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Destroy");
+        lua_gettable(L, 1);
+        if (!lua_isfunction(L, -1)) return 0;
+    }
+    lua_pushvalue(L, 1);
+    int args = 1;
+    if (scripted) {
+        for (int i = 2; i <= 4; ++i) lua_pushvalue(L, i);
+        args = 4;
+    }
+    if (lua_pcall(L, args, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
+        const std::string message = std::string("Prop Kill error: ") + (err ? err : "(unknown)");
+        spdlog::warn("{}", message);
+        if (test_status::count_lua_failures()) test_status::record_failure(message);
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+// prop:CreatePropAtBone(bone, blueprint): a new prop at one of this prop's
+// bones (tree groups breaking up into trees).
+static int prop_CreatePropAtBone(lua_State* L) {
+    auto* e = check_entity(L);
+    auto* sim = get_sim(L);
+    if (!e || !sim || e->destroyed() || lua_type(L, 3) != LUA_TSTRING) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const i32 bone = resolve_bone_index(e, L, 2);
+    const auto* bones = e->bone_data();
+    const sim::Quaternion rot =
+        bones && bones->is_valid(bone)
+            ? sim::quat_multiply(e->orientation(),
+                                 bones->bones[static_cast<size_t>(bone)].world_rotation)
+            : e->orientation();
+    sim::spawn_prop(L, *sim, lua_tostring(L, 3), bone_world_position(e, bone), rot, true);
+    return 1;
+}
+
+// prop:SinkAway(rate): sink into the ground at `rate` units per second
+// until the script destroys it.
+static int prop_SinkAway(lua_State* L) {
+    auto* e = check_entity(L);
+    if (e && e->is_prop()) static_cast<sim::Prop*>(e)->sink_rate = static_cast<f32>(lua_tonumber(L, 2));
+    return 0;
+}
+
+// motor:Whack(nx, ny, nz, depth, dotrunk): the tree falls over away from
+// the push, once. (Moho simulates the fall; it lands the same way.)
+static int falldown_Whack(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_c_fallen");
+    lua_rawget(L, 1);
+    const bool fallen = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    lua_pushstring(L, "_c_prop_id");
+    lua_rawget(L, 1);
+    const auto id = static_cast<u32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    auto* sim = get_sim(L);
+    sim::Entity* e = sim ? sim->entity_registry().find(id) : nullptr;
+    if (fallen || !e || e->destroyed()) return 0;
+    f32 dx = static_cast<f32>(lua_tonumber(L, 2));
+    f32 dz = static_cast<f32>(lua_tonumber(L, 4));
+    const f32 len = std::sqrt(dx * dx + dz * dz);
+    if (len < 1e-4f) {
+        dx = 1.0f; // no horizontal push: any way will do
+        dz = 0.0f;
+    } else {
+        dx /= len;
+        dz /= len;
+    }
+    // A quarter turn about (dz, 0, -dx) carries up (+Y) onto the push.
+    const f32 s = 0.70710678f;
+    const sim::Quaternion fall{dz * s, 0.0f, -dx * s, s};
+    e->set_orientation(sim::quat_multiply(fall, e->orientation()));
+    lua_pushstring(L, "_c_fallen");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, 1);
+    return 0;
+}
+
+// prop:FallDown() -> motor: whacking it topples the tree.
+static int prop_FallDown(lua_State* L) {
+    auto* e = check_entity(L);
+    lua_newtable(L);
+    lua_pushstring(L, "_c_prop_id");
+    lua_pushnumber(L, e ? static_cast<lua_Number>(e->entity_id()) : 0);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "__osc_falldown_mt");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushstring(L, "__index");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "Whack");
+        lua_pushcfunction(L, falldown_Whack);
+        lua_rawset(L, -3);
+        lua_pushstring(L, "__osc_falldown_mt");
+        lua_pushvalue(L, -2);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+    }
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
 static const MethodEntry prop_methods[] = {
     {"GetMaxHealth",                entity_GetMaxHealth},
     {"SetMaxHealth",                entity_SetMaxHealth},
@@ -4818,6 +4941,10 @@ static const MethodEntry prop_methods[] = {
     {"SetVizToNeutrals",            entity_SetVizToNeutrals},
     {"SetReclaimable",              entity_SetReclaimable},
     {"SetMaxReclaimValues",          prop_SetMaxReclaimValues},
+    {"Kill",                         prop_Kill},
+    {"CreatePropAtBone",             prop_CreatePropAtBone},
+    {"SinkAway",                     prop_SinkAway},
+    {"FallDown",                     prop_FallDown},
     {"SetPropCollision",             entity_SetCollisionShape},
     {"GetHeading",                   entity_GetHeading},
     {nullptr, nullptr},

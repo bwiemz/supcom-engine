@@ -4135,28 +4135,35 @@ void test_wreck(TestContext& ctx) {
 
     int pass = 0, fail = 0;
 
-    // Test 1: SetMaxReclaimValues sets fields on prop table
+    // Test 1: a wreck is retail's Wreckage prop, and Prop.lua's
+    // SetMaxReclaimValues(massTimeMult, energyTimeMult, mass, energy) sets
+    // what GetReclaimCosts reads.
     {
-        auto r = ctx.lua_state.do_string(
-            "local pos = GetEntityById(__osc_test_acu_id(1)):GetPosition()\n"
-            "local prop = CreatePropHPR('/env/common/props/TreeGroup01_prop.bp',\n"
-            "    pos[1]+30, pos[2], pos[3]+30, 0, 0, 0)\n"
-            "if not prop then error('CreatePropHPR failed') end\n"
-            "prop:SetMaxReclaimValues(10, 100, 500)\n"
-            "local ok = prop.MaxMassReclaim == 100\n"
-            "    and prop.MaxEnergyReclaim == 500\n"
-            "    and prop.TimeReclaim == 10\n"
-            "    and prop.ReclaimLeft == 1\n"
-            "if ok then\n"
-            "    LOG('Wreck test 1: PASS - SetMaxReclaimValues set all fields')\n"
-            "else\n"
-            "    WARN('Wreck test 1: FAIL - mass=' .. tostring(prop.MaxMassReclaim)\n"
-            "         .. ' energy=' .. tostring(prop.MaxEnergyReclaim)\n"
-            "         .. ' time=' .. tostring(prop.TimeReclaim)\n"
-            "         .. ' left=' .. tostring(prop.ReclaimLeft))\n"
-            "end\n");
-        if (r) { pass++; spdlog::info("[PASS] Test 1: SetMaxReclaimValues"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r.error().message); }
+        auto r = ctx.lua_state.do_string(R"(
+            local pos = GetEntityById(__osc_test_acu_id(1)):GetPosition()
+            local prop = CreatePropHPR('/props/DefaultWreckage/DefaultWreckage_prop.bp',
+                pos[1] + 30, pos[2], pos[3] + 30, 0, 0, 0)
+            if not prop then error('CreatePropHPR failed') end
+            local Wreckage = import('/lua/wreckage.lua').Wreckage
+            if getmetatable(prop) ~= Wreckage then error('not a Wreckage') end
+            prop:SetMaxReclaimValues(2, 3, 100, 500)
+            local ok = prop.MaxMassReclaim == 100 and prop.MaxEnergyReclaim == 500
+                and prop.ReclaimTimeMassMult == 2 and prop.ReclaimTimeEnergyMult == 3
+            if ok then
+                LOG('Wreck test 1: PASS - a Wreckage with its reclaim values')
+            else
+                WARN('Wreck test 1: FAIL - mass=' .. tostring(prop.MaxMassReclaim)
+                     .. ' energy=' .. tostring(prop.MaxEnergyReclaim)
+                     .. ' mult=' .. tostring(prop.ReclaimTimeMassMult))
+            end
+        )");
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] Test 1: a Wreckage prop with retail reclaim values");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 1: {}", r.error().message);
+        }
     }
 
     // Test 2: GetHeading returns correct yaw from quaternion
@@ -5664,6 +5671,125 @@ void test_prop(TestContext& ctx) {
             fail++;
             osc::test_status::fail("[FAIL] Test 5: all props have identity orientation");
         }
+    }
+
+    // M201a: props are instances of their script classes (map props too),
+    // and their scripts work: reclaim values, tree groups breaking up, trees
+    // falling, Kill, reclaim through GetReclaimCosts.
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    lua_check("Test 6: map props are instances of their script classes", R"(
+        local Tree = import('/lua/proptree.lua').Tree
+        local TreeGroup = import('/lua/proptree.lua').TreeGroup
+        local Prop = import('/lua/sim/Prop.lua').Prop
+        local counts = {tree = 0, group = 0, prop = 0, other = 0}
+        local found = {}
+        for _, p in GetReclaimablesInRect({0, 0, 1024, 1024}) do
+            local mt = getmetatable(p)
+            if mt == Tree then
+                counts.tree = counts.tree + 1
+                found.tree = found.tree or p
+            elseif mt == TreeGroup then
+                counts.group = counts.group + 1
+                found.group = found.group or p
+            elseif mt == Prop then
+                counts.prop = counts.prop + 1
+                if not found.rock and p:GetBlueprint().Economy.ReclaimMassMax > 0 then
+                    found.rock = p
+                end
+            else
+                counts.other = counts.other + 1
+            end
+        end
+        __osc_tree, __osc_group, __osc_rock = found.tree, found.group, found.rock
+        if counts.tree == 0 or counts.group == 0 or counts.prop == 0 or not __osc_rock then
+            error(string.format('trees %d, groups %d, props %d, other %d',
+                                counts.tree, counts.group, counts.prop, counts.other))
+        end
+    )");
+    lua_check("Test 7: a map prop reads its reclaim value from its blueprint", R"(
+        local want = __osc_rock:GetBlueprint().Economy.ReclaimMassMax
+        if __osc_rock.MaxMassReclaim ~= want then
+            error('MaxMassReclaim ' .. tostring(__osc_rock.MaxMassReclaim) .. ', blueprint ' .. want)
+        end
+    )");
+    lua_check("Test 8: Force damage breaks a tree group into single trees", R"(
+        local p = __osc_group:GetPosition()
+        local before = table.getn(GetReclaimablesInRect({p[1] - 8, p[3] - 8, p[1] + 8, p[3] + 8}))
+        DamageArea(nil, p, 0.5, 1, 'Force', true)
+        if not __osc_group:BeenDestroyed() then error('the group is still there') end
+        local Tree = import('/lua/proptree.lua').Tree
+        local trees = 0
+        for _, t in GetReclaimablesInRect({p[1] - 8, p[3] - 8, p[1] + 8, p[3] + 8}) do
+            if getmetatable(t) == Tree then trees = trees + 1 end
+        end
+        if trees == 0 then error('no trees where the group stood (' .. before .. ' props before)') end
+    )");
+    lua_check("Test 9: Force damage fells a tree, away from the blast", R"(
+        local t = __osc_tree:GetPosition()
+        Damage(nil, {t[1] - 1, t[2], t[3]}, __osc_tree, 1, 'Force')
+        local q = __osc_tree:GetOrientation()
+        -- The tree's up axis after the fall: 1 - 2(x^2 + z^2) is its height.
+        local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
+        if math.abs(up_y) > 0.05 then error('still upright: up.y ' .. up_y) end
+    )");
+    lua_check("Test 10: Kill destroys a prop through its script", R"(
+        local p = __osc_rock:GetPosition()
+        local rock = CreatePropHPR('/env/evergreen/props/rocks/rock01_prop.bp', p[1] + 2, p[2], p[3], 0, 0, 0)
+        rock:Kill()
+        if not rock:BeenDestroyed() then error('it survived') end
+    )");
+    // The commanders' warp-in keeps blasting its surroundings (DamageRing,
+    // Force) for several seconds; let it finish before reclaiming beside one.
+    for (int i = 0; i < 100; ++i) ctx.sim.tick();
+    lua_check("Test 11: a commander asks GetReclaimCosts, and reclaims", R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local a = acu:GetPosition()
+        local rock = CreatePropHPR('/env/evergreen/props/rocks/rock01_prop.bp', a[1] + 4, a[2], a[3], 0, 0, 0)
+        local time, energy, mass = acu:GetReclaimCosts(rock)
+        if mass ~= 10 or energy ~= 0 then
+            error('a rock: mass ' .. tostring(mass) .. ', energy ' .. tostring(energy))
+        end
+        -- A wreck worth 1000 mass at twice the time: 2 * 1000 / build rate
+        -- 10 / 10 = 20 s. (Read off its table alone, it would take 10.)
+        __osc_reclaim_wreck = CreatePropHPR('/props/DefaultWreckage/DefaultWreckage_prop.bp',
+                                            a[1] + 4, a[2], a[3] + 2, 0, 0, 0)
+        __osc_reclaim_wreck:SetMaxReclaimValues(2, 2, 1000, 0)
+        __osc_reclaim_wreck:SetReclaimValues(2, 2, 1000, 0)
+        time = acu:GetReclaimCosts(__osc_reclaim_wreck)
+        if math.abs(time - 20) > 1e-6 then error('reclaim time ' .. time) end
+        IssueReclaim({acu}, __osc_reclaim_wreck)
+    )");
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    lua_check("Test 11b: the reclaim is under way", R"(
+        if __osc_reclaim_wreck:BeenDestroyed() then error('gone at once') end
+        if not GetEntityById(__osc_test_acu_id(1)):IsUnitState('Reclaiming') then
+            error('the commander is not reclaiming')
+        end
+    )");
+    for (int i = 0; i < 120; ++i) ctx.sim.tick();
+    lua_check("Test 11c: at 12.5 s it is still being reclaimed (it takes 20)", R"(
+        if __osc_reclaim_wreck:BeenDestroyed() then error('gone early: the time multiplier was ignored') end
+    )");
+    for (int i = 0; i < 90; ++i) ctx.sim.tick();
+    lua_check("Test 11d: ...and by 21.5 s the wreck is gone", R"(
+        if not __osc_reclaim_wreck:BeenDestroyed() then error('still there') end
+    )");
+    if (osc::test_status::failure_count() - fail == failures_before) {
+        pass++;
+        spdlog::info("[PASS] Test 12: no prop script errors");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] Test 12: prop script errors");
     }
 
     spdlog::info("Prop test: {}/{} passed", pass, pass + fail);
