@@ -2965,40 +2965,43 @@ void Unit::update_pose() {
         return;
     }
     const size_t count = bd->bones.size();
-    // Lower precedence first, so a higher one's delta on a bone replaces it.
-    std::vector<const Manipulator*> order;
+    // Lower precedence first; each manipulator applies on top of the ones
+    // before it (an animator sets bones, aim and rotators turn them).
+    std::vector<Manipulator*>& order = pose_order_;
+    order.clear();
     for (const auto& m : manipulators_) {
         if (!m->is_destroyed() && m->enabled()) order.push_back(m.get());
     }
     std::stable_sort(order.begin(), order.end(), [](const Manipulator* a, const Manipulator* b) {
         return a->precedence() < b->precedence();
     });
-    PoseDeltas deltas(count);
-    for (const Manipulator* m : order) m->contribute_pose(deltas);
-    if (!deltas.any()) {
-        pose_.clear();
+    PoseLocals& locals = pose_locals_;
+    locals.changed = false;
+    locals.local.resize(count);
+    for (size_t i = 0; i < count; ++i)
+        locals.local[i] = {bd->bones[i].local_position, bd->bones[i].local_rotation};
+    for (Manipulator* m : order) m->apply_pose(locals);
+    if (!locals.changed) {
+        pose_.clear(); // the bind pose; the render matrices stay identity
         return;
     }
     // Bones are stored parents first (see the SCM parser).
     pose_.resize(count);
     for (size_t i = 0; i < count; ++i) {
-        const BoneInfo& bone = bd->bones[i];
-        Quaternion rotation = bone.local_rotation;
-        Vector3 position = bone.local_position;
-        if (deltas.rotated[i]) rotation = quat_multiply(rotation, deltas.rotation[i]);
-        if (deltas.offset_set[i]) {
-            const Vector3 slide = quat_rotate(bone.local_rotation, deltas.offset[i]);
-            position = {position.x + slide.x, position.y + slide.y, position.z + slide.z};
+        const i32 parent = bd->bones[i].parent_index;
+        pose_[i] = parent < 0 || static_cast<size_t>(parent) >= i
+                       ? locals.local[i]
+                       : pose_compose(pose_[static_cast<size_t>(parent)], locals.local[i]);
+    }
+    // What the renderer skins with: each bone's posed transform times its
+    // inverse bind pose (identity where a bone is at rest).
+    if (animated_bone_matrices_.size() == count) {
+        for (size_t i = 0; i < count; ++i) {
+            f32 posed[16];
+            pose_to_mat4(posed, pose_[i]);
+            mat4_multiply(animated_bone_matrices_[i].data(), posed,
+                          bd->bones[i].inverse_bind_pose.data());
         }
-        const i32 parent = bone.parent_index;
-        if (parent < 0 || static_cast<size_t>(parent) >= i) {
-            pose_[i] = {position, rotation};
-            continue;
-        }
-        const BonePose& p = pose_[static_cast<size_t>(parent)];
-        const Vector3 offset = quat_rotate(p.rotation, position);
-        pose_[i] = {{p.position.x + offset.x, p.position.y + offset.y, p.position.z + offset.z},
-                    quat_multiply(p.rotation, rotation)};
     }
 }
 

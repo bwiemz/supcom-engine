@@ -246,9 +246,12 @@ that:
     blueprints give them.
   - Retail only copies heading and pitch between controllers, for example
     the build arm to the gun, so the unit is ours to choose.
-- **Precedence overrides.** On a shared bone, the higher-precedence
-  manipulator wins. The UEF commander's OverCharge and main gun aim at the
-  same arm, and the one not in use sits at precedence 0.
+- **Precedence (revised in M200d-2).** M200d-1 let the higher-precedence
+  manipulator replace a lower one on a shared bone. M200d-2 applies them in
+  precedence order, each on top of the last, which is how a walking bot's
+  torso aim rides its walk cycle. The UEF commander's OverCharge and main
+  gun aim at the same arm, and the one not in use is disabled, so they
+  never stack.
 - **A disabled aim holds fire.** Retail disables an aim controller together
   with its weapon (OverCharge, `SetWeaponEnabledByLabel`), so a disabled
   fire control can simply block `CanFire`.
@@ -257,6 +260,27 @@ that:
   so retail's `CreateWreckageProp` errors on `SetReclaimValues`. The gap
   predates M200, and now that units really die in combat, every wreck hits
   it.
+
+**What building M200d-2 established:**
+
+- **One pose, drawn and simulated.** Each tick a unit's manipulators apply
+  to its bind-pose locals in precedence order: animators set the bones
+  they animate, rotators and aim controllers turn bones on top, sliders move
+  them. The pose composes root-down. The renderer's skinning matrices and
+  the sim's bone positions (muzzles, `GetPosition(bone)`) both come from it.
+- **Animators give local transforms.** An animated bone is expressed
+  relative to its SCM parent as the frame poses that parent, or as the bind
+  pose places it when the animation doesn't move it. Cross-fades blend these
+  local transforms. So turrets turn on screen, rotators spin, and a bone the
+  animation leaves alone follows its animated parent instead of staying
+  behind at bind pose.
+- **At rest costs nothing.** A turret at heading 0, a stopped rotator or a
+  slider at home leaves its bone alone, so a unit with nothing moving keeps
+  the bind pose and computes no skeleton. A seeded 3000-tick four-AI game ran
+  as fast as on M200d-1 (13.2 s against 13.5 s median, within noise).
+- **Animations now move sim bones.** Muzzles on an animated arm fire from
+  where the animation holds them. `AnimCache` loads synchronously, so every
+  machine poses alike.
 
 ## Risks
 

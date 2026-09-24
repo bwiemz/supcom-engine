@@ -80,97 +80,18 @@ bool RotateManipulator::is_at_goal() const {
 // AnimManipulator — skeletal animation with SCA bone matrix computation
 // ---------------------------------------------------------------------------
 
-namespace {
-
-/// Normalized linear interpolation for quaternions (cheaper than slerp,
-/// sufficient at 30fps SCA frame rates).
-Quaternion nlerp(const Quaternion& a, const Quaternion& b, f32 t) {
-    // Ensure shortest path (dot product check)
-    f32 dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
-    f32 sign = dot < 0 ? -1.0f : 1.0f;
-    Quaternion r = {
-        a.x + t * (sign * b.x - a.x),
-        a.y + t * (sign * b.y - a.y),
-        a.z + t * (sign * b.z - a.z),
-        a.w + t * (sign * b.w - a.w)
-    };
-    // Normalize
-    f32 len = std::sqrt(r.x * r.x + r.y * r.y + r.z * r.z + r.w * r.w);
-    if (len > 1e-8f) {
-        f32 inv = 1.0f / len;
-        r.x *= inv; r.y *= inv; r.z *= inv; r.w *= inv;
-    } else {
-        r = a; // Degenerate case (near-antipodal): return start quaternion
-    }
-    return r;
-}
-
-/// Linear interpolation for Vector3.
-Vector3 lerp_vec3(const Vector3& a, const Vector3& b, f32 t) {
-    return {a.x + t * (b.x - a.x),
-            a.y + t * (b.y - a.y),
-            a.z + t * (b.z - a.z)};
-}
-
-/// Build column-major 4x4 matrix from quaternion + position (scale=1).
-void quat_pos_to_mat4(f32* out, const Quaternion& q, const Vector3& p) {
-    f32 xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
-    f32 xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
-    f32 wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
-    // Column 0
-    out[0]  = 1.0f - 2.0f * (yy + zz);
-    out[1]  = 2.0f * (xy + wz);
-    out[2]  = 2.0f * (xz - wy);
-    out[3]  = 0.0f;
-    // Column 1
-    out[4]  = 2.0f * (xy - wz);
-    out[5]  = 1.0f - 2.0f * (xx + zz);
-    out[6]  = 2.0f * (yz + wx);
-    out[7]  = 0.0f;
-    // Column 2
-    out[8]  = 2.0f * (xz + wy);
-    out[9]  = 2.0f * (yz - wx);
-    out[10] = 1.0f - 2.0f * (xx + yy);
-    out[11] = 0.0f;
-    // Column 3 (translation)
-    out[12] = p.x;
-    out[13] = p.y;
-    out[14] = p.z;
-    out[15] = 1.0f;
-}
-
-/// 4x4 column-major matrix multiply: C = A * B
-void mat4_multiply(f32* C, const f32* A, const f32* B) {
-    for (int col = 0; col < 4; col++) {
-        for (int row = 0; row < 4; row++) {
-            C[col * 4 + row] =
-                A[0 * 4 + row] * B[col * 4 + 0] +
-                A[1 * 4 + row] * B[col * 4 + 1] +
-                A[2 * 4 + row] * B[col * 4 + 2] +
-                A[3 * 4 + row] * B[col * 4 + 3];
-        }
-    }
-}
-
-/// Component-wise linear interpolation of 4x4 matrices.
-/// Sufficient for short blend durations where rotation error is imperceptible.
-void mat4_lerp(f32* out, const f32* a, const f32* b, f32 t) {
-    for (int i = 0; i < 16; i++) {
-        out[i] = a[i] + t * (b[i] - a[i]);
-    }
-}
-
-} // anonymous namespace
 
 void AnimManipulator::play_anim(const std::string& anim, bool loop,
                                  AnimCache* cache) {
-    // Snapshot current bone matrices for cross-fade blending
-    // (only if we're already playing an animation with bone data)
+    // Cross-fade from the bones as the current animation left them (only
+    // if one is playing with bone data).
     if (owner_ && !current_anim_.empty() && sca_data_ && blend_time_ > 0.0f) {
-        blend_from_matrices_ = owner_->animated_bone_matrices();
+        blend_from_ = last_;
+        blend_from_set_ = last_set_;
         blend_remaining_ = blend_time_;
     } else {
-        blend_from_matrices_.clear();
+        blend_from_.clear();
+        blend_from_set_.clear();
         blend_remaining_ = 0.0f;
     }
 
@@ -180,6 +101,7 @@ void AnimManipulator::play_anim(const std::string& anim, bool loop,
     finished_ = false;
     sca_data_ = nullptr;
     sca_to_scm_map_.clear();
+    scm_to_sca_map_.clear();
 
     // Try to load SCA data
     if (cache && !anim.empty()) {
@@ -192,9 +114,11 @@ void AnimManipulator::play_anim(const std::string& anim, bool loop,
             auto* bd = owner_ ? owner_->bone_data() : nullptr;
             if (bd) {
                 sca_to_scm_map_.resize(sca_data_->num_bones, -1);
+                scm_to_sca_map_.assign(static_cast<size_t>(bd->bone_count()), -1);
                 for (u32 i = 0; i < sca_data_->num_bones; i++) {
-                    sca_to_scm_map_[i] =
-                        bd->find_bone(sca_data_->bone_names[i]);
+                    const i32 scm = bd->find_bone(sca_data_->bone_names[i]);
+                    sca_to_scm_map_[i] = scm;
+                    if (scm >= 0) scm_to_sca_map_[static_cast<size_t>(scm)] = static_cast<i32>(i);
                 }
             }
         }
@@ -243,15 +167,12 @@ void AnimManipulator::tick(f32 dt) {
         }
     }
 
-    // Advance cross-fade blend BEFORE computing bone matrices,
-    // so the first tick after play_anim() uses weight < 1.0 (not frozen on old pose).
+    // Advance the cross-fade before the pose is taken (Unit::update_pose),
+    // so the first tick after play_anim() is not frozen on the old pose.
     if (blend_remaining_ > 0.0f) {
         blend_remaining_ -= dt;
         if (blend_remaining_ < 0.0f) blend_remaining_ = 0.0f;
     }
-
-    // Compute bone matrices after fraction update
-    compute_bone_matrices();
 }
 
 bool AnimManipulator::is_at_goal() const {
@@ -269,90 +190,74 @@ bool AnimManipulator::is_bone_enabled(i32 scm_idx) const {
     return disabled_bones_.find(scm_idx) == disabled_bones_.end();
 }
 
-void AnimManipulator::compute_bone_matrices() {
-    if (!sca_data_ || !owner_ || sca_data_->frames.empty()) return;
-    auto& matrices = owner_->animated_bone_matrices();
-    if (matrices.empty()) return;
+void AnimManipulator::apply_pose(PoseLocals& pose) {
+    const f32 from_weight =
+        blend_remaining_ > 0.0f && blend_time_ > 0.0f ? blend_remaining_ / blend_time_ : 0.0f;
+    if (!sca_data_ || !owner_ || sca_data_->frames.empty() || !owner_->bone_data() ||
+        scm_to_sca_map_.size() != static_cast<size_t>(owner_->bone_data()->bone_count())) {
+        // No animation to show (it failed to load): fade the bones the last
+        // one held back to what lies beneath, rather than snap.
+        for (size_t s = 0; s < blend_from_set_.size() && from_weight > 0.0f; ++s) {
+            if (!blend_from_set_[s] || !pose.valid(static_cast<i32>(s))) continue;
+            const BonePose& below = pose.local[s];
+            pose.set(static_cast<i32>(s),
+                     {vec3_lerp(below.position, blend_from_[s].position, from_weight),
+                      quat_nlerp(below.rotation, blend_from_[s].rotation, from_weight)});
+        }
+        return;
+    }
+    const BoneData* bd = owner_->bone_data();
 
-    auto* bd = owner_->bone_data();
-    if (!bd) return;
-
-    u32 num_sca_bones = sca_data_->num_bones;
-    u32 num_frames = sca_data_->num_frames;
-
-    // Determine frame pair and lerp factor
-    f32 frac = std::clamp(fraction_, 0.0f, 1.0f);
-    f32 frame_float = frac * static_cast<f32>(num_frames - 1);
-    u32 frame_a = static_cast<u32>(frame_float);
-    u32 frame_b = frame_a + 1;
-    if (frame_b >= num_frames) frame_b = num_frames - 1;
-    f32 t = frame_float - static_cast<f32>(frame_a);
-
+    const u32 num_sca_bones = sca_data_->num_bones;
+    const u32 num_frames = sca_data_->num_frames;
+    const f32 frac = std::clamp(fraction_, 0.0f, 1.0f);
+    const f32 frame_float = frac * static_cast<f32>(num_frames - 1);
+    const u32 frame_a = static_cast<u32>(frame_float);
+    const u32 frame_b = std::min(frame_a + 1, num_frames - 1);
+    const f32 t = frame_float - static_cast<f32>(frame_a);
     const auto& fa = sca_data_->frames[frame_a];
     const auto& fb = sca_data_->frames[frame_b];
 
-    // Temporary world transforms for SCA bones (position + rotation)
-    struct WorldXform { Vector3 pos; Quaternion rot; };
-    std::vector<WorldXform> world_xforms(num_sca_bones);
-
-    // Forward pass: compute world transforms (parents come first in SCA)
+    // The frame's bones in model space (SCA parents come first).
+    std::vector<BonePose>& world = frame_world_;
+    world.resize(num_sca_bones);
     for (u32 i = 0; i < num_sca_bones; i++) {
-        // Interpolate between frame pair
-        Vector3 local_pos = lerp_vec3(fa.bones[i].position,
-                                       fb.bones[i].position, t);
-        Quaternion local_rot = nlerp(fa.bones[i].rotation,
-                                      fb.bones[i].rotation, t);
-
-        i32 parent = sca_data_->parent_indices[i];
-        if (parent < 0 || parent >= static_cast<i32>(num_sca_bones)) {
-            // Root bone
-            world_xforms[i] = {local_pos, local_rot};
-        } else {
-            auto& pw = world_xforms[parent];
-            // world_rot = parent_rot * local_rot
-            world_xforms[i].rot = quat_multiply(pw.rot, local_rot);
-            // world_pos = parent_pos + rotate(local_pos, parent_rot)
-            auto rotated = quat_rotate(pw.rot, local_pos);
-            world_xforms[i].pos = {
-                pw.pos.x + rotated.x,
-                pw.pos.y + rotated.y,
-                pw.pos.z + rotated.z
-            };
-        }
-
-        // Write final bone matrix: animated_world × inverse_bind_pose
-        i32 scm_idx = (i < sca_to_scm_map_.size())
-                          ? sca_to_scm_map_[i] : -1;
-        if (scm_idx >= 0 &&
-            scm_idx < static_cast<i32>(matrices.size()) &&
-            scm_idx < bd->bone_count() &&
-            disabled_bones_.find(scm_idx) == disabled_bones_.end()) {
-            f32 world_mat[16];
-            quat_pos_to_mat4(world_mat, world_xforms[i].rot,
-                             world_xforms[i].pos);
-            mat4_multiply(matrices[scm_idx].data(), world_mat,
-                          bd->bones[scm_idx].inverse_bind_pose.data());
-        }
+        const BonePose local{vec3_lerp(fa.bones[i].position, fb.bones[i].position, t),
+                             quat_nlerp(fa.bones[i].rotation, fb.bones[i].rotation, t)};
+        const i32 parent = sca_data_->parent_indices[i];
+        world[i] = parent < 0 || parent >= static_cast<i32>(num_sca_bones)
+                       ? local
+                       : pose_compose(world[static_cast<size_t>(parent)], local);
     }
 
-    // Apply cross-fade blending if active
-    if (blend_remaining_ > 0.0f && blend_time_ > 0.0f && !blend_from_matrices_.empty()) {
-        f32 weight = blend_remaining_ / blend_time_; // 1.0 → 0.0 over blend duration
-        for (u32 i = 0; i < num_sca_bones; i++) {
-            i32 scm_idx = (i < sca_to_scm_map_.size())
-                              ? sca_to_scm_map_[i] : -1;
-            if (scm_idx >= 0 &&
-                scm_idx < static_cast<i32>(matrices.size()) &&
-                scm_idx < static_cast<i32>(blend_from_matrices_.size()) &&
-                disabled_bones_.find(scm_idx) == disabled_bones_.end()) {
-                f32 blended[16];
-                mat4_lerp(blended,
-                          matrices[scm_idx].data(),        // "to" (new anim)
-                          blend_from_matrices_[scm_idx].data(), // "from" (snapshot)
-                          weight);
-                std::memcpy(matrices[scm_idx].data(), blended, sizeof(f32) * 16);
-            }
+    // Each animated bone relative to its SCM parent: that parent as this
+    // frame has it, or in bind pose when the animation doesn't move it.
+    // Other manipulators then turn the bones on top, and bones the
+    // animation leaves alone follow their animated parents.
+    const size_t bone_count = static_cast<size_t>(bd->bone_count());
+    last_.resize(bone_count);
+    last_set_.assign(bone_count, 0);
+    for (u32 i = 0; i < num_sca_bones; i++) {
+        const i32 scm = i < sca_to_scm_map_.size() ? sca_to_scm_map_[i] : -1;
+        if (scm < 0 || static_cast<size_t>(scm) >= bone_count || !is_bone_enabled(scm)) continue;
+        const i32 parent = bd->bones[static_cast<size_t>(scm)].parent_index;
+        BonePose parent_world;
+        if (parent >= 0 && static_cast<size_t>(parent) < bone_count) {
+            const i32 animated = scm_to_sca_map_[static_cast<size_t>(parent)];
+            parent_world = animated >= 0
+                               ? world[static_cast<size_t>(animated)]
+                               : BonePose{bd->bones[static_cast<size_t>(parent)].world_position,
+                                          bd->bones[static_cast<size_t>(parent)].world_rotation};
         }
+        BonePose local = pose_relative(parent_world, world[i]);
+        const auto s_idx = static_cast<size_t>(scm);
+        if (from_weight > 0.0f && s_idx < blend_from_set_.size() && blend_from_set_[s_idx]) {
+            local = {vec3_lerp(local.position, blend_from_[s_idx].position, from_weight),
+                     quat_nlerp(local.rotation, blend_from_[s_idx].rotation, from_weight)};
+        }
+        pose.set(scm, local);
+        last_[s_idx] = local;
+        last_set_[s_idx] = 1;
     }
 }
 
@@ -438,12 +343,12 @@ BonePose rest_frame_world(const Unit& unit, i32 bone) {
 
 } // namespace
 
-void RotateManipulator::contribute_pose(PoseDeltas& deltas) const {
-    deltas.rotate(bone_index_, quat_axis_angle(axis_, current_angle_ * kDegToRad));
+void RotateManipulator::apply_pose(PoseLocals& pose) {
+    pose.rotate(bone_index_, quat_axis_angle(axis_, current_angle_ * kDegToRad));
 }
 
-void SlideManipulator::contribute_pose(PoseDeltas& deltas) const {
-    deltas.slide(bone_index_, current_);
+void SlideManipulator::apply_pose(PoseLocals& pose) {
+    pose.slide(bone_index_, current_);
 }
 
 // ---------------------------------------------------------------------------
@@ -529,19 +434,12 @@ void AimManipulator::tick(f32 dt) {
     on_target_ = reachable && heading_error <= tolerance_ && pitch_error <= tolerance_;
 }
 
-void AimManipulator::contribute_pose(PoseDeltas& deltas) const {
+void AimManipulator::apply_pose(PoseLocals& pose) {
     if (yaw_bone_ < 0) return;
-    const Quaternion yaw = quat_axis_angle('y', heading_);
-    // Pitch turns the barrel's forward (+Z) up: about local X, negated.
-    const Quaternion pitch = quat_axis_angle('x', -pitch_);
-    if (pitch_bone_ < 0) {
-        deltas.rotate(yaw_bone_, yaw);
-    } else if (pitch_bone_ == yaw_bone_) {
-        deltas.rotate(yaw_bone_, quat_multiply(yaw, pitch));
-    } else {
-        deltas.rotate(yaw_bone_, yaw);
-        deltas.rotate(pitch_bone_, pitch);
-    }
+    pose.rotate(yaw_bone_, quat_axis_angle('y', heading_));
+    // Pitch turns the barrel's forward (+Z) up: about local X, negated. On
+    // a single-bone turret it follows the yaw on the same bone.
+    if (pitch_bone_ >= 0) pose.rotate(pitch_bone_, quat_axis_angle('x', -pitch_));
 }
 
 } // namespace osc::sim

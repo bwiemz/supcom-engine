@@ -8,6 +8,8 @@
 #include "sim/anim_cache.hpp"
 #include "sim/sca_parser.hpp"
 
+#include <memory>
+
 using namespace osc;
 using namespace osc::sim;
 using Catch::Matchers::WithinAbs;
@@ -57,6 +59,14 @@ static SCAData make_linear_sca(const Vector3& start, const Vector3& end,
     return sca;
 }
 
+/// An animator the unit owns, as scripts' CreateAnimator makes one: the
+/// unit's tick_manipulators advances it, takes its pose and writes the
+/// matrices the renderer skins with.
+static AnimManipulator& add_animator(Unit& unit) {
+    return static_cast<AnimManipulator&>(
+        *unit.add_manipulator(std::make_unique<AnimManipulator>()));
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: Default blend time is 0.2s
 // ---------------------------------------------------------------------------
@@ -77,7 +87,7 @@ TEST_CASE("AnimManipulator SetBlendTime changes duration", "[anim]") {
 // ---------------------------------------------------------------------------
 // Test 3: Cross-fade blends bone matrices over time
 // ---------------------------------------------------------------------------
-TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
+TEST_CASE("Cross-fade blends the posed bones over time", "[anim]") {
     // Set up bone data and unit
     BoneData bd = make_one_bone();
     Unit unit;
@@ -93,8 +103,7 @@ TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
     cache.inject("/anim_b.sca", make_linear_sca({0, 0, 0}, {0, 2, 0}, 1.0f));
 
     // Create animator, attach to unit
-    AnimManipulator anim;
-    anim.set_owner(&unit);
+    auto& anim = add_animator(unit);
     anim.set_bone_index(0);
     anim.set_blend_time(0.4f);
 
@@ -102,7 +111,7 @@ TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
     anim.play_anim("/anim_a.sca", false, &cache);
     anim.set_rate(1.0f);
     // Tick 1.0s to reach the end of anim_a
-    anim.tick(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
     CHECK_THAT(anim.animation_fraction(), WithinAbs(1.0, 0.001));
 
     // Verify bone is at X=1 (column-major: translation at [12],[13],[14])
@@ -117,12 +126,12 @@ TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
     anim.set_rate(1.0f);
 
     // Tick 0.1s into the blend.
-    // Inside tick: blend_remaining_ decremented BEFORE compute_bone_matrices().
+    // The animator's tick shortens the blend before the unit takes its pose.
     // blend_remaining: 0.4 - 0.1 = 0.3, weight = 0.3/0.4 = 0.75
     // anim_b fraction=0.1, so "to" Y = 0.1*2 = 0.2, "to" X = 0
     // "from" snapshot: X=1, Y=0
     // Blended X = lerp(0, 1, 0.75) = 0.75, Y = lerp(0.2, 0, 0.75) = 0.05
-    anim.tick(0.1f);
+    unit.tick_manipulators(0.1f, nullptr);
 
     {
         auto& mat = unit.animated_bone_matrices()[0];
@@ -132,7 +141,7 @@ TEST_CASE("Cross-fade blends bone matrices over time", "[anim]") {
 
     // Tick 0.3s more — blend_remaining: 0.3 - 0.3 = 0, blend complete.
     // fraction=0.4, anim_b Y = 0.4*2 = 0.8, pure new anim (no blend).
-    anim.tick(0.3f);
+    unit.tick_manipulators(0.3f, nullptr);
     {
         auto& mat = unit.animated_bone_matrices()[0];
         CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.0, 0.01));
@@ -153,20 +162,19 @@ TEST_CASE("No blend when blend_time is 0", "[anim]") {
     cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
     cache.inject("/anim_b.sca", make_linear_sca({0, 0, 0}, {0, 2, 0}, 1.0f));
 
-    AnimManipulator anim;
-    anim.set_owner(&unit);
+    auto& anim = add_animator(unit);
     anim.set_bone_index(0);
     anim.set_blend_time(0.0f); // No blending
 
     // Play anim_a to completion
     anim.play_anim("/anim_a.sca", false, &cache);
     anim.set_rate(1.0f);
-    anim.tick(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
 
     // Switch to anim_b with zero blend time
     anim.play_anim("/anim_b.sca", false, &cache);
     anim.set_rate(1.0f);
-    anim.tick(0.1f);
+    unit.tick_manipulators(0.1f, nullptr);
 
     // Pure anim_b at fraction=0.1 => Y=0.2, X=0 (no blending from old pose)
     {
@@ -210,13 +218,9 @@ TEST_CASE("Identity reset clears stale bone data", "[anim]") {
 
 // ---------------------------------------------------------------------------
 // A finished or paused animation keeps posing its bones. Unit::tick_manipulators
-// resets every bone to identity each tick, so an animator that stops writing
-// would snap the unit back to its bind pose.
+// resets every bone to identity each tick and takes the pose afresh, so an
+// animator that stopped posing would snap the unit back to its bind pose.
 // ---------------------------------------------------------------------------
-static void reset_to_identity(Unit& unit) {
-    for (auto& m : unit.animated_bone_matrices())
-        m = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-}
 
 TEST_CASE("Finished non-looping animation holds its last frame", "[anim]") {
     BoneData bd = make_one_bone();
@@ -227,16 +231,14 @@ TEST_CASE("Finished non-looping animation holds its last frame", "[anim]") {
     AnimCache cache(nullptr);
     cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
 
-    AnimManipulator anim;
-    anim.set_owner(&unit);
+    auto& anim = add_animator(unit);
     anim.set_bone_index(0);
     anim.play_anim("/anim_a.sca", false, &cache);
     anim.set_rate(1.0f);
-    anim.tick(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
     REQUIRE(anim.is_at_goal());
 
-    reset_to_identity(unit);
-    anim.tick(0.1f);
+    unit.tick_manipulators(0.1f, nullptr);
     auto& mat = unit.animated_bone_matrices()[0];
     CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(1.0, 0.01));
     CHECK_THAT(anim.animation_fraction(), WithinAbs(1.0, 0.001));
@@ -252,18 +254,41 @@ TEST_CASE("Paused animation poses at its set fraction", "[anim]") {
     cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
 
     // Scripts pose units this way: PlayAnim, SetRate(0), SetAnimationFraction.
-    AnimManipulator anim;
-    anim.set_owner(&unit);
+    auto& anim = add_animator(unit);
     anim.set_bone_index(0);
     anim.play_anim("/anim_a.sca", false, &cache);
     anim.set_rate(0.0f);
     anim.set_animation_fraction(0.5f);
 
     for (int i = 0; i < 3; ++i) {
-        reset_to_identity(unit);
-        anim.tick(0.1f);
+        unit.tick_manipulators(0.1f, nullptr);
         auto& mat = unit.animated_bone_matrices()[0];
         CHECK_THAT(static_cast<double>(mat[12]), WithinAbs(0.5, 0.01));
     }
     CHECK_THAT(anim.animation_fraction(), WithinAbs(0.5, 0.001));
+}
+
+TEST_CASE("An animation that fails to load fades the last one out", "[anim]") {
+    BoneData bd = make_one_bone();
+    Unit unit;
+    unit.set_bone_data(&bd);
+    unit.init_animated_bones();
+
+    AnimCache cache(nullptr);
+    cache.inject("/anim_a.sca", make_linear_sca({0, 0, 0}, {1, 0, 0}, 1.0f));
+
+    auto& anim = add_animator(unit);
+    anim.set_blend_time(0.4f);
+    anim.play_anim("/anim_a.sca", false, &cache);
+    anim.set_rate(1.0f);
+    unit.tick_manipulators(1.0f, nullptr);
+    REQUIRE_THAT(static_cast<double>(unit.animated_bone_matrices()[0][12]), WithinAbs(1.0, 0.01));
+
+    // No such animation: the bone eases back toward rest over the blend
+    // time (0.3 of 0.4 s left: three quarters of the way from rest).
+    anim.play_anim("/missing.sca", false, &cache);
+    unit.tick_manipulators(0.1f, nullptr);
+    CHECK_THAT(static_cast<double>(unit.animated_bone_matrices()[0][12]), WithinAbs(0.75, 0.01));
+    unit.tick_manipulators(0.3f, nullptr);
+    CHECK_THAT(static_cast<double>(unit.animated_bone_matrices()[0][12]), WithinAbs(0.0, 0.01));
 }

@@ -15,8 +15,8 @@ const SCAData* AnimCache::get(const std::string& vfs_path) {
     // Check failed set (don't retry)
     if (failed_.count(vfs_path)) return nullptr;
 
-    // Read .sca file from VFS
-    auto file_data = vfs_->read_file(vfs_path);
+    // Read .sca file from VFS (none: only injected animations exist)
+    auto file_data = vfs_ ? vfs_->read_file(vfs_path) : std::nullopt;
     if (!file_data) {
         spdlog::debug("AnimCache: VFS read failed for '{}'", vfs_path);
         failed_.insert(vfs_path);
