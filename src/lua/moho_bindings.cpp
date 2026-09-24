@@ -1795,6 +1795,56 @@ static int entity_SetUnSelectable(lua_State* L) {
 }
 
 // clang-format off
+// Intel on an entity that isn't a unit: retail's VizMarker reveals an area
+// with InitIntel(army, type, radius) and EnableIntel. SimState paints it
+// each tick while the entity lives. (Units have their own.)
+static int entity_InitIntel(lua_State* L) {
+    auto* e = check_entity(L);
+    auto* sim = get_sim(L);
+    if (!e || !sim || lua_type(L, 3) != LUA_TSTRING) return 0;
+    auto& intel = sim->entity_intel(e->entity_id());
+    intel.army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1 : e->army();
+    intel.sources[lua_tostring(L, 3)] = {static_cast<f32>(luaL_optnumber(L, 4, 0)), true};
+    return 0;
+}
+
+static sim::SimState::EntityIntel::Source* entity_intel_source(lua_State* L) {
+    auto* e = check_entity(L);
+    auto* sim = get_sim(L);
+    if (!e || !sim || lua_type(L, 2) != LUA_TSTRING) return nullptr;
+    if (!sim->find_entity_intel(e->entity_id())) return nullptr;
+    auto& sources = sim->entity_intel(e->entity_id()).sources;
+    const auto it = sources.find(lua_tostring(L, 2));
+    return it != sources.end() ? &it->second : nullptr;
+}
+
+static int entity_EnableIntel(lua_State* L) {
+    if (auto* s = entity_intel_source(L)) s->enabled = true;
+    return 0;
+}
+
+static int entity_DisableIntel(lua_State* L) {
+    if (auto* s = entity_intel_source(L)) s->enabled = false;
+    return 0;
+}
+
+static int entity_SetIntelRadius(lua_State* L) {
+    if (auto* s = entity_intel_source(L)) s->radius = static_cast<f32>(luaL_checknumber(L, 3));
+    return 0;
+}
+
+static int entity_IsIntelEnabled(lua_State* L) {
+    const auto* s = entity_intel_source(L);
+    lua_pushboolean(L, s && s->enabled ? 1 : 0);
+    return 1;
+}
+
+static int entity_GetIntelRadius(lua_State* L) {
+    const auto* s = entity_intel_source(L);
+    lua_pushnumber(L, s ? s->radius : 0);
+    return 1;
+}
+
 static const MethodEntry entity_methods[] = {
     // Real implementations
     {"GetPosition",         entity_GetPosition},
@@ -1825,6 +1875,12 @@ static const MethodEntry entity_methods[] = {
     {"SetDrawScale",            entity_SetScale},
     {"SetMesh",                 entity_SetMesh},
     {"SetScale",                entity_SetScale},
+    {"InitIntel",               entity_InitIntel},
+    {"EnableIntel",             entity_EnableIntel},
+    {"DisableIntel",            entity_DisableIntel},
+    {"SetIntelRadius",          entity_SetIntelRadius},
+    {"IsIntelEnabled",          entity_IsIntelEnabled},
+    {"GetIntelRadius",          entity_GetIntelRadius},
     {"SetParentOffset",         entity_SetParentOffset},
     {"SetVizToAllies",          entity_SetVizToAllies},
     {"SetVizToEnemies",         entity_SetVizToEnemies},

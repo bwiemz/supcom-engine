@@ -12,6 +12,7 @@
 #include <array>
 #include <functional>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -170,6 +171,23 @@ public:
     void build_spatial_grid();
     map::VisibilityGrid* visibility_grid() { return visibility_grid_.get(); }
     const map::VisibilityGrid* visibility_grid() const { return visibility_grid_.get(); }
+    /// Intel a script gave an entity that isn't a unit: retail's VizMarker
+    /// calls InitIntel(army, type, radius) to reveal an area. Painted each
+    /// tick like a unit's, until the entity goes.
+    struct EntityIntel {
+        struct Source {
+            f32 radius = 0;
+            bool enabled = false;
+        };
+        i32 army = -1; ///< 0-based
+        std::map<std::string, Source> sources;
+    };
+    EntityIntel& entity_intel(u32 id) { return entity_intel_[id]; }
+    const EntityIntel* find_entity_intel(u32 id) const {
+        const auto it = entity_intel_.find(id);
+        return it != entity_intel_.end() ? &it->second : nullptr;
+    }
+
     void add_temp_vision(u32 army, f32 x, f32 z, f32 radius, f32 lifetime_sec) {
         temp_visions_.push_back({army, x, z, radius, static_cast<i32>(lifetime_sec * 10.0f)});
     }
@@ -607,6 +625,7 @@ private:
         i32 remaining_ticks;
     };
     std::vector<TempVision> temp_visions_;
+    std::map<u32, EntityIntel> entity_intel_; ///< by entity id: painted in id order
     u32 next_command_id_ = 0;
     bool game_ended_ = false;
     bool script_victory_ = false;
