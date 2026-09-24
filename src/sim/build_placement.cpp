@@ -30,7 +30,7 @@ bool StructureSite::overlaps(const StructureSite& o) const {
 StructurePlacement::StructurePlacement(const SimState& sim, i32 army,
                                        PlacementRulesLookup rules)
     : sim_(sim), lookup_(std::move(rules)) {
-    sim_.entity_registry().for_each([&](const Entity& e) {
+    sim_.entity_registry().for_each_unit([&](const Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != army) return;
         const auto& unit = static_cast<const Unit&>(e);
         for (const auto& cmd : unit.command_queue()) {

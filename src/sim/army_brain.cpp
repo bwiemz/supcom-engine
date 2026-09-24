@@ -104,7 +104,7 @@ f64 ArmyBrain::get_economy_trend(const std::string& resource_type) const {
 
 i32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
     i32 count = 0;
-    registry.for_each([&](const Entity& e) {
+    registry.for_each_unit([&](const Entity& e) {
         if (e.army() == index_ && !e.destroyed() && e.is_unit())
             count++;
     });
@@ -135,7 +135,7 @@ bool ArmyBrain::is_build_restricted(
 
 std::vector<Entity*> ArmyBrain::get_units(EntityRegistry& registry) const {
     std::vector<Entity*> result;
-    registry.for_each([&](Entity& e) {
+    registry.for_each_unit([&](Entity& e) {
         if (e.army() == index_ && !e.destroyed() && e.is_unit())
             result.push_back(&e);
     });
@@ -174,7 +174,7 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     f64 total_storage_energy = 200.0 + bonus_storage_energy_;
 
     u32 active_units = 0;
-    registry.for_each([&](const Entity& e) {
+    registry.for_each_unit([&](const Entity& e) {
         if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
         ++active_units;
         const auto& unit = static_cast<const Unit&>(e);
@@ -236,7 +236,7 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     }
 
     if (energy_efficiency_ < 1.0) {
-        registry.for_each([&](Entity& e) {
+        registry.for_each_unit([&](Entity& e) {
             if (e.army() != index_ || e.destroyed() || !e.is_unit()) return;
             auto& unit = static_cast<Unit&>(e);
             auto& econ = unit.economy();

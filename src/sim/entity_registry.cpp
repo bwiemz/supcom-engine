@@ -15,6 +15,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     entity->set_entity_id(id);
     entity->set_registry(this);
     order_.push_back({id, entity.get()});
+    if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
     entities_[id] = std::move(entity);
 
     if (grid_initialized_) {
@@ -35,12 +36,15 @@ void EntityRegistry::unregister_entity(u32 id) {
     // which may create or remove entities and so rehash the map.
     std::unique_ptr<Entity> entity = std::move(it->second);
     entities_.erase(it);
-    auto slot = std::lower_bound(order_.begin(), order_.end(), id,
-                                 [](const Slot& s, u32 v) { return s.id < v; });
-    if (slot != order_.end() && slot->id == id && slot->entity) {
+    const auto clear_slot = [id](std::vector<Slot>& order) {
+        auto slot = std::lower_bound(order.begin(), order.end(), id,
+                                     [](const Slot& s, u32 v) { return s.id < v; });
+        if (slot == order.end() || slot->id != id || !slot->entity) return false;
         slot->entity = nullptr;
-        ++removed_slots_;
-    }
+        return true;
+    };
+    if (clear_slot(order_)) ++removed_slots_;
+    if (entity->is_unit()) clear_slot(unit_order_);
     if (grid_initialized_) {
         i32 cx = entity->grid_cell_x();
         i32 cz = entity->grid_cell_z();
@@ -65,7 +69,9 @@ void EntityRegistry::collect_garbage() {
 void EntityRegistry::compact() {
     // Not under a walk: it holds its place by index.
     if (walking_ > 0 || removed_slots_ == 0) return;
-    std::erase_if(order_, [](const Slot& s) { return s.entity == nullptr; });
+    const auto empty = [](const Slot& s) { return s.entity == nullptr; };
+    std::erase_if(order_, empty);
+    std::erase_if(unit_order_, empty);
     removed_slots_ = 0;
 }
 

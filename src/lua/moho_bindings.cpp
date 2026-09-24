@@ -1246,7 +1246,7 @@ static int unit_GetGuards(lua_State* L) {
     u32 my_id = u->entity_id();
     int idx = 1;
 
-    sim->entity_registry().for_each([&](sim::Entity& e) {
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         auto* other = static_cast<sim::Unit*>(&e);
         if (other->command_queue().empty()) return;
@@ -5138,7 +5138,7 @@ static int brain_GetCurrentUnits(lua_State* L) {
     if (lua_istable(L, 2)) {
         int cat_idx = 2;
         i32 count = 0;
-        sim->entity_registry().for_each([&](const sim::Entity& e) {
+        sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
             if (e.army() == brain->index() && !e.destroyed() && e.is_unit()) {
                 auto* u = static_cast<const sim::Unit*>(&e);
                 if (osc::lua::unit_matches_category(L, cat_idx, u->categories()))
@@ -5786,7 +5786,7 @@ static int brain_GetHighestThreatPosition(lua_State* L) {
     f32 best_threat = 0;
     sim::Vector3 best_pos{0, 0, 0};
 
-    sim->entity_registry().for_each([&](const sim::Entity& e) {
+    sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (!e.is_unit() || e.destroyed()) return;
         auto* unit = static_cast<const sim::Unit*>(&e);
 
@@ -7276,7 +7276,7 @@ static int platoon_FindClosestUnit(lua_State* L) {
     f32 best_dist = 1e30f;
     sim::Entity* best = nullptr;
 
-    sim->entity_registry().for_each([&](const sim::Entity& e) {
+    sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (!e.is_unit() || e.destroyed()) return;
         auto* unit = static_cast<const sim::Unit*>(&e);
 
@@ -7808,7 +7808,7 @@ static int brain_IsAnyEngineerBuilding(lua_State* L) {
     i32 army = brain->index();
 
     bool found = false;
-    sim->entity_registry().for_each([&](sim::Entity& e) {
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         if (found) return;
         if (e.destroyed() || !e.is_unit()) return;
         auto& unit = static_cast<sim::Unit&>(e);
@@ -14008,7 +14008,7 @@ static std::vector<sim::Entity*> focus_army_units(lua_State* L, Pred pred) {
     if (lua_isnumber(L, -1)) focus = static_cast<int>(lua_tonumber(L, -1));
     lua_pop(L, 1);
     if (focus < 0) return out;
-    sim->entity_registry().for_each([&](sim::Entity& e) {
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         if (!e.is_unit() || e.destroyed() || e.army() != focus) return;
         if (pred(static_cast<sim::Unit&>(e))) out.push_back(&e);
     });
@@ -14047,7 +14047,7 @@ void notify_focus_army_damage(lua_State* uiL, sim::SimState& sim) {
 
     std::vector<sim::Entity*> damaged;
     std::unordered_map<u32, f32> health;
-    sim.entity_registry().for_each([&](const sim::Entity& e) {
+    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
         if (focus < 0 || !e.is_unit() || e.destroyed() || e.army() != focus) return;
         health.emplace(e.entity_id(), e.health());
         auto it = last_health.find(e.entity_id());

@@ -75,6 +75,16 @@ public:
             if (Entity* e = order_[i].entity) fn(*e);
     }
 
+    /// Iterate the units alone, in id order, with for_each's guarantees. Most
+    /// of a map's entities are props, which every per-tick unit walk (economy,
+    /// intel, the AI's queries) would otherwise step over.
+    template <typename F> void for_each_unit(F&& fn) const {
+        const Walking guard(walking_);
+        const size_t n = unit_order_.size();
+        for (size_t i = 0; i < n; ++i)
+            if (Entity* e = unit_order_[i].entity) fn(*e);
+    }
+
     u32 grid_width() const { return grid_width_; }
     u32 grid_height() const { return grid_height_; }
     bool grid_initialized() const { return grid_initialized_; }
@@ -95,7 +105,8 @@ private:
         Entity* entity;
     };
     std::vector<Slot> order_;
-    size_t removed_slots_ = 0;
+    std::vector<Slot> unit_order_; ///< the units of order_, for for_each_unit
+    size_t removed_slots_ = 0;     ///< null slots in order_ (and so in unit_order_)
     /// Walks in progress (a walk's callback may start another).
     mutable u32 walking_ = 0;
     struct Walking {

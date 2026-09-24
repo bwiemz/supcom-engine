@@ -6,6 +6,7 @@
 
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
+#include "sim/prop.hpp"
 #include "sim/unit.hpp"
 
 #include <memory>
@@ -13,6 +14,7 @@
 
 using osc::sim::Entity;
 using osc::sim::EntityRegistry;
+using osc::sim::Prop;
 using osc::sim::Unit;
 
 namespace {
@@ -64,6 +66,52 @@ TEST_CASE("for_each tolerates the walk creating and removing entities", "[determ
     });
     CHECK(seen == std::vector<osc::u32>{a, c});
     CHECK(walk(reg) == std::vector<osc::u32>{a, c, spawned});
+}
+
+TEST_CASE("for_each_unit visits the units alone, in id order", "[determinism]") {
+    EntityRegistry reg;
+    std::vector<osc::u32> units;
+    std::vector<osc::u32> props;
+    for (int i = 0; i < 60; ++i) {
+        if (i % 4 == 0) units.push_back(add(reg));
+        else props.push_back(reg.register_entity(std::make_unique<Prop>()));
+    }
+    const auto unit_walk = [&reg] {
+        std::vector<osc::u32> ids;
+        reg.for_each_unit([&](const Entity& e) {
+            CHECK(e.is_unit());
+            ids.push_back(e.entity_id());
+        });
+        return ids;
+    };
+    CHECK(unit_walk() == units);
+
+    // Removals leave both walks consistent, before and after compaction.
+    reg.unregister_entity(units[3]);
+    reg.unregister_entity(props[5]);
+    units.erase(units.begin() + 3);
+    CHECK(unit_walk() == units);
+    reg.collect_garbage();
+    CHECK(unit_walk() == units);
+    units.push_back(add(reg));
+    CHECK(unit_walk() == units);
+    CHECK(walk(reg).size() == units.size() + props.size() - 1);
+
+    // A unit born during a unit walk is visited by the next one; one that
+    // dies before its turn is skipped.
+    std::vector<osc::u32> seen;
+    osc::u32 spawned = 0;
+    reg.for_each_unit([&](const Entity& e) {
+        seen.push_back(e.entity_id());
+        if (e.entity_id() == units[0]) {
+            reg.unregister_entity(units[1]);
+            spawned = add(reg);
+        }
+    });
+    units.erase(units.begin() + 1);
+    CHECK(seen == units);
+    units.push_back(spawned);
+    CHECK(unit_walk() == units);
 }
 
 TEST_CASE("Spatial queries return ids in ascending order", "[determinism]") {
