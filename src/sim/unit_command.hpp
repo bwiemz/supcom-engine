@@ -13,22 +13,26 @@ enum class CommandType : u8 {
     Attack = 10,
     Guard = 15,
     Patrol = 16,
-    BuildMobile = 20,  // engineer builds structure/unit at position
-    BuildFactory = 21, // factory produces unit at own position
-    Reclaim = 25,      // engineer reclaims prop/wreckage/unit
-    Repair = 30,       // engineer repairs damaged unit
-    Upgrade = 35,      // structure upgrades to next tier
-    Capture = 40,      // engineer captures enemy unit
-    Dive = 45,         // submarine submerge/surface toggle
-    Enhance = 50,      // ACU/SACU self-enhancement (same unit)
-    TransportLoad = 60,    // ground unit → load into transport (target_id = transport)
-    TransportUnload = 61,  // transport → unload all cargo at position
-    Nuke = 70,             // fire nuke from silo at target position
-    Tactical = 71,         // fire tactical missile from silo at target/entity
-    Overcharge = 72,       // overcharge attack (ACU ability)
-    Sacrifice = 73,        // sacrifice unit to speed up construction
-    Teleport = 74,         // teleport to target position
-    Ferry = 75,            // ferry route waypoint (transport loop)
+    BuildMobile = 20,     // engineer builds structure/unit at position
+    BuildFactory = 21,    // factory produces unit at own position
+    Reclaim = 25,         // engineer reclaims prop/wreckage/unit
+    Repair = 30,          // engineer repairs damaged unit
+    Upgrade = 35,         // structure upgrades to next tier
+    Capture = 40,         // engineer captures enemy unit
+    Dive = 45,            // submarine submerge/surface toggle
+    Enhance = 50,         // ACU/SACU self-enhancement (same unit)
+    TransportLoad = 60,   // ground unit → load into transport (target_id = transport)
+    TransportUnload = 61, // transport → unload all cargo at position
+    Nuke = 70,            // launch a nuke at a position (M206)
+    Tactical = 71,        // launch a tactical missile at a unit or position
+    Overcharge = 72,      // overcharge attack (ACU ability)
+    Sacrifice = 73,       // sacrifice unit to speed up construction
+    Teleport = 74,        // teleport to target position
+    Ferry = 75,           // ferry route waypoint (transport loop)
+    // Silo builds (IssueSiloBuildNuke/Tactical): applied to the unit's silo,
+    // not queued, so ordering a missile does not cancel what it is doing.
+    SiloBuildNuke = 76,
+    SiloBuildTactical = 77,
 };
 
 struct UnitCommand {
@@ -48,6 +52,9 @@ struct UnitCommand {
     /// Held to this speed (a formation keeps its slowest unit's pace); 0:
     /// the unit's own. Set when a formation order is laid out.
     f32 speed_cap = 0;
+    /// A launch order's weapon has fired for it (runtime state: not sent
+    /// with the order). The order then ends.
+    bool launched = false;
 };
 
 } // namespace osc::sim

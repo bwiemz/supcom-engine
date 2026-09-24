@@ -39,7 +39,7 @@ set(OSC_DATA_TESTS_GATE
     enhance-wreck-test fire-test flags-test formation-test font-test fow-test full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test
-    layercap-test los-test lowstub-test manip-test massstub-test massstub2-test
+    layercap-test los-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test move-test normal-test
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test profile-test projectile-test prop-test reclaim-test

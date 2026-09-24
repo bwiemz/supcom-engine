@@ -3124,36 +3124,32 @@ static int unit_RemoveTacticalSiloAmmo(lua_State* L) {
     return 0;
 }
 
+/// StopSiloBuild(): the missile under way is abandoned, and the builds
+/// ordered with it.
+static int unit_StopSiloBuild(lua_State* L) {
+    auto* unit = check_unit(L);
+    if (unit) unit->stop_silo_build();
+    return 0;
+}
+
 static int unit_GetMissileInfo(lua_State* L) {
     auto* unit = check_unit(L);
     if (!unit) { lua_newtable(L); return 1; }
 
     lua_newtable(L);
 
-    lua_pushstring(L, "nukeSiloStorageCount");
-    lua_pushnumber(L, unit->nuke_silo_ammo());
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "nukeSiloMaxStorageCount");
-    lua_pushnumber(L, 0);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "tacticalSiloStorageCount");
-    lua_pushnumber(L, unit->tactical_silo_ammo());
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "tacticalSiloMaxStorageCount");
-    lua_pushnumber(L, 0);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "nukeSiloBuildCount");
-    lua_pushnumber(L, 0);
-    lua_rawset(L, -3);
-
-    lua_pushstring(L, "tacticalSiloBuildCount");
-    lua_pushnumber(L, 0);
-    lua_rawset(L, -3);
-
+    // Each kind's missiles stored, its storage, and the builds ordered.
+    for (const bool nuke : {true, false}) {
+        const std::string kind = nuke ? "nukeSilo" : "tacticalSilo";
+        for (const auto& [field, value] :
+             {std::pair{"StorageCount", unit->silo_ammo(nuke)},
+              std::pair{"MaxStorageCount", unit->silo_max_storage(nuke)},
+              std::pair{"BuildCount", unit->silo_build_count(nuke)}}) {
+            lua_pushstring(L, (kind + field).c_str());
+            lua_pushnumber(L, value);
+            lua_rawset(L, -3);
+        }
+    }
     return 1;
 }
 
@@ -3914,6 +3910,7 @@ static const MethodEntry unit_methods[] = {
     {"RemoveNukeSiloAmmo",          unit_RemoveNukeSiloAmmo},
     {"RemoveTacticalSiloAmmo",      unit_RemoveTacticalSiloAmmo},
     {"GetMissileInfo",              unit_GetMissileInfo},
+    {"StopSiloBuild",               unit_StopSiloBuild},
     // Armor
     {"GetArmorMult",                unit_GetArmorMult},
     {"AlterArmor",                  unit_AlterArmor},
@@ -4406,12 +4403,10 @@ static int weapon_GetCurrentTarget(lua_State* L) {
 
 static int weapon_GetCurrentTargetPos(lua_State* L) {
     auto* w = check_weapon(L);
-    if (!w || w->target_entity_id == 0) { lua_pushnil(L); return 1; }
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
-    auto* target = sim->entity_registry().find(w->target_entity_id);
-    if (!target || target->destroyed()) { lua_pushnil(L); return 1; }
-    push_vector3(L, target->position());
+    const auto at = w && sim ? w->target_point(sim->entity_registry()) : std::nullopt;
+    if (!at) { lua_pushnil(L); return 1; }
+    push_vector3(L, *at);
     return 1;
 }
 
@@ -4458,9 +4453,7 @@ static int weapon_SetTargetEntity(lua_State* L) {
     auto* w = check_weapon(L);
     if (!w) return 0;
     auto* target = check_entity(L, 2);
-    w->target_entity_id = (target && !target->destroyed())
-                              ? target->entity_id()
-                              : 0;
+    w->set_target_entity((target && !target->destroyed()) ? target->entity_id() : 0);
     return 0;
 }
 
@@ -4469,7 +4462,7 @@ static int weapon_SetTargetEntity(lua_State* L) {
 static int weapon_ResetTarget(lua_State* L) {
     auto* w = check_weapon(L);
     if (w) {
-        w->target_entity_id = 0;
+        w->set_target_entity(0);
         w->target_check_clock = 0;
     }
     return 0;
@@ -4525,6 +4518,9 @@ static int weapon_CreateProjectile(lua_State* L) {
     else if (!w->muzzle_bone_name.empty() && unit->bone_data())
         bone = unit->bone_data()->find_bone(w->muzzle_bone_name);
     const sim::Vector3 spawn = bone >= 0 ? bone_world_position(unit, bone) : unit->position();
+    // A silo missile leaves the way its muzzle faces.
+    std::optional<sim::Vector3> muzzle_dir;
+    if (bone >= 0 && unit->bone_data()) muzzle_dir = unit->bone_world_forward(bone);
 
     const sim::Entity* target = nullptr;
     if (w->target_entity_id > 0) {
@@ -4532,7 +4528,7 @@ static int weapon_CreateProjectile(lua_State* L) {
         if (target && target->destroyed()) target = nullptr;
     }
     auto* proj = w->launch(*unit, spawn, target, sim->entity_registry(), L,
-                           under_water(sim, spawn));
+                           under_water(sim, spawn), muzzle_dir);
     if (!proj || proj->lua_table_ref() < 0) {
         lua_pushnil(L);
         return 1;
@@ -4616,9 +4612,17 @@ static int weapon_GetProjectileBlueprint(lua_State* L) {
     return 1;
 }
 
+/// SetTargetGround(position): aim at a point on the ground.
 static int weapon_SetTargetGround(lua_State* L) {
     auto* w = check_weapon(L);
-    if (w) w->target_ground = (lua_toboolean(L, 2) != 0);
+    if (!w || !lua_istable(L, 2)) return 0;
+    lua_rawgeti(L, 2, 1);
+    lua_rawgeti(L, 2, 2);
+    lua_rawgeti(L, 2, 3);
+    w->set_target_ground({static_cast<f32>(lua_tonumber(L, -3)),
+                          static_cast<f32>(lua_tonumber(L, -2)),
+                          static_cast<f32>(lua_tonumber(L, -1))});
+    lua_pop(L, 3);
     return 0;
 }
 
@@ -14784,17 +14788,36 @@ static int l_GetUnitCommandDataOfUnit(lua_State* L) {
     return l_GetUnitCommandData(L);
 }
 
-/// GetUnitCommandFromCommandCap("RULEUCC_Move") → "Move"
-/// Strips the "RULEUCC_" prefix to produce a command type string.
+/// GetUnitCommandFromCommandCap("RULEUCC_Move") → "Move": the order a
+/// command cap issues, by Moho's table (FAF's engine notes), "None" for a
+/// cap with none. Not every name is the cap's: RULEUCC_SiloBuildNuke issues
+/// BuildSiloNuke, RULEUCC_Transport TransportUnloadUnits.
 static int l_GetUnitCommandFromCommandCap(lua_State* L) {
-    const char* cap = luaL_checkstring(L, 1);
-    static const char prefix[] = "RULEUCC_";
-    static const size_t plen = sizeof(prefix) - 1; // exclude NUL
-    if (strncmp(cap, prefix, plen) == 0) {
-        lua_pushstring(L, cap + plen);
-    } else {
-        lua_pushvalue(L, 1); // return as-is
-    }
+    static const std::map<std::string_view, const char*> kOrders = {
+        {"RULEUCC_Move", "Move"},
+        {"RULEUCC_Stop", "Stop"},
+        {"RULEUCC_Attack", "Attack"},
+        {"RULEUCC_Guard", "Guard"},
+        {"RULEUCC_Patrol", "Patrol"},
+        {"RULEUCC_Repair", "Repair"},
+        {"RULEUCC_Capture", "Capture"},
+        {"RULEUCC_Transport", "TransportUnloadUnits"},
+        {"RULEUCC_CallTransport", "TransportLoadUnits"},
+        {"RULEUCC_Nuke", "Nuke"},
+        {"RULEUCC_Tactical", "Tactical"},
+        {"RULEUCC_Teleport", "Teleport"},
+        {"RULEUCC_Ferry", "Ferry"},
+        {"RULEUCC_SiloBuildTactical", "BuildSiloTactical"},
+        {"RULEUCC_SiloBuildNuke", "BuildSiloNuke"},
+        {"RULEUCC_Sacrifice", "Sacrifice"},
+        {"RULEUCC_Pause", "Pause"},
+        {"RULEUCC_Overcharge", "OverCharge"},
+        {"RULEUCC_Dive", "Dive"},
+        {"RULEUCC_Reclaim", "Reclaim"},
+        {"RULEUCC_SpecialAction", "SpecialAction"},
+    };
+    const auto it = kOrders.find(luaL_checkstring(L, 1));
+    lua_pushstring(L, it != kOrders.end() ? it->second : "None");
     return 1;
 }
 
@@ -14835,8 +14858,9 @@ static std::string ui_command_name(const char* name) {
     return std::string(n);
 }
 
-/// An order with no target: Stop, Dive, or a Script order whose task is an
-/// enhancement (the construction panel's). `data` is the order's table.
+/// An order with no target: Stop, Dive, a silo build, or a Script order
+/// whose task is an enhancement (the construction panel's). `data` is the
+/// order's table.
 static void issue_targetless_order(lua_State* L, const std::vector<u32>& ids,
                                    const std::string& name, int data, bool clear) {
     sim::UnitCommand cmd;
@@ -14844,6 +14868,11 @@ static void issue_targetless_order(lua_State* L, const std::vector<u32>& ids,
         cmd.type = sim::CommandType::Stop;
     } else if (name == "Dive") {
         cmd.type = sim::CommandType::Dive;
+    } else if (name == "BuildSiloNuke" || name == "BuildSiloTactical") {
+        // The orders panel's silo build: one missile more (its silo takes
+        // it, not its queue, so `clear` does nothing).
+        cmd.type = name == "BuildSiloNuke" ? sim::CommandType::SiloBuildNuke
+                                           : sim::CommandType::SiloBuildTactical;
     } else if (name == "Script" && lua_istable(L, data)) {
         lua_pushstring(L, "TaskName");
         lua_gettable(L, data);
@@ -14885,7 +14914,7 @@ static int l_IssueUnitCommandToUnit(lua_State* L) {
 }
 
 /// IssueCommand(command [, data [, clear]]) -- for the selection: the orders
-/// panel's Stop and Dive, the construction panel's enhancements.
+/// panel's Stop, Dive and silo builds, the construction panel's enhancements.
 static int l_IssueCommand(lua_State* L) {
     const std::string name = ui_command_name(luaL_checkstring(L, 1));
     const bool clear = lua_isboolean(L, 3) ? lua_toboolean(L, 3) != 0 : true;
@@ -15339,12 +15368,12 @@ static int l_GetRolloverInfo(lua_State* L) {
     set_num("massRequested",    static_cast<lua_Number>(econ.consumption_mass));
     set_num("energyRequested",  static_cast<lua_Number>(econ.consumption_energy));
 
-    set_num("tacticalSiloStorageCount",    static_cast<lua_Number>(unit->tactical_silo_ammo()));
-    set_num("tacticalSiloMaxStorageCount", 0);
-    set_num("nukeSiloStorageCount",        static_cast<lua_Number>(unit->nuke_silo_ammo()));
-    set_num("nukeSiloMaxStorageCount",     0);
-    set_num("tacticalSiloBuildCount",      0);
-    set_num("nukeSiloBuildCount",          0);
+    set_num("tacticalSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(false)));
+    set_num("tacticalSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(false)));
+    set_num("nukeSiloStorageCount", static_cast<lua_Number>(unit->silo_ammo(true)));
+    set_num("nukeSiloMaxStorageCount", static_cast<lua_Number>(unit->silo_max_storage(true)));
+    set_num("tacticalSiloBuildCount", static_cast<lua_Number>(unit->silo_build_count(false)));
+    set_num("nukeSiloBuildCount", static_cast<lua_Number>(unit->silo_build_count(true)));
 
     // userUnit: full UI unit table with _c_object + metatable
     lua_pushstring(L, "userUnit");

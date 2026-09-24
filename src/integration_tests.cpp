@@ -8396,6 +8396,335 @@ void test_formation(TestContext& ctx) {
     spdlog::info("Formation test: {}/{} passed", pass, pass + fail);
 }
 
+// ── Missile test (M206a) ──
+void test_missile(TestContext& ctx) {
+    spdlog::info("=== MISSILE TEST: silos build missiles, launchers fire them ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+    // Each tick the watched launchers' missiles are followed: where each
+    // went, and where it was last seen.
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            (void)ctx.lua_state.do_string(R"(
+                for _, m in __osc_missiles do
+                    if not m.gone then
+                        if m.proj:BeenDestroyed() then
+                            m.gone = GetGameTick()
+                        else
+                            table.insert(m.path, m.proj:GetPosition())
+                        end
+                    end
+                end
+            )");
+        }
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_at(x, z) return {x, GetTerrainHeight(x, z), z} end
+        for _, army in {'ARMY_1', 'ARMY_3'} do
+            local brain = GetArmyBrain(army)
+            brain:GiveStorage('MASS', 100000)
+            brain:GiveStorage('ENERGY', 5000000)
+            brain:GiveResource('MASS', 100000)
+            brain:GiveResource('ENERGY', 5000000)
+        end
+        -- What a unit's army has spent.
+        function __osc_consumed(u, kind)
+            return u:GetAIBrain():GetArmyStat('Economy_TotalConsumed_' .. kind, 0).Value
+        end
+        -- Every missile a unit's weapon launches, and its silo's builds:
+        -- when each started and ended, and what the army had spent by then.
+        __osc_missiles = {}
+        function __osc_watch(u)
+            local rec = {launched = 0, builds = {}}
+            for i = 1, u:GetWeaponCount() do
+                local w = u:GetWeapon(i)
+                local create = w.CreateProjectileAtMuzzle
+                w.CreateProjectileAtMuzzle = function(self, muzzle)
+                    local proj = create(self, muzzle)
+                    if proj then
+                        rec.launched = rec.launched + 1
+                        table.insert(__osc_missiles, {owner = u, proj = proj, path = {proj:GetPosition()},
+                                                      tick = GetGameTick()})
+                    end
+                    return proj
+                end
+            end
+            local on_start, on_end = u.OnSiloBuildStart, u.OnSiloBuildEnd
+            u.OnSiloBuildStart = function(self, weapon)
+                table.insert(rec.builds, {start = GetGameTick(), weapon = weapon,
+                                          energy = __osc_consumed(self, 'Energy'),
+                                          mass = __osc_consumed(self, 'Mass')})
+                on_start(self, weapon)
+            end
+            u.OnSiloBuildEnd = function(self, weapon)
+                local b = rec.builds[table.getn(rec.builds)]
+                b.done = GetGameTick()
+                b.energy = __osc_consumed(self, 'Energy') - b.energy
+                b.mass = __osc_consumed(self, 'Mass') - b.mass
+                on_end(self, weapon)
+            end
+            u.__osc = rec
+            return u
+        end
+        function __osc_missile_of(u, n)
+            local seen = 0
+            for _, m in __osc_missiles do
+                if m.owner == u then
+                    seen = seen + 1
+                    if seen == n then return m end
+                end
+            end
+        end
+    )");
+
+    // Phase 1, on the flat plain east of the map's centre:
+    // - A, a tactical launcher, is ordered a missile, and a launch at a
+    //   power generator before the missile exists;
+    // - B, another (in an army of its own, so each army pays for one
+    //   missile), builds one with four engineers assisting;
+    // - S, a nuke launcher with a missile, is fired at a group of tanks;
+    // - D, an anti-nuke holding a missile, has an enemy aircraft overhead
+    //   (its layer caps take air; its restriction, strategic missiles only).
+    lua_check("setup: launchers and targets", R"(
+        __osc_a = __osc_watch(__osc_spawn('ueb2108', 'ARMY_1', 620, 130))
+        __osc_e1 = __osc_spawn('ueb1101', 'ARMY_2', 740, 130)
+        IssueSiloBuildTactical({__osc_a})
+        IssueTactical({__osc_a}, __osc_e1)
+        __osc_b = __osc_watch(__osc_spawn('ueb2108', 'ARMY_3', 620, 170))
+        __osc_engineers = {}
+        for i = 1, 4 do
+            table.insert(__osc_engineers, __osc_spawn('uel0105', 'ARMY_3', 612 + 4 * i, 163))
+        end
+        IssueGuard(__osc_engineers, __osc_b)
+        IssueSiloBuildTactical({__osc_b})
+        __osc_s = __osc_watch(__osc_spawn('ueb2305', 'ARMY_1', 560, 300))
+        __osc_s:GiveNukeSiloAmmo(1)
+        __osc_zero = __osc_at(560, 600)
+        __osc_victims = {}
+        for i = -1, 1 do
+            for j = -1, 1 do
+                table.insert(__osc_victims, __osc_spawn('ueb1101', 'ARMY_2', 560 + 8 * i, 600 + 8 * j))
+            end
+        end
+        IssueNuke({__osc_s}, __osc_zero)
+        __osc_d = __osc_watch(__osc_spawn('ueb4302', 'ARMY_1', 680, 250))
+        __osc_d:GiveTacticalSiloAmmo(1)
+        __osc_bait = __osc_spawn('uea0101', 'ARMY_2', 690, 250)
+    )");
+    run(1);
+    lua_check("Test 1: a silo build starts at once, beside the launch order waiting for it", R"(
+        local info = __osc_a:GetMissileInfo()
+        if not __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is not building') end
+        if info.tacticalSiloBuildCount ~= 1 or info.tacticalSiloStorageCount ~= 0 or
+           info.tacticalSiloMaxStorageCount ~= 12 then
+            error(string.format('A reports %d ordered, %d stored of %d', info.tacticalSiloBuildCount,
+                                info.tacticalSiloStorageCount, info.tacticalSiloMaxStorageCount))
+        end
+        if table.getn(__osc_a.__osc.builds) ~= 1 then error('OnSiloBuildStart was not called') end
+        if table.getn(__osc_a:GetCommandQueue()) ~= 1 then error('the launch order is gone') end
+    )");
+    run(150);
+    lua_check("Test 2: halfway, the order still waits and nothing has flown", R"(
+        if __osc_a.__osc.launched ~= 0 then error('A launched without a missile') end
+        if __osc_e1:IsDead() then error('the target is dead') end
+        local progress = __osc_a:GetWorkProgress()
+        if math.abs(progress - 0.5) > 0.01 then error('A is ' .. progress .. ' done') end
+    )");
+    run(450);
+    lua_check("Test 3: the missile took its build time and cost", R"(
+        local b = __osc_a.__osc.builds[1]
+        if not b.done then error('A never finished') end
+        -- 2400 build time at build rate 80: 30 s. It is laid a tick after the
+        -- build starts.
+        if b.done - b.start ~= 300 then error('A took ' .. (b.done - b.start) .. ' ticks') end
+        if math.abs(b.energy - 3600) > 1 or math.abs(b.mass - 180) > 0.1 then
+            error(string.format('A spent %g E and %g M', b.energy, b.mass))
+        end
+        if __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is still building') end
+    )");
+    lua_check("Test 4: assisted by four engineers, B built its missile faster, for the same cost",
+              R"(
+        local b = __osc_b.__osc.builds[1]
+        if not b or not b.done then error('B never finished') end
+        -- 80 + 4 x 5 build rate: 24 s.
+        if math.abs((b.done - b.start) - 240) > 1 then error('B took ' .. (b.done - b.start) .. ' ticks') end
+        if math.abs(b.energy - 3600) > 1 or math.abs(b.mass - 180) > 0.1 then
+            error(string.format('B and its engineers spent %g E and %g M', b.energy, b.mass))
+        end
+        for _, e in __osc_engineers do
+            if e:GetConsumptionPerSecondEnergy() > 0 then error('an engineer still pays') end
+        end
+    )");
+    lua_check("Test 5: the order fired as the missile was done, and it killed its target", R"(
+        if __osc_a.__osc.launched ~= 1 then error('A launched ' .. __osc_a.__osc.launched) end
+        if not __osc_e1:IsDead() then error('the power generator lives') end
+        if __osc_a:GetTacticalSiloAmmoCount() ~= 0 then error('A still has a missile') end
+        if table.getn(__osc_a:GetCommandQueue()) ~= 0 then error('the order is still queued') end
+        local m = __osc_missile_of(__osc_a, 1)
+        if m.tick - __osc_a.__osc.builds[1].done > 60 then error('it waited to fire') end
+    )");
+    lua_check("Test 6: the nuke rose from its silo before turning", R"(
+        local m = __osc_missile_of(__osc_s, 1)
+        if not m then error('S launched nothing') end
+        local p0, p5 = m.path[1], m.path[50]
+        local drift = math.sqrt((p5[1] - p0[1]) ^ 2 + (p5[3] - p0[3]) ^ 2)
+        if drift > 2 or p5[2] - p0[2] < 20 then
+            error(string.format('in 5 s it drifted %g and rose %g', drift, p5[2] - p0[2]))
+        end
+        if __osc_s:GetNukeSiloAmmoCount() ~= 0 then error('S still has its nuke') end
+    )");
+    lua_check("Test 7: an anti-nuke with a missile fires nothing at an aircraft", R"(
+        if __osc_bait:GetCurrentLayer() ~= 'Air' then error('the bait is on ' .. __osc_bait:GetCurrentLayer()) end
+        if __osc_d.__osc.launched ~= 0 then error('the anti-nuke fired ' .. __osc_d.__osc.launched) end
+        if __osc_d:GetTacticalSiloAmmoCount() ~= 1 then error('the anti-nuke spent its missile') end
+    )");
+    run(300);
+    lua_check("Test 8: the nuke destroyed what stood about its target", R"(
+        local m = __osc_missile_of(__osc_s, 1)
+        if not m.gone then error('it is still flying') end
+        local last = m.path[table.getn(m.path)]
+        local miss = math.sqrt((last[1] - __osc_zero[1]) ^ 2 + (last[3] - __osc_zero[3]) ^ 2)
+        if miss > 10 then error('it came down ' .. miss .. ' from its target') end
+        for i, v in __osc_victims do
+            if not v:IsDead() then error('victim ' .. i .. ' lives') end
+        end
+    )");
+
+    // Phase 2:
+    // - A, stocked to one below its storage, fills it in auto mode, then stops;
+    // - B fires its missile at a point on the ground, and starts another,
+    //   which is paused with its engineers helping;
+    // - C's launch order, waiting for a missile, is cancelled; then it gets one.
+    lua_check("setup: auto mode, a ground target, a waiting launch", R"(
+        __osc_a:GiveTacticalSiloAmmo(11)
+        __osc_a:SetAutoMode(true)
+        __osc_spot = __osc_at(700, 330)
+        IssueTactical({__osc_b}, __osc_spot)
+        IssueSiloBuildTactical({__osc_b})
+        __osc_c = __osc_watch(__osc_spawn('ueb2108', 'ARMY_1', 640, 90))
+        __osc_e2 = __osc_spawn('ueb1101', 'ARMY_2', 760, 90)
+        IssueTactical({__osc_c}, __osc_e2)
+    )");
+    run(20);
+    lua_check("setup: the waiting launch is cancelled, then a missile arrives; B is paused", R"(
+        IssueClearCommands({__osc_c})
+        if not __osc_b:IsUnitState('SiloBuildingAmmo') then error('B is not building') end
+        __osc_b:SetPaused(true)
+    )");
+    // What was asked before the pause is paid on the tick after it.
+    run(1);
+    lua_check("setup: B's progress and its army's spending, paused", R"(
+        __osc_paused = {progress = __osc_b:GetWorkProgress(), spent = __osc_consumed(__osc_b, 'Energy')}
+    )");
+    run(5);
+    lua_check("Test 9: a paused silo's missile waits, and its engineers pay nothing", R"(
+        if __osc_b:GetWorkProgress() ~= __osc_paused.progress then error('B went on building') end
+        local spent = __osc_consumed(__osc_b, 'Energy') - __osc_paused.spent
+        if spent > 1e-6 then error('B and its engineers spent ' .. spent) end
+    )");
+    lua_check("setup: B resumes; C gets its missile", R"(
+        __osc_b:SetPaused(false)
+        __osc_c:GiveTacticalSiloAmmo(1)
+    )");
+    run(289);
+    lua_check("Test 10: auto mode filled A's storage and stopped", R"(
+        if __osc_a:GetTacticalSiloAmmoCount() ~= 12 then
+            error('A has ' .. __osc_a:GetTacticalSiloAmmoCount())
+        end
+        if table.getn(__osc_a.__osc.builds) ~= 2 then error('A built ' .. table.getn(__osc_a.__osc.builds)) end
+        if __osc_a:IsUnitState('SiloBuildingAmmo') then error('A is still building') end
+        rawset(_G, '__osc_spent', __osc_consumed(__osc_a, 'Energy'))
+    )");
+    run(20);
+    lua_check("Test 11: with its storage full A asks nothing of the economy", R"(
+        local spent = __osc_consumed(__osc_a, 'Energy') - __osc_spent
+        if spent > 1e-6 then error('A spent ' .. spent) end
+    )");
+    lua_check("Test 12: a missile fired at the ground lands there", R"(
+        local m = __osc_missile_of(__osc_b, 1)
+        if not m then error('B launched nothing') end
+        if not m.gone then error('it is still flying') end
+        local last = m.path[table.getn(m.path)]
+        local miss = math.sqrt((last[1] - __osc_spot[1]) ^ 2 + (last[3] - __osc_spot[3]) ^ 2)
+        if miss > 4 then error('it came down ' .. miss .. ' from the spot') end
+    )");
+    lua_check("Test 13: a launch cancelled while it waited fires nothing when the missile comes",
+              R"(
+        if __osc_c.__osc.launched ~= 0 then error('C launched') end
+        if __osc_c:GetTacticalSiloAmmoCount() ~= 1 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
+        if __osc_e2:IsDead() then error('its old target died') end
+    )");
+
+    // Phase 3: C's next launch is cancelled once its launcher is opening;
+    // then it is sent again. G, a Seraphim launcher (it has a death
+    // animation, so it lingers dying), is killed with a missile under way.
+    lua_check("setup: a launch under way, a missile under way", R"(
+        __osc_spot2 = __osc_at(760, 60)
+        IssueTactical({__osc_c}, __osc_spot2)
+        __osc_g = __osc_spawn('xsb2108', 'ARMY_1', 660, 200)
+        IssueSiloBuildTactical({__osc_g})
+    )");
+    run(5);
+    lua_check("setup: cancelled as the launcher opens; G killed", R"(
+        if not __osc_c:IsUnitState('Busy') then error('C is not opening') end
+        IssueClearCommands({__osc_c})
+        if not __osc_g:IsUnitState('SiloBuildingAmmo') then error('G is not building') end
+        __osc_g:Kill()
+    )");
+    run(1);
+    lua_check("setup: what G's army has spent", R"(
+        __osc_dead_spent = __osc_consumed(__osc_a, 'Energy')
+    )");
+    run(10);
+    lua_check("Test 14: a launcher killed with a missile under way stops paying for it", R"(
+        if __osc_g:BeenDestroyed() then error('G is already gone: nothing was tested') end
+        local spent = __osc_consumed(__osc_a, 'Energy') - __osc_dead_spent
+        if spent > 1e-6 then error('its army spent ' .. spent) end
+    )");
+    run(89);
+    lua_check("Test 15: a launch cancelled as the launcher opens packs it up, missile kept", R"(
+        if __osc_c.__osc.launched ~= 0 then error('C launched') end
+        if __osc_c:GetTacticalSiloAmmoCount() ~= 1 then error('C has ' .. __osc_c:GetTacticalSiloAmmoCount()) end
+        IssueTactical({__osc_c}, __osc_spot2)
+    )");
+    run(300);
+    lua_check("Test 16: sent again, the missile lands there", R"(
+        local m = __osc_missile_of(__osc_c, 1)
+        if not m then error('C launched nothing') end
+        if not m.gone then error('it is still flying') end
+        local last = m.path[table.getn(m.path)]
+        local miss = math.sqrt((last[1] - __osc_spot2[1]) ^ 2 + (last[3] - __osc_spot2[3]) ^ 2)
+        if miss > 4 then error('it came down ' .. miss .. ' from where it was sent') end
+    )");
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 17: no script errors");
+    spdlog::info("Missile test: {}/{} passed", pass, pass + fail);
+}
+
 void test_terrain_tex(TestContext& ctx) {
     spdlog::info("=== TERRAIN-TEX TEST: Terrain stratum textures ===");
 
@@ -15247,48 +15576,61 @@ void test_commands(TestContext& ctx) {
     auto u1 = std::to_string(unit1_id);
     auto u2 = std::to_string(unit2_id);
 
-    // Test 1: IssueNuke decrements silo ammo
+    // Test 1: a launch order needs a launch weapon. The ACU's missile weapons
+    // stay off until an enhancement enables them, so its orders are dropped
+    // and its stored missiles untouched (the weapon's script, not the
+    // engine, spends a missile it fires: see --missile-test).
     {
         auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "if not u then error('no entity') end\n"
-            "u:GiveNukeSiloAmmo(3)\n"
-            "local before = u:GetNukeSiloAmmoCount()\n"
-            "IssueNuke({u}, {u:GetPosition()[1], u:GetPosition()[2], u:GetPosition()[3]})\n"
-            "rawset(_G, '_cmd1_before', before)\n").c_str());
+            ("local u = GetEntityById(" + u1 +
+             ")\n"
+             "if not u then error('no entity') end\n"
+             "IssueClearCommands({u})\n"
+             "u:GiveNukeSiloAmmo(3)\n"
+             "u:GiveTacticalSiloAmmo(5)\n"
+             "IssueNuke({u}, {u:GetPosition()[1] + 50, u:GetPosition()[2], u:GetPosition()[3]})\n"
+             "IssueTactical({u}, {100, 25, 100})\n")
+                .c_str());
         if (r) {
             ctx.sim.tick();
             auto r2 = ctx.lua_state.do_string(
-                ("local u = GetEntityById(" + u1 + ")\n"
-                "local after = u:GetNukeSiloAmmoCount()\n"
-                "if rawget(_G, '_cmd1_before') == 3 and after == 2 then\n"
-                "    LOG('cmd test 1: PASS')\n"
-                "else error('FAIL before=' .. tostring(rawget(_G, '_cmd1_before')) .. ' after=' .. tostring(after)) end\n").c_str());
-            if (r2) { pass++; spdlog::info("[PASS] Test 1: IssueNuke decrements silo ammo"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 1: {}", r2.error().message); }
+                ("local u = GetEntityById(" + u1 +
+                 ")\n"
+                 "local nukes, tacs = u:GetNukeSiloAmmoCount(), u:GetTacticalSiloAmmoCount()\n"
+                 "if nukes ~= 3 or tacs ~= 5 then error('ammo ' .. nukes .. '/' .. tacs) end\n"
+                 "if table.getn(u:GetCommandQueue()) ~= 0 then error('the orders stayed') end\n")
+                    .c_str());
+            if (r2) {
+                pass++;
+                spdlog::info("[PASS] Test 1: launch orders without a launch weapon are dropped");
+            } else {
+                fail++;
+                osc::test_status::fail("[FAIL] Test 1: {}", r2.error().message);
+            }
         } else { fail++; osc::test_status::fail("[FAIL] Test 1: setup {}", r.error().message); }
     }
 
-    // Test 2: IssueTactical decrements tactical silo ammo
+    // Test 2: the orders queue, as Moho's Issue* do: a launch order after a
+    // move leaves the move in place.
     {
-        auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "if not u then error('no entity') end\n"
-            "u:GiveTacticalSiloAmmo(5)\n"
-            "local before = u:GetTacticalSiloAmmoCount()\n"
-            "IssueTactical({u}, {100, 25, 100})\n"
-            "rawset(_G, '_cmd2_before', before)\n").c_str());
+        auto r = ctx.lua_state.do_string(("local u = GetEntityById(" + u1 +
+                                          ")\n"
+                                          "IssueClearCommands({u})\n"
+                                          "local p = u:GetPosition()\n"
+                                          "IssueMove({u}, {p[1] + 5, p[2], p[3]})\n"
+                                          "IssueTactical({u}, {100, 25, 100})\n"
+                                          "if table.getn(u:GetCommandQueue()) ~= 2 then\n"
+                                          "    error('queue ' .. table.getn(u:GetCommandQueue()))\n"
+                                          "end\n"
+                                          "IssueClearCommands({u})\n")
+                                             .c_str());
         if (r) {
-            ctx.sim.tick();
-            auto r2 = ctx.lua_state.do_string(
-                ("local u = GetEntityById(" + u1 + ")\n"
-                "local after = u:GetTacticalSiloAmmoCount()\n"
-                "if rawget(_G, '_cmd2_before') == 5 and after == 4 then\n"
-                "    LOG('cmd test 2: PASS')\n"
-                "else error('FAIL before=' .. tostring(rawget(_G, '_cmd2_before')) .. ' after=' .. tostring(after)) end\n").c_str());
-            if (r2) { pass++; spdlog::info("[PASS] Test 2: IssueTactical decrements tactical silo ammo"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 2: {}", r2.error().message); }
-        } else { fail++; osc::test_status::fail("[FAIL] Test 2: setup {}", r.error().message); }
+            pass++;
+            spdlog::info("[PASS] Test 2: IssueTactical queues behind a move");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 2: {}", r.error().message);
+        }
     }
 
     // Test 3: IssueNuke with zero ammo does nothing

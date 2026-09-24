@@ -4,6 +4,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/entity.hpp" // Vector3
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,8 +47,12 @@ public:
     /// shape, where it will be when the shot arrives for a weapon that leads.
     Vector3 aim_point(const Entity& target, const Vector3& from) const;
     bool fire_on_death = false;
+    /// ManualFire: fires only at what its unit's launch order names.
     bool manual_fire = false;
-    bool counted_projectile = false; // CountedProjectile: fires silo ammo
+    /// CountedProjectile: fires missiles its unit stores and builds (M206).
+    bool counted_projectile = false;
+    bool nuke_weapon = false;        ///< NukeWeapon: its missiles are nukes, else tactical
+    i32 max_projectile_storage = 0;  ///< MaxProjectileStorage: the silo builds up to this
     bool overcharge = false;         // OverChargeWeapon
     bool beam = false;               // BeamLifetime: a DefaultBeamWeapon
     std::string muzzle_bone_name; // from RackBones[1].MuzzleBones[1]
@@ -58,8 +63,7 @@ public:
     f32 tracking_radius = 1;               // TrackingRadius: acquire out to MaxRadius * this
     f32 heading_arc_center = 0;            // HeadingArcCenter (degrees from the unit's facing)
     f32 heading_arc_range = 180;           // HeadingArcRange (degrees either side)
-    std::string projectile_bp_id;   // ChangeProjectileBlueprint
-    bool target_ground = false;       // SetTargetGround
+    std::string projectile_bp_id;          // ChangeProjectileBlueprint
     std::string fire_control_label;   // SetFireControl: whose OnTarget gates firing
     bool need_compute_bomb_drop = false; // NeedToComputeBombDrop
     f32 bomb_drop_threshold = 25.0f;     // BombDropThreshold (default 25)
@@ -82,6 +86,14 @@ public:
 
     // Runtime state
     u32 target_entity_id = 0;   // 0 = no target
+    /// A point on the ground it is aimed at instead of a unit (SetTargetGround,
+    /// a launch order). Only valid while target_entity_id is 0.
+    bool has_ground_target = false;
+    Vector3 ground_target;
+    /// Where a manual weapon's last order sent it. Its script may fire after
+    /// the order is gone (a launch cancelled once the silo is opening); the
+    /// missile then goes there.
+    std::optional<Vector3> last_order_point;
     bool enabled = true;
     u32 fire_clock = 0; // ticks until the fire clock is ready again
     u32 target_check_clock = 0; // ticks until the next target scan
@@ -92,16 +104,34 @@ public:
 
     /// Retail's firing cycle drives this weapon: the engine picks targets and
     /// runs the fire clock, and the weapon's script state machine gets
-    /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos.
-    /// Silo, OverCharge and beam weapons keep the engine's own firing until
-    /// their commands (M206) and beam collision exist.
+    /// OnGotTarget/OnLostTarget/OnFire and fires its own racks and salvos
+    /// (a silo weapon's script also takes its ammunition). OverCharge and
+    /// beam weapons keep the engine's own firing until their scripts' needs
+    /// exist (M206c, M206d).
     bool fires_through_script() const {
-        return script_class && lua_table_ref >= 0 && !counted_projectile && !overcharge && !beam;
+        return script_class && lua_table_ref >= 0 && !overcharge && !beam;
     }
+
+    bool has_target() const { return target_entity_id != 0 || has_ground_target; }
+    /// Aim at a point on the ground (dropping any unit target).
+    void set_target_ground(const Vector3& at) {
+        target_entity_id = 0;
+        has_ground_target = true;
+        ground_target = at;
+    }
+    /// Aim at a unit (0: at nothing), dropping any ground target.
+    void set_target_entity(u32 id) {
+        target_entity_id = id;
+        has_ground_target = false;
+    }
+    /// Where it is aiming: its target unit's position or its ground target.
+    /// Nothing without a target, or when its target is gone.
+    std::optional<Vector3> target_point(const EntityRegistry& registry) const;
 
     /// Moho's CanFire: a target within MaxRadius, the weapon enabled, its
     /// fire control on target (see fire_control), the unit free (not Busy)
-    /// and above water if it must be, and a bomber over its drop zone.
+    /// and above water if it must be, a bomber over its drop zone, and a
+    /// silo weapon's missile ready (HasSiloAmmo).
     bool can_fire(const Unit& owner, const EntityRegistry& registry) const;
 
     /// Whether this weapon may shoot `target` from where `owner` stands: an
@@ -128,19 +158,40 @@ public:
                 const SimState* sim = nullptr);
 
     /// Fire the weapon at current target. Returns true if fired.
-    /// Fire one projectile from `spawn_pos` at `target` (along the owner's
-    /// facing when null): the weapon's muzzle velocity and spread, the
-    /// projectile blueprint's physics, the weapon's damage. It is registered
-    /// and given its script object (OnCreate runs). Returns it.
+    /// Fire one projectile from `spawn_pos` at `target` (when null: at its
+    /// ground target, where a manual weapon's last order sent it, or along
+    /// the owner's facing): the weapon's muzzle
+    /// velocity and spread, the projectile blueprint's physics, the weapon's
+    /// damage. A silo weapon's missile instead leaves along `muzzle_dir` (its
+    /// muzzle bone's facing, when known) and steers itself. It is registered
+    /// and given its script object (OnCreate runs), and a launch order the
+    /// weapon serves is marked fired. Returns it.
     Projectile* launch(Unit& owner, const Vector3& spawn_pos, const Entity* target,
-                       EntityRegistry& registry, lua_State* L, bool in_water);
+                       EntityRegistry& registry, lua_State* L, bool in_water,
+                       std::optional<Vector3> muzzle_dir = std::nullopt);
     bool try_fire(Unit& owner, EntityRegistry& registry, lua_State* L,
                   const map::VisibilityGrid* visibility_grid = nullptr);
 
 private:
     void update_targeting(Unit& owner, EntityRegistry& registry,
                           const map::VisibilityGrid* visibility_grid, const SimState* sim);
-    void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L, u32 previous_target);
+    /// What it was aiming at: the script hears when that changes.
+    struct TargetMark {
+        u32 entity = 0;
+        bool ground = false;
+        Vector3 point;
+        bool operator==(const TargetMark& o) const {
+            return entity == o.entity && ground == o.ground &&
+                   (!ground ||
+                    (point.x == o.point.x && point.y == o.point.y && point.z == o.point.z));
+        }
+    };
+    TargetMark target_mark() const { return {target_entity_id, has_ground_target, ground_target}; }
+    void update_scripted(Unit& owner, EntityRegistry& registry, lua_State* L,
+                         const TargetMark& previous);
+    /// A manual weapon's target: what its unit's launch order names, if the
+    /// order is for this weapon; else none.
+    void take_order_target(const Unit& owner, const EntityRegistry& registry);
     /// Call the weapon script's `method(self [, arg])`, if it has one.
     /// Returns its first result's truth (true when there is no such method).
     bool call_script(lua_State* L, const char* method, const char* arg = nullptr) const;
@@ -149,6 +200,7 @@ private:
     void update_aim(Unit& owner, EntityRegistry& registry, lua_State* L);
     /// The target is within MaxRadius (it may be tracked from farther).
     bool in_firing_range(const Unit& owner, const Entity& target) const;
+    bool in_firing_range(const Unit& owner, const Vector3& at) const;
 };
 
 /// Parse pipe-separated layer string ("Land|Water|Air") into bitmask.

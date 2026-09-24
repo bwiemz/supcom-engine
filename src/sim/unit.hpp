@@ -52,6 +52,10 @@ struct UnitEconomy {
     f64 energy_maintenance_override = -1.0; // negative = not set
     f64 storage_mass = 0.0;
     f64 storage_energy = 0.0;
+    /// What the silo's missile under way asks per second (M206): the engine's
+    /// own request, beside the consumption the unit's script sets.
+    f64 silo_mass = 0.0;
+    f64 silo_energy = 0.0;
 };
 
 class Unit : public Entity {
@@ -355,6 +359,58 @@ public:
     void give_tactical_silo_ammo(i32 amount) { tactical_silo_ammo_ += amount; if (tactical_silo_ammo_ < 0) tactical_silo_ammo_ = 0; }
     void remove_nuke_silo_ammo(i32 amount) { nuke_silo_ammo_ -= amount; if (nuke_silo_ammo_ < 0) nuke_silo_ammo_ = 0; }
     void remove_tactical_silo_ammo(i32 amount) { tactical_silo_ammo_ -= amount; if (tactical_silo_ammo_ < 0) tactical_silo_ammo_ = 0; }
+    /// The same, by kind: nukes, or tactical missiles (anti-nukes' too).
+    i32 silo_ammo(bool nuke) const { return nuke ? nuke_silo_ammo_ : tactical_silo_ammo_; }
+    void give_silo_ammo(bool nuke, i32 amount) {
+        nuke ? give_nuke_silo_ammo(amount) : give_tactical_silo_ammo(amount);
+    }
+    void remove_silo_ammo(bool nuke, i32 amount) {
+        nuke ? remove_nuke_silo_ammo(amount) : remove_tactical_silo_ammo(amount);
+    }
+
+    // Moho's silo (M206): it builds missiles for the unit's counted weapons,
+    // one at a time, beside whatever else the unit is doing.
+    /// The missile under way: for which weapon, how far along, and what its
+    /// projectile blueprint's Economy says it costs.
+    struct SiloBuild {
+        i32 weapon = -1; ///< index into weapons(); -1: none under way
+        bool nuke = false;
+        f64 progress = 0; ///< 0 to 1
+        f64 build_time = 0;
+        f64 energy = 0;
+        f64 mass = 0;
+    };
+    const SiloBuild& silo_build() const { return silo_build_; }
+    bool silo_building() const { return silo_build_.weapon >= 0; }
+    /// A build of a missile of that kind, ordered (IssueSiloBuildNuke/Tactical).
+    void order_silo_build(bool nuke) { silo_orders_.push_back(nuke); }
+    /// Builds of that kind ordered and not yet finished (the one under way
+    /// included), as GetMissileInfo reports them.
+    i32 silo_build_count(bool nuke) const;
+    /// The first enabled counted weapon of that kind: the one the silo
+    /// builds for. Null when there is none.
+    Weapon* silo_weapon(bool nuke) const;
+    /// That kind's storage: its silo weapon's MaxProjectileStorage (0 with none).
+    i32 silo_max_storage(bool nuke) const;
+    /// Per tick: start the next missile (an ordered build, else in auto mode
+    /// one with room in its storage), advance the one under way at the
+    /// unit's build rate as the economy allows, and store it when done. A
+    /// paused unit's build waits. The script hears OnSiloBuildStart and
+    /// OnSiloBuildEnd, and the unit is SiloBuildingAmmo between them.
+    void update_silo(f64 dt, f32 efficiency, lua_State* L);
+    /// StopSiloBuild: the missile under way is abandoned and the builds
+    /// ordered are dropped.
+    void stop_silo_build();
+    /// An assisting engineer's build power, `rate`, on the missile under way.
+    void assist_silo_build(f32 rate, f64 dt, f32 efficiency);
+
+    /// The weapon a launch order uses: the first enabled one with ManualFire
+    /// and CountedProjectile (a NukeWeapon for a nuke), OverCharge aside.
+    Weapon* launch_weapon(bool nuke) const;
+    /// The launch order at the head of the queue, if `w` is the weapon it
+    /// uses; else null.
+    const UnitCommand* launch_order_for(const Weapon& w) const;
+    UnitCommand* launch_order_for(const Weapon& w);
 
     // Immobile flag (set during enhancement)
     bool immobile() const { return immobile_; }
@@ -553,6 +609,9 @@ public:
     /// A bone's world position in the sim pose (the unit's position if the
     /// bone doesn't exist).
     Vector3 bone_world_position(i32 bone) const;
+    /// The way a bone faces in the world (its +Z, as a muzzle fires): the
+    /// unit's facing if the bone doesn't exist.
+    Vector3 bone_world_forward(i32 bone) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     void release_manipulators(lua_State* L);
@@ -717,6 +776,15 @@ private:
     // Silo ammo counters
     i32 nuke_silo_ammo_ = 0;
     i32 tactical_silo_ammo_ = 0;
+    std::deque<bool> silo_orders_; // builds ordered, oldest first (true: a nuke)
+    SiloBuild silo_build_;
+    bool assisting_silo_ = false; // this tick, a Guard lent a silo its build power
+    /// Take the missile under way off the silo: its request, the unit
+    /// state. The script hears nothing: it was not finished (the Yolona
+    /// Oss's tells a cancel by the state going without OnSiloBuildEnd).
+    void abandon_silo_build();
+    /// A finished missile: taken off the silo, and OnSiloBuildEnd.
+    void end_silo_build(lua_State* L);
     // Adjacency system
     std::set<u32> adjacent_unit_ids_;
     f32 skirt_size_x_ = 0;
