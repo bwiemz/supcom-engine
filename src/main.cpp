@@ -382,6 +382,7 @@ static void print_usage() {
               << "  --arc-test         Shots fly ballistic arcs onto their targets\n"
               << "  --collide-test     Shots meet what is in their way\n"
               << "  --area-test        Blasts reach what stands in them; shields absorb\n"
+              << "  --drive-test       Ground units turn, accelerate and brake\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
@@ -1751,6 +1752,7 @@ int main(int argc, char* argv[]) {
     bool arc_test = parse_flag(argc, argv, "--arc-test");
     bool collide_test = parse_flag(argc, argv, "--collide-test");
     bool area_test = parse_flag(argc, argv, "--area-test");
+    bool drive_test = parse_flag(argc, argv, "--drive-test");
     bool shadow_test = parse_flag(argc, argv, "--shadow-test");
     bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
     bool spatial_test = parse_flag(argc, argv, "--spatial-test");
@@ -1846,9 +1848,9 @@ int main(int argc, char* argv[]) {
         teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
         terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
         targeting_test || aim_test || death_test || impact_test || arc_test || collide_test ||
-        area_test || shadow_test || massstub4_test || spatial_test || unitsound_test ||
-        medstub_test || lowstub_test || blend_test || ui_test || bitmap_test || text_test ||
-        edit_test || controls_test || uiboot_test || gameui_test || lobby_flow_test ||
+        area_test || drive_test || shadow_test || massstub4_test || spatial_test ||
+        unitsound_test || medstub_test || lowstub_test || blend_test || ui_test || bitmap_test ||
+        text_test || edit_test || controls_test || uiboot_test || gameui_test || lobby_flow_test ||
         uirender_test || font_test || scissor_test || border_render_test || edit_render_test ||
         itemlist_render_test || scrollbar_render_test || anim_render_test || tiled_render_test ||
         input_test || onframe_test || cursor_render_test || drag_render_test || emitter_test ||
@@ -3991,6 +3993,7 @@ int main(int argc, char* argv[]) {
     if (arc_test && !map_path.empty()) osc::test::test_arc(test_ctx);
     if (collide_test && !map_path.empty()) osc::test::test_collide(test_ctx);
     if (area_test && !map_path.empty()) osc::test::test_area(test_ctx);
+    if (drive_test && !map_path.empty()) osc::test::test_drive(test_ctx);
     if (terrain_tex_test && !map_path.empty()) osc::test::test_terrain_tex(test_ctx);
     if (shadow_test && !map_path.empty()) osc::test::test_shadow(test_ctx);
     if (massstub4_test && !map_path.empty()) osc::test::test_massstub4(test_ctx);

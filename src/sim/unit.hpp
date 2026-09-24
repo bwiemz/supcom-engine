@@ -185,6 +185,34 @@ public:
     /// self:OnMotionHorzEventChange(new, old) when they change.
     enum class MotionHorz : u8 { Stopped, Cruise, TopSpeed, Stopping };
     MotionHorz motion_horz() const { return motion_horz_; }
+    /// How it is turning, raised as self:OnMotionTurnEventChange(new, old).
+    enum class MotionTurn : u8 { Straight, Turn, SharpTurn };
+    MotionTurn motion_turn() const { return motion_turn_; }
+
+    /// How a surface unit drives: its blueprint's Physics (M203).
+    struct Drive {
+        f32 max_accel = 0;           ///< MaxAcceleration, per second
+        f32 max_brake = 0;           ///< MaxBrake (0: as MaxAcceleration)
+        f32 turn_rate = 0;           ///< TurnRate, in radians per second
+        f32 turn_radius = 0;         ///< TurnRadius (0: none)
+        bool rotate_on_spot = false; ///< RotateOnSpot
+        f32 rotate_threshold = 0.5f; ///< RotateOnSpotThreshold: slower than this it pivots
+        f32 max_speed_reverse = 0;   ///< MaxSpeedReverse (0: it can't back up; absent: MaxSpeed)
+        f32 backup_distance = 0;     ///< BackUpDistance: a goal behind it this near, it backs to
+    };
+    const Drive& drive() const { return drive_; }
+    void set_drive(const Drive& d) { drive_ = d; }
+    /// Its speed along its heading, negative backing up.
+    f32 ground_speed() const { return ground_speed_; }
+    /// What the navigator drove it at this tick: the speed, the speed it was
+    /// steering for (0 braking to a stop), its top speed, and how it turned.
+    void note_drive(f32 speed, f32 target, f32 top, MotionTurn turn) {
+        ground_speed_ = speed;
+        target_speed_ = target;
+        top_speed_ = top;
+        motion_turn_next_ = turn;
+        drove_ = true;
+    }
 
     // Threat levels (cached from blueprint Defense at creation time)
     f32 surface_threat() const { return surface_threat_; }
@@ -620,6 +648,16 @@ private:
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
     void update_motion_horz(lua_State* L);
+    MotionTurn motion_turn_ = MotionTurn::Straight;
+    MotionTurn motion_turn_next_ = MotionTurn::Straight;
+    void update_motion_turn(lua_State* L);
+    Drive drive_;
+    f32 ground_speed_ = 0;
+    f32 target_speed_ = 0;
+    f32 top_speed_ = 0;
+    bool drove_ = false; ///< the navigator drove it this tick
+    /// With no navigator driving it, it brakes to a stop along its heading.
+    void coast(f64 dt, const map::Terrain* terrain);
     u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
     bool block_command_queue_ = false;

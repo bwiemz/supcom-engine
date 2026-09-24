@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/platoon.hpp"
 #include "sim/build_info.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
@@ -131,6 +132,50 @@ SimState::~SimState() {
         lua_pushstring(L_, "osc_sound_manager");
         lua_pushnil(L_);
         lua_rawset(L_, LUA_REGISTRYINDEX);
+    }
+}
+
+void SimState::reap_empty_platoons() {
+    if (!L_) return;
+    for (const auto& army : armies_) {
+        // In creation order; OnDestroy may make platoons, which come after.
+        for (size_t i = 0; i < army->platoon_count(); ++i) {
+            Platoon* p = army->platoon_at(i);
+            if (!p || p->destroyed() || !p->had_units() || p->name() == "ArmyPool") continue;
+            const bool manned =
+                std::any_of(p->unit_ids().begin(), p->unit_ids().end(), [this](u32 id) {
+                    const Entity* e = entity_registry_.find(id);
+                    return e && !e->destroyed();
+                });
+            if (manned) continue;
+            army->destroy_platoon(p);
+            const int ref = p->lua_table_ref();
+            if (ref < 0) continue;
+            p->set_lua_table_ref(-2); // LUA_NOREF
+            const int top = lua_gettop(L_);
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+            const int table = lua_gettop(L_);
+            lua_pushstring(L_, "OnDestroy");
+            lua_gettable(L_, table);
+            if (lua_isfunction(L_, -1)) {
+                lua_pushvalue(L_, table);
+                if (lua_pcall(L_, 1, 0, 0) != 0) {
+                    const char* err = lua_tostring(L_, -1);
+                    const std::string message =
+                        std::string("Platoon OnDestroy error: ") + (err ? err : "(unknown)");
+                    spdlog::warn("{}", message);
+                    if (test_status::count_lua_failures()) test_status::record_failure(message);
+                }
+            }
+            lua_settop(L_, top);
+            // Scripts still holding it see a platoon that no longer exists.
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, ref);
+            lua_pushstring(L_, "_c_object");
+            lua_pushnil(L_);
+            lua_rawset(L_, -3);
+            lua_settop(L_, top);
+            luaL_unref(L_, LUA_REGISTRYINDEX, ref);
+        }
     }
 }
 
@@ -756,6 +801,8 @@ void SimState::tick() {
 
     // "No Rush": pin units that strayed beyond their confinement radius.
     enforce_no_rush();
+
+    reap_empty_platoons();
 
     update_visibility();
 

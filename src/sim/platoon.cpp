@@ -8,6 +8,7 @@ namespace osc::sim {
 void Platoon::add_unit(u32 entity_id) {
     if (!has_unit(entity_id))
         unit_ids_.push_back(entity_id);
+    had_units_ = true;
 }
 
 void Platoon::remove_unit(u32 entity_id) {

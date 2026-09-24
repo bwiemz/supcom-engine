@@ -180,16 +180,44 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 unit->set_health(being_built ? 1.0f : static_cast<f32>(*hp));
             }
 
-            // Physics.MaxSpeed
+            // Physics: its top speed, and how it drives (M203).
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Physics");
             lua_gettable(L, -2);
             if (lua_istable(L, -1)) {
-                lua_pushstring(L, "MaxSpeed");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    unit->set_max_speed(static_cast<f32>(lua_tonumber(L, -1)));
+                const int physics = lua_gettop(L);
+                const auto number = [&](const char* key, f32 fallback) {
+                    lua_pushstring(L, key);
+                    lua_rawget(L, physics);
+                    const f32 v = lua_type(L, -1) == LUA_TNUMBER
+                                      ? static_cast<f32>(lua_tonumber(L, -1))
+                                      : fallback;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                const f32 max_speed = number("MaxSpeed", 0);
+                unit->set_max_speed(max_speed);
+                constexpr f32 kDegToRad = 3.14159265358979f / 180.0f;
+                sim::Unit::Drive drive;
+                // Every retail mobile unit gives these; a unit without them
+                // reaches its top speed in a second and turns 90 degrees in one.
+                drive.max_accel = number("MaxAcceleration", 0);
+                if (drive.max_accel <= 0) drive.max_accel = max_speed;
+                drive.max_brake = number("MaxBrake", drive.max_accel);
+                if (drive.max_brake <= 0) drive.max_brake = drive.max_accel;
+                drive.turn_rate = number("TurnRate", 0) * kDegToRad;
+                if (drive.turn_rate <= 0) drive.turn_rate = 90.0f * kDegToRad;
+                drive.turn_radius = number("TurnRadius", 0);
+                // FAF: MaxSpeedReverse defaults to MaxSpeed (every retail unit gives it).
+                drive.max_speed_reverse = number("MaxSpeedReverse", max_speed);
+                // Two retail blueprints spell it BackupDistance.
+                drive.backup_distance = number("BackUpDistance", number("BackupDistance", 0));
+                drive.rotate_threshold = number("RotateOnSpotThreshold", 0.5f);
+                lua_pushstring(L, "RotateOnSpot");
+                lua_rawget(L, physics);
+                drive.rotate_on_spot = lua_toboolean(L, -1) != 0;
                 lua_pop(L, 1);
+                unit->set_drive(drive);
             }
             lua_pop(L, 2);
 
@@ -1011,7 +1039,28 @@ static void create_unit_weapons(lua_State* L, int unit_tbl, const char* what) {
 }
 
 /// CreateUnit(blueprintId, army, x, y, z, qx, qy, qz, qw, layer)
+/// CreateUnit and CreateUnitHPR: a complete unit at (x, y, z) facing
+/// `orientation`, its script told as retail's are (OnPreCreate, OnCreate,
+/// OnStopBeingBuilt).
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation);
+
+// CreateUnit(bp, army, x, y, z, qx, qy, qz, qw[, layer])
 static int l_CreateUnit(lua_State* L) {
+    sim::Quaternion orientation;
+    if (lua_isnumber(L, 6) && lua_isnumber(L, 7) && lua_isnumber(L, 8) && lua_isnumber(L, 9)) {
+        orientation = {static_cast<f32>(lua_tonumber(L, 6)), static_cast<f32>(lua_tonumber(L, 7)),
+                       static_cast<f32>(lua_tonumber(L, 8)), static_cast<f32>(lua_tonumber(L, 9))};
+        const f32 len = std::sqrt(orientation.x * orientation.x + orientation.y * orientation.y +
+                                  orientation.z * orientation.z + orientation.w * orientation.w);
+        if (len > 1e-6f)
+            orientation = {orientation.x / len, orientation.y / len, orientation.z / len,
+                           orientation.w / len};
+        else orientation = {};
+    }
+    return create_complete_unit(L, orientation);
+}
+
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation) {
     auto* sim = get_sim(L);
     if (!sim) return luaL_error(L, "CreateUnit: no SimState");
 
@@ -1032,6 +1081,7 @@ static int l_CreateUnit(lua_State* L) {
 
     u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/false);
     if (id == 0) { lua_pushnil(L); return 1; }
+    if (auto* made = sim->entity_registry().find(id)) made->set_orientation(orientation);
 
     // Lua table is now on top of stack
     int tbl = lua_gettop(L);
@@ -1170,10 +1220,15 @@ static int l_create_building_unit(lua_State* L) {
 }
 
 // Alternate forms
+// CreateUnitHPR(bp, army, x, y, z, rx, ry, rz): the angles about the X, Y and
+// Z axes, as a scenario's Orientation gives them (retail's
+// ScenarioUtilities passes its three in order; map units store their
+// heading second). FAF's annotation names them heading, pitch and roll.
 static int l_CreateUnitHPR(lua_State* L) {
-    // CreateUnitHPR(bp, army, x, y, z, heading, pitch, roll)
-    // Forward to CreateUnit with position only
-    return l_CreateUnit(L);
+    const auto angle = [L](int idx) {
+        return lua_isnumber(L, idx) ? static_cast<f32>(lua_tonumber(L, idx)) : 0.0f;
+    };
+    return create_complete_unit(L, sim::euler_to_quat(angle(7), angle(6), angle(8)));
 }
 
 static int l_CreateUnit2(lua_State* L) {
@@ -3654,6 +3709,9 @@ static void push_vec3(lua_State* L, f32 x, f32 y, f32 z) {
 }
 
 static void read_vec3(lua_State* L, int idx, f32& x, f32& y, f32& z) {
+    // A script passing nothing gets Moho's error, not a crash: rawgeti
+    // assumes a table.
+    luaL_checktype(L, idx, LUA_TTABLE);
     lua_rawgeti(L, idx, 1); x = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
     lua_rawgeti(L, idx, 2); y = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
     lua_rawgeti(L, idx, 3); z = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);

@@ -611,6 +611,18 @@ static int entity_GetPosition(lua_State* L) {
     return 1;
 }
 
+// unit:GetCurrentMoveLocation(): where it is going (its navigator's goal),
+// or where it is when it isn't.
+static int unit_GetCurrentMoveLocation(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u) {
+        push_vector3(L, {0, 0, 0});
+        return 1;
+    }
+    push_vector3(L, u->navigator().busy() ? u->navigator().goal() : u->position());
+    return 1;
+}
+
 static int entity_GetPositionXYZ(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) {
@@ -629,10 +641,7 @@ static int entity_GetPositionXYZ(lua_State* L) {
 static int entity_GetHeading(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) { lua_pushnumber(L, 0); return 1; }
-    const auto& q = e->orientation();
-    f32 heading =
-        osc::dmath::atan2(2.0f * (q.w * q.y + q.x * q.z), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
-    lua_pushnumber(L, heading);
+    lua_pushnumber(L, sim::quat_yaw(e->orientation()));
     return 1;
 }
 
@@ -3890,7 +3899,7 @@ static const MethodEntry unit_methods[] = {
     {"SetTurnMult",                 unit_SetTurnMult},
     {"SetBreakOffDistanceMult",     unit_SetBreakOffDistanceMult},
     {"SetBreakOffTriggerMult",      unit_SetBreakOffTriggerMult},
-    {"GetCurrentMoveLocation",      entity_GetPosition},
+    {"GetCurrentMoveLocation",      unit_GetCurrentMoveLocation},
     {"GetHeading",                  entity_GetHeading},
     // Stubs — transport / cargo
     {"GetCargo",                    unit_GetCargo},
