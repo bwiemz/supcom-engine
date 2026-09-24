@@ -42,10 +42,10 @@ BlueprintStore::~BlueprintStore() {
 namespace {
 
 /// Moho fills in blueprint fields that scripts read unconditionally. A unit
-/// without a Footprint uses its SizeX/SizeZ, rounded, at least 1 (FAF engine
-/// notes, EntityBlueprint.lua). 165 retail units have none, and StructureUnit
-/// reads bp.Footprint.SizeX when it flattens its skirt.
-/// t[key] = {Min = 0, Max = 0} unless t already has it.
+/// without a Footprint uses its SizeX/SizeZ, rounded up, at least 1 (Moho's
+/// REntityBlueprint::OnInitBlueprint, decompiled by faf-re). 165 retail units have none, and
+/// StructureUnit reads bp.Footprint.SizeX when it flattens its skirt. t[key] = {Min = 0, Max = 0}
+/// unless t already has it.
 void default_min_max(lua_State* L, int t, const char* key) {
     lua_pushstring(L, key);
     lua_rawget(L, t);
@@ -95,10 +95,11 @@ void apply_unit_defaults(lua_State* L, int bp) {
     }
 
     // A footprint the .bp leaves unsized, whole or per axis, takes the unit's
-    // own size, rounded and at least 1, as Moho's does (FAF's loader
-    // emulates the same rule). Retail's GetSkirtRect and GetFootPrintSize
-    // read Footprint.SizeX/SizeZ unguarded; 205 retail units omit them, some
-    // with a Footprint table that holds only MinWaterDepth (the UEF TMD).
+    // own size, rounded up and at least 1, as Moho's does (its decompiled
+    // REntityBlueprint::OnInitBlueprint; FAF's loader rounds to nearest,
+    // which differs on 13 retail axes, e.g. a T2 tank's 1.2 length). Retail's GetSkirtRect and
+    // GetFootPrintSize read Footprint.SizeX/SizeZ unguarded; 205 retail units omit them, some with
+    // a Footprint table that holds only MinWaterDepth (the UEF TMD).
     lua_pushstring(L, "Footprint");
     lua_rawget(L, bp);
     if (!lua_istable(L, -1)) {
@@ -121,7 +122,7 @@ void apply_unit_defaults(lua_State* L, int bp) {
         const double size = lua_isnumber(L, -1) ? lua_tonumber(L, -1) : 1.0;
         lua_pop(L, 1);
         lua_pushstring(L, axis);
-        lua_pushnumber(L, std::max(1.0, std::floor(size + 0.5)));
+        lua_pushnumber(L, std::max(1.0, std::ceil(size)));
         lua_rawset(L, footprint);
     }
 

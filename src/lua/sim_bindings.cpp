@@ -609,33 +609,23 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         unit->set_default_collision_shape(sim::blueprint_collision_shape(L, lua_gettop(L)));
         lua_pop(L, 1);
 
-        // Footprint.SizeX / SizeZ (for pathfinding obstacle marking)
+        // Footprint (pathfinding obstacles, placement, ranges).
         {
             store->push_lua_table(*entry, L);
-            lua_pushstring(L, "Footprint");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                f32 sx = 0, sz = 0;
-                lua_pushstring(L, "SizeX");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1)) sx = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                lua_pushstring(L, "SizeZ");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1)) sz = static_cast<f32>(lua_tonumber(L, -1));
-                lua_pop(L, 1);
-                unit->set_footprint_size(sx, sz);
-            }
-            lua_pop(L, 2);
+            const auto [sx, sz] = sim::blueprint_footprint(L, lua_gettop(L));
+            unit->set_footprint_size(sx, sz);
+            lua_pop(L, 1);
         }
 
-        // Physics.SkirtSizeX/Z, SkirtOffsetX/Z (for adjacency detection)
+        // Physics.SkirtSizeX/Z, SkirtOffsetX/Z (adjacency, build ranges). As
+        // Moho's: at least the footprint, never offset outward
+        // (RUnitBlueprint's physics init).
         {
             store->push_lua_table(*entry, L);
             lua_pushstring(L, "Physics");
             lua_gettable(L, -2);
+            f32 ssx = 0, ssz = 0, sox = 0, soz = 0;
             if (lua_istable(L, -1)) {
-                f32 ssx = 0, ssz = 0, sox = 0, soz = 0;
                 lua_pushstring(L, "SkirtSizeX");
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1)) ssx = static_cast<f32>(lua_tonumber(L, -1));
@@ -652,9 +642,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_gettable(L, -2);
                 if (lua_isnumber(L, -1)) soz = static_cast<f32>(lua_tonumber(L, -1));
                 lua_pop(L, 1);
-                unit->set_skirt(ssx, ssz, sox, soz);
             }
             lua_pop(L, 2);
+            unit->set_skirt(std::max(ssx, unit->footprint_size_x()),
+                            std::max(ssz, unit->footprint_size_z()), std::min(sox, 0.0f),
+                            std::min(soz, 0.0f));
         }
 
         // Transport.Class1Capacity / TransportClass (for cargo tracking)

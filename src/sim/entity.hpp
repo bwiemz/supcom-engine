@@ -241,6 +241,16 @@ public:
     }
     void revert_collision_shape() { set_collision_shape(default_collision_shape_); }
 
+    // Footprint, in whole cells: its blueprint's Footprint, else its size
+    // rounded up (Moho's REntityBlueprint default). Structures block it on
+    // the pathfinding grid; build, reclaim and capture ranges measure from it.
+    f32 footprint_size_x() const { return footprint_size_x_; }
+    f32 footprint_size_z() const { return footprint_size_z_; }
+    void set_footprint_size(f32 sx, f32 sz) {
+        footprint_size_x_ = sx;
+        footprint_size_z_ = sz;
+    }
+
     // Mesh override (runtime mesh switching via SetMesh)
     const std::string& mesh_override() const { return mesh_override_; }
     void set_mesh_override(const std::string& path) { mesh_override_ = path; }
@@ -336,6 +346,8 @@ private:
     f32 max_health_ = 0;
     f32 regen_rate_ = 0;
     f32 fraction_complete_ = 1.0f;
+    f32 footprint_size_x_ = 0;
+    f32 footprint_size_z_ = 0;
     bool destroyed_ = false;
     std::string blueprint_id_;
     int lua_table_ref_ = -2; // LUA_NOREF

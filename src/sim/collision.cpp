@@ -46,6 +46,22 @@ CollisionShape blueprint_collision_shape(lua_State* L, int bp_index) {
     return shape;
 }
 
+std::pair<f32, f32> blueprint_footprint(lua_State* L, int bp_index) {
+    if (!L || !lua_istable(L, bp_index)) return {0.0f, 0.0f};
+    f32 sx = 0, sz = 0;
+    lua_pushstring(L, "Footprint");
+    lua_rawget(L, bp_index);
+    if (lua_istable(L, -1)) {
+        const int footprint = lua_gettop(L);
+        sx = number_field(L, footprint, "SizeX", 0);
+        sz = number_field(L, footprint, "SizeZ", 0);
+    }
+    lua_pop(L, 1);
+    if (sx <= 0) sx = std::ceil(number_field(L, bp_index, "SizeX", 0));
+    if (sz <= 0) sz = std::ceil(number_field(L, bp_index, "SizeZ", 0));
+    return {sx, sz};
+}
+
 f32 collision_reach(const CollisionShape& shape) {
     const f32 centre = std::sqrt(shape.cx * shape.cx + shape.cy * shape.cy + shape.cz * shape.cz);
     switch (shape.type) {

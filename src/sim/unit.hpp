@@ -259,11 +259,6 @@ public:
     void clear_commands(const char* source = "?");
     void clear_queued_commands(); // remove all but current command
 
-    // Footprint (from blueprint, for pathfinding obstacle marking)
-    f32 footprint_size_x() const { return footprint_size_x_; }
-    f32 footprint_size_z() const { return footprint_size_z_; }
-    void set_footprint_size(f32 sx, f32 sz) { footprint_size_x_ = sx; footprint_size_z_ = sz; }
-
     /// Per-tick update: process command queue + movement + weapons.
     void update(f64 dt, SimContext& ctx);
 
@@ -711,9 +706,7 @@ private:
     f64 capture_time_ = 0;        // total seconds to capture
     f64 capture_energy_cost_ = 0; // total energy drain
     bool capturable_ = true;      // can this unit be captured?
-    bool being_captured_ = false;  // is this unit currently being captured?
-    f32 footprint_size_x_ = 0;    // from blueprint Footprint.SizeX
-    f32 footprint_size_z_ = 0;    // from blueprint Footprint.SizeZ
+    bool being_captured_ = false; // is this unit currently being captured?
     bool paused_ = false;
     MotionHorz motion_horz_ = MotionHorz::Stopped;
     void update_motion_horz(lua_State* L);
