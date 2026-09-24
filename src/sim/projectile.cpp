@@ -119,11 +119,13 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
         }
     }
 
-    // Move
+    // Move. Gravity was added to the velocity above; taking half of it back
+    // keeps the fall on the parabola an arc's launch angle was solved for.
     auto pos = position();
-    pos.x += velocity.x * static_cast<f32>(dt);
-    pos.y += velocity.y * static_cast<f32>(dt);
-    pos.z += velocity.z * static_cast<f32>(dt);
+    const auto step_dt = static_cast<f32>(dt);
+    pos.x += velocity.x * step_dt;
+    pos.y += velocity.y * step_dt - 0.5f * ballistic_accel * step_dt * step_dt;
+    pos.z += velocity.z * step_dt;
     set_position(pos);
 
     // SetScaleVelocity: an effect that grows or shrinks as it flies.

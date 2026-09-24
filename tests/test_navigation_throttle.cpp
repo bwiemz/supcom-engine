@@ -363,3 +363,22 @@ TEST_CASE("a unit closed in between buildings paths out", "[nav]") {
     REQUIRE(out.found);
     CHECK_FALSE(out.partial);
 }
+
+// Weapons that LeadTarget aim by a unit's velocity: its movement over the
+// last tick. A teleport is a jump, not a speed.
+TEST_CASE("a unit's velocity is its last tick's movement, and none across a teleport", "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    auto* u = spawn_land_unit(sim, 20.0f, 20.0f);
+    u->push_command(order(CommandType::Move, 100.0f, 20.0f), true);
+    for (int t = 0; t < 10; ++t) sim.tick();
+    CHECK(u->velocity().x > 1.0f);
+    CHECK(u->velocity().z == 0.0f);
+
+    u->push_command(order(CommandType::Teleport, 20.0f, 100.0f), true);
+    sim.tick();
+    CHECK(u->position().z == 100.0f);
+    CHECK(u->velocity().x == 0.0f);
+    CHECK(u->velocity().z == 0.0f);
+}

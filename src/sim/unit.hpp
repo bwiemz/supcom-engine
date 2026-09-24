@@ -404,6 +404,11 @@ public:
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
 
+    /// How far it moved over its last tick, per second (SimState sets it):
+    /// weapons that LeadTarget aim ahead by it.
+    const Vector3& velocity() const { return velocity_; }
+    void set_velocity(const Vector3& v) { velocity_ = v; }
+
     // A killed aircraft's fall (see begin_dying).
     bool is_crashing() const { return crashing_; }
     bool crash_impacted() const { return crash_impacted_; }
@@ -694,6 +699,7 @@ private:
     // Air crash state
     bool crashing_ = false;
     bool crash_impacted_ = false; // set on landing, taken by SimState
+    Vector3 velocity_{};
     f32 crash_velocity_y_ = 0;
     f32 crash_spin_rate_ = 0;
     // Misc flags

@@ -246,6 +246,21 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1)) weapon->muzzle_velocity = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
 
+                    lua_pushstring(L, "BallisticArc");
+                    lua_gettable(L, we);
+                    if (lua_type(L, -1) == LUA_TSTRING) {
+                        const std::string arc = lua_tostring(L, -1);
+                        weapon->ballistic_arc = arc == "RULEUBA_LowArc"    ? sim::Weapon::Arc::Low
+                                                : arc == "RULEUBA_HighArc" ? sim::Weapon::Arc::High
+                                                                           : sim::Weapon::Arc::None;
+                    }
+                    lua_pop(L, 1);
+
+                    lua_pushstring(L, "LeadTarget");
+                    lua_gettable(L, we);
+                    weapon->lead_target = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+
                     lua_pushstring(L, "FireOnDeath");
                     lua_gettable(L, we);
                     if (lua_isboolean(L, -1)) weapon->fire_on_death = lua_toboolean(L, -1) != 0;

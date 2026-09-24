@@ -19,6 +19,7 @@
 #include "sim/bone_cache.hpp"
 #include "sim/pose.hpp"
 #include "sim/projectile.hpp"
+#include "sim/weapon.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/ieffect.hpp"
 #include "sim/sim_state.hpp"
@@ -856,6 +857,38 @@ void test_threat(TestContext& ctx) {
     spdlog::info("Running threat test ticks...");
     for (int i = 0; i < 50; i++) {
         ctx.sim.tick();
+    }
+
+    // Attack vectors: the AI groups an army's structures (its own, to find
+    // its bases) with SetUpAttackVectorsToArmy and reads GetAttackVectors.
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local brain = ArmyBrains[2]
+            local function build(x, z)
+                return CreateUnitHPR('ueb1101', 'ARMY_2', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            end
+            build(300, 700)
+            build(304, 700)   -- the same group
+            build(420, 700)   -- another
+            local enemy = brain:GetCurrentEnemy()
+            brain:SetCurrentEnemy(brain)
+            brain:SetUpAttackVectorsToArmy(categories.STRUCTURE - categories.MASSEXTRACTION)
+            local vecs = brain:GetAttackVectors()
+            brain:SetCurrentEnemy(enemy)
+            local near = {}
+            for _, v in vecs do
+                if math.abs(v.pz - 700) < 16 and (math.abs(v.px - 302) < 16 or math.abs(v.px - 420) < 16) then
+                    table.insert(near, v)
+                end
+                local len = math.sqrt(v.vx * v.vx + v.vz * v.vz)
+                if math.abs(len - 1) > 1e-3 or v.vy ~= 0 then error('heading not level and unit') end
+            end
+            if table.getn(near) ~= 2 then
+                error(table.getn(near) .. ' groups near the three generators, of ' .. table.getn(vecs))
+            end
+        )");
+        if (r) spdlog::info("[PASS] Threat test: attack vectors group an army's structures");
+        else osc::test_status::fail("[FAIL] Threat test: attack vectors: {}", r.error().message);
     }
 
     spdlog::info("Threat test: {} entities, {} threads",
@@ -7332,6 +7365,135 @@ void test_impact(TestContext& ctx) {
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
     spdlog::info("Impact test: {}/{} passed", pass, pass + fail);
+}
+
+// M201e: shots fly the arcs gravity gives them. An arcing weapon solves its
+// launch angle for its target's distance and height at its muzzle velocity
+// (low or high), its turret pitches to it, and the shell falls onto the
+// target; a weapon that leads aims where a moving target will be.
+void test_arc(TestContext& ctx) {
+    spdlog::info("=== ARC TEST: shots fly ballistic arcs ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const int failures_before = osc::test_status::failure_count();
+
+    // The closed form: at 14 u/s over 30 units on the level, sin(2 theta) =
+    // g d / v^2 = 0.75, so the arcs leave at 24.3 and 65.7 degrees.
+    {
+        osc::sim::Weapon w;
+        w.muzzle_velocity = 14;
+        w.ballistic_arc = osc::sim::Weapon::Arc::Low;
+        const osc::f32 low = w.launch_elevation(30, 0) * 180.0f / 3.14159265f;
+        w.ballistic_arc = osc::sim::Weapon::Arc::High;
+        const osc::f32 high = w.launch_elevation(30, 0) * 180.0f / 3.14159265f;
+        const osc::f32 beyond = w.launch_elevation(100, 0) * 180.0f / 3.14159265f;
+        // Right overhead: up for the high arc; for the low one, up to a
+        // target above and down onto one below.
+        const osc::f32 up = w.launch_elevation(0, 10) * 180.0f / 3.14159265f;
+        w.ballistic_arc = osc::sim::Weapon::Arc::Low;
+        const osc::f32 low_up = w.launch_elevation(0, 10) * 180.0f / 3.14159265f;
+        const osc::f32 low_down = w.launch_elevation(0, -10) * 180.0f / 3.14159265f;
+        check(std::abs(low - 24.3f) < 0.1f && std::abs(high - 65.7f) < 0.1f &&
+                  std::abs(beyond - 45.0f) < 0.01f && up == 90.0f && low_up == 90.0f &&
+                  low_down == -90.0f,
+              fmt::format("Test 1: arcs at 14 u/s over 30 leave at {:.1f} and {:.1f} degrees; "
+                          "out of reach at {:.1f}; overhead at {:.0f} ({:.0f} and {:.0f} low)",
+                          low, high, beyond, up, low_up, low_down));
+    }
+
+    lua_check("setup: a Lobo shelling a target 25 away", R"(
+        local function spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_lobo = spawn('uel0103', 'ARMY_1', 220, 790)
+        __osc_mark = spawn('ueb1101', 'ARMY_2', 245, 790)
+        __osc_mark:SetCanTakeDamage(false)
+        __osc_shells = {}
+        __osc_live = {}
+        -- The engine's CreateProjectile: every weapon class makes its shots
+        -- with it (the Lobo's CreateProjectileAtMuzzle returns nothing).
+        local w = __osc_lobo:GetWeapon(1)
+        local fire = w.CreateProjectile
+        w.CreateProjectile = function(self, muzzle)
+            local p = fire(self, muzzle)
+            if not p then return p end
+            local rec = {from = p:GetPosition(), top = p:GetPosition()[2]}
+            table.insert(__osc_shells, rec)
+            table.insert(__osc_live, {p = p, rec = rec})
+            local impact = p.OnImpact
+            p.OnImpact = function(s, type, target)
+                rec.type, rec.at = type, s:GetPosition()
+                return impact(s, type, target)
+            end
+            return p
+        end
+    )");
+    for (int i = 0; i < 120; ++i) {
+        ctx.sim.tick();
+        (void)ctx.lua_state.do_string(R"(
+            for _, l in __osc_live do
+                if not l.p:BeenDestroyed() then
+                    local y = l.p:GetPosition()[2]
+                    if y > l.rec.top then l.rec.top = y end
+                end
+            end
+        )");
+    }
+    lua_check("Test 2: a Lobo's shell climbs high and falls onto its target", R"(
+        local s = __osc_shells[1]
+        if not s then error('no shell') end
+        if not s.at then error('the shell never landed') end
+        local rise = s.top - s.from[2]
+        if rise < 10 then error('it rose only ' .. rise) end
+        local m = __osc_mark:GetPosition()
+        local miss = math.sqrt((s.at[1] - m[1]) ^ 2 + (s.at[3] - m[3]) ^ 2)
+        if miss > 3 then error(s.type .. ' impact ' .. miss .. ' from the target') end
+    )");
+    lua_check("Test 3: its turret pitches up to the arc", R"(
+        local _, pitch = __osc_lobo:GetWeapon(1):GetAimManipulator():GetHeadingPitch()
+        if math.deg(pitch) < 45 then error('pitch ' .. math.deg(pitch) .. ' degrees') end
+    )");
+
+    // Leading: where a target moving at (2, 0, 1) u/s will be.
+    {
+        osc::sim::Weapon w;
+        w.muzzle_velocity = 20;
+        w.lead_target = true;
+        osc::sim::Unit target;
+        target.set_position({50, 0, 0});
+        target.set_velocity({2, 0, 1});
+        const auto at = w.aim_point(target, {0, 0, 0});
+        // Straight shots meet it at t = 2.78 s, at (55.56, 2.78); two
+        // refinements from t = 2.5 s come within a few hundredths.
+        check(at.x > 55.4f && at.x < 55.6f && at.z > 2.7f && at.z < 2.8f,
+              fmt::format("Test 4: a leading weapon aims at ({:.2f}, {:.2f}), where the "
+                          "target will be",
+                          at.x, at.z));
+        w.lead_target = false;
+        const auto still = w.aim_point(target, {0, 0, 0});
+        check(still.x == 50.0f && still.z == 0.0f, "Test 5: one that doesn't lead aims at it");
+    }
+
+    check(osc::test_status::failure_count() - fail == failures_before, "Test 6: no script errors");
+    spdlog::info("Arc test: {}/{} passed", pass, pass + fail);
 }
 
 void test_terrain_tex(TestContext& ctx) {

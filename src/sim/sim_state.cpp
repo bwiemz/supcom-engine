@@ -974,7 +974,19 @@ void SimState::update_entities() {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
         if (e->is_unit()) {
+            const Vector3 before = e->position();
+            const u32 snaps = e->snap_serial();
             static_cast<Unit*>(e)->update(SECONDS_PER_TICK, ctx);
+            if (auto* moved = entity_registry_.find(id); moved && !moved->destroyed()) {
+                // A teleport or a boarding jumps: no speed to lead by.
+                const Vector3 after = moved->position();
+                const auto per_second = static_cast<f32>(1.0 / SECONDS_PER_TICK);
+                static_cast<Unit*>(moved)->set_velocity(
+                    moved->snap_serial() != snaps ? Vector3{}
+                                                  : Vector3{(after.x - before.x) * per_second,
+                                                            (after.y - before.y) * per_second,
+                                                            (after.z - before.z) * per_second});
+            }
         } else if (e->is_projectile()) {
             static_cast<Projectile*>(e)->update(SECONDS_PER_TICK,
                                                  entity_registry_, L_, terrain_.get());

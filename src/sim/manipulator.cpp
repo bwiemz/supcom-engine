@@ -397,7 +397,8 @@ void AimManipulator::tick(f32 dt) {
         const Vector3 from = pitches ? unit->bone_world_position(pitch_bone_) : yaw.position;
         const Vector3 w = quat_rotate(quat_axis_angle('y', -want_heading),
                                       quat_rotate(to_local, sub(target_, from)));
-        want_pitch = osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
+        want_pitch =
+            elevation_ ? *elevation_ : osc::dmath::atan2(w.y, std::sqrt(w.x * w.x + w.z * w.z));
         if (!full_circle) {
             // Measured about the arc's centre, so an arc across +-180 deg
             // (a rear turret) still contains the headings it should.

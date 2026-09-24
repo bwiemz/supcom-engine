@@ -17,6 +17,7 @@
 #include "sim/ieffect.hpp"
 #include "sim/manipulator.hpp"
 #include "core/test_status.hpp"
+#include "sim/category_expr.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
@@ -7969,7 +7970,79 @@ static int brain_RemoveArmyStatsTrigger(lua_State*) { return 0; }
 static int brain_RemoveEnergyDependingEntity(lua_State*) { return 0; }
 static int brain_PBMAddBuildLocation(lua_State*) { return 0; }
 static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
-static int brain_SetUpAttackVectorsToArmy(lua_State*) { return 0; }
+// brain:SetUpAttackVectorsToArmy([category]): attack vectors on the current
+// enemy (the AI sets itself as enemy to find its own bases). Its units of
+// the category -- STRUCTURE - MOBILE without one -- grouped into 32x32
+// cells, each group a point (its centre) and the heading from this army's
+// start to it. Groups in cell order: the list reaches the AI's scripts.
+static int brain_SetUpAttackVectorsToArmy(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim) return 0;
+    const i32 enemy = brain->current_enemy_index();
+    std::vector<sim::ArmyBrain::AttackVector> vectors;
+    if (enemy < 0) {
+        brain->set_attack_vectors({});
+        return 0;
+    }
+    const bool any = !lua_istable(L, 2);
+    const sim::CategoryExpr wanted = any ? sim::CategoryExpr{} : sim::compile_category(L, 2);
+    struct Group {
+        f64 x = 0, y = 0, z = 0;
+        u32 count = 0;
+    };
+    constexpr f32 kCell = 32.0f;
+    std::map<std::pair<i32, i32>, Group> groups;
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
+        if (e.destroyed() || e.army() != enemy) return;
+        const auto& u = static_cast<const sim::Unit&>(e);
+        if (u.is_dying()) return;
+        const bool matches = any ? u.has_category("STRUCTURE") && !u.has_category("MOBILE")
+                                 : wanted.matches(u.categories());
+        if (!matches) return;
+        const auto& p = u.position();
+        auto& g = groups[{static_cast<i32>(std::floor(p.x / kCell)),
+                          static_cast<i32>(std::floor(p.z / kCell))}];
+        g.x += p.x;
+        g.y += p.y;
+        g.z += p.z;
+        ++g.count;
+    });
+    const sim::Vector3 home = brain->start_position();
+    for (const auto& [cell, g] : groups) {
+        const sim::Vector3 at{static_cast<f32>(g.x / g.count), static_cast<f32>(g.y / g.count),
+                              static_cast<f32>(g.z / g.count)};
+        const f32 dx = at.x - home.x;
+        const f32 dz = at.z - home.z;
+        const f32 len = std::sqrt(dx * dx + dz * dz);
+        vectors.push_back({at, len > 1e-3f ? sim::Vector3{dx / len, 0.0f, dz / len}
+                                           : sim::Vector3{0.0f, 0.0f, 1.0f}});
+    }
+    brain->set_attack_vectors(std::move(vectors));
+    return 0;
+}
+
+// brain:GetAttackVectors() -> {{px, py, pz, vx, vy, vz}, ...}, as
+// SetUpAttackVectorsToArmy left them.
+static int brain_GetAttackVectors(lua_State* L) {
+    auto* brain = check_brain(L);
+    lua_newtable(L);
+    if (!brain) return 1;
+    int i = 1;
+    for (const auto& v : brain->attack_vectors()) {
+        lua_newtable(L);
+        const std::pair<const char*, f32> fields[] = {
+            {"px", v.position.x},  {"py", v.position.y},  {"pz", v.position.z},
+            {"vx", v.direction.x}, {"vy", v.direction.y}, {"vz", v.direction.z}};
+        for (const auto& [key, value] : fields) {
+            lua_pushstring(L, key);
+            lua_pushnumber(L, value);
+            lua_rawset(L, -3);
+        }
+        lua_rawseti(L, -2, i++);
+    }
+    return 1;
+}
 static int brain_SetGreaterOf(lua_State*) { return 0; }
 
 // brain:CheckBlockingTerrain(pos, maxRange, threatType)
@@ -8042,6 +8115,7 @@ static const MethodEntry aibrain_methods[] = {
     {"PBMRemoveBuildLocation",      brain_PBMRemoveBuildLocation},
     {"PBMAddBuildLocation",         brain_PBMAddBuildLocation},
     {"SetUpAttackVectorsToArmy",    brain_SetUpAttackVectorsToArmy},
+    {"GetAttackVectors",            brain_GetAttackVectors},
     {"FindPlaceToBuild",            brain_FindPlaceToBuild},
     {"CanBuildStructureAt",         brain_CanBuildStructureAt},
     {"BuildUnit",                   brain_BuildUnit},

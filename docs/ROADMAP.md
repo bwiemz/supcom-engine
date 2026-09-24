@@ -224,7 +224,13 @@ In order of how much they change what the player feels:
 - Script entities carry intel, so `VizMarker`s reveal.
 - `CreateProjectile`, `CreateProjectileAtBone`, `CreateChildProjectile` and `SetScaleVelocity` take retail's arguments.
 
-`--impact-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
+`--impact-test` (gate). **M201e ✅** Shots fly the arcs gravity gives them:
+- A `LowArc` or `HighArc` weapon solves its launch angle for its target's distance and height at its muzzle velocity.
+- Its turret pitches to that angle, and the shell leaves with a real vertical velocity, falling on a parabola integrated exactly.
+- Straight weapons aim at their target in three dimensions.
+- `LeadTarget` weapons aim where a moving target will be.
+
+`--arc-test` (gate). Ballistic arc solution. Collision shapes (sphere, box, none) against terrain, units, shields and water. `OnImpact` with impact types. `DamageArea` falloff and rings. Projectiles and props become instances of their script classes (blueprint `ScriptModule`/`ScriptClass`; props default to `/lua/sim/Prop.lua` `Prop`; retail trees use `/lua/proptree.lua`, wrecks `/lua/wreckage.lua`). Retail's `CreateWreckageProp` then makes the wrecks, and the engine's own wreck path gives way to it, as victory did in M189. |
 | M202 | Shields | Bubble interception, overspill, `OnCollisionCheck`. |
 | M203 | Ground locomotion | Turn rate, acceleration and braking. Motion follows heading. Unit–unit avoidance and pushing. Footprint occupancy. |
 | M204 | Formations | `IssueFormMove` / `IssueFormAttack` / `IssueFormAggressiveMove`, and attack-move semantics. |

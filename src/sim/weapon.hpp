@@ -32,6 +32,19 @@ public:
     f32 damage_radius = 0;
     std::string damage_type = "Normal";
     f32 muzzle_velocity = 25;
+    /// How a shot flies to its target (BallisticArc): straight, or on the
+    /// low or the high of the two arcs gravity allows at its muzzle velocity.
+    enum class Arc : u8 { None, Low, High };
+    Arc ballistic_arc = Arc::None;
+    bool lead_target = false; ///< LeadTarget: aim where a moving target will be
+
+    /// The launch angle above the horizontal for a shot `dist` away and
+    /// `rise` above: its arc's, at its muzzle velocity under gravity (45
+    /// degrees, the furthest, when out of reach).
+    f32 launch_elevation(f32 dist, f32 rise) const;
+    /// Where to aim at `target` from `from`: where it will be when the shot
+    /// arrives, for a weapon that leads.
+    Vector3 aim_point(const Entity& target, const Vector3& from) const;
     bool fire_on_death = false;
     bool manual_fire = false;
     bool counted_projectile = false; // CountedProjectile: fires silo ammo

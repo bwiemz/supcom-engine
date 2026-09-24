@@ -143,6 +143,16 @@ public:
     i32 current_enemy_index() const { return current_enemy_index_; }
     void set_current_enemy_index(i32 idx) { current_enemy_index_ = idx; }
 
+    /// SetUpAttackVectorsToArmy's result, which GetAttackVectors returns: a
+    /// point on each group of the target army's structures, and the heading
+    /// from this army's start to it.
+    struct AttackVector {
+        Vector3 position;
+        Vector3 direction;
+    };
+    const std::vector<AttackVector>& attack_vectors() const { return attack_vectors_; }
+    void set_attack_vectors(std::vector<AttackVector> v) { attack_vectors_ = std::move(v); }
+
     // --- Platoons ---
     Platoon* create_platoon(const std::string& name);
     Platoon* find_platoon_by_name(const std::string& name);
@@ -234,6 +244,7 @@ private:
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
+    std::vector<AttackVector> attack_vectors_;
     bool has_color_ = false;
     u8 color_r_ = 255, color_g_ = 255, color_b_ = 255;
 
