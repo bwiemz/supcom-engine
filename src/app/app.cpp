@@ -1,3 +1,5 @@
+#include "app/app.hpp"
+#include "app/support.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
 #include "core/test_status.hpp"
@@ -7,7 +9,6 @@
 #include "core/profiler.hpp"
 #include "core/tick_clock.hpp"
 #include "core/types.hpp"
-#include "integration_tests.hpp"
 #include "platform/crash_handler.hpp"
 #include "platform/game_install.hpp"
 #include "platform/paths.hpp"
@@ -18,7 +19,6 @@
 #include "lua/sim_loader.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/binding_coverage.hpp"
-#include "audio_data_test.hpp"
 #include "lua/scenario_loader.hpp"
 #include "lua/sim_bindings.hpp"
 #include "vfs/virtual_file_system.hpp"
@@ -82,7 +82,9 @@ extern "C" {
 #include <vector>
 #include <spdlog/spdlog.h>
 
-// ── Engine global Lua C functions (file-static, outside main) ──
+namespace osc::app {
+
+// ── Engine global Lua C functions (file-static, outside run) ──
 // Note: GetCurrentUIState and WorldIsLoading moved to moho_bindings.cpp (M144c)
 
 static int l_FlushEvents(lua_State*) { return 0; }
@@ -327,121 +329,13 @@ static void print_usage() {
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops)\n"
-              << "  --damage-test      After ticks, kill entity #1 and run 10 more ticks\n"
-              << "  --move-test        After ticks, move entity #1 and run 200 more ticks\n"
-              << "  --fire-test        Teleport entities #1 and #2 close, run 100 combat ticks\n"
-              << "  --economy-test     After ticks, log economy state for all armies\n"
-              << "  --build-test       After ticks, build a T1 power gen near entity #1\n"
-              << "  --chain-test       Full build chain: ACU -> factory -> engineer -> pgen\n"
-              << "  --ai-test          AI ARMY_2: pgens + factory + engineers + guard assist\n"
-              << "  --reclaim-test     Create prop, engineer reclaims it, verify mass gained\n"
-              << "  --platoon-test     Platoon system: create, assign, move, fork, disband\n"
-              << "  --threat-test      Threat queries, platoon targeting, command tracking\n"
-              << "  --combat-test      AI produces army, forms platoons, attacks enemy\n"
-              << "  --repair-test      Build pgen, damage it, repair it, verify health\n"
-              << "  --upgrade-test     Build T1 mex, upgrade to T2, verify completion\n"
-              << "  --capture-test     Build enemy pgen, capture it, verify ownership\n"
-              << "  --path-test        A* pathfinding around obstacles + terrain height\n"
-              << "  --toggle-test      Script bits, toggle caps, and dive command\n"
-              << "  --enhance-test     ACU enhancement (AdvancedEngineering)\n"
-              << "  --intel-test       Intel system (InitIntel/Enable/Disable/Radius)\n"
-              << "  --shield-test      Shield system (create, health, regen, toggle)\n"
-              << "  --transport-test   Transport load/unload, cargo tracking, speed mult\n"
-              << "  --fow-test         Fog of war / visibility grid + OnIntelChange\n"
-              << "  --los-test         Terrain line-of-sight occlusion\n"
-              << "  --stall-test       Economy stalling (resource scarcity slows progress)\n"
-              << "  --jammer-test      Dead-reckoning, stealth, jammer detection\n"
-              << "  --stub-test        Moho stub conversions (14 real implementations)\n"
-              << "  --audio-test       Audio system (XWB/XSB banks, play, loop, stop)\n"
-              << "  --bone-test        Bone system (SCM parser, bone queries)\n"
-              << "  --manip-test       Manipulator system (rotators, animators, sliders, aim)\n"
-              << "  --canpath-test     CanPathTo + GetThreatBetweenPositions\n"
-              << "  --armor-test      Armor system (damage multipliers by armor/damage type)\n"
-              << "  --vet-test         Veterancy system (regen, vet XP dispersal, level up)\n"
-              << "  --wreck-test       Wreckage system (SetMaxReclaimValues, GetHeading)\n"
-              << "  --adjacency-test   Adjacency bonus system + SetFiringRandomness\n"
-              << "  --stats-test       Stats/telemetry system (SetStat/GetStat/UpdateStat)\n"
-              << "  --silo-test        Missile silo ammo system (Give/Remove/Get nuke+tactical)\n"
-              << "  --flags-test       Unit targeting flags (DoNotTarget, Reclaimable, IsValidTarget)\n"
-              << "  --layercap-test    Weapon fire target layer caps\n"
-              << "  --massstub-test    Mass stub conversion (weapon/movement/fuel/projectile/misc)\n"
-              << "  --massstub2-test   Mass stub conversion II (damage flags/caps/weapon/proj/elevation)\n"
-              << "  --massstub3-test   Mass stub conversion III (brain/weapon/projectile/platoon)\n"
-              << "  --anim-test        SCA skeletal animation (parsing, bone matrices, GPU skinning)\n"
-              << "  --teamcolor-test   Team color rendering (SpecTeam texture, alpha mask blending)\n"
-              << "  --normal-test      Normal map rendering (tangent-space normal maps, TBN matrix)\n"
-              << "  --prop-test        Map prop rendering (SCMAP parsing, prop meshes, orientation)\n"
-              << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
-              << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
-              << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
-              << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
-              << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
-              << "  --targeting-test   How weapons choose targets (priorities, restrictions, orders)\n"
-              << "  --aim-test         Turrets turn toward targets before firing\n"
-              << "  --death-test       Units die through their scripts and leave retail wrecks\n"
-              << "  --impact-test      Projectiles impact through their scripts\n"
-              << "  --arc-test         Shots fly ballistic arcs onto their targets\n"
-              << "  --collide-test     Shots meet what is in their way\n"
-              << "  --area-test        Blasts reach what stands in them; shields absorb\n"
-              << "  --drive-test       Ground units turn, accelerate and brake\n"
-              << "  --crowd-test       Ground units keep apart\n"
-              << "  --formation-test   Groups move in formation\n"
-              << "  --missile-test     Silos build missiles; launchers fire them\n"
-              << "  --defence-test     Anti-missile weapons shoot missiles down\n"
-              << "  --beam-weapon-test Beam weapons reach, hit and damage\n"
-              << "  --charge-test      Economy events, OverCharge and teleports cost and take time\n"
-              << "  --range-test       Build, repair, reclaim and capture reach, guards, the queue\n"
-              << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
-              << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
-              << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
-              << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
-              << "  --unitsound-test   Unit sound (PlayUnitSound, PlayUnitAmbientSound, StopUnitAmbientSound)\n"
-              << "  --medstub-test     Medium stubs (SetBoneEnabled, AddOnGivenCallback, AddBoundedProp)\n"
-              << "  --lowstub-test     Low-priority stubs (Destroy/BeenDestroyed, CreateBuilderArmController)\n"
-              << "  --blend-test       Blend-weight skinning (multi-bone vertex parsing, weight validation)\n"
-              << "  --ui-test          UI control system (Frame, Group, LazyVar, moho bindings)\n"
-              << "  --bitmap-test      Bitmap control (SetNewTexture, solid color, UVs, animation)\n"
-              << "  --text-test        Text control (SetNewFont, SetText, font metrics, centering)\n"
-              << "  --edit-test        Edit/ItemList/Scrollbar controls (text input, list ops, scroll)\n"
-              << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
-              << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
-              << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
-              << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
-              << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
-              << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
-              << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
-              << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
-              << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
-              << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
-              << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
-              << "  --border-render-test Border 9-patch rendering (6-texture ninepatch)\n"
-              << "  --edit-render-test Edit control visuals (background, text, caret)\n"
-              << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
-              << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
-              << "  --emitter-test     IEffect/emitter system (Create*Emitter, beams, decals, chaining)\n"
-              << "  --collision-test   CollisionBeam entity (__init, Enable/Disable, SetBeamFx, GetLauncher)\n"
-              << "  --decalsplat-test  Decal/Splat system (CreateDecal, CreateSplat, CreateSplatOnBone, lifetime)\n"
-              << "  --cmd-test         Issue commands + economy events (Nuke/Tactical/Teleport/Ferry/Sacrifice)\n"
-              << "  --deposit-test     Resource deposits + manipulator stub conversions\n"
-              << "  --beam-test        Beam rendering (construction/reclaim/repair/capture/collision)\n"
-              << "  --shield-render-test Shield bubble rendering (projected circles)\n"
-              << "  --vet-adj-render-test Veterancy indicators + adjacency lines\n"
-              << "  --intel-overlay-test Intel range overlay (radar/sonar/omni circles)\n"
-              << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"
-              << "  --vfx-render-test  VFX/emitter particle rendering\n"
-              << "  --transport-silo-test Transport cargo + silo ammo visuals\n"
-              << "  --dualstate-test   Dual Lua state split (sim_L/ui_L isolation)\n"
-              << "  --construction-test Construction panel (EntityCategoryGetUnitList)\n"
-              << "  --phase2-test      Phase 2 integration (construction, orders, unitview, tooltips)\n"
-              << "  --phase3-test      Phase 3 integration (state machine, beat system, score flow)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
-              << "  --profile-test     Profiler system (zones, nesting, rolling stats)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --help             Show this help message\n";
     // clang-format on
 }
 
-static osc::lua::InitConfig parse_args(int argc, char* argv[]) {
+static osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests) {
     osc::platform::GameInstallHints hints;
     bool print_install = false;
 
@@ -460,6 +354,7 @@ static osc::lua::InitConfig parse_args(int argc, char* argv[]) {
             print_install = true;
         } else if (std::strcmp(argv[i], "--help") == 0) {
             print_usage();
+            if (tests) tests->print_usage();
             std::exit(0);
         }
     }
@@ -521,15 +416,14 @@ static std::string parse_map_arg(int argc, char* argv[]) {
     return {};
 }
 
-static bool parse_flag(int argc, char* argv[], const char* flag) {
+bool parse_flag(int argc, char* argv[], const char* flag) {
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], flag) == 0) return true;
     }
     return false;
 }
 
-static std::string parse_string_arg(int argc, char* argv[], const char* flag,
-                                     const char* default_val = "") {
+std::string parse_string_arg(int argc, char* argv[], const char* flag, const char* default_val) {
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], flag) == 0 && i + 1 < argc) {
             return argv[++i];
@@ -538,14 +432,7 @@ static std::string parse_string_arg(int argc, char* argv[], const char* flag,
     return default_val;
 }
 
-/// Exit code for a test mode run when no game data is available: CTest
-/// treats it as "skipped" (SKIP_RETURN_CODE), so data-backed tests pass
-/// harmlessly on machines without Forged Alliance.
-constexpr int kExitSkippedNoData = 77;
-
-/// End a test-mode run: fold smoke-harness issues into the tally, print a
-/// summary, and return the process exit code (0 = all checks passed).
-static int finish_test_run(const char* mode, osc::u32 smoke_issues = 0) {
+int finish_test_run(const char* mode, osc::u32 smoke_issues) {
     if (smoke_issues > 0) {
         osc::test_status::record_failure(
             fmt::format("{} smoke issue(s) reported (see smoke report)", smoke_issues));
@@ -562,9 +449,7 @@ static int finish_test_run(const char* mode, osc::u32 smoke_issues = 0) {
     return 1;
 }
 
-/// The UI state reaches the sim through a registry pointer; clear it before
-/// the sim is destroyed so UI scripts see "no sim" rather than freed memory.
-static void detach_ui_from_sim(lua_State* uiL) {
+void detach_ui_from_sim(lua_State* uiL) {
     lua_pushstring(uiL, "osc_sim_state");
     lua_pushnil(uiL);
     lua_rawset(uiL, LUA_REGISTRYINDEX);
@@ -709,7 +594,7 @@ static int play_replay(osc::sim::SimState& sim, const osc::sim::Replay& replay) 
 /// The random seed of a new game: `--seed` when given; else a fixed one when
 /// the run must repeat (tests, headless runs, captures); else a fresh one.
 /// A multiplayer session then replaces it with the seed its peers share.
-static osc::u64 new_game_seed(const std::string& seed_arg, bool reproducible) {
+osc::u64 new_game_seed(const std::string& seed_arg, bool reproducible) {
     if (!seed_arg.empty()) return std::strtoull(seed_arg.c_str(), nullptr, 0);
     if (reproducible) return osc::sim::SimRandom::kDefaultSeed;
     std::random_device rd;
@@ -748,19 +633,20 @@ struct WorldInterp {
     }
 };
 
-static bool execute_reload_sequence(
-    std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
-    std::unique_ptr<osc::sim::SimState>& sim_state, osc::lua::LuaState& ui_lua_state,
-    osc::vfs::VirtualFileSystem& vfs, osc::blueprints::BlueprintStore& store,
-    osc::lua::InitLoader& loader, const osc::lua::InitConfig& config,
-    osc::lua::ScenarioMetadata& scenario_meta, osc::GameStateManager& game_state_mgr,
-    osc::renderer::Renderer* renderer,            // nullable for headless
-    osc::renderer::InputHandler* input_handler,   // nullable for headless
-    std::unordered_set<osc::u32>* prev_selection, // nullable for headless
-    WorldInterp* world_interp,                    // nullable for headless
-    osc::u64 seed,                                // the new game's random seed
-    double& sim_accumulator, const std::string& launch_scenario,
-    const osc::sim::Replay* replay = nullptr) { // a replay to play instead
+bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
+                             std::unique_ptr<osc::sim::SimState>& sim_state,
+                             osc::lua::LuaState& ui_lua_state, osc::vfs::VirtualFileSystem& vfs,
+                             osc::blueprints::BlueprintStore& store, osc::lua::InitLoader& loader,
+                             const osc::lua::InitConfig& config,
+                             osc::lua::ScenarioMetadata& scenario_meta,
+                             osc::GameStateManager& game_state_mgr,
+                             osc::renderer::Renderer* renderer,            // nullable for headless
+                             osc::renderer::InputHandler* input_handler,   // nullable for headless
+                             std::unordered_set<osc::u32>* prev_selection, // nullable for headless
+                             WorldInterp* world_interp,                    // nullable for headless
+                             osc::u64 seed, // the new game's random seed
+                             double& sim_accumulator, const std::string& launch_scenario,
+                             const osc::sim::Replay* replay) { // a replay to play instead
 
     lua_State* uiL = ui_lua_state.raw();
 
@@ -992,7 +878,7 @@ static bool execute_reload_sequence(
 /// Hand the UI's queued SimCallbacks to the sim. Moho runs them as
 /// commands, inside a tick: in multiplayer they are broadcast and every peer
 /// runs them on the same tick; in single-player they run at the next tick.
-static void submit_sim_callbacks(osc::sim::SimCallbackQueue& queue, osc::sim::SimState& sim) {
+void submit_sim_callbacks(osc::sim::SimCallbackQueue& queue, osc::sim::SimState& sim) {
     for (auto& cb : queue.drain()) sim.submit_callback(std::move(cb));
 }
 
@@ -1044,7 +930,7 @@ static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
 /// game UI has loaded the module. Build mode carries the footprint (for
 /// the ghost and the snap).
-static osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
+osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     osc::renderer::CommandMode m;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
     if (!lua_isfunction(uiL, -1)) {
@@ -1077,7 +963,7 @@ static osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
 
 /// Report an issued command to commandmode.OnCommandIssued, as Moho does:
 /// a non-Shift command ends the mode, and FA draws its feedback blip.
-static void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c) {
+void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c) {
     lua_newtable(uiL);
     lua_pushstring(uiL, "CommandType");
     lua_pushstring(uiL, c.type.c_str());
@@ -1138,10 +1024,8 @@ static void sync_build_ghost(osc::sim::SimState& sim, const osc::renderer::Comma
 /// action (`action`), even one that leaves the selection unchanged -- retail
 /// refreshes the orders and construction panels on those -- as well as any
 /// change. `prev` becomes `cur`.
-static void dispatch_selection_change(lua_State* uL,
-                                      std::unordered_set<osc::u32>& prev,
-                                      const std::unordered_set<osc::u32>& cur,
-                                      bool action) {
+void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev,
+                               const std::unordered_set<osc::u32>& cur, bool action) {
     if (cur == prev && !action) return;
     std::vector<osc::u32> old_ids(prev.begin(), prev.end());
     std::vector<osc::u32> new_ids(cur.begin(), cur.end());
@@ -1191,7 +1075,7 @@ static void dispatch_selection_change(lua_State* uL,
 /// sync channel (/lua/UserSync.lua and its hooks: OnSync, a fresh Sync and
 /// UnitData) is loaded for the new session, then uimain.StartGameUI makes the
 /// Lua provider, whose loading dialog shows while the world loads.
-static void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
+void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
     if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
         spdlog::warn("UserSync.lua: {}", r.error().message);
     osc::core::call_start_game_ui(uiL);
@@ -1200,7 +1084,7 @@ static void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
 
 /// One Moho sim beat on the user side: the sync channel (sim -> UI data and
 /// focus changes, OnSync), then the game UI's beat functions.
-static void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
+void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua_State* uiL) {
     if (sim_lua) osc::lua::sync_beat(sim_lua->raw(), uiL);
     if (sim) osc::lua::notify_focus_army_damage(uiL, *sim);
     osc::core::call_game_beat(uiL);
@@ -1211,8 +1095,7 @@ static void world_beat(osc::lua::LuaState* sim_lua, osc::sim::SimState* sim, lua
 /// adjudication without one), the UI hears uimain.NoteGameOver. Retail's
 /// game-result UI (Sync.GameResult -> DoGameResult) announces the outcome and
 /// offers the score screen: nothing is paused and the view is not switched.
-static void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr,
-                                    lua_State* uiL) {
+void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManager& mgr, lua_State* uiL) {
     if (!sim || !sim->game_ended() || mgr.game_over()) return;
     mgr.set_game_over(true);
     const osc::i32 result = sim->player_result();
@@ -1225,19 +1108,15 @@ static void note_game_over_if_ended(osc::sim::SimState* sim, osc::GameStateManag
 
 /// The world is loaded: build FA's game interface (gamemain.CreateUI) and
 /// fade the loading dialog out.
-static void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld,
-                            bool is_replay) {
+void finish_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld, bool is_replay) {
     wld.create_game_interface(uiL, is_replay);
     wld.stop_loading_dialog(uiL);
 }
 
 /// Pump N UI frames: resume coroutines, fire OnBeat, fire beat functions.
-static void pump_ui_frames(
-    osc::lua::LuaState& ui_lua_state,
-    osc::sim::ThreadManager& ui_thread_manager,
-    osc::lua::BeatFunctionRegistry& beat_registry,
-    int count,
-    osc::u32& ui_frame_counter) {
+void pump_ui_frames(osc::lua::LuaState& ui_lua_state, osc::sim::ThreadManager& ui_thread_manager,
+                    osc::lua::BeatFunctionRegistry& beat_registry, int count,
+                    osc::u32& ui_frame_counter) {
     lua_State* uL = ui_lua_state.raw();
     for (int i = 0; i < count; i++) {
         ui_frame_counter++;
@@ -1248,13 +1127,11 @@ static void pump_ui_frames(
     }
 }
 
-static void pump_ui_frames_with_controls(
-    osc::lua::LuaState& ui_lua_state,
-    osc::sim::ThreadManager& ui_thread_manager,
-    osc::lua::BeatFunctionRegistry& beat_registry,
-    osc::ui::UIControlRegistry& ui_registry,
-    int count,
-    osc::u32& ui_frame_counter) {
+void pump_ui_frames_with_controls(osc::lua::LuaState& ui_lua_state,
+                                  osc::sim::ThreadManager& ui_thread_manager,
+                                  osc::lua::BeatFunctionRegistry& beat_registry,
+                                  osc::ui::UIControlRegistry& ui_registry, int count,
+                                  osc::u32& ui_frame_counter) {
     lua_State* uL = ui_lua_state.raw();
     osc::ui::UIDispatch dispatch;
     for (int i = 0; i < count; i++) {
@@ -1266,293 +1143,6 @@ static void pump_ui_frames_with_controls(
         osc::core::call_on_beat(uL, 1.0 / 30.0);
         beat_registry.fire_all(uL);
     }
-}
-
-// ── Headless two-process LAN lockstep verification (multiplayer step 4) ──
-// One process runs `--mp-host`, another `--mp-join <addr>`. They connect over
-// real TCP, build identical minimal sims, and drive a LockstepSession: the host
-// issues scripted player orders through the SAME route_command path the game
-// uses; both sims advance in lockstep, exchanging command frames + checksums.
-// Each side self-reports its final tick / checksum and whether it desynced —
-// matching checksums with desynced()==false on both processes is a synced match.
-static int run_mp_lan_test(bool is_host, const std::string& address,
-                           osc::u16 port, osc::u32 frames, bool inject_desync) {
-    using namespace osc;
-    namespace chrono = std::chrono;
-
-    // Stand up the transport through the SAME entry points the lobby
-    // HostGame / JoinGame bindings use, so this verifies that plumbing too.
-    auto& mp = lua::mp_net_state();
-    mp.reset();
-    const bool ok = is_host ? lua::mp_begin_host(port)
-                            : lua::mp_begin_join(address, port);
-    if (!ok) {
-        spdlog::error("[mp] transport setup failed ({})",
-                      is_host ? "host" : "join");
-        return 1;
-    }
-
-    if (is_host) {
-        spdlog::info("[mp] host listening on port {} — waiting for a peer...",
-                     mp.port);
-        bool connected = false;
-        for (int i = 0; i < 6000 && !connected; ++i) { // up to ~60s
-            if (lua::mp_poll_connections() >= 1) connected = true;
-            else std::this_thread::sleep_for(chrono::milliseconds(10));
-        }
-        if (!connected) {
-            spdlog::error("[mp] host: no peer connected, aborting");
-            lua::mp_teardown();
-            return 1;
-        }
-        spdlog::info("[mp] host: peer connected");
-    } else {
-        spdlog::info("[mp] client connected to {}:{}", address, port);
-    }
-
-    // Minimal deterministic sim, constructed identically on both sides.
-    lua_State* L = lua_open();
-    auto sim = std::make_unique<sim::SimState>(L, nullptr);
-    std::vector<u32> unit_ids;
-    for (int i = 0; i < 3; ++i) {
-        auto u = std::make_unique<sim::Unit>();
-        u->set_army(0);
-        u->set_max_speed(4.0f);
-        u->set_position({static_cast<f32>(i * 10), 0.0f, 0.0f});
-        unit_ids.push_back(
-            sim->entity_registry().register_entity(std::move(u)));
-    }
-
-    // Build the LockstepSession over the transport and install the sim's
-    // command sink — exactly what the game does at launch.
-    lua::mp_attach_session(*sim);
-    auto* session = mp.session.get();
-
-    auto issue = [&](u32 unit_id, const sim::UnitCommand& cmd) {
-        sim->set_human_input_active(true);   // player order → sink → session
-        sim->route_command({unit_id}, cmd, true);
-        sim->set_human_input_active(false);
-    };
-    auto issue_move = [&](u32 unit_id, f32 x, f32 z) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Move;
-        cmd.target_pos = {x, 0.0f, z};
-        issue(unit_id, cmd);
-    };
-    auto issue_stop = [&](u32 unit_id) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Stop;
-        issue(unit_id, cmd);
-    };
-
-    bool stalled = false;
-    // Run the full frame count (don't early-exit on desync): both peers must keep
-    // exchanging frames so a divergence is detected symmetrically on both sides —
-    // if one side bailed the moment it noticed, it would starve the other of the
-    // frame carrying the mismatching checksum.
-    for (u32 round = 0; round < frames; ++round) {
-        // Host scripts a few player orders at known frames (client stays silent).
-        if (is_host) {
-            if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
-            if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
-            if (round == 20) issue_move(unit_ids[2], 100.0f, -400.0f);
-            if (round == 30) issue_stop(unit_ids[0]); // mid-move Stop → must sync
-            if (inject_desync && round == 15) {
-                // Negative test: apply a LOCAL-only order (human input inactive
-                // → route_command's direct branch, NOT broadcast) so this sim
-                // deliberately diverges. The checksum exchange must catch it.
-                sim::UnitCommand cmd;
-                cmd.type = sim::CommandType::Move;
-                cmd.target_pos = {999.0f, 0.0f, 999.0f};
-                sim->route_command({unit_ids[1]}, cmd, true);
-            }
-        }
-        session->send_frame();
-        // Pump until this side advances one tick (both peers confirmed frame).
-        for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
-            lua::mp_pump(); // drain the mux (game channel) + accept peers
-            session->receive_and_advance();
-            if (sim->tick_count() <= round)
-                std::this_thread::sleep_for(chrono::milliseconds(1));
-        }
-        if (sim->tick_count() <= round) {
-            spdlog::error("[mp] stalled at round {} (tick {})", round,
-                          sim->tick_count());
-            stalled = true;
-            break;
-        }
-    }
-
-    const u32 final_tick = sim->tick_count();
-    const u32 checksum = sim->compute_sync_checksum();
-    const bool desynced = session->desynced();
-    spdlog::info("[mp] {} RESULT: tick={} checksum={:#010x} desynced={}",
-                 is_host ? "HOST" : "CLIENT", final_tick, checksum, desynced);
-    // Machine-greppable summary line (stdout).
-    std::printf("MP_RESULT role=%s tick=%u checksum=%08x desynced=%d stalled=%d\n",
-                is_host ? "host" : "client", final_tick, checksum,
-                desynced ? 1 : 0, stalled ? 1 : 0);
-    std::fflush(stdout);
-
-    // Tear down the session/transport before destroying the sim + Lua state
-    // (the session references the sim; the sim references L).
-    sim->clear_local_command_sink();
-    lua::mp_teardown();
-    sim.reset();
-    lua_close(L);
-
-    if (inject_desync) {
-        // Negative test: success == the injected divergence WAS detected.
-        return (desynced && !stalled) ? 0 : 3;
-    }
-    return (desynced || stalled) ? 2 : 0;
-}
-
-// ── Headless two-process LAN lobby lifecycle verification ──
-// `--lan-host` / `--lan-join <ip>` drive the REAL lobby handshake over TCP: the
-// host advertises a config (scenario + seed), the client applies it and readies,
-// the host fires the launch barrier. Both then seed a sim from the shared seed
-// (printed as an rng probe to prove it propagated), attach a LockstepSession over
-// the mux *game* channel of the same connection, and run a scripted lockstep
-// match. Matching scenario/seed/rng/checksum with desynced=0 on both processes ==
-// a synced LAN lobby→game lifecycle. (Uses a minimal sim rather than loading the
-// full scenario, so the network path — not the FA scenario boot — is what's
-// exercised; scenario boot is covered by --full-smoke-test.)
-static int run_lan_lobby_test(bool is_host, const std::string& address,
-                              osc::u16 port, osc::u32 frames, osc::u32 drop_at) {
-    using namespace osc;
-    namespace chrono = std::chrono;
-
-    auto& mp = lua::mp_net_state();
-    mp.reset();
-    const u64 host_seed = 0xA5A5F00DCAFEBABEull;
-    const std::string scenario = "/maps/SCMP_009/SCMP_009_scenario.lua";
-
-    const bool ok = is_host ? lua::mp_begin_host(port)
-                            : lua::mp_begin_join(address, port);
-    if (!ok) {
-        spdlog::error("[lan] transport setup failed ({})",
-                      is_host ? "host" : "join");
-        return 1;
-    }
-
-    if (is_host) {
-        spdlog::info("[lan] host listening on port {} — waiting for a peer...",
-                     mp.port);
-        bool connected = false;
-        for (int i = 0; i < 6000 && !connected; ++i) {
-            if (lua::mp_poll_connections() >= 1) connected = true;
-            else std::this_thread::sleep_for(chrono::milliseconds(10));
-        }
-        if (!connected) {
-            spdlog::error("[lan] host: no peer connected, aborting");
-            lua::mp_teardown();
-            return 1;
-        }
-        mp.lobby->set_host_config(lua::LanSessionConfig{scenario, host_seed});
-    }
-
-    // Drive the lobby handshake to the launch barrier on both sides.
-    auto* lob = mp.lobby.get();
-    for (int i = 0; i < 10000 && !lob->launch_ready(); ++i) {
-        lua::mp_pump();
-        lob->poll();
-        if (is_host && lob->state() == lua::LanLobby::State::Ready)
-            lob->request_launch();
-        if (!lob->launch_ready())
-            std::this_thread::sleep_for(chrono::milliseconds(1));
-    }
-    if (!lob->launch_ready()) {
-        spdlog::error("[lan] lobby handshake did not reach launch");
-        lua::mp_teardown();
-        return 2;
-    }
-    spdlog::info("[lan] {} launch barrier reached: scenario='{}' seed={:#018x}",
-                 is_host ? "HOST" : "CLIENT", lob->config().scenario,
-                 lob->config().seed);
-
-    // Apply the synced seed and build the lockstep session over the game channel.
-    mp.seed = lob->config().seed;
-    lua_State* L = lua_open();
-    auto sim = std::make_unique<sim::SimState>(L, nullptr);
-    std::vector<u32> unit_ids;
-    for (int i = 0; i < 3; ++i) {
-        auto u = std::make_unique<sim::Unit>();
-        u->set_army(0);
-        u->set_max_speed(4.0f);
-        u->set_position({static_cast<f32>(i * 10), 0.0f, 0.0f});
-        unit_ids.push_back(sim->entity_registry().register_entity(std::move(u)));
-    }
-    lua::mp_attach_session(*sim); // seeds the sim from mp.seed
-    auto* session = mp.session.get();
-    const u32 rng_probe = sim->sim_rand(); // identical iff the seed propagated
-
-    auto issue_move = [&](u32 id, f32 x, f32 z) {
-        sim::UnitCommand cmd;
-        cmd.type = sim::CommandType::Move;
-        cmd.target_pos = {x, 0.0f, z};
-        sim->set_human_input_active(true);
-        sim->route_command({id}, cmd, true);
-        sim->set_human_input_active(false);
-    };
-
-    bool stalled = false;
-    u32 dropped_count = 0;
-    for (u32 round = 0; round < frames; ++round) {
-        // Optional: the client leaves mid-match to exercise drop handling.
-        if (!is_host && drop_at > 0 && round == drop_at) {
-            spdlog::warn("[lan] client leaving at round {} (--mp-drop-at)", round);
-            std::fflush(stdout);
-            std::exit(0);
-        }
-        if (is_host) {
-            if (round == 1) issue_move(unit_ids[0], 500.0f, 0.0f);
-            if (round == 10) issue_move(unit_ids[1], -300.0f, 200.0f);
-        }
-        session->send_frame();
-        auto last_resend = chrono::steady_clock::now();
-        for (int i = 0; i < 20000 && sim->tick_count() <= round; ++i) {
-            lua::mp_pump();
-            session->receive_and_advance();
-            for (u32 s : session->take_dropped()) {
-                ++dropped_count;
-                spdlog::warn("[lan] peer {} dropped — continuing solo", s);
-            }
-            if (sim->tick_count() <= round) {
-                // Resend while stalled so a silent peer's drop timer accrues
-                // (behind = next_frame_ - peer_confirmed grows only on send_frame),
-                // but only at the ~10 Hz sim cadence — resending every poll would
-                // race next_frame_ ahead and false-drop a merely-slow peer.
-                auto now = chrono::steady_clock::now();
-                if (now - last_resend >= chrono::milliseconds(100)) {
-                    session->send_frame();
-                    last_resend = now;
-                }
-                std::this_thread::sleep_for(chrono::milliseconds(1));
-            }
-        }
-        if (sim->tick_count() <= round) { stalled = true; break; }
-    }
-
-    const u32 checksum = sim->compute_sync_checksum();
-    const bool desynced = session->desynced();
-    spdlog::info("[lan] {} RESULT tick={} checksum={:#010x} rng={:#010x} desynced={} dropped={}",
-                 is_host ? "HOST" : "CLIENT", sim->tick_count(), checksum,
-                 rng_probe, desynced, dropped_count);
-    std::printf("LAN_RESULT role=%s scenario=%s seed=%08x%08x rng=%08x tick=%u "
-                "checksum=%08x desynced=%d stalled=%d dropped=%d\n",
-                is_host ? "host" : "client", lob->config().scenario.c_str(),
-                static_cast<u32>(lob->config().seed >> 32),
-                static_cast<u32>(lob->config().seed & 0xFFFFFFFFull), rng_probe,
-                sim->tick_count(), checksum, desynced ? 1 : 0, stalled ? 1 : 0,
-                dropped_count > 0 ? 1 : 0);
-    std::fflush(stdout);
-
-    sim->clear_local_command_sink();
-    lua::mp_teardown();
-    sim.reset();
-    lua_close(L);
-    return (desynced || stalled) ? 2 : 0;
 }
 
 // Build a fixed 1v1 human-vs-human sessionConfig for `scenario` and launch it via
@@ -1598,98 +1188,34 @@ static void lan_launch_session(lua_State* uL, const std::string& scenario) {
     }
 }
 
-int main(int argc, char* argv[]) {
+/// A test mode's flag given to the game (the integration runner has them),
+/// or null.
+static const char* test_mode_flag(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
+                          arg != "--replay-flow-test";
+        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
+            arg == "--lan-host" || arg == "--lan-join")
+            return argv[i];
+    }
+    return nullptr;
+}
+
+int run(int argc, char* argv[], TestModes* tests) {
     osc::log::init();
     osc::platform::install_crash_handler();
 
-    auto config = parse_args(argc, argv);
+    auto config = parse_args(argc, argv, tests);
 
-    // Multiplayer LAN verification: two processes (host + join) run a real
-    // TCP lockstep match and self-report sync. Handled before any engine init
-    // since it needs no FA data / window.
-    {
-        bool mp_host = parse_flag(argc, argv, "--mp-host");
-        std::string mp_join = parse_string_arg(argc, argv, "--mp-join", "");
-        if (mp_host || !mp_join.empty()) {
-            std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
-            std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "60");
-            bool inject_desync = parse_flag(argc, argv, "--mp-desync");
-            auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
-            auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
-            return run_mp_lan_test(mp_host, mp_join, port, frames, inject_desync);
-        }
-
-        // Headless LAN lobby lifecycle verification (host + client processes).
-        bool lan_host = parse_flag(argc, argv, "--lan-host");
-        std::string lan_join = parse_string_arg(argc, argv, "--lan-join", "");
-        if (lan_host || !lan_join.empty()) {
-            std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
-            std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "40");
-            std::string drop_s = parse_string_arg(argc, argv, "--mp-drop-at", "0");
-            auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
-            auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
-            auto drop_at = static_cast<osc::u32>(std::strtoul(drop_s.c_str(), nullptr, 10));
-            return run_lan_lobby_test(lan_host, lan_join, port, frames, drop_at);
-        }
-
-        // Headless check of the LAN UI engine globals (LanHost/LanJoin bindings).
-        if (parse_flag(argc, argv, "--lan-ui-test")) {
-            osc::lua::LuaState uiL;
-            osc::lua::register_lan_ui_bindings(uiL);
-            auto& mp = osc::lua::mp_net_state();
-            mp.reset();
-            int fails = 0;
-            uiL.do_string("__r_host = LanHost()");
-            if (!mp.transport_ready) {
-                spdlog::error("[lan-ui] LanHost did not create a transport");
-                fails++;
-            } else {
-                spdlog::info("[lan-ui] LanHost OK (listening on port {})", mp.port);
-            }
-            osc::lua::mp_teardown();
-            uiL.do_string("__r_join = LanJoin('')");
-            bool rj = false;
-            {
-                lua_State* L = uiL.raw();
-                lua_pushstring(L, "__r_join");
-                lua_rawget(L, LUA_GLOBALSINDEX);
-                rj = lua_toboolean(L, -1) != 0;
-                lua_pop(L, 1);
-            }
-            if (rj || mp.transport_ready) {
-                spdlog::error("[lan-ui] LanJoin(empty) was not rejected");
-                fails++;
-            } else {
-                spdlog::info("[lan-ui] LanJoin(empty) correctly rejected");
-            }
-            osc::lua::mp_teardown();
-            // The LAN dialog snippet must be syntactically valid and pcall-safe:
-            // on a bare state (no maui/UIUtil) it runs its guard, fails to build
-            // the UI, catches that in its pcall, and returns cleanly.
-            uiL.do_string("function LOG(s) end"); // stub the FA logger
-            {
-                auto lr = uiL.do_string(osc::lua::kLanDialogLua);
-                if (!lr) {
-                    spdlog::error("[lan-ui] dialog snippet errored: {}",
-                                  lr.error().message);
-                    fails++;
-                }
-                lua_State* L = uiL.raw();
-                lua_pushstring(L, "__osc_lan_dialog_built");
-                lua_rawget(L, LUA_GLOBALSINDEX);
-                bool built_flag = lua_toboolean(L, -1) != 0;
-                lua_pop(L, 1);
-                if (!built_flag) {
-                    spdlog::error("[lan-ui] dialog snippet did not execute");
-                    fails++;
-                } else {
-                    spdlog::info("[lan-ui] dialog snippet parses + degrades gracefully");
-                }
-            }
-            std::printf("LAN_UI_TEST fails=%d\n", fails);
-            std::fflush(stdout);
-            return fails == 0 ? 0 : 1;
-        }
+    // The test modes (the integration runner's): which the command line
+    // asks for, and those that need no engine.
+    const TestRequest request = tests ? tests->parse(argc, argv) : TestRequest{};
+    if (tests) {
+        if (auto code = tests->before_boot(argc, argv)) return *code;
+    } else if (const char* flag = test_mode_flag(argc, argv)) {
+        spdlog::error("{} is a test mode: run it with osc_integration", flag);
+        return 2;
     }
 
     auto map_path = parse_map_arg(argc, argv);
@@ -1703,141 +1229,18 @@ int main(int argc, char* argv[]) {
     }
     g_record_path = parse_string_arg(argc, argv, "--record", "");
     const bool scripted_orders = parse_flag(argc, argv, "--scripted-orders");
-    bool damage_test = parse_flag(argc, argv, "--damage-test");
-    bool move_test = parse_flag(argc, argv, "--move-test");
-    bool fire_test = parse_flag(argc, argv, "--fire-test");
-    bool economy_test = parse_flag(argc, argv, "--economy-test");
-    bool build_test = parse_flag(argc, argv, "--build-test");
-    bool chain_test = parse_flag(argc, argv, "--chain-test");
-    bool ai_test = parse_flag(argc, argv, "--ai-test");
-    bool reclaim_test = parse_flag(argc, argv, "--reclaim-test");
-    bool platoon_test = parse_flag(argc, argv, "--platoon-test");
-    bool threat_test = parse_flag(argc, argv, "--threat-test");
-    bool combat_test = parse_flag(argc, argv, "--combat-test");
-    bool repair_test = parse_flag(argc, argv, "--repair-test");
-    bool upgrade_test = parse_flag(argc, argv, "--upgrade-test");
-    bool capture_test = parse_flag(argc, argv, "--capture-test");
-    bool path_test = parse_flag(argc, argv, "--path-test");
-    bool toggle_test = parse_flag(argc, argv, "--toggle-test");
-    bool enhance_test = parse_flag(argc, argv, "--enhance-test");
-    bool intel_test = parse_flag(argc, argv, "--intel-test");
-    bool shield_test = parse_flag(argc, argv, "--shield-test");
-    bool transport_test = parse_flag(argc, argv, "--transport-test");
-    bool fow_test = parse_flag(argc, argv, "--fow-test");
-    bool los_test = parse_flag(argc, argv, "--los-test");
-    bool stall_test = parse_flag(argc, argv, "--stall-test");
-    bool jammer_test = parse_flag(argc, argv, "--jammer-test");
-    bool stub_test = parse_flag(argc, argv, "--stub-test");
-    bool audio_test = parse_flag(argc, argv, "--audio-test");
-    bool bone_test = parse_flag(argc, argv, "--bone-test");
-    bool manip_test = parse_flag(argc, argv, "--manip-test");
-    bool canpath_test = parse_flag(argc, argv, "--canpath-test");
-    bool armor_test = parse_flag(argc, argv, "--armor-test");
-    bool vet_test = parse_flag(argc, argv, "--vet-test");
-    bool wreck_test = parse_flag(argc, argv, "--wreck-test");
-    bool adjacency_test = parse_flag(argc, argv, "--adjacency-test");
-    bool stats_test = parse_flag(argc, argv, "--stats-test");
-    bool silo_test = parse_flag(argc, argv, "--silo-test");
-    bool flags_test = parse_flag(argc, argv, "--flags-test");
-    bool layercap_test = parse_flag(argc, argv, "--layercap-test");
-    bool massstub_test = parse_flag(argc, argv, "--massstub-test");
-    bool massstub2_test = parse_flag(argc, argv, "--massstub2-test");
-    bool massstub3_test = parse_flag(argc, argv, "--massstub3-test");
-    bool anim_test = parse_flag(argc, argv, "--anim-test");
-    bool teamcolor_test = parse_flag(argc, argv, "--teamcolor-test");
-    bool normal_test = parse_flag(argc, argv, "--normal-test");
-    bool prop_test = parse_flag(argc, argv, "--prop-test");
-    bool scale_test = parse_flag(argc, argv, "--scale-test");
-    bool specular_test = parse_flag(argc, argv, "--specular-test");
-    bool terrain_normal_test = parse_flag(argc, argv, "--terrain-normal-test");
-    bool terrain_tex_test = parse_flag(argc, argv, "--terrain-tex-test");
-    bool decal_test = parse_flag(argc, argv, "--decal-test");
-    bool projectile_test = parse_flag(argc, argv, "--projectile-test");
-    bool weapon_test = parse_flag(argc, argv, "--weapon-test");
-    bool targeting_test = parse_flag(argc, argv, "--targeting-test");
-    bool aim_test = parse_flag(argc, argv, "--aim-test");
-    bool death_test = parse_flag(argc, argv, "--death-test");
-    bool impact_test = parse_flag(argc, argv, "--impact-test");
-    bool arc_test = parse_flag(argc, argv, "--arc-test");
-    bool collide_test = parse_flag(argc, argv, "--collide-test");
-    bool area_test = parse_flag(argc, argv, "--area-test");
-    bool drive_test = parse_flag(argc, argv, "--drive-test");
-    bool crowd_test = parse_flag(argc, argv, "--crowd-test");
-    bool formation_test = parse_flag(argc, argv, "--formation-test");
-    bool missile_test = parse_flag(argc, argv, "--missile-test");
-    bool defence_test = parse_flag(argc, argv, "--defence-test");
-    bool beam_weapon_test = parse_flag(argc, argv, "--beam-weapon-test");
-    bool charge_test = parse_flag(argc, argv, "--charge-test");
-    bool range_test = parse_flag(argc, argv, "--range-test");
-    bool ferry_test = parse_flag(argc, argv, "--ferry-test");
-    bool shadow_test = parse_flag(argc, argv, "--shadow-test");
-    bool massstub4_test = parse_flag(argc, argv, "--massstub4-test");
-    bool spatial_test = parse_flag(argc, argv, "--spatial-test");
-    bool unitsound_test = parse_flag(argc, argv, "--unitsound-test");
-    bool medstub_test = parse_flag(argc, argv, "--medstub-test");
-    bool lowstub_test = parse_flag(argc, argv, "--lowstub-test");
-    bool blend_test = parse_flag(argc, argv, "--blend-test");
-    bool ui_test = parse_flag(argc, argv, "--ui-test");
-    bool bitmap_test = parse_flag(argc, argv, "--bitmap-test");
-    bool text_test = parse_flag(argc, argv, "--text-test");
-    bool edit_test = parse_flag(argc, argv, "--edit-test");
-    bool controls_test = parse_flag(argc, argv, "--controls-test");
-    bool uiboot_test = parse_flag(argc, argv, "--uiboot-test");
-    bool gameui_test = parse_flag(argc, argv, "--gameui-test");
-    bool audio_data_test = parse_flag(argc, argv, "--audio-data-test");
-    bool victory_test = parse_flag(argc, argv, "--victory-test");
-    // Windowed (it checks what is drawn), so not one of the headless modes.
-    const bool interp_test = parse_flag(argc, argv, "--interp-test");
-    const std::string render_dump_path = parse_string_arg(argc, argv, "--render-dump", "");
     // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
     // --watch <file>: open a replay in the game, as the replay dialog does.
     // --replay-flow-test: the dialog's own path (the first replay
     // GetSpecialFiles lists), played to its end offscreen.
     const std::string watch_path = parse_string_arg(argc, argv, "--watch", "");
     const bool replay_flow_test = parse_flag(argc, argv, "--replay-flow-test");
-    const bool scripted_window = interp_test || !render_dump_path.empty() || replay_flow_test;
-    bool lobby_flow_test = parse_flag(argc, argv, "--lobby-flow-test");
-    bool uirender_test = parse_flag(argc, argv, "--uirender-test");
-    bool font_test = parse_flag(argc, argv, "--font-test");
-    bool scissor_test = parse_flag(argc, argv, "--scissor-test");
-    bool border_render_test = parse_flag(argc, argv, "--border-render-test");
-    bool edit_render_test = parse_flag(argc, argv, "--edit-render-test");
-    bool itemlist_render_test = parse_flag(argc, argv, "--itemlist-render-test");
-    bool scrollbar_render_test = parse_flag(argc, argv, "--scrollbar-render-test");
-    bool anim_render_test = parse_flag(argc, argv, "--anim-render-test");
-    bool tiled_render_test = parse_flag(argc, argv, "--tiled-render-test");
-    bool input_test = parse_flag(argc, argv, "--input-test");
-    bool onframe_test = parse_flag(argc, argv, "--onframe-test");
-    bool cursor_render_test = parse_flag(argc, argv, "--cursor-render-test");
-    bool drag_render_test = parse_flag(argc, argv, "--drag-render-test");
-    bool emitter_test = parse_flag(argc, argv, "--emitter-test");
-    bool collision_test = parse_flag(argc, argv, "--collision-test");
-    bool decalsplat_test = parse_flag(argc, argv, "--decalsplat-test");
-    bool cmd_test = parse_flag(argc, argv, "--cmd-test");
-    bool deposit_test = parse_flag(argc, argv, "--deposit-test");
-    bool beam_test = parse_flag(argc, argv, "--beam-test");
-    bool shield_render_test = parse_flag(argc, argv, "--shield-render-test");
-    bool vet_adj_render_test = parse_flag(argc, argv, "--vet-adj-render-test");
-    bool intel_overlay_test = parse_flag(argc, argv, "--intel-overlay-test");
-    bool enhance_wreck_test = parse_flag(argc, argv, "--enhance-wreck-test");
-    bool vfx_render_test = parse_flag(argc, argv, "--vfx-render-test");
-    bool transport_silo_test = parse_flag(argc, argv, "--transport-silo-test");
-    bool dualstate_test = parse_flag(argc, argv, "--dualstate-test");
+    const bool scripted_window = request.windowed || replay_flow_test;
     bool no_fog = parse_flag(argc, argv, "--no-fog");
     bool legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     bool no_decals = parse_flag(argc, argv, "--no-decals");
     bool profile_enabled = parse_flag(argc, argv, "--profile");
-    bool profile_test = parse_flag(argc, argv, "--profile-test");
-    bool construction_test = parse_flag(argc, argv, "--construction-test");
-    bool phase2_test = parse_flag(argc, argv, "--phase2-test");
-    bool phase3_test = parse_flag(argc, argv, "--phase3-test");
-    bool phase4_test = parse_flag(argc, argv, "--phase4-test");
-    bool phase5_test = parse_flag(argc, argv, "--phase5-test");
-    bool smoke_test = parse_flag(argc, argv, "--smoke-test");
     bool ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
-    bool draw_test = parse_flag(argc, argv, "--draw-test");
-    bool stress_test = parse_flag(argc, argv, "--stress-test");
-    bool full_smoke_test = parse_flag(argc, argv, "--full-smoke-test");
     bool instrument = parse_flag(argc, argv, "--instrument");
     bool builder_debug = parse_flag(argc, argv, "--builder-debug");
     auto ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
@@ -1853,35 +1256,13 @@ int main(int argc, char* argv[]) {
         cmdline_args.insert(argv[i]);
     }
 
-    // Determine if any test/headless flag was set
-    bool any_test =
-        damage_test || move_test || fire_test || economy_test || build_test || chain_test ||
-        ai_test || reclaim_test || platoon_test || threat_test || combat_test || repair_test ||
-        upgrade_test || capture_test || path_test || toggle_test || enhance_test || intel_test ||
-        shield_test || transport_test || fow_test || los_test || stall_test || jammer_test ||
-        stub_test || audio_test || bone_test || manip_test || canpath_test || armor_test ||
-        vet_test || wreck_test || adjacency_test || stats_test || silo_test || flags_test ||
-        layercap_test || massstub_test || massstub2_test || massstub3_test || anim_test ||
-        teamcolor_test || normal_test || prop_test || scale_test || specular_test ||
-        terrain_normal_test || terrain_tex_test || decal_test || projectile_test || weapon_test ||
-        targeting_test || aim_test || death_test || impact_test || arc_test || collide_test ||
-        area_test || drive_test || crowd_test || formation_test || missile_test || defence_test ||
-        beam_weapon_test || charge_test || range_test || ferry_test || shadow_test ||
-        massstub4_test || spatial_test || unitsound_test || medstub_test || lowstub_test ||
-        blend_test || ui_test || bitmap_test || text_test || edit_test || controls_test ||
-        uiboot_test || gameui_test || lobby_flow_test || uirender_test || font_test ||
-        scissor_test || border_render_test || edit_render_test || itemlist_render_test ||
-        scrollbar_render_test || anim_render_test || tiled_render_test || input_test ||
-        onframe_test || cursor_render_test || drag_render_test || emitter_test || collision_test ||
-        decalsplat_test || cmd_test || deposit_test || beam_test || shield_render_test ||
-        vet_adj_render_test || intel_overlay_test || enhance_wreck_test || vfx_render_test ||
-        transport_silo_test || dualstate_test || construction_test || phase2_test || phase3_test ||
-        phase4_test || phase5_test || profile_test || smoke_test || ai_skirmish || draw_test ||
-        stress_test || full_smoke_test || audio_data_test || victory_test;
+    // A checked run: headless, and its exit code is the checks' result (a
+    // test mode, or an AI game whose script errors count).
+    const bool any_test = request.headless || ai_skirmish;
     bool headless = (tick_count > 0) || any_test || replay_to_play.has_value();
-    // --render-dump compares renders; its scene's script errors are logged,
-    // not counted, so a dump is still written.
-    if (any_test || interp_test || replay_flow_test) osc::test_status::set_count_lua_failures(true);
+    // (A scripted windowed test mode counts its script errors if it says
+    // so, in parse.)
+    if (any_test || replay_flow_test) osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
@@ -1896,9 +1277,8 @@ int main(int argc, char* argv[]) {
     spdlog::info("Init file: {}", config.init_file.string());
     spdlog::info("FAF data:  {}", config.faf_data_path.string());
 
-    if (audio_data_test) {
-        osc::test::run_audio_data_test(config.fa_path / "sounds");
-        return finish_test_run("audio-data-test");
+    if (tests) {
+        if (auto code = tests->before_init(config)) return *code;
     }
 
     if (!osc::fs::exists(config.init_file)) {
@@ -2015,7 +1395,7 @@ int main(int argc, char* argv[]) {
                 game_setup.cheat_mult = 2.0;
                 game_setup.build_mult = 2.0;
             }
-        } else if (ai_test || platoon_test || threat_test || combat_test) {
+        } else if (request.ai_army_2) {
             game_setup.ai_armies = {1}; // ARMY_2 (0-based index 1) is AI
         }
     }
@@ -2595,9 +1975,10 @@ int main(int argc, char* argv[]) {
             lua_pushlightuserdata(sL, &game_state_mgr);
             lua_rawset(sL, LUA_REGISTRYINDEX);
         }
-        // FA's game interface. Headless test modes other than --gameui-test
-        // keep a bare root frame: they build and inspect their own controls.
-        if (!headless || gameui_test || victory_test) {
+        // FA's game interface. Headless test modes other than those asking
+        // for it keep a bare root frame: they build and inspect their own
+        // controls.
+        if (!headless || request.world_ui) {
             begin_world_ui(ui_lua_state.raw(), wld_provider);
             finish_world_ui(ui_lua_state.raw(), wld_provider, false);
         }
@@ -2606,92 +1987,19 @@ int main(int argc, char* argv[]) {
         game_state_mgr.transition_to(osc::GameState::FRONT_END, nullptr);
     }
 
-    if (lobby_flow_test) {
-        if (!map_path.empty()) {
-            spdlog::error("--lobby-flow-test runs from the no-map front-end boot; omit --map");
-            return 1;
-        }
-
-        static osc::lua::SmokeTestHarness lobby_harness;
-        lobby_harness.activate();
-        lobby_harness.set_phase("LOBBY_FLOW");
-        lobby_harness.install_panic_handler(ui_lua_state.raw());
-        lobby_harness.install_global_interceptor(ui_lua_state.raw());
-        lobby_harness.install_all_method_interceptors(ui_lua_state.raw());
-
-        spdlog::info("=== Lobby Flow Test: ButtonSkirmish -> hosted lobby ===");
-        auto trigger_result = ui_lua_state.do_string(R"(
-            rawset(_G, '__osc_lobby_flow_before_count', GetNumRootFrames())
-            import('/lua/user/prefs.lua').SetToCurrentProfile('MenuTutorialPrompt', true)
-            local main_menu = import('/lua/ui/menus/main.lua')
-            rawset(_G, '__osc_lobby_flow_button_skirmish_type', type(main_menu.ButtonSkirmish))
-            main_menu.ButtonSkirmish()
-        )");
-        if (!trigger_result) {
-            spdlog::error("Lobby flow ButtonSkirmish error: {}",
-                          trigger_result.error().message);
-            lobby_harness.print_report(true);
-            lobby_harness.write_report_to_file("smoke_report.txt");
-            lobby_harness.deactivate();
-            return 1;
-        }
-
-        pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager,
-                                     beat_registry, ui_registry, 180,
-                                     ui_frame_count);
-
-        auto verify_result = ui_lua_state.do_string(R"(
-            __osc_lobby_flow_after_count = GetNumRootFrames()
-            __osc_lobby_flow_hosted =
-                rawget(_G, '__osc_lobby_hosting_callback_fired') == true
-                and rawget(_G, '__osc_pending_host_comm') == nil
-                and __osc_lobby_flow_after_count >= __osc_lobby_flow_before_count
-        )");
-        if (!verify_result) {
-            spdlog::error("Lobby flow verification error: {}",
-                          verify_result.error().message);
-            lobby_harness.print_report(true);
-            lobby_harness.write_report_to_file("smoke_report.txt");
-            lobby_harness.deactivate();
-            return 1;
-        }
-
-        lua_State* uL = ui_lua_state.raw();
-        lua_getglobal(uL, "__osc_lobby_flow_hosted");
-        const bool hosted = lua_toboolean(uL, -1) != 0;
-        lua_pop(uL, 1);
-
-        if (!hosted) {
-            lua_getglobal(uL, "__osc_lobby_host_game_called");
-            const bool host_game_called = lua_toboolean(uL, -1) != 0;
-            lua_pop(uL, 1);
-            lua_getglobal(uL, "__osc_lobby_hosting_callback_fired");
-            const bool hosting_callback = lua_toboolean(uL, -1) != 0;
-            lua_pop(uL, 1);
-            lua_getglobal(uL, "__osc_pending_host_comm");
-            const bool pending_host_comm = !lua_isnil(uL, -1);
-            lua_pop(uL, 1);
-            lua_getglobal(uL, "__osc_lobby_flow_button_skirmish_type");
-            const char* button_type = lua_tostring(uL, -1);
-            std::string button_type_text = button_type ? button_type : "<nil>";
-            lua_pop(uL, 1);
-
-            spdlog::error(
-                "Lobby flow did not reach hosted lobby state "
-                "(ButtonSkirmish={}, HostGame={}, Hosting={}, pending_comm={})",
-                button_type_text, host_game_called, hosting_callback,
-                pending_host_comm);
-            lobby_harness.print_report(true);
-            lobby_harness.write_report_to_file("smoke_report.txt");
-            lobby_harness.deactivate();
-            return 1;
-        }
-
-        spdlog::info("=== Lobby Flow Test Complete ===");
-        lobby_harness.print_report(true);
-        lobby_harness.write_report_to_file("smoke_report.txt");
-        lobby_harness.deactivate();
-        return finish_test_run("lobby-flow-test", lobby_harness.total_count());
+    // What a test mode drives.
+    Engine engine{config,         map_path,
+                  tick_count,     seed_arg,
+                  ai_personality, vfs,
+                  store,          loader,
+                  sim_lua_state,  sim_state,
+                  scenario_meta,  ui_lua_state,
+                  ui_registry,    ui_thread_manager,
+                  ui_frame_count, beat_registry,
+                  game_state_mgr, wld_provider,
+                  sound};
+    if (tests) {
+        if (auto code = tests->front_end(engine)) return *code;
     }
 
     // Instrumented mode: install SmokeTestHarness for interactive play (M166)
@@ -2865,11 +2173,9 @@ int main(int argc, char* argv[]) {
                 parse_string_arg(argc, argv, "--screenshot-frame", "120").c_str(),
                 nullptr, 10));
             constexpr double kScreenshotFrameDt = 1.0 / 60.0;
-            // --interp-test / --render-dump: four frames per sim tick, on a
-            // fixed clock.
+            // Scripted windowed runs (a test mode's, --replay-flow-test): four
+            // frames per sim tick, on a fixed clock.
             constexpr double kInterpFrameDt = osc::sim::SimState::SECONDS_PER_TICK / 4.0;
-            osc::test::InterpProbe interp_probe;
-            osc::test::RenderDumpProbe render_dump(render_dump_path);
             if (scripted_window) {
                 renderer.set_fixed_frame_dt(static_cast<osc::f32>(kInterpFrameDt));
                 renderer.camera().set_input_enabled(false);
@@ -2942,8 +2248,7 @@ int main(int argc, char* argv[]) {
             }
 
             while (!renderer.should_close() && !screenshot_done &&
-                   !(interp_test && interp_probe.done()) &&
-                   !(!render_dump_path.empty() && render_dump.done()) && !replay_flow_done) {
+                   !(tests && tests->frames_done()) && !replay_flow_done) {
                 osc::Profiler::instance().begin_frame();
                 auto now = std::chrono::high_resolution_clock::now();
                 double dt = std::chrono::duration<double>(now - prev_time).count();
@@ -3130,12 +2435,9 @@ int main(int argc, char* argv[]) {
                 // drawn and what clicks pick.
                 const osc::sim::FrameView frame_view = world_interp.view();
                 input_handler.set_frame_view(frame_view);
-                if (interp_test && sim_state) {
-                    interp_probe.on_frame(*sim_state, frame_view, [&](const char* code) {
-                        auto r = sim_lua_state->do_string(code);
-                        if (!r) spdlog::error("sim Lua: {}", r.error().message);
-                        return static_cast<bool>(r);
-                    });
+                if (tests && sim_state) {
+                    Frame frame{frame_view, renderer, input_handler};
+                    tests->frame_view(engine, frame);
                 }
 
                 // Player input: selection + commands
@@ -3174,18 +2476,9 @@ int main(int argc, char* argv[]) {
                     renderer.render(frame_view, world_interp.history.events(),
                                     ghost ? &*ghost : nullptr, ui_lua_state.raw(),
                                     &ui_registry, sel.empty() ? nullptr : &sel);
-                    if (!render_dump_path.empty()) {
-                        render_dump.on_frame(
-                            *sim_state,
-                            [&](const char* code) {
-                                auto r = sim_lua_state->do_string(code);
-                                if (!r) spdlog::error("sim Lua: {}", r.error().message);
-                                return static_cast<bool>(r);
-                            },
-                            [&](const std::vector<osc::u32>& ids) {
-                                input_handler.set_selected({ids.begin(), ids.end()});
-                            },
-                            [&](std::ostream& out) { renderer.dump_frame(out); });
+                    if (tests) {
+                        Frame frame{frame_view, renderer, input_handler};
+                        tests->frame_rendered(engine, frame);
                     }
                 } else {
                     // No sim state (front-end/lobby) — render UI only
@@ -3438,15 +2731,8 @@ int main(int argc, char* argv[]) {
                 }
                 return finish_test_run("replay-flow-test");
             }
-            if (interp_test) {
-                if (!interp_probe.done())
-                    osc::test_status::fail("[FAIL] interp: the window closed before the check ended");
-                return finish_test_run("interp-test");
-            }
-            if (!render_dump_path.empty()) {
-                if (!render_dump.done())
-                    osc::test_status::fail("[FAIL] render-dump: the window closed before the dump ended");
-                return finish_test_run("render-dump");
+            if (tests) {
+                if (auto code = tests->after_window()) return *code;
             }
             if (!screenshot_path.empty() &&
                 osc::renderer::Renderer::validation_error_count() > 0) {
@@ -3507,271 +2793,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // === Full Smoke Test: 5-phase game lifecycle ===
-    if (full_smoke_test && !map_path.empty()) {
-        // Static so the harness outlives ui_lua_state — interceptor closures
-        // capture a lightuserdata pointer to the harness, and lua_close() during
-        // main() cleanup would segfault if the harness were already freed.
-        static osc::lua::SmokeTestHarness harness;
-        harness.activate();
-        osc::u32 ui_frame_counter = 0;
-
-        // Install interceptors on ui_L (persistent across all phases)
-        harness.install_panic_handler(ui_lua_state.raw());
-        harness.install_global_interceptor(ui_lua_state.raw());
-        harness.install_all_method_interceptors(ui_lua_state.raw());
-
-        // --- Phase 1: FRONT_END ---
-        spdlog::info("=== Phase 1: FRONT_END ===");
-        harness.set_phase("FRONT_END");
-        // Destroy sim to match real FRONT_END state (sim_state is null during lobby)
-        detach_ui_from_sim(ui_lua_state.raw());
-        sim_state.reset();
-        sim_lua_state.reset();
-        store.rebind(nullptr); // Detach from destroyed sim Lua state
-        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
-        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
-        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
-
-        // --- Phase 2: LOBBY ---
-        spdlog::info("=== Phase 2: LOBBY ===");
-        harness.set_phase("LOBBY");
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_full_smoke_map_path");
-            lua_pushstring(uL, map_path.c_str());
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-
-            lua_pushstring(uL, "__osc_full_smoke_ai_personality");
-            lua_pushstring(uL, ai_personality.c_str());
-            lua_rawset(uL, LUA_GLOBALSINDEX);
-
-            spdlog::info("Full smoke: launching through lobby:LaunchGame");
-            auto launch_result = ui_lua_state.do_string(R"(
-                local LobbyClass = {}
-                for k, v in moho.lobby_methods do LobbyClass[k] = v end
-                local lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Full Smoke Host')
-                local scenario = rawget(_G, '__osc_full_smoke_map_path')
-                local ai = rawget(_G, '__osc_full_smoke_ai_personality') or 'adaptive'
-                lobby:LaunchGame({
-                    GameOptions = {
-                        ScenarioFile = scenario,
-                    },
-                    PlayerOptions = {
-                        [1] = {
-                            Human = true,
-                            PlayerName = 'Player',
-                            Faction = 1,
-                            Team = 1,
-                            StartSpot = 1,
-                        },
-                        [2] = {
-                            Human = false,
-                            PlayerName = 'AI',
-                            AIPersonality = ai,
-                            Faction = 2,
-                            Team = 2,
-                            StartSpot = 2,
-                        },
-                    },
-                })
-                rawset(_G, '__osc_full_smoke_map_path', nil)
-                rawset(_G, '__osc_full_smoke_ai_personality', nil)
-            )");
-            if (!launch_result) {
-                spdlog::warn("Full smoke lobby LaunchGame error: {}",
-                             launch_result.error().message);
-            }
-        }
-        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
-
-        // --- Phase 3: GAME ---
-        spdlog::info("=== Phase 3: GAME (3000 ticks) ===");
-        harness.set_phase("GAME");
-
-        // Execute reload sequence to create sim state (headless — no renderer)
-        double sim_accumulator_fst = 0.0;
-        bool reload_ok = execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
-                                                 loader, config, scenario_meta, game_state_mgr,
-                                                 nullptr, // renderer (headless)
-                                                 nullptr, // input_handler (headless)
-                                                 nullptr, // prev_selection (headless)
-                                                 nullptr, // world_interp (headless)
-                                                 new_game_seed(seed_arg, /*reproducible=*/true),
-                                                 sim_accumulator_fst, map_path);
-
-        if (!reload_ok) {
-            spdlog::error("Phase 3: Reload failed — skipping remaining phases");
-            harness.print_report(true);
-            harness.write_report_to_file("smoke_report.txt");
-            harness.deactivate();
-            return 1;
-        }
-
-        // After reload, re-install interceptors on fresh sim_L
-        if (sim_lua_state) {
-            harness.install_panic_handler(sim_lua_state->raw());
-            harness.install_global_interceptor(sim_lua_state->raw());
-            harness.install_all_method_interceptors(sim_lua_state->raw());
-        }
-
-        // FA's game interface, as the windowed launch builds it
-        begin_world_ui(ui_lua_state.raw(), wld_provider);
-        finish_world_ui(ui_lua_state.raw(), wld_provider, false);
-
-        // Fire OnFirstUpdate once
-        osc::core::call_on_first_update(ui_lua_state.raw());
-
-        for (int t = 0; t < 3000; t++) {
-            if (sim_state) {
-                sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
-            }
-            if ((t + 1) % 10 == 0) {
-                pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1, ui_frame_counter);
-            }
-            if ((t + 1) % 250 == 0) {
-                osc::i32 prop_count = 0;
-                std::string army_summary;
-
-                if (sim_state) {
-                    sim_state->entity_registry().for_each(
-                        [&](const osc::sim::Entity& e) {
-                            if (!e.destroyed() && !e.is_unit()) prop_count++;
-                        });
-
-                    for (size_t a = 0; a < sim_state->army_count(); a++) {
-                        auto* brain = sim_state->army_at(a);
-                        if (!brain || brain->is_civilian()) continue;
-
-                        osc::i32 units = 0, structures = 0;
-                        sim_state->entity_registry().for_each(
-                            [&](const osc::sim::Entity& e) {
-                                if (e.army() == static_cast<osc::i32>(a) &&
-                                    !e.destroyed() && e.is_unit()) {
-                                    auto* u = static_cast<const osc::sim::Unit*>(&e);
-                                    if (u->has_category("STRUCTURE"))
-                                        structures++;
-                                    else
-                                        units++;
-                                }
-                            });
-
-                        if (!army_summary.empty()) army_summary += ", ";
-                        army_summary += "a" + std::to_string(a) + ": " +
-                                       std::to_string(units) + "u/" +
-                                       std::to_string(structures) + "s";
-                    }
-                }
-
-                spdlog::info("  tick {}/3000 — props:{} {}", t + 1, prop_count, army_summary);
-            }
-        }
-
-        // End-of-GAME army summary
-        if (sim_state) {
-            for (size_t a = 0; a < sim_state->army_count(); a++) {
-                auto* brain = sim_state->army_at(a);
-                if (!brain || brain->is_civilian()) continue;
-
-                osc::i32 units = 0, structures = 0;
-                sim_state->entity_registry().for_each(
-                    [&](const osc::sim::Entity& e) {
-                        if (e.army() == static_cast<osc::i32>(a) &&
-                            !e.destroyed() && e.is_unit()) {
-                            auto* u = static_cast<const osc::sim::Unit*>(&e);
-                            if (u->has_category("STRUCTURE"))
-                                structures++;
-                            else
-                                units++;
-                        }
-                    });
-
-                spdlog::info("  Army {} ({}): {} units, {} structures, kills={:.0f} built={:.0f}",
-                             a, brain->name(), units, structures,
-                             brain->get_stat("Units_Killed"),
-                             brain->get_stat("Units_History"));
-            }
-        }
-
-        // --- Phase 4: SCORE ---
-        spdlog::info("=== Phase 4: SCORE ===");
-        harness.set_phase("SCORE");
-        if (sim_state) {
-            for (size_t i = 0; i < sim_state->army_count(); i++) {
-                auto* brain = sim_state->army_at(i);
-                if (brain && !brain->is_civilian() && static_cast<osc::i32>(i) != 0) {
-                    brain->set_state(osc::sim::BrainState::Defeat);
-                }
-            }
-            osc::i32 result = sim_state->player_result();
-            spdlog::info("  player_result() = {} (expected 1=Victory)", result);
-            osc::core::call_note_game_over(ui_lua_state.raw());
-            game_state_mgr.set_game_over(true);
-            game_state_mgr.transition_to(osc::GameState::SCORE, ui_lua_state.raw());
-        }
-        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
-
-        // --- Phase 5: RETURN ---
-        spdlog::info("=== Phase 5: RETURN ===");
-        harness.set_phase("RETURN");
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_return_to_lobby");
-            lua_pushboolean(uL, 1);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
-        wld_provider.destroy_game_interface(ui_lua_state.raw());
-        detach_ui_from_sim(ui_lua_state.raw());
-        sim_state.reset();
-        sim_lua_state.reset();
-        // Detach store from destroyed sim Lua state to prevent dangling luaL_unref
-        store.rebind(nullptr);
-        game_state_mgr.set_game_over(false);
-        game_state_mgr.transition_to(osc::GameState::FRONT_END, ui_lua_state.raw());
-        osc::core::call_lua_global(ui_lua_state.raw(), "CreateUI");
-        pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 10, ui_frame_counter);
-
-        // --- Report ---
-        spdlog::info("=== Full Smoke Test Complete ===");
-        harness.print_report(true);
-        harness.write_report_to_file("smoke_report.txt");
-        spdlog::info("Report written to smoke_report.txt");
-        harness.deactivate();
-        return finish_test_run("full-smoke-test", harness.total_count());
-    }
-
-    // === Smoke Test ===
-    if (smoke_test && !map_path.empty()) {
-        osc::lua::SmokeTestHarness harness;
-
-        // Install interceptors on sim state
-        harness.install_panic_handler(sim_lua_state->raw());
-        harness.install_global_interceptor(sim_lua_state->raw());
-        harness.install_all_method_interceptors(sim_lua_state->raw());
-
-        // Install interceptors on UI state
-        harness.install_panic_handler(ui_lua_state.raw());
-        harness.install_global_interceptor(ui_lua_state.raw());
-        harness.install_all_method_interceptors(ui_lua_state.raw());
-
-        spdlog::info("=== Smoke Test: Running 100 sim ticks ===");
-        for (int i = 0; i < 100; i++) {
-            sim_state->tick();
-        }
-
-        spdlog::info("=== Smoke Test: Running 100 UI frame dispatches ===");
-        for (int i = 0; i < 100; i++) {
-            osc::lua::advance_ui_clock(ui_lua_state.raw(), 1.0 / 60.0);
-            ui_thread_manager.resume_all(static_cast<osc::u32>(i));
-        }
-
-        harness.print_report(false);
-        spdlog::info("=== Smoke Test Complete ===");
-        if (harness.total_count() > 0) {
-            osc::test_status::record_failure(fmt::format(
-                "smoke-test: {} issue(s) reported", harness.total_count()));
-        }
+    if (tests) {
+        if (auto code = tests->headless_first(engine)) return *code;
     }
 
     // === AI-vs-AI Skirmish (M163) ===
@@ -3862,78 +2885,6 @@ int main(int argc, char* argv[]) {
         spdlog::info("=== End AI Skirmish ===");
     }
 
-    // === Draw Test: simultaneous ACU death ===
-    if (draw_test && sim_state) {
-        spdlog::info("=== DRAW TEST: simultaneous ACU death ===");
-        // Set both armies to defeated
-        for (size_t i = 0; i < sim_state->army_count(); i++) {
-            auto* brain = sim_state->army_at(i);
-            if (brain && !brain->is_civilian()) {
-                brain->set_state(osc::sim::BrainState::Defeat);
-            }
-        }
-        osc::i32 result = sim_state->player_result();
-        if (result == 3) {
-            spdlog::info("  PASS — simultaneous defeat returns Draw (3)");
-        } else {
-            osc::test_status::fail("  FAIL — expected Draw (3), got {}", result);
-            return 1;
-        }
-        return 0;
-    }
-
-    // === Stress Test: 10000-tick AI-vs-AI stability validation ===
-    if (stress_test && sim_state) {
-        spdlog::info("=== STRESS TEST: 10000-tick AI-vs-AI ===");
-
-        osc::i32 peak_entities = 0;
-        osc::i32 tick_target = 10000;
-
-        for (osc::i32 t = 0; t < tick_target; t++) {
-            sim_state->tick();
-
-            osc::i32 entity_count = 0;
-            sim_state->entity_registry().for_each([&](const osc::sim::Entity& e) {
-                if (!e.destroyed()) entity_count++;
-            });
-            if (entity_count > peak_entities) peak_entities = entity_count;
-
-            // Log progress every 1000 ticks
-            if ((t + 1) % 1000 == 0) {
-                spdlog::info("  tick {}/{} — {} entities (peak {})",
-                             t + 1, tick_target, entity_count, peak_entities);
-            }
-
-            // Check game-over — continue tracking but note it
-            osc::i32 result = sim_state->player_result();
-            if (result != 0 && !sim_state->game_ended()) {
-                const char* result_str = result == 1 ? "VICTORY" :
-                                          result == 2 ? "DEFEAT" : "DRAW";
-                spdlog::info("  Game over at tick {}: {}", t + 1, result_str);
-                sim_state->set_game_ended(true);
-            }
-        }
-
-        // Report results
-        spdlog::info("=== STRESS TEST COMPLETE ===");
-        spdlog::info("  Peak entities: {}", peak_entities);
-
-        // Report army stats
-        for (size_t i = 0; i < sim_state->army_count(); i++) {
-            auto* brain = sim_state->army_at(i);
-            if (!brain || brain->is_civilian()) continue;
-            spdlog::info("  Army {} ({}): kills={:.0f} losses={:.0f} built={:.0f} mass={:.0f}",
-                         i, brain->name(),
-                         brain->get_stat("Units_Killed"),
-                         brain->get_stat("Units_Killed"),
-                         brain->get_stat("Units_History"),
-                         brain->get_stat("Economy_TotalProduced_Mass"));
-        }
-
-        spdlog::info("  PASS — no crashes in {} ticks", tick_target);
-        return finish_test_run("stress-test");
-    }
-
     // Headless tick loop
     if (!ai_skirmish && !map_path.empty() && tick_count > 0) {
         spdlog::info("Running {} sim ticks ({:.1f}s game time)...",
@@ -3947,707 +2898,7 @@ int main(int argc, char* argv[]) {
     }
 
 
-    // ── Integration tests (require --map) ──
-    if (sim_state && sim_lua_state) {
-    osc::test::TestContext test_ctx{*sim_state, *sim_lua_state, sim_lua_state->raw(), vfs, store};
-    // UI tests run against the UI Lua state, where the UI factories live
-    // (the sim and UI states have been separate since M135c).
-    osc::test::TestContext ui_test_ctx{*sim_state, ui_lua_state, ui_lua_state.raw(), vfs, store};
-    osc::test::register_test_helpers(sim_lua_state->raw());
-
-    if (damage_test && !map_path.empty()) osc::test::test_damage(test_ctx);
-    if (move_test && !map_path.empty()) osc::test::test_move(test_ctx);
-    if (fire_test && !map_path.empty()) osc::test::test_fire(test_ctx);
-    if (economy_test && !map_path.empty()) osc::test::test_economy(test_ctx);
-    if (build_test && !map_path.empty()) osc::test::test_build(test_ctx);
-    if (chain_test && !map_path.empty()) osc::test::test_chain(test_ctx);
-    if (ai_test && !map_path.empty()) osc::test::test_ai(test_ctx);
-    if (reclaim_test && !map_path.empty()) osc::test::test_reclaim(test_ctx);
-    if (threat_test && !map_path.empty()) osc::test::test_threat(test_ctx);
-    if (combat_test && !map_path.empty()) osc::test::test_combat(test_ctx);
-    if (platoon_test && !map_path.empty()) osc::test::test_platoon(test_ctx);
-    if (repair_test && !map_path.empty()) osc::test::test_repair(test_ctx);
-    if (upgrade_test && !map_path.empty()) osc::test::test_upgrade(test_ctx);
-    if (capture_test && !map_path.empty()) osc::test::test_capture(test_ctx);
-    if (path_test && !map_path.empty()) osc::test::test_path(test_ctx);
-    if (toggle_test && !map_path.empty()) osc::test::test_toggle(test_ctx);
-    if (enhance_test && !map_path.empty()) osc::test::test_enhance(test_ctx);
-    if (intel_test && !map_path.empty()) osc::test::test_intel(test_ctx);
-    if (shield_test && !map_path.empty()) osc::test::test_shield(test_ctx);
-    if (transport_test && !map_path.empty()) osc::test::test_transport(test_ctx);
-    if (fow_test && !map_path.empty()) osc::test::test_fow(test_ctx);
-    if (los_test && !map_path.empty()) osc::test::test_los(test_ctx);
-    if (stall_test && !map_path.empty()) osc::test::test_stall(test_ctx);
-    if (jammer_test && !map_path.empty()) osc::test::test_jammer(test_ctx);
-    if (stub_test && !map_path.empty()) osc::test::test_stub(test_ctx);
-    if (audio_test && !map_path.empty()) osc::test::test_audio(test_ctx);
-    if (bone_test && !map_path.empty()) osc::test::test_bone(test_ctx);
-    if (manip_test && !map_path.empty()) osc::test::test_manip(test_ctx);
-    if (canpath_test && !map_path.empty()) osc::test::test_canpath(test_ctx);
-    if (armor_test && !map_path.empty()) osc::test::test_armor(test_ctx);
-    if (vet_test && !map_path.empty()) osc::test::test_vet(test_ctx);
-    if (wreck_test && !map_path.empty()) osc::test::test_wreck(test_ctx);
-    if (adjacency_test && !map_path.empty()) osc::test::test_adjacency(test_ctx);
-    if (stats_test && !map_path.empty()) osc::test::test_stats(test_ctx);
-    if (silo_test && !map_path.empty()) osc::test::test_silo(test_ctx);
-    if (flags_test && !map_path.empty()) osc::test::test_flags(test_ctx);
-    if (layercap_test && !map_path.empty()) osc::test::test_layercap(test_ctx);
-    if (massstub_test && !map_path.empty()) osc::test::test_massstub(test_ctx);
-    if (massstub2_test && !map_path.empty()) osc::test::test_massstub2(test_ctx);
-    if (massstub3_test && !map_path.empty()) osc::test::test_massstub3(test_ctx);
-    if (anim_test && !map_path.empty()) osc::test::test_anim(test_ctx);
-    if (teamcolor_test && !map_path.empty()) osc::test::test_teamcolor(test_ctx);
-    if (normal_test && !map_path.empty()) osc::test::test_normal(test_ctx);
-    if (prop_test && !map_path.empty()) osc::test::test_prop(test_ctx);
-    if (scale_test && !map_path.empty()) osc::test::test_scale(test_ctx);
-    if (specular_test && !map_path.empty()) osc::test::test_specular(test_ctx);
-    if (terrain_normal_test && !map_path.empty()) osc::test::test_terrain_normal(test_ctx);
-    if (decal_test && !map_path.empty()) osc::test::test_decal(test_ctx);
-    if (projectile_test && !map_path.empty()) osc::test::test_projectile(test_ctx);
-    if (weapon_test && !map_path.empty()) osc::test::test_weapon(test_ctx);
-    if (targeting_test && !map_path.empty()) osc::test::test_targeting(test_ctx);
-    if (aim_test && !map_path.empty()) osc::test::test_aim(test_ctx);
-    if (death_test && !map_path.empty()) osc::test::test_death(test_ctx);
-    if (impact_test && !map_path.empty()) osc::test::test_impact(test_ctx);
-    if (arc_test && !map_path.empty()) osc::test::test_arc(test_ctx);
-    if (collide_test && !map_path.empty()) osc::test::test_collide(test_ctx);
-    if (area_test && !map_path.empty()) osc::test::test_area(test_ctx);
-    if (drive_test && !map_path.empty()) osc::test::test_drive(test_ctx);
-    if (crowd_test && !map_path.empty()) osc::test::test_crowd(test_ctx);
-    if (formation_test && !map_path.empty()) osc::test::test_formation(test_ctx);
-    if (missile_test && !map_path.empty()) osc::test::test_missile(test_ctx);
-    if (defence_test && !map_path.empty()) osc::test::test_defence(test_ctx);
-    if (beam_weapon_test && !map_path.empty()) osc::test::test_beam_weapon(test_ctx);
-    if (charge_test && !map_path.empty()) osc::test::test_charge(test_ctx);
-    if (range_test && !map_path.empty()) osc::test::test_range(test_ctx);
-    if (ferry_test && !map_path.empty()) osc::test::test_ferry(test_ctx);
-    if (terrain_tex_test && !map_path.empty()) osc::test::test_terrain_tex(test_ctx);
-    if (shadow_test && !map_path.empty()) osc::test::test_shadow(test_ctx);
-    if (massstub4_test && !map_path.empty()) osc::test::test_massstub4(test_ctx);
-    if (spatial_test && !map_path.empty()) osc::test::test_spatial(test_ctx);
-    if (unitsound_test && !map_path.empty()) osc::test::test_unitsound(test_ctx);
-    if (medstub_test && !map_path.empty()) osc::test::test_medstub(test_ctx);
-    if (lowstub_test && !map_path.empty()) osc::test::test_lowstub(test_ctx);
-    if (blend_test && !map_path.empty()) osc::test::test_blend(test_ctx);
-    if (ui_test && !map_path.empty()) osc::test::test_ui(ui_test_ctx);
-    if (bitmap_test && !map_path.empty()) osc::test::test_bitmap(ui_test_ctx);
-    if (text_test && !map_path.empty()) osc::test::test_text(ui_test_ctx);
-    if (edit_test && !map_path.empty()) osc::test::test_edit(ui_test_ctx);
-    if (controls_test && !map_path.empty()) osc::test::test_controls(ui_test_ctx);
-    if (uiboot_test && !map_path.empty()) osc::test::test_uiboot(ui_test_ctx);
-    if ((gameui_test || victory_test) && !map_path.empty()) {
-        // Selection is input-handler state; a headless one lets the test
-        // select units (SelectUnits) and drive the selection UI.
-        osc::renderer::InputHandler headless_input;
-        std::unordered_set<osc::u32> prev_sel;
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_input_handler");
-        lua_pushlightuserdata(uL, &headless_input);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        osc::sim::SimCallbackQueue test_callbacks; // SimCallback / ProcessInfo
-        lua_pushstring(uL, "__osc_sim_callback_queue");
-        lua_pushlightuserdata(uL, &test_callbacks);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        osc::lua::FactoryQueueDisplay test_factory_queue; // the construction panel's
-        lua_pushstring(uL, "__osc_factory_queue");
-        lua_pushlightuserdata(uL, &test_factory_queue);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        osc::u32 frames = 0;
-        auto pump = [&](int n) {
-            for (int i = 0; i < n; ++i) {
-                pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager,
-                                             beat_registry, ui_registry, 1, frames);
-                dispatch_selection_change(uL, prev_sel, headless_input.selected(),
-                                          headless_input.take_selection_event());
-            }
-        };
-        // As the windowed loop plays: a sim tick, its beat, 6 UI frames.
-        auto play = [&](int ticks) {
-            for (int t = 0; t < ticks; ++t) {
-                submit_sim_callbacks(test_callbacks, *sim_state);
-                sim_state->tick();
-                world_beat(sim_lua_state.get(), sim_state.get(), ui_lua_state.raw());
-                note_game_over_if_ended(sim_state.get(), game_state_mgr, uL);
-                pump(6);
-            }
-        };
-        // A world click as the input handler makes it under FA's command mode.
-        auto click = [&](osc::f32 x, osc::f32 z, bool shift) {
-            const auto mode = read_command_mode(uL);
-            auto issued = headless_input.click_in_command_mode(*sim_state, mode, x, z, shift);
-            if (issued) report_command_issued(uL, *issued);
-            return issued.has_value();
-        };
-        auto sim_lua = [&](const char* code) {
-            auto r = sim_lua_state->do_string(code);
-            if (!r) spdlog::error("sim Lua: {}", r.error().message);
-            return static_cast<bool>(r);
-        };
-        if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click, sim_lua);
-        if (victory_test) {
-            osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
-        }
-        lua_pushstring(uL, "__osc_input_handler");
-        lua_pushnil(uL);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        lua_pushstring(uL, "__osc_sim_callback_queue");
-        lua_pushnil(uL);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-        lua_pushstring(uL, "__osc_factory_queue");
-        lua_pushnil(uL);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-    if (uirender_test && !map_path.empty()) osc::test::test_uirender(ui_test_ctx);
-    if (font_test && !map_path.empty()) osc::test::test_font(ui_test_ctx);
-    if (scissor_test && !map_path.empty()) osc::test::test_scissor(ui_test_ctx);
-    if (border_render_test && !map_path.empty()) osc::test::test_border_render(ui_test_ctx);
-    if (edit_render_test && !map_path.empty()) osc::test::test_edit_render(ui_test_ctx);
-    if (itemlist_render_test && !map_path.empty()) osc::test::test_itemlist_render(ui_test_ctx);
-    if (scrollbar_render_test && !map_path.empty()) osc::test::test_scrollbar_render(ui_test_ctx);
-    if (anim_render_test && !map_path.empty()) osc::test::test_anim_render(ui_test_ctx);
-    if (tiled_render_test && !map_path.empty()) osc::test::test_tiled_render(ui_test_ctx);
-    if (input_test && !map_path.empty()) osc::test::test_input(ui_test_ctx);
-    if (onframe_test && !map_path.empty()) osc::test::test_onframe(ui_test_ctx);
-    if (cursor_render_test && !map_path.empty()) osc::test::test_cursor_render(ui_test_ctx);
-    if (drag_render_test && !map_path.empty()) osc::test::test_drag_render(ui_test_ctx);
-    if (emitter_test && !map_path.empty()) osc::test::test_emitter(test_ctx);
-    if (collision_test && !map_path.empty()) osc::test::test_collision_beam(test_ctx);
-    if (decalsplat_test && !map_path.empty()) osc::test::test_decal_splat(test_ctx);
-    if (cmd_test && !map_path.empty()) osc::test::test_commands(test_ctx);
-    if (deposit_test && !map_path.empty()) osc::test::test_deposits(test_ctx);
-    if (beam_test && !map_path.empty()) osc::test::test_beams(test_ctx);
-    if (shield_render_test && !map_path.empty()) osc::test::test_shield_render(test_ctx);
-    if (vet_adj_render_test && !map_path.empty()) osc::test::test_vet_adj_render(test_ctx);
-    if (intel_overlay_test && !map_path.empty()) osc::test::test_intel_overlay(test_ctx);
-    if (enhance_wreck_test && !map_path.empty()) osc::test::test_enhance_wreck_render(test_ctx);
-    if (vfx_render_test && !map_path.empty()) osc::test::test_vfx_render(test_ctx);
-    if (transport_silo_test && !map_path.empty()) osc::test::test_transport_silo_render(test_ctx);
-    if (profile_test && !map_path.empty()) osc::test::test_profile(test_ctx);
-
-    // Dual-state isolation test (does not require map)
-    if (dualstate_test) {
-        spdlog::info("=== Dual Lua State Test ===");
-        int pass = 0, fail = 0;
-
-        // 1. Both states initialized
-        if (sim_lua_state->raw() && ui_lua_state.raw()) {
-            spdlog::info("[PASS] Both Lua states initialized");
-            pass++;
-        } else {
-            osc::test_status::fail("[FAIL] Lua state initialization");
-            fail++;
-        }
-
-        // 2. sim_L has CreateUnit but NOT InternalCreateGroup
-        //    Use lua_rawget on globals index to avoid __index metamethod
-        //    (config.lua locks globals and errors on undefined access)
-        {
-            lua_State* sL = sim_lua_state->raw();
-            lua_pushstring(sL, "CreateUnit");
-            lua_rawget(sL, LUA_GLOBALSINDEX);
-            bool sim_has_create_unit = !lua_isnil(sL, -1);
-            lua_pop(sL, 1);
-            lua_pushstring(sL, "InternalCreateGroup");
-            lua_rawget(sL, LUA_GLOBALSINDEX);
-            bool sim_has_ui_func = !lua_isnil(sL, -1);
-            lua_pop(sL, 1);
-
-            if (sim_has_create_unit) {
-                spdlog::info("[PASS] sim_L has CreateUnit");
-                pass++;
-            } else {
-                osc::test_status::fail("[FAIL] sim_L missing CreateUnit");
-                fail++;
-            }
-            if (!sim_has_ui_func) {
-                spdlog::info("[PASS] sim_L does NOT have InternalCreateGroup");
-                pass++;
-            } else {
-                osc::test_status::fail("[FAIL] sim_L has InternalCreateGroup (should be ui_L only)");
-                fail++;
-            }
-        }
-
-        // 3. ui_L has InternalCreateGroup but NOT CreateUnit
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "InternalCreateGroup");
-            lua_rawget(uL, LUA_GLOBALSINDEX);
-            bool ui_has_create_group = !lua_isnil(uL, -1);
-            lua_pop(uL, 1);
-            lua_pushstring(uL, "CreateUnit");
-            lua_rawget(uL, LUA_GLOBALSINDEX);
-            bool ui_has_sim_func = !lua_isnil(uL, -1);
-            lua_pop(uL, 1);
-
-            if (ui_has_create_group) {
-                spdlog::info("[PASS] ui_L has InternalCreateGroup");
-                pass++;
-            } else {
-                osc::test_status::fail("[FAIL] ui_L missing InternalCreateGroup");
-                fail++;
-            }
-            if (!ui_has_sim_func) {
-                spdlog::info("[PASS] ui_L does NOT have CreateUnit");
-                pass++;
-            } else {
-                osc::test_status::fail("[FAIL] ui_L has CreateUnit (should be sim_L only)");
-                fail++;
-            }
-        }
-
-        // 4. Both share the same VFS
-        {
-            auto* sim_vfs = osc::lua::LuaState::get_vfs(sim_lua_state->raw());
-            auto* ui_vfs = osc::lua::LuaState::get_vfs(ui_lua_state.raw());
-            if (sim_vfs && ui_vfs && sim_vfs == ui_vfs) {
-                spdlog::info("[PASS] Both states share the same VFS");
-                pass++;
-            } else {
-                osc::test_status::fail("[FAIL] VFS mismatch (sim={}, ui={})",
-                              static_cast<void*>(sim_vfs),
-                              static_cast<void*>(ui_vfs));
-                fail++;
-            }
-        }
-
-        spdlog::info("=== Dual State Test: {} passed, {} failed ===", pass, fail);
-    }
-
-    // M140d: Construction panel integration test
-    if (construction_test && !map_path.empty()) {
-        spdlog::info("=== M140 Construction Panel Test ===");
-
-        auto result = ui_lua_state.do_string(R"(
-            local cat = ParseEntityCategory('FACTORY LAND TECH1')
-            local units = EntityCategoryGetUnitList(cat)
-            assert(type(units) == 'table', 'Expected table from EntityCategoryGetUnitList')
-            print('EntityCategoryGetUnitList returned ' .. table.getn(units) .. ' entries')
-            for i, id in ipairs(units) do
-                if i <= 5 then print('  ' .. id) end
-            end
-        )");
-        if (result.ok()) {
-            spdlog::info("=== M140 Construction Panel Test PASSED ===");
-        } else {
-            osc::test_status::fail("=== M140 Construction Panel Test FAILED ===");
-        }
-    }
-
-    // M140-M143: Phase 2 integration test
-    if (phase2_test && !map_path.empty()) {
-        spdlog::info("=== Phase 2 Integration Test ===");
-        int pass = 0, fail = 0;
-
-        // Test 1: EntityCategoryGetUnitList returns results
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local cat = ParseEntityCategory('STRUCTURE LAND')
-                local list = EntityCategoryGetUnitList(cat)
-                assert(type(list) == 'table', 'EntityCategoryGetUnitList failed')
-                print('M140: EntityCategoryGetUnitList returned ' .. table.getn(list) .. ' blueprints')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] EntityCategoryGetUnitList"); pass++; }
-            else { osc::test_status::fail("[FAIL] EntityCategoryGetUnitList"); fail++; }
-        }
-
-        // Test 2: GetOrderBitmapNames returns 8 values
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local a,b,c,d,e,f,g,h = GetOrderBitmapNames('move')
-                assert(a ~= nil, 'GetOrderBitmapNames returned nil')
-                assert(type(g) == 'string', 'Expected sound cue string')
-                print('M141: GetOrderBitmapNames("move") up=' .. a)
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GetOrderBitmapNames"); pass++; }
-            else { osc::test_status::fail("[FAIL] GetOrderBitmapNames"); fail++; }
-        }
-
-        // Test 3: GetRolloverInfo returns nil when nothing hovered
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local info = GetRolloverInfo()
-                print('M142: GetRolloverInfo type=' .. type(info))
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GetRolloverInfo"); pass++; }
-            else { osc::test_status::fail("[FAIL] GetRolloverInfo"); fail++; }
-        }
-
-        // Test 4: StartCursorText doesn't crash
-        {
-            auto r = ui_lua_state.do_string(R"(
-                StartCursorText(100, 100, 'Test', {1,1,0,1}, 1.0, false)
-                print('M143: StartCursorText succeeded')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] StartCursorText"); pass++; }
-            else { osc::test_status::fail("[FAIL] StartCursorText"); fail++; }
-        }
-
-        // Test 5: orders.lua boots (pcall, allow WARN)
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local ok, err = pcall(function()
-                    local orders = import('/lua/ui/game/orders.lua')
-                    assert(orders ~= nil, 'orders.lua import returned nil')
-                end)
-                if ok then print('M141: orders.lua boot OK')
-                else print('M141: orders.lua boot WARN: ' .. tostring(err)) end
-            )");
-            if (r.ok()) { spdlog::info("[PASS] orders.lua boot"); pass++; }
-            else { osc::test_status::fail("[FAIL] orders.lua boot"); fail++; }
-        }
-
-        // Test 6: unitview.lua boots (pcall, allow WARN)
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local ok, err = pcall(function()
-                    local unitview = import('/lua/ui/game/unitview.lua')
-                    assert(unitview ~= nil, 'unitview.lua import returned nil')
-                end)
-                if ok then print('M142: unitview.lua boot OK')
-                else print('M142: unitview.lua boot WARN: ' .. tostring(err)) end
-            )");
-            if (r.ok()) { spdlog::info("[PASS] unitview.lua boot"); pass++; }
-            else { osc::test_status::fail("[FAIL] unitview.lua boot"); fail++; }
-        }
-
-        spdlog::info("=== Phase 2 Integration Test: {}/{} passed ===", pass, pass + fail);
-    }
-
-    // M144-M146: Phase 3 integration test
-    if (phase3_test && !map_path.empty()) {
-        spdlog::info("=== Phase 3 Integration Test ===");
-        int pass = 0, fail = 0;
-
-        // Test 1: GetCurrentUIState returns "game"
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local state = GetCurrentUIState()
-                assert(state == 'game', 'Expected "game", got: ' .. tostring(state))
-                print('M144: GetCurrentUIState = ' .. state)
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GetCurrentUIState"); pass++; }
-            else { osc::test_status::fail("[FAIL] GetCurrentUIState"); fail++; }
-        }
-
-        // Test 2: AddBeatFunction registers and fires
-        {
-            auto r = ui_lua_state.do_string(R"(
-                __test_beat_called = false
-                local function myBeat() __test_beat_called = true end
-                AddBeatFunction(myBeat, 'test_beat')
-                print('M145: AddBeatFunction registered')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] AddBeatFunction registration"); pass++; }
-            else { osc::test_status::fail("[FAIL] AddBeatFunction registration"); fail++; }
-        }
-
-        // Fire beat functions
-        beat_registry.fire_all(ui_lua_state.raw());
-
-        {
-            auto r = ui_lua_state.do_string(R"(
-                assert(__test_beat_called == true, 'BeatFunction was not called')
-                RemoveBeatFunction('test_beat')
-                print('M145: BeatFunction fired and removed OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] BeatFunction fire + remove"); pass++; }
-            else { osc::test_status::fail("[FAIL] BeatFunction fire + remove"); fail++; }
-        }
-
-        // Test 3: Time queries
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local t = GetGameTimeSeconds()
-                local tick = GameTick()
-                local gt = GetGameTime()
-                local rate = GetSimRate()
-                assert(type(t) == 'number', 'GetGameTimeSeconds failed')
-                assert(type(tick) == 'number', 'GameTick failed')
-                assert(type(gt) == 'string', 'GetGameTime should return string')
-                assert(rate == 10, 'GetSimRate should be 10')
-                print('M145: Time queries OK (t=' .. t .. ' tick=' .. tick .. ' gt=' .. gt .. ')')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Time queries"); pass++; }
-            else { osc::test_status::fail("[FAIL] Time queries"); fail++; }
-        }
-
-        // Test 4: Speed control
-        {
-            auto r = ui_lua_state.do_string(R"(
-                SetGameSpeed(2.0)
-                local spd = GetGameSpeed()
-                assert(spd == 2.0, 'SetGameSpeed failed: got ' .. tostring(spd))
-                SetGameSpeed(1.0)
-                print('M145: Speed control OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Speed control"); pass++; }
-            else { osc::test_status::fail("[FAIL] Speed control"); fail++; }
-        }
-
-        // Test 5: EscapeHandler
-        {
-            auto r = ui_lua_state.do_string(R"(
-                __test_esc_called = false
-                SetEscapeHandler(function() __test_esc_called = true end)
-                EscapeHandler()
-                assert(__test_esc_called, 'EscapeHandler not called')
-                print('M146: EscapeHandler OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] EscapeHandler"); pass++; }
-            else { osc::test_status::fail("[FAIL] EscapeHandler"); fail++; }
-        }
-
-        spdlog::info("=== Phase 3 Integration Test: {}/{} passed ===", pass, pass + fail);
-    }
-
-    // M147-M149: Phase 4 integration test
-    if (phase4_test && !map_path.empty()) {
-        spdlog::info("=== Phase 4 Integration Test ===");
-        int pass = 0, fail = 0;
-
-        // Test 1: FrontEndData round-trip
-        {
-            auto r = ui_lua_state.do_string(R"(
-                SetFrontEndData('testKey', {value=42, name='test'})
-                local d = GetFrontEndData('testKey')
-                assert(d ~= nil, 'FrontEndData lost')
-                assert(d.value == 42, 'FrontEndData value mismatch')
-                print('M147: FrontEndData round-trip OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] FrontEndData"); pass++; }
-            else { osc::test_status::fail("[FAIL] FrontEndData"); fail++; }
-        }
-
-        // Test 2: HasCommandLineArg
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local has = HasCommandLineArg('--phase4-test')
-                assert(has == true, 'Expected --phase4-test to be present')
-                local no = HasCommandLineArg('--nonexistent')
-                assert(no == false, 'Expected --nonexistent to be absent')
-                print('M147: HasCommandLineArg OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] HasCommandLineArg"); pass++; }
-            else { osc::test_status::fail("[FAIL] HasCommandLineArg"); fail++; }
-        }
-
-        // Test 3: PlaySound gives a handle for a cue that plays, nil otherwise
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local h = PlaySound(Sound({Bank = 'Interface', Cue = 'X_Main_Menu_On_Start'}))
-                assert(type(h) == 'number', 'PlaySound should return a handle')
-                assert(PlaySound('test_click') == nil, 'an unknown cue plays nothing')
-                StopSound(nil) -- a nil handle is a no-op
-                print('M147: PlaySound OK (handle=' .. h .. ')')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] PlaySound"); pass++; }
-            else { osc::test_status::fail("[FAIL] PlaySound"); fail++; }
-        }
-
-        // Test 4: Skin selection
-        {
-            auto r = ui_lua_state.do_string(R"(
-                UIUtil.SetCurrentSkin('cybran')
-                local skin = UIUtil.GetCurrentSkin()
-                assert(skin == 'cybran', 'Skin mismatch: ' .. tostring(skin))
-                print('M149: Skin selection OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Skin selection"); pass++; }
-            else { osc::test_status::fail("[FAIL] Skin selection"); fail++; }
-        }
-
-        // Test 5: Layout preference
-        {
-            auto r = ui_lua_state.do_string(R"(
-                UIUtil.SetLayoutPreference('right')
-                local layout = UIUtil.GetLayoutPreference()
-                assert(layout == 'right', 'Layout mismatch: ' .. tostring(layout))
-                print('M149: Layout preference OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Layout preference"); pass++; }
-            else { osc::test_status::fail("[FAIL] Layout preference"); fail++; }
-        }
-
-        // Test 6: GetKeyBindings returns table
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local kb = GetKeyBindings()
-                assert(type(kb) == 'table', 'GetKeyBindings should return table')
-                assert(kb.attack == 'A', 'attack binding wrong')
-                assert(kb.move == 'M', 'move binding wrong')
-                print('M149: GetKeyBindings OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GetKeyBindings"); pass++; }
-            else { osc::test_status::fail("[FAIL] GetKeyBindings"); fail++; }
-        }
-
-        // Test 7: Prefs table exists
-        {
-            auto r = ui_lua_state.do_string(R"(
-                assert(type(Prefs) == 'table', 'Prefs not found')
-                assert(type(Prefs.GetFromCurrentProfile) == 'function', 'GetFromCurrentProfile missing')
-                assert(type(Prefs.SetToCurrentProfile) == 'function', 'SetToCurrentProfile missing')
-                print('M149: Prefs table OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Prefs table"); pass++; }
-            else { osc::test_status::fail("[FAIL] Prefs table"); fail++; }
-        }
-
-        // Test 8: LaunchSinglePlayerSession sets launch signal
-        {
-            auto r = ui_lua_state.do_string(R"(
-                LaunchSinglePlayerSession({ScenarioFile='/maps/test/test_scenario.lua'})
-                print('M148: LaunchSinglePlayerSession OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] LaunchSinglePlayerSession"); pass++; }
-            else { osc::test_status::fail("[FAIL] LaunchSinglePlayerSession"); fail++; }
-
-            // Clear the launch flag so we don't actually try to launch
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_launch_requested");
-            lua_pushnil(uL);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
-
-        // Test 9: DiskFindFiles accessible on ui_L
-        {
-            auto r = ui_lua_state.do_string(R"(
-                assert(type(DiskFindFiles) == 'function', 'DiskFindFiles not on ui_L')
-                assert(type(DiskGetFileInfo) == 'function', 'DiskGetFileInfo not on ui_L')
-                assert(type(exists) == 'function', 'exists not on ui_L')
-                print('M148: File I/O on ui_L OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] File I/O on ui_L"); pass++; }
-            else { osc::test_status::fail("[FAIL] File I/O on ui_L"); fail++; }
-        }
-
-        spdlog::info("=== Phase 4 Integration Test: {}/{} passed ===", pass, pass + fail);
-    }
-
-    // M150-M152: Phase 5 integration test
-    if (phase5_test && !map_path.empty()) {
-        spdlog::info("=== Phase 5 Integration Test ===");
-        int pass = 0, fail = 0;
-
-        // Test 1: IN_AddKeyMapTable / IN_RemoveKeyMapTable
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local action_called = false
-                local km = {A = function() action_called = true end}
-                IN_AddKeyMapTable(km)
-                IN_RemoveKeyMapTable(km)
-                print('M150: IN_AddKeyMapTable/IN_RemoveKeyMapTable OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] KeyMap add/remove"); pass++; }
-            else { osc::test_status::fail("[FAIL] KeyMap add/remove"); fail++; }
-        }
-
-        // Test 2: IsKeyDown exists and returns boolean
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local down = IsKeyDown(65)  -- GLFW_KEY_A = 65
-                assert(type(down) == 'boolean', 'IsKeyDown should return boolean')
-                print('M150: IsKeyDown OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] IsKeyDown"); pass++; }
-            else { osc::test_status::fail("[FAIL] IsKeyDown"); fail++; }
-        }
-
-        // Test 3: Camera SaveSettings / RestoreSettings
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local cam = GetCamera('WorldCamera')
-                if cam then
-                    local settings = cam:SaveSettings()
-                    assert(type(settings) == 'table', 'SaveSettings should return table')
-                    if settings.distance ~= nil then
-                        -- Full camera available (renderer present)
-                        assert(settings.target_x ~= nil, 'Missing target_x field')
-                        cam:RestoreSettings(settings)
-                        print('M150: Camera Save/RestoreSettings OK')
-                    else
-                        -- Headless mode: SaveSettings returns empty table
-                        print('M150: Camera headless (empty settings) - OK')
-                    end
-                else
-                    print('M150: Camera not available (headless) - skipping')
-                end
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Camera Save/RestoreSettings"); pass++; }
-            else { osc::test_status::fail("[FAIL] Camera Save/RestoreSettings"); fail++; }
-        }
-
-        // Test 4: UIZoomTo exists
-        {
-            auto r = ui_lua_state.do_string(R"(
-                assert(type(UIZoomTo) == 'function', 'UIZoomTo not registered')
-                UIZoomTo({})  -- empty array, should not crash
-                print('M150: UIZoomTo OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] UIZoomTo"); pass++; }
-            else { osc::test_status::fail("[FAIL] UIZoomTo"); fail++; }
-        }
-
-        // Test 5: RegisterChatFunc + SessionSendChatMessage
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local received = nil
-                RegisterChatFunc(function(msg) received = msg end, 'test')
-                SessionSendChatMessage({}, {text='hello', from='Player'})
-                assert(received ~= nil, 'Chat func not called')
-                assert(received.text == 'hello', 'Chat text mismatch')
-                print('M151: Chat system OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] Chat system"); pass++; }
-            else { osc::test_status::fail("[FAIL] Chat system"); fail++; }
-        }
-
-        // Test 6: SendSystemMessage
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local sys_msg = nil
-                RegisterChatFunc(function(msg) sys_msg = msg end, 'sys')
-                SendSystemMessage('Test announcement')
-                assert(sys_msg ~= nil, 'System message not received')
-                assert(sys_msg.from == 'System', 'Expected from=System')
-                assert(sys_msg.text == 'Test announcement', 'Text mismatch')
-                print('M151: SendSystemMessage OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] SendSystemMessage"); pass++; }
-            else { osc::test_status::fail("[FAIL] SendSystemMessage"); fail++; }
-        }
-
-        // Test 7: GetSessionClients returns table with player
-        {
-            auto r = ui_lua_state.do_string(R"(
-                local clients = GetSessionClients()
-                assert(type(clients) == 'table', 'GetSessionClients should return table')
-                assert(clients[1] ~= nil, 'Expected at least one client')
-                assert(clients[1].name ~= nil, 'Client needs name')
-                print('M151: GetSessionClients OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GetSessionClients"); pass++; }
-            else { osc::test_status::fail("[FAIL] GetSessionClients"); fail++; }
-        }
-
-        // Test 8: GiveResources SimCallback exists
-        {
-            auto r = sim_lua_state->do_string(R"(
-                local sc = rawget(_G, 'SimCallbacks')
-                assert(type(sc) == 'table', 'SimCallbacks not found')
-                assert(type(sc.GiveResources) == 'function', 'GiveResources missing')
-                sc.GiveResources({From=1, To=2, Mass=100, Energy=200})
-                print('M151: GiveResources SimCallback OK')
-            )");
-            if (r.ok()) { spdlog::info("[PASS] GiveResources SimCallback"); pass++; }
-            else { osc::test_status::fail("[FAIL] GiveResources SimCallback"); fail++; }
-        }
-
-        spdlog::info("=== Phase 5 Integration Test: {}/{} passed ===", pass, pass + fail);
-    }
-
-    } // end if (sim_state && sim_lua_state) — integration tests
+    if (tests) tests->headless(engine);
 
     // --dump-threads: where every live sim script thread is suspended.
     if (sim_state && parse_flag(argc, argv, "--dump-threads")) {
@@ -4677,3 +2928,5 @@ int main(int argc, char* argv[]) {
     osc::log::shutdown();
     return exit_code;
 }
+
+} // namespace osc::app

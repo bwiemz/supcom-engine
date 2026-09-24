@@ -7,14 +7,17 @@ with tools/checksum_diff.py, which names the first tick and part that differ.
 Each playback also checks itself against the checksums the replay recorded.
 
 The Windows build is CI's (the `opensupcom-windows` artifact of a workflow
-run, fetched with `gh`) or a local directory holding opensupcom.exe and its
-DLLs. The replay is a file, or is recorded first with the Linux build from
-game arguments given after `--`.
+run, fetched with `gh`) or a local directory holding opensupcom.exe,
+osc_integration.exe and their DLLs. The Windows side runs the program the
+Linux side does: opensupcom, or the integration runner. The replay is a
+file, or is recorded first with the Linux build from game arguments given
+after `--`.
 
 With --direct, nothing is recorded: both builds run the game arguments as
 they are, each writing its trace. That suits scripted scenarios such as the
-integration tests (`--weapon-test`, `--aim-test`), which fight from the first
-tick, where a recorded AI game may never see a shot.
+integration tests (`--weapon-test`, `--aim-test`; give the runner,
+osc_integration, as --linux-exe), which fight from the first tick, where a
+recorded AI game may never see a shot.
 
 Examples:
     cross_os_replay.py --run-id 123456789 --linux-exe build/linux-debug/opensupcom \\
@@ -22,7 +25,7 @@ Examples:
            --ticks 1200 --seed 4242 --scripted-orders
     cross_os_replay.py --windows-dir win/ --linux-exe build/linux-debug/opensupcom \\
         --replay game.oscreplay
-    cross_os_replay.py --run-id 123456789 --linux-exe build/linux-release/opensupcom \\
+    cross_os_replay.py --run-id 123456789 --linux-exe build/linux-release/osc_integration \\
         --direct -- --map /maps/SCMP_009/SCMP_009_scenario.lua --aim-test
 
 Needs Forged Alliance (--fa-path, or OSC_FA_PATH, or the Steam install the
@@ -112,9 +115,13 @@ def main() -> int:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     _ = source.add_argument("--run-id", help="CI workflow run whose Windows build to use")
-    _ = source.add_argument("--windows-dir", help="directory with opensupcom.exe and its DLLs")
+    _ = source.add_argument(
+        "--windows-dir", help="directory with opensupcom.exe, osc_integration.exe and their DLLs"
+    )
     _ = parser.add_argument("--repo", help="GitHub repository of --run-id (default: this one)")
-    _ = parser.add_argument("--linux-exe", required=True, help="the Linux opensupcom")
+    _ = parser.add_argument(
+        "--linux-exe", required=True, help="the Linux opensupcom (or osc_integration)"
+    )
     _ = parser.add_argument("--replay", help="replay to play (else one is recorded first)")
     _ = parser.add_argument(
         "--direct",
@@ -155,9 +162,10 @@ def main() -> int:
             win_dir = fetch_windows_build(args.run_id, args.repo, tmp / "win")
         else:
             win_dir = Path(args.windows_dir or ".").resolve()
-        win_exe = win_dir / "opensupcom.exe"
+        # The same program as the Linux side's: the game, or the runner.
+        win_exe = win_dir / f"{linux_exe.stem}.exe"
         if not win_exe.exists():
-            sys.exit(f"no opensupcom.exe in {win_dir}")
+            sys.exit(f"no {win_exe.name} in {win_dir}")
 
         replay = Path(args.replay).resolve() if args.replay else tmp / "game.oscreplay"
         # What each build runs: the replay, or with --direct the game itself.
