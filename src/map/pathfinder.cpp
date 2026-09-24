@@ -12,6 +12,14 @@ namespace osc::map {
 
 static constexpr f32 SQRT2 = 1.41421356f;
 
+/// How far a path looks for open ground from a blocked cell: around an
+/// impassable goal (find_path), or out of the footprint a unit stands in
+/// (astar, reachability).
+static constexpr i32 NEAREST_PASSABLE_RADIUS = 20;
+
+/// What a step across a footprint costs, leaving one, against open ground.
+static constexpr f32 ESCAPE_COST = 10.0f;
+
 Pathfinder::Pathfinder(const PathfindingGrid& grid) : grid_(grid) {}
 
 PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
@@ -72,8 +80,20 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
         }
     }
 
-    // Run A*
-    auto grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious);
+    // A goal moved to the nearest open cell may be the one the unit is on:
+    // it is as close as it gets.
+    if (sx == gx && sz == gz) {
+        result.found = true;
+        result.partial = true;
+        result.waypoints.push_back({goal_x, 0, goal_z});
+        return result;
+    }
+
+    // Run A*. A unit that can't take a first step is closed in by buildings
+    // (standing in one, or in a gap between them): it leaves across them.
+    auto grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious, false);
+    if (grid_path.cells.empty() && grid_.get(sx, sz) != CellPassability::Obstacle)
+        grid_path = astar(sx, sz, gx, gz, layer, draft, amphibious, true);
     if (grid_path.cells.empty()) {
         spdlog::debug("Pathfinder: A* found no path from ({},{}) to ({},{})",
                        sx, sz, gx, gz);
@@ -102,10 +122,8 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
     return result;
 }
 
-Pathfinder::GridPath Pathfinder::astar(
-    u32 sx, u32 sz, u32 gx, u32 gz,
-    const std::string& layer, f32 draft, bool amphibious) const {
-
+Pathfinder::GridPath Pathfinder::astar(u32 sx, u32 sz, u32 gx, u32 gz, const std::string& layer,
+                                       f32 draft, bool amphibious, bool closed_in) const {
     const u32 w = grid_.grid_width();
     const u32 h = grid_.grid_height();
     const u32 total = w * h;
@@ -133,6 +151,47 @@ Pathfinder::GridPath Pathfinder::astar(
         f32 mn = std::min(dx, dz);
         f32 mx = std::max(dx, dz);
         return (mx + (SQRT2 - 1.0f) * mn) * cs;
+    };
+
+    // A unit inside a structure's footprint -- a factory's new unit, a
+    // builder its own buildings closed in -- or `closed_in` by them leaves
+    // across them: the obstacle cells joined to its start count as open, out
+    // to the radius reachability() looks for a way out. Only where the ground
+    // beneath is open: a footprint over a cliff's foot doesn't lead up it.
+    auto& escape = escape_buf_;
+    const bool escaping = closed_in || grid_.get(sx, sz) == CellPassability::Obstacle;
+    if (escaping) {
+        escape.assign(total, 0);
+        std::vector<u32> frontier{idx(sx, sz)};
+        escape[idx(sx, sz)] = 1;
+        while (!frontier.empty()) {
+            const u32 cur = frontier.back();
+            frontier.pop_back();
+            const i32 cx = static_cast<i32>(cur % w);
+            const i32 cz = static_cast<i32>(cur / w);
+            for (const auto& d :
+                 {std::pair{1, 0}, std::pair{-1, 0}, std::pair{0, 1}, std::pair{0, -1}}) {
+                const i32 nx = cx + d.first;
+                const i32 nz = cz + d.second;
+                if (nx < 0 || nz < 0 || static_cast<u32>(nx) >= w || static_cast<u32>(nz) >= h)
+                    continue;
+                if (std::abs(nx - static_cast<i32>(sx)) > NEAREST_PASSABLE_RADIUS ||
+                    std::abs(nz - static_cast<i32>(sz)) > NEAREST_PASSABLE_RADIUS)
+                    continue;
+                const u32 n = idx(static_cast<u32>(nx), static_cast<u32>(nz));
+                const u32 ux = static_cast<u32>(nx);
+                const u32 uz = static_cast<u32>(nz);
+                if (escape[n] || grid_.get(ux, uz) != CellPassability::Obstacle ||
+                    !grid_.terrain_passable_for(ux, uz, layer, draft, amphibious))
+                    continue;
+                escape[n] = 1;
+                frontier.push_back(n);
+            }
+        }
+    }
+    auto passable = [&](u32 x, u32 z) {
+        return grid_.is_passable_for(x, z, layer, draft, amphibious) ||
+               (escaping && escape[idx(x, z)] != 0);
     };
 
     u32 start_idx = idx(sx, sz);
@@ -189,7 +248,7 @@ Pathfinder::GridPath Pathfinder::astar(
             u32 n_idx = idx(unx, unz);
 
             if (closed[n_idx]) continue;
-            if (!grid_.is_passable_for(unx, unz, layer, draft, amphibious)) continue;
+            if (!passable(unx, unz)) continue;
 
             // Diagonal: also check that both cardinal neighbors are passable
             // (prevent cutting corners through walls)
@@ -201,13 +260,15 @@ Pathfinder::GridPath Pathfinder::astar(
                     continue;
                 u32 card_x = static_cast<u32>(card_x_i);
                 u32 card_z = static_cast<u32>(card_z_i);
-                if (!grid_.is_passable_for(card_x, cz, layer, draft, amphibious) ||
-                    !grid_.is_passable_for(cx, card_z, layer, draft, amphibious))
-                    continue;
+                if (!passable(card_x, cz) || !passable(cx, card_z)) continue;
             }
 
             bool diagonal = (dir[0] != 0 && dir[1] != 0);
             f32 move_cost = diagonal ? SQRT2 * cs : cs;
+            // Blocked ground is left by the shortest way: across the unit's
+            // own footprint, not through the buildings packed beside it
+            // (whose cells the escape can't tell from its own).
+            if (escaping && escape[n_idx] != 0) move_cost *= ESCAPE_COST;
             f32 new_g = g_cost[cur_idx] + move_cost;
 
             if (new_g < g_cost[n_idx]) {
@@ -332,8 +393,6 @@ void for_ring(i32 cx, i32 cz, i32 r, u32 w, u32 h, Fn&& fn) {
     }
 }
 
-/// How far find_path() looks for a passable cell around an impassable goal.
-constexpr i32 NEAREST_PASSABLE_RADIUS = 20;
 
 } // namespace
 

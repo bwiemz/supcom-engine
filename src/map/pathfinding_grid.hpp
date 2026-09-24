@@ -37,6 +37,10 @@ public:
     bool is_passable_for(u32 gx, u32 gz, const std::string& layer,
                          f32 draft, bool amphibious) const;
 
+    /// is_passable_for on the terrain alone, as if no structure stood there.
+    bool terrain_passable_for(u32 gx, u32 gz, const std::string& layer, f32 draft,
+                              bool amphibious) const;
+
     /// Get the water depth at a grid cell (0 if land).
     f32 water_depth(u32 gx, u32 gz) const;
 
@@ -62,6 +66,9 @@ public:
     u64 version() const { return version_; }
 
 private:
+    bool passable(CellPassability cell, u32 gx, u32 gz, const std::string& layer, f32 draft,
+                  bool amphibious) const;
+
     u32 grid_width_;
     u32 grid_height_;
     u32 cell_size_;

@@ -285,3 +285,81 @@ TEST_CASE("an unreachable goal far from reachable ground falls back to the start
     CHECK(r.best_x == 20.0f);
     CHECK(r.best_z == 256.0f);
 }
+
+// A factory's new unit stands at the factory's centre, inside its obstacle
+// footprint; the builder that closed a base around itself stands in one too.
+// A path from there leaves across the footprint. Before, every neighbour of
+// the start was blocked, A* found nothing, and no factory-built land unit
+// ever left its base.
+TEST_CASE("a unit inside a structure's footprint paths out of it", "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    sim.pathfinding_grid()->mark_obstacle(64.0f, 64.0f, 12.0f, 12.0f);
+    const auto* pf = sim.pathfinder();
+    REQUIRE(pf != nullptr);
+    pf->reset_request_count();
+
+    auto out = pf->find_path(64.0f, 64.0f, 110.0f, 64.0f, "Land");
+    REQUIRE(out.found);
+    CHECK_FALSE(out.partial);
+    CHECK(out.waypoints.back().x == 110.0f);
+    CHECK(pf->reachable(64.0f, 64.0f, 110.0f, 64.0f, "Land"));
+}
+
+TEST_CASE("leaving a footprint never crosses terrain", "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_walled_world(sim); // a cliff at x 60-64
+    // A footprint against the cliff: out of it, but not through the wall.
+    sim.pathfinding_grid()->mark_obstacle(54.0f, 64.0f, 10.0f, 10.0f);
+    const auto* pf = sim.pathfinder();
+    pf->reset_request_count();
+
+    auto result = pf->find_path(54.0f, 64.0f, 100.0f, 64.0f, "Land");
+    REQUIRE(result.found);
+    CHECK(result.partial);
+    for (const auto& wp : result.waypoints) CHECK(wp.x < 60.0f);
+}
+
+// Bases pack buildings together for adjacency, so a factory's footprint
+// often touches its neighbours'. The way out is across the unit's own
+// footprint, then around the rest, not through the building next door.
+TEST_CASE("leaving a footprint goes around the buildings beside it", "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    auto& grid = *sim.pathfinding_grid();
+    grid.mark_obstacle(64.0f, 64.0f, 12.0f, 12.0f); // the factory, x 58-70
+    grid.mark_obstacle(76.0f, 64.0f, 12.0f, 30.0f); // flush against it, x 70-82
+    const auto* pf = sim.pathfinder();
+    pf->reset_request_count();
+
+    auto out = pf->find_path(64.0f, 64.0f, 110.0f, 64.0f, "Land");
+    REQUIRE(out.found);
+    CHECK_FALSE(out.partial);
+    for (const auto& wp : out.waypoints) {
+        const bool in_neighbour = wp.x > 71.0f && wp.x < 81.0f && wp.z > 50.0f && wp.z < 78.0f;
+        CHECK_FALSE(in_neighbour);
+    }
+}
+
+// Open ground closed in by buildings -- a unit that walked into a gap the
+// base then filled -- is left across them too; it had no first step either.
+TEST_CASE("a unit closed in between buildings paths out", "[nav]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    auto& grid = *sim.pathfinding_grid();
+    grid.mark_obstacle(58.0f, 64.0f, 8.0f, 16.0f); // west, x 54-62
+    grid.mark_obstacle(70.0f, 64.0f, 8.0f, 16.0f); // east, x 66-74
+    grid.mark_obstacle(64.0f, 70.0f, 4.0f, 4.0f);  // north, z 68-72
+    grid.mark_obstacle(64.0f, 58.0f, 4.0f, 4.0f);  // south, z 56-60
+    REQUIRE(grid.is_passable_for(32, 32, "Land")); // the gap itself is open
+    const auto* pf = sim.pathfinder();
+    pf->reset_request_count();
+
+    auto out = pf->find_path(64.5f, 64.5f, 110.0f, 64.0f, "Land");
+    REQUIRE(out.found);
+    CHECK_FALSE(out.partial);
+}
