@@ -176,10 +176,51 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 
 ### M206c: beam weapons
 
-- **Beams:** a collision beam per muzzle, following the bone.
-  - A raycast every `CollisionCheckInterval`, out to the weapon's range, against units, shields, props, terrain and water.
-  - `OnImpact` with retail's types, and `GetPosition(1)` at the beam's end.
-- **Weapons:** beam weapons fire through the script. Whether a weapon is a beam is decided by its class, not by `BeamLifetime`.
+**What a third survey found:**
+- **Twenty retail weapons are beams.** They come from 15 `DefaultBeamWeapon` classes.
+  - **Continuous** (`BeamLifetime` 0): the Monkeylord, GC eye, CZAR and MLG.
+  - **Pulsed:** Cerberus and Seraphim point defence, the zappers, the Novax, Hiro cannons and Othuy.
+  - **Not a beam:** URL0001's OverCharge is the one other weapon with `BeamLifetime`, and it fires a projectile.
+- **Where a beam starts:** `spec.OtherBone` is the muzzle ("bone of weapon's unit to attach to", from the retail engine's own strings). The beam reaches along the muzzle's facing, not toward the target, to `MaximumBeamLength` or else MaxRadius.
+- **How often it hits:** a beam checks for collisions, and calls `OnImpact`, every `CollisionCheckInterval + 1` ticks while enabled.
+  - This is FAF's documented and tested reading. Its DPS formulas, and its 2014 rebalance that halved beam damage when the delay went to 0, agree.
+  - Retail's own comment, "only when the thing it is touching changes", is wrong.
+  - `SetBeamFx(fx, true)`, which continuous beams call, checks at once.
+- **What stops it:** the first unit, shield met from outside, prop or projectile whose `OnCollisionCheckWeapon(weapon)` allows it (`CollideFriendly`, `DoNotCollideList`), else the ground or the water.
+- **The engine's beams did nothing:** they never collided, and never moved from where they were made. `SetBeamFx(true)` faked a `'Terrain'` impact.
+
+**The slice:**
+- **Beam pass:** each tick after the units have moved, every beam is posed on its launcher's muzzle. An enabled one is checked when its countdown runs out: its end goes where it stops, and its script hears `OnImpact(type, target)`.
+- **Bindings:**
+  - `GetPosition(1)` is the beam's end.
+  - `Destroy` goes the way of any entity (`OnDestroy`, unregistered).
+  - The engine calls a beam's `OnCreate`, which makes its `Trash`.
+  - `FireWeapon` on a scripted weapon gives it `OnFire`.
+- **Weapons:** beam weapons fire through their scripts. A weapon is a beam weapon when its script makes beams for it.
+- **Two fixes the beams needed first:**
+  - **Bone scale:** bone world positions ignored the blueprint's `UniformScale` (0.05 on most units), so every muzzle sat about 14 times too far from its unit (see the risks below).
+  - **Blast reach:** `DamageArea` measured to units' positions (their feet). A beam's 0.5 blast on a big unit's hull, or a shell on a structure's roof, reached nothing. It now measures to their shapes.
+- **Proof:**
+  - `--beam-weapon-test`:
+    - A Cerberus's three beams kill a tank, without a projectile.
+    - A pulsed beam hits 3 times a shot, 3 ticks apart; the Monkeylord's every other tick.
+    - The beam runs from the muzzle, past a friendly structure, to its target's face, and its blast hurts the structure.
+    - A zapper meets a missile.
+    - A Striker's muzzle is 0.4 ahead.
+  - `--area-test`: a blast on a structure's roof hurts it.
+
+**What building M206c established:**
+- **Plausible outcomes hid the scale bug.** Shots hit because they started closer to their targets. It showed only when a beam, which reaches from its muzzle, stopped at the ground. The defence test's Phalanx and frigate had passed on the wrong geometry. With real muzzles:
+  - **The Phalanx:** a lone Phalanx (1 damage every 2 s, not led) hits a 2-health missile but may not stop it. The test now checks the hit.
+  - **The frigate:** its anti-torpedo (a 1-second shot at speed 2) reaches only torpedoes at its hull. The test uses a destroyer.
+- **Friendly-fire filtering is the struck side's script.** The engine only asks, as for projectiles.
+- **Two game-UI goldens changed, and were re-blessed.**
+  - **The glow:** a screen-filling white glow over the starting ACU is gone. It was the warp-in's emitters at the unscaled bone positions, near the camera; the scale fix alone accounts for most of the difference.
+  - **The trees:** the rest is trees knocked flat at the warp-in. Its blasts (radius 11, 20 and 27) now reach tree groups whose boxes overlap them.
+
+**Risks:**
+- **Scale is global:** every muzzle, bone attachment and scripted bone position moves to where the model puts it. Combat changes throughout.
+- **Readings, not measurements:** the cadence's phase (a check on the enable tick), and beams stopping at scripted entities (they don't), are readings.
 
 ### M206d: economy events, OverCharge, teleport
 
