@@ -4935,7 +4935,10 @@ static int l_SplitProp(lua_State* L) {
     int n = 0;
     for (i32 b = 1; b < count; ++b) {
         const sim::BoneInfo& bone = bones->bones[static_cast<size_t>(b)];
-        const sim::Vector3 offset = sim::quat_rotate(prop->orientation(), bone.world_position);
+        const f32 s = bones->model_scale;
+        const sim::Vector3 offset = sim::quat_rotate(
+            prop->orientation(), sim::Vector3{bone.world_position.x * s, bone.world_position.y * s,
+                                              bone.world_position.z * s});
         const sim::Vector3 at{prop->position().x + offset.x, prop->position().y + offset.y,
                               prop->position().z + offset.z};
         if (sim::spawn_prop(L, *sim, bp, at,

@@ -519,7 +519,11 @@ static sim::Vector3 bone_world_position(const sim::Entity* e, i32 bone_idx) {
     if (!bd || !bd->is_valid(bone_idx)) return e->position();
 
     auto& bone = bd->bones[static_cast<size_t>(bone_idx)];
-    auto rotated = sim::quat_rotate(e->orientation(), bone.world_position);
+    const f32 s = bd->model_scale;
+    auto rotated = sim::quat_rotate(e->orientation(),
+                                    sim::Vector3{bone.world_position.x * s,
+                                                 bone.world_position.y * s,
+                                                 bone.world_position.z * s});
     return {
         e->position().x + rotated.x,
         e->position().y + rotated.y,

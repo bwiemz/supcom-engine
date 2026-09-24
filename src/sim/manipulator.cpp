@@ -334,8 +334,9 @@ BonePose rest_frame_world(const Unit& unit, i32 bone) {
     if (info.parent_index >= 0) parent = unit.bone_pose(info.parent_index);
     const Quaternion model_rot = quat_multiply(parent.rotation, info.local_rotation);
     const Vector3 offset = quat_rotate(parent.rotation, info.local_position);
-    const Vector3 model_pos{parent.position.x + offset.x, parent.position.y + offset.y,
-                            parent.position.z + offset.z};
+    const f32 s = unit.bone_data()->model_scale;
+    const Vector3 model_pos{(parent.position.x + offset.x) * s, (parent.position.y + offset.y) * s,
+                            (parent.position.z + offset.z) * s};
     const Vector3 world = quat_rotate(unit.orientation(), model_pos);
     return {{unit.position().x + world.x, unit.position().y + world.y, unit.position().z + world.z},
             quat_multiply(unit.orientation(), model_rot)};
