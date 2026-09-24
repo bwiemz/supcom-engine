@@ -306,8 +306,9 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 # Run 100 sim ticks on Seton's Clutch (headless)
 ./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 100
 
-# Run the AI test (ARMY_2 builds a base autonomously, 1200 ticks)
-./build/linux-debug/opensupcom --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
+# Run the AI test (ARMY_2 builds a base autonomously, 1200 ticks). Test modes
+# are in the integration runner, built beside the game.
+./build/linux-debug/osc_integration --map "/maps/SCMP_009/SCMP_009_scenario.lua" --ticks 1200 --ai-test
 ```
 
 ## Testing
@@ -320,8 +321,10 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 | All data-backed modes, including known retail gaps | `ctest --preset linux-debug -L data` | Yes |
 
 CI (GitHub Actions) builds on GCC, Clang, ASan+UBSan and MSVC and runs every
-data-free test. The `--<name>-test` integration modes exit non-zero when a
-check fails and with 77 (skipped) when no game data is available. Their
+data-free test. The `--<name>-test` integration modes are in the integration
+runner, `osc_integration` (built beside `opensupcom`, which doesn't ship them;
+`osc_integration --help` lists them). They exit non-zero when a check fails
+and with 77 (skipped) when no game data is available. Their
 `gate` / `retail-gap` membership lives in `tests/integration/data_tests.cmake`.
 
 ### Integration Test Flags

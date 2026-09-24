@@ -50,7 +50,7 @@ There are several layers. Use the lowest one that can show the behaviour.
 |---|---|---|
 | Unit (Catch2, no game data) | `tests/test_*.cpp` | everywhere, and in CI |
 | Two-process multiplayer | `ctest -L mp` | everywhere, and in CI |
-| Data-backed modes (`opensupcom --<name>-test`) | `src/integration_tests.cpp`, listed in `tests/integration/data_tests.cmake` | machines with FA |
+| Data-backed modes (`osc_integration --<name>-test`) | `tests/integration/runner/` (`integration_tests.cpp`; the flag table in `test_modes.cpp`), listed in `tests/integration/data_tests.cmake` | machines with FA |
 | Regression gate | `ctest -L gate` | machines with FA; run it before every PR |
 | Cross-OS replay | `tools/cross_os_replay.py` | machines with FA and Wine; run it before merging a change to the sim's arithmetic |
 
