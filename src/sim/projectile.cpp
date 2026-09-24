@@ -330,6 +330,10 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
     const u32 self_id = entity_id();
     const u32 other_id = other.entity_id();
     // Each side's OnCollisionCheck(self, other); a missing one allows it.
+    // In retail's scripts `self` is what is struck and `other` what hits
+    // it, so the struck side is asked first and a refusal ends it: a lure
+    // (a Flare entity) turns the missile away and refuses, and the missile
+    // is never asked about a blueprint-less entity.
     const auto check = [&](u32 self, u32 with) {
         const Entity* a = registry.find(self);
         const Entity* b = registry.find(with);
@@ -356,7 +360,7 @@ bool Projectile::collision_allowed(lua_State* L, EntityRegistry& registry, Entit
         lua_settop(L, top);
         return allowed;
     };
-    return check(self_id, other_id) && check(other_id, self_id);
+    return check(other_id, self_id) && check(self_id, other_id);
 }
 
 Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
@@ -411,6 +415,12 @@ Projectile::BlueprintPhysics Projectile::apply_blueprint_physics(lua_State* L) {
     lua_pop(L, 1);
     lua_settop(L, top);
     return found;
+}
+
+const std::unordered_set<std::string>& Projectile::categories() const {
+    // One with no blueprint (or none read yet) is just a projectile.
+    static const std::unordered_set<std::string> kBare{"ALLPROJECTILES"};
+    return info_ ? info_->categories : kBare;
 }
 
 const char* Projectile::impact_type(const Entity* target, const map::Terrain* terrain) const {

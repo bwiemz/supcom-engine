@@ -41,6 +41,8 @@ class VirtualFileSystem;
 
 namespace osc::sim {
 
+struct ProjectileBlueprintInfo;
+
 class AnimCache;
 class BoneCache;
 class SimState;
@@ -144,6 +146,9 @@ public:
 
     blueprints::BlueprintStore* blueprint_store() { return blueprint_store_; }
     blueprints::BlueprintStore* blueprint_store() const { return blueprint_store_; }
+    /// What a projectile blueprint says of its projectiles as targets (its
+    /// categories, its DesiredShooterCap), read once per blueprint (M206b).
+    std::shared_ptr<const ProjectileBlueprintInfo> projectile_blueprint_info(const std::string& bp_id);
 
     // Terrain & Pathfinding
     void set_terrain(std::unique_ptr<map::Terrain> terrain);
@@ -591,6 +596,7 @@ private:
     EntityRegistry entity_registry_;
     ThreadManager thread_manager_;
     blueprints::BlueprintStore* blueprint_store_;
+    std::unordered_map<std::string, std::shared_ptr<const ProjectileBlueprintInfo>> projectile_info_;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

@@ -110,6 +110,12 @@ void push_projectile_class(lua_State* L, const std::string& bp_id) {
 void create_projectile_object(lua_State* L, Projectile& proj, bool in_water, bool push) {
     if (!L) return;
     const int top = lua_gettop(L);
+    // Its categories first: its own OnCreate may test them.
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (auto* sim = static_cast<SimState*>(lua_touserdata(L, -1)))
+        proj.set_blueprint_info(sim->projectile_blueprint_info(proj.blueprint_id()));
+    lua_settop(L, top);
     lua_newtable(L);
     const int obj = lua_gettop(L);
     push_projectile_class(L, proj.blueprint_id());

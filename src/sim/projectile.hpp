@@ -2,8 +2,10 @@
 
 #include "sim/entity.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 struct lua_State;
@@ -14,9 +16,33 @@ namespace osc::sim {
 
 class EntityRegistry;
 
+/// What a projectile's blueprint says of it as a target (M206b), shared by
+/// every projectile of the blueprint.
+struct ProjectileBlueprintInfo {
+    /// Its Categories, and ALLPROJECTILES.
+    std::unordered_set<std::string> categories;
+    /// DesiredShooterCap: at most this many weapons shoot at it at once (0:
+    /// no cap).
+    u32 desired_shooter_cap = 0;
+};
+
 class Projectile : public Entity {
 public:
     bool is_projectile() const override { return true; }
+
+    /// What category tests see (EntityCategoryContains, weapons'
+    /// restrictions): its blueprint's categories and ALLPROJECTILES.
+    const std::unordered_set<std::string>& categories() const;
+    u32 desired_shooter_cap() const { return info_ ? info_->desired_shooter_cap : 0; }
+    void set_blueprint_info(std::shared_ptr<const ProjectileBlueprintInfo> info) {
+        info_ = std::move(info);
+    }
+    /// Its layer, for weapons' layer caps: Water below the surface, Air above.
+    const char* layer() const { return in_water ? "Water" : "Air"; }
+    /// Weapons (unit id, weapon index) that have taken it as their target,
+    /// for its DesiredShooterCap. A weapon that has since let go, or whose
+    /// unit is gone, still appears until a count prunes it.
+    std::vector<std::pair<u32, i32>> shooters;
 
     /// Moho's gravity, in world units per second squared.
     static constexpr f32 GRAVITY = 4.9f;
@@ -100,6 +126,8 @@ private:
     /// Whether its script and `other`'s both let them meet
     /// (OnCollisionCheck, each given the other).
     bool collision_allowed(lua_State* L, EntityRegistry& registry, Entity& other);
+
+    std::shared_ptr<const ProjectileBlueprintInfo> info_;
 };
 
 } // namespace osc::sim

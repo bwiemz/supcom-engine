@@ -34,7 +34,8 @@ CategoryExpr CategoryExpr::combine(Op op, CategoryExpr left, CategoryExpr right)
 bool CategoryExpr::matches(const std::unordered_set<std::string>& categories) const {
     switch (op_) {
     case Op::None: return false;
-    case Op::All: return true;
+    // ALLUNITS: anything but a projectile (whose set holds ALLPROJECTILES).
+    case Op::All: return categories.count("ALLPROJECTILES") == 0;
     case Op::Name: return categories.count(name_) > 0;
     case Op::Union: return operands_[0].matches(categories) || operands_[1].matches(categories);
     case Op::Intersection:
