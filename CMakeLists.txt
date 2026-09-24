@@ -50,6 +50,7 @@ target_link_libraries(opensupcom PRIVATE
     osc::ui
     osc::renderer
     osc::lua
+    osc::lua_user
     osc::blueprints
 )
 

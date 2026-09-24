@@ -32,6 +32,7 @@
 #include "core/preferences.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/user_bindings.hpp"
 #include "lua/beat_system.hpp"
 #include "lua/factory_queue.hpp"
 #include "ui/ui_control.hpp"
@@ -2263,6 +2264,7 @@ int main(int argc, char* argv[]) {
     osc::lua::register_blueprint_bindings(ui_lua_state);
 
     osc::lua::register_ui_bindings(ui_lua_state, ui_registry);
+    osc::lua::register_user_bindings(ui_lua_state);
 
     // Set root frame size to window dimensions (1600x900) so LazyVar layout
     // resolves correctly. Must happen BEFORE CreateUI() so FillParent etc. work.

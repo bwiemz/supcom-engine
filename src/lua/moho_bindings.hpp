@@ -40,11 +40,6 @@ void register_lan_ui_bindings(LuaState& state);
 /// expects, without replacing globals already installed by real bindings.
 void register_front_end_fallback_bindings(LuaState& state);
 
-/// Push the current selection as a Lua array table onto the UI Lua state stack.
-/// Each element is a unit table with _c_object, EntityId, Army, and the
-/// __osc_ui_unit_mt metatable (same as GetSelectedUnits()).
-/// Pushes exactly 1 value.
-void push_selected_units_for_ui(lua_State* L);
 /// Push an array of UI-side unit objects for the given entity ids (dead or
 /// unknown ids are skipped), in the given order.
 void push_units_for_ui(lua_State* L, const std::vector<osc::u32>& ids);
