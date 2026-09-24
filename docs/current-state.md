@@ -1,6 +1,6 @@
 # OpenSupCom Current State
 
-Last reviewed: 2026-09-23 (retail AI, binding coverage; see `docs/ROADMAP.md` for the plan)
+Last reviewed: 2026-09-24 (through M206e, merged as PR #61; see `docs/ROADMAP.md` for the plan)
 
 ## What This Codebase Is
 
@@ -16,28 +16,30 @@ OpenSupCom is a C++20/CMake reimplementation of the Supreme Commander: Forged Al
 
 The code runs against real FA/FAF data via the VFS and currently boots Seton's Clutch far enough to load blueprints, parse the map, start FA AI code, spawn armies, build structures, and execute sim ticks.
 
-## Platforms, Data Targets and Measured Status (2026-09-23)
+## Platforms, Data Targets and Measured Status (2026-09-24, main at M206e)
 
 | | Status |
 |---|---|
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`. |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
 | Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. Retail's own front end boots and reaches a hosted skirmish lobby. In a windowed game, retail's own game interface runs and draws: economy, score, avatars, unit view, orders and construction panels, command-mode clicks and the minimap window. The C++ HUD placeholders remain behind `--legacy-hud`. Preferences are retail's Lua `Game.prefs` (profiles, options, window positions) in `<config>/opensupcom/`; tests and captures keep them in memory. Audio plays FA's own XACT data through an app-owned cue engine: interface sounds, retail's music thread, unit and weapon sounds with FA's categories, falloff curves and limits. It has been checked headless only; a listening pass is still to do. The world is drawn between the sim's last two ticks (M190a): the sim still ticks at 10 Hz, but units, walk cycles, projectiles and overlays move every frame. |
+| Gameplay fidelity (Phase E, M200–M206) | The engine provides the machinery retail's own scripts expect, rather than parallel C++ behaviour:<br>• **Weapons:** retail's weapon state machines (targets, racks and salvos, priorities, restrictions, turret slew and firing tolerance, posed muzzles).<br>• **Projectiles:** script classes with `OnImpact`, and ballistic arcs. Swept collision against terrain, water, units, props, shields and projectiles, filtered by scripts.<br>• **Props and wreckage:** script classes. Trees split, fall and sink; wrecks are made by retail's scripts.<br>• **Movement:** acceleration, braking, turning and reversing; collision separation; retail's `formations.lua`.<br>• **Pathfinding:** cheaper after M205.<br>• **Missiles:** silo missile builds and launches, and anti-missile weapons.<br>• **Beams:** collision beams.<br>• **Economy events:** their resources are drawn (teleport, OverCharge).<br>• **Work ranges:** build, repair, reclaim and capture reach, measured by Moho's footprint gap.<br>• **Orders:** `Issue*` appends to the queue.<br>Where the scripts left Moho's rules unclear, they come from the decompiled engine ([faf-re](https://github.com/Draiget/faf-re)). |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 380 cases / 37,983 assertions (the RNG tests draw many values). Clean on GCC and under ASan+UBSan+LSan (Clang not re-run since M186). |
+| Unit tests (Catch2) | 441 cases / 38,978 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format`. |
-| Data-backed gate on retail (`ctest -L gate`) | All 108 pass: 104 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test` and the offscreen `--interp-test`), `data.determinism` (two processes play a four-AI game identically), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance): the default profile, and one that shows the minimap window. |
+| Data-backed gate on retail (`ctest -L gate`) | All 126 pass: 120 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`), `data.determinism` (two processes play a four-AI game identically), `data.replay_roundtrip` and `data.replay_flow`, the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
-| Retail-only engine API still unbound | 54 globals and 30 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
+| Retail-only engine API still unbound | 45 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
+| Benchmark (Release, four retail AIs, SCMP_009) | About 21 s for 6,000 ticks (it was 25.2 s before M205's path-cost fix). An 18,000-tick game runs without Lua errors. |
 
 ## Verified Locally
 
-- `build/tests/Debug/osc_tests.exe` passes: 208 test cases, 5,026 assertions.
-- `build/Debug/opensupcom.exe --help` runs and lists the current CLI surface.
+- `build/linux-debug/tests/osc_tests` passes (see the metrics above); `build/linux-debug/opensupcom --help` lists the CLI surface, including every `--*-test` mode.
+- **Cross-OS determinism on real data:** `tools/cross_os_replay.py --run-id <CI run>` plays a recorded four-AI game with the CI's Windows build (under Wine) and a Linux build; each Phase E PR has matched at every tick.
 - **Multiplayer (LAN lockstep), verified across two OS processes over localhost TCP:**
   `opensupcom.exe --mp-host` + `opensupcom.exe --mp-join 127.0.0.1` reach identical
   sync checksums with `desynced=0` through scripted player orders (incl. a mid-move
@@ -184,16 +186,16 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   still read the live sim; they move over with M191's split of the bindings
   into sim and user sides. `InputHandler` (picking, orders, the build
   ghost) works on the live sim by design.
-- **Props aren't script-class instances:** retail props, trees and wrecks
-  should be instances of `Prop`, `Tree`/`TreeGroup` (`/lua/proptree.lua`) or
-  `Wreckage` (`/lua/wreckage.lua`), but get only `moho.prop_methods`. So
-  retail's `CreateWreckageProp` fails at `SetReclaimValues`, and a retail
-  unit death leaves no scripted wreck. Tracked with the projectile script
-  classes (M201).
-- **Death weapons:** projectiles are not yet instances of their script
-  classes (M201). So a death weapon's `PassDamageData` fails. An ACU's
-  `OnKilled` then falls back to engine destruction, and its death blast does no
-  damage.
+- **Architecture debt (Phase C, next):** `Unit::update` is over 1,000 lines of order handling (M193 splits it). `integration_tests.cpp` (18k lines) is built into the `opensupcom` executable (M192 moves it out). The renderer, blueprints and Lua libraries link in a cycle (M191 breaks it).
+- **Determinism diagnostics:** the per-tick checksum covers RNG, armies' resources and each entity's position and health. It does not cover weapons, orders, projectiles, economy events or scripts, so a divergence shows only when it reaches those. Splitting it by domain is next after the architecture work begins.
+- **Multiplayer robustness:** in review (PR #63), a cap on wire message size, and orders limited to the sender's army. Peers are not yet authenticated.
+- **Order fidelity gaps (after M206):**
+  - A factory assisting a factory lends nothing; Moho copies its queue.
+  - Transports don't land, and their capacity isn't read from attach points.
+  - `IssueTransportUnloadSpecific` drops every unit.
+  - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
+  - Platoons formed by `FormPlatoon` don't set `PlatoonHandle` (M207).
+- **Ferries** (M206f) are in review (PR #62).
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
@@ -207,5 +209,14 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 
 ## Recommended Work Order
 
-See `docs/ROADMAP.md` (the phases, exit criteria and Definition of Done) and the
-tactical plan for the active phase in `docs/superpowers/plans/`.
+After M206, as agreed on 2026-09-24:
+1. Keep these docs current.
+2. Network hardening (PR #63).
+3. A checksum split by domain.
+4. M193: split `Unit::update`.
+5. M192: split the executable.
+6. M191: break the library cycle and finish the Sim/User split.
+7. M206's remaining gaps, and M207.
+8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
+
+The phases, exit criteria and Definition of Done are in `docs/ROADMAP.md`.

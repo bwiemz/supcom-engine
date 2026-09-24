@@ -116,8 +116,9 @@ Scores run from 0 to 5.
 - [ ] The headless retail smoke on SCMP_009 introduces no new Lua errors (error budget).
 - [ ] Sim changes keep the two-run checksum trace identical once M196 lands.
 - [ ] Code review is done and high-priority findings are fixed.
-- [ ] `docs/current-state.md` and this roadmap's status table are updated. Durable decisions go
-      to memory.
+- [ ] `docs/current-state.md` (metrics: unit tests, gate count, benchmark; known gaps closed and
+      found) and this roadmap's status table are updated in the milestone's own PR. Durable
+      decisions go to memory.
 
 ---
 
@@ -384,9 +385,10 @@ in the repo if they contain game assets).
 | A | **Complete and merged** (PR #18). All of M175–M182 landed. Plan and outcomes: `docs/superpowers/plans/2026-09-22-phase-a-linux-foundation.md`. |
 | A′ | In progress alongside B (M183, the strata fix, landed). |
 | B | **Done.** M184–M189 are done (PRs #20–#27). The retail gate went from 44 to all 99 data modes, and `retail-gap` is empty; `tests/integration/data_tests.cmake` records each step. Phase B is complete; next is Phase C (architecture seams). |
-| C | In progress: M190 (the sim/user boundary: interpolation, and a renderer that reads only snapshots) and M194 (the style and static-analysis ratchets, a contributor guide) are done. M191 (the binding split) and M192 (slimming `main.cpp`) move code that the open PRs change, so they wait for those PRs to merge. |
+| C | In progress: M190 (the sim/user boundary: interpolation, and a renderer that reads only snapshots) and M194 (the style and static-analysis ratchets, a contributor guide) are done. M191–M193 come back to the front, in the order agreed after an external review (2026-09-24). A checksum split by domain comes first, as the refactors' oracle. Then M193 (split `Unit::update`), M192 (split the executable, taking the integration tests out of it) and M191 (break the renderer/blueprints/Lua link cycle; finish the Sim/User split). |
 | D | **Done.** M195 (ordered iteration), M196 (one sim RNG, checksum traces), M197 (floating-point policy), M198 (all mutation in-tick; dropped peers decided by agreement) and M199 (replays: record, play back in the game and headlessly, and a Windows build and a Linux build play a real game identically). |
-| E–I | Not started. |
+| E | In progress: M200–M206 done (M206f in review). Weapons, projectiles, props and wrecks, movement and formations, pathfinding cost, silo missiles and missile defence, beams, economy events, work ranges and the order queue follow retail's scripts and the decompiled engine. Next: M207 (AI query fidelity), after the architecture and determinism work below. |
+| F–I | Not started. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)
 - ~~**Fog of war** looks wrong around the focus army's ACU~~ Diagnosed with
