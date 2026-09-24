@@ -81,6 +81,19 @@ void apply_unit_defaults(lua_State* L, int bp) {
     default_min_max(L, intel, "SpoofRadius");
     lua_pop(L, 1);
 
+    // Every unit has a weapon list, if an empty one: Unit.DoDeathWeapon
+    // loops over bp.Weapon on every death, and 321 of retail's 568 units
+    // (engineers, economy, most structures) have none.
+    lua_pushstring(L, "Weapon");
+    lua_rawget(L, bp);
+    const bool armed = lua_istable(L, -1);
+    lua_pop(L, 1);
+    if (!armed) {
+        lua_pushstring(L, "Weapon");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+    }
+
     // A footprint the .bp leaves unsized, whole or per axis, takes the unit's
     // own size, rounded and at least 1, as Moho's does (FAF's loader
     // emulates the same rule). Retail's GetSkirtRect and GetFootPrintSize
