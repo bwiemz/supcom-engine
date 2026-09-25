@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 #include "sim/entity.hpp"
+#include "sim/influence_map.hpp"
 #include "sim/platoon.hpp"
 
 #include <memory>
@@ -143,6 +144,13 @@ public:
 
     // --- Start position ---
     const Vector3& start_position() const { return start_position_; }
+
+    /// The army's influence map (M207b; Moho's CInfluenceMap): the threat
+    /// its intel has reported, which the brain's threat queries read. Null
+    /// until SimState makes it, once the map's size is known.
+    InfluenceMap* influence_map() { return influence_map_.get(); }
+    const InfluenceMap* influence_map() const { return influence_map_.get(); }
+    void set_influence_map(std::unique_ptr<InfluenceMap> map) { influence_map_ = std::move(map); }
     void set_start_position(const Vector3& pos) { start_position_ = pos; }
 
     // --- Current enemy ---
@@ -251,6 +259,7 @@ private:
 
     std::unordered_map<i32, Alliance> alliances_;
     Vector3 start_position_;
+    std::unique_ptr<InfluenceMap> influence_map_;
     i32 current_enemy_index_ = -1; // -1 = no current enemy
     std::vector<AttackVector> attack_vectors_;
     bool has_color_ = false;
