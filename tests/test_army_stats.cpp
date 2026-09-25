@@ -353,7 +353,7 @@ TEST_CASE("LaunchSinglePlayerSession accepts GameOptions ScenarioFile", "[launch
     REQUIRE(launch_requested);
     REQUIRE(scenario == "/maps/the_pass/the_pass_scenario.lua");
 
-    front_end_data.clear(L);
+    front_end_data.clear();
 }
 
 TEST_CASE("ReturnToLobby is available from UI bindings", "[score][lua]") {

@@ -60,6 +60,7 @@ add_executable(osc_tests
     test_command_scheduler.cpp
     test_no_rush.cpp
     test_replay.cpp
+    test_front_end_data.cpp
     test_category_match.cpp
     test_effect_expiry.cpp
     test_saved_game.cpp
