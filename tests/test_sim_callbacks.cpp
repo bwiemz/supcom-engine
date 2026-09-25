@@ -21,6 +21,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -420,6 +421,50 @@ TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", 
     q = f.factory_queue();
     REQUIRE(q.size() == 1);
     CHECK((q[0].blueprint_id == "a" && q[0].count == 4));
+}
+
+TEST_CASE("A callback's NaN or infinite numbers change nothing", "[simcallback]") {
+    // They arrive over the network as raw doubles; NaN passes a `< lo || > hi`
+    // guard and a NaN cast to an integer is undefined.
+    CallbackSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    const osc::u32 id = w.spawn();
+    Unit& f = w.unit(id);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "a";
+    for (int i = 0; i < 3; ++i) f.push_command(build, false);
+
+    const double bad[] = {std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::infinity(),
+                          -std::numeric_limits<double>::infinity()};
+    for (const char* func : {osc::sim::kDecreaseBuildCountCallback}) {
+        for (const double v : bad) {
+            SimCallbackEntry cb;
+            cb.func_name = func;
+            cb.unit_ids = {id};
+            cb.args["Index"] = v;
+            cb.args["Count"] = 1.0;
+            w.sim.run_sim_callback(cb);
+            cb.args["Index"] = 1.0;
+            cb.args["Count"] = v;
+            w.sim.run_sim_callback(cb);
+        }
+    }
+    CHECK(f.command_queue().size() == 3);
+
+    SimCallbackEntry defeat;
+    defeat.func_name = osc::sim::kDefeatArmyCallback;
+    for (const double v : bad) {
+        defeat.args["Army"] = v;
+        w.sim.run_sim_callback(defeat);
+    }
+    CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+    CHECK_FALSE(w.sim.army_at(1)->is_defeated());
+    defeat.args["Army"] = 1.0; // and a real one still works
+    w.sim.run_sim_callback(defeat);
+    CHECK(w.sim.army_at(1)->is_defeated());
 }
 
 TEST_CASE("Cancelling a factory's build under way destroys the unit it was building",
