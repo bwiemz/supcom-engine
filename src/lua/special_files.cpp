@@ -1,8 +1,11 @@
 #include "lua/special_files.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/mp_net_state.hpp"
 #include "platform/paths.hpp"
+#include "sim/build_info.hpp"
 #include "sim/replay.hpp"
+#include "sim/saved_game.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -133,16 +136,36 @@ int l_RemoveSpecialFile(lua_State* L) {
     return 0;
 }
 
+/// The game being played, or null.
+const sim::SimState* sim_of(lua_State* L) {
+    lua_pushstring(L, "osc_sim_state");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* sim = static_cast<const sim::SimState*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return sim;
+}
+
+/// Ask the game loop to launch a game (see the launch request in
+/// window.cpp): `key`, if given, names the file it plays from.
+void request_launch(lua_State* L, const char* key, const char* file, const std::string& scenario) {
+    lua_pushstring(L, key);
+    lua_pushstring(L, file);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_launch_scenario");
+    lua_pushstring(L, scenario.c_str());
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "__osc_launch_requested");
+    lua_pushboolean(L, 1);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
 /// CopyCurrentReplay(profile, base) -- save the game being played, as
 /// recorded so far, under that name.
 int l_CopyCurrentReplay(lua_State* L) {
     const char* profile = luaL_checkstring(L, 1);
     const char* base = luaL_checkstring(L, 2);
     auto* files = get_special_files(L);
-    lua_pushstring(L, "osc_sim_state");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* sim = static_cast<const sim::SimState*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
+    const auto* sim = sim_of(L);
     if (!files || !sim || !sim->recording()) return 0;
     const auto path = files->path(*SpecialFiles::find_type("Replay"), profile, base);
     if (!path.empty()) write_replay_file(sim->recorded_replay(), path);
@@ -159,15 +182,67 @@ int l_LaunchReplaySession(lua_State* L) {
         lua_pushboolean(L, 0);
         return 1;
     }
-    lua_pushstring(L, "__osc_launch_replay");
-    lua_pushstring(L, file);
-    lua_rawset(L, LUA_REGISTRYINDEX);
-    lua_pushstring(L, "__osc_launch_scenario");
-    lua_pushstring(L, replay->setup.scenario.c_str());
-    lua_rawset(L, LUA_REGISTRYINDEX);
-    lua_pushstring(L, "__osc_launch_requested");
+    request_launch(L, "__osc_launch_replay", file, replay->setup.scenario);
     lua_pushboolean(L, 1);
-    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 1;
+}
+
+/// InternalSaveGame(file, name, callback) -- save the game being played as
+/// `file`, then callback(worked, errmsg). Moho calls back once its sim
+/// reaches the end of a tick; the UI runs between ticks, so the engine
+/// saves at once. Single-player games only, as retail's UI offers it, and
+/// only into the SaveGame folder (the file GetSpecialFiles' folder names).
+int l_InternalSaveGame(lua_State* L) {
+    const char* file = luaL_checkstring(L, 1);
+    const char* name = luaL_checkstring(L, 2);
+    const auto* files = get_special_files(L);
+    const auto* sim = sim_of(L);
+    const char* refused = nullptr;
+    if (!sim || !sim->recording()) refused = "No session to save!";
+    else if (mp_net_state().active()) refused = "A multiplayer game can't be saved.";
+    else if (sim->resuming()) refused = "The game is still loading.";
+    else if (sim->playback()) refused = "A replay can't be saved.";
+    else if (!files || !files->holds(*SpecialFiles::find_type("SaveGame"), file))
+        refused = "Games are saved only in the savegames folder.";
+    bool worked = false;
+    const char* errmsg = refused;
+    if (refused) {
+        spdlog::warn("InternalSaveGame({}): {}", file, refused);
+    } else {
+        worked = write_saved_game(sim::save_game(*sim, name), file);
+        errmsg = worked ? name : "nowrite"; // retail's dialog words "nowrite"
+    }
+    lua_pushvalue(L, 3);
+    lua_pushboolean(L, worked ? 1 : 0);
+    lua_pushstring(L, errmsg);
+    if (lua_pcall(L, 2, 0, 0) != 0) { // as Moho: the save stands
+        spdlog::warn("InternalSaveGame: its callback failed: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    return 0;
+}
+
+/// LoadSavedGame(file) -> worked, error, detail. `error` is how retail's
+/// Load dialog words a failure: 'CantOpen', 'InvalidFormat', 'WrongVersion'
+/// or 'InternalError' (with `detail`). On success the game loop loads it,
+/// as it launches a replay; a divergence while it catches up is reported
+/// there.
+int l_LoadSavedGame(lua_State* L) {
+    const char* file = luaL_checkstring(L, 1);
+    sim::SavedGame save;
+    sim::SaveLoadError error = read_saved_game(file, save);
+    const char* detail = "";
+    if (error == sim::SaveLoadError::None && mp_net_state().active()) {
+        error = sim::SaveLoadError::InternalError;
+        detail = "A multiplayer game can't load a saved game.";
+    }
+    if (error != sim::SaveLoadError::None) {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, sim::save_load_error_name(error));
+        lua_pushstring(L, detail);
+        return 3;
+    }
+    request_launch(L, "__osc_launch_save", file, save.game.setup.scenario);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -212,6 +287,15 @@ std::map<std::string, std::vector<std::string>> SpecialFiles::list(const Type& t
         out[profile.path().filename().string()] = std::move(names);
     }
     return out;
+}
+
+bool SpecialFiles::holds(const Type& type, const fs::path& file) const {
+    const fs::path f = file.lexically_normal();
+    if (f.extension() != std::string(".") + type.extension) return false;
+    const std::string profile = f.parent_path().filename().string();
+    const std::string base = f.stem().string();
+    const fs::path own = path(type, profile, base);
+    return !own.empty() && own.lexically_normal() == f;
 }
 
 SpecialFiles* get_special_files(lua_State* L) {
@@ -259,6 +343,54 @@ std::optional<sim::Replay> read_replay_file(const fs::path& path) {
     return replay;
 }
 
+bool write_saved_game(const sim::SavedGame& save, const fs::path& path) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    const auto bytes = save.serialize();
+    fs::path temp = path;
+    temp += ".tmp";
+    bool ok = false;
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        ok = static_cast<bool>(out);
+    }
+    if (ok) {
+        fs::rename(temp, path, ec);
+        ok = !ec;
+    }
+    if (!ok) {
+        fs::remove(temp, ec);
+        spdlog::error("Saved game: cannot write {}", path.string());
+        return false;
+    }
+    spdlog::info("Saved game '{}' at tick {}: {} commands, written to {}", save.name, save.tick,
+                 save.game.commands.size(), path.string());
+    return true;
+}
+
+sim::SaveLoadError read_saved_game(const fs::path& path, sim::SavedGame& out) {
+    out = sim::SavedGame{};
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        spdlog::error("Saved game: cannot read {}", path.string());
+        return sim::SaveLoadError::CantOpen;
+    }
+    const std::vector<u8> bytes((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+    const auto error = sim::SavedGame::deserialize(bytes, out);
+    if (error == sim::SaveLoadError::WrongVersion) {
+        spdlog::error("Saved game: {} was saved by another build (this is {}), which may not "
+                      "replay it as it was played",
+                      path.string(), sim::build_id());
+    } else if (error != sim::SaveLoadError::None) {
+        spdlog::error("Saved game: {} is not a saved game, or is damaged", path.string());
+    }
+    return error;
+}
+
 void register_special_file_bindings(LuaState& state, SpecialFiles* files) {
     lua_State* L = state.raw();
     lua_pushstring(L, kRegistryKey);
@@ -270,6 +402,8 @@ void register_special_file_bindings(LuaState& state, SpecialFiles* files) {
     state.register_function("RemoveSpecialFile", l_RemoveSpecialFile);
     state.register_function("CopyCurrentReplay", l_CopyCurrentReplay);
     state.register_function("LaunchReplaySession", l_LaunchReplaySession);
+    state.register_function("InternalSaveGame", l_InternalSaveGame);
+    state.register_function("LoadSavedGame", l_LoadSavedGame);
 }
 
 } // namespace osc::lua

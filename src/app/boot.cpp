@@ -106,6 +106,8 @@ std::optional<int> App::boot_game() {
     // Phase 3: Map + Sim boot (only when --map provided)
     if (opt.replay_to_play) {
         game_setup = opt.replay_to_play->setup;
+    } else if (opt.save_to_load) {
+        game_setup = opt.save_to_load->game.setup;
     } else {
         game_setup.scenario = opt.map_path;
         game_setup.seed = new_game_seed(opt.seed_arg, opt.reproducible_run);
@@ -162,7 +164,7 @@ std::optional<int> App::boot_game() {
             for (size_t i = 0; i < std::min(army_limit, scenario_meta.armies.size()); i++) {
                 sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
             }
-            if (opt.ai_skirmish && !opt.replay_to_play) {
+            if (opt.ai_skirmish && !opt.replay_to_play && !opt.save_to_load) {
                 for (size_t a = 0; a < sim_state->army_count(); ++a)
                     game_setup.ai_armies.push_back(static_cast<int>(a));
             }
@@ -570,9 +572,18 @@ std::optional<int> App::start() {
             return 1;
         }
         sim_state->set_game_setup(game_setup);
-        // Recorded for --record, and an interactive game for its LastGame.
-        if (!g_record_path.empty() || opt.interactive) sim_state->set_recording(true);
+        // Recorded for --record, an interactive game for its LastGame, and
+        // a game that will be saved (a loaded one too: its recording grows
+        // back to the whole game as it catches up).
+        if (!g_record_path.empty() || opt.interactive || !opt.save_path.empty() || opt.save_to_load)
+            sim_state->set_recording(true);
         if (opt.replay_to_play) return play_replay(*sim_state, *opt.replay_to_play);
+        if (opt.save_to_load) {
+            catch_up.emplace(opt.save_to_load->game);
+            catch_up->resume(*sim_state);
+            spdlog::info("Saved game '{}': catching up to tick {}", opt.save_to_load->name,
+                         opt.save_to_load->tick);
+        }
     }
 
     // Binding-coverage report (roadmap M184): runs on the fully booted sim and

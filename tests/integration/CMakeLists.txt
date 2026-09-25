@@ -113,6 +113,19 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # M208a: a saved game loads and plays on as the game did, and a game
+    # saved after it was loaded loads too -- each save holding an order the
+    # player gave just before saving.
+    add_test(NAME data.save_load
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders)
+    set_tests_properties(data.save_load PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
+
     # M199b: retail's replay dialog path -- GetSpecialFiles lists the
     # recording, LaunchReplaySession opens it -- and the game plays it to
     # its end, offscreen, matching the recording at every tick.

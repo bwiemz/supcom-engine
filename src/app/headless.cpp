@@ -4,13 +4,41 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#include "core/test_status.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/unit.hpp"
 
 #include <spdlog/spdlog.h>
 
+#include <cstdio>
+
 namespace osc::app {
+
+bool App::after_headless_tick() {
+    if (catch_up) {
+        if (!catch_up->check(*sim_state)) {
+            const u32 tick = catch_up->diverged_at();
+            osc::test_status::fail("[FAIL] saved game: diverged at tick {} as it caught up", tick);
+            std::printf("LOAD diverged tick=%u\n", tick);
+            catch_up.reset();
+            return false;
+        }
+        if (!sim_state->resuming()) {
+            spdlog::info("Saved game: caught up at tick {}; the game plays on",
+                         sim_state->tick_count());
+            std::printf("LOAD resumed tick=%u\n", sim_state->tick_count());
+            catch_up.reset();
+        }
+    }
+    if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
+        if (opt.scripted_orders) issue_order_before_save(*sim_state);
+        const auto save = osc::sim::save_game(*sim_state, "headless");
+        if (!osc::lua::write_saved_game(save, opt.save_path))
+            osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
+    }
+    return true;
+}
 
 int App::run_headless() {
     if (tests) {
@@ -32,6 +60,7 @@ int App::run_headless() {
             if (opt.scripted_orders) issue_scripted_orders(*sim_state, script_rng, i);
             sim_state->tick();
             ticks_run++;
+            if (!after_headless_tick()) break;
 
             // Periodic stats logging
             if (ticks_run % log_interval == 0) {
@@ -106,6 +135,7 @@ int App::run_headless() {
             osc::Profiler::instance().begin_frame();
             sim_state->tick();
             osc::Profiler::instance().end_frame();
+            if (!after_headless_tick()) break;
         }
     }
 
@@ -133,7 +163,8 @@ int App::run_headless() {
         osc::Profiler::instance().log_summary();
     }
 
-    const int exit_code = opt.any_test ? finish_test_run("integration tests") : 0;
+    const int exit_code =
+        opt.any_test || opt.save_to_load ? finish_test_run("integration tests") : 0;
     recording_writer.write();
     osc::log::shutdown();
     return exit_code;

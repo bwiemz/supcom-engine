@@ -56,8 +56,13 @@ void print_usage() {
               << "                     replay dialog does, and watch it to its end\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
+              << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
+              << "                     catches up headlessly (exit 1 on divergence) and plays\n"
+              << "                     on; else the game opens it\n"
+              << "  --save <file> --save-at <tick>  Save the game after that tick\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
-              << "                     orders (moves, pauses, fire states, stops)\n"
+              << "                     orders (moves, pauses, fire states, stops), and one\n"
+              << "                     more just before --save-at's save\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --help             Show this help message\n";
@@ -210,6 +215,21 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
     o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
                     parse_string_arg(argc, argv, "--golden", "").empty();
+    // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
+    // catches it up and plays on; else the window opens it.
+    o.load_path = parse_string_arg(argc, argv, "--load", "");
+    if (!o.load_path.empty() && o.headless) {
+        sim::SavedGame save;
+        if (lua::read_saved_game(o.load_path, save) != sim::SaveLoadError::None)
+            return std::nullopt;
+        o.map_path = save.game.setup.scenario;
+        o.save_to_load = std::move(save);
+        o.load_path.clear();
+    }
+    // --save <file> --save-at <tick>: save the game after that tick.
+    o.save_path = parse_string_arg(argc, argv, "--save", "");
+    o.save_at = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
     return o;
 }
 
