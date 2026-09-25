@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "platform/game_install.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -158,6 +159,58 @@ std::string parse_string_arg(int argc, char* argv[], const char* flag, const cha
         }
     }
     return default_val;
+}
+
+std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request) {
+    Options o;
+    o.map_path = parse_map_arg(argc, argv);
+    o.tick_count = parse_ticks_arg(argc, argv);
+    // --replay <file>: play a recorded game (its setup names the map).
+    if (const auto replay_arg = parse_string_arg(argc, argv, "--replay", ""); !replay_arg.empty()) {
+        o.replay_to_play = load_replay(replay_arg);
+        if (!o.replay_to_play) return std::nullopt;
+        o.map_path = o.replay_to_play->setup.scenario;
+    }
+    o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
+    // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
+    // --watch <file>: open a replay in the game, as the replay dialog does.
+    // --replay-flow-test: the dialog's own path (the first replay
+    // GetSpecialFiles lists), played to its end offscreen.
+    o.watch_path = parse_string_arg(argc, argv, "--watch", "");
+    o.replay_flow_test = parse_flag(argc, argv, "--replay-flow-test");
+    o.scripted_window = request.windowed || o.replay_flow_test;
+    o.no_fog = parse_flag(argc, argv, "--no-fog");
+    o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
+    o.no_decals = parse_flag(argc, argv, "--no-decals");
+    o.profile_enabled = parse_flag(argc, argv, "--profile");
+    o.ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
+    o.instrument = parse_flag(argc, argv, "--instrument");
+    o.builder_debug = parse_flag(argc, argv, "--builder-debug");
+    o.ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
+    // --ai-armies <n>: how many of the scenario's armies play (all AI).
+    if (const auto n = parse_string_arg(argc, argv, "--ai-armies", ""); !n.empty()) {
+        o.ai_army_count = static_cast<size_t>(std::max(1, std::atoi(n.c_str())));
+    }
+
+    // Collect all command-line args for HasCommandLineArg (M147d)
+    for (int i = 1; i < argc; ++i) {
+        o.cmdline_args.insert(argv[i]);
+    }
+
+    // A checked run: headless, and its exit code is the checks' result (a
+    // test mode, or an AI game whose script errors count).
+    o.any_test = request.headless || o.ai_skirmish;
+    o.headless = (o.tick_count > 0) || o.any_test || o.replay_to_play.has_value();
+
+    o.silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window;
+    // --seed N: the game's random seed (weapon spread, scripts' Random and
+    // math.random). Runs that must repeat default to a fixed one.
+    o.seed_arg = parse_string_arg(argc, argv, "--seed", "");
+    o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
+    o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
+                    parse_string_arg(argc, argv, "--golden", "").empty();
+    return o;
 }
 
 /// A test mode's flag given to the game (the integration runner has them),
