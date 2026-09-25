@@ -169,6 +169,15 @@ private:
     std::optional<int> boot_game();
     /// The UI state, up to the game's interface or the front end.
     std::optional<int> boot_ui();
+    /// A UI state's own setup: bindings, the App's objects, userInit.lua.
+    std::optional<int> init_ui_state();
+    /// start()'s part of it: the registries and managers the bindings use.
+    void publish_session_objects();
+    /// Replace the UI state with a fresh one, as Moho starts the front end
+    /// and each game in a state of its own (M191 step 4). The old state's
+    /// controls, threads, beat functions and key maps go with it; the
+    /// caller then runs SetupUI and the front end's or game's UI.
+    void reset_ui_state();
     /// The session, the UI's registries, and the test modes' front end.
     std::optional<int> start();
 

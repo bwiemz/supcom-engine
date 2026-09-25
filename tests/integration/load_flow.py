@@ -8,7 +8,10 @@ listed one with LoadSavedGame, as retail's Load dialog does. Offscreen, the
 game catches up to the saved tick (checked against the save; the UI never
 takes it for a replay), plays on, and is saved again with InternalSaveGame;
 the new save must hold the whole game, and a save outside the folder is
-refused.
+refused. Then, as a player might go on: the new save loads from inside the
+game, as the game menu's Load dialog loads it; the game returns to the lobby
+(ReturnToLobby); and the first save loads from the front end again. Each
+game starts in a fresh UI Lua state, and no Lua error may happen.
 
 Usage:
     load_flow.py <opensupcom> -- <game args for the first game...>

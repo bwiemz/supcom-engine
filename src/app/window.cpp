@@ -29,7 +29,10 @@ extern "C" {
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
@@ -48,14 +51,6 @@ std::optional<int> App::run_window() {
                                  osc::sim::world_blueprints(*sim_state), &vfs, ui_lua_state.raw());
         }
 
-        // Store renderer pointer in UI Lua registry for WorldView/GetCamera
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_renderer");
-            lua_pushlightuserdata(uL, &renderer);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
-
         // Initialize texture/font caches for UI rendering (normally done in build_scene)
         if (!sim_state) {
             renderer.init_ui_caches(&vfs);
@@ -65,39 +60,33 @@ std::optional<int> App::run_window() {
         osc::renderer::InputHandler input_handler;
         input_handler.set_player_army(0);
         renderer.set_player_army(0);
-        // Store input_handler pointer in UI Lua registry for selection globals
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_input_handler");
-            lua_pushlightuserdata(uL, &input_handler);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
 
         // Factory queue display (M140c)
         osc::lua::FactoryQueueDisplay factory_queue;
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_factory_queue");
-            lua_pushlightuserdata(uL, &factory_queue);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
 
         // SimCallback queue (UI→Sim bridge, M138a)
         osc::sim::SimCallbackQueue sim_callback_queue;
-        {
-            lua_State* uL = ui_lua_state.raw();
-            lua_pushstring(uL, "__osc_sim_callback_queue");
-            lua_pushlightuserdata(uL, &sim_callback_queue);
-            lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
 
-        // Initialize hover entity ID to 0 (updated by WorldView HitTest, M142a)
-        {
+        // The window's objects in the UI state's registry: the renderer
+        // (WorldView, GetCamera), the input handler (selection), the factory
+        // queue display (M140c), the SimCallback queue (M138a), and no hover
+        // yet (M142a). Again for each new UI state (M191 step 4).
+        const auto publish_window_objects = [&] {
             lua_State* uL = ui_lua_state.raw();
+            const auto publish = [&](const char* key, void* object) {
+                lua_pushstring(uL, key);
+                lua_pushlightuserdata(uL, object);
+                lua_rawset(uL, LUA_REGISTRYINDEX);
+            };
+            publish("__osc_renderer", &renderer);
+            publish("__osc_input_handler", &input_handler);
+            publish("__osc_factory_queue", &factory_queue);
+            publish("__osc_sim_callback_queue", &sim_callback_queue);
             lua_pushstring(uL, "__osc_hover_entity_id");
             lua_pushnumber(uL, 0);
             lua_rawset(uL, LUA_REGISTRYINDEX);
-        }
+        };
+        publish_window_objects();
 
         // Store scenario path for SessionGetScenarioInfo (M145c2)
         if (!opt.map_path.empty()) {
@@ -262,10 +251,33 @@ std::optional<int> App::run_window() {
 
         // Open the saved game (--load, --load-flow-test) through the global
         // retail's Load dialog calls; the loop then loads it.
+        // --load-flow-test, as a player might go (M208a, M191 step 4):
+        //  0. the listed save loads from the front end, catches up (never a
+        //     replay meanwhile), plays on, and is saved again;
+        //  1. that save loads from inside the game, as the game menu's Load
+        //     dialog loads it, into a fresh UI state;
+        //  2. back to the front end (ReturnToLobby), a fresh state again;
+        //  3. the first save loads from there once more.
+        // Each game starts in a UI state of its own, so what the flow needs
+        // (the save's profile and file) is kept here, not in Lua globals.
         bool load_flow_done = false;
-        bool load_flow_saw_catch_up = false;
-        std::optional<osc::u32> load_flow_resumed_at;
+        int load_flow_phase = 0;
+        bool load_flow_saw_catch_up = false;          // this load began catching up
+        std::optional<osc::u32> load_flow_resumed_at; // ...and was the player's from here
+        std::vector<osc::u32> load_flow_resumes;      // every load's resume tick
         osc::u32 load_flow_frames = 0;
+        osc::u32 load_flow_front_end_frames = 0;
+        std::string load_flow_profile;
+        std::string load_flow_file;
+        const auto load_flow_globals = [&] { // into the current UI state
+            lua_State* uL = ui_lua_state.raw();
+            for (const auto& [name, value] : {std::pair{"__osc_load_profile", &load_flow_profile},
+                                              std::pair{"__osc_load_file", &load_flow_file}}) {
+                lua_pushstring(uL, name);
+                lua_pushstring(uL, value->c_str());
+                lua_rawset(uL, LUA_GLOBALSINDEX);
+            }
+        };
         if (!opt.load_path.empty() || opt.load_flow_test) {
             lua_State* uL = ui_lua_state.raw();
             lua_pushstring(uL, "__osc_load_file");
@@ -299,6 +311,17 @@ std::optional<int> App::run_window() {
                         error('cannot load ' .. __osc_load_file .. ': ' .. tostring(err))
                     end
                 )");
+            if (opened && opt.load_flow_test) {
+                const auto global = [&](const char* name) {
+                    lua_pushstring(uL, name);
+                    lua_rawget(uL, LUA_GLOBALSINDEX);
+                    std::string value = lua_type(uL, -1) == LUA_TSTRING ? lua_tostring(uL, -1) : "";
+                    lua_pop(uL, 1);
+                    return value;
+                };
+                load_flow_profile = global("__osc_load_profile");
+                load_flow_file = global("__osc_load_file");
+            }
             if (!opened) {
                 spdlog::error("Saved game: {}", opened.error().message);
                 if (opt.load_flow_test) {
@@ -311,6 +334,7 @@ std::optional<int> App::run_window() {
         // --load-flow-test, once the loaded game has played on: save it again
         // as retail's Save dialog does, and check what saving refuses.
         auto save_again_in_load_flow = [&] {
+            load_flow_globals();
             auto saved = ui_lua_state.do_string(R"(
                 if SessionIsReplay() then error('a loaded game is a replay') end
                 local data = GetSpecialFiles('SaveGame')
@@ -550,12 +574,48 @@ std::optional<int> App::run_window() {
                         "saved game catches up') end");
                     if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
                 }
-                if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at)
+                if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at) {
                     load_flow_resumed_at = sim_state->tick_count();
-                if (load_flow_resumed_at && sim_state->tick_count() >= *load_flow_resumed_at + 50) {
+                    load_flow_resumes.push_back(*load_flow_resumed_at);
+                }
+                const bool played_on = sim_state && load_flow_resumed_at &&
+                                       sim_state->tick_count() >= *load_flow_resumed_at + 50;
+                const auto next_load = [&] {
+                    load_flow_saw_catch_up = false;
+                    load_flow_resumed_at.reset();
+                };
+                const auto run = [&](const char* code) {
+                    load_flow_globals();
+                    if (auto r = ui_lua_state.do_string(code); !r)
+                        osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
+                };
+                if (load_flow_phase == 0 && played_on) {
                     save_again_in_load_flow();
+                    // The game menu's Load dialog: load, then destroy the
+                    // control it was opened over, GetFrame(0) in a game.
+                    run(R"(
+                        local worked, err = LoadSavedGame(__osc_again_file)
+                        if not worked then error('LoadSavedGame in a game: ' .. tostring(err)) end
+                        GetFrame(0):Destroy()
+                    )");
+                    next_load();
+                    load_flow_phase = 1;
+                } else if (load_flow_phase == 1 && played_on) {
+                    run("ReturnToLobby()");
+                    load_flow_front_end_frames = 0;
+                    load_flow_phase = 2;
+                } else if (load_flow_phase == 2 && !sim_state &&
+                           ++load_flow_front_end_frames > 20) {
+                    run(R"(
+                        local worked, err = LoadSavedGame(__osc_load_file)
+                        if not worked then error('LoadSavedGame from the front end: ' ..
+                                                 tostring(err)) end
+                    )");
+                    next_load();
+                    load_flow_phase = 3;
+                } else if (load_flow_phase == 3 && played_on) {
                     load_flow_done = true;
-                } else if (load_flow_frames > 40000) {
+                } else if (load_flow_frames > 60000) {
                     load_flow_done = true; // stuck: reported below
                 }
             }
@@ -600,8 +660,15 @@ std::optional<int> App::run_window() {
                 });
             }
 
-            dispatch_selection_change(ui_lua_state.raw(), prev_selection, input_handler.selected(),
-                                      input_handler.take_selection_event());
+            // Selections are a game's: at the front end (after a return to the
+            // lobby cleared the selection) there is no game UI to tell.
+            if (sim_state) {
+                dispatch_selection_change(ui_lua_state.raw(), prev_selection,
+                                          input_handler.selected(),
+                                          input_handler.take_selection_event());
+            } else {
+                (void)input_handler.take_selection_event();
+            }
 
             const auto& sel = input_handler.selected();
             if (!screenshot_path.empty() &&
@@ -753,10 +820,22 @@ std::optional<int> App::run_window() {
                         active_playback.reset();
                         catch_up.reset();
 
-                        // Transition to LOADING and show loading screen
-                        game_state_mgr.transition_to(osc::GameState::LOADING, ui_lua_state.raw());
-                        wld_provider.destroy_game_interface(ui_lua_state.raw());
-                        begin_world_ui(ui_lua_state.raw(), wld_provider);
+                        // The game gets a fresh UI state, as Moho gives each
+                        // game one (M191 step 4): the front end's, or the last
+                        // game's, goes with its controls and threads.
+                        wld_provider.destroy_game_interface(uiL);
+                        renderer.forget_ui_controls();
+                        reset_ui_state();
+                        uiL = ui_lua_state.raw();
+                        publish_window_objects();
+                        // The new state's loading screen has no game yet, even
+                        // when the last one still runs until the reload (per
+                        // review), as from the front end.
+                        detach_ui_from_sim(uiL);
+
+                        // Transition to LOADING (SetupUI) and show the loading screen
+                        game_state_mgr.transition_to(osc::GameState::LOADING, uiL);
+                        begin_world_ui(uiL, wld_provider);
 
                         // Pump one UI frame to display loading screen
                         pump_ui_frames(ui_lua_state, ui_thread_manager, beat_registry, 1,
@@ -853,44 +932,42 @@ std::optional<int> App::run_window() {
                     input_handler.set_selected({});
                     prev_selection.clear();
 
-                    // Clear hover
-                    lua_pushstring(uiL, "__osc_hover_entity_id");
-                    lua_pushnumber(uiL, 0);
-                    lua_rawset(uiL, LUA_REGISTRYINDEX);
-
-                    // Transition to FRONT_END
-                    game_state_mgr.transition_to(osc::GameState::FRONT_END, uiL);
-
-                    // Re-show lobby UI
-                    osc::core::call_lua_global(uiL, "CreateUI");
-
                     // Why the game ended, when it wasn't the player's doing
-                    // (a saved game that didn't load as it was played).
+                    // (a saved game that didn't load as it was played): read
+                    // before the game's UI state goes.
+                    std::string notice;
                     lua_pushstring(uiL, "__osc_front_end_notice");
                     lua_rawget(uiL, LUA_REGISTRYINDEX);
-                    if (lua_type(uiL, -1) == LUA_TSTRING) {
+                    if (lua_type(uiL, -1) == LUA_TSTRING) notice = lua_tostring(uiL, -1);
+                    lua_pop(uiL, 1);
+
+                    // The front end gets a fresh UI state, as in Moho (M191
+                    // step 4), built as at boot.
+                    renderer.forget_ui_controls();
+                    reset_ui_state();
+                    uiL = ui_lua_state.raw();
+                    publish_window_objects();
+
+                    // Transition to FRONT_END (SetupUI) and show the main menu
+                    game_state_mgr.transition_to(osc::GameState::FRONT_END, uiL);
+                    if (auto shown =
+                            ui_lua_state.do_string("import('/lua/ui/menus/main.lua').CreateUI()");
+                        !shown)
+                        spdlog::warn("Front-end CreateUI error: {}", shown.error().message);
+
+                    if (!notice.empty()) {
                         lua_pushstring(uiL, "__osc_notice");
-                        lua_pushvalue(uiL, -2);
+                        lua_pushstring(uiL, notice.c_str());
                         lua_rawset(uiL, LUA_GLOBALSINDEX);
                         auto shown = ui_lua_state.do_string(
                             "import('/lua/ui/uiutil.lua').ShowInfoDialog(GetFrame(0), "
                             "__osc_notice, '<LOC _Ok>')");
                         if (!shown) spdlog::warn("Front-end notice: {}", shown.error().message);
                     }
-                    lua_pop(uiL, 1);
-                    lua_pushstring(uiL, "__osc_front_end_notice");
-                    lua_pushnil(uiL);
-                    lua_rawset(uiL, LUA_REGISTRYINDEX);
 
-                    // Rebuild the LAN dialog on the fresh front end.
-                    {
-                        lua_pushstring(uiL, "__osc_lan_dialog_built");
-                        lua_pushnil(uiL);
-                        lua_rawset(uiL, LUA_GLOBALSINDEX);
-                        auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua);
-                        if (!lr)
-                            spdlog::warn("LAN dialog UI (relobby) error: {}", lr.error().message);
-                    }
+                    // The LAN dialog on the fresh front end.
+                    if (auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua); !lr)
+                        spdlog::warn("LAN dialog UI (relobby) error: {}", lr.error().message);
 
                     spdlog::info("=== Returned to lobby ===");
                 } else {
@@ -904,14 +981,22 @@ std::optional<int> App::run_window() {
         save_last_game(); // quitting leaves the game being played
         renderer.shutdown();
         if (opt.load_flow_test) {
-            if (!load_flow_saw_catch_up) {
-                osc::test_status::fail("[FAIL] load-flow: the saved game never loaded");
-            } else if (!load_flow_resumed_at) {
-                osc::test_status::fail("[FAIL] load-flow: the saved game never caught up");
+            // The first save resumes at its tick, the one saved in the game
+            // 50 ticks later, then the first again.
+            const bool all = load_flow_resumes.size() == 3 &&
+                             load_flow_resumes[1] == load_flow_resumes[0] + 50 &&
+                             load_flow_resumes[2] == load_flow_resumes[0];
+            if (!all) {
+                std::string got;
+                for (const osc::u32 t : load_flow_resumes) got += fmt::format(" {}", t);
+                osc::test_status::fail("[FAIL] load-flow: stopped in phase {}; the loads "
+                                       "resumed at:{}",
+                                       load_flow_phase, got.empty() ? " none" : got);
             } else if (osc::test_status::failure_count() == 0) {
-                spdlog::info("[PASS] load-flow: loaded, caught up to tick {}, played on and "
-                             "saved again",
-                             *load_flow_resumed_at);
+                spdlog::info("[PASS] load-flow: loaded from the front end (tick {}), saved "
+                             "again, loaded that from the game (tick {}), back to the lobby, "
+                             "and loaded again (tick {}), each in a fresh UI state",
+                             load_flow_resumes[0], load_flow_resumes[1], load_flow_resumes[2]);
             }
             return finish_test_run("load-flow-test");
         }

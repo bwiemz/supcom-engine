@@ -46,6 +46,11 @@ public:
     /// so thread wrapper Destroy() can find it.
     void register_in_registry(lua_State* L);
 
+    /// Serve a new Lua state (a new UI state, M191 step 4): the old state's
+    /// threads are forgotten, closed with it. Serials keep counting, so a
+    /// wake meant for a forgotten thread finds none.
+    void rebind(lua_State* L);
+
     /// Resume all eligible threads for the given tick.
     void resume_all(u32 current_tick);
 

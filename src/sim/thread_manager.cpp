@@ -63,6 +63,12 @@ void ThreadManager::create_thread_metatable(lua_State* L) {
     lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
+void ThreadManager::rebind(lua_State* L) {
+    threads_.clear();
+    pending_threads_.clear();
+    L_ = L;
+}
+
 void ThreadManager::register_in_registry(lua_State* L) {
     lua_pushstring(L, "osc_thread_mgr");
     lua_pushlightuserdata(L, this);

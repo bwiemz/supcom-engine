@@ -87,6 +87,8 @@ public:
 
     /// Tear down scene-specific GPU resources for map reload.
     void clear_scene();
+    /// The UI's controls are being replaced with a new UI state's.
+    void forget_ui_controls() { ui_dispatch_.forget_controls(); }
 
     /// Render one frame from the world as `view` draws it, between the
     /// sim's last two ticks. It shows (and takes) the death flashes and

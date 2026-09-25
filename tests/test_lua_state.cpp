@@ -563,7 +563,7 @@ TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][
     CHECK(global_string(L, "normalized_scenario") == "/maps/SCMP_009/SCMP_009_scenario.lua");
     CHECK(global_string(L, "saved_ai_personality") == "turtle");
 
-    front_end_data.clear(L);
+    front_end_data.clear();
 }
 
 TEST_CASE("Discovery service tracks advertised lobby entries", "[lua][ui]") {

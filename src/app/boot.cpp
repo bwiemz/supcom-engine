@@ -215,7 +215,11 @@ std::optional<int> App::boot_game() {
     return std::nullopt;
 }
 
-std::optional<int> App::boot_ui() {
+/// The UI Lua state's own setup, as Moho gives the front end and each game
+/// a state of their own: the engine's bindings and objects in it, then
+/// userInit.lua. boot_ui runs it for the first state, reset_ui_state for
+/// each later one (M191 step 4).
+std::optional<int> App::init_ui_state() {
     // === UI Lua State ===
     ui_lua_state.set_vfs(&vfs);
     ui_lua_state.set_blueprint_store(&store);
@@ -244,9 +248,12 @@ std::optional<int> App::boot_ui() {
     // When no map, create a temporary dummy SimState for registration.
     // Sim-dependent moho methods check get_sim(L) and return gracefully when null.
     {
+        // A throwaway Lua state for it: at the front end the sim's is gone.
+        std::unique_ptr<lua_State, void (*)(lua_State*)> dummy_L{nullptr, lua_close};
         std::unique_ptr<osc::sim::SimState> dummy_sim;
         if (!sim_state) {
-            dummy_sim = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
+            dummy_L.reset(lua_open());
+            dummy_sim = std::make_unique<osc::sim::SimState>(dummy_L.get(), &store);
         }
         osc::lua::register_moho_bindings(ui_lua_state, sim_state ? *sim_state : *dummy_sim);
         // A drawn game's captured ticks serve the UI's unit objects too.
@@ -261,8 +268,7 @@ std::optional<int> App::boot_ui() {
         }
     }
 
-    // Localization cache — load strings from VFS, then store pointer in UI registry
-    loc_cache.load_from_vfs(ui_lua_state.raw(), &vfs);
+    // The localization cache, loaded once (boot_ui), in the UI registry
     {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_loc_cache");
@@ -270,26 +276,7 @@ std::optional<int> App::boot_ui() {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Preferences (Game.prefs). An interactive game keeps them in the user's
-    // config dir. Tests and captures never touch that file, so the player's
-    // settings cannot change a result: --prefs PATH seeds them instead, and
-    // is written back only when interactive.
-    {
-        std::filesystem::path file = parse_string_arg(argc, argv, "--prefs", "");
-        if (file.empty() && opt.interactive) {
-            file = osc::platform::known_folder(osc::platform::KnownFolder::Config) / "opensupcom" /
-                   "Game.prefs";
-        }
-        if (!file.empty()) prefs.load(file);
-        if (opt.interactive) prefs.set_path(file);
-        // Retail's menus need a current profile; it would ask for one in a
-        // first-run dialog (and then offer the tutorial). The engine makes
-        // "Player" instead.
-        if (prefs.ensure_profile("Player")) {
-            prefs.set_bool(prefs.current_profile_path() + ".MenuTutorialPrompt", true);
-            prefs.save();
-        }
-    }
+    // Preferences, loaded once (boot_ui), in the UI registry
     {
         lua_State* uL = ui_lua_state.raw();
         lua_pushstring(uL, "__osc_preferences");
@@ -297,19 +284,7 @@ std::optional<int> App::boot_ui() {
         lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
-    // Replays and saved games (FA's special files). An interactive game keeps
-    // them in FA's user folder; other runs use --user-dir, else a temporary
-    // folder of their own (removed at exit), never the player's.
-    user_dir = parse_string_arg(argc, argv, "--user-dir", "");
-    if (user_dir.empty() && opt.interactive) user_dir = osc::lua::SpecialFiles::default_root();
-    if (user_dir.empty()) {
-        std::random_device rd;
-        temp_user_dir =
-            std::filesystem::temp_directory_path() / fmt::format("opensupcom-user-{:08x}", rd());
-        user_dir = temp_user_dir;
-    }
-    temp_user_dir_remover.dir = temp_user_dir;
-    special_files.emplace(user_dir);
+    // Replays and saved games (FA's special files), set up once (boot_ui)
     osc::lua::register_special_file_bindings(ui_lua_state, &*special_files);
 
     // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider
@@ -480,6 +455,48 @@ std::optional<int> App::boot_ui() {
         }
     }
 
+    return std::nullopt;
+}
+
+std::optional<int> App::boot_ui() {
+    // What outlives every UI state: localization, preferences, the user's
+    // special files.
+    loc_cache.load_from_vfs(ui_lua_state.raw(), &vfs);
+    // Preferences (Game.prefs). An interactive game keeps them in the user's
+    // config dir. Tests and captures never touch that file, so the player's
+    // settings cannot change a result: --prefs PATH seeds them instead, and
+    // is written back only when interactive.
+    {
+        std::filesystem::path file = parse_string_arg(argc, argv, "--prefs", "");
+        if (file.empty() && opt.interactive) {
+            file = osc::platform::known_folder(osc::platform::KnownFolder::Config) / "opensupcom" /
+                   "Game.prefs";
+        }
+        if (!file.empty()) prefs.load(file);
+        if (opt.interactive) prefs.set_path(file);
+        // Retail's menus need a current profile; it would ask for one in a
+        // first-run dialog (and then offer the tutorial). The engine makes
+        // "Player" instead.
+        if (prefs.ensure_profile("Player")) {
+            prefs.set_bool(prefs.current_profile_path() + ".MenuTutorialPrompt", true);
+            prefs.save();
+        }
+    }
+    // Replays and saved games (FA's special files). An interactive game keeps
+    // them in FA's user folder; other runs use --user-dir, else a temporary
+    // folder of their own (removed at exit), never the player's.
+    user_dir = parse_string_arg(argc, argv, "--user-dir", "");
+    if (user_dir.empty() && opt.interactive) user_dir = osc::lua::SpecialFiles::default_root();
+    if (user_dir.empty()) {
+        std::random_device rd;
+        temp_user_dir =
+            std::filesystem::temp_directory_path() / fmt::format("opensupcom-user-{:08x}", rd());
+        user_dir = temp_user_dir;
+    }
+    temp_user_dir_remover.dir = temp_user_dir;
+    special_files.emplace(user_dir);
+    if (auto code = init_ui_state()) return code;
+
     // State transition: INIT → GAME or INIT → FRONT_END
     if (!opt.map_path.empty()) {
         osc::core::call_setup_ui(ui_lua_state.raw());
@@ -548,6 +565,75 @@ std::optional<int> App::boot_ui() {
     return std::nullopt;
 }
 
+/// The App's registries and managers the UI's bindings reach through the
+/// UI state's registry: beat functions, key maps, FrontEndData, the command
+/// line, the game-state manager.
+void App::publish_session_objects() {
+    // BeatFunctionRegistry for per-frame Lua callbacks (M145b) — outer scope for headless test
+    // access
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_beat_registry");
+        lua_pushlightuserdata(uL, &beat_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Key map registry for hotkey dispatch (M150b) — outer scope for headless test access
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_keymap_registry");
+        lua_pushlightuserdata(uL, &keymap_registry);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // FrontEndData — cross-state key-value store (M147c)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_front_end_data");
+        lua_pushlightuserdata(uL, &front_end_data);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // Command-line args for HasCommandLineArg (M147d)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_cmdline_args");
+        lua_pushlightuserdata(uL, &opt.cmdline_args);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+
+    // GameStateManager — outer scope for headless test access (M144b)
+    {
+        lua_State* uL = ui_lua_state.raw();
+        lua_pushstring(uL, "__osc_game_state_mgr");
+        lua_pushlightuserdata(uL, &game_state_mgr);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
+    }
+}
+
+void App::reset_ui_state() {
+    lua_State* old = ui_lua_state.raw();
+    spdlog::info("UI state: a fresh one for the next front end or game");
+    // What the old state's scripts built goes while the state still runs:
+    // the controls' OnDestroy, then the beat functions and key maps.
+    if (auto r = ui_lua_state.do_string("moho.control_methods.Destroy(GetFrame(0))"); !r)
+        spdlog::warn("UI state: tearing down the controls: {}", r.error().message);
+    beat_registry.clear(old);
+    keymap_registry.clear(old);
+    ui_registry = ui::UIControlRegistry{};
+
+    ui_lua_state = lua::LuaState(); // closes the old state
+    ui_store.rebind(ui_lua_state.raw());
+    ui_thread_manager.rebind(ui_lua_state.raw());
+    if (init_ui_state()) spdlog::error("UI state: the new state's init failed");
+    publish_session_objects();
+    if (instrument_harness) {
+        instrument_harness->install_panic_handler(ui_lua_state.raw());
+        instrument_harness->install_global_interceptor(ui_lua_state.raw());
+        instrument_harness->install_all_method_interceptors(ui_lua_state.raw());
+    }
+}
+
 std::optional<int> App::start() {
     spdlog::info("Dual Lua states initialized (sim_L + ui_L)");
 
@@ -607,46 +693,7 @@ std::optional<int> App::start() {
         spdlog::info("Performance profiling enabled");
     }
 
-    // BeatFunctionRegistry for per-frame Lua callbacks (M145b) — outer scope for headless test
-    // access
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_beat_registry");
-        lua_pushlightuserdata(uL, &beat_registry);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
-    // Key map registry for hotkey dispatch (M150b) — outer scope for headless test access
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_keymap_registry");
-        lua_pushlightuserdata(uL, &keymap_registry);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
-    // FrontEndData — cross-state key-value store (M147c)
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_front_end_data");
-        lua_pushlightuserdata(uL, &front_end_data);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
-    // Command-line args for HasCommandLineArg (M147d)
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_cmdline_args");
-        lua_pushlightuserdata(uL, &opt.cmdline_args);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
-
-    // GameStateManager — outer scope for headless test access (M144b)
-    {
-        lua_State* uL = ui_lua_state.raw();
-        lua_pushstring(uL, "__osc_game_state_mgr");
-        lua_pushlightuserdata(uL, &game_state_mgr);
-        lua_rawset(uL, LUA_REGISTRYINDEX);
-    }
+    publish_session_objects();
     // SetupUI already ran during the UI state's boot above; the initial
     // transitions pass nullptr so it does not run a second time.
     if (!opt.map_path.empty()) {

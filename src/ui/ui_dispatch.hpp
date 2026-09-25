@@ -60,6 +60,9 @@ public:
 
     /// The control currently under the mouse (for enter/exit tracking).
     UIControl* hover_control() const { return hover_control_; }
+    /// Let go of the controls it remembers (their registry is being
+    /// replaced with a new UI state).
+    void forget_controls() { hover_control_ = nullptr; }
 
     /// Current mouse position (updated by cursor pos callback).
     f64 mouse_x() const { return mouse_x_; }

@@ -1,6 +1,12 @@
 # A fresh UI Lua state for every game
 
-Status: design, 2026-09-25. Phase C (architecture), as M191 step 4: the user layer's lifecycle.
+Status: done, 2026-09-25. Phase C (architecture), as M191 step 4: the user layer's lifecycle.
+
+As built, it differs from the design below in two places:
+- **The state is rebuilt in place.** `App` keeps its members, and `reset_ui_state()` tears them down and re-inits them around a new `LuaState`, rather than owning a separate `UiState` object. References bound to those members, such as the test modes' `Engine`, stay valid for free.
+- **The launch and return flags stay in the Lua registry.** The loop reads them every frame, before any transition, so none can be lost with a state; moving them into C++ would have changed tests and no behaviour.
+
+One fix came with it: selections are reported to the game UI only while a game runs.
 
 ## Why
 
