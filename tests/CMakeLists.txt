@@ -58,6 +58,7 @@ add_executable(osc_tests
     test_command_scheduler.cpp
     test_no_rush.cpp
     test_replay.cpp
+    test_category_match.cpp
     test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp

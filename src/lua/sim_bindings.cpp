@@ -3423,6 +3423,7 @@ static int l_EntityCategoryCount(lua_State* L) {
         lua_pushnumber(L, 0);
         return 1;
     }
+    const osc::lua::CategoryMatcher category(L, 1);
     int count = 0;
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
@@ -3433,7 +3434,7 @@ static int l_EntityCategoryCount(lua_State* L) {
         auto* entity = extract_entity(L, unit_tbl);
         if (entity && entity->is_unit() && !entity->destroyed()) {
             auto* unit = static_cast<sim::Unit*>(entity);
-            if (osc::lua::unit_matches_category(L, 1, unit->categories())) {
+            if (category.matches(unit->category_bits())) {
                 count++;
             }
         }
@@ -3491,6 +3492,7 @@ static int category_filter(lua_State* L, bool keep_matches) {
 
     if (!lua_istable(L, 1) || !lua_istable(L, 2)) return 1;
 
+    const osc::lua::CategoryMatcher category(L, 1);
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
@@ -3498,7 +3500,7 @@ static int category_filter(lua_State* L, bool keep_matches) {
 
         int unit_tbl = lua_gettop(L);
         const auto* cats = entity_categories(extract_entity(L, unit_tbl));
-        const bool matches = cats && osc::lua::unit_matches_category(L, 1, *cats);
+        const bool matches = cats && category.matches(*cats);
 
         if (matches == keep_matches) {
             lua_pushnumber(L, out_idx++);
@@ -3531,13 +3533,14 @@ static int l_EntityCategoryGetUnitList(lua_State* L) {
 
     auto* store = sim->blueprint_store();
     auto entries = store->get_all(blueprints::BlueprintType::Unit);
+    const osc::lua::CategoryMatcher category(L, 1);
     for (const auto* entry : entries) {
         store->push_lua_table(*entry, L);
         int bp_tbl = lua_gettop(L);
 
         std::unordered_set<std::string> bp_cats;
         sim::collect_blueprint_categories(L, bp_tbl, bp_cats);
-        if (!bp_cats.empty() && osc::lua::categories_match(L, 1, bp_cats)) {
+        if (!bp_cats.empty() && category.matches(bp_cats)) {
             lua_pushnumber(L, out_idx++);
             lua_pushstring(L, entry->id.c_str());
             lua_rawset(L, result);
@@ -5067,13 +5070,14 @@ static int l_IssueTransportUnloadSpecific(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = extract_position(L, 3);
+    const CategoryMatcher category(L, 2);
     for (u32 transport_id : collect_unit_ids(L, 1)) {
         const auto* te = sim->entity_registry().find(transport_id);
         if (!te || te->destroyed() || !te->is_unit()) continue;
         for (u32 cargo_id : static_cast<const sim::Unit*>(te)->cargo_ids()) {
             const auto* e = sim->entity_registry().find(cargo_id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
-            if (unit_matches_category(L, 2, static_cast<const sim::Unit*>(e)->categories()))
+            if (category.matches(static_cast<const sim::Unit*>(e)->category_bits()))
                 cmd.unload_ids.push_back(cargo_id);
         }
     }

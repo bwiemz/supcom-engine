@@ -135,11 +135,12 @@ static int platoon_count_matching(lua_State* L, bool around) {
         radius_sq = r * r;
     }
     int count = 0;
+    const CategoryMatcher category(L, 2);
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
-        if (!unit_matches_category(L, 2, unit->categories())) continue;
+        if (!category.matches(unit->category_bits())) continue;
         if (around) {
             const f32 dx = unit->position().x - cx;
             const f32 dz = unit->position().z - cz;
@@ -563,6 +564,9 @@ static int platoon_FindClosestUnit(lua_State* L) {
     // arg 4 = isUnit (boolean, ignored — we only have units)
     // arg 5 = category (Lua table)
     int cat_idx = lua_istable(L, 5) ? 5 : 0;
+    const std::optional<osc::lua::CategoryMatcher> category =
+        cat_idx > 0 ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_idx)
+                    : std::nullopt;
 
     // Get platoon center
     auto center = platoon->get_position(sim->entity_registry());
@@ -590,9 +594,7 @@ static int platoon_FindClosestUnit(lua_State* L) {
         }
 
         // Filter by category
-        if (cat_idx > 0 &&
-            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-            return;
+        if (category && !category->matches(unit->category_bits())) return;
 
         f32 dx = unit->position().x - center.x;
         f32 dz = unit->position().z - center.z;
@@ -720,6 +722,9 @@ static int platoon_CalculatePlatoonThreat(lua_State* L) {
 
     const char* threat_type = lua_isstring(L, 2) ? lua_tostring(L, 2) : "Overall";
     int cat_idx = lua_istable(L, 3) ? 3 : 0;
+    const std::optional<osc::lua::CategoryMatcher> category =
+        cat_idx > 0 ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_idx)
+                    : std::nullopt;
 
     f32 total = 0;
     for (u32 id : platoon->unit_ids()) {
@@ -727,9 +732,7 @@ static int platoon_CalculatePlatoonThreat(lua_State* L) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
 
-        if (cat_idx > 0 &&
-            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-            continue;
+        if (category && !category->matches(unit->category_bits())) continue;
 
         total += get_unit_threat_for_type(unit, threat_type);
     }
@@ -750,6 +753,9 @@ static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
 
     const char* threat_type = lua_isstring(L, 2) ? lua_tostring(L, 2) : "Overall";
     int cat_idx = lua_istable(L, 3) ? 3 : 0;
+    const std::optional<osc::lua::CategoryMatcher> category =
+        cat_idx > 0 ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_idx)
+                    : std::nullopt;
 
     // Extract position from arg 4 ({x, y, z} table)
     f32 px = 0, pz = 0;
@@ -771,9 +777,7 @@ static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(e);
 
-        if (cat_idx > 0 &&
-            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-            continue;
+        if (category && !category->matches(unit->category_bits())) continue;
 
         // Distance filter (2D, ignoring Y)
         if (radius > 0) {
@@ -847,14 +851,14 @@ static int platoon_CanFormPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         // Count matching units in pool
+        const osc::lua::CategoryMatcher category(L, cat_idx);
         int matched = 0;
         for (u32 id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<sim::Unit*>(e);
 
-            if (!osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-                continue;
+            if (!category.matches(unit->category_bits())) continue;
 
             if (has_location) {
                 auto pos = unit->position();
@@ -971,6 +975,7 @@ static int platoon_FormPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         // Find matching units and transfer
+        const osc::lua::CategoryMatcher category(L, cat_idx);
         int taken = 0;
         for (u32 id : pool_ids) {
             if (taken >= max_count) break;
@@ -986,8 +991,7 @@ static int platoon_FormPlatoon(lua_State* L) {
             if (!e || e->destroyed() || !e->is_unit()) continue;
             auto* unit = static_cast<sim::Unit*>(e);
 
-            if (!osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-                continue;
+            if (!category.matches(unit->category_bits())) continue;
 
             if (has_location) {
                 auto pos = unit->position();

@@ -2672,13 +2672,14 @@ static int l_ui_EntityCategoryGetUnitList(lua_State* L) {
     if (!store || !lua_istable(L, 1)) return 1;
 
     auto entries = store->get_all(blueprints::BlueprintType::Unit);
+    const osc::lua::CategoryMatcher category(L, 1);
     for (const auto* entry : entries) {
         store->push_lua_table(*entry, L);
         int bp_tbl = lua_gettop(L);
 
         std::unordered_set<std::string> bp_cats;
         sim::collect_blueprint_categories(L, bp_tbl, bp_cats);
-        if (!bp_cats.empty() && osc::lua::categories_match(L, 1, bp_cats)) {
+        if (!bp_cats.empty() && category.matches(bp_cats)) {
             lua_pushnumber(L, out_idx++);
             lua_pushstring(L, entry->id.c_str());
             lua_rawset(L, result);
@@ -2725,6 +2726,7 @@ static int ui_category_filter(lua_State* L, bool keep_matches) {
 
     if (!lua_istable(L, 1) || !lua_istable(L, 2)) return 1;
 
+    const osc::lua::CategoryMatcher category(L, 1);
     for (int i = 1; ; i++) {
         lua_rawgeti(L, 2, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
@@ -2732,7 +2734,7 @@ static int ui_category_filter(lua_State* L, bool keep_matches) {
         const int item = lua_gettop(L);
         std::unordered_set<std::string> cats;
         if (!ui_item_categories(L, item, cats)) { lua_pop(L, 1); continue; }
-        const bool matches = osc::lua::categories_match(L, 1, cats);
+        const bool matches = category.matches(cats);
         if (matches == keep_matches) {
             lua_pushnumber(L, out_idx++);
             lua_pushvalue(L, item);
