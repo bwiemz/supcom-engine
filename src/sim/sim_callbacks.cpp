@@ -124,6 +124,9 @@ void process_info(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
         for_each_unit(sim, cb, [&](Unit& u) { set_auto_mode(L, u, value); });
     } else if (name == "SetRepeatQueue") {
         for_each_unit(sim, cb, [&](Unit& u) { u.set_repeat_queue(value); });
+    } else if (name == "CustomName") {
+        // UserUnit:SetCustomName (Moho's ProcessInfoPair "CustomName").
+        if (text) for_each_unit(sim, cb, [&](Unit& u) { u.set_custom_name(*text); });
     } else {
         spdlog::warn("ProcessInfo: unsupported action '{}'", name);
     }

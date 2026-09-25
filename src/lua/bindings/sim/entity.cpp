@@ -721,10 +721,24 @@ static int entity_CreateProjectileAtBone(lua_State* L) {
     return 1;
 }
 
+// unit:SetCustomName(name). The UI's (UserUnit's: the rename dialog, the
+// commander named for its player) goes to the sim as a ProcessInfo pair, as
+// Moho's does, so every lockstep peer and a replay name the unit at the same
+// tick. Only the UI state has a callback queue; the sim's own scripts name
+// the unit at once.
 static int entity_SetCustomName(lua_State* L) {
     auto* e = check_entity(L);
-    if (e && lua_type(L, 2) == LUA_TSTRING)
-        e->set_custom_name(lua_tostring(L, 2));
+    if (!e || lua_type(L, 2) != LUA_TSTRING) return 0;
+    if (auto* queue = get_callback_queue(L)) {
+        sim::SimCallbackEntry entry;
+        entry.func_name = sim::kProcessInfoCallback;
+        entry.args["Action"] = std::string("CustomName");
+        entry.args["Value"] = std::string(lua_tostring(L, 2));
+        entry.unit_ids.push_back(e->entity_id());
+        queue->push(std::move(entry));
+        return 0;
+    }
+    e->set_custom_name(lua_tostring(L, 2));
     return 0;
 }
 
