@@ -68,6 +68,10 @@ void ReplayPlayback::start(SimState& sim) const {
     sim.queue_replay(replay_);
 }
 
+void ReplayPlayback::resume(SimState& sim) const {
+    sim.start_resume(replay_);
+}
+
 bool ReplayPlayback::check(const SimState& sim) {
     if (diverged_at_ != 0) return false;
     const u32 tick = sim.tick_count();

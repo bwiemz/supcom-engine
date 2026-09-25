@@ -367,6 +367,15 @@ public:
     /// carry their original exec ticks, so ticking the sim replays them in
     /// order. Also restores the recorded command delay / victory condition.
     void queue_replay(const Replay& replay);
+    /// Load a saved game (M208): its recording plays as a replay's does,
+    /// player input dropped, up to the tick it was saved on (its
+    /// final_tick); from the end of that tick the game is the player's
+    /// again. Orders it holds for later ticks (given before the save, not
+    /// yet run) run when they fall due.
+    void start_resume(const Replay& saved);
+    /// Catching up a loaded game. It is not a replay: the UI's
+    /// SessionIsReplay() stays false.
+    bool resuming() const { return resume_tick_ != 0; }
 
     // Game end state
     bool game_ended() const { return game_ended_; }
@@ -688,6 +697,7 @@ private:
     Replay recorded_replay_;
     bool recording_ = false;
     bool playback_ = false;
+    u32 resume_tick_ = 0; // a loaded game's saved tick, until it is reached
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {

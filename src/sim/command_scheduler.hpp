@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <unordered_map>
@@ -102,6 +103,20 @@ public:
         std::vector<ScheduledCommand> v = it->second;
         sort_canonical(v);
         return v;
+    }
+
+    /// Every command not yet dispatched, tick by tick, each tick's in
+    /// canonical order: what a saved game carries so orders given before
+    /// the save still run after a load.
+    std::vector<ScheduledCommand> pending() const {
+        std::vector<ScheduledCommand> out;
+        for (const auto& [tick, cmds] : by_tick_) {
+            std::vector<ScheduledCommand> v = cmds;
+            sort_canonical(v);
+            out.insert(out.end(), std::make_move_iterator(v.begin()),
+                       std::make_move_iterator(v.end()));
+        }
+        return out;
     }
 
     void set_lockstep(bool on) { lockstep_ = on; }

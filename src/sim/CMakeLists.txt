@@ -24,6 +24,7 @@ add_library(osc_sim STATIC
     entity_registry.cpp
     thread_manager.cpp
     replay.cpp
+    saved_game.cpp
     lockstep_session.cpp
     net_transport.cpp
     sim_state.cpp
