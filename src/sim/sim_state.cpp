@@ -704,6 +704,13 @@ void SimState::queue_replay(const Replay& replay) {
     for (const auto& c : replay.commands) command_scheduler_.submit(c);
 }
 
+void SimState::start_resume(const Replay& saved) {
+    queue_replay(saved);
+    const bool behind = saved.final_tick > tick_count_;
+    playback_ = behind;
+    resume_tick_ = behind ? saved.final_tick : 0;
+}
+
 std::shared_ptr<const ProjectileBlueprintInfo>
 SimState::projectile_blueprint_info(const std::string& bp_id) {
     if (auto it = projectile_info_.find(bp_id); it != projectile_info_.end()) return it->second;
@@ -1034,6 +1041,11 @@ void SimState::tick() {
     // next one).
     death_events_.clear();
     camera_shake_events_.clear();
+    // A loaded game has caught up: the player's orders count from here.
+    if (resume_tick_ != 0 && tick_count_ >= resume_tick_) {
+        resume_tick_ = 0;
+        playback_ = false;
+    }
 }
 
 void SimState::update_economies() {

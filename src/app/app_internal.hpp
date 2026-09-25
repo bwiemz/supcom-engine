@@ -19,6 +19,7 @@
 #include "lua/special_files.hpp"
 #include "sim/game_setup.hpp"
 #include "sim/replay.hpp"
+#include "sim/saved_game.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/world_snapshot.hpp"
@@ -48,9 +49,18 @@ struct Options {
     std::string map_path;                      ///< --map, or the replay's scenario
     u32 tick_count = 0;                        ///< --ticks (0: not given)
     std::optional<sim::Replay> replay_to_play; ///< --replay
+    /// --load <file> in a headless run: the saved game, which catches up to
+    /// its saved tick and plays on.
+    std::optional<sim::SavedGame> save_to_load;
+    /// --load <file> otherwise: the window opens it as retail's Load dialog
+    /// does (LoadSavedGame).
+    std::string load_path;
+    std::string save_path; ///< --save <file>: the game, saved at --save-at's tick
+    u32 save_at = 0;       ///< --save-at <tick>
     bool scripted_orders = false;
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
+    bool load_flow_test = false;
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;
@@ -82,7 +92,8 @@ u32 parse_ticks_arg(int argc, char* argv[]);
 std::string parse_map_arg(int argc, char* argv[]);
 /// The test mode flag on the command line, if any.
 const char* test_mode_flag(int argc, char* argv[]);
-/// The run's options, or null when the --replay file can't be read.
+/// The run's options, or null (logged) when the --replay or --load file
+/// can't be read, or --save can't be done.
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request);
 
 // session.cpp
@@ -98,6 +109,7 @@ extern std::string g_record_path;
 bool write_recording(const sim::SimState& sim, const std::string& path);
 std::optional<sim::Replay> load_replay(const std::string& path);
 void issue_scripted_orders(sim::SimState& sim, sim::SimRandom& rng, u32 tick);
+void issue_order_before_save(sim::SimState& sim);
 int play_replay(sim::SimState& sim, const sim::Replay& replay);
 u64 launch_seed(const std::string& seed_arg, bool reproducible);
 
@@ -165,6 +177,14 @@ private:
 
     // headless.cpp
     int run_headless();
+    /// After a headless tick: a loaded game (--load) is checked against its
+    /// save until the player's turn, and --save-at's tick saves the game.
+    /// False once a loaded game stops matching its save.
+    bool after_headless_tick();
+    /// After a tick of a loaded game catching up: check it against the save,
+    /// and let catch_up go once the player has the game. False (logged) on
+    /// the first tick that differs.
+    bool check_catch_up();
 
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the
@@ -190,8 +210,13 @@ private:
     WorldInterp world_interp; // outlives every sim it observes
     std::unique_ptr<sim::SimState> sim_state;
     lua::ScenarioMetadata scenario_meta;
-    /// The game's setup: a replay's own, or the command line's.
+    /// The game's setup: a replay's or saved game's own, or the command
+    /// line's.
     sim::GameSetup game_setup;
+    /// A loaded game's save (--load, LoadSavedGame), while the game catches
+    /// up with it: checked tick by tick until the player takes over.
+    std::optional<sim::ReplayPlayback> catch_up;
+    bool save_written = false; ///< --save's file, once written
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).
     struct RecordingWriter {

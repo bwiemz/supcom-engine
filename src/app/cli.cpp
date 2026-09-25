@@ -54,10 +54,17 @@ void print_usage() {
               << "                     for an interactive game, else a temporary one)\n"
               << "  --replay-flow-test Offscreen: open the first listed replay as retail's\n"
               << "                     replay dialog does, and watch it to its end\n"
+              << "  --load-flow-test   Offscreen: load the first listed saved game as retail's\n"
+              << "                     Load dialog does, play on, and save it again\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
+              << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
+              << "                     catches up headlessly (exit 1 on divergence) and plays\n"
+              << "                     on; else the game opens it\n"
+              << "  --save <file> --save-at <tick>  Headless: save the game after that tick\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
-              << "                     orders (moves, pauses, fire states, stops)\n"
+              << "                     orders (moves, pauses, fire states, stops), and one\n"
+              << "                     more just before --save-at's save\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --help             Show this help message\n";
@@ -178,7 +185,10 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     // GetSpecialFiles lists), played to its end offscreen.
     o.watch_path = parse_string_arg(argc, argv, "--watch", "");
     o.replay_flow_test = parse_flag(argc, argv, "--replay-flow-test");
-    o.scripted_window = request.windowed || o.replay_flow_test;
+    // --load-flow-test: the Load dialog's path (the first saved game
+    // GetSpecialFiles lists), caught up and saved again, offscreen.
+    o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
+    o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -210,6 +220,26 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
     o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
                     parse_string_arg(argc, argv, "--golden", "").empty();
+    // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
+    // catches it up and plays on; else the window opens it.
+    o.load_path = parse_string_arg(argc, argv, "--load", "");
+    if (!o.load_path.empty() && o.headless) {
+        sim::SavedGame save;
+        if (lua::read_saved_game(o.load_path, save) != sim::SaveLoadError::None)
+            return std::nullopt;
+        o.map_path = save.game.setup.scenario;
+        o.save_to_load = std::move(save);
+        o.load_path.clear();
+    }
+    // --save <file> --save-at <tick>: save the game after that tick.
+    o.save_path = parse_string_arg(argc, argv, "--save", "");
+    o.save_at = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
+    if (!o.save_path.empty() && (o.save_at == 0 || !o.headless)) {
+        // A headless run saves after a tick: its checks run after each one.
+        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks or --ai-skirmish");
+        return std::nullopt;
+    }
     return o;
 }
 
@@ -219,7 +249,7 @@ const char* test_mode_flag(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
-                          arg != "--replay-flow-test";
+                          arg != "--replay-flow-test" && arg != "--load-flow-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
             arg == "--lan-host" || arg == "--lan-join")
             return argv[i];

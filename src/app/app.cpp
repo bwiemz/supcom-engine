@@ -4,6 +4,7 @@
 #include "lua/smoke_test.hpp"
 #include "platform/crash_handler.hpp"
 
+#include <cstdio>
 #include <memory>
 #include <spdlog/spdlog.h>
 
@@ -30,7 +31,8 @@ int run(int argc, char* argv[], TestModes* tests) {
     g_record_path = parse_string_arg(argc, argv, "--record", "");
     // (A scripted windowed test mode counts its script errors if it says
     // so, in parse.)
-    if (opt->any_test || opt->replay_flow_test) osc::test_status::set_count_lua_failures(true);
+    if (opt->any_test || opt->replay_flow_test || opt->load_flow_test)
+        osc::test_status::set_count_lua_failures(true);
 
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
@@ -102,6 +104,24 @@ int App::run() {
         if (auto code = run_window()) return *code;
     }
     return run_headless();
+}
+
+bool App::check_catch_up() {
+    if (!catch_up) return true;
+    if (!catch_up->check(*sim_state)) {
+        const u32 tick = catch_up->diverged_at();
+        spdlog::error("Saved game: diverged from the save at tick {} as it caught up", tick);
+        std::printf("LOAD diverged tick=%u\n", tick);
+        catch_up.reset();
+        return false;
+    }
+    if (!sim_state->resuming()) {
+        spdlog::info("Saved game: caught up at tick {}; the game is the player's",
+                     sim_state->tick_count());
+        std::printf("LOAD resumed tick=%u\n", sim_state->tick_count());
+        catch_up.reset();
+    }
+    return true;
 }
 
 void App::save_last_game() {

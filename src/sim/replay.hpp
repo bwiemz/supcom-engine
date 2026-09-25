@@ -55,6 +55,9 @@ public:
     explicit ReplayPlayback(Replay replay) : replay_(std::move(replay)) {}
 
     void start(SimState& sim) const;
+    /// Start it as a saved game instead: the player takes over after its
+    /// last tick (SimState::start_resume). check() works the same.
+    void resume(SimState& sim) const;
     /// After a tick: false from the first tick whose checksum differs.
     bool check(const SimState& sim);
     /// Whether the sim has played every recorded tick.

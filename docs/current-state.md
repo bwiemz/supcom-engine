@@ -28,12 +28,12 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 443 cases / 38,987 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | 461 cases / 39,153 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format` (a moved file only where it changed). The library targets link without a cycle or a layer reaching up (`ctest -L arch`). |
-| Data-backed gate on retail (`ctest -L gate`) | All 127 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically, compared domain by domain), `data.replay_roundtrip` and `data.replay_flow`, the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
+| Data-backed gate on retail (`ctest -L gate`) | All 129 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically, compared domain by domain), `data.replay_roundtrip` and `data.replay_flow`, `data.save_load` and `data.load_flow` (M208a), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
-| Retail-only engine API still unbound | 45 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
+| Retail-only engine API still unbound | 43 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 | Benchmark (Release, four retail AIs, SCMP_009) | About 21 s for 6,000 ticks (it was 25.2 s before M205's path-cost fix). An 18,000-tick game runs without Lua errors. |
 
 ## Verified Locally
@@ -181,6 +181,17 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   `--replay <file>` plays one headlessly, reporting the first tick that
   differs. Two gate tests hold this: `data.replay_roundtrip` and
   `data.replay_flow`.
+- **Saved games (M208a):** a save is the game's recording, plus the orders
+  still to run. Retail's Save and Load dialogs and quick-save work through
+  `InternalSaveGame` and `LoadSavedGame`. A load catches up to the saved tick
+  in the game's frame loop, checked against the save's checksums, and then
+  the game is the player's again. Saves from another build are refused as
+  `WrongVersion`. `--load`, `--save` and `--save-at` do the same headlessly.
+  `data.save_load` chains three processes (save, load and save again, load),
+  and `data.load_flow` drives the dialogs' globals offscreen. Loading from
+  inside a running game isn't reliable yet. Any game started from another
+  needs a fresh UI Lua state, as retail gives each game, and the renderer
+  leaks on relaunch (see the M208 design).
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's units are Moho's `UserUnit` (M191 step 3). They read the
   tick's snapshot, and change the sim only through the command stream.
@@ -221,6 +232,6 @@ After M206, as agreed on 2026-09-24:
 5. M192: split the executable. Step 1 in review (#69, with M191 step 2); step 2 decomposes `app.cpp`.
 6. ~~M191: finish the Sim/User split.~~ Done: the cycle is broken (#66), the bindings are split by class (step 2), and the UI's units are UserUnit, reading snapshots and changing the sim through the command stream (step 3).
 7. M206's remaining gaps, and M207.
-8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
+8. M208 save/load: M208a done (saves as the game's history). Then M208b (load times), a first FAF regression run, and presentation (Phase F).
 
 The phases, exit criteria and Definition of Done are in `docs/ROADMAP.md`.

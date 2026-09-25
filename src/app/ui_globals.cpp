@@ -19,13 +19,14 @@ static int l_FlushEvents(lua_State*) { return 0; }
 /// SessionIsReplay() for the UI: whether the game is a replay being played
 /// (retail's UI then hides orders and shows the replay controls). Only UI
 /// scripts ask it; the sim's own answer stays false, so a replay can't
-/// change what the game does.
+/// change what the game does. A saved game catching up plays back too, but
+/// it is the player's game.
 static int l_SessionIsReplay(lua_State* L) {
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
     const auto* sim = static_cast<const osc::sim::SimState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    lua_pushboolean(L, sim && sim->playback() ? 1 : 0);
+    lua_pushboolean(L, sim && sim->playback() && !sim->resuming() ? 1 : 0);
     return 1;
 }
 

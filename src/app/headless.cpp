@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/profiler.hpp"
+#include "core/test_status.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_random.hpp"
 #include "sim/unit.hpp"
@@ -11,6 +12,20 @@
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
+
+bool App::after_headless_tick() {
+    if (!check_catch_up()) {
+        osc::test_status::fail("[FAIL] saved game: it did not play as it was saved");
+        return false;
+    }
+    if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
+        if (opt.scripted_orders) issue_order_before_save(*sim_state);
+        const auto save = osc::sim::save_game(*sim_state, "headless");
+        if (osc::lua::write_saved_game(save, opt.save_path)) save_written = true;
+        else osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
+    }
+    return true;
+}
 
 int App::run_headless() {
     if (tests) {
@@ -32,6 +47,7 @@ int App::run_headless() {
             if (opt.scripted_orders) issue_scripted_orders(*sim_state, script_rng, i);
             sim_state->tick();
             ticks_run++;
+            if (!after_headless_tick()) break;
 
             // Periodic stats logging
             if (ticks_run % log_interval == 0) {
@@ -106,6 +122,7 @@ int App::run_headless() {
             osc::Profiler::instance().begin_frame();
             sim_state->tick();
             osc::Profiler::instance().end_frame();
+            if (!after_headless_tick()) break;
         }
     }
 
@@ -133,7 +150,12 @@ int App::run_headless() {
         osc::Profiler::instance().log_summary();
     }
 
-    const int exit_code = opt.any_test ? finish_test_run("integration tests") : 0;
+    if (!opt.save_path.empty() && !save_written) {
+        osc::test_status::fail("[FAIL] saved game: the run ended at tick {}, before --save-at {}",
+                               sim_state ? sim_state->tick_count() : 0, opt.save_at);
+    }
+    const bool checked = opt.any_test || opt.save_to_load || !opt.save_path.empty();
+    const int exit_code = checked ? finish_test_run("integration tests") : 0;
     recording_writer.write();
     osc::log::shutdown();
     return exit_code;

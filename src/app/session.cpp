@@ -146,6 +146,27 @@ void issue_scripted_orders(osc::sim::SimState& sim, osc::sim::SimRandom& rng, os
     sim.set_human_input_active(false);
 }
 
+/// --save-at with --scripted-orders: a player's order given just before the
+/// save, so it runs only after it -- as when a player clicks, then saves. A
+/// save that lost it would not play on as the game did. Army 1's first
+/// mobile unit moves to the map's centre.
+void issue_order_before_save(osc::sim::SimState& sim) {
+    if (!sim.terrain()) return;
+    osc::u32 mover = 0;
+    sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+        if (mover != 0 || !e.is_unit() || e.destroyed() || e.army() != 0) return;
+        if (static_cast<const osc::sim::Unit&>(e).has_command_cap("RULEUCC_Move"))
+            mover = e.entity_id();
+    });
+    if (mover == 0) return;
+    osc::sim::UnitCommand cmd;
+    cmd.type = osc::sim::CommandType::Move;
+    cmd.target_pos = {sim.terrain()->map_width() * 0.5f, 0.0f, sim.terrain()->map_height() * 0.5f};
+    sim.set_human_input_active(true);
+    sim.route_command({mover}, cmd, true);
+    sim.set_human_input_active(false);
+}
+
 /// --replay: play the recorded game to its end, checking the checksum after
 /// every tick against the recording's. 0 when they match throughout.
 int play_replay(osc::sim::SimState& sim, const osc::sim::Replay& replay) {
