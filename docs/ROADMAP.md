@@ -286,7 +286,7 @@ In order of how much they change what the player feels:
 | # | Milestone | Scope |
 |---|---|---|
 | M223 | Benchmark harness | Deterministic headless benchmark scenario with timing budgets asserted in CI (Release build). |
-| M224 | Sim hot paths | Incremental visibility, spatial target acquisition, path caching and reuse, O(1) thread wake, per-tick GC stepping instead of a full collect every 50 ticks. |
+| M224 | Sim hot paths | Incremental visibility, spatial target acquisition, path caching and reuse, O(1) thread wake, per-tick GC stepping instead of a full collect every 50 ticks. Late four-AI games (15,000+ ticks, 1,700–1,800 units) are where the sim is slow, so they drive the order. Loading a saved game replays it, so a faster sim also means faster loads (M208b). **M224a ✅** Category expressions are compiled once per query, and units carry their categories as interned ids. Before, every AI query walked the Lua table and hashed strings for each unit: a third of late-game time. The traces are byte-identical, and the 18,000-tick sim runs 21% faster. **Next (M224b):** radius queries (27% of late-game time, a third of it sorting ids) should skip props and avoid a hash lookup per candidate. |
 | M225 | Threaded renderer | Render thread fed by Sync snapshots (after M190); async pathfinding with deterministic result application. |
 | M226 | GPU efficiency | Pipeline cache, bindless or descriptor-indexed textures, GPU-driven instancing for props and units. |
 
