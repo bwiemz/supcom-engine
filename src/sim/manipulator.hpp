@@ -15,6 +15,7 @@
 namespace osc::sim {
 
 class AnimCache;
+class SimState;
 class Unit;
 struct SCAData;
 
@@ -314,12 +315,31 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// StorageManipulator — visual mass/energy storage fill indicator
+// StorageManipulator — moves a bone as its army's mass or energy storage
+// fills (CreateStorageManip: storage buildings' tanks, pods and lifts)
 // ---------------------------------------------------------------------------
 class StorageManipulator : public Manipulator {
 public:
-    void tick(f32 /*dt*/) override {} // visual only
+    /// `empty` and `full`: the bone's offset, in its own frame, at empty and
+    /// at full storage. It starts at `empty`.
+    StorageManipulator(SimState* sim, bool mass, const Vector3& empty, const Vector3& full)
+        : sim_(sim), mass_(mass), empty_(empty), full_(full), current_(empty) {}
+
+    /// A tenth of the way toward the offset for the army's stored fraction,
+    /// each tick, as Moho's CStorageManipulator eases it; held while the
+    /// unit is being built.
+    void tick(f32 dt) override;
     bool is_at_goal() const override { return true; }
+    void apply_pose(PoseLocals& pose) override { pose.slide(bone_index_, current_); }
+
+    const Vector3& current() const { return current_; }
+
+private:
+    SimState* sim_;
+    bool mass_;
+    Vector3 empty_;
+    Vector3 full_;
+    Vector3 current_;
 };
 
 // ---------------------------------------------------------------------------
