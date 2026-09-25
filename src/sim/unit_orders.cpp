@@ -3,6 +3,8 @@
 // on (OrderStep).
 
 #include "sim/unit.hpp"
+#include "core/dmath.hpp"
+#include "sim/bone_data.hpp"
 #include "core/test_status.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/entity_registry.hpp"
@@ -13,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
 
@@ -39,6 +42,34 @@ std::unordered_set<std::string> read_blueprint_categories(lua_State* L, const st
     collect_blueprint_categories(L, lua_gettop(L), categories);
     lua_pop(L, 2); // blueprint entry + __blueprints
     return categories;
+}
+
+/// A number in unit blueprint `bp_id`'s Economy table, or `fallback`.
+f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char* field,
+                             f32 fallback) {
+    if (!L || bp_id.empty()) return fallback;
+    std::string key = bp_id;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    f32 value = fallback;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, key.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Economy");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, field);
+                lua_rawget(L, -2);
+                if (lua_type(L, -1) == LUA_TNUMBER) value = static_cast<f32>(lua_tonumber(L, -1));
+            }
+        }
+    }
+    lua_settop(L, top);
+    return value;
 }
 
 bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
@@ -410,7 +441,27 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
             return OrderStep::Next;
         }
     }
-    if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
+    bool built = false;
+    const u32 order_id = cmd.command_id;
+    const u32 target = build_target_id_;
+    const bool factory_build = cmd.type == CommandType::BuildFactory; // not an upgrade
+    if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
+        if (built && factory_build) hand_over_rally_orders(target, entity_id(), ctx);
+        // Finishing ran scripts, which may have cleared the queue (and cmd
+        // with it) or replaced it.
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
+        // A factory repeating its queue sends a finished build order to the
+        // back, and starts the next one next tick (Moho's command dispatch;
+        // an order for n units is n orders here, so each goes back alone,
+        // which builds them in Moho's order). A failed build still goes.
+        if (built && repeat_queue_ && cmd.type == CommandType::BuildFactory) {
+            auto finished = std::move(cmd); // cmd is the element pop_front destroys
+            command_queue_.pop_front();
+            command_queue_.push_back(std::move(finished));
+            return OrderStep::Hold;
+        }
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -425,11 +476,13 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     if (!nav_update(dt, ctx.terrain)) {
         // Reached patrol point — cycle to back of queue (moved out first:
-        // cmd is the element pop_front destroys)
+        // cmd is the element pop_front destroys). The next leg starts next
+        // tick: a patrol whose points it already stands on would otherwise
+        // go round them for ever within this one.
         auto finished = std::move(cmd);
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));
-        return OrderStep::Next;
+        return OrderStep::Hold;
     }
     return OrderStep::Hold;
 }
@@ -663,26 +716,141 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
     return OrderStep::Hold;
 }
 
+void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
+    if (factory_assist_build_) {
+        factory_assist_build_ = false;
+        cancel_factory_build(registry, L);
+    } else if (is_building()) {
+        stop_assisting();
+    }
+}
+
+namespace {
+/// A factory's initial rally point: its blueprint's Economy.InitialRallyX/Z
+/// (Moho's defaults 0 and 5), turned with the factory.
+Vector3 initial_rally_point(const Unit& u, lua_State* L) {
+    const Vector3 local{blueprint_economy_number(L, u.blueprint_id(), "InitialRallyX", 0.0f), 0.0f,
+                        blueprint_economy_number(L, u.blueprint_id(), "InitialRallyZ", 5.0f)};
+    const Vector3 offset = quat_rotate(u.orientation(), local);
+    return {u.position().x + offset.x, u.position().y + offset.y, u.position().z + offset.z};
+}
+} // namespace
+
+const std::vector<UnitCommand>& Unit::validated_rally_orders(lua_State* L, SimState* sim) {
+    if (rally_orders_.empty() && keeps_rally_orders()) {
+        UnitCommand rally;
+        rally.type = CommandType::Move;
+        rally.target_pos = initial_rally_point(*this, L);
+        rally.command_id = sim ? sim->next_command_id() : 0;
+        rally_orders_.push_back(rally);
+    }
+    return rally_orders_;
+}
+
+bool Unit::rally_point(lua_State* L, Vector3& out) const {
+    if (!rally_orders_.empty()) {
+        out = rally_orders_.front().target_pos;
+        return true;
+    }
+    if (!keeps_rally_orders()) return false;
+    out = initial_rally_point(*this, L);
+    return true;
+}
+
+void Unit::hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx) {
+    if (is_mobile()) return; // a mobile factory's units take none (Moho)
+    auto* built_entity = ctx.registry.find(built_id);
+    auto* rally_entity = ctx.registry.find(rally_id);
+    if (!built_entity || built_entity->destroyed() || !built_entity->is_unit()) return;
+    if (!rally_entity || rally_entity->destroyed() || !rally_entity->is_unit()) return;
+    auto& built = static_cast<Unit&>(*built_entity);
+    auto& rally = static_cast<Unit&>(*rally_entity);
+    // Aircraft and ships don't take a rally order to board a transport.
+    const bool air_or_naval = built.has_category("AIR") || built.has_category("NAVAL");
+    for (const UnitCommand& order : rally.validated_rally_orders(ctx.L, ctx.sim)) {
+        if (order.type == CommandType::TransportLoad && air_or_naval) continue;
+        built.command_queue_.push_back(order);
+    }
+}
+
 OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (!target->is_unit()) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target_unit = static_cast<Unit*>(target);
+
+    // A factory guarding a factory takes work from its queue (Moho's guard
+    // task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).
+    // Each time it is free: the first of the guarded factory's build orders
+    // it can build, other than the one being built, leaves that queue
+    // (repeating, it goes to the back) and this factory builds the unit
+    // itself (M206h). Moho also takes a repeating assister's pick of a
+    // queue's only order, whose count it then restarts; without counts or
+    // repeat queues here, that would only build a duplicate, so the head
+    // is never taken.
+    if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY")) {
+        if (factory_assist_build_) {
+            const u32 built_id = build_target_id_;
+            const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
+            bool built = false;
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
+                factory_assist_build_ = false; // built (or failed): free again
+                // Built for the guarded factory, the unit takes its rally
+                // orders: Moho's guard task hands the build task that
+                // factory as the one whose orders the unit takes.
+                if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
+            }
+            return OrderStep::Hold;
+        }
+        // Its own builds and upgrades come first: Moho's guard task dispatches
+        // them from the guarding factory's queue before the guarded one's.
+        // Only the head order runs here, so the first of them moves ahead of
+        // the guard and runs; the guard carries on when it is done. (Moho's
+        // queue shows the guard first all the while.)
+        for (size_t i = 1; i < command_queue_.size(); ++i) {
+            const CommandType own = command_queue_[i].type;
+            if (own != CommandType::BuildFactory && own != CommandType::Upgrade) continue;
+            UnitCommand order = std::move(command_queue_[i]);
+            command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(i));
+            // The erase may leave cmd (the guard) dangling: it is not used again.
+            command_queue_.push_front(std::move(order));
+            return OrderStep::Next;
+        }
+        auto& queue = target_unit->command_queue_;
+        for (size_t i = 0; i < queue.size() && L; ++i) {
+            if (queue[i].type != CommandType::BuildFactory) continue;
+            if (i == 0) continue; // the guarded factory's own build
+            if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
+            UnitCommand build;
+            build.type = CommandType::BuildFactory;
+            build.blueprint_id = queue[i].blueprint_id;
+            const UnitCommand taken = queue[i];
+            queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
+            // Taken even if the lobby's rules forbid it, as Moho's build task
+            // fails after the take; such an order is dropped, repeating or
+            // not, as the guarded factory drops it when it comes to it.
+            if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
+            if (repeat_queue_) queue.push_back(taken);
+            factory_assist_build_ = start_build(build, registry, L);
+            break;
+        }
+        return OrderStep::Hold;
+    }
 
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair
@@ -878,16 +1046,24 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 }
 
 OrderStep Unit::order_dive(lua_State* L) {
-    // Toggle submarine layer: Water ↔ Sub
-    if (layer_ == "Water") {
-        set_layer_with_callback("Sub", L);
-        spdlog::debug("Unit #{} diving: Water → Sub", entity_id());
-    } else if (layer_ == "Sub" || layer_ == "Seabed") {
-        std::string from = layer_;
-        set_layer_with_callback("Water", L);
-        spdlog::debug("Unit #{} surfacing: {} → Water", entity_id(), from);
+    // Moho's SetNewTargetLayer (M206o): a sub at or making for the surface
+    // dives, one under or making for it surfaces; its layer changes when it
+    // gets there (tick_dive). Scripts hear it (OnMotionVertEventChange), and
+    // may clear or replace the queue: the order goes only if still the head.
+    // Only a submarine dives: any other unit ignores the order (Moho's UI
+    // offers it to units with RULEUCC_Dive, but a script may give it to any).
+    const UnitCommand* head = &command_queue_.front();
+    const u32 order_id = head->command_id;
+    const bool under = layer_ == "Sub" || layer_ == "Seabed";
+    if (motion_type_ == "RULEUMT_SurfacingSub") {
+        if (vert_motion_ == VertMotion::Down || (vert_motion_ == VertMotion::None && under))
+            start_surfacing(L);
+        else if (vert_motion_ == VertMotion::Up || layer_ == "Water") start_dive(L);
     }
-    command_queue_.pop_front();
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!command_queue_.empty() && &command_queue_.front() == head &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
     return OrderStep::Next;
 }
 
@@ -907,58 +1083,375 @@ OrderStep Unit::order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
     return OrderStep::Hold;
 }
 
+namespace {
+
+/// How long a transport waits at the pickup for its units (Moho's
+/// CUnitLoadUnits).
+constexpr i32 kPickupTimeoutTicks = 300;
+/// A beam up's ticks (CUnitCallTransport).
+constexpr i32 kBeamUpTicks = 10;
+
+/// self:method(entity, number), for OnStartTransportBeamUp(transport, bone).
+void call_with_entity_and_number(lua_State* L, const Unit& self, const char* method,
+                                 const Entity& entity, f64 number) {
+    if (!L || self.lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self.lua_table_ref());
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, method);
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl);
+        if (entity.lua_table_ref() >= 0) lua_rawgeti(L, LUA_REGISTRYINDEX, entity.lua_table_ref());
+        else lua_pushnil(L);
+        lua_pushnumber(L, number);
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            spdlog::warn("{} error: {}", method, lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+/// The shorter-way blend of two orientations, `t` of the way from a to b.
+Quaternion blend_orientation(const Quaternion& a, Quaternion b, f32 t) {
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0) b = {-b.x, -b.y, -b.z, -b.w};
+    Quaternion q{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t,
+                 a.w + (b.w - a.w) * t};
+    const f32 len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    if (len > 0) q = {q.x / len, q.y / len, q.z / len, q.w / len};
+    return q;
+}
+
+bool loads_itself(const UnitCommand& cmd, u32 id) {
+    return cmd.type == CommandType::TransportLoad && cmd.target_id == id;
+}
+
+} // namespace
+
+bool Unit::calls_transport(u32 transport_id) const {
+    return transport_id != entity_id() && !command_queue_.empty() &&
+           loads_itself(command_queue_.front(), transport_id);
+}
+
 OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    if (cmd.target_id != 0 && cmd.target_id == entity_id())
+        return order_transport_pickup(cmd, dt, ctx);
+    return order_call_transport(cmd, dt, ctx);
+}
+
+OrderStep Unit::order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    // Cargo unit loads into transport (target_id = transport entity)
-    if (cmd.target_id == 0 || transport_id_ != 0) {
-        set_unit_state("TransportLoading", false);
-        command_queue_.pop_front();
+    const u32 me = entity_id();
+    // Ending ran scripts, which may have cleared the queue (and cmd with it)
+    // or replaced it: the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const auto finish_order = [&] {
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id)
+            command_queue_.pop_front();
         return OrderStep::Next;
+    };
+    if (pickup_phase_ == PickupPhase::None) {
+        set_unit_state("TransportLoading", true);
+        call_lua_method(L, "OnStartTransportLoading");
+        if (destroyed() || !in_registry()) return OrderStep::Gone;
+        pickup_phase_ = PickupPhase::Holding;
+        pickup_ticks_ = 0;
     }
-    auto* target = registry.find(cmd.target_id);
-    if (!target || target->destroyed() || !target->is_unit()) {
-        set_unit_state("TransportLoading", false);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-    auto* transport = static_cast<Unit*>(target);
-
-    // Check capacity before moving
-    if (transport->transport_capacity() > 0 &&
-        static_cast<i32>(transport->cargo_ids().size()) >= transport->transport_capacity()) {
-        set_unit_state("TransportLoading", false);
-        command_queue_.pop_front();
-        return OrderStep::Next;
-    }
-
-    // Move toward transport
-    set_unit_state("TransportLoading", true);
-    constexpr f32 load_range = 5.0f;
-    f32 ldx = transport->position().x - position().x;
-    f32 ldz = transport->position().z - position().z;
-    f32 ldist2 = ldx * ldx + ldz * ldz;
-    if (ldist2 > load_range * load_range) {
-        if (!navigator_.is_moving() || navigator_.goal().x != transport->position().x ||
-            navigator_.goal().z != transport->position().z) {
-            navigator_.set_goal(transport->position(), ctx.pathfinder, position(), layer_,
-                                naval_draft_, is_amphibious() || is_hover());
+    if (pickup_phase_ == PickupPhase::Holding) {
+        // The units ordered aboard: the army's with a load order onto us in
+        // their queue. Moho holds until each has it at its head.
+        struct Candidate {
+            Unit* unit;
+            f32 metric;
+            f32 d2;
+        };
+        std::vector<Candidate> wanted;
+        bool holding = false;
+        registry.for_each_unit([&](Entity& e) {
+            if (e.destroyed() || !e.is_unit() || e.army() != army() || e.entity_id() == me) return;
+            auto& u = static_cast<Unit&>(e);
+            if (u.is_dying() || u.transport_id() != 0) return;
+            const bool ordered =
+                std::any_of(u.command_queue_.begin(), u.command_queue_.end(),
+                            [&](const UnitCommand& c) { return loads_itself(c, me); });
+            if (!ordered) return;
+            if (!u.calls_transport(me)) {
+                holding = true;
+                return;
+            }
+            const f32 dx = position().x - u.position().x;
+            const f32 dy = position().y - u.position().y;
+            const f32 dz = position().z - u.position().z;
+            wanted.push_back({&u, u.load_metric(), dx * dx + dy * dy + dz * dz});
+        });
+        if (holding) return OrderStep::Hold;
+        // The largest first, the nearer on ties (then the older, so it is
+        // the same everywhere).
+        std::sort(wanted.begin(), wanted.end(), [](const Candidate& a, const Candidate& b) {
+            if (a.metric != b.metric) return a.metric > b.metric;
+            if (a.d2 != b.d2) return a.d2 < b.d2;
+            return a.unit->entity_id() < b.unit->entity_id();
+        });
+        TransportSlots* slots = transport_slots();
+        const bool slotted = slots && slots->has_points();
+        i32 room = transport_capacity_ > 0
+                       ? transport_capacity_ - static_cast<i32>(cargo_ids_.size())
+                       : std::numeric_limits<i32>::max();
+        Vector3 centre{0.0f, 0.0f, 0.0f};
+        bool full = false;
+        for (const Candidate& c : wanted) {
+            const bool fits = slotted ? slots
+                                            ->assign(c.unit->entity_id(), c.unit->transport_class(),
+                                                     c.unit->transport_attach_bone())
+                                            .has_value()
+                                      : room-- > 0;
+            if (!fits) {
+                full = true;
+                continue;
+            }
+            pickup_ids_.push_back(c.unit->entity_id());
+            centre = {centre.x + c.unit->position().x, centre.y + c.unit->position().y,
+                      centre.z + c.unit->position().z};
         }
-        navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+        if (full) {
+            call_lua_method(L, "OnTransportFull");
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+        }
+        if (pickup_ids_.empty()) {
+            finish_pickup(false, L);
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            return finish_order();
+        }
+        const f32 inv = 1.0f / static_cast<f32>(pickup_ids_.size());
+        pickup_center_ = {centre.x * inv, centre.y * inv, centre.z * inv};
+        // It faces from where it is toward the centre (TransportAddPickupUnits).
+        const f32 fx = pickup_center_.x - position().x;
+        const f32 fz = pickup_center_.z - position().z;
+        pickup_facing_ =
+            fx * fx + fz * fz > 1e-6f ? euler_to_quat(dmath::atan2(fx, fz), 0, 0) : orientation();
+        if (is_air_unit()) {
+            call_lua_method(L, "OnTransportOrdered");
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            pickup_phase_ = PickupPhase::Flying;
+        } else {
+            navigator_.abort_move();
+            pickup_center_ = position();
+            pickup_phase_ = PickupPhase::Waiting;
+        }
+    }
+    if (pickup_phase_ == PickupPhase::Flying) {
+        const Vector3 goal = navigator_.goal();
+        if (!navigator_.is_moving() || std::abs(goal.x - pickup_center_.x) > 1.0f ||
+            std::abs(goal.z - pickup_center_.z) > 1.0f) {
+            navigator_.set_goal(pickup_center_, ctx.pathfinder, position(), layer_, naval_draft_,
+                                is_amphibious() || is_hover());
+        }
+        if (nav_update(dt, ctx.terrain)) return OrderStep::Hold;
+        navigator_.abort_move();
+        pickup_phase_ = PickupPhase::Landing;
+    }
+    // Over the centre, it comes down to its hover height; only then is it at
+    // the pickup (Moho's move there is onto the land layer).
+    hold_altitude(dt, ctx.terrain, transport_hover_height_);
+    if (pickup_phase_ == PickupPhase::Landing) {
+        if (is_air_unit() && current_altitude_ != transport_hover_height_) return OrderStep::Hold;
+        pickup_phase_ = PickupPhase::Waiting;
+    }
+    // At the pickup: hover while the units come aboard, as long as the wait
+    // allows.
+    ++pickup_ticks_;
+    std::erase_if(pickup_ids_, [&](u32 id) {
+        const Entity* e = registry.find(id);
+        const auto* u =
+            e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+        if (u && u->transport_id() == me) return true;                   // aboard
+        if (u && !u->is_dying() && u->calls_transport(me)) return false; // still coming
+        if (transport_slots_) transport_slots_->release(id);
+        return true;
+    });
+    if (!pickup_ids_.empty() && pickup_ticks_ <= kPickupTimeoutTicks) return OrderStep::Hold;
+    finish_pickup(pickup_ticks_ <= kPickupTimeoutTicks, L);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    return finish_order();
+}
+
+void Unit::finish_pickup(bool completed, lua_State* L) {
+    // Units that never came give their slots up (Moho removes them at the
+    // timeout).
+    if (transport_slots_)
+        for (const u32 id : pickup_ids_) transport_slots_->release(id);
+    pickup_ids_.clear();
+    pickup_phase_ = PickupPhase::None;
+    pickup_ticks_ = 0;
+    call_lua_method(L, "OnStopTransportLoading");
+    set_unit_state("TransportLoading", false);
+    if (!completed && !destroyed() && in_registry()) call_lua_method(L, "OnTransportAborted");
+}
+
+void Unit::abandon_beam_up(const map::Terrain* terrain, lua_State* L) {
+    beam_up_ticks_ = 0;
+    Vector3 at = position();
+    if (terrain) at.y = terrain->get_surface_height(at.x, at.z);
+    set_position(at);
+    set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
+    note_snap();
+    call_lua_method(L, "OnStopTransportBeamUp");
+}
+
+void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
+    if (!is_air_unit() || !terrain) return;
+    const f32 climb = climb_rate_ * static_cast<f32>(dt);
+    f32 alt = current_altitude_;
+    if (alt < altitude) alt = std::min(alt + climb, altitude);
+    else if (alt > altitude) alt = std::max(alt - climb, altitude);
+    current_altitude_ = alt;
+    current_airspeed_ = 0.0f;
+    Vector3 at = position();
+    at.y = terrain->get_terrain_height(at.x, at.z) + alt;
+    set_position(at);
+}
+
+OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    auto& registry = ctx.registry;
+    auto* L = ctx.L;
+    const u32 me = entity_id();
+    // Scripts run on the way (the beam, the attach) may clear the queue (and
+    // cmd with it) or replace it: the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const auto finish_order = [&] {
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id)
+            command_queue_.pop_front();
+        return OrderStep::Next;
+    };
+    const auto end = [&] {
+        if (beam_up_ticks_ > 0) {
+            abandon_beam_up(ctx.terrain, L);
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+        }
+        return finish_order();
+    };
+    if (cmd.target_id == 0 || transport_id_ != 0) return end();
+    Entity* target = registry.find(cmd.target_id);
+    if (!target || target->destroyed() || !target->is_unit()) return end();
+    auto* transport = static_cast<Unit*>(target);
+    if (transport->is_dying()) return end();
+    const u32 tid = transport->entity_id();
+
+    // The transport runs the pickup once its head is the load order; one
+    // without it queued is given it (Moho's command is the transport's too).
+    // Once the unit has a slot, a transport no longer loading ends its order.
+    const bool running = !transport->command_queue_.empty() &&
+                         loads_itself(transport->command_queue_.front(), tid) &&
+                         transport->pickup_phase_ != PickupPhase::None &&
+                         transport->pickup_phase_ != PickupPhase::Holding;
+    if (!running && cmd.started) return end();
+    if (!running) {
+        if (std::none_of(transport->command_queue_.begin(), transport->command_queue_.end(),
+                         [&](const UnitCommand& c) { return loads_itself(c, tid); })) {
+            UnitCommand load;
+            load.type = CommandType::TransportLoad;
+            load.target_id = tid;
+            load.target_pos = transport->position();
+            load.command_id = cmd.command_id;
+            transport->command_queue_.push_back(load);
+        }
+        navigator_.abort_move();
+        return OrderStep::Hold;
+    }
+    // A unit the transport gave no slot is left behind (TransportIsUnitAssignedForPickup).
+    const auto& assigned = transport->pickup_ids_;
+    if (std::find(assigned.begin(), assigned.end(), me) == assigned.end()) return end();
+    cmd.started = true;
+
+    const TransportSlots* slots = transport->built_transport_slots();
+    const TransportSlots::Slot* slot = slots ? slots->slot_of(me) : nullptr;
+    const Vector3 bone_at =
+        slot ? transport->bone_world_position(slot->bone) : transport->position();
+
+    if (beam_up_ticks_ > 0) {
+        if (beam_up_ticks_ <= 1) {
+            beam_up_ticks_ = 0;
+            call_lua_method(L, "OnStopTransportBeamUp");
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            if (transport->destroyed() || !transport->in_registry() || transport->is_dying()) {
+                // The transport went while the unit rose: it comes back down.
+                Vector3 at = position();
+                if (ctx.terrain) at.y = ctx.terrain->get_surface_height(at.x, at.z);
+                set_position(at);
+                set_orientation(euler_to_quat(quat_yaw(orientation()), 0.0f, 0.0f));
+                note_snap();
+                return finish_order();
+            }
+            attach_to_transport(transport, registry, L);
+            if (destroyed() || !in_registry()) return OrderStep::Gone;
+            return finish_order();
+        }
+        // From where it stood to the bone, less its own height, easing in
+        // and out (cos(t pi / 10) / 2 + 1/2 as t runs 10 to 2).
+        const f32 blend =
+            dmath::cos(static_cast<f32>(beam_up_ticks_) * 3.14159265f * 0.1f) * 0.5f + 0.5f;
+        const Quaternion bone_facing =
+            slot
+                ? quat_multiply(transport->orientation(), transport->bone_pose(slot->bone).rotation)
+                : transport->orientation();
+        const Vector3 to{bone_at.x, bone_at.y - size_y_, bone_at.z};
+        set_position({beam_from_.x + (to.x - beam_from_.x) * blend,
+                      beam_from_.y + (to.y - beam_from_.y) * blend,
+                      beam_from_.z + (to.z - beam_from_.z) * blend});
+        set_orientation(blend_orientation(beam_from_orientation_, bone_facing, blend));
+        --beam_up_ticks_;
+        return OrderStep::Hold;
+    }
+
+    const auto walk_to = [&](const Vector3& at) {
+        const Vector3 goal = navigator_.goal();
+        if (!navigator_.is_moving() || std::abs(goal.x - at.x) > 1.0f ||
+            std::abs(goal.z - at.z) > 1.0f) {
+            navigator_.set_goal(at, ctx.pathfinder, position(), layer_, naval_draft_,
+                                is_amphibious() || is_hover());
+        }
+        nav_update(dt, ctx.terrain);
+    };
+    if (!transport->pickup_ready()) {
+        // Wait about the centre, twice its bone's offset out
+        // (TransportGetPickupUnitPos).
+        Vector3 wait = transport->pickup_center_;
+        if (slot && transport->bone_data()) {
+            const Vector3 model = transport->bone_pose(slot->bone).position;
+            const f32 scale = transport->bone_data()->model_scale;
+            const Vector3 offset = quat_rotate(transport->pickup_facing_,
+                                               {model.x * scale, model.y * scale, model.z * scale});
+            wait = {wait.x + offset.x * 2.0f, wait.y, wait.z + offset.z * 2.0f};
+        }
+        walk_to(wait);
+        return OrderStep::Hold;
+    }
+    // The transport is there: under the bone, and within twice its footprint
+    // of it, beam up.
+    const f32 reach = 2.0f * std::max(transport->footprint_size_x(), transport->footprint_size_z());
+    const f32 dx = bone_at.x - position().x;
+    const f32 dz = bone_at.z - position().z;
+    if (dx * dx + dz * dz > reach * reach) {
+        walk_to({bone_at.x, position().y, bone_at.z});
         return OrderStep::Hold;
     }
     navigator_.abort_move();
-
-    // Attach to transport
-    attach_to_transport(transport, registry, L);
-    set_unit_state("TransportLoading", false);
-    command_queue_.pop_front();
-    return OrderStep::Next;
+    ground_speed_ = 0;
+    beam_from_ = position();
+    beam_from_orientation_ = orientation();
+    beam_up_ticks_ = kBeamUpTicks;
+    call_with_entity_and_number(L, *this, "OnStartTransportBeamUp", *transport,
+                                slot ? static_cast<f64>(slot->bone) : -1.0);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    return OrderStep::Hold;
 }
 
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx) {
-    auto& registry = ctx.registry;
-    auto* L = ctx.L;
     // Transport drops its cargo at target position: the order's
     // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
     // the order ends.
@@ -986,16 +1479,47 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
             navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
                                 is_amphibious() || is_hover());
         }
-        navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+        // Flown, for an aircraft (the ground navigator had dragged transports
+        // along the ground).
+        nav_update(dt, ctx.terrain);
         return OrderStep::Hold;
     }
     navigator_.abort_move();
+    set_unit_state("TransportUnloading", true);
 
-    if (cmd.unload_ids.empty()) detach_all_cargo(registry, L);
-    else detach_cargo(cmd.unload_ids, registry, L);
+    // Over the drop: down to its hover height, then its cargo is set down
+    // where it fits. Scripts ran, which may have cleared the queue (and cmd
+    // with it): the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const std::vector<u32> ids = cmd.unload_ids;
+    if (!unload_step(dt, ctx, ids)) return OrderStep::Hold;
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
     set_unit_state("TransportUnloading", false);
-    command_queue_.pop_front();
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
     return OrderStep::Next;
+}
+
+bool Unit::unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids) {
+    if (is_air_unit() && current_altitude_ != transport_hover_height_) {
+        hold_altitude(dt, ctx.terrain, transport_hover_height_);
+        return false;
+    }
+    // Those whose footprint fits the ground where they hang; the rest stay
+    // aboard (Moho's TransportDetachUnit asks FitsAt of an aircraft's cargo).
+    std::vector<u32> down;
+    for (const u32 id : ids.empty() ? cargo_ids_ : ids) {
+        if (std::find(cargo_ids_.begin(), cargo_ids_.end(), id) == cargo_ids_.end()) continue;
+        const Entity* e = ctx.registry.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        const auto& cargo = static_cast<const Unit&>(*e);
+        if (is_air_unit() && ctx.pathfinding_grid && !cargo.footprint_fits(*ctx.pathfinding_grid))
+            continue;
+        down.push_back(id);
+    }
+    detach_cargo(down, ctx.registry, ctx.L, ctx.terrain);
+    return true;
 }
 
 OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
@@ -1178,7 +1702,6 @@ OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
 
 OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
-    auto* L = ctx.L;
     // A ferry route (Moho's CUnitFerryTask): the leading Ferry orders,
     // which stay queued. The first is where it loads, at a beacon;
     // the last where it unloads; those between are waypoints, flown
@@ -1220,9 +1743,26 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
                 ++boarding;
         });
-        // (A capacity of 0 is unknown, and not a limit, as for a load
-        // order: retail transports count attach points, not read here.)
-        i32 room = transport_capacity() > 0
+        // Room is what the slots would still hold with those already
+        // boarding aboard (M206l): a trial copy takes their slots, then each
+        // new unit's that fits. A transport without attach points counts
+        // its Class1Capacity (0: no limit).
+        const TransportSlots* slots = transport_slots();
+        std::optional<TransportSlots> trial;
+        if (slots && slots->has_points()) {
+            trial.emplace(*slots);
+            registry.for_each_unit([&](const Entity& e) {
+                if (e.destroyed() || !e.is_unit() || e.army() != army()) return;
+                const auto& u = static_cast<const Unit&>(e);
+                if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty()) return;
+                const UnitCommand& wait = u.command_queue().front();
+                if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
+                    (void)trial->assign(u.entity_id(), u.transport_class(),
+                                        u.transport_attach_bone());
+            });
+        }
+        i32 room = trial ? std::numeric_limits<i32>::max()
+                   : transport_capacity() > 0
                        ? transport_capacity() - static_cast<i32>(cargo_ids_.size()) - boarding
                        : std::numeric_limits<i32>::max();
         if (room > 0) {
@@ -1236,6 +1776,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                 const UnitCommand& wait = u.command_queue().front();
                 if (wait.type != CommandType::WaitForFerry || wait.target_id != beacon_id ||
                     wait.assigned_id != 0)
+                    return;
+                if (trial &&
+                    !trial->assign(u.entity_id(), u.transport_class(), u.transport_attach_bone()))
                     return;
                 u.board_ferry(entity_id());
                 --room;
@@ -1270,7 +1813,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         navigator_.abort_move();
         ferry_leg_set_ = false;
-        detach_all_cargo(registry, L);
+        if (!unload_step(dt, ctx, {})) return OrderStep::Hold;
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         ferry_phase_ = FerryPhase::Back;
         ferry_index_ = route - 1;

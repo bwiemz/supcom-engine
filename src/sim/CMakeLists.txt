@@ -4,6 +4,7 @@ add_library(osc_sim STATIC
     blueprint_categories.cpp
     category_expr.cpp
     build_placement.cpp
+    influence_map.cpp
     army_brain.cpp
     bone_cache.cpp
     bone_data.cpp
@@ -23,8 +24,10 @@ add_library(osc_sim STATIC
     navigator.cpp
     entity_registry.cpp
     thread_manager.cpp
+    transport_slots.cpp
     replay.cpp
     category_set.cpp
+    saved_game.cpp
     lockstep_session.cpp
     net_transport.cpp
     sim_state.cpp

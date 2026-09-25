@@ -1,0 +1,260 @@
+// The command line: usage and the arguments the application reads (M192
+// step 2, moved from app.cpp).
+
+#include "app/app_internal.hpp"
+#include "platform/game_install.hpp"
+
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <spdlog/spdlog.h>
+
+namespace osc::app {
+
+void print_usage() {
+    // The option table is laid out by hand.
+    // clang-format off
+    std::cout << "OpenSupCom v0.1.0\n"
+              << "Open-source engine reimplementation for Supreme Commander: "
+                 "Forged Alliance\n\n"
+              << "Usage:\n"
+              << "  opensupcom [options]\n\n"
+              << "Options:\n"
+              << "  --init <path>      Path to init.lua / init_faf.lua\n"
+              << "  --fa-path <path>   Path to FA installation directory\n"
+              << "  --faf-data <path>  Path to FAF data directory\n"
+              << "  --print-install    Show which FA install would be used and exit\n"
+              << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
+              << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
+              << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
+              << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
+              << "  --prefs <path>     Game.prefs to use (default: the user's config dir;\n"
+              << "                     tests and captures keep preferences in memory)\n"
+              << "  --golden <name>    Capture like --screenshot, compare to golden image\n"
+              << "  --golden-update    Record the golden image instead of comparing\n"
+              << "  --binding-coverage <file>  Report engine API the scripts call but\n"
+              << "                     the engine lacks (needs --map)\n"
+              << "  --binding-baseline <file>  With --binding-coverage: fail on gaps\n"
+              << "                     not listed in this baseline\n"
+              << "  --dump-threads     At exit, list where each sim script thread waits\n"
+              << "  --ai-armies <n>    With --ai-skirmish: number of AI armies (default 2)\n"
+              << "  --map <vfs-path>   VFS path to *_scenario.lua\n"
+              << "  --ticks <n>        Number of sim ticks to run (default: 100)\n"
+              << "  --seed <n>         The game's random seed (default: fixed for tests and\n"
+              << "                     headless runs, fresh for an interactive game)\n"
+              << "  --checksum-trace <f>  Write each tick's sync checksum and its parts\n"
+              << "  --entity-trace <f>    Write every entity's synced state each tick\n"
+              << "  --entity-trace-ticks <from>-<to>  ...only for these ticks\n"
+              << "  --rng-trace <f>       Write each random draw and the script that made it\n"
+              << "  --rng-trace-ticks <from>-<to>  ...only for these ticks\n"
+              << "  --record <file>    Record the game as a replay, written when the run ends\n"
+              << "  --watch <file>     Watch a replay in the game\n"
+              << "  --user-dir <dir>   Replays and saved games folder (default: FA's user folder\n"
+              << "                     for an interactive game, else a temporary one)\n"
+              << "  --replay-flow-test Offscreen: open the first listed replay as retail's\n"
+              << "                     replay dialog does, and watch it to its end\n"
+              << "  --load-flow-test   Offscreen: load the first listed saved game as retail's\n"
+              << "                     Load dialog does, play on, and save it again\n"
+              << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
+              << "                     checksum against the recording (exit 1 on divergence)\n"
+              << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
+              << "                     catches up headlessly (exit 1 on divergence) and plays\n"
+              << "                     on; else the game opens it\n"
+              << "  --save <file> --save-at <tick>  Headless: save the game after that tick\n"
+              << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
+              << "                     orders (moves, pauses, fire states, stops), and one\n"
+              << "                     more just before --save-at's save\n"
+              << "  --profile          Enable performance profiling (prints summary at exit)\n"
+              << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
+              << "  --help             Show this help message\n";
+    // clang-format on
+}
+
+osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests) {
+    osc::platform::GameInstallHints hints;
+    bool print_install = false;
+
+    for (int i = 1; i < argc; i++) {
+        auto take_path = [&](std::optional<osc::fs::path>& out) {
+            const char* value = argv[++i];
+            if (*value) out = value; // "" means "not given"
+        };
+        if (std::strcmp(argv[i], "--init") == 0 && i + 1 < argc) {
+            take_path(hints.init_file);
+        } else if (std::strcmp(argv[i], "--fa-path") == 0 && i + 1 < argc) {
+            take_path(hints.fa_path);
+        } else if (std::strcmp(argv[i], "--faf-data") == 0 && i + 1 < argc) {
+            take_path(hints.faf_data_path);
+        } else if (std::strcmp(argv[i], "--print-install") == 0) {
+            print_install = true;
+        } else if (std::strcmp(argv[i], "--help") == 0) {
+            print_usage();
+            if (tests) tests->print_usage();
+            std::exit(0);
+        }
+    }
+
+    auto search = osc::platform::locate_game_install(
+        hints, osc::platform::system_env());
+
+    if (print_install) {
+        if (search.install) {
+            std::cout << "source="    << search.install->source << "\n"
+                      << "fa_path="   << search.install->fa_path.string() << "\n"
+                      << "init_file=" << search.install->init_file.string() << "\n"
+                      << "faf_data="  << search.install->faf_data_path.string() << "\n";
+        } else {
+            std::cout << "No Supreme Commander: Forged Alliance installation found.\n";
+        }
+        for (const auto& where : search.searched) {
+            std::cout << "searched " << where << "\n";
+        }
+        std::exit(search.install ? 0 : 1);
+    }
+
+    osc::lua::InitConfig config;
+    if (search.install) {
+        config.fa_path = search.install->fa_path;
+        config.init_file = search.install->init_file;
+        config.faf_data_path = search.install->faf_data_path;
+        spdlog::info("Game install ({}): {}", search.install->source,
+                     config.fa_path.string());
+    } else {
+        for (const auto& where : search.searched) {
+            spdlog::info("Searched for FA: {}", where);
+        }
+    }
+    return config;
+}
+
+osc::u32 parse_ticks_arg(int argc, char* argv[]) {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--ticks") == 0 && i + 1 < argc) {
+            char* end = nullptr;
+            long val = std::strtol(argv[++i], &end, 10);
+            if (end == argv[i] || val < 0 || val > 1'000'000) {
+                spdlog::error("Invalid --ticks value: {}", argv[i]);
+                std::exit(1);
+            }
+            return static_cast<osc::u32>(val);
+        }
+    }
+    return 0; // 0 = no explicit tick count → windowed mode
+}
+
+std::string parse_map_arg(int argc, char* argv[]) {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
+            return argv[++i];
+        }
+    }
+    return {};
+}
+
+bool parse_flag(int argc, char* argv[], const char* flag) {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], flag) == 0) return true;
+    }
+    return false;
+}
+
+std::string parse_string_arg(int argc, char* argv[], const char* flag, const char* default_val) {
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], flag) == 0 && i + 1 < argc) {
+            return argv[++i];
+        }
+    }
+    return default_val;
+}
+
+std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request) {
+    Options o;
+    o.map_path = parse_map_arg(argc, argv);
+    o.tick_count = parse_ticks_arg(argc, argv);
+    // --replay <file>: play a recorded game (its setup names the map).
+    if (const auto replay_arg = parse_string_arg(argc, argv, "--replay", ""); !replay_arg.empty()) {
+        o.replay_to_play = load_replay(replay_arg);
+        if (!o.replay_to_play) return std::nullopt;
+        o.map_path = o.replay_to_play->setup.scenario;
+    }
+    o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
+    // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
+    // --watch <file>: open a replay in the game, as the replay dialog does.
+    // --replay-flow-test: the dialog's own path (the first replay
+    // GetSpecialFiles lists), played to its end offscreen.
+    o.watch_path = parse_string_arg(argc, argv, "--watch", "");
+    o.replay_flow_test = parse_flag(argc, argv, "--replay-flow-test");
+    // --load-flow-test: the Load dialog's path (the first saved game
+    // GetSpecialFiles lists), caught up and saved again, offscreen.
+    o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
+    o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test;
+    o.no_fog = parse_flag(argc, argv, "--no-fog");
+    o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
+    o.no_decals = parse_flag(argc, argv, "--no-decals");
+    o.profile_enabled = parse_flag(argc, argv, "--profile");
+    o.ai_skirmish = parse_flag(argc, argv, "--ai-skirmish");
+    o.instrument = parse_flag(argc, argv, "--instrument");
+    o.builder_debug = parse_flag(argc, argv, "--builder-debug");
+    o.ai_personality = parse_string_arg(argc, argv, "--ai-personality", "adaptive");
+    // --ai-armies <n>: how many of the scenario's armies play (all AI).
+    if (const auto n = parse_string_arg(argc, argv, "--ai-armies", ""); !n.empty()) {
+        o.ai_army_count = static_cast<size_t>(std::max(1, std::atoi(n.c_str())));
+    }
+
+    // Collect all command-line args for HasCommandLineArg (M147d)
+    for (int i = 1; i < argc; ++i) {
+        o.cmdline_args.insert(argv[i]);
+    }
+
+    // A checked run: headless, and its exit code is the checks' result (a
+    // test mode, or an AI game whose script errors count).
+    o.any_test = request.headless || o.ai_skirmish;
+    o.headless = (o.tick_count > 0) || o.any_test || o.replay_to_play.has_value();
+
+    o.silent_capture = !parse_string_arg(argc, argv, "--screenshot", "").empty() ||
+                       !parse_string_arg(argc, argv, "--golden", "").empty() || o.scripted_window;
+    // --seed N: the game's random seed (weapon spread, scripts' Random and
+    // math.random). Runs that must repeat default to a fixed one.
+    o.seed_arg = parse_string_arg(argc, argv, "--seed", "");
+    o.reproducible_run = o.headless || o.scripted_window || o.silent_capture;
+    o.interactive = !o.headless && parse_string_arg(argc, argv, "--screenshot", "").empty() &&
+                    parse_string_arg(argc, argv, "--golden", "").empty();
+    // --load <file>: a saved game. A headless run (--ticks, --ai-skirmish)
+    // catches it up and plays on; else the window opens it.
+    o.load_path = parse_string_arg(argc, argv, "--load", "");
+    if (!o.load_path.empty() && o.headless) {
+        sim::SavedGame save;
+        if (lua::read_saved_game(o.load_path, save) != sim::SaveLoadError::None)
+            return std::nullopt;
+        o.map_path = save.game.setup.scenario;
+        o.save_to_load = std::move(save);
+        o.load_path.clear();
+    }
+    // --save <file> --save-at <tick>: save the game after that tick.
+    o.save_path = parse_string_arg(argc, argv, "--save", "");
+    o.save_at = static_cast<u32>(
+        std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
+    if (!o.save_path.empty() && (o.save_at == 0 || !o.headless)) {
+        // A headless run saves after a tick: its checks run after each one.
+        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks or --ai-skirmish");
+        return std::nullopt;
+    }
+    return o;
+}
+
+/// A test mode's flag given to the game (the integration runner has them),
+/// or null.
+const char* test_mode_flag(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
+                          arg != "--replay-flow-test" && arg != "--load-flow-test";
+        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
+            arg == "--lan-host" || arg == "--lan-join")
+            return argv[i];
+    }
+    return nullptr;
+}
+
+} // namespace osc::app

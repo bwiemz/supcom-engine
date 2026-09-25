@@ -19,8 +19,8 @@ namespace osc::sim {
 struct Replay {
     // 2: the game's seed; 3: SimCallbacks; 4: the game's setup, the build,
     // and a checksum trail; 5: formation orders; 6: a specific unload's
-    // cargo
-    static constexpr u32 kVersion = 6;
+    // cargo; 7: factory commands (a player's rally orders)
+    static constexpr u32 kVersion = 7;
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers
@@ -55,6 +55,9 @@ public:
     explicit ReplayPlayback(Replay replay) : replay_(std::move(replay)) {}
 
     void start(SimState& sim) const;
+    /// Start it as a saved game instead: the player takes over after its
+    /// last tick (SimState::start_resume). check() works the same.
+    void resume(SimState& sim) const;
     /// After a tick: false from the first tick whose checksum differs.
     bool check(const SimState& sim);
     /// Whether the sim has played every recorded tick.

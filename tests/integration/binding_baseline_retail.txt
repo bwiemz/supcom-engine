@@ -28,13 +28,11 @@ G IN_ClearKeyMap
 G IncreaseBuildCountInQueue
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
-G InternalSaveGame
 G InternalStartSteamDiscoveryService
 G IsCommandDone
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
-G LoadSavedGame
 G MapBorderAdd
 G MapBorderClear
 G RefreshSteamGames

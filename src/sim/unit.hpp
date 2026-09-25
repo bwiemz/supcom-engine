@@ -4,6 +4,7 @@
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
 #include "sim/pose.hpp"
+#include "sim/transport_slots.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
@@ -31,6 +32,7 @@ namespace osc::sim {
 
 struct SimContext;
 class EntityRegistry;
+class SimState;
 
 struct IntelState {
     f32 radius = 0;
@@ -127,16 +129,31 @@ public:
         categories_.insert(std::move(cat));
     }
 
-    // Rally point (factories send produced units here)
-    bool has_rally_point() const { return has_rally_point_; }
-    const Vector3& rally_point() const { return rally_point_; }
-    void set_rally_point(const Vector3& p) { rally_point_ = p; has_rally_point_ = true; }
-    void clear_rally_point() { rally_point_ = {}; has_rally_point_ = false; }
+    /// A factory's rally orders (Moho's builder factory command queue,
+    /// M206j): each unit it finishes takes a copy of them, after the
+    /// roll-off move its script gives it. Only an immobile FACTORY keeps
+    /// them.
+    bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
+    void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
+    void clear_rally_orders() { rally_orders_.clear(); }
+    /// The rally orders, first given the blueprint's initial rally if there
+    /// are none (Moho's BuilderSetUpInitialRally), as Moho keeps a factory's.
+    /// It changes sim state: only the sim's own steps may call it.
+    const std::vector<UnitCommand>& validated_rally_orders(lua_State* L, SimState* sim);
+    /// Where the first rally order goes (unit:GetRallyPoint), without
+    /// changing anything: the initial rally's point if there are none yet.
+    /// False for a unit that keeps none. `L` is the sim's Lua state, whose
+    /// blueprints it reads; the UI's unit objects ask it too.
+    bool rally_point(lua_State* L, Vector3& out) const;
 
     // Build state (builder side) — tracks what this unit is constructing
     u32 build_target_id() const { return build_target_id_; }
     void set_build_target_id(u32 id) { build_target_id_ = id; }
     bool is_building() const { return build_target_id_ != 0; }
+    /// This factory's build came from the queue of a factory it guards
+    /// (M206h): the guard order runs it, and cancels it when it ends.
+    bool factory_assist_build() const { return factory_assist_build_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -279,7 +296,6 @@ public:
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
     void clear_commands(const char* source = "?");
-    void clear_queued_commands(); // remove all but current command
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
     /// orders (tick_orders), coasting, layer changes and fuel
@@ -295,9 +311,12 @@ public:
     /// Build helpers called from the order handlers (unit_orders.cpp)
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
+    /// Works on the build under way; false once it has ended, and then
+    /// `built` (if given) says whether the unit was finished or the build
+    /// failed.
     bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                         map::PathfindingGrid* grid = nullptr,
-                         f32 efficiency = 1.0f);
+                        map::PathfindingGrid* grid = nullptr, f32 efficiency = 1.0f,
+                        bool* built = nullptr);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
 
@@ -502,6 +521,15 @@ public:
     void set_climb_rate(f32 r) { climb_rate_ = r; }
     f32 elevation_target() const { return elevation_target_; }
     void set_elevation_target(f32 e) { elevation_target_ = e; }
+    void set_dive_surface_speed(f32 s) { dive_surface_speed_ = s; }
+    /// How far under the water's surface a sub is (M206o): 0 at the surface,
+    /// down to its Physics.Elevation when dived.
+    f32 sub_elevation() const { return sub_elevation_; }
+    /// Whether it is on its way down or up (Moho's MovingDown/MovingUp).
+    bool diving() const { return vert_motion_ == VertMotion::Down; }
+    bool surfacing() const { return vert_motion_ == VertMotion::Up; }
+    /// Its vertical motion event: Top, Down, Bottom or Up.
+    const std::string& vert_event() const { return vert_event_; }
     bool is_air_unit() const { return layer_ == "Air"; }
 
     // Motion type (from blueprint Physics.MotionType)
@@ -513,6 +541,9 @@ public:
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_AmphibiousFloating";
     }
     bool is_hover() const { return motion_type_ == "RULEUMT_Hover"; }
+    /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
+    /// MotionType is RULEUMT_None).
+    bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
     bool is_naval() const {
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
@@ -546,8 +577,10 @@ public:
     void set_sonar_stealth(bool v) { sonar_stealth_ = v; }
     bool auto_mode() const { return auto_mode_; }
     void set_auto_mode(bool v) { auto_mode_ = v; }
-    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue).
-    /// Stored; the factory queue does not repeat yet.
+    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue):
+    /// a finished build order goes to the back of the queue
+    /// (order_build_in_place), and one taken from a guarded factory goes to
+    /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
     void set_repeat_queue(bool v) { repeat_queue_ = v; }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
@@ -597,11 +630,53 @@ public:
     void set_transport_class(i32 c) { transport_class_ = c; }
     i32 transport_capacity() const { return transport_capacity_; }
     void set_transport_capacity(i32 c) { transport_capacity_ = c; }
+    void set_transport_layout(const TransportLayout& layout) { transport_layout_ = layout; }
+    /// The blueprint's SizeY: a carried unit with no AttachPoint bone hangs
+    /// by its centre, half of it up.
+    void set_size_y(f32 size_y) { size_y_ = size_y; }
+    void set_size_xz(f32 size_x, f32 size_z) {
+        size_x_ = size_x;
+        size_z_ = size_z;
+    }
+    void set_average_density(f32 d) { average_density_ = d; }
+    /// Size x density: a transport picks up the largest first (M206m).
+    f32 load_metric() const { return size_x_ * size_y_ * size_z_ * average_density_; }
+
+    /// The transport's attach points and who holds them (M206l), built from
+    /// its skeleton the first time they are asked for; null without one.
+    TransportSlots* transport_slots();
+    /// The slots, if they have been built.
+    const TransportSlots* built_transport_slots() const { return transport_slots_.get(); }
+    /// Whether this transport has room for `cargo` now: a free slot of its
+    /// class, or, for a transport without attach points, fewer units aboard
+    /// than its Class1Capacity (0: no limit).
+    bool transport_has_space_for(const Unit& cargo);
+    /// The bone a carried unit hangs by: its AttachPoint bone, else its root
+    /// for a flier, else -1 (its centre).
+    i32 transport_attach_bone() const;
+    void set_transport_hover_height(f32 h) { transport_hover_height_ = h; }
+    /// A transport's pickup (M206m): the units given slots, not yet aboard;
+    /// whether it is at their centre; the ticks it has waited there.
+    const std::vector<u32>& pickup_ids() const { return pickup_ids_; }
+    bool pickup_ready() const { return pickup_phase_ == PickupPhase::Waiting; }
+    bool pickup_running() const { return pickup_phase_ != PickupPhase::None; }
+    i32 pickup_ticks() const { return pickup_ticks_; }
+    /// Ticks left of a unit's beam up into its transport (0: not beaming).
+    i32 beam_up_ticks() const { return beam_up_ticks_; }
+    /// Whether the unit's head order is a load onto that transport.
+    bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
-    void detach_all_cargo(EntityRegistry& registry, lua_State* L);
-    /// Drop those of `ids` still aboard, in cargo order; the rest stays.
-    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L);
+    /// Drop the cargo (all of it, or those of `ids` still aboard, in cargo
+    /// order): each is set down where it hung, level, and on the ground when
+    /// `terrain` is given (M206n).
+    void detach_all_cargo(EntityRegistry& registry, lua_State* L,
+                          const map::Terrain* terrain = nullptr);
+    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+                      const map::Terrain* terrain = nullptr);
+    /// Whether the unit's footprint fits the ground where it is (Moho's
+    /// SFootprint::FitsAt): every cell under it passable for it.
+    bool footprint_fits(const map::PathfindingGrid& grid) const;
 
     // Bone visibility (per-unit, ShowBone/HideBone)
     bool is_bone_hidden(i32 idx) const { return hidden_bones_.count(idx) > 0; }
@@ -736,11 +811,46 @@ private:
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A guard order ends: a factory's assisted build (M206h) is cancelled,
+    /// as a factory's build is when its order goes; an assist just stops.
+    void end_guard_build(EntityRegistry& registry, lua_State* L);
+    /// The unit this factory just finished takes the rally orders of
+    /// `rally_id` (itself, or the factory it built the unit for); Moho's
+    /// CFactoryBuildTask::InheritQueuedCommandsTo.
+    void hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
+    /// Set off down (Water to Sub) or up (Sub to Water): the layer changes
+    /// when the sub gets there (Moho's SetNewTargetLayer).
+    void start_dive(lua_State* L);
+    void start_surfacing(lua_State* L);
+    /// A tick of a dive or surfacing, stationary or not (Moho's
+    /// HandleDivingAndSurfacing), and a sub held at its depth.
+    void tick_dive(const map::Terrain* terrain, lua_State* L);
+    /// A new vertical motion event, told to the script
+    /// (OnMotionVertEventChange(new, old)).
+    void set_vert_event(const char* event, lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    /// Cargo walks to its transport and boards.
+    /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
+    /// it targets runs the pickup, and the units it carries call it.
     OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// The transport's side (CUnitLoadUnits): slots for the units calling
+    /// it, a flight to their centre, a low hover while they board.
+    OrderStep order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A unit's side (CUnitCallTransport): to its place, then a beam up.
+    OrderStep order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// End the pickup: slots of units that never came are given up.
+    void finish_pickup(bool completed, lua_State* L);
+    /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
+    /// down to its hover height, then sets down the cargo (`ids`, or all of
+    /// it) whose footprint fits the ground under it; the rest stays aboard.
+    /// True once it has set them down.
+    bool unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids);
+    /// A beam up cut short: back down on the ground, level, and the script
+    /// told it has stopped.
+    void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
+    /// Hold still at `altitude` over the ground, climbing or sinking to it.
+    void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
@@ -770,8 +880,7 @@ private:
     CategoryBits category_bits_; // categories_, as ids
     std::deque<UnitCommand> command_queue_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
-    Vector3 rally_point_;
-    bool has_rally_point_ = false;
+    std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built
     f64 build_time_ = 0;          // target's Economy.BuildTime
     f64 build_cost_mass_ = 0;     // target's Economy.BuildCostMass
@@ -819,6 +928,7 @@ private:
     std::string enhance_name_;
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
+    bool factory_assist_build_ = false;           // see factory_assist_build()
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Bone visibility
@@ -838,8 +948,21 @@ private:
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
-    i32 transport_class_ = 0;        // cargo TransportClass (1=small, 2=medium, 3=large)
+    i32 transport_class_ = 1;        // cargo TransportClass (1=small, 2=medium, 3=large)
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
+    TransportLayout transport_layout_;
+    std::unique_ptr<TransportSlots> transport_slots_;
+    // The blueprint's size and AverageDensity (Moho's defaults 1 and 0.49):
+    // a transport picks up its largest units first.
+    f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
+    f32 average_density_ = 0.49f;
+    /// Hang from the transport's bone that holds our slot (or sit at its
+    /// origin without one): our AttachPoint bone, or centre, on it, facing
+    /// as it does.
+    void hang_from(const Unit& transport);
+    /// Give up slots whose unit is no longer aboard (it died, was taken off
+    /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
+    void release_stale_slots(const EntityRegistry& registry);
     // Veterancy
     u8 vet_level_ = 0;
     f32 vet_xp_ = 0;
@@ -860,6 +983,22 @@ private:
     bool teleporting_ = false;
     u32 teleport_snap_ = 0;
     bool overcharge_armed_ = false;
+    // A transport's pickup (M206m): where it is in the order (holding for
+    // its units' orders, flying to them, coming down to its hover height,
+    // waiting while they board), the units it has given slots to that aren't
+    // aboard yet, their centre, and the ticks it has waited there.
+    enum class PickupPhase : u8 { None, Holding, Flying, Landing, Waiting };
+    PickupPhase pickup_phase_ = PickupPhase::None;
+    std::vector<u32> pickup_ids_;
+    Vector3 pickup_center_{};
+    Quaternion pickup_facing_{};
+    i32 pickup_ticks_ = 0;
+    f32 transport_hover_height_ = 0.0f; // Air.TransportHoverHeight
+    // A unit beaming up into its transport (M206m): ticks left of the 10,
+    // and where it started.
+    i32 beam_up_ticks_ = 0;
+    Vector3 beam_from_{};
+    Quaternion beam_from_orientation_{};
     // A ferry's cycle (M206f, Moho's CUnitFerryTask): loading at its beacon,
     // flying out along its route, unloading at its end, flying back; which
     // route point it heads for, and whether that leg's path is asked for.
@@ -908,6 +1047,12 @@ private:
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
     f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
+    // Diving and surfacing (M206o).
+    enum class VertMotion : u8 { None, Down, Up };
+    VertMotion vert_motion_ = VertMotion::None;
+    f32 sub_elevation_ = 0.0f;
+    f32 dive_surface_speed_ = 1.0f; // Physics.DiveSurfaceSpeed
+    std::string vert_event_ = "Top";
     // Air crash state
     bool crashing_ = false;
     bool crash_impacted_ = false; // set on landing, taken by SimState
