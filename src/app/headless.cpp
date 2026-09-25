@@ -21,8 +21,8 @@ bool App::after_headless_tick() {
     if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
         if (opt.scripted_orders) issue_order_before_save(*sim_state);
         const auto save = osc::sim::save_game(*sim_state, "headless");
-        if (!osc::lua::write_saved_game(save, opt.save_path))
-            osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
+        if (osc::lua::write_saved_game(save, opt.save_path)) save_written = true;
+        else osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
     }
     return true;
 }
@@ -150,8 +150,12 @@ int App::run_headless() {
         osc::Profiler::instance().log_summary();
     }
 
-    const int exit_code =
-        opt.any_test || opt.save_to_load ? finish_test_run("integration tests") : 0;
+    if (!opt.save_path.empty() && !save_written) {
+        osc::test_status::fail("[FAIL] saved game: the run ended at tick {}, before --save-at {}",
+                               sim_state ? sim_state->tick_count() : 0, opt.save_at);
+    }
+    const bool checked = opt.any_test || opt.save_to_load || !opt.save_path.empty();
+    const int exit_code = checked ? finish_test_run("integration tests") : 0;
     recording_writer.write();
     osc::log::shutdown();
     return exit_code;

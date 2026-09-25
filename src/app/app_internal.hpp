@@ -92,8 +92,8 @@ u32 parse_ticks_arg(int argc, char* argv[]);
 std::string parse_map_arg(int argc, char* argv[]);
 /// The test mode flag on the command line, if any.
 const char* test_mode_flag(int argc, char* argv[]);
-/// The run's options, or null when the --replay or --load file can't be
-/// read.
+/// The run's options, or null (logged) when the --replay or --load file
+/// can't be read, or --save can't be done.
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request);
 
 // session.cpp
@@ -216,6 +216,7 @@ private:
     /// A loaded game's save (--load, LoadSavedGame), while the game catches
     /// up with it: checked tick by tick until the player takes over.
     std::optional<sim::ReplayPlayback> catch_up;
+    bool save_written = false; ///< --save's file, once written
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).
     struct RecordingWriter {

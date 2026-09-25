@@ -575,15 +575,17 @@ std::optional<int> App::start() {
         // Recorded for --record, an interactive game for its LastGame, and
         // a game that will be saved (a loaded one too: its recording grows
         // back to the whole game as it catches up).
-        if (!g_record_path.empty() || opt.interactive || !opt.save_path.empty() || opt.save_to_load)
-            sim_state->set_recording(true);
-        if (opt.replay_to_play) return play_replay(*sim_state, *opt.replay_to_play);
+        // A save first: its orders queue, with its command delay, before
+        // the recording starts from the sim's.
         if (opt.save_to_load) {
             catch_up.emplace(opt.save_to_load->game);
             catch_up->resume(*sim_state);
             spdlog::info("Saved game '{}': catching up to tick {}", opt.save_to_load->name,
                          opt.save_to_load->tick);
         }
+        if (!g_record_path.empty() || opt.interactive || !opt.save_path.empty() || opt.save_to_load)
+            sim_state->set_recording(true);
+        if (opt.replay_to_play) return play_replay(*sim_state, *opt.replay_to_play);
     }
 
     // Binding-coverage report (roadmap M184): runs on the fully booted sim and

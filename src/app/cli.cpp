@@ -61,7 +61,7 @@ void print_usage() {
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
               << "                     catches up headlessly (exit 1 on divergence) and plays\n"
               << "                     on; else the game opens it\n"
-              << "  --save <file> --save-at <tick>  Save the game after that tick\n"
+              << "  --save <file> --save-at <tick>  Headless: save the game after that tick\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
               << "                     more just before --save-at's save\n"
@@ -235,6 +235,11 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.save_path = parse_string_arg(argc, argv, "--save", "");
     o.save_at = static_cast<u32>(
         std::strtoul(parse_string_arg(argc, argv, "--save-at", "0").c_str(), nullptr, 10));
+    if (!o.save_path.empty() && (o.save_at == 0 || !o.headless)) {
+        // A headless run saves after a tick: its checks run after each one.
+        spdlog::error("--save needs --save-at <tick> (1 or more), and --ticks or --ai-skirmish");
+        return std::nullopt;
+    }
     return o;
 }
 
