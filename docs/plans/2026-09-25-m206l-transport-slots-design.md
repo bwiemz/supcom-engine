@@ -1,6 +1,6 @@
 # M206l — Transports carry by their attach points
 
-Status: slices 1 and 2 (M206l, slots; M206m, the pickup) done, 2026-09-25. Part of M206 (order fidelity).
+Status: done, 2026-09-25: M206l (slots), M206m (the pickup) and M206n (the drop). Part of M206 (order fidelity).
 
 Source: Moho's decompiled `CAiTransportImpl`, and the unit tasks `CUnitLoadUnits`, `CUnitCallTransport` and `CUnitUnloadUnits` ([faf-re](https://github.com/Draiget/faf-re)). faf-re is still reconstructing parts of the load handshake; it carries temporary probes there. So each rule below is checked against retail's data and a test, not taken on trust.
 
@@ -102,6 +102,24 @@ Moho's `IssueTransportLoad(units, transport)` gives one `UNITCOMMAND_TransportLo
   - **Largest first:** a T3 bot boards ahead of tanks.
   - **Scripts that clear their orders:** a unit clearing its orders as it stops beaming up, and a transport doing so as it stops loading, still end the order safely. The unit boards, and no second order is taken off. Without the check, the process aborts.
   - **Mutations:** reversing the size order, keeping stopped units' orders, and loading before coming down each fail a test.
+
+## M206n — the drop
+
+Moho's `CUnitUnloadUnits` moves an aircraft to its drop onto the land layer, so a transport with cargo comes down to its `TransportHoverHeight`. Each unit is detached with `TransportDetachUnit`, which for an aircraft's cargo asks whether its footprint `FitsAt` where it hangs. A unit that doesn't fit stays aboard. Then the transport's target is the air again.
+
+- **The order flies.** The unload order used the ground navigator, which dragged aircraft along the ground at a crawl. It now flies as the ferry and the pickup do.
+- **`unload_step`**, shared by the unload order and the ferry's drop:
+  1. The transport comes down to its hover height over the drop.
+  2. It sets down the cargo (the order's units, or all of it) whose footprint fits the ground under it: every cell passable for a land unit (`Unit::footprint_fits`).
+  3. The rest stays aboard, and the order ends.
+- **Set down on the ground.** `detach_cargo` puts each unit on the surface where it hung, level. (Before, only the crowd-separation pass did that, and only for units near others.)
+- **Idle.** A transport with cargo aboard hovers at its hover height, and an empty one climbs back to its flying height (`ShouldHoverInsteadOfLand`). This applies only to units with a hover height, so other aircraft are untouched.
+- **A ferry whose cargo never fits at its drop** (over deep water, say) keeps flying its route with the cargo aboard. Moho's `CUnitFerryTask::HasNextUnitToLoad` sends a ferry that still has loaded units out along the route again, so this matches.
+- **Proof:** `data.transport-drop-test` (retail).
+  - A UEF T1 transport with 6 tanks flies up to 10, comes down to 3, and only then sets them down, on the ground and spread under it. Empty, it climbs back to 10.
+  - Over deep water all 6 stay aboard, and it hovers at 3.
+  - A lone tank, with none to jostle it, is set down on the ground.
+  - **Mutations:** no descent, no fit check, no placement on the ground, and no idle climb each fail a check.
 
 ## Decisions
 
