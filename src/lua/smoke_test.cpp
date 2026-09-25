@@ -236,6 +236,12 @@ void SmokeTestHarness::install_method_interceptor(
     lua_pushstring(L, "__index");
     lua_rawget(L, mt);
     int old_index = lua_gettop(L);
+    if (!lua_istable(L, old_index)) {
+        // smoke_method_index rawgets from a methods table; a function
+        // __index (the vector metatable's named fields) has none to audit.
+        lua_pop(L, 2);
+        return;
+    }
 
     // Replace __index with our interceptor closure.
     // The closure captures: (1) old __index table, (2) type_name, (3) harness ptr
@@ -268,7 +274,6 @@ void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
         {"__osc_slaver_mt",    "Slaver"},
         {"__osc_storage_mt",   "Storage"},
         {"__osc_thrust_mt",    "Thrust"},
-        {"__osc_vector_mt",    "Vector"},
         {"__osc_thread_mt",    "Thread"},
     };
     for (auto& e : entries) {

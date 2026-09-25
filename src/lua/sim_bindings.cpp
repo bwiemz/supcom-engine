@@ -3750,38 +3750,89 @@ static int l_GetUnitsInRect(lua_State* L) {
 }
 
 // Math helpers
-static int l_EulerToQuaternion(lua_State* L) {
-    f32 heading = static_cast<f32>(lua_tonumber(L, 1));
-    f32 pitch = static_cast<f32>(lua_tonumber(L, 2));
-    f32 roll = static_cast<f32>(lua_tonumber(L, 3));
+static void read_vec3(lua_State* L, int idx, f32& x, f32& y, f32& z);
 
-    f32 ch = osc::dmath::cos(heading * 0.5f), sh = osc::dmath::sin(heading * 0.5f);
-    f32 cp = osc::dmath::cos(pitch * 0.5f), sp = osc::dmath::sin(pitch * 0.5f);
-    f32 cr = osc::dmath::cos(roll * 0.5f), sr = osc::dmath::sin(roll * 0.5f);
-
+/// A quaternion as scripts get one: {x, y, z, w}, with the vector
+/// metatable, as Moho hands them out (SCR_ToLua<Quaternion>). FAF adds
+/// quaternion arithmetic to that metatable (utils.lua: `q1 * q2`).
+static void push_quaternion(lua_State* L, f32 x, f32 y, f32 z, f32 w) {
     lua_newtable(L);
-    lua_pushnumber(L, 1);
-    lua_pushnumber(L, sr * cp * ch - cr * sp * sh); // x
-    lua_settable(L, -3);
-    lua_pushnumber(L, 2);
-    lua_pushnumber(L, cr * sp * ch + sr * cp * sh); // y
-    lua_settable(L, -3);
-    lua_pushnumber(L, 3);
-    lua_pushnumber(L, cr * cp * sh - sr * sp * ch); // z
-    lua_settable(L, -3);
-    lua_pushnumber(L, 4);
-    lua_pushnumber(L, cr * cp * ch + sr * sp * sh); // w
-    lua_settable(L, -3);
+    const f32 lanes[] = {x, y, z, w};
+    for (int k = 0; k < 4; ++k) {
+        lua_pushnumber(L, k + 1);
+        lua_pushnumber(L, lanes[k]);
+        lua_rawset(L, -3);
+    }
+    push_vector_metatable(L);
+    lua_setmetatable(L, -2);
+}
+
+/// EulerToQuaternion(roll, pitch, yaw), as Moho converts (faf-re
+/// MathReflection.cpp, func_EulerToQuaternion).
+static int l_EulerToQuaternion(lua_State* L) {
+    const f32 roll = static_cast<f32>(lua_tonumber(L, 1));
+    const f32 pitch = static_cast<f32>(lua_tonumber(L, 2));
+    const f32 yaw = static_cast<f32>(lua_tonumber(L, 3));
+    const f32 cr = osc::dmath::cos(roll * 0.5f), sr = osc::dmath::sin(roll * 0.5f);
+    const f32 cp = osc::dmath::cos(pitch * 0.5f), sp = osc::dmath::sin(pitch * 0.5f);
+    const f32 cy = osc::dmath::cos(yaw * 0.5f), sy = osc::dmath::sin(yaw * 0.5f);
+    push_quaternion(L,
+                    cy * cp * sr - sy * sp * cr,  // x
+                    sp * cy * cr + sy * cp * sr,  // y
+                    sy * cp * cr - sp * cy * sr,  // z
+                    cy * cp * cr + sy * sp * sr); // w
     return 1;
 }
 
+/// OrientFromDir(v): the orientation whose forward axis is v, as Moho's
+/// COORDS_Orient builds it (faf-re Entity.cpp): rows right, up and forward,
+/// with right level; a zero vector gives the identity, and straight up or
+/// down a quarter turn about X.
 static int l_OrientFromDir(lua_State* L) {
-    // Simplified: return identity quaternion
-    lua_newtable(L);
-    lua_pushnumber(L, 1); lua_pushnumber(L, 0); lua_settable(L, -3);
-    lua_pushnumber(L, 2); lua_pushnumber(L, 0); lua_settable(L, -3);
-    lua_pushnumber(L, 3); lua_pushnumber(L, 0); lua_settable(L, -3);
-    lua_pushnumber(L, 4); lua_pushnumber(L, 1); lua_settable(L, -3);
+    f32 fx = 0, fy = 0, fz = 0;
+    if (lua_istable(L, 1)) read_vec3(L, 1, fx, fy, fz);
+    const f32 flen = std::sqrt(fx * fx + fy * fy + fz * fz);
+    if (flen == 0.0f) {
+        push_quaternion(L, 0, 0, 0, 1);
+        return 1;
+    }
+    fx /= flen;
+    fy /= flen;
+    fz /= flen;
+    f32 rx = fz, rz = -fx; // right: level, (forward.z, 0, -forward.x)
+    const f32 rlen = std::sqrt(rx * rx + rz * rz);
+    if (rlen == 0.0f) {
+        constexpr f32 kHalfSqrtTwo = 0.70710677f;
+        push_quaternion(L, fy > 0.0f ? -kHalfSqrtTwo : kHalfSqrtTwo, 0, 0, kHalfSqrtTwo);
+        return 1;
+    }
+    rx /= rlen;
+    rz /= rlen;
+    const f32 ry = 0.0f;
+    const f32 ux = fy * rz - fz * ry, uy = fz * rx - rz * fx, uz = ry * fx - fy * rx;
+    // Rows as axes (m): the rotation matrix is its transpose, so
+    // x = m12 - m21, y = m20 - m02, z = m01 - m10 (Moho's MatrixToQuat).
+    const f32 m[3][3] = {{rx, ry, rz}, {ux, uy, uz}, {fx, fy, fz}};
+    const f32 trace = m[0][0] + m[1][1] + m[2][2];
+    f32 x, y, z, w;
+    if (trace > 0.0f) {
+        const f32 t = std::sqrt(trace + 1.0f) * 2.0f; // 4w
+        w = 0.25f * t;
+        x = (m[1][2] - m[2][1]) / t;
+        y = (m[2][0] - m[0][2]) / t;
+        z = (m[0][1] - m[1][0]) / t;
+    } else {
+        // With right level, m11 = |forward.xz| >= 0, and the trace can only
+        // fall to zero when forward.z < 0, which makes m00 and m22 negative:
+        // m11 is the largest diagonal, so of MatrixToQuat's other branches
+        // only the Y one is reachable.
+        const f32 t = std::sqrt(1.0f + m[1][1] - m[0][0] - m[2][2]) * 2.0f; // 4y
+        w = (m[2][0] - m[0][2]) / t;
+        x = (m[0][1] + m[1][0]) / t;
+        y = 0.25f * t;
+        z = (m[1][2] + m[2][1]) / t;
+    }
+    push_quaternion(L, x, y, z, w);
     return 1;
 }
 
@@ -3793,7 +3844,7 @@ static int l_OrientFromDir(lua_State* L) {
 // The metatable provides __index for named access (x->1, y->2, z->3)
 // and __newindex for named assignment.
 void push_vector_metatable(lua_State* L) {
-    lua_pushstring(L, "osc_vector_mt");
+    lua_pushstring(L, "__osc_vector_mt");
     lua_gettable(L, LUA_REGISTRYINDEX);
     if (!lua_isnil(L, -1)) return; // already created
     lua_pop(L, 1); // pop nil
@@ -3829,7 +3880,7 @@ void push_vector_metatable(lua_State* L) {
     lua_rawset(L, -3);
 
     // Store in registry
-    lua_pushstring(L, "osc_vector_mt");
+    lua_pushstring(L, "__osc_vector_mt");
     lua_pushvalue(L, -2);
     lua_settable(L, LUA_REGISTRYINDEX);
 }
