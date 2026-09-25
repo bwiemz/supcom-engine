@@ -138,11 +138,36 @@ static void destroy_control_tree(lua_State* L, ui::UIControlRegistry* reg,
     reg->destroy(ctrl->control_id());
 }
 
+/// The root frame (GetFrame(0)), or null.
+static ui::UIControl* root_frame(lua_State* L) {
+    lua_pushstring(L, "__osc_root_frame");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    ui::UIControl* root = nullptr;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        root = static_cast<ui::UIControl*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    return root;
+}
+
 static int control_Destroy(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl || ctrl->destroyed() || ctrl->destroying()) return 0;
     auto* reg = get_ui_registry(L);
     if (!reg) return 0;
+    // The root frame outlives every game: retail's Load and replay dialogs
+    // destroy the control they were opened over as they leave for the next
+    // game, and in a game that is GetFrame(0). What it holds goes.
+    if (ctrl == root_frame(L)) {
+        const std::vector<ui::UIControl*> children = ctrl->children();
+        for (auto* child : children)
+            if (child && !child->destroyed() && !child->destroying())
+                destroy_control_tree(L, reg, child);
+        return 0;
+    }
     destroy_control_tree(L, reg, ctrl);
     return 0;
 }
