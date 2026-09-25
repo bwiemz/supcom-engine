@@ -9730,6 +9730,41 @@ void test_factory_assist(TestContext& ctx) {
         end
     )");
     if (brain) brain->remove_build_restriction("ENGINEER");
+
+    // A factory repeating its queue builds its orders again (M206i), through
+    // retail's factory scripts: A, given one tank, finishes it and starts
+    // another, the order back on its queue.
+    lua_check("A and B are cleared again", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+    )");
+    run(2);
+    lua_check("A, repeating, is given one tank", R"(
+        __osc_a:SetRepeatQueue(true)
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+    )");
+    run(2);
+    lua_check("A builds it", R"(
+        __osc_a_first = __osc_building(__osc_a)
+        if not __osc_a_first then error('A is not building') end
+    )");
+    for (int i = 0; i < 150; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            local u = __osc_building(__osc_a)
+            if u and u ~= __osc_a_first then error('the next') end
+        )");
+        if (!r) break;
+    }
+    lua_check("and, that one built, starts another", R"(
+        if __osc_a_first:IsDead() or __osc_a_first:IsBeingBuilt() then
+            error("A's first tank was not finished")
+        end
+        local u = __osc_building(__osc_a)
+        if not u or u == __osc_a_first then error('A is not building a second tank') end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
+        end
+    )");
     spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
 }
 

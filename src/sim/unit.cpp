@@ -640,7 +640,8 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
 }
 
 bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                          map::PathfindingGrid* grid, f32 efficiency) {
+                          map::PathfindingGrid* grid, f32 efficiency, bool* built) {
+    if (built) *built = false;
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed()) {
         finish_build(registry, L, false, grid);
@@ -649,6 +650,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
 
     // Guard: if an assister already pushed fraction to 1.0 this tick
     if (target->fraction_complete() >= 1.0f) {
+        if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false;
     }
@@ -666,6 +668,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     work_progress_ = new_frac;
 
     if (new_frac >= 1.0f) {
+        if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false; // command done
     }

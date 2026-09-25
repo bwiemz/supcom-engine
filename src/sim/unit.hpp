@@ -293,9 +293,12 @@ public:
     /// Build helpers called from the order handlers (unit_orders.cpp)
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
+    /// Works on the build under way; false once it has ended, and then
+    /// `built` (if given) says whether the unit was finished or the build
+    /// failed.
     bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                         map::PathfindingGrid* grid = nullptr,
-                         f32 efficiency = 1.0f);
+                        map::PathfindingGrid* grid = nullptr, f32 efficiency = 1.0f,
+                        bool* built = nullptr);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
 
@@ -547,8 +550,10 @@ public:
     void set_sonar_stealth(bool v) { sonar_stealth_ = v; }
     bool auto_mode() const { return auto_mode_; }
     void set_auto_mode(bool v) { auto_mode_ = v; }
-    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue).
-    /// Stored; the factory queue does not repeat yet.
+    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue):
+    /// a finished build order goes to the back of the queue
+    /// (order_build_in_place), and one taken from a guarded factory goes to
+    /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
     void set_repeat_queue(bool v) { repeat_queue_ = v; }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
