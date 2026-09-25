@@ -1446,6 +1446,19 @@ void Renderer::create_bloom_pipelines() {
                  (void*)bloom_composite_pipeline_);
 }
 
+void Renderer::destroy_decal_buffers() {
+    const auto destroy = [&](AllocatedBuffer& b) {
+        if (b.buffer) vmaDestroyBuffer(allocator_, b.buffer, b.allocation);
+        b = {};
+    };
+    destroy(decal_quad_verts_);
+    destroy(decal_quad_indices_);
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        destroy(decal_instance_buf_[i]);
+        decal_instance_mapped_[i] = nullptr;
+    }
+}
+
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
@@ -1468,6 +1481,9 @@ void Renderer::clear_scene() {
 
     stored_decals_.clear();
     decal_groups_.clear();
+    // build_scene makes them again for the next map: a game started from
+    // another leaked the last one's otherwise.
+    destroy_decal_buffers();
     particle_system_.clear();
     emitter_bp_cache_.clear();
 
@@ -3201,18 +3217,7 @@ void Renderer::shutdown() {
     if (texture_ds_layout_)
         vkDestroyDescriptorSetLayout(device_, texture_ds_layout_, nullptr);
 
-    // Decal buffers
-    if (decal_quad_verts_.buffer)
-        vmaDestroyBuffer(allocator_, decal_quad_verts_.buffer,
-                         decal_quad_verts_.allocation);
-    if (decal_quad_indices_.buffer)
-        vmaDestroyBuffer(allocator_, decal_quad_indices_.buffer,
-                         decal_quad_indices_.allocation);
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-        if (decal_instance_buf_[i].buffer)
-            vmaDestroyBuffer(allocator_, decal_instance_buf_[i].buffer,
-                             decal_instance_buf_[i].allocation);
-    }
+    destroy_decal_buffers();
 
     // Shadow infrastructure
     if (shadow_ds_pool_)
