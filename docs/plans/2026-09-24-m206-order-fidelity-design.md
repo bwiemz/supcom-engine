@@ -360,6 +360,27 @@ These findings come from reading retail's `defaultweapons.lua`, `weapon.lua`, `U
 - **Readings, not measurements:** sharing a beacon by position (Moho's orders share one command object; script orders here carry no shared id), and hovering instead of landing.
 - **Cost:** a ferry scans the army's units twice a tick while loading. Ferries are rare, and the AI doesn't use them.
 
+### M206o: naval depth
+
+Two gaps left from M206c. From Moho's decompiled `CUnitMotion::HandleDivingAndSurfacing` and `SetNewTargetLayer`, and `Projectile` ([faf-re](https://github.com/Draiget/faf-re)):
+
+- **Dive and surface.** A dive order sets a sub moving down (from Water) or up (from Sub), and its script hears `OnMotionVertEventChange("Down" or "Up", old)`.
+  - **Rate.** Every tick, moving or not, its depth under the surface changes by `DiveSurfaceSpeed` × 0.1 (default 1), eased by `sin(phase · π)` (at least a tenth of that). The phase is how far it has gone, folded at the halfway point.
+  - **Limit.** It goes down to its `Physics.Elevation`, but no deeper than 0.25 over the seabed.
+  - **Arriving.** There, its layer becomes Sub or Water (`OnLayerChange`), and the script hears Bottom or Top.
+  - **Moving.** A moving sub keeps its depth: the ground navigator no longer lifts it to the surface.
+  - **Before,** the layer changed at once, and the depth moved only while the sub drove.
+  - **Only a submarine (`RULEUMT_SurfacingSub`) dives.** Any other unit ignores a dive order. Moho's UI offers it only to units with `RULEUCC_Dive`, but a script may give it to anything.
+- **Torpedoes.** A `StayUnderwater` projectile tracking a target aims no higher than 0.25 under the surface. It is held under the surface (0.01 below) only once in the water.
+  - **Before,** it was pinned to the surface itself, wet or not. A surfaced sub's torpedoes skimmed it and never counted as in the water: no `OnEnterWater`, so the script's underwater tracking never started, and a dived sub was out of reach.
+  - **Now,** they dive in and run under. A torpedo dropped from the air falls until it reaches the water.
+- **Proof:** `data.naval-depth-test` (retail).
+  - A UEF T1 sub dives in place in 10+ steps to exactly 1.5 under. It is on Water until the depth, then Sub, and hears Down/Bottom. It surfaces with Up/Top.
+  - A surfaced sub's torpedoes enter the water, go under, and hit a frigate, and then a dived sub.
+  - A torpedo dropped 8 over the sea falls.
+  - `data.defence-test` no longer warps its sub under.
+  - **Mutations:** diving only while moving, changing the layer at the start, aiming at the surface, and pinning torpedoes to the surface each fail a check.
+
 ## Risks
 
 - **Missiles now fly.** Long AI games reach nukes and tactical missiles, which play differently. The cross-OS replay and the long AI games check them.

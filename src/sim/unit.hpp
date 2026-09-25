@@ -516,6 +516,15 @@ public:
     void set_climb_rate(f32 r) { climb_rate_ = r; }
     f32 elevation_target() const { return elevation_target_; }
     void set_elevation_target(f32 e) { elevation_target_ = e; }
+    void set_dive_surface_speed(f32 s) { dive_surface_speed_ = s; }
+    /// How far under the water's surface a sub is (M206o): 0 at the surface,
+    /// down to its Physics.Elevation when dived.
+    f32 sub_elevation() const { return sub_elevation_; }
+    /// Whether it is on its way down or up (Moho's MovingDown/MovingUp).
+    bool diving() const { return vert_motion_ == VertMotion::Down; }
+    bool surfacing() const { return vert_motion_ == VertMotion::Up; }
+    /// Its vertical motion event: Top, Down, Bottom or Up.
+    const std::string& vert_event() const { return vert_event_; }
     bool is_air_unit() const { return layer_ == "Air"; }
 
     // Motion type (from blueprint Physics.MotionType)
@@ -806,6 +815,16 @@ private:
     void hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
+    /// Set off down (Water to Sub) or up (Sub to Water): the layer changes
+    /// when the sub gets there (Moho's SetNewTargetLayer).
+    void start_dive(lua_State* L);
+    void start_surfacing(lua_State* L);
+    /// A tick of a dive or surfacing, stationary or not (Moho's
+    /// HandleDivingAndSurfacing), and a sub held at its depth.
+    void tick_dive(const map::Terrain* terrain, lua_State* L);
+    /// A new vertical motion event, told to the script
+    /// (OnMotionVertEventChange(new, old)).
+    void set_vert_event(const char* event, lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
     /// it targets runs the pickup, and the units it carries call it.
@@ -1022,6 +1041,12 @@ private:
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
     f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
+    // Diving and surfacing (M206o).
+    enum class VertMotion : u8 { None, Down, Up };
+    VertMotion vert_motion_ = VertMotion::None;
+    f32 sub_elevation_ = 0.0f;
+    f32 dive_surface_speed_ = 1.0f; // Physics.DiveSurfaceSpeed
+    std::string vert_event_ = "Top";
     // Air crash state
     bool crashing_ = false;
     bool crash_impacted_ = false; // set on landing, taken by SimState

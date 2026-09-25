@@ -1032,16 +1032,24 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
 }
 
 OrderStep Unit::order_dive(lua_State* L) {
-    // Toggle submarine layer: Water ↔ Sub
-    if (layer_ == "Water") {
-        set_layer_with_callback("Sub", L);
-        spdlog::debug("Unit #{} diving: Water → Sub", entity_id());
-    } else if (layer_ == "Sub" || layer_ == "Seabed") {
-        std::string from = layer_;
-        set_layer_with_callback("Water", L);
-        spdlog::debug("Unit #{} surfacing: {} → Water", entity_id(), from);
+    // Moho's SetNewTargetLayer (M206o): a sub at or making for the surface
+    // dives, one under or making for it surfaces; its layer changes when it
+    // gets there (tick_dive). Scripts hear it (OnMotionVertEventChange), and
+    // may clear or replace the queue: the order goes only if still the head.
+    // Only a submarine dives: any other unit ignores the order (Moho's UI
+    // offers it to units with RULEUCC_Dive, but a script may give it to any).
+    const UnitCommand* head = &command_queue_.front();
+    const u32 order_id = head->command_id;
+    const bool under = layer_ == "Sub" || layer_ == "Seabed";
+    if (motion_type_ == "RULEUMT_SurfacingSub") {
+        if (vert_motion_ == VertMotion::Down || (vert_motion_ == VertMotion::None && under))
+            start_surfacing(L);
+        else if (vert_motion_ == VertMotion::Up || layer_ == "Water") start_dive(L);
     }
-    command_queue_.pop_front();
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    if (!command_queue_.empty() && &command_queue_.front() == head &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
     return OrderStep::Next;
 }
 
