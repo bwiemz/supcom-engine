@@ -199,7 +199,6 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
   - A repeating factory's queue shows an order split by its trip round the queue as two entries; Moho shows one with its count.
-  - A factory guarding a factory doesn't yet run its own queued builds first, or upgrades (Moho's guard task does).
   - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
   - The AI's threat queries count every enemy unit. Moho's read the army's influence map (`CInfluenceMap`), a grid of threat kept from the blips its intel has seen (M207).
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
