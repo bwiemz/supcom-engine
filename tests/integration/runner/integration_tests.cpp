@@ -9866,6 +9866,43 @@ void test_factory_assist(TestContext& ctx) {
             error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
         end
     )");
+
+    // A guarding factory's own builds come first (Moho's guard task
+    // dispatches them from its own queue before the guarded one's): C,
+    // guarding A2, is given a scout to build, and builds it before it takes
+    // a tank from A2's queue; then it goes back to helping.
+    lua_check("setup: C guards A2, and has a build of its own", R"(
+        __osc_a2 = __osc_spawn('ueb0101', 1, 610, 140)
+        __osc_c = __osc_spawn('ueb0101', 1, 630, 140)
+        IssueBuildFactory({__osc_a2}, 'uel0201', 3)
+        IssueGuard({__osc_c}, __osc_a2)
+        IssueBuildFactory({__osc_c}, 'uel0101', 1)
+    )");
+    run(20);
+    lua_check("C builds its own scout first", R"(
+        local u = __osc_building(__osc_c)
+        if not u then error('C is not building') end
+        if u:GetBlueprint().BlueprintId ~= 'uel0101' then
+            error('C builds ' .. u:GetBlueprint().BlueprintId .. ', not its own scout')
+        end
+        __osc_scout = u
+        if __osc_queue(__osc_a2) ~= 3 then error("C took from A2's queue") end
+    )");
+    for (int i = 0; i < 100; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            local u = __osc_building(__osc_c)
+            if u and u ~= __osc_scout then error('next') end
+        )");
+        if (!r) break;
+    }
+    lua_check("then, its scout built, it helps A2 again", R"(
+        if __osc_scout:IsDead() or __osc_scout:IsBeingBuilt() then error('the scout was not finished') end
+        local u = __osc_building(__osc_c)
+        if not u or u:GetBlueprint().BlueprintId ~= 'uel0201' then error('C is not building a tank') end
+        local q = __osc_c:GetCommandQueue()
+        if table.getn(q) ~= 1 then error('C has ' .. table.getn(q) .. ' orders; its guard alone expected') end
+    )");
     spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
 }
 

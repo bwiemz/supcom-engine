@@ -817,6 +817,20 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             }
             return OrderStep::Hold;
         }
+        // Its own builds and upgrades come first: Moho's guard task dispatches
+        // them from the guarding factory's queue before the guarded one's.
+        // Only the head order runs here, so the first of them moves ahead of
+        // the guard and runs; the guard carries on when it is done. (Moho's
+        // queue shows the guard first all the while.)
+        for (size_t i = 1; i < command_queue_.size(); ++i) {
+            const CommandType own = command_queue_[i].type;
+            if (own != CommandType::BuildFactory && own != CommandType::Upgrade) continue;
+            UnitCommand order = std::move(command_queue_[i]);
+            command_queue_.erase(command_queue_.begin() + static_cast<std::ptrdiff_t>(i));
+            // The erase may leave cmd (the guard) dangling: it is not used again.
+            command_queue_.push_front(std::move(order));
+            return OrderStep::Next;
+        }
         auto& queue = target_unit->command_queue_;
         for (size_t i = 0; i < queue.size() && L; ++i) {
             if (queue[i].type != CommandType::BuildFactory) continue;
