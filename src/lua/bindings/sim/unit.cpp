@@ -721,17 +721,14 @@ static void set_blip_metatable(lua_State* L, int blip_tbl) {
     lua_setmetatable(L, blip_tbl);
 }
 
-/// Helper: build a blip table with _c_object, _c_entity_id, _c_req_army.
-static void push_blip_table(lua_State* L, sim::Entity* e, osc::u32 entity_id,
-                             osc::i32 req_army) {
+/// Helper: build a blip table: its unit's id (_c_entity_id) and the army
+/// that sees it (_c_req_army). No pointer to the unit: AI scripts keep blips
+/// after their unit is gone, and its memory with it, so every use resolves
+/// the id (check_entity, collect_unit_ids).
+static void push_blip_table(lua_State* L, osc::u32 entity_id, osc::i32 req_army) {
     lua_newtable(L);
     int blip_tbl = lua_gettop(L);
 
-    if (e) {
-        lua_pushstring(L, "_c_object");
-        lua_pushlightuserdata(L, e);
-        lua_rawset(L, blip_tbl);
-    }
     lua_pushstring(L, "_c_entity_id");
     lua_pushnumber(L, static_cast<lua_Number>(entity_id));
     lua_rawset(L, blip_tbl);
@@ -754,7 +751,7 @@ static int unit_GetBlip(lua_State* L) {
     if (e && !e->destroyed()) {
         // Own army always gets blip
         if (req_army < 0 || req_army == e->army()) {
-            push_blip_table(L, e, e->entity_id(), req_army);
+            push_blip_table(L, e->entity_id(), req_army);
             return 1;
         }
 
@@ -770,7 +767,7 @@ static int unit_GetBlip(lua_State* L) {
 
             if (has_intel || has_cache) {
                 // Return blip — blip methods handle dead-reckoning position
-                push_blip_table(L, e, e->entity_id(), req_army);
+                push_blip_table(L, e->entity_id(), req_army);
                 return 1;
             }
         }
@@ -801,7 +798,7 @@ static int unit_GetBlip(lua_State* L) {
     if (!snap) { lua_pushnil(L); return 1; }
 
     // Return dead-reckoning blip (no live entity pointer)
-    push_blip_table(L, nullptr, entity_id, req_army);
+    push_blip_table(L, entity_id, req_army);
     return 1;
 }
 

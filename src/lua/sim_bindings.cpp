@@ -69,6 +69,19 @@ static i32 resolve_army(lua_State* L, int arg, sim::SimState* sim) {
 
 static sim::Entity* extract_entity(lua_State* L, int idx);
 
+/// A handle that names its entity by id (_c_entity_id: blips, the UI's unit
+/// objects), resolved through the registry, so a handle kept past its entity
+/// finds nothing rather than freed memory. nullptr without one.
+static sim::Entity* entity_by_handle_id(lua_State* L, int idx) {
+    auto* sim = get_sim(L);
+    if (!sim) return nullptr;
+    lua_pushstring(L, "_c_entity_id");
+    lua_rawget(L, idx);
+    const u32 id = lua_isnumber(L, -1) ? static_cast<u32>(lua_tonumber(L, -1)) : 0;
+    lua_pop(L, 1);
+    return id != 0 ? sim->entity_registry().find(id) : nullptr;
+}
+
 /// _c_CreateEntity(self, spec) — creates a C++ Entity and stores it.
 static int l_c_CreateEntity(lua_State* L) {
     auto* sim = get_sim(L);
@@ -2015,11 +2028,27 @@ static sim::Entity* extract_entity(lua_State* L, int idx) {
     if (!lua_istable(L, idx)) return nullptr;
     lua_pushstring(L, "_c_object");
     lua_rawget(L, idx);
-    auto* e = lua_isuserdata(L, -1)
-                  ? static_cast<sim::Entity*>(lua_touserdata(L, -1))
-                  : nullptr;
+    void* object = lua_isuserdata(L, -1) ? lua_touserdata(L, -1) : nullptr;
     lua_pop(L, 1);
-    return e;
+    if (!object) return entity_by_handle_id(L, idx);
+    // Platoons, brains and weapons carry a _c_object too: only a registered
+    // entity's is one.
+    auto* sim = get_sim(L);
+    return sim && sim->entity_registry().holds(object) ? static_cast<sim::Entity*>(object)
+                                                       : nullptr;
+}
+
+/// Whether the table at `idx` is a handle to one object (a unit, a blip),
+/// not a list of them.
+static bool is_object_handle(lua_State* L, int idx) {
+    for (const char* key : {"_c_object", "_c_entity_id"}) {
+        lua_pushstring(L, key);
+        lua_rawget(L, idx);
+        const bool present = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (present) return true;
+    }
+    return false;
 }
 
 // Helper: call OnDamage on a target entity via its Lua table registry ref.
@@ -4440,22 +4469,23 @@ static sim::Vector3 extract_position(lua_State* L, int idx) {
     return pos;
 }
 
-// Collect the entity ids of live units from a Lua table of unit tables.
+// Collect the entity ids of live units from a Lua table of units -- or of
+// blips, which stand for their units (an AI orders an attack on the blips it
+// sees). One unit on its own counts too, as in Moho: FAF's AI calls
+// IssueClearCommands(scout).
 static std::vector<u32> collect_unit_ids(lua_State* L, int table_idx) {
     std::vector<u32> ids;
     if (!lua_istable(L, table_idx)) return ids;
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    if (is_object_handle(L, table_idx)) {
+        if (auto* e = extract_entity(L, table_idx); e && e->is_unit() && !e->destroyed())
+            ids.push_back(e->entity_id());
+        return ids;
+    }
     lua_pushnil(L);
     while (lua_next(L, table_idx) != 0) {
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "_c_object");
-            lua_rawget(L, -2);
-            if (lua_isuserdata(L, -1)) {
-                auto* e = static_cast<sim::Entity*>(lua_touserdata(L, -1));
-                if (e && e->is_unit() && !e->destroyed())
-                    ids.push_back(e->entity_id());
-            }
-            lua_pop(L, 1); // _c_object
-        }
+        if (auto* e = extract_entity(L, lua_gettop(L)); e && e->is_unit() && !e->destroyed())
+            ids.push_back(e->entity_id());
         lua_pop(L, 1); // value (keep key for lua_next)
     }
     return ids;
