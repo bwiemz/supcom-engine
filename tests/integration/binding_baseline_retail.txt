@@ -25,7 +25,6 @@ G GetArmy
 G GetMovieDuration
 G GetValidAttackingUnits
 G IN_ClearKeyMap
-G IncreaseBuildCountInQueue
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService

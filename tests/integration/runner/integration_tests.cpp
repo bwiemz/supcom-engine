@@ -14052,7 +14052,7 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     // The construction panel's orders reach the sim as commands: a factory's
     // builds (IssueBlueprintCommand), the queue display read from its
-    // orders, DecreaseBuildCountInQueue and the Stop button, each applied in
+    // orders, Decrease- and IncreaseBuildCountInQueue and the Stop button, each applied in
     // the sim's next tick. (They were SimCallbacks retail's scripts have no
     // handler for.)
     sim_lua(R"(
@@ -14094,9 +14094,17 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         DecreaseBuildCountInQueue(1, 1)
     )");
     play(1);
-    lua_ok("Test 10s: two left; the Stop button", R"(
+    lua_ok("Test 10s: two left; five more (a shift-click)", R"(
         local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
         if not q[1] or q[1].count ~= 2 then error('count ' .. tostring(q[1] and q[1].count)) end
+        IncreaseBuildCountInQueue(1, 5)
+    )");
+    play(1);
+    lua_ok("Test 10s1: seven; the Stop button", R"(
+        local q = SetCurrentFactoryForQueueDisplay(GetUnitById(__osc_test_factory_id))
+        if table.getn(q) ~= 1 or q[1].count ~= 7 then
+            error('queue: ' .. table.getn(q) .. ' entries, ' .. tostring(q[1] and q[1].count))
+        end
         IssueCommand(GetUnitCommandFromCommandCap('RULEUCC_Stop'))
     )");
     play(1);

@@ -166,6 +166,20 @@ void decrease_build_count(SimState& sim, lua_State* L, const SimCallbackEntry& c
     });
 }
 
+/// IncreaseBuildCountInQueue: more of one of a factory's queued blueprints.
+/// FA's queue display asks for 1 or 5 at a time; a request comes from the
+/// network, so a count past kMaxBuildCountIncrease (which would only grow
+/// the queue by that many orders) is refused.
+constexpr f64 kMaxBuildCountIncrease = 1000;
+void increase_build_count(SimState& sim, const SimCallbackEntry& cb) {
+    const auto* index = number_in(cb, "Index", 1, 1e6);
+    const auto* count = number_in(cb, "Count", 1, kMaxBuildCountIncrease);
+    if (!index || !count) return;
+    for_each_unit(sim, cb, [&](Unit& u) {
+        u.increase_build_count(static_cast<int>(*index), static_cast<int>(*count));
+    });
+}
+
 /// A dropped player's army is defeated.
 void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
     const auto* army = number_in(cb, "Army", 0, static_cast<f64>(sim.army_count()) - 1);
@@ -221,6 +235,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
     else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
+    else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
