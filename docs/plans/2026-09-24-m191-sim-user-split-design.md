@@ -36,6 +36,15 @@ Besides the renderer and input-handler getters, they use 13 of the file's genera
    - **The check:** a token count of before and after differs by exactly those edits.
    - **The format ratchet:** it now counts a block moved between files as moved, not changed.
 3. **The UI reads snapshots.** `UserUnit` methods read the tick's `WorldSnapshot` (M190b) rather than live units. The user side then reaches the sim only through commands and `SimCallback`, as in Moho.
+   - **The audit** (2026-09-24). The UI state's units carry the sim's own `moho.unit_methods`, so a UI script's call runs against the live unit. Two sources said which methods the UI uses:
+     - **Traced:** every method a unit was asked for in the game-UI, victory and 600-frame capture runs (a `/schook` hook wrapping `moho.unit_methods` in the UI state). That's 14 methods: `GetBlueprint`, `GetCommandQueue`, `GetEntityId`, `GetHealth`, `GetMaxHealth`, `GetPosition`, `GetWorkProgress`, `IsAutoMode`, `IsDead`, `IsIdle`, `IsInCategory`, `IsOverchargePaused`, `IsRepeatQueue`, `ProcessInfo`.
+     - **Read:** every `unit:Method(` in retail's UI Lua that names a unit method. That adds `GetCreator`, `GetFuelRatio`, `GetMissileInfo`, `SetCustomName`, `AddSelectionSet` and `RemoveSelectionSet`. The rest are other classes' methods of the same name (controls' `Destroy`, world meshes' `SetMesh`).
+   - **What changes the sim:**
+     - `ProcessInfo` already went through the callback queue.
+     - The selection sets are the UI state's own bookkeeping.
+     - `SetCustomName` wrote the live unit. It is used by the rename dialog, and by `OnFirstUpdate`, which names the commander for its player. In multiplayer only that player's sim had the name, and a replay lost it. It now goes through the queue as a `CustomName` ProcessInfo pair, as Moho's does (`ProcessInfoPair(id, "CustomName", name)` in the decompiled `UserUnit`), and the sim names the unit at the tick. The sim's own scripts (the scenario names each commander for its army) still name it at once.
+   - **A read that was wrong:** `IsInCategory` took only a category object. UserUnit's takes a name, and retail's UI passes names (`'COMMAND'`, `'FACTORY'`, a faction). So `OnFirstUpdate` never recognised the commander, and the construction panel's category checks all failed. Only the UI calls it, so the sim is unchanged.
+   - **Next:** the 14 reads come from the snapshot rather than the live unit.
 
 ## Proof
 

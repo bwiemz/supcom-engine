@@ -183,13 +183,14 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   `data.replay_flow`.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
-  still read the live sim; they move over with M191's split of the bindings
-  into sim and user sides. `InputHandler` (picking, orders, the build
+  still read the live sim (M191 step 3 moves them to snapshots); what they
+  change goes through the command stream. `InputHandler` (picking, orders, the build
   ghost) works on the live sim by design.
 - **Architecture (Phase C):**
   - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
   - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
   - `moho_bindings.cpp` is split by class into `src/lua/bindings/{sim,ui}/` (M191 step 2).
+  - The UI changes units only through the command stream: `SetCustomName` was the one that wrote the live sim, and now travels as Moho's `CustomName` ProcessInfo pair (M191 step 3). The UI's unit reads still come from the live sim.
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
   - Next:
     - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
