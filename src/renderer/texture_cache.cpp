@@ -930,6 +930,16 @@ void TextureCache::flush_uploads(u32 max_per_frame) {
     }
 }
 
+void TextureCache::evict(const std::string& key) {
+    failed_.erase(key);
+    const auto it = cache_.find(key);
+    if (it == cache_.end()) return;
+    if (it->second->image.view) vkDestroyImageView(device_, it->second->image.view, nullptr);
+    if (it->second->image.image)
+        vmaDestroyImage(allocator_, it->second->image.image, it->second->image.allocation);
+    cache_.erase(it);
+}
+
 void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
     // Drain all in-flight async loads before tearing down Vulkan resources
     for (auto& al : async_loads_)

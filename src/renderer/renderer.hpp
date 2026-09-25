@@ -312,6 +312,9 @@ private:
     AllocatedBuffer decal_quad_indices_{};
     AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
+    /// Free the decal quad and instance buffers (build_scene makes them for a
+    /// map with decals). The device must be idle.
+    void destroy_decal_buffers();
 
     struct StoredDecal {
         std::string texture_path;
