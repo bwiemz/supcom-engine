@@ -250,8 +250,8 @@ struct BuildRuleHarness {
         osc::lua::register_sim_bindings(state, sim);
         sim.add_army("ARMY_1", "ARMY_1");
 
-        register_test_unit_blueprint(
-            state, store, "test_factory", {"STRUCTURE", "FACTORY"}, 20);
+        register_test_unit_blueprint(state, store, "test_factory",
+                                     {"STRUCTURE", "FACTORY", "RALLYPOINT"}, 20);
         register_test_unit_blueprint(
             state, store, "test_tank", {"MOBILE", "LAND", "TECH1"}, 1);
         register_test_unit_blueprint(
@@ -293,6 +293,210 @@ TEST_CASE("Factory build obeys lobby restricted categories", "[session][rules]")
 
     CHECK(h.sim.entity_registry().count() == 1);
     CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
+}
+
+namespace {
+
+/// The harness's factory, making more than its builds use (they draw 20
+/// mass and energy a second), so it builds at full rate.
+osc::sim::Unit* find_factory(const BuildRuleHarness& h) {
+    osc::sim::Unit* found = nullptr;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<osc::sim::Unit&>(e);
+        if (u.blueprint_id() == "test_factory") found = &u;
+    });
+    if (found) {
+        found->economy().production_mass = 100.0;
+        found->economy().production_energy = 100.0;
+        found->economy().production_active = true;
+    }
+    return found;
+}
+
+/// The factory's build orders, e.g. "test_tank test_experimental".
+std::string factory_orders(const osc::sim::Unit& f) {
+    std::string s;
+    for (const auto& g : f.factory_queue())
+        for (int i = 0; i < g.count; ++i) s += (s.empty() ? "" : " ") + g.blueprint_id;
+    return s;
+}
+
+/// Finished units the army has, not counting the factory.
+int finished_units(const BuildRuleHarness& h) {
+    int n = 0;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<osc::sim::Unit&>(e);
+        if (!u.destroyed() && !u.is_being_built() && u.blueprint_id() != "test_factory") ++n;
+    });
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("A repeating factory sends each finished build to the back of its queue",
+          "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    REQUIRE(factory_orders(*f) == "test_tank test_experimental");
+
+    // Each build takes a few ticks (build rate 20, build time 10).
+    auto head = [&] {
+        const auto q = f->factory_queue();
+        return q.empty() ? std::string() : q.front().blueprint_id;
+    };
+    auto finish_head = [&] {
+        const std::string first = head();
+        for (int i = 0; i < 50 && head() == first; ++i) h.sim.tick();
+    };
+    finish_head();
+    CHECK(factory_orders(*f) == "test_experimental test_tank");
+    CHECK(finished_units(h) == 1);
+    CHECK_FALSE(f->is_building()); // the next build starts next tick, as Moho's does
+    h.sim.tick();
+    CHECK(f->is_building());
+
+    finish_head();
+    CHECK(factory_orders(*f) == "test_tank test_experimental");
+    CHECK(finished_units(h) == 2);
+
+    finish_head(); // round again: a second tank
+    CHECK(factory_orders(*f) == "test_experimental test_tank");
+    CHECK(finished_units(h) == 3);
+}
+
+TEST_CASE("A factory not repeating its queue builds each order once", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    for (int i = 0; i < 50 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    CHECK(factory_orders(*f).empty());
+    CHECK(finished_units(h) == 1);
+    for (int i = 0; i < 20; ++i) h.sim.tick();
+    CHECK(finished_units(h) == 1);
+}
+
+TEST_CASE("A repeating factory drops a build that fails", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    h.sim.tick();
+    REQUIRE(f->is_building());
+
+    // The tank on the factory's floor is destroyed: its order goes, and the
+    // factory moves on to the next.
+    h.sim.entity_registry().find(f->build_target_id())->mark_destroyed();
+    h.sim.tick();
+    CHECK(factory_orders(*f) == "test_experimental");
+    CHECK(f->is_building());
+}
+
+namespace {
+
+osc::sim::Unit* find_unit(const BuildRuleHarness& h, const std::string& bp) {
+    osc::sim::Unit* found = nullptr;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<osc::sim::Unit&>(e);
+        if (!found && u.blueprint_id() == bp) found = &u;
+    });
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("A factory's rally orders are apart from its build orders", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "local tank = CreateUnit('test_tank', 1, 20, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 2)\n"
+                              "IssueFactoryRallyPoint({factory, tank}, {50, 0, 60})\n"));
+    osc::sim::Unit* f = find_factory(h);
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(f);
+    REQUIRE(tank);
+    REQUIRE(f->rally_orders().size() == 1);
+    const auto& rally = f->rally_orders().front();
+    CHECK(rally.type == osc::sim::CommandType::Move);
+    CHECK((rally.target_pos.x == 50.0f && rally.target_pos.z == 60.0f));
+    CHECK(rally.command_id != 0);
+    CHECK(factory_orders(*f) == "test_tank test_tank"); // not in the build queue
+    CHECK(tank->rally_orders().empty());                // only a factory keeps them
+
+    // Retail's AI clears a factory's rally orders before it sets new ones:
+    // the builds it queued stay.
+    REQUIRE(h.state.do_string("IssueClearFactoryCommands({factory})\n"));
+    CHECK(f->rally_orders().empty());
+    CHECK(factory_orders(*f) == "test_tank test_tank");
+}
+
+TEST_CASE("A unit a factory finishes takes the factory's rally orders", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueFactoryRallyPoint({factory}, {50, 0, 60})\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    // Then a guard order, which never ends: without a pathfinder here, a
+    // move is done the tick it starts.
+    osc::sim::UnitCommand guard;
+    guard.type = osc::sim::CommandType::Guard;
+    guard.target_id = f->entity_id();
+    guard.command_id = h.sim.next_command_id();
+    f->add_rally_order(guard);
+
+    h.sim.tick();
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(tank);
+    CHECK(tank->command_queue().empty()); // nothing while it is being built
+    for (int i = 0; i < 50 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    REQUIRE_FALSE(tank->is_being_built());
+
+    // The move went first; the guard, the factory's own command, stays.
+    REQUIRE(tank->command_queue().size() == 1);
+    CHECK(tank->command_queue().front().type == osc::sim::CommandType::Guard);
+    CHECK(tank->command_queue().front().command_id == guard.command_id);
+    CHECK(f->rally_orders().size() == 2); // the factory keeps them
+}
+
+TEST_CASE("A factory without rally orders rallies ahead of itself", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("CreateUnit('test_factory', 1, 10, 0, 20)\n"
+                              "CreateUnit('test_tank', 1, 30, 0, 20)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(f);
+    REQUIRE(tank);
+    // Asked where it rallies (unit:GetRallyPoint, which the UI's unit
+    // objects share), it answers without changing anything: its blueprint's
+    // InitialRallyX/Z, default 0 and 5, five ahead of it.
+    const auto checksum = h.sim.compute_sync_checksum();
+    osc::sim::Vector3 point;
+    REQUIRE(f->rally_point(h.state.raw(), point));
+    CHECK(point.x == 10.0f);
+    CHECK(point.z == 25.0f);
+    CHECK(f->rally_orders().empty());
+    CHECK(h.sim.compute_sync_checksum() == checksum);
+    CHECK_FALSE(tank->rally_point(h.state.raw(), point)); // no factory
+
+    // The sim's own steps give it that rally as an order.
+    const auto& rally = f->validated_rally_orders(h.state.raw(), &h.sim);
+    REQUIRE(rally.size() == 1);
+    CHECK(rally.front().type == osc::sim::CommandType::Move);
+    CHECK(rally.front().target_pos.x == 10.0f);
+    CHECK(rally.front().target_pos.z == 25.0f);
+    CHECK(rally.front().command_id != 0);
+    CHECK(f->validated_rally_orders(h.state.raw(), &h.sim).size() == 1); // given once
+    CHECK(tank->validated_rally_orders(h.state.raw(), &h.sim).empty());  // no factory
 }
 
 TEST_CASE("SimState generation increments on construction", "[m155]") {
@@ -746,4 +950,78 @@ TEST_CASE("CreateUnitHPR with an unknown blueprint creates nothing", "[sim][unit
     CHECK(lua_isnil(state.raw(), -1));
     lua_pop(state.raw(), 1);
     CHECK(sim.entity_registry().count() == 0);
+}
+
+TEST_CASE("A player's move goes to a factory as its rally point", "[session][rules]") {
+    // M206k: as Moho's UI issues it, a move, patrol or transport call splits
+    // the selection: its RALLYPOINT units (factories) take it as a factory
+    // command, into their rally orders; the rest as an order.
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "CreateUnit('test_tank', 1, 20, 0, 0)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(f);
+    REQUIRE(tank);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "test_tank";
+    f->push_command(build, false);
+    f->push_command(build, false);
+    h.sim.set_recording(true);
+
+    const auto order = [&](osc::sim::CommandType type, osc::f32 x, bool clear) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = type;
+        cmd.target_pos = {x, 0, 60};
+        h.sim.set_human_input_active(true);
+        h.sim.route_player_command({f->entity_id(), tank->entity_id()}, cmd, clear);
+        h.sim.set_human_input_active(false);
+        h.sim.tick();
+    };
+    order(osc::sim::CommandType::Move, 50, true);
+    // Two commands: the factory's, flagged, and the tank's.
+    const auto& recorded = h.sim.recorded_replay().commands;
+    REQUIRE(recorded.size() == 2);
+    CHECK(recorded[0].unit_ids == std::vector<osc::u32>{tank->entity_id()});
+    CHECK_FALSE(recorded[0].command.factory);
+    CHECK(recorded[1].unit_ids == std::vector<osc::u32>{f->entity_id()});
+    CHECK(recorded[1].command.factory);
+    // The factory's rally orders take it; its builds are untouched.
+    REQUIRE(f->rally_orders().size() == 1);
+    CHECK(f->rally_orders()[0].target_pos.x == 50.0f);
+    CHECK(factory_orders(*f) == "test_tank test_tank");
+
+    // Queued, it adds one; given fresh, it replaces them.
+    order(osc::sim::CommandType::Patrol, 70, false);
+    REQUIRE(f->rally_orders().size() == 2);
+    CHECK(f->rally_orders()[1].type == osc::sim::CommandType::Patrol);
+    order(osc::sim::CommandType::Move, 90, true);
+    REQUIRE(f->rally_orders().size() == 1);
+    CHECK(f->rally_orders()[0].target_pos.x == 90.0f);
+    CHECK(factory_orders(*f) == "test_tank test_tank");
+
+    // Any other order goes to the selection as it is.
+    const size_t before = recorded.size();
+    order(osc::sim::CommandType::Stop, 0, true);
+    REQUIRE(recorded.size() == before + 1);
+    CHECK(recorded.back().unit_ids.size() == 2);
+    CHECK_FALSE(recorded.back().command.factory);
+}
+
+TEST_CASE("A patrol whose point a unit stands on doesn't spin", "[session][rules]") {
+    // Reached, a patrol point goes to the back and the next leg waits for the
+    // next tick: with every point reached at once it would otherwise go
+    // round them for ever inside one tick.
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("CreateUnit('test_tank', 1, 20, 0, 0)\n"));
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(tank);
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = tank->position();
+    tank->push_command(patrol, true);
+    h.sim.tick();
+    REQUIRE(tank->command_queue().size() == 1);
+    CHECK(tank->command_queue().front().type == osc::sim::CommandType::Patrol);
 }

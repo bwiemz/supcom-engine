@@ -4,6 +4,7 @@
 #include "sim/entity.hpp" // Vector3
 
 #include <string>
+#include <vector>
 
 namespace osc::sim {
 
@@ -22,7 +23,7 @@ enum class CommandType : u8 {
     Dive = 45,            // submarine submerge/surface toggle
     Enhance = 50,         // ACU/SACU self-enhancement (same unit)
     TransportLoad = 60,   // ground unit → load into transport (target_id = transport)
-    TransportUnload = 61, // transport → unload all cargo at position
+    TransportUnload = 61, // transport → unload its cargo (or unload_ids) at position
     Nuke = 70,            // launch a nuke at a position (M206)
     Tactical = 71,        // launch a tactical missile at a unit or position
     Overcharge = 72,      // overcharge attack (ACU ability)
@@ -55,6 +56,15 @@ struct UnitCommand {
     /// Held to this speed (a formation keeps its slowest unit's pace); 0:
     /// the unit's own. Set when a formation order is laid out.
     f32 speed_cap = 0;
+    /// A TransportUnload's cargo to drop, chosen when the order is issued
+    /// (IssueTransportUnloadSpecific's category, as Moho's
+    /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
+    /// rest stays aboard. Empty: all of it.
+    std::vector<u32> unload_ids;
+    /// A factory command (Moho's IssueFactoryCommand, M206k): it goes to the
+    /// units' rally orders, not their queues, and a fresh one clears those.
+    /// A player's move, patrol or transport call to a selected factory.
+    bool factory = false;
     /// A launch order's weapon has fired for it (runtime state: not sent
     /// with the order). The order then ends.
     bool launched = false;

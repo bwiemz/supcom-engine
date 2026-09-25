@@ -21,6 +21,7 @@ add_executable(osc_tests
     test_cross_platform.cpp
     test_sim_callbacks.cpp
     test_user_unit.cpp
+    test_transport_unload.cpp
     test_special_files.cpp
     test_binding_coverage.cpp
     test_lua_state.cpp
@@ -28,6 +29,7 @@ add_executable(osc_tests
     test_init_loader.cpp
     test_blueprint_loading.cpp
     test_map.cpp
+    test_influence_map.cpp
     test_anim_blend.cpp
     test_emitter_blueprint.cpp
     test_ui_layout.cpp
