@@ -42,7 +42,7 @@ set(OSC_DATA_TESTS_GATE
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test
     layercap-test los-test lowstub-test manip-test massstub-test massstub2-test missile-test
-    massstub3-test massstub4-test medstub-test move-test normal-test
+    massstub3-test massstub4-test medstub-test move-test naval-depth-test normal-test
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test profile-test projectile-test prop-test range-test reclaim-test
     repair-test scale-test scissor-test scrollbar-render-test shadow-test

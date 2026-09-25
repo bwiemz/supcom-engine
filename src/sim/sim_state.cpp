@@ -1991,6 +1991,12 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                   (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u) |
                   (u.factory_assist_build() ? 64u : 0u));
         mix_str(units, u.layer());
+        // A sub's depth and dive (M206o), only when under or on its way, so
+        // other units hash as before.
+        if (u.sub_elevation() != 0.0f || u.diving() || u.surfacing()) {
+            units.mix_f32(u.sub_elevation());
+            units.mix((u.diving() ? 1u : 0u) | (u.surfacing() ? 2u : 0u));
+        }
         units.mix(u.transport_id());
         units.mix(static_cast<u64>(u.cargo_ids().size()));
         units.mix(u.build_target_id());

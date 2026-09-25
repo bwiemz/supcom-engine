@@ -794,6 +794,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     unit->set_naval_draft(std::abs(elev));
                 }
                 lua_pop(L, 1);
+                // How fast a sub dives and surfaces (M206o; Moho's default 1)
+                lua_pushstring(L, "DiveSurfaceSpeed");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_dive_surface_speed(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
             }
             lua_pop(L, 2);
         }

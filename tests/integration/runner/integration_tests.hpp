@@ -103,6 +103,7 @@ void test_range(TestContext& ctx);
 void test_ferry(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);
 void test_factory_rally(TestContext& ctx);
+void test_naval_depth(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);
