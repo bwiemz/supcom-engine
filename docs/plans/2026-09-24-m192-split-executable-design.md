@@ -67,6 +67,10 @@ The tests use nothing else. Nothing in `integration_tests.cpp` refers to `main.c
 - **Files:** `app.cpp` splits into files (`cli`, `frames`, `reload`, the boot, the windowed loop).
 - **One object:** `run`'s boot, windowed loop and headless run become functions over one `Engine` object, not one function's locals.
 - They are pure moves, checked as M193 was.
+- **2a (done):** the free functions moved into files: `cli.cpp`, `ui_globals.cpp` (with the seven registrations as one function), `session.cpp` (traces, recording, replays, scripted orders, sound, `WorldInterp` in `app_internal.hpp`), `reload.cpp` and `frames.cpp`.
+  - Each new file was trimmed to the includes it compiles with.
+  - A token count finds only 23 `static`s dropped (15 functions and 8 trace globals, now shared), plus the declarations and wrappers.
+  - A four-AI game's checksum trace is byte-identical over 3,000 ticks.
 
 ## Proof
 
