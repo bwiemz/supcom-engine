@@ -138,6 +138,19 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+
+    # M208a: retail's Load dialog path -- GetSpecialFiles lists the save,
+    # LoadSavedGame loads it -- then the game catches up (never a replay
+    # meanwhile), plays on, and InternalSaveGame saves it again, offscreen.
+    add_test(NAME data.load_flow
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/load_flow.py
+                     $<TARGET_FILE:opensupcom>
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 2 --ticks 250
+                     --seed 9 --scripted-orders)
+    set_tests_properties(data.load_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────

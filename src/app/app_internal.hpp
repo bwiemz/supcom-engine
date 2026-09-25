@@ -60,6 +60,7 @@ struct Options {
     bool scripted_orders = false;
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
+    bool load_flow_test = false;
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;
@@ -180,6 +181,10 @@ private:
     /// save until the player's turn, and --save-at's tick saves the game.
     /// False once a loaded game stops matching its save.
     bool after_headless_tick();
+    /// After a tick of a loaded game catching up: check it against the save,
+    /// and let catch_up go once the player has the game. False (logged) on
+    /// the first tick that differs.
+    bool check_catch_up();
 
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the
@@ -208,8 +213,8 @@ private:
     /// The game's setup: a replay's or saved game's own, or the command
     /// line's.
     sim::GameSetup game_setup;
-    /// --load: the save a headless run is catching up with, checked tick by
-    /// tick until the player takes over.
+    /// A loaded game's save (--load, LoadSavedGame), while the game catches
+    /// up with it: checked tick by tick until the player takes over.
     std::optional<sim::ReplayPlayback> catch_up;
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).

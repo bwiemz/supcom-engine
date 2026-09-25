@@ -11,25 +11,12 @@
 
 #include <spdlog/spdlog.h>
 
-#include <cstdio>
-
 namespace osc::app {
 
 bool App::after_headless_tick() {
-    if (catch_up) {
-        if (!catch_up->check(*sim_state)) {
-            const u32 tick = catch_up->diverged_at();
-            osc::test_status::fail("[FAIL] saved game: diverged at tick {} as it caught up", tick);
-            std::printf("LOAD diverged tick=%u\n", tick);
-            catch_up.reset();
-            return false;
-        }
-        if (!sim_state->resuming()) {
-            spdlog::info("Saved game: caught up at tick {}; the game plays on",
-                         sim_state->tick_count());
-            std::printf("LOAD resumed tick=%u\n", sim_state->tick_count());
-            catch_up.reset();
-        }
+    if (!check_catch_up()) {
+        osc::test_status::fail("[FAIL] saved game: it did not play as it was saved");
+        return false;
     }
     if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
         if (opt.scripted_orders) issue_order_before_save(*sim_state);

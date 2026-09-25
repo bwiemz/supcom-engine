@@ -188,6 +188,8 @@ std::optional<int> App::run_window() {
         // Scripted windowed runs (a test mode's, --replay-flow-test): four
         // frames per sim tick, on a fixed clock.
         constexpr double kInterpFrameDt = osc::sim::SimState::SECONDS_PER_TICK / 4.0;
+        // A loaded game catching up ticks for this long each frame.
+        constexpr auto kCatchUpFrameBudget = std::chrono::milliseconds(100);
         if (opt.scripted_window) {
             renderer.set_fixed_frame_dt(static_cast<osc::f32>(kInterpFrameDt));
             renderer.camera().set_input_enabled(false);
@@ -258,8 +260,103 @@ std::optional<int> App::run_window() {
             }
         }
 
+        // Open the saved game (--load, --load-flow-test) through the global
+        // retail's Load dialog calls; the loop then loads it.
+        bool load_flow_done = false;
+        bool load_flow_saw_catch_up = false;
+        std::optional<osc::u32> load_flow_resumed_at;
+        osc::u32 load_flow_frames = 0;
+        if (!opt.load_path.empty() || opt.load_flow_test) {
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_load_file");
+            lua_pushstring(uL, opt.load_path.c_str());
+            lua_rawset(uL, LUA_GLOBALSINDEX);
+            auto opened = ui_lua_state.do_string(opt.load_flow_test ? R"(
+                    local data = GetSpecialFiles('SaveGame')
+                    for p, names in data.files do
+                        if names[1] then
+                            __osc_load_profile, __osc_load_name = p, names[1]
+                            break
+                        end
+                    end
+                    if not __osc_load_name then error('GetSpecialFiles lists no saved game') end
+                    local folder = data.directory .. __osc_load_profile .. '/'
+                    local worked, err = LoadSavedGame(folder .. 'missing.' .. data.extension)
+                    if worked or err ~= 'CantOpen' then
+                        error('a missing save: ' .. tostring(worked) .. ', ' .. tostring(err))
+                    end
+                    __osc_load_file = folder .. __osc_load_name .. '.' .. data.extension
+                    local detail
+                    worked, err, detail = LoadSavedGame(__osc_load_file)
+                    if not worked then
+                        error('LoadSavedGame refused ' .. __osc_load_file .. ': ' .. tostring(err) ..
+                              ' ' .. tostring(detail))
+                    end
+                )"
+                                                                    : R"(
+                    local worked, err = LoadSavedGame(__osc_load_file)
+                    if not worked then
+                        error('cannot load ' .. __osc_load_file .. ': ' .. tostring(err))
+                    end
+                )");
+            if (!opened) {
+                spdlog::error("Saved game: {}", opened.error().message);
+                if (opt.load_flow_test) {
+                    osc::test_status::fail("[FAIL] load-flow: {}", opened.error().message);
+                    return finish_test_run("load-flow-test");
+                }
+            }
+        }
+
+        // --load-flow-test, once the loaded game has played on: save it again
+        // as retail's Save dialog does, and check what saving refuses.
+        auto save_again_in_load_flow = [&] {
+            auto saved = ui_lua_state.do_string(R"(
+                if SessionIsReplay() then error('a loaded game is a replay') end
+                local data = GetSpecialFiles('SaveGame')
+                local folder = data.directory .. __osc_load_profile .. '/'
+                __osc_again_file = folder .. 'again.' .. data.extension
+                local result
+                InternalSaveGame(__osc_again_file, 'again', function(worked, errmsg)
+                    result = {worked = worked, errmsg = errmsg}
+                end)
+                if not result then error('InternalSaveGame never called back') end
+                if not result.worked then
+                    error('InternalSaveGame failed: ' .. tostring(result.errmsg))
+                end
+                if not GetSpecialFileInfo(__osc_load_profile, 'again', 'SaveGame') then
+                    error('the new save is not listed')
+                end
+                local refused
+                InternalSaveGame(folder .. '../../outside.' .. data.extension, 'outside',
+                                 function(worked) refused = not worked end)
+                if not refused then error('InternalSaveGame saved outside its folder') end
+            )");
+            if (!saved) {
+                osc::test_status::fail("[FAIL] load-flow: {}", saved.error().message);
+                return;
+            }
+            // The new save holds the whole game, as it stands.
+            lua_State* uL = ui_lua_state.raw();
+            lua_pushstring(uL, "__osc_again_file");
+            lua_rawget(uL, LUA_GLOBALSINDEX);
+            const std::string again = lua_type(uL, -1) == LUA_TSTRING ? lua_tostring(uL, -1) : "";
+            lua_pop(uL, 1);
+            osc::sim::SavedGame save;
+            const osc::u32 tick = sim_state->tick_count();
+            if (osc::lua::read_saved_game(again, save) != osc::sim::SaveLoadError::None) {
+                osc::test_status::fail("[FAIL] load-flow: the new save {} does not load", again);
+            } else if (save.tick != tick || save.game.checksums.size() != tick) {
+                osc::test_status::fail("[FAIL] load-flow: the new save holds tick {} and {} "
+                                       "checksums, not the game's {}",
+                                       save.tick, save.game.checksums.size(), tick);
+            }
+            if (osc::fs::exists(special_files->root() / "outside.oscsave"))
+                osc::test_status::fail("[FAIL] load-flow: a save was written outside its folder");
+        };
+
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
-               !replay_flow_done) {
+               !replay_flow_done && !load_flow_done) {
             osc::Profiler::instance().begin_frame();
             auto now = std::chrono::high_resolution_clock::now();
             double dt = std::chrono::duration<double>(now - prev_time).count();
@@ -345,7 +442,33 @@ std::optional<int> App::run_window() {
             const osc::u32 beat_tick0 = sim_state ? sim_state->tick_count() : 0;
             if (!game_state_mgr.paused() && !game_state_mgr.sim_stopped() && sim_state) {
                 world_interp.clock.advance(dt * game_state_mgr.speed());
-                if (osc::lua::mp_net_state().active()) {
+                if (catch_up) {
+                    // A loaded game catches up to its saved tick as fast as
+                    // the sim runs, a frame's budget of ticks at a time: the
+                    // window stays live, showing the game fast-forward.
+                    const auto until = std::chrono::steady_clock::now() + kCatchUpFrameBudget;
+                    bool matched = true;
+                    while (catch_up && matched && std::chrono::steady_clock::now() < until) {
+                        sim_state->tick();
+                        matched = check_catch_up();
+                    }
+                    sim_accumulator = 0.0;
+                    if (!matched) {
+                        // Not the game that was saved: back to the front end.
+                        lua_State* uiL = ui_lua_state.raw();
+                        lua_pushstring(uiL, "__osc_front_end_notice");
+                        lua_pushstring(uiL, "This saved game did not load as it was played.");
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        lua_pushstring(uiL, "__osc_return_to_lobby");
+                        lua_pushboolean(uiL, 1);
+                        lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        if (opt.load_flow_test) {
+                            osc::test_status::fail("[FAIL] load-flow: the game diverged from "
+                                                   "its save as it caught up");
+                            load_flow_done = true;
+                        }
+                    }
+                } else if (osc::lua::mp_net_state().active()) {
                     // Multiplayer: advance in lockstep. Pace command frames
                     // at the sim tick rate; the session only advances the
                     // sim once every peer has confirmed the next frame
@@ -414,6 +537,27 @@ std::optional<int> App::run_window() {
                     replay_flow_done = true;
                 else if (replay_flow_frames > 40000)
                     replay_flow_done = true; // stuck: reported below
+            }
+
+            // --load-flow-test: the saved game catches up -- never a replay
+            // meanwhile -- then plays on a little and is saved again.
+            if (opt.load_flow_test && !load_flow_done) {
+                ++load_flow_frames;
+                if (sim_state && sim_state->resuming() && !load_flow_saw_catch_up) {
+                    load_flow_saw_catch_up = true;
+                    auto r = ui_lua_state.do_string(
+                        "if SessionIsReplay() then error('SessionIsReplay() is true while a "
+                        "saved game catches up') end");
+                    if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
+                }
+                if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at)
+                    load_flow_resumed_at = sim_state->tick_count();
+                if (load_flow_resumed_at && sim_state->tick_count() >= *load_flow_resumed_at + 50) {
+                    save_again_in_load_flow();
+                    load_flow_done = true;
+                } else if (load_flow_frames > 40000) {
+                    load_flow_done = true; // stuck: reported below
+                }
             }
 
             // OnFirstUpdate — fire once after first sim tick
@@ -494,6 +638,7 @@ std::optional<int> App::run_window() {
                 char title[256];
                 if (sim_state) {
                     const char* status_str = game_state_mgr.game_over() ? "GAME OVER "
+                                             : sim_state->resuming()    ? "LOADING "
                                              : game_state_mgr.paused()  ? "PAUSED "
                                                                         : "";
                     std::snprintf(
@@ -580,11 +725,33 @@ std::optional<int> App::run_window() {
                     lua_pushnil(uiL);
                     lua_rawset(uiL, LUA_REGISTRYINDEX);
 
+                    // A saved game to load (LoadSavedGame), if any
+                    std::optional<osc::sim::SavedGame> launch_save;
+                    lua_pushstring(uiL, "__osc_launch_save");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_type(uiL, -1) == LUA_TSTRING) {
+                        osc::sim::SavedGame save;
+                        if (osc::lua::read_saved_game(lua_tostring(uiL, -1), save) ==
+                            osc::sim::SaveLoadError::None)
+                            launch_save = std::move(save);
+                        else launch_scenario.clear();
+                    }
+                    lua_pop(uiL, 1);
+                    lua_pushstring(uiL, "__osc_launch_save");
+                    lua_pushnil(uiL);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+                    const osc::sim::Replay* recorded = launch_replay ? &*launch_replay
+                                                       : launch_save ? &launch_save->game
+                                                                     : nullptr;
+
                     if (!launch_scenario.empty()) {
                         spdlog::info("Launch requested: {}{}", launch_scenario,
-                                     launch_replay ? " (replay)" : "");
+                                     launch_replay ? " (replay)"
+                                     : launch_save ? " (saved game)"
+                                                   : "");
                         save_last_game(); // the game being left, if any
                         active_playback.reset();
+                        catch_up.reset();
 
                         // Transition to LOADING and show loading screen
                         game_state_mgr.transition_to(osc::GameState::LOADING, ui_lua_state.raw());
@@ -597,12 +764,12 @@ std::optional<int> App::run_window() {
                         renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
 
                         // Execute reload in stages, pumping UI frames between each
-                        execute_reload_sequence(
-                            sim_lua_state, sim_state, ui_lua_state, vfs, store, loader, config,
-                            scenario_meta, game_state_mgr, &renderer, &input_handler,
-                            &prev_selection, &world_interp,
-                            launch_seed(opt.seed_arg, opt.reproducible_run), sim_accumulator,
-                            launch_scenario, launch_replay ? &*launch_replay : nullptr);
+                        execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
+                                                loader, config, scenario_meta, game_state_mgr,
+                                                &renderer, &input_handler, &prev_selection,
+                                                &world_interp,
+                                                launch_seed(opt.seed_arg, opt.reproducible_run),
+                                                sim_accumulator, launch_scenario, recorded);
                         if (launch_replay && sim_state) {
                             // Watched as an observer, as the replay plays.
                             active_playback.emplace(std::move(*launch_replay));
@@ -610,6 +777,16 @@ std::optional<int> App::run_window() {
                             lua_pushstring(uiL, "__osc_focus_army");
                             lua_pushnumber(uiL, -1);
                             lua_rawset(uiL, LUA_REGISTRYINDEX);
+                        }
+                        if (launch_save && sim_state) {
+                            // The player's game, caught up first; recorded
+                            // from its start (once its orders and command
+                            // delay are queued), so it saves again whole.
+                            catch_up.emplace(std::move(launch_save->game));
+                            catch_up->resume(*sim_state);
+                            sim_state->set_recording(true);
+                            spdlog::info("Saved game '{}': catching up to tick {}",
+                                         launch_save->name, launch_save->tick);
                         }
 
                         // Reset per-session state for the new game
@@ -660,6 +837,7 @@ std::optional<int> App::run_window() {
                     osc::lua::mp_teardown();
                     save_last_game();
                     active_playback.reset();
+                    catch_up.reset();
 
                     // Tear down game state
                     wld_provider.destroy_game_interface(uiL);
@@ -686,6 +864,24 @@ std::optional<int> App::run_window() {
                     // Re-show lobby UI
                     osc::core::call_lua_global(uiL, "CreateUI");
 
+                    // Why the game ended, when it wasn't the player's doing
+                    // (a saved game that didn't load as it was played).
+                    lua_pushstring(uiL, "__osc_front_end_notice");
+                    lua_rawget(uiL, LUA_REGISTRYINDEX);
+                    if (lua_type(uiL, -1) == LUA_TSTRING) {
+                        lua_pushstring(uiL, "__osc_notice");
+                        lua_pushvalue(uiL, -2);
+                        lua_rawset(uiL, LUA_GLOBALSINDEX);
+                        auto shown = ui_lua_state.do_string(
+                            "import('/lua/ui/uiutil.lua').ShowInfoDialog(GetFrame(0), "
+                            "__osc_notice, '<LOC _Ok>')");
+                        if (!shown) spdlog::warn("Front-end notice: {}", shown.error().message);
+                    }
+                    lua_pop(uiL, 1);
+                    lua_pushstring(uiL, "__osc_front_end_notice");
+                    lua_pushnil(uiL);
+                    lua_rawset(uiL, LUA_REGISTRYINDEX);
+
                     // Rebuild the LAN dialog on the fresh front end.
                     {
                         lua_pushstring(uiL, "__osc_lan_dialog_built");
@@ -707,6 +903,18 @@ std::optional<int> App::run_window() {
 
         save_last_game(); // quitting leaves the game being played
         renderer.shutdown();
+        if (opt.load_flow_test) {
+            if (!load_flow_saw_catch_up) {
+                osc::test_status::fail("[FAIL] load-flow: the saved game never loaded");
+            } else if (!load_flow_resumed_at) {
+                osc::test_status::fail("[FAIL] load-flow: the saved game never caught up");
+            } else if (osc::test_status::failure_count() == 0) {
+                spdlog::info("[PASS] load-flow: loaded, caught up to tick {}, played on and "
+                             "saved again",
+                             *load_flow_resumed_at);
+            }
+            return finish_test_run("load-flow-test");
+        }
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(
                 "if not SessionIsReplay() then error('SessionIsReplay() is false') end");
