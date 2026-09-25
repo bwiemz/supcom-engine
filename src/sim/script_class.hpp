@@ -23,4 +23,13 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
                                  const char* cache_key, const char* kind,
                                  bool warn_default_missing = true);
 
+/// Replace the class on top of the stack with a new object of it, made as
+/// Moho's CScriptObject::CreateLuaObject makes an entity's (faf-re): by
+/// calling the class, with no arguments, when its metatable has a __call
+/// (class.lua's runs __init and __post_init; FAF's ACUs name their gun in
+/// __init), else a new table with the class as its metatable. When the
+/// call fails or returns no table, a warning names `kind` and the object
+/// is the plain instance. A non-table on top becomes an empty table.
+void push_new_script_object(lua_State* L, const char* kind);
+
 } // namespace osc::sim
