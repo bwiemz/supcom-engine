@@ -269,6 +269,10 @@ static int entity_GetOrientation(lua_State* L) {
     lua_pushnumber(L, 4);
     lua_pushnumber(L, q.w);
     lua_settable(L, -3);
+    // The vector metatable, as Moho's quaternions carry it: FAF multiplies
+    // them (EulerToQuaternion(...) * unit:GetOrientation()).
+    push_vector_metatable(L);
+    lua_setmetatable(L, -2);
     return 1;
 }
 

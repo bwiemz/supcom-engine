@@ -5996,6 +5996,8 @@ void test_prop(TestContext& ctx) {
         local t = __osc_tree:GetPosition()
         Damage(nil, {t[1] - 1, t[2], t[3]}, __osc_tree, 1, 'Force')
         local q = __osc_tree:GetOrientation()
+        -- A quaternion as Moho hands it out, with the vector metatable.
+        if getmetatable(q) ~= getmetatable(Vector2(0, 0)) then error('no vector metatable') end
         -- The tree's up axis after the fall: 1 - 2(x^2 + z^2) is its height.
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
         if math.abs(up_y) > 0.05 then error('still upright: up.y ' .. up_y) end
@@ -10884,6 +10886,85 @@ void test_transport_drop(TestContext& ctx) {
                           : -1.0f));
 
     spdlog::info("Transport drop test: {} passed, {} failed", pass, fail);
+}
+
+// ── Issue* handles (the FAF regression run): one unit on its own is a list
+// of one, as in Moho (FAF's AI calls IssueClearCommands(scout)), and a
+// list's non-units -- a brain, a platoon, a blip kept past its unit -- are
+// skipped, never read as units. Each had crashed the engine. ──
+void test_issue_handles(TestContext& ctx) {
+    spdlog::info("=== ISSUE HANDLES TEST: Issue* takes a unit or a list, and skips non-units ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_a = __osc_spawn('uel0201', 1, 300, 300)
+        __osc_b = __osc_spawn('uel0201', 1, 310, 300)
+        __osc_doomed = __osc_spawn('uel0201', 2, 600, 300)
+        __osc_blip = __osc_doomed:GetBlip(2)
+        if not __osc_blip then error('no blip') end
+        __osc_platoon = ArmyBrains[1]:MakePlatoon('issue handles', 'none')
+        function __osc_queued(u) return table.getn(u:GetCommandQueue()) end
+    )");
+    lua_check("one unit on its own takes the order", R"(
+        IssueMove(__osc_a, {400, 0, 300})
+        if __osc_queued(__osc_a) ~= 1 then error('queue ' .. __osc_queued(__osc_a)) end
+        IssueClearCommands(__osc_a)
+        if __osc_queued(__osc_a) ~= 0 then error('not cleared: ' .. __osc_queued(__osc_a)) end
+    )");
+    lua_check("a list's brain and platoon are skipped", R"(
+        IssueMove({ArmyBrains[1], __osc_platoon, __osc_b}, {400, 0, 320})
+        if __osc_queued(__osc_b) ~= 1 then error('queue ' .. __osc_queued(__osc_b)) end
+        IssueStop({ArmyBrains[1], __osc_platoon})
+    )");
+    lua_check("the doomed unit dies", "__osc_doomed:Kill()");
+    run(30); // killed, unregistered and freed
+    lua_check("a blip kept past its unit is skipped", R"(
+        IssueStop({__osc_blip})
+        IssueClearCommands({__osc_blip, __osc_a})
+        IssueAttack({__osc_a}, __osc_blip)
+    )");
+    // The blips the sim hands an AI (OnIntelChange) name their unit by id
+    // too: no pointer to outlive it.
+    lua_check("intel: an enemy comes into view", R"(
+        __osc_intel_blips = {}
+        local brain = ArmyBrains[1]
+        local original = brain.OnIntelChange
+        brain.OnIntelChange = function(self, blip, recon, val)
+            table.insert(__osc_intel_blips, blip)
+            if original then return original(self, blip, recon, val) end
+        end
+        __osc_spotted = __osc_spawn('uel0201', 2, 316, 300)
+    )");
+    run(40);
+    lua_check("intel blips carry no unit pointer", R"(
+        if table.getn(__osc_intel_blips) == 0 then error('no OnIntelChange') end
+        for _, blip in __osc_intel_blips do
+            if rawget(blip, '_c_object') then error('an intel blip keeps a unit pointer') end
+        end
+        __osc_spotted:Kill()
+    )");
+    run(30);
+    lua_check("an intel blip kept past its unit is skipped", R"(
+        IssueStop(__osc_intel_blips)
+        IssueAttack({__osc_a}, __osc_intel_blips[1])
+    )");
+    spdlog::info("=== ISSUE HANDLES TEST: {} passed, {} failed ===", pass, fail);
 }
 
 void test_influence(TestContext& ctx) {

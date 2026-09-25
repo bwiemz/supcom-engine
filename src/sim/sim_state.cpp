@@ -1777,12 +1777,11 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
     lua_pushvalue(L_, brain_tbl); // self (brain)
 
-    // Build blip table: {_c_object, _c_entity_id, _c_req_army}
+    // Build blip table: {_c_entity_id, _c_req_army}. No pointer to the unit,
+    // as unit:GetBlip's blips: AI scripts keep the blips they're told of past
+    // their unit, and its memory with it; every use resolves the id.
     lua_newtable(L_);
     int blip_tbl = lua_gettop(L_);
-    lua_pushstring(L_, "_c_object");
-    lua_pushlightuserdata(L_, entity);
-    lua_rawset(L_, blip_tbl);
     lua_pushstring(L_, "_c_entity_id");
     lua_pushnumber(L_, entity->entity_id());
     lua_rawset(L_, blip_tbl);

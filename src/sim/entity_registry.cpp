@@ -18,6 +18,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     order_.push_back({id, entity.get()});
     if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
     if (entities_.size() <= id) entities_.resize(id + 1);
+    live_.insert(entity.get());
     entities_[id] = std::move(entity);
     ++live_count_;
 
@@ -58,6 +59,9 @@ void EntityRegistry::unregister_entity(u32 id) {
     Entity& ref = *entity;
     graveyard_.push_back(std::move(entity)); // freed by collect_garbage()
     if (unregister_hook_) unregister_hook_(ref);
+    // Held until its OnDestroy (in the hook) has run, as a script's own
+    // Destroy() runs it: a handle to it still resolves there (per review).
+    live_.erase(&ref);
 }
 
 Entity* EntityRegistry::find(u32 id) const {
