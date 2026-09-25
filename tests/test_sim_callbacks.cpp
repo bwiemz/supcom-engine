@@ -340,6 +340,24 @@ TEST_CASE("ProcessInfo's pause and auto mode call the same hooks", "[simcallback
     CHECK(w.hooks() == "OnPaused,OnAutoModeOn");
 }
 
+TEST_CASE("ProcessInfo's CustomName names the unit at the tick", "[simcallback]") {
+    // UserUnit:SetCustomName reaches the sim as this pair, as Moho's does
+    // (ProcessInfoPair(id, "CustomName", name)): the rename dialog, and the
+    // commander named for its player as the game starts.
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kProcessInfoCallback;
+    cb.args["Action"] = std::string("CustomName");
+    cb.args["Value"] = std::string("Fred");
+    cb.unit_ids = {id};
+    w.sim.submit_callback(cb);
+    CHECK(w.unit(id).custom_name().empty()); // not between ticks
+    w.sim.tick();
+    CHECK(w.unit(id).custom_name() == "Fred");
+    CHECK(w.hooks().empty()); // a name, no script hook
+}
+
 TEST_CASE("The sync checksum sees a unit setting", "[simcallback][sync]") {
     CallbackSim a, b;
     const osc::u32 ua = a.spawn();

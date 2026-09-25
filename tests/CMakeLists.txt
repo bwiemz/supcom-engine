@@ -20,6 +20,7 @@ add_executable(osc_tests
     test_dmath.cpp
     test_cross_platform.cpp
     test_sim_callbacks.cpp
+    test_user_unit.cpp
     test_special_files.cpp
     test_binding_coverage.cpp
     test_lua_state.cpp
