@@ -910,6 +910,67 @@ void test_threat(TestContext& ctx) {
         else osc::test_status::fail("[FAIL] Threat test: attack vectors: {}", r.error().message);
     }
 
+    // CheckBlockingTerrain (M207c): whether the heightfield stands between
+    // two points for a straight or arcing shot, as Moho's does.
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local brain = ArmyBrains[1]
+            local x, z = 500, 500
+            local h = GetTerrainHeight(x, z)
+            -- A shot from under the ground is blocked; one high over the map isn't.
+            if not brain:CheckBlockingTerrain({x, h - 5, z}, {x + 30, 1000, z}, 'none') then
+                error('a buried start is not blocked')
+            end
+            for _, arc in {'none', 'NONE', 'Low', 'high'} do
+                if brain:CheckBlockingTerrain({x, 1000, z}, {x + 30, 1000, z + 30}, arc) then
+                    error('a shot above the map is blocked (' .. arc .. ')')
+                end
+            end
+            -- A ridge: two points on the ground, `dx`, `dz` apart, with the
+            -- ground between them at least 10 higher than both. Found along x,
+            -- and along a 3:1 slant toward -z (the usual shot is neither);
+            -- SCMP_009's best along those are about 11.5 and 13.5.
+            local function find_ridge(dx, dz)
+                for sz = 64, 900, 16 do
+                    for sx = 64, 900, 8 do
+                        local ha = GetTerrainHeight(sx, sz)
+                        local hb = GetTerrainHeight(sx + dx, sz + dz)
+                        local top = 0
+                        for s = 1, 39 do
+                            local f = s / 40
+                            top = math.max(top, GetTerrainHeight(sx + dx * f, sz + dz * f))
+                        end
+                        if top > math.max(ha, hb) + 10 then
+                            return {sx, ha, sz}, {sx + dx, hb, sz + dz}
+                        end
+                    end
+                end
+            end
+            for _, d in {{40, 0}, {36, -12}} do
+                local a, b = find_ridge(d[1], d[2])
+                if not a then error('no ridge found along ' .. d[1] .. ', ' .. d[2]) end
+                if not brain:CheckBlockingTerrain(a, b, 'none') then
+                    error('a ridge at ' .. a[1] .. ', ' .. a[3] .. ' does not block')
+                end
+                -- The same span, well above the ridge, is clear.
+                local over = math.max(a[2], b[2]) + 200
+                if brain:CheckBlockingTerrain({a[1], over, a[3]}, {b[1], over, b[3]}, 'none') then
+                    error('a shot over the ridge at ' .. a[1] .. ', ' .. a[3] .. ' is blocked')
+                end
+            end
+            -- Retail's CheckNavalPathing passes an end it never set.
+            local ok, err = pcall(function() return brain:CheckBlockingTerrain({x, h, z}, nil, 'none') end)
+            if not ok then error('a nil end errors: ' .. tostring(err)) end
+            if pcall(function() return brain:CheckBlockingTerrain({x, h, z}, {x, h, z}) end) then
+                error('three arguments are accepted')
+            end
+        )");
+        if (r) spdlog::info("[PASS] Threat test: CheckBlockingTerrain sees ridges");
+        else
+            osc::test_status::fail("[FAIL] Threat test: CheckBlockingTerrain: {}",
+                                   r.error().message);
+    }
+
     spdlog::info("Threat test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
