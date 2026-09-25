@@ -1,6 +1,6 @@
 # M206l — Transports carry by their attach points
 
-Status: slice 1 (M206l, slots) done, 2026-09-25. Part of M206 (order fidelity).
+Status: slices 1 and 2 (M206l, slots; M206m, the pickup) done, 2026-09-25. Part of M206 (order fidelity).
 
 Source: Moho's decompiled `CAiTransportImpl`, and the unit tasks `CUnitLoadUnits`, `CUnitCallTransport` and `CUnitUnloadUnits` ([faf-re](https://github.com/Draiget/faf-re)). faf-re is still reconstructing parts of the load handshake; it carries temporary probes there. So each rule below is checked against retail's data and a test, not taken on trust.
 
@@ -70,6 +70,38 @@ Retail's transports bear this out:
    - The slots (who holds which bone) go into the checksum.
 2. **M206m, the pickup:** the load handshake, with the transport at the pickup centre, units walking to their points and beaming up. The handshake also gates who may board, using `TransportCanCarryUnit`'s whole test (`TransportSlots::can_carry_class` is its class half). Today only a ferry checks part of it: it takes land units only, and a commander only onto a `CANTRANSPORTCOMMANDER` transport.
 3. **M206n, the drop:** unloading from the ground.
+
+## M206m — the pickup
+
+Moho's `IssueTransportLoad(units, transport)` gives one `UNITCOMMAND_TransportLoadUnits` command to the units and to the transport together (`cfunc_IssueTransportLoadL`). The transport runs `CUnitLoadUnits` for it, and each unit runs `CUnitCallTransport`. Each side goes on only while the other's head command is the same order.
+
+- **The transport gets the order from the units calling it.** A unit whose transport has no load order on itself queued appends one. That covers every path that gives units a load order: scripts, players, and a factory's rally orders, which the engine hands to built units directly.
+  - A unit whose load order targets itself runs the transport's side.
+  - The handshake is the heads: the transport's head is a load order on itself, and a unit's head is a load order on that transport. Ids aren't compared, since the engine numbers an order per unit on the script path.
+- **The transport's side (`CUnitLoadUnits`):**
+  1. **Start.** It takes the `TransportLoading` state and hears `OnStartTransportLoading`.
+  2. **Hold.** Its requested units are the army's units with a load order onto it anywhere in their queues. It holds, as Moho's does, until each has that order at its head.
+  3. **Assign.** They are sorted by size (SizeX × SizeY × SizeZ × `AverageDensity`; defaults 1 and 0.49), largest first. Ties go to the nearer, then the older, so every platform agrees. Each is given a slot, reserved now. A unit that gets none is dropped, and if any was, the transport hears `OnTransportFull`. With none assigned, the order ends, aborted.
+  4. **Fly.** It hears `OnTransportOrdered` and flies to the pickup centre, the mean of the assigned units' positions. A transport that can't fly waits where it is.
+  5. **Land.** Over the centre, it comes down to `Air.TransportHoverHeight` (default 0: it lands). Only then is it at the pickup: Moho's move there is onto the land layer.
+  6. **Wait.** It hovers while its units board, up to 300 ticks.
+  7. **End.** It releases the slots of any unit that never came. It hears `OnStopTransportLoading`, and `OnTransportAborted` if it timed out or was stopped. It then leaves the `TransportLoading` state. Idle with cargo, it stays at its hover height until moved (`ShouldHoverInsteadOfLand`).
+- **A unit's side (`CUnitCallTransport`):**
+  1. Until its transport starts the pickup, it waits.
+  2. Once it has a slot, the order goes on only while the transport is still loading. A unit the transport gave no slot is left, its order done.
+  3. Until the transport is at the pickup, it walks to the centre plus twice its bone's offset (`TransportGetPickupUnitPos`). After that it walks to the ground under its bone (`TransportGetAttachPosition`).
+  4. Within twice the transport's footprint of the bone (horizontally), it beams up. It hears `OnStartTransportBeamUp(transport, boneIndex)`, and eases over 10 ticks, by `cos(t·π/10)/2 + 1/2`, from where it stood to the bone's place less its own height.
+  5. It hears `OnStopTransportBeamUp` and attaches.
+- **Stale state:**
+  - A transport whose head is no longer that load order gives up its pickup, aborted.
+  - A unit whose order ends mid-beam comes back down to the ground, and hears `OnStopTransportBeamUp`.
+  - The stale-slot pass keeps a slot held for a unit still coming.
+- **Proof:** `data.transport-pickup-test` (retail).
+  - **The pickup:** a UEF T1 transport given 8 tanks takes 6 (`OnTransportFull`), flies 45 to their centre, and hovers at exactly 3. Each tank beams up, seen off the ground before it attaches, and hears a bone number. The 2 left end their orders.
+  - **The abort:** a pickup stopped on the way is aborted, and its units don't call the transport back.
+  - **Largest first:** a T3 bot boards ahead of tanks.
+  - **Scripts that clear their orders:** a unit clearing its orders as it stops beaming up, and a transport doing so as it stops loading, still end the order safely. The unit boards, and no second order is taken off. Without the check, the process aborts.
+  - **Mutations:** reversing the size order, keeping stopped units' orders, and loading before coming down each fail a test.
 
 ## Decisions
 

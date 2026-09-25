@@ -364,6 +364,20 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
     }
     auto& registry = ctx.registry;
 
+    // A pickup whose load order is no longer the transport's head is over,
+    // aborted; a unit whose load order went mid-beam comes back down (M206m).
+    const bool loading_head =
+        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
+    if (pickup_phase_ != PickupPhase::None &&
+        !(loading_head && command_queue_.front().target_id == entity_id())) {
+        finish_pickup(false, ctx.L);
+        if (destroyed() || !in_registry()) return false;
+    }
+    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
+        abandon_beam_up(ctx.terrain, ctx.L);
+        if (destroyed() || !in_registry()) return false;
+    }
+
     // A transport gives up the slots of units no longer aboard (M206l).
     if (transport_slots_ && !transport_slots_->slots().empty()) release_stale_slots(registry);
 
@@ -1812,11 +1826,16 @@ void Unit::release_stale_slots(const EntityRegistry& registry) {
     std::vector<u32> stale;
     for (const TransportSlots::Slot& slot : transport_slots_->slots()) {
         const Entity* e = registry.find(slot.unit_id);
+        const auto* u =
+            e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
         const bool aboard =
-            e && !e->destroyed() && e->is_unit() &&
-            static_cast<const Unit*>(e)->transport_id() == entity_id() &&
+            u && u->transport_id() == entity_id() &&
             std::find(cargo_ids_.begin(), cargo_ids_.end(), slot.unit_id) != cargo_ids_.end();
-        if (!aboard) stale.push_back(slot.unit_id);
+        // A unit given a slot for the pickup keeps it while it still comes (M206m).
+        const bool coming =
+            u && !u->is_dying() && u->calls_transport(entity_id()) &&
+            std::find(pickup_ids_.begin(), pickup_ids_.end(), slot.unit_id) != pickup_ids_.end();
+        if (!aboard && !coming) stale.push_back(slot.unit_id);
     }
     for (const u32 id : stale) transport_slots_->release(id);
 }

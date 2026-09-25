@@ -620,6 +620,13 @@ public:
     /// The blueprint's SizeY: a carried unit with no AttachPoint bone hangs
     /// by its centre, half of it up.
     void set_size_y(f32 size_y) { size_y_ = size_y; }
+    void set_size_xz(f32 size_x, f32 size_z) {
+        size_x_ = size_x;
+        size_z_ = size_z;
+    }
+    void set_average_density(f32 d) { average_density_ = d; }
+    /// Size x density: a transport picks up the largest first (M206m).
+    f32 load_metric() const { return size_x_ * size_y_ * size_z_ * average_density_; }
 
     /// The transport's attach points and who holds them (M206l), built from
     /// its skeleton the first time they are asked for; null without one.
@@ -633,6 +640,17 @@ public:
     /// The bone a carried unit hangs by: its AttachPoint bone, else its root
     /// for a flier, else -1 (its centre).
     i32 transport_attach_bone() const;
+    void set_transport_hover_height(f32 h) { transport_hover_height_ = h; }
+    /// A transport's pickup (M206m): the units given slots, not yet aboard;
+    /// whether it is at their centre; the ticks it has waited there.
+    const std::vector<u32>& pickup_ids() const { return pickup_ids_; }
+    bool pickup_ready() const { return pickup_phase_ == PickupPhase::Waiting; }
+    bool pickup_running() const { return pickup_phase_ != PickupPhase::None; }
+    i32 pickup_ticks() const { return pickup_ticks_; }
+    /// Ticks left of a unit's beam up into its transport (0: not beaming).
+    i32 beam_up_ticks() const { return beam_up_ticks_; }
+    /// Whether the unit's head order is a load onto that transport.
+    bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     void detach_all_cargo(EntityRegistry& registry, lua_State* L);
@@ -782,8 +800,21 @@ private:
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
-    /// Cargo walks to its transport and boards.
+    /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
+    /// it targets runs the pickup, and the units it carries call it.
     OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// The transport's side (CUnitLoadUnits): slots for the units calling
+    /// it, a flight to their centre, a low hover while they board.
+    OrderStep order_transport_pickup(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A unit's side (CUnitCallTransport): to its place, then a beam up.
+    OrderStep order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// End the pickup: slots of units that never came are given up.
+    void finish_pickup(bool completed, lua_State* L);
+    /// A beam up cut short: back down on the ground, level, and the script
+    /// told it has stopped.
+    void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
+    /// Hold still at `altitude` over the ground, climbing or sinking to it.
+    void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
@@ -884,7 +915,10 @@ private:
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
     TransportLayout transport_layout_;
     std::unique_ptr<TransportSlots> transport_slots_;
-    f32 size_y_ = 0.0f;
+    // The blueprint's size and AverageDensity (Moho's defaults 1 and 0.49):
+    // a transport picks up its largest units first.
+    f32 size_x_ = 1.0f, size_y_ = 1.0f, size_z_ = 1.0f;
+    f32 average_density_ = 0.49f;
     /// Hang from the transport's bone that holds our slot (or sit at its
     /// origin without one): our AttachPoint bone, or centre, on it, facing
     /// as it does.
@@ -912,6 +946,22 @@ private:
     bool teleporting_ = false;
     u32 teleport_snap_ = 0;
     bool overcharge_armed_ = false;
+    // A transport's pickup (M206m): where it is in the order (holding for
+    // its units' orders, flying to them, coming down to its hover height,
+    // waiting while they board), the units it has given slots to that aren't
+    // aboard yet, their centre, and the ticks it has waited there.
+    enum class PickupPhase : u8 { None, Holding, Flying, Landing, Waiting };
+    PickupPhase pickup_phase_ = PickupPhase::None;
+    std::vector<u32> pickup_ids_;
+    Vector3 pickup_center_{};
+    Quaternion pickup_facing_{};
+    i32 pickup_ticks_ = 0;
+    f32 transport_hover_height_ = 0.0f; // Air.TransportHoverHeight
+    // A unit beaming up into its transport (M206m): ticks left of the 10,
+    // and where it started.
+    i32 beam_up_ticks_ = 0;
+    Vector3 beam_from_{};
+    Quaternion beam_from_orientation_{};
     // A ferry's cycle (M206f, Moho's CUnitFerryTask): loading at its beacon,
     // flying out along its route, unloading at its end, flying back; which
     // route point it heads for, and whether that leg's path is asked for.
