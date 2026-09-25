@@ -9911,6 +9911,217 @@ void test_factory_rally(TestContext& ctx) {
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
 }
 
+void test_transport_slots(TestContext& ctx) {
+    spdlog::info("=== TRANSPORT SLOTS TEST: a transport carries by its attach points (M206l) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] transport slots script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+    // The positions of a Lua list's units, from the sim.
+    const auto positions = [&](const char* list) {
+        std::vector<osc::sim::Vector3> out;
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, list);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        for (int i = 1; lua_istable(L, -1); ++i) {
+            lua_rawgeti(L, -1, i);
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            lua_pushstring(L, "GetEntityId");
+            lua_gettable(L, -2);
+            lua_pushvalue(L, -2);
+            lua_pcall(L, 1, 1, 0);
+            const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+            lua_pop(L, 2);
+            if (const auto* e = ctx.sim.entity_registry().find(id)) out.push_back(e->position());
+        }
+        lua_pop(L, 1);
+        return out;
+    };
+    const auto spread = [](const std::vector<osc::sim::Vector3>& at) {
+        f32 nearest = 1e9f;
+        for (size_t i = 0; i < at.size(); ++i)
+            for (size_t j = i + 1; j < at.size(); ++j)
+                nearest = std::min(nearest, std::hypot(at[i].x - at[j].x, at[i].z - at[j].z));
+        return nearest;
+    };
+
+    // A UEF T2 transport (14 small, 6 medium and 3 large attach points) on
+    // the flat ground east of the map's centre; 15 T1 tanks (class 1) and 4
+    // T3 bots (class 3) beside it, made first, so they tick before it does.
+    // The transport's script notes each bone it is told of.
+    if (!lua(R"(
+        local function spawn(bp, x, z)
+            return CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_small = {}
+        for i = 1, 15 do __osc_small[i] = spawn('uel0201', 598 + 3 * i, 112) end
+        __osc_large = {}
+        for i = 1, 4 do __osc_large[i] = spawn('uel0303', 606 + 5 * i, 88) end
+        __osc_xport = spawn('uea0104', 620, 100)
+        __osc_bones = {}
+        local attach = __osc_xport.OnTransportAttach
+        __osc_xport.OnTransportAttach = function(self, bone, unit)
+            table.insert(__osc_bones, bone)
+            return attach(self, bone, unit)
+        end
+        function __osc_count_attached(list)
+            local n = 0
+            for _, u in list do
+                if not u:IsDead() and u:IsUnitState('Attached') then n = n + 1 end
+            end
+            return n
+        end
+    )"))
+        return;
+    run(5);
+
+    // 15 tanks told to board: 14 slots take 14, and the 15th is refused.
+    lua("IssueTransportLoad(__osc_small, __osc_xport)");
+    run(400);
+    lua("__osc_n = __osc_count_attached(__osc_small)");
+    check(number("__osc_n") == 14,
+          fmt::format("14 of 15 tanks board a UEF T2 transport ({})", number("__osc_n")));
+    lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_small[15]) and 1 or 0");
+    check(number("__osc_room") == 0, "the full transport has no room for the 15th");
+
+    // Scripts heard 14 different bones, each an attach point.
+    lua(R"(
+        local seen, distinct, named = {}, 0, 0
+        for _, b in __osc_bones do
+            if type(b) == 'string' and string.find(b, 'Attachpoint') then named = named + 1 end
+            if not seen[b] then seen[b] = true; distinct = distinct + 1 end
+        end
+        __osc_named, __osc_distinct = named, distinct
+    )");
+    check(number("__osc_named") == 14 && number("__osc_distinct") == 14,
+          fmt::format("OnTransportAttach heard 14 distinct attach bones ({} named, {} distinct)",
+                      number("__osc_named"), number("__osc_distinct")));
+
+    lua("__osc_xid = __osc_xport:GetEntityId()");
+    const auto* xport = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_xid")));
+    const auto* transport =
+        xport && xport->is_unit() ? static_cast<const osc::sim::Unit*>(xport) : nullptr;
+    // How many carried units hang by their AttachPoint bone, and how far the
+    // worst of those bones is from its slot's bone on the transport.
+    const auto placement = [&]() -> std::pair<int, f32> {
+        const auto* slots = transport ? transport->built_transport_slots() : nullptr;
+        f32 worst = 0;
+        int placed = 0;
+        for (const osc::u32 id : transport ? transport->cargo_ids() : std::vector<osc::u32>{}) {
+            const auto* e = ctx.sim.entity_registry().find(id);
+            const auto* slot = slots ? slots->slot_of(id) : nullptr;
+            if (!e || !e->is_unit() || !slot || slot->unit_bone < 0) continue;
+            const auto& cargo = static_cast<const osc::sim::Unit&>(*e);
+            const osc::sim::Vector3 hook = cargo.bone_world_position(slot->unit_bone);
+            const osc::sim::Vector3 bone = transport->bone_world_position(slot->bone);
+            worst = std::max({worst, std::abs(hook.x - bone.x), std::abs(hook.y - bone.y),
+                              std::abs(hook.z - bone.z)});
+            ++placed;
+        }
+        return {placed, worst};
+    };
+
+    // Aboard, each tank hangs at its own bone, close about the transport.
+    {
+        std::vector<osc::sim::Vector3> aboard;
+        for (const auto& at : positions("__osc_small")) aboard.push_back(at);
+        aboard.pop_back(); // the one left on the ground
+        f32 farthest = 0;
+        for (const auto& at : aboard)
+            if (xport)
+                farthest = std::max(
+                    farthest, std::hypot(at.x - xport->position().x, at.z - xport->position().z));
+        check(xport && spread(aboard) > 0.5f && farthest < 10.0f,
+              fmt::format("each tank hangs at its own bone ({:.2f} apart at least, {:.1f} out "
+                          "at most)",
+                          spread(aboard), farthest));
+
+        // Each hangs by its own AttachPoint bone, which sits on its slot's bone.
+        const auto [placed, worst] = placement();
+        check(placed == 14 && worst < 1e-3f,
+              fmt::format("each tank's AttachPoint is on its bone ({} placed, {:.5f} off at most)",
+                          placed, worst));
+    }
+
+    // Unloaded, they are set down where they hung, not on top of each other,
+    // and the slots are free again. In flight, they stay on their bones: the
+    // tanks tick before the transport, and it moves them with it.
+    lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
+    {
+        const osc::sim::Vector3 from = transport ? transport->position() : osc::sim::Vector3{};
+        run(8);
+        const f32 moved = transport ? std::hypot(transport->position().x - from.x,
+                                                 transport->position().z - from.z)
+                                    : 0.0f;
+        const auto [placed, worst] = placement();
+        check(moved > 0.2f && placed == 14 && worst < 1e-3f,
+              fmt::format("in flight, each tank stays on its bone ({:.2f} flown, {} placed, "
+                          "{:.5f} off at most)",
+                          moved, placed, worst));
+    }
+    run(400);
+    lua("__osc_n = __osc_count_attached(__osc_small)");
+    check(number("__osc_n") == 0,
+          fmt::format("unloaded: {} tanks still aboard", number("__osc_n")));
+    {
+        auto down = positions("__osc_small");
+        down.pop_back();
+        check(spread(down) > 0.5f,
+              fmt::format("unloaded tanks are spread out ({:.2f} apart at least)", spread(down)));
+    }
+    lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_small[1]) and 1 or 0");
+    check(number("__osc_room") == 1, "the emptied transport has room again");
+
+    // Large units take 4 small bones each: 3 of 4 bots board, and then only
+    // 2 tanks (14 - 3 x 4) fit beside them.
+    lua("IssueTransportLoad(__osc_large, __osc_xport)");
+    run(500);
+    lua("__osc_n = __osc_count_attached(__osc_large)");
+    check(number("__osc_n") == 3, fmt::format("3 of 4 T3 bots board ({})", number("__osc_n")));
+    lua("IssueTransportLoad({__osc_small[1], __osc_small[2], __osc_small[3]}, __osc_xport)");
+    run(500);
+    lua("__osc_n = __osc_count_attached(__osc_small)");
+    check(number("__osc_n") == 2,
+          fmt::format("2 of 3 tanks fit beside them ({})", number("__osc_n")));
+
+    // A bot destroyed aboard gives its 4 bones up, and the 4th bot fits.
+    lua(R"(
+        for _, u in __osc_large do
+            if u:IsUnitState('Attached') then u:Destroy() break end
+        end
+    )");
+    run(3);
+    lua("__osc_room = __osc_xport:TransportHasSpaceFor(__osc_large[4]) and 1 or 0");
+    check(number("__osc_room") == 1, "a bot destroyed aboard frees its slot");
+
+    spdlog::info("Transport slots test: {} passed, {} failed", pass, fail);
+}
+
 void test_ferry(TestContext& ctx) {
     spdlog::info("=== FERRY TEST: a ferry carries units from its beacon to its drop-off ===");
     int pass = 0, fail = 0;

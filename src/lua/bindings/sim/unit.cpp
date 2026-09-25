@@ -471,13 +471,14 @@ static int unit_GetCargo(lua_State* L) {
     return 1;
 }
 
+// transport:TransportHasSpaceFor(unit): whether a slot of the unit's class
+// is free (M206l); a transport without attach points, whether it holds fewer
+// units than its Class1Capacity.
 static int unit_TransportHasSpaceFor(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u) { lua_pushboolean(L, 0); return 1; }
-    // Simplified: check cargo count vs transport_capacity
-    // (Full FA slot math with TransportClass can be added later)
-    bool has_space = u->transport_capacity() > 0 &&
-                     static_cast<i32>(u->cargo_ids().size()) < u->transport_capacity();
+    auto* cargo = lua_gettop(L) >= 2 ? check_entity(L, 2) : nullptr;
+    const bool has_space = u && cargo && cargo->is_unit() &&
+                           u->transport_has_space_for(*static_cast<sim::Unit*>(cargo));
     lua_pushboolean(L, has_space ? 1 : 0);
     return 1;
 }
