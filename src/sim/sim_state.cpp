@@ -1988,7 +1988,8 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         units.mix(static_cast<u64>(static_cast<u32>(u.fire_state())));
         units.mix((u.is_paused() ? 1u : 0u) | (u.auto_mode() ? 2u : 0u) |
                   (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u) |
-                  (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u));
+                  (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u) |
+                  (u.factory_assist_build() ? 64u : 0u));
         mix_str(units, u.layer());
         units.mix(u.transport_id());
         units.mix(static_cast<u64>(u.cargo_ids().size()));

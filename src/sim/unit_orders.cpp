@@ -663,26 +663,71 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
     return OrderStep::Hold;
 }
 
+void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
+    if (factory_assist_build_) {
+        factory_assist_build_ = false;
+        cancel_factory_build(registry, L);
+    } else if (is_building()) {
+        stop_assisting();
+    }
+}
+
 OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
     if (cmd.target_id == 0) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target = registry.find(cmd.target_id);
     if (!target || target->destroyed()) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     if (!target->is_unit()) {
-        if (is_building()) stop_assisting();
+        end_guard_build(registry, L);
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* target_unit = static_cast<Unit*>(target);
+
+    // A factory guarding a factory takes work from its queue (Moho's guard
+    // task for an immobile FACTORY, TryDispatchFactoryOrUpgradeFromGuardQueues).
+    // Each time it is free: the first of the guarded factory's build orders
+    // it can build, other than the one being built, leaves that queue
+    // (repeating, it goes to the back) and this factory builds the unit
+    // itself (M206h). Moho also takes a repeating assister's pick of a
+    // queue's only order, whose count it then restarts; without counts or
+    // repeat queues here, that would only build a duplicate, so the head
+    // is never taken.
+    if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY")) {
+        if (factory_assist_build_) {
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff))
+                factory_assist_build_ = false; // built (or failed): free again
+            return OrderStep::Hold;
+        }
+        auto& queue = target_unit->command_queue_;
+        for (size_t i = 0; i < queue.size() && L; ++i) {
+            if (queue[i].type != CommandType::BuildFactory) continue;
+            if (i == 0) continue; // the guarded factory's own build
+            if (!blueprint_can_build(L, blueprint_id(), queue[i].blueprint_id)) continue;
+            UnitCommand build;
+            build.type = CommandType::BuildFactory;
+            build.blueprint_id = queue[i].blueprint_id;
+            const UnitCommand taken = queue[i];
+            queue.erase(queue.begin() + static_cast<std::ptrdiff_t>(i));
+            // Taken even if the lobby's rules forbid it, as Moho's build task
+            // fails after the take; such an order is dropped, repeating or
+            // not, as the guarded factory drops it when it comes to it.
+            if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
+            if (repeat_queue_) queue.push_back(taken);
+            factory_assist_build_ = start_build(build, registry, L);
+            break;
+        }
+        return OrderStep::Hold;
+    }
 
     // Help only within reach of the work (M206e): Moho's guard hands
     // it to a repair or reclaim task. A build, a silo or a repair

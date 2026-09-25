@@ -1357,86 +1357,8 @@ static int unit_IsPaused(lua_State* L) {
 // unit:CanBuild(bp_id) -> bool — checks Economy.BuildableCategory
 static int unit_CanBuild(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u) { lua_pushboolean(L, 0); return 1; }
     const char* target_bp = luaL_checkstring(L, 2);
-    if (!target_bp) { lua_pushboolean(L, 0); return 1; }
-
-    // Collect target blueprint's categories (retail list or FAF hash). The
-    // old loop lua_tostring'd the list's numeric keys in place, which broke
-    // lua_next ("invalid key for `next'") and collected indices, not names.
-    std::unordered_set<std::string> target_cats;
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, target_bp);
-        lua_rawget(L, -2);
-        if (lua_istable(L, -1)) {
-            sim::collect_blueprint_categories(L, lua_gettop(L), target_cats);
-        }
-        lua_pop(L, 1); // target bp table
-    }
-    lua_pop(L, 1); // __blueprints
-
-    // Look up this unit's Economy.BuildableCategory
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (!lua_istable(L, -1)) { lua_pop(L, 1); lua_pushboolean(L, 0); return 1; }
-    lua_pushstring(L, u->blueprint_id().c_str());
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) { lua_pop(L, 2); lua_pushboolean(L, 0); return 1; }
-    lua_pushstring(L, "Economy");
-    lua_rawget(L, -2);
-    if (!lua_istable(L, -1)) { lua_pop(L, 3); lua_pushboolean(L, 0); return 1; }
-    lua_pushstring(L, "BuildableCategory");
-    lua_rawget(L, -2);
-
-    bool can_build = false;
-    if (lua_istable(L, -1)) {
-        int bc = lua_gettop(L);
-        for (int i = 1; !can_build; i++) {
-            lua_rawgeti(L, bc, i);
-            if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
-            if (lua_isstring(L, -1)) {
-                std::string entry = lua_tostring(L, -1);
-                // Exact bp_id match (upgrade paths like "ueb1202")
-                if (entry == target_bp) {
-                    can_build = true;
-                } else {
-                    // Category expression: all tokens must be in target cats
-                    bool match = true;
-                    std::istringstream ss(entry);
-                    std::string token;
-                    while (ss >> token) {
-                        if (target_cats.count(token) == 0) {
-                            match = false;
-                            break;
-                        }
-                    }
-                    if (match && !entry.empty()) can_build = true;
-                }
-            }
-            lua_pop(L, 1);
-        }
-    } else if (lua_isstring(L, -1)) {
-        std::string entry = lua_tostring(L, -1);
-        if (entry == target_bp) {
-            can_build = true;
-        } else {
-            bool match = true;
-            std::istringstream ss(entry);
-            std::string token;
-            while (ss >> token) {
-                if (target_cats.count(token) == 0) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match && !entry.empty()) can_build = true;
-        }
-    }
-    lua_pop(L, 4); // BuildableCategory, Economy, bp table, __blueprints
-
-    lua_pushboolean(L, can_build ? 1 : 0);
+    lua_pushboolean(L, u && target_bp && sim::blueprint_can_build(L, u->blueprint_id(), target_bp));
     return 1;
 }
 

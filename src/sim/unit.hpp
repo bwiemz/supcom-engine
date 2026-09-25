@@ -132,6 +132,9 @@ public:
     u32 build_target_id() const { return build_target_id_; }
     void set_build_target_id(u32 id) { build_target_id_ = id; }
     bool is_building() const { return build_target_id_ != 0; }
+    /// This factory's build came from the queue of a factory it guards
+    /// (M206h): the guard order runs it, and cancels it when it ends.
+    bool factory_assist_build() const { return factory_assist_build_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -508,6 +511,9 @@ public:
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_AmphibiousFloating";
     }
     bool is_hover() const { return motion_type_ == "RULEUMT_Hover"; }
+    /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
+    /// MotionType is RULEUMT_None).
+    bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
     bool is_naval() const {
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
@@ -731,6 +737,9 @@ private:
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A guard order ends: a factory's assisted build (M206h) is cancelled,
+    /// as a factory's build is when its order goes; an assist just stops.
+    void end_guard_build(EntityRegistry& registry, lua_State* L);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -813,6 +822,7 @@ private:
     std::string enhance_name_;
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
+    bool factory_assist_build_ = false;           // see factory_assist_build()
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Bone visibility
