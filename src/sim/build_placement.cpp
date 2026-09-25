@@ -114,9 +114,7 @@ bool StructurePlacement::structure_overlaps(const StructureSite& site) const {
     const f32 reach =
         0.5f * osc::dmath::hypot(site.size_x, site.size_z) + MAX_STRUCTURE_HALF_EXTENT;
     const auto& registry = sim_.entity_registry();
-    for (u32 id : registry.collect_in_radius(site.x, site.z, reach)) {
-        const auto* e = registry.find(id);
-        if (!e || e->destroyed() || !e->is_unit()) continue;
+    for (const auto* e : registry.units_in_radius(site.x, site.z, reach)) {
         const auto& unit = static_cast<const Unit&>(*e);
         if (!unit.has_category("STRUCTURE") || unit.footprint_size_x() <= 0 ||
             unit.footprint_size_z() <= 0)

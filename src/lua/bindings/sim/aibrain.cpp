@@ -441,14 +441,12 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
     const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
                                   ? lua_tostring(L, team_arg) : "";
 
-    // Collect entities in radius
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+    // Collect units in radius
+    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     lua_newtable(L);
     int idx = 1;
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+    for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
 
         // Filter by team relationship
@@ -816,12 +814,10 @@ static int brain_GetThreatAtPosition(lua_State* L) {
                             ? static_cast<i32>(lua_tonumber(L, 6)) - 1 // Lua 1-based
                             : -1;
 
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     f32 total = 0;
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+    for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
 
         if (filter_specific) {
@@ -1010,12 +1006,9 @@ static int brain_GetThreatBetweenPositions(lua_State* L) {
         f32 px = x1 + dx * t;
         f32 pz = z1 + dz * t;
 
-        auto ids = sim->entity_registry().collect_in_radius(
-            px, pz, SAMPLE_SPACING);
+        const auto units = sim->entity_registry().units_in_radius(px, pz, SAMPLE_SPACING);
         f32 sample_threat = 0;
-        for (u32 eid : ids) {
-            auto* entity = sim->entity_registry().find(eid);
-            if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        for (auto* entity : units) {
             auto* unit = static_cast<sim::Unit*>(entity);
             if (!sim->is_enemy(brain->index(), unit->army())) continue;
             sample_threat += get_unit_threat_for_type(unit, threat_type);
@@ -1125,12 +1118,10 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
     const char* team_filter = (lua_type(L, team_arg) == LUA_TSTRING)
                                   ? lua_tostring(L, team_arg) : "";
 
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     int count = 0;
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+    for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
 
         i32 my_army = brain->index();

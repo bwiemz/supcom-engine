@@ -60,6 +60,11 @@ public:
     /// in ascending id order.
     std::vector<u32> collect_in_radius(f32 x, f32 z, f32 radius) const;
 
+    /// The live units within radius of a point (2D, ignoring Y), in ascending
+    /// id order: collect_in_radius's units, from a grid of units alone (a
+    /// map's props aren't walked), as the units themselves.
+    std::vector<Entity*> units_in_radius(f32 x, f32 z, f32 radius) const;
+
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
     /// in ascending id order.
     std::vector<u32> collect_in_rect(f32 x0, f32 z0, f32 x1, f32 z1) const;
@@ -141,13 +146,19 @@ private:
     u32 grid_width_ = 0;
     u32 grid_height_ = 0;
     std::vector<std::vector<u32>> grid_cells_;
+    /// grid_cells_' units, with their entities.
+    struct UnitRef {
+        u32 id;
+        Entity* entity;
+    };
+    std::vector<std::vector<UnitRef>> unit_cells_;
     /// Entities whose shape reaches beyond COLLIDER_REACH, in id order.
     std::set<u32> large_colliders_;
 
     void world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const;
     size_t cell_index(i32 cx, i32 cz) const;
-    void grid_insert(u32 id, i32 cx, i32 cz);
-    void grid_remove(u32 id, i32 cx, i32 cz);
+    void grid_insert(Entity& entity, i32 cx, i32 cz);
+    void grid_remove(const Entity& entity, i32 cx, i32 cz);
 };
 
 } // namespace osc::sim
