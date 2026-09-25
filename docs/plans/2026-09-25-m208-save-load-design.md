@@ -1,6 +1,6 @@
 # M208 — Save and load
 
-Status: design, 2026-09-25. Phase E (gameplay fidelity).
+Status: M208a done (2026-09-25); M208b and M208c to come. Phase E (gameplay fidelity).
 
 ## Why
 
@@ -27,18 +27,24 @@ Its cost is load time, which grows with the game. On SCMP_009 with four AIs, the
 
 ## M208a — saves as history
 
-- **Saving.** `InternalSaveGame(path, name, callback)`, on the UI state, writes the game's recording so far as a save file:
-  - The file has a small header (`OSCSAVE`, a version, the name, the tick, the scenario), then the replay's own serialization (`Replay::serialize`, in its current format).
+- **Saving.** `InternalSaveGame(path, name, callback)`, on the UI state, writes the game's recording so far as a save file (`sim::SavedGame`):
+  - The file has a small header (`OSCSAVE`, a version, the build, the name, the tick), then the replay's own serialization (`Replay::serialize`, in its current format). The scenario is in the replay's setup.
   - The recording already holds the setup, the commands, the build, and the checksum trail up to the current tick.
-  - The callback gets `true`, or `false` and a reason: no game running, a multiplayer game, a replay, or a file that can't be written.
+  - **Orders still to run are saved too.** The UI runs between ticks, so a click just before saving, or any order given while paused, is in the scheduler and not yet in the recording. The save appends them, and they run after the load, on their own ticks.
+  - It is written to a temporary file, then renamed over the old one, as Moho does, so a failed save never destroys the file it would replace.
+  - It is written only into the SaveGame folder, since the path comes from scripts.
+  - The callback gets `true`, or `false` and a reason: no game running, a multiplayer game, a replay, a game still catching up, a path outside the folder, or a file that can't be written (`'nowrite'`, which retail's dialog words for itself).
+  - Moho calls back once its sim reaches the end of a tick. The engine's UI already runs between ticks, so it saves and calls back at once.
 - **Loading.** `LoadSavedGame(fspec)` reads the header:
   - an unreadable file is `CantOpen`, and a bad header `InvalidFormat`;
   - a save from another build is `WrongVersion`, as retail refuses a save from another version.
 
-  It then launches the game as `LaunchReplaySession` does, through the reload sequence, but in a new mode, **resume**:
-  1. **Catch up.** The sim plays the recorded commands, as a replay plays them, with no rendering and without the UI's per-frame work, as fast as it runs. The loading screen shows the ticks done. Each tick's checksum is checked against the trail. A difference is an error: the dialog reports `InternalError` with the tick, and the player goes back to the front end.
-  2. **At the saved tick,** playback stops. The sim takes the player's orders again, and `SessionIsReplay()` is false. The recording continues from the loaded one, so a later save holds the whole game.
-- **The UI during catch-up.** Retail's UI learns about the sim through `Sync`, some of which is events. Catch-up therefore runs the sim-to-UI sync on every tick, as a played game does, and skips only the frames: rendering, UI frames and input. M208b measures what this costs.
+  It then launches the game as `LaunchReplaySession` does, through the reload sequence, but in a new mode, **resume** (`SimState::start_resume`):
+  1. **Catch up.** The sim plays the recorded commands as a replay plays them, with the player's input dropped. Each tick's checksum is checked against the trail. It runs in the game's frame loop, as many ticks as fit in 100 ms each frame: the window stays live, shows the game fast-forwarding, and its title says `LOADING`. The load is asynchronous, as retail's launch is, so `LoadSavedGame` has already returned by now. A difference therefore sends the player back to the front end, with a notice that the save did not load as it was played.
+  2. **At the saved tick,** the sim itself ends playback, at the end of that tick, so every tick driver gets the same handover. The sim takes the player's orders again. The recording started with the load and has grown back to the whole game, so a later save holds all of it.
+- **`SessionIsReplay()` is false throughout.** Retail's UI asks it while building the game interface (menus, score, unit view), so a loaded game must never look like a replay, even while catching up.
+- **The UI during catch-up.** Retail's UI learns about the sim through `Sync`, some of which is events. Catch-up therefore runs the sim-to-UI sync on every tick, as a played game does. M208b measures what this costs.
+- **Headless:** `--load <file>` with `--ticks` or `--ai-skirmish` catches a save up (exit 1 on a divergence) and plays on. `--save <file> --save-at <tick>` saves a game mid-run. Without them, `--load` opens the save in the window, as the Load dialog does.
 - **Not saved:** the camera, the selection, control groups, chat, and pause state. The game loads unpaused, with the camera on the player's start. These are presentation, and can come later.
 - **Multiplayer:** no. `InternalSaveGame` refuses while a lockstep session is active, as the UI already stops it.
 
@@ -59,20 +65,37 @@ Its cost is load time, which grows with the game. On SCMP_009 with four AIs, the
 
 ## Proof (M208a)
 
-- **Unit:**
-  - the save header round-trips;
-  - a truncated, foreign or other-build file is refused with the right error.
-- **Data-backed (retail), `data.save-load-test`:**
-  1. Play a four-AI game on SCMP_009 for 600 ticks, with scripted player orders (`--scripted-orders`), and save it.
-  2. Load the save into a fresh sim.
-  3. Play both on for another 600 ticks.
+- **Unit (`[savegame]`):**
+  - the save round-trips;
+  - an empty, truncated, foreign, other-format or other-build file is refused with the right error;
+  - a loaded game plays on as the saved one did. It drops the player's input while catching up, runs the order that was pending at the save, takes orders again, and its recording regrows to the whole game;
+  - a game saved before its first tick is the player's at once.
+- **Data-backed (retail), `data.save_load`:** three processes, on a four-AI SCMP_009 game with scripted player orders:
+  1. A plays 1,200 ticks and saves after tick 600.
+  2. B loads A's save, catches up (checked against A's checksums), plays on, and saves after tick 900.
+  3. C loads B's save and plays to 1,200.
 
-  The two checksum traces must be identical at every tick, domain by domain. A save made in a game that was itself loaded must load too.
-- **The UI flow:** from the Load dialog, as `--replay-flow-test` drives the replay dialog. The save the test wrote is listed, loads, and the game resumes at its tick with `SessionIsReplay()` false.
-- **Refusals:** `InternalSaveGame` in a replay or a multiplayer session fails with a reason, and writes nothing.
+  Each save is made with one of the player's orders still pending. B's trace must match A's to tick 900, and C's must match B's throughout, domain by domain.
+- **The UI flow, `data.load_flow`:** offscreen, through the globals retail's dialogs call.
+  - `GetSpecialFiles('SaveGame')` lists the save, a missing save is `CantOpen`, and `LoadSavedGame` loads the listed one.
+  - The game catches up with `SessionIsReplay()` false, and plays on.
+  - `InternalSaveGame` saves it again: the new save is listed and holds the whole game.
+  - A path outside the folder is refused, and nothing is written.
+- **Mutation-checked:** each test above fails without the rule it guards. The rules: pending orders saved, the handover, `SessionIsReplay()` during catch-up, and the folder check.
+- **Not covered:** the refusals for a replay and a multiplayer game (simple checks, with no test).
+
+## Found along the way: starting a game from inside a game
+
+Loading from the game menu's Load dialog starts a new game from inside the one being played. That path has problems of its own that have nothing to do with saves, and they affect any launch from a running game (and lobby, game, lobby, game):
+- **Retail expects a fresh UI Lua state for every game.** Its `FrontEndData` exists to carry data across that reset. The engine keeps one UI state. So on the second game, `unitviewDetail`, which sets its module global `View` to nil and then reads it, errors, and the unit view is broken.
+- **A GPU allocation leaks** on each relaunch (VMA asserts at exit in Debug builds).
+- **Per-map textures are cached by name** (`__terrain_blend0/1`, `__normal_overlay__`) and not cleared with the scene. A second game on a different map would draw the first map's.
+
+M208a fixes one prerequisite: the Load and replay dialogs destroy `GetFrame(0)` as they leave, and the root frame now keeps itself while its children go. The rest is a follow-up milestone of its own. Loading from the front end (the main menu, the single-player lobby) works.
 
 ## Risks
 
+- **A UI callback given in the same frame as the save** (`SimCallback`) is queued for the next frame's submission, so it can miss the save. Orders go straight to the scheduler, and are saved.
 - **Determinism holes.** Anything that affects the sim but isn't recorded breaks loads. Examples: UI state read by the sim, wall-clock time, or a SimCallback outside the command stream. The checksum trail catches this at load, and the save-load test is designed to hit it. It is the same property that multiplayer and replays already depend on.
 - **Build changes.** A save from an older build may not replay identically, so saves are refused across builds, as retail does. This is stricter than it needs to be for builds that only touch the renderer, but it is safe.
 - **Long games** load slowly until M208b or M208c.
