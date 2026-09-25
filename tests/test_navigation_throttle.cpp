@@ -119,6 +119,29 @@ TEST_CASE("Patrol with an exhausted path budget does not hang the tick",
     }
 }
 
+TEST_CASE("Units parked on their patrol point spend none of the path budget", "[nav][m206k]") {
+    // A one-point patrol at the unit's own spot asks for its path every tick
+    // (the leg ends at once and starts again next tick). The path is trivial,
+    // so it must not use the tick's budget, or a few such units would stall
+    // every other unit's movement for good.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_flat_world(sim);
+    const int parked = osc::map::Pathfinder::MAX_REQUESTS_PER_TICK + 4;
+    for (int i = 0; i < parked; ++i) {
+        const osc::f32 z = 10.0f + 4.0f * static_cast<osc::f32>(i);
+        auto* u = spawn_land_unit(sim, 10.0f, z);
+        u->push_command(order(CommandType::Patrol, 10.0f, z), true);
+    }
+    // A mover, updated after all of them.
+    auto* mover = spawn_land_unit(sim, 60.0f, 10.0f);
+    mover->push_command(order(CommandType::Move, 110.0f, 10.0f), true);
+
+    for (int t = 0; t < 5; ++t) sim.tick();
+    CHECK(sim.pathfinder()->requests_this_tick() == 0); // the parked asked for nothing
+    CHECK(mover->position().x > 61.0f);                 // and the mover got its path
+}
+
 TEST_CASE("Builders sent to a site beyond the per-tick path budget still go", "[nav][m206e]") {
     LuaGuard g;
     SimState sim(g.L, nullptr);
