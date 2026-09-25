@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -36,6 +37,10 @@ public:
 
     /// Look up an entity by ID. Returns nullptr if not found.
     Entity* find(u32 id) const;
+
+    /// Whether `e` is a registered entity, asked without reading it: a Lua
+    /// handle's pointer may be a platoon's, a brain's, or a freed entity's.
+    bool holds(const void* e) const { return live_.count(e) != 0; }
 
     /// Number of active entities.
     size_t count() const { return live_count_; }
@@ -118,6 +123,7 @@ private:
     /// lookup is an index, not a hash; a removed entity leaves null.
     std::vector<std::unique_ptr<Entity>> entities_;
     size_t live_count_ = 0;
+    std::unordered_set<const void*> live_; ///< the registered entities, for holds()
     /// Every live entity in id order (ids only grow, so a new one appends).
     /// A removed entity leaves a null slot until compact(), so a walk in
     /// progress keeps its place.
