@@ -188,7 +188,7 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   ghost) works on the live sim by design.
 - **Architecture debt (Phase C, next):** `Unit::update` is over 1,000 lines of order handling (M193 splits it). `integration_tests.cpp` (18k lines) is built into the `opensupcom` executable (M192 moves it out). The renderer, blueprints and Lua libraries link in a cycle (M191 breaks it).
 - **Determinism diagnostics:** the per-tick checksum covers RNG, armies' resources and each entity's position and health. It does not cover weapons, orders, projectiles, economy events or scripts, so a divergence shows only when it reaches those. Splitting it by domain is next after the architecture work begins.
-- **Multiplayer robustness:** in review (PR #63), a cap on wire message size, and orders limited to the sender's army. Peers are not yet authenticated.
+- **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
   - A factory assisting a factory lends nothing; Moho copies its queue.
   - Transports don't land, and their capacity isn't read from attach points.

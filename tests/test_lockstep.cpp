@@ -327,6 +327,45 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
     CHECK(relayed);
 }
 
+TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lockstep][drop]") {
+    // The dropped peer's last frames each name 600,000 units (2.4 MB): all
+    // three would make a report over the wire limit, and a survivor that
+    // sent it would be dropped as hostile. The report keeps the newest.
+    LuaGuard ga, gc;
+    SimState a(ga.L, nullptr), c(gc.L, nullptr);
+    for (SimState* s : {&a, &c}) {
+        s->set_victory_condition("sandbox");
+        for (const char* army : {"ARMY_1", "ARMY_2"}) s->add_army(army, army);
+    }
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint()), tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sc(c, tc, 1, {0, 1});
+    sa.set_drop_timeout(5);
+
+    std::vector<osc::u32> crowd(600000);
+    for (size_t i = 0; i < crowd.size(); ++i) crowd[i] = static_cast<osc::u32>(1000000 + i);
+    for (int round = 0; round < 3; ++round) {
+        sc.submit_local(crowd, move_to(10.0f * static_cast<osc::f32>(round), 0.0f), true);
+        sa.send_frame();
+        sc.send_frame();
+        sa.receive_and_advance();
+        sc.receive_and_advance();
+    }
+    hub.drain(1); // what C was sent so far
+    for (int round = 0; round < 30 && !sa.has_dropped(1); ++round) {
+        sa.send_frame();
+        sa.receive_and_advance();
+    }
+    REQUIRE(sa.has_dropped(1));
+    size_t largest = 0;
+    for (const auto& msg : hub.drain(1)) {
+        CHECK(msg.size() <= osc::sim::kMaxWireMessage);
+        largest = std::max(largest, msg.size());
+    }
+    CHECK(largest > crowd.size() * sizeof(osc::u32)); // the newest frame went
+}
+
 TEST_CASE("A drop report's frame number can't make a survivor work forever", "[lockstep][drop]") {
     // B's report about C claims C's last frame is ~4 billion. Survivors walk
     // the frames the reports carried, not the frame numbers.
