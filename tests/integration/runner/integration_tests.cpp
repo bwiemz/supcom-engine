@@ -2528,7 +2528,13 @@ void test_transport(TestContext& ctx) {
             if not loaded then
                 LOG('TRANSPORT TEST 12 FAILED: scout and engineer not both aboard')
             else
-                -- Test 13: a category no cargo has gives no order.
+                -- Test 13: a category no cargo has gives no order. (The
+                -- transport's load order ends the tick after its last unit
+                -- boards, as Moho's does: wait for it.)
+                for i = 1, 10 do
+                    if table.getn(transport:GetCommandQueue()) == 0 then break end
+                    WaitTicks(1)
+                end
                 IssueTransportUnloadSpecific({transport}, categories.NAVAL, pos)
                 if table.getn(transport:GetCommandQueue()) ~= 0 then
                     LOG('TRANSPORT TEST 13 FAILED: an unload with no cargo to drop was queued')
@@ -10379,6 +10385,162 @@ void test_transport_pickup(TestContext& ctx) {
                       number("__osc_solo_in"), number("__osc_solo_q"), number("__osc_x4_q")));
 
     spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
+}
+
+void test_transport_drop(TestContext& ctx) {
+    spdlog::info(
+        "=== TRANSPORT DROP TEST: a transport comes down to set its cargo down (M206n) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] transport drop script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    const auto* terrain = ctx.sim.terrain();
+    const auto altitude = [&](const osc::sim::Unit& u) {
+        return u.position().y - terrain->get_terrain_height(u.position().x, u.position().z);
+    };
+
+    // A UEF T1 transport (hovering 3 over the ground to unload) with 6 tanks
+    // aboard, on the flat ground east of the map's centre.
+    if (!lua(R"(
+        local function spawn(bp, x, z)
+            return CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_xport = spawn('uea0107', 600, 100)
+        __osc_tanks = {}
+        for i = 1, 6 do
+            __osc_tanks[i] = spawn('uel0201', 600 + i, 104)
+            __osc_xport:AddUnitToStorage(__osc_tanks[i])
+        end
+        function __osc_attached(list)
+            local n = 0
+            for _, u in list do
+                if not u:IsDead() and u:IsUnitState('Attached') then n = n + 1 end
+            end
+            return n
+        end
+    )") ||
+        !terrain)
+        return;
+    auto* xport = unit("__osc_xport");
+    std::vector<osc::sim::Unit*> tanks;
+    for (int i = 1; i <= 6; ++i) tanks.push_back(unit("__osc_tanks[" + std::to_string(i) + "]"));
+    lua("__osc_n = __osc_attached(__osc_tanks)");
+    if (!xport || number("__osc_n") != 6) {
+        check(false, fmt::format("6 tanks aboard to start ({})", number("__osc_n")));
+        return;
+    }
+
+    // Told to unload 40 away: the cargo is set down only once it is down at
+    // its hover height, each tank on the ground where it hung.
+    lua("IssueTransportUnload({__osc_xport}, {640, GetTerrainHeight(640, 100), 100})");
+    f32 dropped_at = -1, peak = 0;
+    // (Emptied, it starts to climb in the same tick: its height is taken
+    // before the tick that set them down.)
+    for (int i = 0; i < 400 && dropped_at < 0; ++i) {
+        const f32 before = altitude(*xport);
+        ctx.sim.tick();
+        peak = std::max(peak, altitude(*xport));
+        for (const auto* t : tanks)
+            if (t && t->transport_id() == 0) dropped_at = before;
+    }
+    check(peak > 6.0f && dropped_at >= 0 && std::abs(dropped_at - 3.0f) < 0.05f,
+          fmt::format("it flew up ({:.1f}) and came down to 3 before setting them down ({:.2f})",
+                      peak, dropped_at));
+    f32 off_ground = 0, nearest = 1e9f, farthest = 0;
+    for (size_t i = 0; i < tanks.size(); ++i) {
+        const auto& at = tanks[i]->position();
+        off_ground = std::max(off_ground, std::abs(at.y - terrain->get_surface_height(at.x, at.z)));
+        farthest =
+            std::max(farthest, std::hypot(at.x - xport->position().x, at.z - xport->position().z));
+        for (size_t j = i + 1; j < tanks.size(); ++j)
+            nearest = std::min(
+                nearest, std::hypot(at.x - tanks[j]->position().x, at.z - tanks[j]->position().z));
+    }
+    lua("__osc_n = __osc_attached(__osc_tanks)");
+    check(number("__osc_n") == 0 && off_ground < 0.01f && nearest > 0.3f && farthest < 4.0f,
+          fmt::format("all 6 set down on the ground under the transport ({:.3f} off it, {:.2f} "
+                      "apart at least, {:.1f} out at most)",
+                      off_ground, nearest, farthest));
+
+    // Empty and idle, it climbs back to its flying height.
+    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+    check(altitude(*xport) > 6.0f,
+          fmt::format("empty, it climbs back up ({:.1f})", altitude(*xport)));
+
+    // Over deep water nothing fits: all 6 stay aboard, the order ends, and it
+    // hovers low with them.
+    if (!lua(R"(
+        local x, z
+        for tz = 100, 900, 16 do
+            for tx = 100, 900, 16 do
+                if not x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 5 and
+                   GetSurfaceHeight(tx + 6, tz + 6) - GetTerrainHeight(tx + 6, tz + 6) > 5 and
+                   GetSurfaceHeight(tx - 6, tz - 6) - GetTerrainHeight(tx - 6, tz - 6) > 5 then
+                    x, z = tx, tz
+                end
+            end
+        end
+        if not x then error('no deep water on the map') end
+        __osc_wx, __osc_wz = x, z
+        for _, t in __osc_tanks do __osc_xport:AddUnitToStorage(t) end
+        IssueTransportUnload({__osc_xport}, {x, GetSurfaceHeight(x, z), z})
+    )"))
+        return;
+    for (int i = 0; i < 900 && !xport->command_queue().empty(); ++i) ctx.sim.tick();
+    for (int i = 0; i < 30; ++i) ctx.sim.tick();
+    lua("__osc_n = __osc_attached(__osc_tanks)");
+    const f32 over_water = std::hypot(xport->position().x - static_cast<f32>(number("__osc_wx")),
+                                      xport->position().z - static_cast<f32>(number("__osc_wz")));
+    check(xport->command_queue().empty() && number("__osc_n") == 6 && over_water < 8.0f &&
+              std::abs(altitude(*xport) - 3.0f) < 0.05f,
+          fmt::format("over deep water all 6 stay aboard, the order done, hovering at 3 ({} "
+                      "aboard, {:.1f} from the spot, {:.2f} up)",
+                      number("__osc_n"), over_water, altitude(*xport)));
+
+    // A lone tank, with none about to jostle it onto the ground, is set down
+    // on it all the same.
+    if (!lua(R"(
+        __osc_x2 = CreateUnitHPR('uea0107', 'ARMY_1', 560, GetTerrainHeight(560, 140), 140, 0, 0, 0)
+        __osc_one = CreateUnitHPR('uel0201', 'ARMY_1', 561, GetTerrainHeight(561, 144), 144, 0, 0, 0)
+        __osc_x2:AddUnitToStorage(__osc_one)
+        IssueTransportUnload({__osc_x2}, {585, GetTerrainHeight(585, 140), 140})
+    )"))
+        return;
+    auto* one = unit("__osc_one");
+    for (int i = 0; i < 400 && one && one->transport_id() != 0; ++i) ctx.sim.tick();
+    check(one && one->transport_id() == 0 &&
+              std::abs(one->position().y -
+                       terrain->get_surface_height(one->position().x, one->position().z)) < 0.01f,
+          fmt::format("a lone tank is set down on the ground ({:.3f} off it)",
+                      one ? one->position().y -
+                                terrain->get_surface_height(one->position().x, one->position().z)
+                          : -1.0f));
+
+    spdlog::info("Transport drop test: {} passed, {} failed", pass, fail);
 }
 
 void test_ferry(TestContext& ctx) {

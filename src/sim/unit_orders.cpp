@@ -1430,8 +1430,6 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
 }
 
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx) {
-    auto& registry = ctx.registry;
-    auto* L = ctx.L;
     // Transport drops its cargo at target position: the order's
     // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
     // the order ends.
@@ -1459,16 +1457,47 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
             navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,
                                 is_amphibious() || is_hover());
         }
-        navigator_.update(*this, effective_speed(), dt, ctx.terrain);
+        // Flown, for an aircraft (the ground navigator had dragged transports
+        // along the ground).
+        nav_update(dt, ctx.terrain);
         return OrderStep::Hold;
     }
     navigator_.abort_move();
+    set_unit_state("TransportUnloading", true);
 
-    if (cmd.unload_ids.empty()) detach_all_cargo(registry, L);
-    else detach_cargo(cmd.unload_ids, registry, L);
+    // Over the drop: down to its hover height, then its cargo is set down
+    // where it fits. Scripts ran, which may have cleared the queue (and cmd
+    // with it): the order goes only if it is still the head.
+    const u32 order_id = cmd.command_id;
+    const std::vector<u32> ids = cmd.unload_ids;
+    if (!unload_step(dt, ctx, ids)) return OrderStep::Hold;
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
     set_unit_state("TransportUnloading", false);
-    command_queue_.pop_front();
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
     return OrderStep::Next;
+}
+
+bool Unit::unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids) {
+    if (is_air_unit() && current_altitude_ != transport_hover_height_) {
+        hold_altitude(dt, ctx.terrain, transport_hover_height_);
+        return false;
+    }
+    // Those whose footprint fits the ground where they hang; the rest stay
+    // aboard (Moho's TransportDetachUnit asks FitsAt of an aircraft's cargo).
+    std::vector<u32> down;
+    for (const u32 id : ids.empty() ? cargo_ids_ : ids) {
+        if (std::find(cargo_ids_.begin(), cargo_ids_.end(), id) == cargo_ids_.end()) continue;
+        const Entity* e = ctx.registry.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        const auto& cargo = static_cast<const Unit&>(*e);
+        if (is_air_unit() && ctx.pathfinding_grid && !cargo.footprint_fits(*ctx.pathfinding_grid))
+            continue;
+        down.push_back(id);
+    }
+    detach_cargo(down, ctx.registry, ctx.L, ctx.terrain);
+    return true;
 }
 
 OrderStep Unit::order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx) {
@@ -1651,7 +1680,6 @@ OrderStep Unit::order_teleport(UnitCommand& cmd, lua_State* L) {
 
 OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
-    auto* L = ctx.L;
     // A ferry route (Moho's CUnitFerryTask): the leading Ferry orders,
     // which stay queued. The first is where it loads, at a beacon;
     // the last where it unloads; those between are waypoints, flown
@@ -1763,7 +1791,7 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         }
         navigator_.abort_move();
         ferry_leg_set_ = false;
-        detach_all_cargo(registry, L);
+        if (!unload_step(dt, ctx, {})) return OrderStep::Hold;
         if (destroyed() || !in_registry()) return OrderStep::Gone;
         ferry_phase_ = FerryPhase::Back;
         ferry_index_ = route - 1;

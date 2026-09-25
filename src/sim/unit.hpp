@@ -653,9 +653,16 @@ public:
     bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
-    void detach_all_cargo(EntityRegistry& registry, lua_State* L);
-    /// Drop those of `ids` still aboard, in cargo order; the rest stays.
-    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L);
+    /// Drop the cargo (all of it, or those of `ids` still aboard, in cargo
+    /// order): each is set down where it hung, level, and on the ground when
+    /// `terrain` is given (M206n).
+    void detach_all_cargo(EntityRegistry& registry, lua_State* L,
+                          const map::Terrain* terrain = nullptr);
+    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+                      const map::Terrain* terrain = nullptr);
+    /// Whether the unit's footprint fits the ground where it is (Moho's
+    /// SFootprint::FitsAt): every cell under it passable for it.
+    bool footprint_fits(const map::PathfindingGrid& grid) const;
 
     // Bone visibility (per-unit, ShowBone/HideBone)
     bool is_bone_hidden(i32 idx) const { return hidden_bones_.count(idx) > 0; }
@@ -810,6 +817,11 @@ private:
     OrderStep order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx);
     /// End the pickup: slots of units that never came are given up.
     void finish_pickup(bool completed, lua_State* L);
+    /// A transport at its drop (M206n, Moho's CUnitUnloadUnits): it comes
+    /// down to its hover height, then sets down the cargo (`ids`, or all of
+    /// it) whose footprint fits the ground under it; the rest stays aboard.
+    /// True once it has set them down.
+    bool unload_step(f64 dt, SimContext& ctx, const std::vector<u32>& ids);
     /// A beam up cut short: back down on the ground, level, and the script
     /// told it has stopped.
     void abandon_beam_up(const map::Terrain* terrain, lua_State* L);
