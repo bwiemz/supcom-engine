@@ -862,6 +862,7 @@ void SimState::tick() {
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
+    update_influence_maps();
 
     if (pathfinder_) {
         pathfinder_->reset_request_count();
@@ -957,6 +958,7 @@ void SimState::tick() {
     reap_empty_platoons();
 
     update_visibility();
+    feed_influence_map();
 
     // --- Victory-condition enforcement (mode + team aware) ---
     update_victory();
@@ -1407,6 +1409,110 @@ void SimState::separate_ground_units() {
     }
 }
 
+InfluenceMap* SimState::influence_map(i32 army) {
+    ArmyBrain* brain = get_army(army);
+    if (!brain || !terrain_) return nullptr;
+    if (!brain->influence_map())
+        brain->set_influence_map(std::make_unique<InfluenceMap>(
+            terrain_->map_width(), terrain_->map_height(), static_cast<u32>(armies_.size())));
+    return brain->influence_map();
+}
+
+CellRect SimState::playable_cells(const InfluenceMap& map) const {
+    if (has_playable_rect_)
+        return map.cells_in(playable_x0_, playable_z0_, playable_x1_, playable_z1_);
+    return {0, 0, map.width() - 1, map.height() - 1};
+}
+
+namespace {
+/// Moho's IsMobile: a motion type other than RULEUMT_None.
+bool moves(const Unit& u) {
+    return !u.motion_type().empty() && u.motion_type() != "RULEUMT_None";
+}
+
+/// A unit that lives: not gone, dying or left as a wreck.
+bool alive(const Entity* e) {
+    return e && !e->destroyed() && e->is_unit() && !static_cast<const Unit*>(e)->is_dying() &&
+           !e->is_wreckage();
+}
+
+/// What an influence entry keeps of `u` (its blueprint's threat levels).
+ThreatSource threat_source_of(const Unit& u) {
+    ThreatSource s;
+    s.air = u.air_threat();
+    s.surface = u.surface_threat();
+    s.sub = u.sub_threat();
+    s.economy = u.economy_threat();
+    s.mobile = moves(u);
+    s.flies = u.motion_type() == "RULEUMT_Air";
+    s.mass_extractor = u.has_category("MASSEXTRACTION");
+    s.experimental = u.has_category("EXPERIMENTAL");
+    s.commander = u.has_category("COMMAND");
+    return s;
+}
+} // namespace
+
+void SimState::feed_influence_map() {
+    if (!visibility_grid_) return;
+    const u32 n = static_cast<u32>(
+        std::min(army_count(), static_cast<size_t>(map::VisibilityGrid::MAX_ARMIES)));
+    if (n == 0) return;
+    // Moho's recon ticks one army a tick, in turn.
+    const u32 a = tick_count_ % n;
+    InfluenceMap* map = influence_map(static_cast<i32>(a));
+    if (!map) return;
+    const i32 owner = static_cast<i32>(a);
+
+    // Every unit of another army its intel detects -- an ally's always -- and
+    // every structure it has once had in sight (a remembered blip).
+    entity_registry_.for_each_unit([&](Entity& e) {
+        if (!alive(&e) || e.army() == owner) return;
+        auto& u = static_cast<Unit&>(e);
+        if (!u.has_category("VISIBLETORECON")) return;
+        const bool detected =
+            is_ally(owner, u.army()) || has_any_intel_cached(&e, a, u.has_radar_stealth(),
+                                                             u.has_sonar_stealth(), u.is_cloaked());
+        if (detected || (!moves(u) && ever_in_sight(e.entity_id(), a)))
+            map->report(e.entity_id(), u.army(), u.position(), threat_source_of(u));
+    });
+
+    // A dead structure's entry goes once the army sees where it stood, or
+    // it was an ally's; a mobile unit's fades out instead.
+    std::vector<u32> gone;
+    map->for_each_entry([&](const InfluenceMap::EntryView& v) {
+        if (v.mobile || alive(entity_registry_.find(v.id))) return;
+        if (is_ally(owner, v.source_army) ||
+            visibility_grid_->has_vision(v.position.x, v.position.z, a))
+            gone.push_back(v.id);
+    });
+    for (const u32 id : gone) map->remove(id);
+}
+
+void SimState::update_influence_maps() {
+    for (size_t i = 0; i < armies_.size(); ++i) {
+        if (tick_count_ % 30 != i) continue;
+        const i32 owner = static_cast<i32>(i);
+        InfluenceMap* map = influence_map(owner);
+        if (!map) continue;
+        map->update([&](i32 army) { return army == owner || is_ally(owner, army); },
+                    [&](u32 id) -> std::optional<InfluenceMap::UnitState> {
+                        const Entity* e = entity_registry_.find(id);
+                        if (!alive(e)) return std::nullopt;
+                        const auto& u = static_cast<const Unit&>(*e);
+                        InfluenceMap::UnitState s;
+                        const std::string& layer = u.layer();
+                        if (layer == "Land") s.layer = ThreatLayer::Land;
+                        else if (layer == "Water" || layer == "Seabed" || layer == "Sub")
+                            s.layer = ThreatLayer::Naval;
+                        s.detailed = ever_in_sight(id, static_cast<u32>(owner)) ||
+                                     (visibility_grid_ && i < map::VisibilityGrid::MAX_ARMIES &&
+                                      visibility_grid_->has_omni(u.position().x, u.position().z,
+                                                                 static_cast<u32>(owner)));
+                        return s;
+                    });
+    }
+}
+
 void SimState::update_visibility() {
     PROFILE_ZONE("Sim::visibility");
     if (!visibility_grid_) return;
@@ -1545,6 +1651,10 @@ void SimState::update_visibility() {
     });
 
     // Erase destroyed entities from blip cache (prevents unbounded growth)
+    for (auto it = los_ever_.begin(); it != los_ever_.end();) {
+        const auto* e = entity_registry_.find(it->first);
+        it = !e || e->destroyed() ? los_ever_.erase(it) : std::next(it);
+    }
     for (auto it = blip_cache_.begin(); it != blip_cache_.end(); ) {
         auto* e = entity_registry_.find(it->first);
         if (!e || e->destroyed()) {
@@ -1629,6 +1739,7 @@ void SimState::update_visibility() {
                                (!cloaked || states[a].omni);
             states[a].radar = has_effective_radar_cached(&e, a, radar_stealth);
             states[a].sonar = has_effective_sonar_cached(&e, a, sonar_stealth);
+            if (states[a].vision) los_ever_[e.entity_id()] |= 1u << a;
         }
         prev_entity_vis_[e.entity_id()] = states;
     });
@@ -1998,6 +2109,14 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             armies.mix_f32(static_cast<f32>(res->max_storage));
             armies.mix_f32(static_cast<f32>(res->income));
             armies.mix_f32(static_cast<f32>(res->requested));
+        }
+        // Its influence map's entries (M207b), as Moho mixes their strengths.
+        if (const InfluenceMap* map = a->influence_map()) {
+            armies.mix(static_cast<u64>(map->entry_count()));
+            map->for_each_entry([&](const InfluenceMap::EntryView& v) {
+                armies.mix(v.id);
+                armies.mix_f32(v.strength);
+            });
         }
     }
     parts.armies = armies.h;

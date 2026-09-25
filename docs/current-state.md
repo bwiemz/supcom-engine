@@ -182,19 +182,17 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   differs. Two gate tests hold this: `data.replay_roundtrip` and
   `data.replay_flow`.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
-  The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
-  still read the live sim (M191 step 3 moves them to snapshots); what they
-  change goes through the command stream. `InputHandler` (picking, orders, the build
-  ghost) works on the live sim by design.
+  The UI state's units are Moho's `UserUnit` (M191 step 3). They read the
+  tick's snapshot, and change the sim only through the command stream.
+  `GetStat` and `CanAttackTarget` read the live unit (read-only). `InputHandler`
+  (picking, orders, the build ghost) works on the live sim by design.
 - **Architecture (Phase C):**
   - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
   - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
   - `moho_bindings.cpp` is split by class into `src/lua/bindings/{sim,ui}/` (M191 step 2).
-  - The UI changes units only through the command stream: `SetCustomName` was the one that wrote the live sim, and now travels as Moho's `CustomName` ProcessInfo pair (M191 step 3). The UI's unit reads still come from the live sim.
+  - The UI's units are Moho's `UserUnit` (M191 step 3). They read the tick's snapshot (the renderer's capture in a drawn game) and change units only through the command stream, as `SetCustomName` now does: it travels as Moho's `CustomName` ProcessInfo pair.
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
-  - Next:
-    - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
-    - M191 step 3: the UI's unit methods read snapshots.
+  - Next: M192 step 2, splitting `app.cpp` into the boot, the loop and the reload.
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
@@ -202,7 +200,7 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   - A factory guarding a factory doesn't yet run its own queued builds first, or upgrades (Moho's guard task does).
   - Transports don't land, and their capacity isn't read from attach points.
   - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
-  - The AI's threat queries count every enemy unit. Moho's read the army's influence map (`CInfluenceMap`), a grid of threat kept from the blips its intel has seen (M207).
+  - The AI's influence maps (M207b) take no false blips from jammers; nothing makes them yet.
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
@@ -222,7 +220,7 @@ After M206, as agreed on 2026-09-24:
 3. ~~A checksum split by domain.~~ Done (#65).
 4. ~~M193: split `Unit::update`.~~ Done (#68).
 5. M192: split the executable. Step 1 in review (#69, with M191 step 2); step 2 decomposes `app.cpp`.
-6. M191: finish the Sim/User split. The cycle is broken (#66) and the bindings are split by class (step 2); next, UI changes through the command stream and UI reads from snapshots (step 3).
+6. ~~M191: finish the Sim/User split.~~ Done: the cycle is broken (#66), the bindings are split by class (step 2), and the UI's units are UserUnit, reading snapshots and changing the sim through the command stream (step 3).
 7. M206's remaining gaps, and M207.
 8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
 
