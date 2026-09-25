@@ -595,6 +595,8 @@ public:
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     void detach_all_cargo(EntityRegistry& registry, lua_State* L);
+    /// Drop those of `ids` still aboard, in cargo order; the rest stays.
+    void detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L);
 
     // Bone visibility (per-unit, ShowBone/HideBone)
     bool is_bone_hidden(i32 idx) const { return hidden_bones_.count(idx) > 0; }

@@ -1809,9 +1809,18 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
 }
 
 void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L) {
-    // Snapshot IDs (safety against modification during Lua callbacks)
-    std::vector<u32> snapshot = cargo_ids_;
-    cargo_ids_.clear();
+    detach_cargo(cargo_ids_, registry, L);
+}
+
+void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L) {
+    // Taken off the cargo list first (safety against modification during
+    // Lua callbacks), in cargo order.
+    std::vector<u32> snapshot;
+    std::erase_if(cargo_ids_, [&](u32 id) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end()) return false;
+        snapshot.push_back(id);
+        return true;
+    });
 
     for (u32 cargo_id : snapshot) {
         auto* cargo_entity = registry.find(cargo_id);
