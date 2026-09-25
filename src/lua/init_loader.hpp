@@ -3,6 +3,9 @@
 #include "core/result.hpp"
 #include "core/types.hpp"
 
+#include <string>
+#include <vector>
+
 extern "C" {
 struct lua_State;
 }
@@ -40,6 +43,10 @@ public:
                                   const vfs::VirtualFileSystem& vfs,
                                   blueprints::BlueprintStore& store);
 
+    /// The URL protocols the init file lets OpenURL open (its `protocols`
+    /// table, e.g. http, https, mailto), as of the last execute_init.
+    const std::vector<std::string>& url_protocols() const { return url_protocols_; }
+
 private:
     /// Parse the path table from Lua state into VFS mounts.
     Result<void> build_vfs_from_path_table(lua_State* L,
@@ -47,6 +54,8 @@ private:
 
     /// Record the init script's `hook` table (hook directories) on the VFS.
     void read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs);
+
+    std::vector<std::string> url_protocols_;
 };
 
 } // namespace osc::lua

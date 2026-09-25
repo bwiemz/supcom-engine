@@ -31,6 +31,7 @@ add_library(osc_lua STATIC
     scenario_loader.cpp
     session_manager.cpp
     special_files.cpp
+    url_bindings.cpp
     category_utils.cpp
     factory_queue.cpp
     order_helpers.cpp
