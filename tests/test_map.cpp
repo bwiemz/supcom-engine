@@ -5,6 +5,11 @@
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
 
+#include <array>
+#include <initializer_list>
+#include <limits>
+#include <vector>
+
 using namespace osc;
 using namespace osc::map;
 using Catch::Matchers::WithinAbs;
@@ -97,6 +102,94 @@ TEST_CASE("The map's water ratio samples as Moho's does", "[map]") {
     CHECK(Terrain(hm, 0.0f, true).water_ratio() == 0.0f); // level with it isn't under
     CHECK(Terrain(Heightmap(8, 8, 1.0f, std::vector<u16>(81, 0)), 50.0f, true).water_ratio() ==
           0.0f); // too small to sample
+}
+
+namespace {
+/// A size x size map at `height`, with the given grid points changed.
+Heightmap grid(u32 size, u16 height, std::initializer_list<std::array<u32, 3>> points = {}) {
+    std::vector<u16> data((size + 1) * (size + 1), height);
+    for (const auto& [x, z, h] : points) data[z * (size + 1) + x] = static_cast<u16>(h);
+    return Heightmap(size, size, 1.0f, std::move(data));
+}
+} // namespace
+
+TEST_CASE("A line meets the heightfield where Moho's intersection does", "[map]") {
+    const Heightmap flat = grid(32, 10);
+    CHECK(flat.max_height() == 10.0f);
+
+    // Down through y = 10 halfway along; above it all the way; from under it.
+    auto hit = flat.intersect(5, 20, 5, 15, -20, 15, 0.0f, 1.0f);
+    REQUIRE(hit);
+    CHECK_THAT(*hit, WithinAbs(0.5, 1e-5));
+    CHECK_FALSE(flat.intersect(5, 30, 5, 15, -10, 15, 0.0f, 1.0f));
+    hit = flat.intersect(5, 5, 5, 1, 0, 0, 0.0f, 10.0f);
+    REQUIRE(hit);
+    CHECK(*hit == 0.0f); // under the terrain where it starts
+
+    // Past the far end of [start, end], or off the grid: no hit.
+    CHECK_FALSE(flat.intersect(5, 20, 5, 15, -20, 15, 0.0f, 0.4f));
+    CHECK_FALSE(flat.intersect(-10, 5, 5, 0, 0, 1, 0.0f, 10.0f));
+
+    // Straight down.
+    hit = flat.intersect(10.5f, 50, 10.5f, 0, -1, 0, 0.0f, 100.0f);
+    REQUIRE(hit);
+    CHECK_THAT(*hit, WithinAbs(40.0, 1e-4));
+
+    // Each cell is two triangles, split along its (x, z)-(x+1, z+1) diagonal.
+    // Raising the corner (6, 5) raises only the cell's upper triangle, the
+    // plane y = 100 (x - z): along z = 5.2 it reaches y = 5 at x = 5.25.
+    const Heightmap corner = grid(16, 0, {{6, 5, 100}});
+    hit = corner.intersect(0, 5, 5.2f, 1, 0, 0, 0.0f, 16.0f);
+    REQUIRE(hit);
+    CHECK_THAT(*hit, WithinAbs(5.25, 1e-4));
+    // Along the diagonal itself the ground is flat (bilinear would rise to 25).
+    CHECK_FALSE(corner.intersect(5.1f, 1, 5.1f, 1, 0, 1, 0.0f, 0.8f));
+    // Wholly in the upper triangle: y = 50 at x = 5.7, 0.2 along.
+    hit = corner.intersect(5.5f, 50, 5.2f, 1, 0, 0, 0.0f, 10.0f);
+    REQUIRE(hit);
+    CHECK_THAT(*hit, WithinAbs(0.2, 1e-4));
+    // A dip at (6, 5) on ground at 50: the upper triangle's plane, carried into
+    // the lower one, would rise above y = 55 there; the lower one is flat.
+    const Heightmap dip = grid(16, 50, {{6, 5, 0}});
+    CHECK_FALSE(dip.intersect(0, 55, 5.6f, 1, 0, 0, 0.0f, 5.4f));
+
+    // A line at 3:1 across cells, one axis at a time. With (10, 7) raised to
+    // 100, cell (9, 6)'s lower triangle is y = 100 (x - 9): the line
+    // (1, 5, 4.2) + t (3, 0, 1) meets y = 5 there at x = 9.05, t = 8.05 / 3.
+    const Heightmap spike = grid(32, 0, {{10, 7, 100}});
+    hit = spike.intersect(1, 5, 4.2f, 3, 0, 1, 0.0f, 4.0f);
+    REQUIRE(hit);
+    CHECK_THAT(*hit, WithinAbs(8.05 / 3.0, 1e-4));
+    // The same line passes (10, 9)'s cells by: it is in row 7 there.
+    CHECK_FALSE(grid(32, 0, {{10, 9, 100}}).intersect(1, 5, 4.2f, 3, 0, 1, 0.0f, 4.0f));
+
+    // Non-finite input meets nothing.
+    CHECK_FALSE(flat.intersect(5, std::numeric_limits<f32>::quiet_NaN(), 5, 1, 0, 0, 0.0f, 10.0f));
+}
+
+TEST_CASE("Terrain blocks a shot as CheckBlockingTerrain says", "[map]") {
+    // A ridge 12 high along x = 30 on flat ground.
+    std::vector<u16> data(65 * 65, 0);
+    for (u32 z = 0; z <= 64; ++z) data[z * 65 + 30] = 12;
+    const Heightmap ridge(64, 64, 1.0f, std::move(data));
+
+    // Straight and low shots across it are blocked; a high arc (its peak 20
+    // over the line) clears it; on flat ground nothing is.
+    CHECK(terrain_blocks_shot(ridge, 10, 0, 32, 50, 0, 32, ShotArc::Straight));
+    CHECK(terrain_blocks_shot(ridge, 10, 0, 32, 50, 0, 32, ShotArc::Low));
+    CHECK_FALSE(terrain_blocks_shot(ridge, 10, 0, 32, 50, 0, 32, ShotArc::High));
+    const Heightmap flat = grid(64, 0);
+    CHECK_FALSE(terrain_blocks_shot(flat, 10, 0, 32, 50, 0, 32, ShotArc::Straight));
+    CHECK_FALSE(terrain_blocks_shot(flat, 10, 0, 32, 50, 0, 32, ShotArc::Low));
+
+    // The start is lifted 1 and the end 0.5 above what is given.
+    const Heightmap raised = grid(64, 10);
+    CHECK_FALSE(terrain_blocks_shot(raised, 10, 9.2f, 32, 50, 9.6f, 32, ShotArc::Straight));
+    CHECK(terrain_blocks_shot(raised, 10, 8.5f, 32, 50, 9.6f, 32, ShotArc::Straight));
+    CHECK(terrain_blocks_shot(raised, 10, 9.2f, 32, 50, 9.0f, 32, ShotArc::Straight));
+
+    // A shot of no length (once lifted) is never blocked, even underground.
+    CHECK_FALSE(terrain_blocks_shot(raised, 10, -50, 32, 10, -49.5f, 32, ShotArc::Straight));
 }
 
 // ================================================================

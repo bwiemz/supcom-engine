@@ -8,6 +8,7 @@ struct lua_State;
 
 namespace osc::sim {
 class SimState;
+class WorldHistory;
 }
 
 namespace osc::ui {
@@ -43,6 +44,11 @@ void register_front_end_fallback_bindings(LuaState& state);
 /// Push an array of UI-side unit objects for the given entity ids (dead or
 /// unknown ids are skipped), in the given order.
 void push_units_for_ui(lua_State* L, const std::vector<osc::u32>& ids);
+
+/// The ticks the renderer captures (a drawn game): the UI's unit objects
+/// read the newest of them when it is the sim's current tick, rather than
+/// capturing it again. Must outlive the UI state's use of it; null to stop.
+void set_ui_world_source(lua_State* L, const sim::WorldHistory* history);
 
 /// Once per sim beat: gamemain.OnFocusArmyUnitDamaged(unit) for each of the
 /// focus army's units whose health dropped since the last call. Moho reports

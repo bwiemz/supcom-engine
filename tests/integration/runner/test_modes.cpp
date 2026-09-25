@@ -142,6 +142,7 @@ constexpr Mode kModesBefore[] = {
     {"--transport-slots-test", test_transport_slots, false},
     {"--factory-assist-test", test_factory_assist, false},
     {"--factory-rally-test", test_factory_rally, false},
+    {"--influence-test", test_influence, false},
     {"--terrain-tex-test", test_terrain_tex, false},
     {"--shadow-test", test_shadow, false},
     {"--massstub4-test", test_massstub4, false},
@@ -279,6 +280,7 @@ void IntegrationModes::print_usage() const {
               << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
               << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
               << "  --factory-rally-test What a factory builds takes its rally orders\n"
+              << "  --influence-test   The AI's threat is what its intel has seen (influence map)\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
