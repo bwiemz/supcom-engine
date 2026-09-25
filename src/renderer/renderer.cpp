@@ -1484,6 +1484,16 @@ void Renderer::clear_scene() {
     // build_scene makes them again for the next map: a game started from
     // another leaked the last one's otherwise.
     destroy_decal_buffers();
+    // Textures made for this map, cached by name: the next map's would
+    // otherwise be this one's. The minimap lets go of its first, so a reload
+    // that fails before the next map is built draws no minimap rather than a
+    // destroyed texture.
+    minimap_renderer_.forget_terrain();
+    if (caches_initialized_) {
+        for (const char* key : {"__terrain_blend0", "__terrain_blend1", "__normal_overlay__",
+                                "__osc_minimap_terrain"})
+            texture_cache_.evict(key);
+    }
     particle_system_.clear();
     emitter_bp_cache_.clear();
 

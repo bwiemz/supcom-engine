@@ -76,6 +76,13 @@ public:
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
+    /// Drop the texture cached as `key`, so the next upload under that
+    /// name makes a new one: for textures made per map (terrain blends,
+    /// the normal overlay, the minimap). The device must be idle and
+    /// nothing may draw with it again; its descriptor set stays in its
+    /// pool, unused, until the cache is destroyed.
+    void evict(const std::string& key);
+
 private:
     AllocatedImage upload_dds(const DDSTexture& dds);
     void create_fallback();

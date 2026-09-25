@@ -45,6 +45,15 @@ class MinimapRenderer {
 public:
     void init(VkDevice device, VmaAllocator allocator);
 
+    /// Forget the map: no terrain texture and no size, so nothing is drawn
+    /// until build_terrain_texture makes the next map's (the scene is being
+    /// cleared, and its texture evicted).
+    void forget_terrain() {
+        terrain_ds_ = VK_NULL_HANDLE;
+        map_w_ = 0;
+        map_h_ = 0;
+    }
+
     /// Generate the terrain background texture from heightmap.
     /// Call once from build_scene.
     void build_terrain_texture(const map::Terrain& terrain,
