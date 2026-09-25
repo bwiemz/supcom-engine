@@ -9588,6 +9588,299 @@ void test_range(TestContext& ctx) {
 }
 
 // ── Ferry test (M206f): beacons, waiting units, the ferry's round trip ──
+void test_factory_assist(TestContext& ctx) {
+    spdlog::info("=== FACTORY ASSIST TEST: a factory guarding a factory builds from its queue ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // Two UEF T1 land factories on flat ground east of the map's centre: A
+    // is given three T1 tanks to build, and B guards A (M206h; Moho's guard
+    // task for a factory, TryDispatchFactoryOrUpgradeFromGuardQueues).
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_queue(u) return table.getn(u:GetCommandQueue()) end
+        function __osc_building(u)
+            local f = u:GetFocusUnit()
+            return f and f:IsBeingBuilt() and f or nil
+        end
+        __osc_a = __osc_spawn('ueb0101', 1, 610, 100)
+        __osc_b = __osc_spawn('ueb0101', 1, 630, 100)
+        if not __osc_a or not __osc_b then error('no factories') end
+        IssueBuildFactory({__osc_a}, 'uel0201', 3)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+
+    // B took one of A's orders -- not the one A is building -- and builds a
+    // tank itself.
+    lua_check("B takes a build from A's queue", R"(
+        local a, b = __osc_building(__osc_a), __osc_building(__osc_b)
+        if not a then error('A is not building') end
+        if not b then error('B is not building') end
+        if b:GetBlueprint().BlueprintId ~= 'uel0201' then
+            error('B builds ' .. tostring(b:GetBlueprint().BlueprintId))
+        end
+        if a == b then error('B builds the unit A builds') end
+        __osc_seen = {[a] = true, [b] = true} -- every tank either one works on
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 2 expected (1 taken)')
+        end
+        __osc_b_first = b
+    )");
+
+    // The three are built between them, and no more.
+    for (int i = 0; i < 150; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            for _, f in {__osc_a, __osc_b} do
+                local u = __osc_building(f)
+                if u then __osc_seen[u] = true end
+            end
+            if __osc_queue(__osc_a) == 0 and not __osc_building(__osc_a)
+               and not __osc_building(__osc_b) then error('done') end
+        )");
+        if (!r) break;
+    }
+    lua_check("the queue is built between them, and no more", R"(
+        if __osc_b_first:IsDead() or __osc_b_first:IsBeingBuilt() then
+            error("B's tank was not finished")
+        end
+        local tanks = 0
+        for u in __osc_seen do
+            if u:IsDead() or u:IsBeingBuilt() then error('a tank was not finished') end
+            if u:GetBlueprint().BlueprintId ~= 'uel0201' then error('not a tank') end
+            tanks = tanks + 1
+        end
+        if tanks ~= 3 then error(tanks .. ' tanks built; 3 expected') end
+    )");
+
+    // Called off mid-build, B drops the unit it built for A, as a factory
+    // does when its build order goes; the order it took is gone with it.
+    lua_check("B's build ends with its guard order", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 2)
+    )");
+    run(20);
+    lua_check("B took the second order", R"(
+        __osc_b_second = __osc_building(__osc_b)
+        if not __osc_b_second then error('B is not building') end
+        IssueClearCommands({__osc_b})
+    )");
+    run(2);
+    lua_check("B's unfinished tank is gone", R"(
+        if __osc_building(__osc_b) then error('B still builds') end
+        if not __osc_b_second:IsDead() then error('its tank is still there') end
+    )");
+
+    // B takes nothing from a queue whose only order A is building, even
+    // repeating (Moho would restart that order's count; there are no counts
+    // or repeat queues here, so it would only be a duplicate).
+    lua_check("B, repeating, leaves A's only order alone", R"(
+        IssueClearCommands({__osc_a})
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        __osc_b:SetRepeatQueue(true)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("so B builds nothing", R"(
+        if not __osc_building(__osc_a) then error('A is not building its order') end
+        if __osc_building(__osc_b) then error('B builds a duplicate') end
+    )");
+
+    // Given a second order, the repeating B takes it and sends it to the
+    // back of A's queue rather than removing it.
+    lua_check("B, repeating, takes A's next order", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+    )");
+    run(20);
+    lua_check("which goes back on A's queue", R"(
+        if not __osc_building(__osc_b) then error('B is not building') end
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 2 expected (1 re-queued)')
+        end
+    )");
+
+    // An order the lobby forbids is taken and dropped, as Moho's build task
+    // fails after the take (and as A would drop it), rather than left for B
+    // to find again every tick -- even with B repeating, which would
+    // otherwise send it round A's queue for good.
+    auto* brain = ctx.sim.get_army(0);
+    if (brain) brain->add_build_restriction("ENGINEER");
+    lua_check("A and B are cleared", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+        if not __osc_b:IsRepeatQueue() then error('B is not repeating') end
+    )");
+    run(2);
+    lua_check("B takes an order the lobby forbids", R"(
+        if __osc_building(__osc_b) then error('B still builds') end
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        IssueBuildFactory({__osc_a}, 'uel0105', 1)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("and builds nothing from it", R"(
+        local b = __osc_building(__osc_b)
+        if b then error('B builds ' .. b:GetBlueprint().BlueprintId) end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected (1 dropped)')
+        end
+    )");
+    if (brain) brain->remove_build_restriction("ENGINEER");
+
+    // A factory repeating its queue builds its orders again (M206i), through
+    // retail's factory scripts: A, given one tank, finishes it and starts
+    // another, the order back on its queue.
+    lua_check("A and B are cleared again", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+    )");
+    run(2);
+    lua_check("A, repeating, is given one tank", R"(
+        __osc_a:SetRepeatQueue(true)
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+    )");
+    run(2);
+    lua_check("A builds it", R"(
+        __osc_a_first = __osc_building(__osc_a)
+        if not __osc_a_first then error('A is not building') end
+    )");
+    for (int i = 0; i < 150; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            local u = __osc_building(__osc_a)
+            if u and u ~= __osc_a_first then error('the next') end
+        )");
+        if (!r) break;
+    }
+    lua_check("and, that one built, starts another", R"(
+        if __osc_a_first:IsDead() or __osc_a_first:IsBeingBuilt() then
+            error("A's first tank was not finished")
+        end
+        local u = __osc_building(__osc_a)
+        if not u or u == __osc_a_first then error('A is not building a second tank') end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
+        end
+    )");
+    spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
+}
+
+void test_factory_rally(TestContext& ctx) {
+    spdlog::info("=== FACTORY RALLY TEST: what a factory builds takes its rally orders ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // Two UEF T1 land factories on flat ground east of the map's centre, as
+    // in --factory-assist-test (M206j; Moho's factory command queue).
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_queue(u) return table.getn(u:GetCommandQueue()) end
+        function __osc_dist(u, x, z)
+            local p = u:GetPosition()
+            return VDist2(p[1], p[3], x, z)
+        end
+        function __osc_building(u)
+            local f = u:GetFocusUnit()
+            return f and f:IsBeingBuilt() and f or nil
+        end
+        __osc_a = __osc_spawn('ueb0101', 1, 610, 100)
+        __osc_b = __osc_spawn('ueb0101', 1, 630, 100)
+        if not __osc_a or not __osc_b then error('no factories') end
+    )");
+
+    // A factory rallies five ahead of itself until told otherwise (Moho's
+    // initial rally; retail's roll-off reads it). Asking changes nothing in
+    // the sim: the UI's unit objects ask too, and one player's UI must not
+    // put the sims out of step.
+    const auto checksum = ctx.sim.compute_sync_checksum();
+    lua_check("a factory rallies ahead of itself", R"(
+        local p = __osc_a:GetRallyPoint()
+        if not p then error('no rally point') end
+        local d = VDist2(p[1], p[3], 610, 100)
+        if math.abs(d - 5) > 0.01 then error('rally ' .. d .. ' from the factory; 5 expected') end
+    )");
+    if (ctx.sim.compute_sync_checksum() == checksum) {
+        pass++;
+        spdlog::info("[PASS] asking for the rally point leaves the sim as it was");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] asking for the rally point changed the sim");
+    }
+
+    // Retail's AI clears a factory's rally orders and sets its own; the
+    // builds it has queued stay. B, with a rally of its own, guards A.
+    lua_check("the builds stay when the rally orders are cleared", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 3)
+        IssueClearFactoryCommands({__osc_a})
+        if __osc_queue(__osc_a) ~= 3 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' build orders; 3 expected')
+        end
+        IssueFactoryRallyPoint({__osc_a}, {610, GetTerrainHeight(610, 140), 140})
+        local p = __osc_a:GetRallyPoint()
+        if VDist2(p[1], p[3], 610, 140) > 0.01 then error('A rallies elsewhere') end
+        IssueClearFactoryCommands({__osc_b})
+        IssueFactoryRallyPoint({__osc_b}, {650, GetTerrainHeight(650, 140), 140})
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("A and B each build a tank", R"(
+        __osc_ta = __osc_building(__osc_a)
+        __osc_tb = __osc_building(__osc_b)
+        if not __osc_ta or not __osc_tb then error('A or B is not building') end
+    )");
+
+    // Built, each drives off to A's rally point: B built its tank for A.
+    for (int i = 0; i < 200; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            for _, t in {__osc_ta, __osc_tb} do
+                if t:IsDead() or t:IsBeingBuilt() or __osc_dist(t, 610, 140) > 6 then return end
+            end
+            error('there')
+        )");
+        if (!r) break;
+    }
+    lua_check("A's tank drives to A's rally point", R"(
+        if __osc_ta:IsDead() or __osc_ta:IsBeingBuilt() then error('not built') end
+        local d = __osc_dist(__osc_ta, 610, 140)
+        if d > 6 then error(d .. ' from the rally point') end
+    )");
+    lua_check("so does B's, built for A, not to B's", R"(
+        if __osc_tb:IsDead() or __osc_tb:IsBeingBuilt() then error('not built') end
+        local d = __osc_dist(__osc_tb, 610, 140)
+        if d > 6 then
+            error(d .. " from A's rally point, " .. __osc_dist(__osc_tb, 650, 140) .. " from B's")
+        end
+    )");
+    spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
+}
+
 void test_ferry(TestContext& ctx) {
     spdlog::info("=== FERRY TEST: a ferry carries units from its beacon to its drop-off ===");
     int pass = 0, fail = 0;

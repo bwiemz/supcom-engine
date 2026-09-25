@@ -1988,7 +1988,8 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         units.mix(static_cast<u64>(static_cast<u32>(u.fire_state())));
         units.mix((u.is_paused() ? 1u : 0u) | (u.auto_mode() ? 2u : 0u) |
                   (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u) |
-                  (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u));
+                  (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u) |
+                  (u.factory_assist_build() ? 64u : 0u));
         mix_str(units, u.layer());
         units.mix(u.transport_id());
         units.mix(static_cast<u64>(u.cargo_ids().size()));
@@ -2024,6 +2025,17 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             if (!cmd.unload_ids.empty()) {
                 orders.mix(static_cast<u64>(cmd.unload_ids.size()));
                 for (u32 id : cmd.unload_ids) orders.mix(id);
+            }
+        }
+        // A factory's rally orders (M206j), only where it has some.
+        if (!u.rally_orders().empty()) {
+            orders.mix(0x52414c4cu); // "RALL": apart from the queue above
+            orders.mix(static_cast<u64>(u.rally_orders().size()));
+            for (const UnitCommand& cmd : u.rally_orders()) {
+                orders.mix(static_cast<u64>(cmd.type));
+                orders.mix(cmd.target_id);
+                mix_vec(orders, cmd.target_pos);
+                orders.mix(cmd.command_id);
             }
         }
 

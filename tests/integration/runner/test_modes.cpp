@@ -139,6 +139,8 @@ constexpr Mode kModesBefore[] = {
     {"--charge-test", test_charge, false},
     {"--range-test", test_range, false},
     {"--ferry-test", test_ferry, false},
+    {"--factory-assist-test", test_factory_assist, false},
+    {"--factory-rally-test", test_factory_rally, false},
     {"--terrain-tex-test", test_terrain_tex, false},
     {"--shadow-test", test_shadow, false},
     {"--massstub4-test", test_massstub4, false},
@@ -274,6 +276,8 @@ void IntegrationModes::print_usage() const {
               << "  --charge-test      Economy events, OverCharge and teleports cost and take time\n"
               << "  --range-test       Build, repair, reclaim and capture reach, guards, the queue\n"
               << "  --ferry-test       A ferry carries units from its beacon to its drop-off\n"
+              << "  --factory-assist-test A factory guarding a factory builds from its queue\n"
+              << "  --factory-rally-test What a factory builds takes its rally orders\n"
               << "  --shadow-test      Shadow mapping (depth pass, light matrix, shadow sampling)\n"
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
