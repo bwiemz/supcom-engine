@@ -199,7 +199,6 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
   - A repeating factory's queue shows an order split by its trip round the queue as two entries; Moho shows one with its count.
-  - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
   - The AI's influence maps (M207b) take no false blips from jammers; nothing makes them yet. That is all M207 has left: `CheckBlockingTerrain` casts shots against the heightfield as Moho does (M207c).
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits

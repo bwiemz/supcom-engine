@@ -9094,11 +9094,11 @@ void test_defence(TestContext& ctx) {
         IssueDive({__osc_sub})
     )");
     run(40);
-    // A dived sub sinks only while it moves: put it under.
+    // Dived where it stands (M206o): under the surface, it attacks.
     lua_check("setup: the sub, dived, attacks", R"(
         if __osc_sub:GetCurrentLayer() ~= 'Sub' then error('the sub is on ' .. __osc_sub:GetCurrentLayer()) end
         local p = __osc_sub:GetPosition()
-        Warp(__osc_sub, {p[1], GetSurfaceHeight(p[1], p[3]) - 5, p[3]})
+        if p[2] > GetSurfaceHeight(p[1], p[3]) - 0.5 then error('the sub is at ' .. p[2]) end
         IssueAttack({__osc_sub}, __osc_frigate)
     )");
     run(300);
@@ -10038,6 +10038,226 @@ void test_factory_rally(TestContext& ctx) {
         end
     )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
+}
+
+void test_naval_depth(TestContext& ctx) {
+    spdlog::info("=== NAVAL DEPTH TEST: subs dive and surface as Moho's do (M206o) ===");
+    int pass = 0, fail = 0;
+    const auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            ctx.sim.tick();
+            ctx.lua_state.do_string("if __osc_watch then __osc_watch() end");
+        }
+    };
+
+    // A UEF T1 sub (Elevation -1.5) in deep western water, its motion events
+    // and layer followed each tick.
+    lua_check("setup", R"(
+        local x, z
+        for tz = 100, 900, 16 do
+            for tx = 60, 500, 16 do
+                if not x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 8 then x, z = tx, tz end
+            end
+        end
+        if not x then error('no deep water') end
+        __osc_sea = {x, z}
+        __osc_sub = CreateUnitHPR('ues0203', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+        __osc_events = {}
+        local vert = __osc_sub.OnMotionVertEventChange
+        __osc_sub.OnMotionVertEventChange = function(self, new, old)
+            table.insert(__osc_events, {new = new, old = old, layer = self:GetCurrentLayer(), tick = GetGameTick()})
+            if vert then return vert(self, new, old) end
+        end
+        __osc_trace = {}
+        function __osc_watch()
+            local p = __osc_sub:GetPosition()
+            table.insert(__osc_trace, {y = p[2] - GetSurfaceHeight(p[1], p[3]), x = p[1], z = p[3],
+                                       layer = __osc_sub:GetCurrentLayer()})
+        end
+    )");
+    run(5);
+    lua_check(
+        "Test 1: told to dive where it stands, it sinks to its depth; its layer is Sub only there",
+        R"(
+        __osc_trace = {}
+        IssueDive({__osc_sub})
+    )");
+    run(60);
+    lua_check("Test 1 (checked)", R"(
+        local first, last = __osc_trace[1], __osc_trace[table.getn(__osc_trace)]
+        if first.layer ~= 'Water' then error('it was ' .. first.layer .. ' as it began') end
+        if last.layer ~= 'Sub' then error('it is ' .. last.layer .. ' at the end') end
+        if math.abs(last.y + 1.5) > 1e-3 then error('it is ' .. last.y .. ' under, not 1.5') end
+        local moved = math.abs(last.x - first.x) + math.abs(last.z - first.z)
+        if moved > 1e-3 then error('it moved ' .. moved) end
+        -- It went down over ticks, the layer Water all the way until the depth.
+        local steps, under_on_water = 0, false
+        for i = 2, table.getn(__osc_trace) do
+            local t = __osc_trace[i]
+            if t.y < __osc_trace[i - 1].y then steps = steps + 1 end
+            if t.layer == 'Water' and t.y <= -1.5 + 1e-4 then under_on_water = true end
+        end
+        if steps < 10 then error('it sank in ' .. steps .. ' steps') end
+        if under_on_water then error('it reached its depth still on Water') end
+    )");
+    lua_check("Test 2: its script heard Down on Water, then Bottom on Sub", R"(
+        local e = __osc_events
+        if table.getn(e) ~= 2 then error(table.getn(e) .. ' events') end
+        if e[1].new ~= 'Down' or e[1].old ~= 'Top' or e[1].layer ~= 'Water' then
+            error('first ' .. e[1].new .. ' from ' .. e[1].old .. ' on ' .. e[1].layer)
+        end
+        if e[2].new ~= 'Bottom' or e[2].old ~= 'Down' or e[2].layer ~= 'Sub' then
+            error('second ' .. e[2].new .. ' from ' .. e[2].old .. ' on ' .. e[2].layer)
+        end
+    )");
+    lua_check("Test 3: told again, it surfaces: Up on Sub, then Top on Water", R"(
+        __osc_events = {}
+        IssueDive({__osc_sub})
+    )");
+    run(60);
+    lua_check("Test 3 (checked)", R"(
+        local last = __osc_trace[table.getn(__osc_trace)]
+        if last.layer ~= 'Water' or math.abs(last.y) > 1e-3 then
+            error('it is on ' .. last.layer .. ' at ' .. last.y)
+        end
+        local e = __osc_events
+        if table.getn(e) ~= 2 or e[1].new ~= 'Up' or e[1].layer ~= 'Sub' or e[2].new ~= 'Top' or
+           e[2].layer ~= 'Water' then
+            error('heard ' .. table.getn(e) .. ' events: ' .. (e[1] and e[1].new or '-') .. ', ' ..
+                  (e[2] and e[2].new or '-'))
+        end
+    )");
+
+    // Only a submarine dives: a frigate told to stays on the surface, and its
+    // script hears nothing.
+    lua_check("setup: a frigate told to dive", R"(
+        local x, z = __osc_sea[1], __osc_sea[2]
+        __osc_ship = CreateUnitHPR('uas0103', 'ARMY_1', x + 20, GetSurfaceHeight(x + 20, z), z, 0, 0, 0)
+        __osc_ship_events = 0
+        local vert = __osc_ship.OnMotionVertEventChange
+        __osc_ship.OnMotionVertEventChange = function(self, new, old)
+            __osc_ship_events = __osc_ship_events + 1
+            if vert then return vert(self, new, old) end
+        end
+        IssueDive({__osc_ship})
+    )");
+    run(40);
+    lua_check("Test 3b: a frigate ignores a dive order", R"(
+        local p = __osc_ship:GetPosition()
+        if __osc_ship:GetCurrentLayer() ~= 'Water' then error('it is on ' .. __osc_ship:GetCurrentLayer()) end
+        if math.abs(p[2] - GetSurfaceHeight(p[1], p[3])) > 1e-3 then error('it is at ' .. p[2]) end
+        if __osc_ship_events ~= 0 then error('its script heard ' .. __osc_ship_events .. ' events') end
+        if table.getn(__osc_ship:GetCommandQueue()) ~= 0 then error('the order is still queued') end
+        __osc_ship:Destroy()
+    )");
+
+    // A surfaced sub's torpedoes, launched above the water, dive into it
+    // (OnEnterWater), run under it, and hit (M206o): first at a frigate, then
+    // at a dived sub, which a torpedo on the surface can't reach.
+    lua_check("setup: torpedoes from a surfaced sub", R"(
+        local x, z = __osc_sea[1], __osc_sea[2]
+        __osc_sub:SetCanTakeDamage(false)
+        __osc_shots = {}
+        for i = 1, __osc_sub:GetWeaponCount() do
+            local w = __osc_sub:GetWeapon(i)
+            local create = w.CreateProjectileAtMuzzle
+            w.CreateProjectileAtMuzzle = function(self, muzzle)
+                local proj = create(self, muzzle)
+                if proj and EntityCategoryContains(categories.TORPEDO, proj) then
+                    local p = proj:GetPosition()
+                    local rec = {proj = proj, low = 1000, start = p[2] - GetSurfaceHeight(p[1], p[3]),
+                                 entered = false, target = __osc_target}
+                    local enter = proj.OnEnterWater
+                    proj.OnEnterWater = function(q) rec.entered = true; if enter then return enter(q) end end
+                    local impact = proj.OnImpact
+                    proj.OnImpact = function(q, kind, what)
+                        rec.impact = kind
+                        rec.hit = what
+                        return impact(q, kind, what)
+                    end
+                    table.insert(__osc_shots, rec)
+                end
+                return proj
+            end
+        end
+        local watch = __osc_watch
+        function __osc_watch()
+            watch()
+            for _, r in __osc_shots do
+                if not r.proj:BeenDestroyed() then
+                    local q = r.proj:GetPosition()
+                    local y = q[2] - GetSurfaceHeight(q[1], q[3])
+                    if y < r.low then r.low = y end
+                end
+            end
+        end
+        function __osc_check_shots(want)
+            local n = 0
+            for _, r in __osc_shots do
+                if r.target == __osc_target and r.impact then
+                    n = n + 1
+                    if r.start < 0 then error('a torpedo started under the water, at ' .. r.start) end
+                    if not r.entered then error('a torpedo never entered the water') end
+                    if r.low > -0.1 then error('a torpedo stayed at ' .. r.low) end
+                    if r.hit ~= __osc_target then error('a torpedo hit ' .. tostring(r.impact)) end
+                end
+            end
+            if n == 0 then error('no torpedo reached ' .. want) end
+        end
+        __osc_target = CreateUnitHPR('uas0103', 'ARMY_2', x, GetSurfaceHeight(x, z + 25), z + 25, 0, 0, 0)
+        __osc_target:SetCanTakeDamage(false)
+        IssueAttack({__osc_sub}, __osc_target)
+    )");
+    run(150);
+    lua_check("Test 4: a surfaced sub's torpedoes dive in and hit a frigate",
+              "__osc_check_shots('the frigate')");
+    lua_check("setup: a dived sub to hit", R"(
+        IssueClearCommands({__osc_sub})
+        __osc_target:Destroy()
+        local x, z = __osc_sea[1], __osc_sea[2]
+        __osc_target = CreateUnitHPR('ues0203', 'ARMY_2', x, GetSurfaceHeight(x, z + 25), z + 25, 0, 0, 0)
+        __osc_target:SetCanTakeDamage(false)
+        IssueDive({__osc_target})
+    )");
+    run(60);
+    lua_check("setup: the target is under", R"(
+        if __osc_target:GetCurrentLayer() ~= 'Sub' then error('it is on ' .. __osc_target:GetCurrentLayer()) end
+        IssueAttack({__osc_sub}, __osc_target)
+    )");
+    run(150);
+    lua_check("Test 5: they reach a dived sub too", "__osc_check_shots('the dived sub')");
+
+    // A torpedo above the water isn't held to it: dropped 8 over the sea it
+    // falls, and only under the surface does it stay under.
+    lua_check("setup: a torpedo dropped over the sea", R"(
+        IssueClearCommands({__osc_sub})
+        __osc_target:Destroy()
+        __osc_drop = __osc_sub:CreateProjectile(
+            '/projectiles/TANAnglerTorpedo02/TANAnglerTorpedo02_proj.bp', 0, 8, 0, 0, -1, 0)
+        local p = __osc_drop:GetPosition()
+        __osc_drop_start = p[2] - GetSurfaceHeight(p[1], p[3])
+    )");
+    run(1);
+    lua_check("Test 6: it starts to fall, not snapped to the water", R"(
+        if __osc_drop_start < 7 then error('it began ' .. __osc_drop_start .. ' up') end
+        if __osc_drop:BeenDestroyed() then error('it is gone') end
+        local p = __osc_drop:GetPosition()
+        local up = p[2] - GetSurfaceHeight(p[1], p[3])
+        if up < 5 then error('after a tick it is ' .. up .. ' up') end
+        __osc_drop:Destroy()
+    )");
+
+    spdlog::info("Naval depth test: {} passed, {} failed", pass, fail);
 }
 
 void test_transport_slots(TestContext& ctx) {

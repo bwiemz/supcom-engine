@@ -289,17 +289,11 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
     bool result = navigator_.update(*this, speed, dt, terrain);
 
-    // Sub units: smooth transition to dive depth below water surface
-    if (terrain && layer_ == "Sub") {
+    // A sub under the surface, or on its way, keeps its depth as it moves
+    // (the ground navigator put it on the surface; see tick_dive).
+    if (terrain && (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None)) {
         auto p = position();
-        f32 target_y = terrain->water_elevation() + elevation_target_; // elevation_target_ is negative
-        f32 rate = 5.0f * static_cast<f32>(dt);
-        if (std::abs(p.y - target_y) <= rate)
-            p.y = target_y;
-        else if (p.y > target_y)
-            p.y -= rate;
-        else
-            p.y += rate;
+        p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
 
@@ -407,6 +401,10 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
+
+    // A sub dives or surfaces, moving or not (M206o).
+    tick_dive(ctx.terrain, L);
+    if (destroyed() || !in_registry()) return false;
 
     // An idle transport hovers low with cargo aboard, and climbs back to its
     // flying height without (Moho's ShouldHoverInsteadOfLand; M206n).
@@ -2129,6 +2127,94 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     p.z += osc::dmath::cos(heading) * ground_speed_ * step;
     if (terrain) p.y = terrain->get_surface_height(p.x, p.z);
     set_position(p);
+}
+
+void Unit::set_vert_event(const char* event, lua_State* L) {
+    if (vert_event_ == event) return;
+    const std::string old = vert_event_;
+    vert_event_ = event;
+    if (!L || lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnMotionVertEventChange");
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl);
+        lua_pushstring(L, event);
+        lua_pushstring(L, old.c_str());
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            spdlog::warn("OnMotionVertEventChange error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+void Unit::start_dive(lua_State* L) {
+    vert_motion_ = VertMotion::Down;
+    set_unit_state("MovingUp", false);
+    set_unit_state("MovingDown", true);
+    set_vert_event("Down", L);
+}
+
+void Unit::start_surfacing(lua_State* L) {
+    vert_motion_ = VertMotion::Up;
+    set_unit_state("MovingDown", false);
+    set_unit_state("MovingUp", true);
+    set_vert_event("Up", L);
+}
+
+void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
+    if (!terrain) return;
+    const f32 water = terrain->water_elevation();
+    if (vert_motion_ != VertMotion::None) {
+        // Down to its Physics.Elevation, but no deeper than a quarter over
+        // the seabed; at DiveSurfaceSpeed/10 a tick, eased along a sine
+        // (never under a tenth of that).
+        f32 limit = elevation_target_;
+        if (limit >= 0.0f) {
+            vert_motion_ = VertMotion::None;
+            set_unit_state("MovingDown", false);
+            set_unit_state("MovingUp", false);
+        } else {
+            const f32 floor = std::min(
+                0.0f, terrain->get_terrain_height(position().x, position().z) + 0.25f - water);
+            limit = std::max(limit, floor);
+            f32 phase = std::abs(sub_elevation_ / limit);
+            if (phase > 0.5f) phase = 1.0f - phase;
+            const f32 base = dive_surface_speed_ * 0.1f;
+            const f32 speed = std::max(base * 0.1f, osc::dmath::sin(phase * 3.1415927f) * base);
+            if (vert_motion_ == VertMotion::Up) {
+                sub_elevation_ = std::min(0.0f, sub_elevation_ + speed);
+                if (sub_elevation_ == 0.0f) {
+                    vert_motion_ = VertMotion::None;
+                    set_unit_state("MovingUp", false);
+                    set_layer_with_callback("Water", L);
+                    if (destroyed() || !in_registry()) return;
+                    set_vert_event("Top", L);
+                    if (destroyed() || !in_registry()) return;
+                }
+            } else if (sub_elevation_ - speed > limit) {
+                sub_elevation_ -= speed;
+            } else {
+                sub_elevation_ = limit;
+                vert_motion_ = VertMotion::None;
+                set_unit_state("MovingDown", false);
+                set_layer_with_callback("Sub", L);
+                if (destroyed() || !in_registry()) return;
+                set_vert_event("Bottom", L);
+                if (destroyed() || !in_registry()) return;
+            }
+        }
+    }
+    // Under the surface, or on its way: at its depth.
+    if (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None) {
+        Vector3 at = position();
+        at.y = water + sub_elevation_;
+        set_position(at);
+    }
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
