@@ -1,6 +1,7 @@
 #include "lua/engine_bindings.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
+#include "lua/sim_bindings.hpp"
 #include "core/log.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/path_utils.hpp"
@@ -308,22 +309,9 @@ static int l_Rect(lua_State* L) {
     return 1;
 }
 
-// Registry key for the shared vector metatable
-static const char* REG_VECTOR_MT = "__osc_vector_mt";
-
-static void push_vector_metatable(lua_State* L) {
-    lua_pushstring(L, REG_VECTOR_MT);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (lua_isnil(L, -1)) {
-        // First time: create the metatable
-        lua_pop(L, 1);
-        lua_newtable(L);
-        // Store in registry
-        lua_pushstring(L, REG_VECTOR_MT);
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-}
+// Vector and Vector2 carry the one vector metatable every engine vector and
+// quaternion carries (push_vector_metatable): FAF takes it from Vector2 to
+// add vector arithmetic, which needs both operands to share it.
 
 /// Vector(x, y, z) — return a table with shared metatable.
 static int l_Vector(lua_State* L) {

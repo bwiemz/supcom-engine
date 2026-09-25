@@ -20,6 +20,30 @@ extern "C" {
 
 namespace osc::lua {
 
+namespace {
+
+/// The strings in the init script's global array `name` (`hook`,
+/// `protocols`), in order; empty when it sets none.
+std::vector<std::string> string_array(lua_State* L, const char* name) {
+    std::vector<std::string> out;
+    lua_getglobal(L, name);
+    if (lua_istable(L, -1)) {
+        for (int i = 1;; ++i) {
+            lua_rawgeti(L, -1, i);
+            if (lua_isnil(L, -1)) {
+                lua_pop(L, 1);
+                break;
+            }
+            if (lua_type(L, -1) == LUA_TSTRING) out.emplace_back(lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+    return out;
+}
+
+} // namespace
+
 Result<void> InitLoader::execute_init(LuaState& state,
                                         const InitConfig& config,
                                         vfs::VirtualFileSystem& vfs) {
@@ -60,6 +84,7 @@ Result<void> InitLoader::execute_init(LuaState& state,
     // Build VFS from the path table
     if (auto r = build_vfs_from_path_table(state.raw(), vfs); !r) return r;
     read_hook_table(state.raw(), vfs);
+    url_protocols_ = string_array(state.raw(), "protocols");
     return {};
 }
 
@@ -92,21 +117,7 @@ bool mount_one(vfs::VirtualFileSystem& vfs, const fs::path& path,
 } // namespace
 
 void InitLoader::read_hook_table(lua_State* L, vfs::VirtualFileSystem& vfs) {
-    std::vector<std::string> dirs;
-    lua_getglobal(L, "hook");
-    if (lua_istable(L, -1)) {
-        for (int i = 1;; ++i) {
-            lua_rawgeti(L, -1, i);
-            if (lua_isnil(L, -1)) {
-                lua_pop(L, 1);
-                break;
-            }
-            if (lua_type(L, -1) == LUA_TSTRING) dirs.emplace_back(lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    }
-    lua_pop(L, 1);
-    vfs.set_hook_dirs(dirs);
+    vfs.set_hook_dirs(string_array(L, "hook"));
     for (const auto& dir : vfs.hook_dirs()) {
         spdlog::info("VFS hook directory: {}", dir);
     }

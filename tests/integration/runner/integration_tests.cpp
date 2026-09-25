@@ -5996,6 +5996,8 @@ void test_prop(TestContext& ctx) {
         local t = __osc_tree:GetPosition()
         Damage(nil, {t[1] - 1, t[2], t[3]}, __osc_tree, 1, 'Force')
         local q = __osc_tree:GetOrientation()
+        -- A quaternion as Moho hands it out, with the vector metatable.
+        if getmetatable(q) ~= getmetatable(Vector2(0, 0)) then error('no vector metatable') end
         -- The tree's up axis after the fall: 1 - 2(x^2 + z^2) is its height.
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
         if math.abs(up_y) > 0.05 then error('still upright: up.y ' .. up_y) end
@@ -18602,17 +18604,89 @@ void test_deposits(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
-    // Test 8: CreateStorageManipulator returns real object
+    // Test 8: CreateStorageManip, as Moho's takes it: a real object, and
+    // Moho's argument errors.
     {
         auto r = ctx.lua_state.do_string(
-            ("local u = GetEntityById(" + u1 + ")\n"
-            "local sm = CreateStorageManipulator(u)\n"
-            "if type(sm) ~= 'table' then error('not table') end\n"
-            "if not sm._c_object then error('no _c_object') end\n"
-            "sm:SetPrecedence(1)\n"
-            "sm:Destroy()\n").c_str());
-        if (r) { pass++; spdlog::info("[PASS] Test 8: CreateStorageManipulator returns real object"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 8: {}", r.error().message); }
+            ("local u = GetEntityById(" + u1 +
+             ")\n"
+             "local sm = CreateStorageManip(u, 0, 'MASS', 0, 0, -0.3, 0, 0, 0)\n"
+             "if type(sm) ~= 'table' then error('not table') end\n"
+             "if not sm._c_object then error('no _c_object') end\n"
+             "sm:SetPrecedence(1)\n"
+             "sm:Destroy()\n"
+             "local function fails(f, want)\n"
+             "    local ok, err = pcall(f)\n"
+             "    if ok or not string.find(err, want, 1, true) then\n"
+             "        error('wanted an error with ' .. want .. ', got ' .. tostring(err))\n"
+             "    end\n"
+             "end\n"
+             "fails(function() CreateStorageManip(u) end, 'expected between 2 and 9 args')\n"
+             "fails(function() CreateStorageManip(u, 0, 'WATER', 0, 0, 0, 0, 0, 0) end, 'WATER')\n"
+             "fails(function() CreateStorageManip(u, 0, 'MASS', 0, 0, 0) end, 'number expected')\n")
+                .c_str());
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] Test 8: CreateStorageManip returns real object");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8: {}", r.error().message);
+        }
+    }
+
+    // Test 8b: a retail mass storage makes one as it finishes (its
+    // OnStopBeingBuilt), and its tank rises and falls with the army's mass.
+    {
+        auto r = ctx.lua_state.do_string(
+            "local u = CreateUnitHPR('ueb1106', 'ARMY_1', 20, 0, 20, 0, 0, 0)\n"
+            "rawset(_G, '__osc_storage_id', u:GetEntityId())\n");
+        sim::Unit* storage = nullptr;
+        if (r) {
+            lua_State* L = ctx.lua_state.raw();
+            lua_pushstring(L, "__osc_storage_id");
+            lua_rawget(L, LUA_GLOBALSINDEX);
+            const auto id = static_cast<u32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+            storage = dynamic_cast<sim::Unit*>(ctx.sim.entity_registry().find(id));
+        }
+        const sim::StorageManipulator* manip = nullptr;
+        if (storage)
+            for (const auto& m : storage->manipulators())
+                if (auto* s = dynamic_cast<const sim::StorageManipulator*>(m.get())) manip = s;
+        auto* army = storage ? ctx.sim.get_army(storage->army()) : nullptr;
+        if (!manip || !army) {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8b: no storage manipulator ({})",
+                                   r ? "the unit made none" : r.error().message);
+        } else {
+            // Its block sits 0.3 down when empty, and rises as mass fills.
+            const f32 start = manip->current().z;
+            auto& mass = army->economy().mass;
+            for (int i = 0; i < 30; ++i) {
+                mass.stored = mass.max_storage;
+                ctx.sim.tick();
+            }
+            const f32 full = manip->current().z;
+            for (int i = 0; i < 30; ++i) {
+                mass.stored = 0;
+                ctx.sim.tick();
+            }
+            const f32 empty = manip->current().z;
+            // On the bone its script names.
+            const auto* bones = storage->bone_data();
+            const bool on_block = bones && bones->find_bone("Block") > 0 &&
+                                  bones->find_bone("Block") == manip->bone_index();
+            if (start < -0.29f && full > -0.05f && empty < -0.25f && on_block) {
+                pass++;
+                spdlog::info("[PASS] Test 8b: mass storage block {} -> {} (full) -> {} (empty)",
+                             start, full, empty);
+            } else {
+                fail++;
+                osc::test_status::fail("[FAIL] Test 8b: block {} -> {} (full) -> {} (empty), on "
+                                       "its bone: {}",
+                                       start, full, empty, on_block);
+            }
+        }
     }
 
     // Test 9: CreateThrustController returns real object

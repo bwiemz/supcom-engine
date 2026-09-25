@@ -62,6 +62,9 @@ add_executable(osc_tests
     test_replay.cpp
     test_front_end_data.cpp
     test_command_handles.cpp
+    test_url_bindings.cpp
+    test_script_object.cpp
+    test_quaternions.cpp
     test_category_match.cpp
     test_effect_expiry.cpp
     test_saved_game.cpp

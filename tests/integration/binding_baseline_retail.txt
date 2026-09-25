@@ -12,7 +12,6 @@
 G BaseManagerReclaimThread
 G ClearQueueGrid
 G ConTextMatches
-G CreateStorageManip
 G ERROR
 G EjectSessionClient
 G EngineStartFrontEndUI
