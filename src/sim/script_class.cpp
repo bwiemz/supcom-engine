@@ -135,4 +135,33 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
     lua_remove(L, cache);
 }
 
+void push_new_script_object(lua_State* L, const char* kind) {
+    const int cls = lua_gettop(L);
+    if (!lua_istable(L, cls)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        return;
+    }
+    if (lua_getmetatable(L, cls)) {
+        lua_pushstring(L, "__call");
+        lua_gettable(L, -2);
+        lua_remove(L, -2); // the class's metatable
+        if (!lua_isnil(L, -1)) {
+            lua_pushvalue(L, cls);
+            if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+                lua_remove(L, cls);
+                return;
+            }
+            spdlog::warn("{} script object: {}", kind,
+                         lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1)
+                                                        : "its class returned no table");
+        }
+        lua_pop(L, 1); // the error, the non-table, or nil
+    }
+    lua_newtable(L);
+    lua_pushvalue(L, cls);
+    lua_setmetatable(L, -2);
+    lua_remove(L, cls);
+}
+
 } // namespace osc::sim
