@@ -2019,6 +2019,12 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                        (cmd.approached ? 4u : 0u) | (cmd.in_band ? 8u : 0u));
             orders.mix(cmd.beacon_id);
             orders.mix(cmd.assigned_id);
+            // A specific unload's cargo; only when set, so other orders hash
+            // as before it existed.
+            if (!cmd.unload_ids.empty()) {
+                orders.mix(static_cast<u64>(cmd.unload_ids.size()));
+                for (u32 id : cmd.unload_ids) orders.mix(id);
+            }
         }
 
         navigation.mix(e.entity_id());

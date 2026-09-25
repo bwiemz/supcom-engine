@@ -959,8 +959,16 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) 
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    // Transport drops all cargo at target position
-    if (cargo_ids_.empty()) {
+    // Transport drops its cargo at target position: the order's
+    // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
+    // the order ends.
+    const bool any_aboard =
+        cmd.unload_ids.empty()
+            ? !cargo_ids_.empty()
+            : std::any_of(cmd.unload_ids.begin(), cmd.unload_ids.end(), [&](u32 id) {
+                  return std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end();
+              });
+    if (!any_aboard) {
         set_unit_state("TransportUnloading", false);
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -983,8 +991,8 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
     }
     navigator_.abort_move();
 
-    // Detach all cargo
-    detach_all_cargo(registry, L);
+    if (cmd.unload_ids.empty()) detach_all_cargo(registry, L);
+    else detach_cargo(cmd.unload_ids, registry, L);
     set_unit_state("TransportUnloading", false);
     command_queue_.pop_front();
     return OrderStep::Next;
