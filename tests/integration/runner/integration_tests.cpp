@@ -9903,6 +9903,36 @@ void test_factory_rally(TestContext& ctx) {
             error(d .. " from A's rally point, " .. __osc_dist(__osc_tb, 650, 140) .. " from B's")
         end
     )");
+    // A player's move to a factory (M206k): Moho's UI sends it as a factory
+    // command, so it sets A's rally point and leaves A's builds alone, where
+    // it had cleared them and queued a move A can't make.
+    lua_check("A is given builds", R"(
+        IssueClearCommands({__osc_a, __osc_b}) -- B no longer takes A's work
+        IssueBuildFactory({__osc_a}, 'uel0201', 2)
+        __osc_a_id = __osc_a:GetEntityId()
+    )");
+    {
+        lua_State* L = ctx.lua_state.raw();
+        lua_getglobal(L, "__osc_a_id");
+        const auto a_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        osc::sim::UnitCommand move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {560.0f, 0.0f, 180.0f};
+        ctx.sim.set_human_input_active(true);
+        ctx.sim.route_player_command({a_id}, move, true);
+        ctx.sim.set_human_input_active(false);
+    }
+    run(2);
+    lua_check("a player's move sets A's rally point, not its orders", R"(
+        local p = __osc_a:GetRallyPoint()
+        if VDist2(p[1], p[3], 560, 180) > 0.01 then
+            error('rally point ' .. p[1] .. ', ' .. p[3])
+        end
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; its 2 builds expected')
+        end
+    )");
     spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
 }
 

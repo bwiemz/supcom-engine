@@ -250,8 +250,8 @@ struct BuildRuleHarness {
         osc::lua::register_sim_bindings(state, sim);
         sim.add_army("ARMY_1", "ARMY_1");
 
-        register_test_unit_blueprint(
-            state, store, "test_factory", {"STRUCTURE", "FACTORY"}, 20);
+        register_test_unit_blueprint(state, store, "test_factory",
+                                     {"STRUCTURE", "FACTORY", "RALLYPOINT"}, 20);
         register_test_unit_blueprint(
             state, store, "test_tank", {"MOBILE", "LAND", "TECH1"}, 1);
         register_test_unit_blueprint(
@@ -950,4 +950,78 @@ TEST_CASE("CreateUnitHPR with an unknown blueprint creates nothing", "[sim][unit
     CHECK(lua_isnil(state.raw(), -1));
     lua_pop(state.raw(), 1);
     CHECK(sim.entity_registry().count() == 0);
+}
+
+TEST_CASE("A player's move goes to a factory as its rally point", "[session][rules]") {
+    // M206k: as Moho's UI issues it, a move, patrol or transport call splits
+    // the selection: its RALLYPOINT units (factories) take it as a factory
+    // command, into their rally orders; the rest as an order.
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "CreateUnit('test_tank', 1, 20, 0, 0)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(f);
+    REQUIRE(tank);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "test_tank";
+    f->push_command(build, false);
+    f->push_command(build, false);
+    h.sim.set_recording(true);
+
+    const auto order = [&](osc::sim::CommandType type, osc::f32 x, bool clear) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = type;
+        cmd.target_pos = {x, 0, 60};
+        h.sim.set_human_input_active(true);
+        h.sim.route_player_command({f->entity_id(), tank->entity_id()}, cmd, clear);
+        h.sim.set_human_input_active(false);
+        h.sim.tick();
+    };
+    order(osc::sim::CommandType::Move, 50, true);
+    // Two commands: the factory's, flagged, and the tank's.
+    const auto& recorded = h.sim.recorded_replay().commands;
+    REQUIRE(recorded.size() == 2);
+    CHECK(recorded[0].unit_ids == std::vector<osc::u32>{tank->entity_id()});
+    CHECK_FALSE(recorded[0].command.factory);
+    CHECK(recorded[1].unit_ids == std::vector<osc::u32>{f->entity_id()});
+    CHECK(recorded[1].command.factory);
+    // The factory's rally orders take it; its builds are untouched.
+    REQUIRE(f->rally_orders().size() == 1);
+    CHECK(f->rally_orders()[0].target_pos.x == 50.0f);
+    CHECK(factory_orders(*f) == "test_tank test_tank");
+
+    // Queued, it adds one; given fresh, it replaces them.
+    order(osc::sim::CommandType::Patrol, 70, false);
+    REQUIRE(f->rally_orders().size() == 2);
+    CHECK(f->rally_orders()[1].type == osc::sim::CommandType::Patrol);
+    order(osc::sim::CommandType::Move, 90, true);
+    REQUIRE(f->rally_orders().size() == 1);
+    CHECK(f->rally_orders()[0].target_pos.x == 90.0f);
+    CHECK(factory_orders(*f) == "test_tank test_tank");
+
+    // Any other order goes to the selection as it is.
+    const size_t before = recorded.size();
+    order(osc::sim::CommandType::Stop, 0, true);
+    REQUIRE(recorded.size() == before + 1);
+    CHECK(recorded.back().unit_ids.size() == 2);
+    CHECK_FALSE(recorded.back().command.factory);
+}
+
+TEST_CASE("A patrol whose point a unit stands on doesn't spin", "[session][rules]") {
+    // Reached, a patrol point goes to the back and the next leg waits for the
+    // next tick: with every point reached at once it would otherwise go
+    // round them for ever inside one tick.
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("CreateUnit('test_tank', 1, 20, 0, 0)\n"));
+    osc::sim::Unit* tank = find_unit(h, "test_tank");
+    REQUIRE(tank);
+    osc::sim::UnitCommand patrol;
+    patrol.type = osc::sim::CommandType::Patrol;
+    patrol.target_pos = tank->position();
+    tank->push_command(patrol, true);
+    h.sim.tick();
+    REQUIRE(tank->command_queue().size() == 1);
+    CHECK(tank->command_queue().front().type == osc::sim::CommandType::Patrol);
 }

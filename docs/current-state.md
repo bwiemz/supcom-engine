@@ -197,7 +197,6 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
   - A repeating factory's queue shows an order split by its trip round the queue as two entries; Moho shows one with its count.
-  - A player's right-click orders to a factory go into its build queue, and a plain one clears its builds. Moho sends them as rally orders (`IssueFactoryCommand`). The UI doesn't draw a factory's rally orders either (M206k).
   - A factory guarding a factory doesn't yet run its own queued builds first, or upgrades (Moho's guard task does).
   - Transports don't land, and their capacity isn't read from attach points.
   - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.

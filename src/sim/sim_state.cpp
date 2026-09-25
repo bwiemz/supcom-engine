@@ -588,6 +588,10 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
     // An AI or script order, issued inside a tick: apply now. (AI runs
     // identically on every client, so its orders stay in sync without being
     // sent over the wire.)
+    if (command.factory) {
+        apply_factory_command(unit_ids, command, clear_existing);
+        return;
+    }
     for (const auto& [uid, cmd] : expand_group_command(unit_ids, command)) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
@@ -596,6 +600,50 @@ void SimState::route_command(const std::vector<u32>& unit_ids,
         // it matches the old IssueStop's immediate clear_commands() semantics.
         if (cmd.type == CommandType::Stop) stop_unit(*unit);
         else if (!apply_silo_build(*unit, cmd)) unit->push_command(cmd, clear_existing);
+    }
+}
+
+void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                                    bool clear_existing) {
+    // Moho's UI splits these three by the RALLYPOINT category
+    // (SplitSelectionByRallyPointCategory in its move, patrol and
+    // call-transport arms); any other order goes to the selection as it is.
+    const bool rally_kind = command.type == CommandType::Move ||
+                            command.type == CommandType::Patrol ||
+                            command.type == CommandType::TransportLoad;
+    std::vector<u32> rally, others;
+    for (const u32 id : unit_ids) {
+        const Entity* e = entity_registry_.find(id);
+        const bool rally_point = rally_kind && e && e->is_unit() &&
+                                 static_cast<const Unit*>(e)->has_category("RALLYPOINT");
+        (rally_point ? rally : others).push_back(id);
+    }
+    if (!others.empty()) route_command(others, command, clear_existing);
+    if (!rally.empty()) {
+        UnitCommand factory = command;
+        factory.factory = true;
+        factory.formation.clear(); // a rally point, not a place in a formation
+        route_command(rally, factory, clear_existing);
+    }
+}
+
+void SimState::apply_factory_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                                     bool clear_existing) {
+    UnitCommand rally = command;
+    rally.factory = false;
+    const bool no_rush = no_rush_active();
+    for (const u32 id : unit_ids) {
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto& unit = static_cast<Unit&>(*e);
+        if (!unit.keeps_rally_orders()) continue;
+        // Moho passes over a factory whose rally point No Rush forbids.
+        if (no_rush) {
+            const Vector3 in_zone = clamp_to_no_rush(unit, rally.target_pos);
+            if (in_zone.x != rally.target_pos.x || in_zone.z != rally.target_pos.z) continue;
+        }
+        if (clear_existing) unit.clear_rally_orders();
+        unit.add_rally_order(rally);
     }
 }
 
@@ -730,6 +778,10 @@ void SimState::dispatch_due_commands() {
         // arrived with was the issuer's.
         UnitCommand base = sc.command;
         base.command_id = next_command_id();
+        if (base.factory) {
+            apply_factory_command(sc.unit_ids, base, sc.clear_existing);
+            return;
+        }
         for (auto& [uid, expanded] : expand_group_command(sc.unit_ids, base)) {
             auto* e = entity_registry_.find(uid);
             if (!e || e->destroyed() || !e->is_unit()) continue;
