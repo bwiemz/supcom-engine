@@ -198,7 +198,7 @@ Army stats use Moho's names and meanings, which retail's score threads read:
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
-  - A factory's repeat queue is reported (`IsRepeatQueue`) but not honoured: a finished build isn't queued again.
+  - A repeating factory's queue shows an order split by its trip round the queue as two entries; Moho shows one with its count.
   - A factory guarding a factory doesn't yet run its own queued builds first, or upgrades (Moho's guard task does).
   - Transports don't land, and their capacity isn't read from attach points.
   - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.

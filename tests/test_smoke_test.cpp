@@ -295,6 +295,112 @@ TEST_CASE("Factory build obeys lobby restricted categories", "[session][rules]")
     CHECK(h.sim.get_army(0)->get_unit_cost_total(h.sim.entity_registry()) == 1);
 }
 
+namespace {
+
+/// The harness's factory, making more than its builds use (they draw 20
+/// mass and energy a second), so it builds at full rate.
+osc::sim::Unit* find_factory(const BuildRuleHarness& h) {
+    osc::sim::Unit* found = nullptr;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<osc::sim::Unit&>(e);
+        if (u.blueprint_id() == "test_factory") found = &u;
+    });
+    if (found) {
+        found->economy().production_mass = 100.0;
+        found->economy().production_energy = 100.0;
+        found->economy().production_active = true;
+    }
+    return found;
+}
+
+/// The factory's build orders, e.g. "test_tank test_experimental".
+std::string factory_orders(const osc::sim::Unit& f) {
+    std::string s;
+    for (const auto& g : f.factory_queue())
+        for (int i = 0; i < g.count; ++i) s += (s.empty() ? "" : " ") + g.blueprint_id;
+    return s;
+}
+
+/// Finished units the army has, not counting the factory.
+int finished_units(const BuildRuleHarness& h) {
+    int n = 0;
+    h.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        auto& u = static_cast<osc::sim::Unit&>(e);
+        if (!u.destroyed() && !u.is_being_built() && u.blueprint_id() != "test_factory") ++n;
+    });
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("A repeating factory sends each finished build to the back of its queue",
+          "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    REQUIRE(factory_orders(*f) == "test_tank test_experimental");
+
+    // Each build takes a few ticks (build rate 20, build time 10).
+    auto head = [&] {
+        const auto q = f->factory_queue();
+        return q.empty() ? std::string() : q.front().blueprint_id;
+    };
+    auto finish_head = [&] {
+        const std::string first = head();
+        for (int i = 0; i < 50 && head() == first; ++i) h.sim.tick();
+    };
+    finish_head();
+    CHECK(factory_orders(*f) == "test_experimental test_tank");
+    CHECK(finished_units(h) == 1);
+    CHECK_FALSE(f->is_building()); // the next build starts next tick, as Moho's does
+    h.sim.tick();
+    CHECK(f->is_building());
+
+    finish_head();
+    CHECK(factory_orders(*f) == "test_tank test_experimental");
+    CHECK(finished_units(h) == 2);
+
+    finish_head(); // round again: a second tank
+    CHECK(factory_orders(*f) == "test_experimental test_tank");
+    CHECK(finished_units(h) == 3);
+}
+
+TEST_CASE("A factory not repeating its queue builds each order once", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    for (int i = 0; i < 50 && !f->factory_queue().empty(); ++i) h.sim.tick();
+    CHECK(factory_orders(*f).empty());
+    CHECK(finished_units(h) == 1);
+    for (int i = 0; i < 20; ++i) h.sim.tick();
+    CHECK(finished_units(h) == 1);
+}
+
+TEST_CASE("A repeating factory drops a build that fails", "[session][rules]") {
+    BuildRuleHarness h;
+    REQUIRE(h.state.do_string("local factory = CreateUnit('test_factory', 1, 0, 0, 0)\n"
+                              "IssueBuildFactory({factory}, 'test_tank', 1)\n"
+                              "IssueBuildFactory({factory}, 'test_experimental', 1)\n"));
+    osc::sim::Unit* f = find_factory(h);
+    REQUIRE(f);
+    f->set_repeat_queue(true);
+    h.sim.tick();
+    REQUIRE(f->is_building());
+
+    // The tank on the factory's floor is destroyed: its order goes, and the
+    // factory moves on to the next.
+    h.sim.entity_registry().find(f->build_target_id())->mark_destroyed();
+    h.sim.tick();
+    CHECK(factory_orders(*f) == "test_experimental");
+    CHECK(f->is_building());
+}
+
 TEST_CASE("SimState generation increments on construction", "[m155]") {
     osc::u32 gen_before = osc::sim::SimState::sim_generation();
     osc::sim::SimState::increment_sim_generation();

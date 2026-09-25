@@ -410,7 +410,24 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
             return OrderStep::Next;
         }
     }
-    if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff)) {
+    bool built = false;
+    const u32 order_id = cmd.command_id;
+    if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
+        // Finishing ran scripts, which may have cleared the queue (and cmd
+        // with it) or replaced it.
+        if (command_queue_.empty() || &command_queue_.front() != &cmd ||
+            command_queue_.front().command_id != order_id)
+            return OrderStep::Next;
+        // A factory repeating its queue sends a finished build order to the
+        // back, and starts the next one next tick (Moho's command dispatch;
+        // an order for n units is n orders here, so each goes back alone,
+        // which builds them in Moho's order). A failed build still goes.
+        if (built && repeat_queue_ && cmd.type == CommandType::BuildFactory) {
+            auto finished = std::move(cmd); // cmd is the element pop_front destroys
+            command_queue_.pop_front();
+            command_queue_.push_back(std::move(finished));
+            return OrderStep::Hold;
+        }
         command_queue_.pop_front();
         return OrderStep::Next;
     }
