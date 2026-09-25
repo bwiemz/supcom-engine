@@ -2503,6 +2503,49 @@ void test_transport(TestContext& ctx) {
             end
 
             LOG('TRANSPORT TEST: ALL CORE TESTS COMPLETE')
+
+            -- Test 12 (M206g): IssueTransportUnloadSpecific drops the cargo
+            -- in its category, chosen when it is given; the rest stays.
+            local eng = CreateUnit('uel0105', 1, pos[1] + 5, pos[2], pos[3] - 5, 0, 0, 0)
+            IssueTransportLoad({scout, eng}, transport)
+            local loaded = false
+            for i = 1, 80 do
+                WaitTicks(5)
+                if scout:IsUnitState('Attached') and eng:IsUnitState('Attached') then
+                    loaded = true
+                    break
+                end
+            end
+            if not loaded then
+                LOG('TRANSPORT TEST 12 FAILED: scout and engineer not both aboard')
+            else
+                -- Test 13: a category no cargo has gives no order.
+                IssueTransportUnloadSpecific({transport}, categories.NAVAL, pos)
+                if table.getn(transport:GetCommandQueue()) ~= 0 then
+                    LOG('TRANSPORT TEST 13 FAILED: an unload with no cargo to drop was queued')
+                else
+                    LOG('TRANSPORT TEST 13 PASSED: no cargo in the category, no order')
+                end
+                local tPos3 = transport:GetPosition()
+                IssueTransportUnloadSpecific({transport}, categories.ENGINEER,
+                                             {tPos3[1] - 10, tPos3[2], tPos3[3]})
+                local dropped = false
+                for i = 1, 60 do
+                    WaitTicks(5)
+                    if not eng:IsUnitState('Attached') then
+                        dropped = true
+                        break
+                    end
+                end
+                if not dropped then
+                    LOG('TRANSPORT TEST 12 FAILED: the engineer was not unloaded')
+                elseif not scout:IsUnitState('Attached') then
+                    LOG('TRANSPORT TEST 12 FAILED: the scout was unloaded too')
+                else
+                    LOG('TRANSPORT TEST 12 PASSED: the engineer left, the scout stayed aboard')
+                end
+            end
+            __osc_transport_specific_done = true
         end)
     )");
     if (!tt_result) {
@@ -2511,7 +2554,7 @@ void test_transport(TestContext& ctx) {
     }
 
     spdlog::info("Running transport test ticks...");
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 1100; i++) {
         ctx.sim.tick();
         if ((i + 1) % 50 == 0) {
             spdlog::info("  tick {}: {} entities",
@@ -2523,6 +2566,13 @@ void test_transport(TestContext& ctx) {
     spdlog::info("Transport test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
                  ctx.sim.thread_manager().active_count());
+    // The script ran to its end (a check it never reached would not fail).
+    lua_State* L = ctx.lua_state.raw();
+    lua_pushstring(L, "__osc_transport_specific_done");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const bool done = lua_toboolean(L, -1) != 0;
+    lua_pop(L, 1);
+    if (!done) osc::test_status::fail("[FAIL] transport test: the script did not reach its end");
 }
 
 void test_fow(TestContext& ctx) {

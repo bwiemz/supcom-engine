@@ -5057,13 +5057,27 @@ static int l_IssueTransportUnload(lua_State* L) {
     return 0;
 }
 
-// IssueTransportUnloadSpecific(transports, units, position): its position is
-// the third argument. Which units it drops is not modelled yet: it unloads
-// them all there.
+// IssueTransportUnloadSpecific(transports, category, position): the
+// transports' cargo in the category, chosen now, is dropped at the position;
+// the rest stays aboard (Moho's UNITCOMMAND_TransportUnloadSpecificUnits).
+// With no such cargo aboard, no order is given.
 static int l_IssueTransportUnloadSpecific(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim || !lua_istable(L, 2)) return 0;
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = extract_position(L, 3);
+    for (u32 transport_id : collect_unit_ids(L, 1)) {
+        const auto* te = sim->entity_registry().find(transport_id);
+        if (!te || te->destroyed() || !te->is_unit()) continue;
+        for (u32 cargo_id : static_cast<const sim::Unit*>(te)->cargo_ids()) {
+            const auto* e = sim->entity_registry().find(cargo_id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            if (unit_matches_category(L, 2, static_cast<const sim::Unit*>(e)->categories()))
+                cmd.unload_ids.push_back(cargo_id);
+        }
+    }
+    if (cmd.unload_ids.empty()) return 0;
     route_units_command(L, 1, cmd, false);
     return 0;
 }
