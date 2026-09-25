@@ -17,6 +17,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/scenario_loader.hpp"
 #include "lua/special_files.hpp"
+#include "lua/url_bindings.hpp"
 #include "sim/game_setup.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
@@ -240,6 +241,9 @@ private:
         ~RecordingWriter() { write(); }
     } recording_writer{sim_state};
 
+    /// OpenURL's allowed protocols (the init file's) and the system browser;
+    /// declared first, as the UI state keeps a pointer to it.
+    lua::UrlOpener url_opener;
     lua::LuaState ui_lua_state;
     blueprints::BlueprintStore ui_store;
     core::Localization loc_cache;
