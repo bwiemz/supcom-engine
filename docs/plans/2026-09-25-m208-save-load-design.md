@@ -1,6 +1,6 @@
 # M208 — Save and load
 
-Status: M208a done (2026-09-25); M208b and M208c to come. Phase E (gameplay fidelity).
+Status: M208a done, M208b measured (2026-09-25); M208c (snapshots) needed for long games. Phase E (gameplay fidelity).
 
 ## Why
 
@@ -48,11 +48,23 @@ Its cost is load time, which grows with the game. On SCMP_009 with four AIs, the
 - **Not saved:** the camera, the selection, control groups, chat, and pause state. The game loads unpaused, with the camera on the player's start. These are presentation, and can come later.
 - **Multiplayer:** no. `InternalSaveGame` refuses while a lockstep session is active, as the UI already stops it.
 
-## M208b — measure and speed up
+## M208b — measured (2026-09-25)
 
-- Time a load for 10, 30 and 60-minute four-AI games, in Release and Debug.
-- Find where catch-up spends its time; `tools/` profiling (eu-stack) found Lua GC to be 37% of a tick.
-- Cut what catch-up doesn't need. Candidates include sounds (already sim-clocked when headless), effects the renderer would draw, and the world snapshot capture.
+Four retail AIs on SCMP_009, seed 4242, a Release build of M208a. Each game was saved after its last tick and then loaded headless. The load time is the catch-up, from the load's own log.
+
+| Game | Played in | Loaded in | Save |
+|---|---|---|---|
+| 10 minutes (6,000 ticks) | 20 s | 11 s | 24 KB |
+| 30 minutes (18,000 ticks) | 6 min 9 s | 6 min 3 s | 72 KB |
+| 60 minutes (36,000 ticks) | 37 min | 41 min | 144 KB |
+
+(The 60-minute game shared the machine with other runs.)
+
+**A load costs what the game cost to play.** A headless catch-up is the sim and nothing else, so the savings this section once proposed (sounds, effects, the world snapshot) don't exist there. In the window, catch-up adds only the per-tick sync to the UI. The design's estimate, "a 30-minute game loads in about a minute", assumed the early game's 285 ticks a second. Late four-AI games are far slower: 1,700 to 2,400 units, and 50 to 100 ms a tick.
+
+**The response is the sim's speed first** (Phase H, M224), because it speeds up play as well as loading. A late-game profile found that a third of the sim went to category matching and a quarter to radius queries. M224a–c (#90–#92) cut the 18,000-tick sim from 450 s to 250 s, with identical traces, and loads speed up the same.
+
+**Long games still need M208c.** Even at twice the speed, a 60-minute four-AI game would take about 20 minutes to load, and retail loads one at once. State snapshots are therefore the plan for long games. They are a milestone of their own, with a design first. Until then, loads suit short and medium games, and the sim-speed work continues.
 
 ## M208c — state snapshots (only if M208b says so)
 
