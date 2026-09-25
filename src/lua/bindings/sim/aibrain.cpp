@@ -128,15 +128,16 @@ static int brain_NumCurrentlyBuilding(lua_State* L) {
         return 1;
     }
     int count = 0;
+    const CategoryMatcher builder_category(L, 3);
+    const CategoryMatcher target_category(L, 2);
     for (auto* e : brain->get_units(sim->entity_registry())) {
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* builder = static_cast<sim::Unit*>(e);
         if (!builder->is_building()) continue;
         auto* target = sim->entity_registry().find(builder->build_target_id());
         if (!target || target->destroyed() || !target->is_unit()) continue;
-        if (!unit_matches_category(L, 3, builder->categories())) continue;
-        if (!unit_matches_category(L, 2, static_cast<sim::Unit*>(target)->categories()))
-            continue;
+        if (!builder_category.matches(builder->category_bits())) continue;
+        if (!target_category.matches(static_cast<sim::Unit*>(target)->category_bits())) continue;
         ++count;
     }
     lua_pushnumber(L, count);
@@ -293,13 +294,12 @@ static int brain_GetCurrentUnits(lua_State* L) {
 
     // Optional category filter (arg 2 — Lua category expression table)
     if (lua_istable(L, 2)) {
-        int cat_idx = 2;
+        const osc::lua::CategoryMatcher category(L, 2);
         i32 count = 0;
         sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
             if (e.army() == brain->index() && !e.destroyed() && e.is_unit()) {
                 auto* u = static_cast<const sim::Unit*>(&e);
-                if (osc::lua::unit_matches_category(L, cat_idx, u->categories()))
-                    count++;
+                if (category.matches(u->category_bits())) count++;
             }
         });
         lua_pushnumber(L, count);
@@ -362,6 +362,9 @@ static int brain_GetListOfUnits(lua_State* L) {
     bool need_built = (built_idx > 0) && lua_toboolean(L, built_idx) != 0;
 
     auto entities = brain->get_units(sim->entity_registry());
+    const std::optional<osc::lua::CategoryMatcher> category =
+        has_category ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_idx)
+                     : std::nullopt;
 
     lua_newtable(L);
     int idx = 1;
@@ -371,9 +374,7 @@ static int brain_GetListOfUnits(lua_State* L) {
         if (!entity->is_unit()) continue;
         auto* unit = static_cast<sim::Unit*>(entity);
         if (need_built && unit->is_being_built()) continue;
-        if (has_category &&
-            !osc::lua::unit_matches_category(L, cat_idx, unit->categories()))
-            continue;
+        if (category && !category->matches(unit->category_bits())) continue;
 
         lua_pushnumber(L, idx++);
         lua_rawgeti(L, LUA_REGISTRYINDEX, entity->lua_table_ref());
@@ -398,6 +399,9 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
         if (lua_istable(L, i)) { cat_arg = i; break; }
     }
     bool has_category = (cat_arg > 0);
+    const std::optional<osc::lua::CategoryMatcher> category =
+        has_category ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_arg)
+                     : std::nullopt;
     // Position table is next table after category
     int pos_arg = 0;
     if (cat_arg > 0) {
@@ -462,9 +466,7 @@ static int brain_GetUnitsAroundPoint(lua_State* L) {
         }
 
         if (unit->lua_table_ref() < 0) continue;
-        if (has_category &&
-            !osc::lua::unit_matches_category(L, cat_arg, unit->categories()))
-            continue;
+        if (category && !category->matches(unit->category_bits())) continue;
 
         lua_pushnumber(L, idx++);
         lua_rawgeti(L, LUA_REGISTRYINDEX, unit->lua_table_ref());
@@ -516,6 +518,7 @@ static int brain_GetBlueprintStat(lua_State* L) {
         return 1;
     }
     f64 total = 0.0;
+    const CategoryMatcher category(L, 3);
     for (const auto& [bp_id, value] : *per_bp) {
         auto* entry = store->find(bp_id);
         if (!entry) continue;
@@ -523,7 +526,7 @@ static int brain_GetBlueprintStat(lua_State* L) {
         std::unordered_set<std::string> cats;
         sim::collect_blueprint_categories(L, lua_gettop(L), cats);
         lua_pop(L, 1);
-        if (categories_match(L, 3, cats)) total += value;
+        if (category.matches(cats)) total += value;
     }
     lua_pushnumber(L, total);
     return 1;
@@ -1001,6 +1004,9 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
         if (lua_istable(L, i)) { cat_arg = i; break; }
     }
     bool has_category = (cat_arg > 0);
+    const std::optional<osc::lua::CategoryMatcher> category =
+        has_category ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_arg)
+                     : std::nullopt;
 
     // Position table: next table after category
     int pos_arg = 0;
@@ -1059,9 +1065,7 @@ static int brain_GetNumUnitsAroundPoint(lua_State* L) {
 
         if (unit->lua_table_ref() < 0) continue;
 
-        if (has_category &&
-            !osc::lua::unit_matches_category(L, cat_arg, unit->categories()))
-            continue;
+        if (category && !category->matches(unit->category_bits())) continue;
 
         count++;
     }
@@ -1921,6 +1925,9 @@ static int brain_IsAnyEngineerBuilding(lua_State* L) {
     if (!brain || !sim) { lua_pushboolean(L, 0); return 1; }
 
     int cat_idx = lua_istable(L, 2) ? 2 : 0;
+    const std::optional<osc::lua::CategoryMatcher> category =
+        cat_idx > 0 ? std::optional<osc::lua::CategoryMatcher>(std::in_place, L, cat_idx)
+                    : std::nullopt;
     i32 army = brain->index();
 
     bool found = false;
@@ -1938,8 +1945,7 @@ static int brain_IsAnyEngineerBuilding(lua_State* L) {
             auto* target = sim->entity_registry().find(unit.build_target_id());
             if (!target || target->destroyed() || !target->is_unit()) return;
             auto* target_unit = static_cast<sim::Unit*>(target);
-            if (!osc::lua::unit_matches_category(L, cat_idx, target_unit->categories()))
-                return;
+            if (!category->matches(target_unit->category_bits())) return;
         }
         found = true;
     });

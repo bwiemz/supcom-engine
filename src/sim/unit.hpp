@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sim/category_set.hpp"
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
 #include "sim/pose.hpp"
@@ -117,10 +118,14 @@ public:
     const std::unordered_set<std::string>& categories() const {
         return categories_;
     }
+    /// The same categories as ids, for compiled category tests
+    /// (lua::CategoryMatcher).
+    const CategoryBits& category_bits() const { return category_bits_; }
     bool has_category(const std::string& cat) const {
         return categories_.count(cat) > 0;
     }
     void add_category(std::string cat) {
+        category_bits_.set(CategoryIds::intern(cat));
         categories_.insert(std::move(cat));
     }
 
@@ -872,6 +877,7 @@ private:
     Navigator navigator_;
     UnitEconomy economy_;
     std::unordered_set<std::string> categories_;
+    CategoryBits category_bits_; // categories_, as ids
     std::deque<UnitCommand> command_queue_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
     std::vector<UnitCommand> rally_orders_; // see rally_orders()
