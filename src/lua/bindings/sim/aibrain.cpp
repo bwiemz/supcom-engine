@@ -747,10 +747,12 @@ static int brain_GetStartVector3f(lua_State* L) {
     return 1;
 }
 
-// brain:GetMapWaterRatio() → fraction of map that is water (0.0–1.0)
+// brain:GetMapWaterRatio(): the share of the map under water (M207a), which
+// retail's AI weighs when it chooses naval builders.
 static int brain_GetMapWaterRatio(lua_State* L) {
-    // Stub: return 0.0 (land map)
-    lua_pushnumber(L, 0.0);
+    auto* sim = get_sim(L);
+    const auto* terrain = sim ? sim->terrain() : nullptr;
+    lua_pushnumber(L, terrain ? terrain->water_ratio() : 0.0f);
     return 1;
 }
 

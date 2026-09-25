@@ -80,6 +80,25 @@ TEST_CASE("Heightmap with real-world scale", "[map]") {
     CHECK_THAT(hm.get_height(0, 1), WithinAbs(25.0, 0.01));
 }
 
+TEST_CASE("The map's water ratio samples as Moho's does", "[map]") {
+    // A 64x64 map: Moho samples columns and rows 8..48 (6 x 6), not the
+    // border. Low ground (height 0) where x <= 24, and along the far edge
+    // (x >= 56), which isn't sampled; the rest at height 100.
+    const u32 size = 64;
+    std::vector<u16> data((size + 1) * (size + 1), 100);
+    for (u32 z = 0; z <= size; ++z)
+        for (u32 x = 0; x <= size; ++x)
+            if (x <= 24 || x >= 56) data[z * (size + 1) + x] = 0;
+    const Heightmap hm(size, size, 1.0f, data);
+
+    CHECK_THAT(Terrain(hm, 50.0f, true).water_ratio(), WithinAbs(0.5, 1e-6)); // 3 of 6 columns
+    CHECK(Terrain(hm, 50.0f, false).water_ratio() == 0.0f);                   // no water on the map
+    CHECK(Terrain(hm, 150.0f, true).water_ratio() == 1.0f);                   // all of it under
+    CHECK(Terrain(hm, 0.0f, true).water_ratio() == 0.0f); // level with it isn't under
+    CHECK(Terrain(Heightmap(8, 8, 1.0f, std::vector<u16>(81, 0)), 50.0f, true).water_ratio() ==
+          0.0f); // too small to sample
+}
+
 // ================================================================
 // SCMAP parser tests
 // ================================================================

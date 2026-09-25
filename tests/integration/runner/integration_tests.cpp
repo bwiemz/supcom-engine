@@ -846,6 +846,15 @@ void test_threat(TestContext& ctx) {
             -- Cleanup
             brain2:DisbandPlatoon(platoon)
 
+            -- GetMapWaterRatio: the share of the map under water, sampled
+            -- as Moho does (M207a). SCMP_009 is land and sea.
+            local ratio = brain1:GetMapWaterRatio()
+            LOG('Threat test: map water ratio ' .. ratio)
+            if ratio <= 0.05 or ratio >= 0.95 then
+                LOG('THREAT TEST FAILED: water ratio ' .. ratio)
+                return
+            end
+
             LOG('THREAT TEST: ALL PASSED')
         end)
     )");
