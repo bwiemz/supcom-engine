@@ -692,10 +692,29 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 }
                 lua_pop(L, 1); // pop Transport (or nil)
 
-                // SizeY: a carried unit with no AttachPoint bone hangs by its centre
-                lua_pushstring(L, "SizeY");
+                // SizeY: a carried unit with no AttachPoint bone hangs by its
+                // centre; size and density: a transport loads the largest first.
+                const auto number = [&](const char* name, f32 fallback) {
+                    lua_pushstring(L, name);
+                    lua_rawget(L, -2);
+                    const f32 v =
+                        lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : fallback;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                unit->set_size_y(number("SizeY", 1.0f));
+                unit->set_size_xz(number("SizeX", 1.0f), number("SizeZ", 1.0f));
+                unit->set_average_density(number("AverageDensity", 0.49f));
+                // Air.TransportHoverHeight: how low a transport hovers to load
+                lua_pushstring(L, "Air");
                 lua_rawget(L, -2);
-                if (lua_isnumber(L, -1)) unit->set_size_y(static_cast<f32>(lua_tonumber(L, -1)));
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "TransportHoverHeight");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_transport_hover_height(static_cast<f32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+                }
                 lua_pop(L, 1);
             }
             lua_pop(L, 1); // pop bp table

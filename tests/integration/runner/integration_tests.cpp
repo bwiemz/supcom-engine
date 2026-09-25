@@ -10122,6 +10122,265 @@ void test_transport_slots(TestContext& ctx) {
     spdlog::info("Transport slots test: {} passed, {} failed", pass, fail);
 }
 
+void test_transport_pickup(TestContext& ctx) {
+    spdlog::info(
+        "=== TRANSPORT PICKUP TEST: a transport comes for its units; they beam up (M206m) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] transport pickup script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const char* expr) -> osc::sim::Unit* {
+        lua((std::string("__osc_id = ") + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    const auto* terrain = ctx.sim.terrain();
+
+    // 8 tanks east of the map's centre, made first; a UEF T1 transport (6
+    // small attach points, hovering 3 over the ground to load) 50 to the
+    // west. Scripts note what each side hears.
+    if (!lua(R"(
+        local function spawn(bp, x, z)
+            return CreateUnitHPR(bp, 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        __osc_heard = {}
+        function __osc_note(u, method, what)
+            local old = u[method]
+            u[method] = function(self, a, b)
+                table.insert(__osc_heard, what or method)
+                if method == 'OnStartTransportBeamUp' and type(b) == 'number' then
+                    table.insert(__osc_heard, 'bone')
+                end
+                if old then return old(self, a, b) end
+            end
+        end
+        __osc_tanks = {}
+        for i = 1, 8 do
+            __osc_tanks[i] = spawn('uel0201', 636 + 3 * i, 118 + (i - 1) - (i - 1))
+            __osc_note(__osc_tanks[i], 'OnStartTransportBeamUp')
+            __osc_note(__osc_tanks[i], 'OnStopTransportBeamUp')
+        end
+        __osc_xport = spawn('uea0107', 600, 100)
+        for _, m in {'OnStartTransportLoading', 'OnTransportOrdered', 'OnTransportFull',
+                     'OnStopTransportLoading', 'OnTransportAborted'} do
+            __osc_note(__osc_xport, m)
+        end
+        function __osc_count(what)
+            local n = 0
+            for _, h in __osc_heard do if h == what then n = n + 1 end end
+            return n
+        end
+        function __osc_attached(list)
+            local n = 0
+            for _, u in list do
+                if not u:IsDead() and u:IsUnitState('Attached') then n = n + 1 end
+            end
+            return n
+        end
+    )"))
+        return;
+    ctx.sim.tick();
+    auto* xport = unit("__osc_xport");
+    if (!xport || !terrain) {
+        check(false, "the transport exists");
+        return;
+    }
+    const osc::sim::Vector3 start = xport->position();
+    std::vector<osc::sim::Unit*> tanks;
+    for (int i = 1; i <= 8; ++i)
+        tanks.push_back(unit(("__osc_tanks[" + std::to_string(i) + "]").c_str()));
+
+    lua("IssueTransportLoad(__osc_tanks, __osc_xport)");
+    ctx.sim.tick();
+    ctx.sim.tick();
+    check(xport->has_unit_state("TransportLoading") && xport->pickup_ids().size() == 6,
+          fmt::format("the transport takes the pickup: {} of 8 given slots",
+                      xport->pickup_ids().size()));
+
+    // Where the 6 given slots stood.
+    osc::sim::Vector3 centre{};
+    for (const osc::u32 id : xport->pickup_ids()) {
+        const auto* e = ctx.sim.entity_registry().find(id);
+        centre = {centre.x + e->position().x / 6, 0, centre.z + e->position().z / 6};
+    }
+
+    f32 flown = -1, from_centre = -1, lifted = 0;
+    int ticks = 2;
+    for (; ticks < 400; ++ticks) {
+        ctx.sim.tick();
+        if (flown < 0 && xport->pickup_ready()) {
+            flown = std::hypot(xport->position().x - start.x, xport->position().z - start.z);
+            from_centre =
+                std::hypot(xport->position().x - centre.x, xport->position().z - centre.z);
+        }
+        for (const auto* t : tanks)
+            if (t && !t->destroyed() && t->transport_id() == 0)
+                lifted = std::max(lifted, t->position().y - terrain->get_surface_height(
+                                                                t->position().x, t->position().z));
+        if (!xport->pickup_running() && !xport->has_unit_state("TransportLoading")) break;
+    }
+    const f32 hover =
+        xport->position().y - terrain->get_terrain_height(xport->position().x, xport->position().z);
+    lua("__osc_n = __osc_attached(__osc_tanks)");
+    check(number("__osc_n") == 6 && ticks < 300,
+          fmt::format("6 of 8 tanks board, within {} ticks ({} aboard)", ticks, number("__osc_n")));
+    check(flown > 30.0f && from_centre < 10.0f,
+          fmt::format("the transport flew to its units ({:.0f} flown, {:.1f} from their centre)",
+                      flown, from_centre));
+    check(std::abs(hover - 3.0f) < 0.3f,
+          fmt::format("it hovers at its TransportHoverHeight of 3 ({:.2f})", hover));
+    check(lifted > 0.5f,
+          fmt::format("a tank rose off the ground before it was aboard ({:.2f})", lifted));
+    lua(R"(
+        __osc_a = __osc_count('OnStartTransportBeamUp')
+        __osc_b = __osc_count('OnStopTransportBeamUp')
+        __osc_bone = __osc_count('bone')
+        __osc_left = 0
+        for _, t in __osc_tanks do
+            if not t:IsUnitState('Attached') and table.getn(t:GetCommandQueue()) == 0 then
+                __osc_left = __osc_left + 1
+            end
+        end
+    )");
+    check(number("__osc_a") == 6 && number("__osc_b") == 6 && number("__osc_bone") == 6,
+          fmt::format("each boarder beamed up and heard it with a bone ({} started, {} stopped, "
+                      "{} with a bone)",
+                      number("__osc_a"), number("__osc_b"), number("__osc_bone")));
+    check(number("__osc_left") == 2, fmt::format("the 2 without a slot were left, their order "
+                                                 "done ({})",
+                                                 number("__osc_left")));
+    lua(R"(
+        __osc_c = __osc_count('OnStartTransportLoading') .. __osc_count('OnTransportOrdered') ..
+                  __osc_count('OnTransportFull') .. __osc_count('OnStopTransportLoading') ..
+                  __osc_count('OnTransportAborted')
+    )");
+    {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_c");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const std::string heard = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        check(
+            heard == "11110",
+            fmt::format("the transport heard: loading, ordered, full, stop, no abort ({})", heard));
+    }
+
+    // Stopped on its way, a second transport's pickup is aborted; its units'
+    // orders end, and they don't call it back.
+    lua(R"(
+        __osc_heard = {}
+        __osc_x2 = CreateUnitHPR('uea0107', 'ARMY_1', 600, GetTerrainHeight(600, 140), 140, 0, 0, 0)
+        __osc_note(__osc_x2, 'OnTransportAborted')
+        __osc_note(__osc_x2, 'OnStopTransportLoading')
+        __osc_pair = {}
+        for i = 1, 2 do
+            __osc_pair[i] = CreateUnitHPR('uel0201', 'ARMY_1', 660 + 3 * i,
+                                          GetTerrainHeight(660, 150), 150, 0, 0, 0)
+        end
+        IssueTransportLoad(__osc_pair, __osc_x2)
+    )");
+    auto* x2 = unit("__osc_x2");
+    for (int i = 0; i < 10; ++i) ctx.sim.tick();
+    const bool flying = x2 && x2->pickup_running() && !x2->pickup_ready();
+    lua("IssueStop({__osc_x2})");
+    for (int i = 0; i < 20; ++i) ctx.sim.tick();
+    lua(R"(
+        __osc_aborted = __osc_count('OnTransportAborted')
+        __osc_idle = 0
+        for _, t in __osc_pair do
+            if not t:IsUnitState('Attached') and table.getn(t:GetCommandQueue()) == 0 then
+                __osc_idle = __osc_idle + 1
+            end
+        end
+    )");
+    const auto* slots2 = x2 ? x2->built_transport_slots() : nullptr;
+    check(flying && number("__osc_aborted") == 1 && number("__osc_idle") == 2 && x2 &&
+              !x2->pickup_running() && (!slots2 || slots2->slots().empty()),
+          fmt::format("a pickup stopped on the way is aborted, its units' orders end and its "
+                      "slots are free (flying {}, aborted {}, idle {})",
+                      flying, number("__osc_aborted"), number("__osc_idle")));
+
+    // The largest go first: a T3 bot's slot (4 of the 6 small bones) is
+    // given before the tanks', and only 2 of 6 tanks fit beside it.
+    lua(R"(
+        __osc_x3 = CreateUnitHPR('uea0107', 'ARMY_1', 560, GetTerrainHeight(560, 60), 60, 0, 0, 0)
+        __osc_mix = {}
+        for i = 1, 6 do
+            __osc_mix[i] = CreateUnitHPR('uel0201', 'ARMY_1', 585 + 3 * i,
+                                         GetTerrainHeight(585, 70), 70, 0, 0, 0)
+        end
+        __osc_bot = CreateUnitHPR('uel0303', 'ARMY_1', 600, GetTerrainHeight(600, 75), 75, 0, 0, 0)
+        table.insert(__osc_mix, __osc_bot)
+        IssueTransportLoad(__osc_mix, __osc_x3)
+    )");
+    for (int i = 0; i < 300; ++i) ctx.sim.tick();
+    lua(R"(
+        __osc_bot_in = __osc_bot:IsUnitState('Attached') and 1 or 0
+        __osc_n = __osc_attached(__osc_mix)
+    )");
+    check(number("__osc_bot_in") == 1 && number("__osc_n") == 3,
+          fmt::format("the largest board first: the T3 bot and 2 tanks ({} aboard, bot {})",
+                      number("__osc_n"), number("__osc_bot_in")));
+
+    // Scripts that clear their own orders as the pickup ends (a unit as it
+    // stops beaming up, the transport as it stops loading) leave the orders
+    // finished, not a second one taken off.
+    lua(R"(
+        __osc_x4 = CreateUnitHPR('uea0107', 'ARMY_1', 520, GetTerrainHeight(520, 160), 160, 0, 0, 0)
+        __osc_solo = CreateUnitHPR('uel0201', 'ARMY_1', 545, GetTerrainHeight(545, 170), 170, 0, 0, 0)
+        local stop_beam = __osc_solo.OnStopTransportBeamUp
+        __osc_solo.OnStopTransportBeamUp = function(self)
+            IssueClearCommands({self})
+            if stop_beam then stop_beam(self) end
+        end
+        local stop_loading = __osc_x4.OnStopTransportLoading
+        __osc_x4.OnStopTransportLoading = function(self)
+            IssueClearCommands({self})
+            if stop_loading then stop_loading(self) end
+        end
+        IssueTransportLoad({__osc_solo}, __osc_x4)
+        IssueMove({__osc_solo}, {560, GetTerrainHeight(560, 170), 170})
+    )");
+    auto* x4 = unit("__osc_x4");
+    bool began = false;
+    for (int i = 0; i < 400 && x4 && !(began && !x4->pickup_running()); ++i) {
+        ctx.sim.tick();
+        began = began || x4->pickup_running();
+    }
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    lua(R"(
+        __osc_solo_in = __osc_solo:IsUnitState('Attached') and 1 or 0
+        __osc_solo_q = table.getn(__osc_solo:GetCommandQueue())
+        __osc_x4_q = table.getn(__osc_x4:GetCommandQueue())
+    )");
+    check(number("__osc_solo_in") == 1 && number("__osc_solo_q") == 0 &&
+              number("__osc_x4_q") == 0 && x4 && !x4->pickup_running(),
+          fmt::format("scripts clearing their orders as the pickup ends are safe (aboard {}, "
+                      "unit's orders {}, transport's {})",
+                      number("__osc_solo_in"), number("__osc_solo_q"), number("__osc_x4_q")));
+
+    spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
+}
+
 void test_ferry(TestContext& ctx) {
     spdlog::info("=== FERRY TEST: a ferry carries units from its beacon to its drop-off ===");
     int pass = 0, fail = 0;
