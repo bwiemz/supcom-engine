@@ -46,15 +46,6 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     command_queue_.push_back(cmd);
 }
 
-void Unit::clear_queued_commands() {
-    // Keep the front command (currently executing), remove the rest
-    if (command_queue_.size() > 1) {
-        auto front = command_queue_.front();
-        command_queue_.clear();
-        command_queue_.push_back(front);
-    }
-}
-
 void Unit::clear_commands(const char*) {
     command_queue_.clear();
     navigator_.abort_move();

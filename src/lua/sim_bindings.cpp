@@ -4733,23 +4733,35 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     return 0;
 }
 
-// IssueFactoryRallyPoint(units_table, position) — sets rally point on each unit
+// IssueFactoryRallyPoint(units_table, position): a Move, after their other
+// rally orders, for what each factory among the units builds (Moho: one
+// command in each factory's command queue; M206j).
 static int l_IssueFactoryRallyPoint(lua_State* L) {
-    auto pos = extract_position(L, 2);
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->set_rally_point(*static_cast<sim::Vector3*>(c));
-    }, &pos);
+    struct Rally {
+        sim::SimState* sim;
+        sim::UnitCommand move;
+    } rally{get_sim(L), {}};
+    rally.move.type = sim::CommandType::Move;
+    rally.move.target_pos = extract_position(L, 2);
+    for_each_unit_in_table(
+        L, 1,
+        [](sim::Unit* u, void* c) {
+            auto& r = *static_cast<Rally*>(c);
+            if (!u->keeps_rally_orders()) return;
+            // One command id for them all, taken only if a factory gets it.
+            if (r.move.command_id == 0 && r.sim) r.move.command_id = r.sim->next_command_id();
+            u->add_rally_order(r.move);
+        },
+        &rally);
     return 0;
 }
 
-// IssueClearFactoryCommands(units_table) — clears factory build QUEUE only.
-// In FA's engine, this clears pending build orders but does NOT abort the
-// unit currently under construction.  Our clear_commands() was too aggressive
-// and also removed the active BuildFactory command, stalling production.
+// IssueClearFactoryCommands(units_table): clears each factory's rally orders
+// (Moho's factory command queue), not its build orders. Retail's AI calls it
+// before IssueFactoryRallyPoint; clearing build orders here instead dropped
+// the builds it had queued.
 static int l_IssueClearFactoryCommands(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        u->clear_queued_commands();
-    }, nullptr);
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) { u->clear_rally_orders(); }, nullptr);
     return 0;
 }
 

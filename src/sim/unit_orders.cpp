@@ -41,6 +41,34 @@ std::unordered_set<std::string> read_blueprint_categories(lua_State* L, const st
     return categories;
 }
 
+/// A number in unit blueprint `bp_id`'s Economy table, or `fallback`.
+f32 blueprint_economy_number(lua_State* L, const std::string& bp_id, const char* field,
+                             f32 fallback) {
+    if (!L || bp_id.empty()) return fallback;
+    std::string key = bp_id;
+    std::transform(key.begin(), key.end(), key.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    f32 value = fallback;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, key.c_str());
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Economy");
+            lua_rawget(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, field);
+                lua_rawget(L, -2);
+                if (lua_type(L, -1) == LUA_TNUMBER) value = static_cast<f32>(lua_tonumber(L, -1));
+            }
+        }
+    }
+    lua_settop(L, top);
+    return value;
+}
+
 bool build_blocked_by_lobby_rules(const Unit& builder, const UnitCommand& cmd,
                                   const SimContext& ctx) {
     if (!ctx.sim) return false;
@@ -412,7 +440,10 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
     }
     bool built = false;
     const u32 order_id = cmd.command_id;
+    const u32 target = build_target_id_;
+    const bool factory_build = cmd.type == CommandType::BuildFactory; // not an upgrade
     if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
+        if (built && factory_build) hand_over_rally_orders(target, entity_id(), ctx);
         // Finishing ran scripts, which may have cleared the queue (and cmd
         // with it) or replaced it.
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
@@ -689,6 +720,54 @@ void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
     }
 }
 
+namespace {
+/// A factory's initial rally point: its blueprint's Economy.InitialRallyX/Z
+/// (Moho's defaults 0 and 5), turned with the factory.
+Vector3 initial_rally_point(const Unit& u, lua_State* L) {
+    const Vector3 local{blueprint_economy_number(L, u.blueprint_id(), "InitialRallyX", 0.0f), 0.0f,
+                        blueprint_economy_number(L, u.blueprint_id(), "InitialRallyZ", 5.0f)};
+    const Vector3 offset = quat_rotate(u.orientation(), local);
+    return {u.position().x + offset.x, u.position().y + offset.y, u.position().z + offset.z};
+}
+} // namespace
+
+const std::vector<UnitCommand>& Unit::validated_rally_orders(lua_State* L, SimState* sim) {
+    if (rally_orders_.empty() && keeps_rally_orders()) {
+        UnitCommand rally;
+        rally.type = CommandType::Move;
+        rally.target_pos = initial_rally_point(*this, L);
+        rally.command_id = sim ? sim->next_command_id() : 0;
+        rally_orders_.push_back(rally);
+    }
+    return rally_orders_;
+}
+
+bool Unit::rally_point(lua_State* L, Vector3& out) const {
+    if (!rally_orders_.empty()) {
+        out = rally_orders_.front().target_pos;
+        return true;
+    }
+    if (!keeps_rally_orders()) return false;
+    out = initial_rally_point(*this, L);
+    return true;
+}
+
+void Unit::hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx) {
+    if (is_mobile()) return; // a mobile factory's units take none (Moho)
+    auto* built_entity = ctx.registry.find(built_id);
+    auto* rally_entity = ctx.registry.find(rally_id);
+    if (!built_entity || built_entity->destroyed() || !built_entity->is_unit()) return;
+    if (!rally_entity || rally_entity->destroyed() || !rally_entity->is_unit()) return;
+    auto& built = static_cast<Unit&>(*built_entity);
+    auto& rally = static_cast<Unit&>(*rally_entity);
+    // Aircraft and ships don't take a rally order to board a transport.
+    const bool air_or_naval = built.has_category("AIR") || built.has_category("NAVAL");
+    for (const UnitCommand& order : rally.validated_rally_orders(ctx.L, ctx.sim)) {
+        if (order.type == CommandType::TransportLoad && air_or_naval) continue;
+        built.command_queue_.push_back(order);
+    }
+}
+
 OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
@@ -721,8 +800,16 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // is never taken.
     if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY")) {
         if (factory_assist_build_) {
-            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff))
+            const u32 built_id = build_target_id_;
+            const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
+            bool built = false;
+            if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
                 factory_assist_build_ = false; // built (or failed): free again
+                // Built for the guarded factory, the unit takes its rally
+                // orders: Moho's guard task hands the build task that
+                // factory as the one whose orders the unit takes.
+                if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
+            }
             return OrderStep::Hold;
         }
         auto& queue = target_unit->command_queue_;

@@ -37,7 +37,7 @@ set(OSC_DATA_TESTS_GATE
     dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
     gameui-test impact-test
-    enhance-wreck-test factory-assist-test ferry-test fire-test flags-test formation-test font-test fow-test
+    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test
     full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test
