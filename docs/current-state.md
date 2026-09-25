@@ -203,7 +203,7 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   - A factory guarding a factory doesn't yet run its own queued builds first, or upgrades (Moho's guard task does).
   - Transports don't land, and their capacity isn't read from attach points.
   - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
-  - The AI's threat queries count every enemy unit. Moho's read the army's influence map (`CInfluenceMap`), a grid of threat kept from the blips its intel has seen (M207).
+  - The AI's influence maps (M207b) take no false blips from jammers; nothing makes them yet.
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
