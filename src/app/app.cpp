@@ -1535,6 +1535,8 @@ int run(int argc, char* argv[], TestModes* tests) {
             dummy_sim = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
         }
         osc::lua::register_moho_bindings(ui_lua_state, sim_state ? *sim_state : *dummy_sim);
+        // A drawn game's captured ticks serve the UI's unit objects too.
+        if (!headless) osc::lua::set_ui_world_source(ui_lua_state.raw(), &world_interp.history);
         // If we used a dummy, clear the sim pointer in UI registry so moho methods
         // return gracefully instead of dereferencing a dangling pointer.
         if (dummy_sim) {
