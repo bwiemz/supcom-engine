@@ -979,16 +979,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         if (w) w->owner_entity_id = id;
     }
 
-    // Create Lua instance table
-    lua_newtable(L);
-
-    // Metatable: the blueprint's script class (else the generic Unit)
+    // The Lua object: made by the blueprint's script class (else the generic
+    // Unit), as Moho makes it, so a class's __init runs -- FAF's ACUs and
+    // SCUs name their gun there. (Props and projectiles skip the call: their
+    // classes' __init and __post_init are empty in retail and FAF alike.)
     push_unit_class(L, bp_id);
-    if (lua_istable(L, -1)) {
-        lua_setmetatable(L, -2);
-    } else {
-        lua_pop(L, 1);
-    }
+    sim::push_new_script_object(L, "Unit");
 
     // _c_object
     lua_pushstring(L, "_c_object");
