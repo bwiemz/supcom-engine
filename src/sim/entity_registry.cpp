@@ -17,7 +17,9 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
     entity->set_registry(this);
     order_.push_back({id, entity.get()});
     if (entity->is_unit()) unit_order_.push_back({id, entity.get()});
+    if (entities_.size() <= id) entities_.resize(id + 1);
     entities_[id] = std::move(entity);
+    ++live_count_;
 
     notify_collision_shape_changed(*entities_[id]);
     if (grid_initialized_) {
@@ -32,12 +34,11 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
 }
 
 void EntityRegistry::unregister_entity(u32 id) {
-    auto it = entities_.find(id);
-    if (it == entities_.end()) return;
+    if (id >= entities_.size() || !entities_[id]) return;
     // Take the entity out before the hook: the hook runs scripts (OnDestroy),
-    // which may create or remove entities and so rehash the map.
-    std::unique_ptr<Entity> entity = std::move(it->second);
-    entities_.erase(it);
+    // which may create or remove entities and so grow the table.
+    std::unique_ptr<Entity> entity = std::move(entities_[id]);
+    --live_count_;
     const auto clear_slot = [id](std::vector<Slot>& order) {
         auto slot = std::lower_bound(order.begin(), order.end(), id,
                                      [](const Slot& s, u32 v) { return s.id < v; });
@@ -60,8 +61,7 @@ void EntityRegistry::unregister_entity(u32 id) {
 }
 
 Entity* EntityRegistry::find(u32 id) const {
-    auto it = entities_.find(id);
-    return it != entities_.end() ? it->second.get() : nullptr;
+    return id < entities_.size() ? entities_[id].get() : nullptr;
 }
 
 void EntityRegistry::collect_garbage() {
@@ -102,8 +102,8 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
         e.set_grid_cell(cx, cz);
     });
 
-    spdlog::info("Spatial hash grid: {}x{} cells (cell_size={}u, {} entities indexed)",
-                 grid_width_, grid_height_, CELL_SIZE, entities_.size());
+    spdlog::info("Spatial hash grid: {}x{} cells (cell_size={}u, {} entities indexed)", grid_width_,
+                 grid_height_, CELL_SIZE, live_count_);
 }
 
 void EntityRegistry::world_to_cell(f32 wx, f32 wz, i32& cx, i32& cz) const {

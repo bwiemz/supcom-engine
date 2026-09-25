@@ -68,7 +68,10 @@ public:
     void set_lua_table_ref(int r) { lua_table_ref_ = r; }
 
     /// Runtime parameter overrides (SetEmitterParam).
-    void set_param(const std::string& name, f64 value) { params_[name] = value; }
+    void set_param(const std::string& name, f64 value) {
+        params_[name] = value;
+        if (name == "LIFETIME") lifetime_ = value;
+    }
     f64 get_param(const std::string& name) const {
         auto it = params_.find(name);
         return it != params_.end() ? it->second : 0.0;
@@ -76,6 +79,9 @@ public:
 
     /// Birth time for lifetime tracking (game seconds).
     f64 birth_time() const { return birth_time_; }
+    /// get_param("LIFETIME"), kept at hand: expire_timed asks it of every
+    /// timed effect each tick.
+    f64 lifetime() const { return lifetime_; }
     void set_birth_time(f64 t) { birth_time_ = t; }
 
     /// Light particle specific fields.
@@ -104,6 +110,7 @@ private:
     std::unordered_map<std::string, f64> params_;
 
     f64 birth_time_ = -1.0; // -1 = no auto-expiry
+    f64 lifetime_ = 0.0;    // params_' LIFETIME (0 when unset)
 
     // Light particle fields
     f32 light_size_ = 0;
@@ -138,7 +145,7 @@ public:
         for (auto& fx : effects_) {
             if (!fx || fx->destroyed()) continue;
             if (fx->birth_time() < 0) continue; // no auto-expiry
-            f64 lifetime = fx->get_param("LIFETIME");
+            f64 lifetime = fx->lifetime();
             if (lifetime > 0 && (game_time - fx->birth_time()) >= lifetime) {
                 fx->mark_destroyed();
             }

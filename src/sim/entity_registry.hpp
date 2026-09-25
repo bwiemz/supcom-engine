@@ -7,7 +7,6 @@
 #include <functional>
 #include <memory>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
 namespace osc::sim {
@@ -39,7 +38,7 @@ public:
     Entity* find(u32 id) const;
 
     /// Number of active entities.
-    size_t count() const { return entities_.size(); }
+    size_t count() const { return live_count_; }
 
     /// Free the entities unregistered since the last call. An unregistered
     /// entity leaves every lookup immediately but its memory lives until
@@ -115,7 +114,10 @@ public:
     SimRandom& sim_random() { return *sim_random_; }
 
 private:
-    std::unordered_map<u32, std::unique_ptr<Entity>> entities_; ///< lookup only
+    /// Every live entity at its id (ids start at 1 and only grow), so a
+    /// lookup is an index, not a hash; a removed entity leaves null.
+    std::vector<std::unique_ptr<Entity>> entities_;
+    size_t live_count_ = 0;
     /// Every live entity in id order (ids only grow, so a new one appends).
     /// A removed entity leaves a null slot until compact(), so a walk in
     /// progress keeps its place.
