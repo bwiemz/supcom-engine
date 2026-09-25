@@ -4496,12 +4496,39 @@ static std::vector<u32> collect_unit_ids(lua_State* L, int table_idx) {
 // directly; a networked client's *local human* orders are instead handed to the
 // lockstep session to broadcast + schedule. Replaces the direct push_command
 // loops so every Issue* obeys the multiplayer command path uniformly.
-static void route_units_command(lua_State* L, int table_idx,
-                                const sim::UnitCommand& cmd, bool clear) {
+static u32 route_units_command(lua_State* L, int table_idx, const sim::UnitCommand& cmd,
+                               bool clear) {
     auto* sim = get_sim(L);
-    if (!sim) return;
+    if (!sim) return 0;
     auto ids = collect_unit_ids(L, table_idx);
-    if (!ids.empty()) sim->route_command(ids, cmd, clear);
+    return ids.empty() ? 0 : sim->route_command(ids, cmd, clear);
+}
+
+/// What an Issue* returns: the command its units took (its id, the handle
+/// IsCommandDone and platoon:IsCommandsActive take), or nil when none took
+/// it -- as Moho returns the issued CUnitCommand's object, or nil.
+static int push_command_handle(lua_State* L, u32 command_id) {
+    if (command_id != 0) lua_pushnumber(L, command_id);
+    else lua_pushnil(L);
+    return 1;
+}
+
+// IsCommandDone(command): whether an Issue*'s command is finished -- no live
+// unit still has it queued. Moho's is done once the CUnitCommand is gone
+// (faf-re cfunc_IsCommandDoneL); retail's factories wait on it for a new
+// unit to roll off before they take the next build.
+static int l_IsCommandDone(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 1)
+        return luaL_error(L, "%s\n  expected %d args, but got %d", "IsCommandDone(command)", 1, n);
+    if (lua_type(L, 1) != LUA_TNUMBER)
+        return luaL_error(L, "Expected a game object. (Did you call with '.' instead of ':'?)");
+    auto* sim = get_sim(L);
+    const lua_Number id = lua_tonumber(L, 1);
+    const bool queued =
+        sim && id >= 1 && id <= 4294967295.0 && sim->command_queued(static_cast<u32>(id));
+    lua_pushboolean(L, queued ? 0 : 1);
+    return 1;
 }
 
 // IssueMove(units_table, position)
@@ -4510,8 +4537,7 @@ static int l_IssueMove(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueAggressiveMove(units_table, position) — move for now, attack later
@@ -4532,8 +4558,7 @@ static int l_IssueFormMove(lua_State* L) {
         cmd.has_facing = true;
         cmd.facing = static_cast<f32>(lua_tonumber(L, 4)) * 3.14159265358979f / 180.0f;
     }
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueStop(units_table) — routed as a Stop command so a networked player's
@@ -4619,8 +4644,7 @@ static int l_IssueAttack(lua_State* L) {
     cmd.type = sim::CommandType::Attack;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueGuard(units_table, target_entity)
@@ -4635,8 +4659,7 @@ static int l_IssueGuard(lua_State* L) {
     cmd.type = sim::CommandType::Guard;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 static int l_IssueFactoryAssist(lua_State* L) { return l_IssueGuard(L); }
@@ -4653,8 +4676,7 @@ static int l_IssueRepair(lua_State* L) {
     cmd.type = sim::CommandType::Repair;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueCapture(units_table, target)
@@ -4669,15 +4691,13 @@ static int l_IssueCapture(lua_State* L) {
     cmd.type = sim::CommandType::Capture;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 static int l_IssueDive(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Dive;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // ChangeUnitArmy(unit, toArmy [, noRestrictions])
@@ -4748,8 +4768,7 @@ static int l_IssueUpgrade(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Upgrade;
     cmd.blueprint_id = bp_id;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueEnhancement(units_table, enhancementName)
@@ -4783,8 +4802,7 @@ static int l_IssueBuildMobile(lua_State* L) {
     cmd.target_pos = target_pos;
     cmd.blueprint_id = bp_id;
 
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueBuildFactory(units_table, blueprintId, count)
@@ -4796,10 +4814,9 @@ static int l_IssueBuildFactory(lua_State* L) {
     cmd.type = sim::CommandType::BuildFactory;
     cmd.blueprint_id = bp_id;
 
-    for (int i = 0; i < count; i++) {
-        route_units_command(L, 1, cmd, false);
-    }
-    return 0;
+    u32 issued = 0;
+    for (int i = 0; i < count; i++) issued = route_units_command(L, 1, cmd, false);
+    return push_command_handle(L, issued);
 }
 
 // IssueMoveOffFactory(units_table, position) — clears commands, issues Move
@@ -4808,8 +4825,7 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Move;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueFactoryRallyPoint(units_table, position): a Move, after their other
@@ -4856,8 +4872,7 @@ static int l_IssueReclaim(lua_State* L) {
     cmd.type = sim::CommandType::Reclaim;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // CreateProp(position, blueprint_path) -> prop Lua table
@@ -5107,8 +5122,7 @@ static int l_IssuePatrol(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Patrol;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // Stub for unimplemented order types — just does nothing
@@ -5129,9 +5143,7 @@ static int l_IssueTransportLoad(lua_State* L) {
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
 
-    route_units_command(L, 1, cmd, false);
-
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueTransportUnload(transports_table, position)
@@ -5143,9 +5155,7 @@ static int l_IssueTransportUnload(lua_State* L) {
     cmd.type = sim::CommandType::TransportUnload;
     cmd.target_pos = target_pos;
 
-    route_units_command(L, 1, cmd, false);
-
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueTransportUnloadSpecific(transports, category, position): the
@@ -5170,8 +5180,7 @@ static int l_IssueTransportUnloadSpecific(lua_State* L) {
         }
     }
     if (cmd.unload_ids.empty()) return 0;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueNuke(units_table, position): launch a nuke at the position. Like
@@ -5181,8 +5190,7 @@ static int l_IssueNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Nuke;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueTactical(units_table, target): launch a tactical missile at a unit or
@@ -5199,8 +5207,7 @@ static int l_IssueTactical(lua_State* L) {
     } else {
         cmd.target_pos = extract_position(L, 2);
     }
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueSiloBuildNuke(units) / IssueSiloBuildTactical(units): one missile
@@ -5208,15 +5215,13 @@ static int l_IssueTactical(lua_State* L) {
 static int l_IssueSiloBuildNuke(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::SiloBuildNuke;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 static int l_IssueSiloBuildTactical(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::SiloBuildTactical;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueOvercharge(units_table, target_entity) — overcharge attack
@@ -5228,8 +5233,7 @@ static int l_IssueOvercharge(lua_State* L) {
     cmd.type = sim::CommandType::Overcharge;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueSacrifice(units_table, target_entity) — sacrifice unit to build target
@@ -5241,8 +5245,7 @@ static int l_IssueSacrifice(lua_State* L) {
     cmd.type = sim::CommandType::Sacrifice;
     cmd.target_id = target->entity_id();
     cmd.target_pos = target->position();
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // IssueTeleport(units_table, location) — teleport to position
@@ -5251,8 +5254,7 @@ static int l_IssueTeleport(lua_State* L) {
     sim::UnitCommand cmd;
     cmd.type = sim::CommandType::Teleport;
     cmd.target_pos = target_pos;
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // CreateVisibleAreaAtPoint(army, x, y, z, radius, lifetime) — temporary vision (scrying)
@@ -5301,8 +5303,7 @@ static int l_IssueFerry(lua_State* L) {
     cmd.type = sim::CommandType::Ferry;
     cmd.target_pos = target_pos;
     // Ferry appends like Patrol, doesn't clear
-    route_units_command(L, 1, cmd, false);
-    return 0;
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
 // ====================================================================
@@ -5573,6 +5574,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("DamageRing", l_DamageRing);
 
     // Orders (all stubs)
+    state.register_function("IsCommandDone", l_IsCommandDone);
     state.register_function("IssueMove", l_IssueMove);
     state.register_function("IssueAggressiveMove", l_IssueAggressiveMove);
     state.register_function("IssuePatrol", l_IssuePatrol);

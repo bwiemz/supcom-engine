@@ -9984,6 +9984,37 @@ void test_factory_rally(TestContext& ctx) {
         if not __osc_ta or not __osc_tb then error('A or B is not building') end
     )");
 
+    // Once its tank is built, A holds its next build while the tank rolls
+    // off: retail's RolloffBody keeps it busy until IsCommandDone says the
+    // IssueMove it gave the tank is done.
+    lua_check("A waits for its tank to roll off",
+              "__osc_rolloff_waited = 0; __osc_rolloff_over = false");
+    auto rolloff_over = [&] {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_rolloff_over");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const bool over = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return over;
+    };
+    for (int i = 0; i < 400 && !rolloff_over(); ++i) {
+        run(1);
+        (void)ctx.lua_state.do_string(R"(
+            if __osc_ta:IsBeingBuilt() then return end
+            local cmd = __osc_a.MoveCommand
+            if cmd and not IsCommandDone(cmd) then
+                if __osc_a:IsUnitState('Busy') then __osc_rolloff_waited = __osc_rolloff_waited + 1 end
+            elseif __osc_rolloff_waited > 0 then
+                __osc_rolloff_over = true
+            end
+        )");
+    }
+    lua_check("A was busy while its tank rolled off, until the move was done", R"(
+        if __osc_rolloff_waited < 3 or not __osc_rolloff_over then
+            error('A waited ' .. __osc_rolloff_waited .. ' ticks; over: ' .. tostring(__osc_rolloff_over))
+        end
+    )");
+
     // Built, each drives off to A's rally point: B built its tank for A.
     for (int i = 0; i < 200; ++i) {
         run(10);

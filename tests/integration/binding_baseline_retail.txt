@@ -29,7 +29,6 @@ G IncreaseBuildCountInQueue
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService
-G IsCommandDone
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
