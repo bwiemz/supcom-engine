@@ -2170,6 +2170,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         }
         units.mix(u.transport_id());
         units.mix(static_cast<u64>(u.cargo_ids().size()));
+        // Who holds which of a transport's attach points (M206l).
+        if (const auto* slots = u.built_transport_slots()) {
+            for (const auto& slot : slots->slots()) {
+                units.mix(slot.unit_id);
+                units.mix(static_cast<u64>(static_cast<u32>(slot.bone)));
+            }
+        }
         units.mix(u.build_target_id());
         units.mix(u.reclaim_target_id());
         units.mix(u.repair_target_id());
@@ -2203,6 +2210,16 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 orders.mix(static_cast<u64>(cmd.unload_ids.size()));
                 for (u32 id : cmd.unload_ids) orders.mix(id);
             }
+        }
+        // A transport's pickup and a unit's beam up (M206m), only while
+        // under way.
+        if (u.pickup_running() || u.beam_up_ticks() > 0) {
+            orders.mix(0x5049434bu); // "PICK"
+            orders.mix((u.pickup_running() ? 1u : 0u) | (u.pickup_ready() ? 2u : 0u));
+            orders.mix(static_cast<u64>(static_cast<u32>(u.pickup_ticks())));
+            orders.mix(static_cast<u64>(u.pickup_ids().size()));
+            for (const u32 id : u.pickup_ids()) orders.mix(id);
+            orders.mix(static_cast<u64>(static_cast<u32>(u.beam_up_ticks())));
         }
         // A factory's rally orders (M206j), only where it has some.
         if (!u.rally_orders().empty()) {
