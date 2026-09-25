@@ -5996,6 +5996,8 @@ void test_prop(TestContext& ctx) {
         local t = __osc_tree:GetPosition()
         Damage(nil, {t[1] - 1, t[2], t[3]}, __osc_tree, 1, 'Force')
         local q = __osc_tree:GetOrientation()
+        -- A quaternion as Moho hands it out, with the vector metatable.
+        if getmetatable(q) ~= getmetatable(Vector2(0, 0)) then error('no vector metatable') end
         -- The tree's up axis after the fall: 1 - 2(x^2 + z^2) is its height.
         local up_y = 1 - 2 * (q[1] * q[1] + q[3] * q[3])
         if math.abs(up_y) > 0.05 then error('still upright: up.y ' .. up_y) end
