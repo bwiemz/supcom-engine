@@ -105,6 +105,7 @@ void test_transport_slots(TestContext& ctx);
 void test_transport_pickup(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);
 void test_factory_rally(TestContext& ctx);
+void test_influence(TestContext& ctx);
 void test_terrain_tex(TestContext& ctx);
 void test_shadow(TestContext& ctx);
 void test_massstub4(TestContext& ctx);
