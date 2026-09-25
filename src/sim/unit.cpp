@@ -289,17 +289,11 @@ bool Unit::nav_update(f64 dt, const map::Terrain* terrain, f32 speed_cap) {
     const f32 speed = speed_cap > 0 ? std::min(effective_speed(), speed_cap) : effective_speed();
     bool result = navigator_.update(*this, speed, dt, terrain);
 
-    // Sub units: smooth transition to dive depth below water surface
-    if (terrain && layer_ == "Sub") {
+    // A sub under the surface, or on its way, keeps its depth as it moves
+    // (the ground navigator put it on the surface; see tick_dive).
+    if (terrain && (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None)) {
         auto p = position();
-        f32 target_y = terrain->water_elevation() + elevation_target_; // elevation_target_ is negative
-        f32 rate = 5.0f * static_cast<f32>(dt);
-        if (std::abs(p.y - target_y) <= rate)
-            p.y = target_y;
-        else if (p.y > target_y)
-            p.y -= rate;
-        else
-            p.y += rate;
+        p.y = terrain->water_elevation() + sub_elevation_;
         set_position(p);
     }
 
@@ -364,11 +358,28 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
     }
     auto& registry = ctx.registry;
 
+    // A pickup whose load order is no longer the transport's head is over,
+    // aborted; a unit whose load order went mid-beam comes back down (M206m).
+    const bool loading_head =
+        !command_queue_.empty() && command_queue_.front().type == CommandType::TransportLoad;
+    if (pickup_phase_ != PickupPhase::None &&
+        !(loading_head && command_queue_.front().target_id == entity_id())) {
+        finish_pickup(false, ctx.L);
+        if (destroyed() || !in_registry()) return false;
+    }
+    if (beam_up_ticks_ > 0 && !(loading_head && command_queue_.front().target_id != entity_id())) {
+        abandon_beam_up(ctx.terrain, ctx.L);
+        if (destroyed() || !in_registry()) return false;
+    }
+
+    // A transport gives up the slots of units no longer aboard (M206l).
+    if (transport_slots_ && !transport_slots_->slots().empty()) release_stale_slots(registry);
+
     // Cargo position following: if loaded on a transport, skip all processing
     if (transport_id_ != 0) {
         auto* transport_entity = registry.find(transport_id_);
-        if (transport_entity && !transport_entity->destroyed()) {
-            set_position(transport_entity->position());
+        if (transport_entity && !transport_entity->destroyed() && transport_entity->is_unit()) {
+            hang_from(*static_cast<const Unit*>(transport_entity));
         } else {
             // Transport gone — auto-detach and clean up stale cargo entry
             if (transport_entity && transport_entity->is_unit()) {
@@ -390,6 +401,17 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     auto* L = ctx.L;
 
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
+
+    // A sub dives or surfaces, moving or not (M206o).
+    tick_dive(ctx.terrain, L);
+    if (destroyed() || !in_registry()) return false;
+
+    // An idle transport hovers low with cargo aboard, and climbs back to its
+    // flying height without (Moho's ShouldHoverInsteadOfLand; M206n).
+    if (transport_hover_height_ > 0 && is_air_unit() && !dying_ && command_queue_.empty() &&
+        !navigator_.is_moving())
+        hold_altitude(dt, ctx.terrain,
+                      cargo_ids_.empty() ? elevation_target_ : transport_hover_height_);
 
     // Amphibious layer transition: auto-switch Land↔Water based on terrain
     if (is_amphibious() && !dying_ && ctx.terrain) {
@@ -430,6 +452,16 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
             p.z += repulse_z * SEPARATION_FORCE * fdt;
             set_position(p);
         }
+    }
+
+    // Carried units hang where the transport now is (M206l), however their
+    // own ticks fall around ours: Moho moves attached entities with their
+    // parent, so none trails it by a tick.
+    for (const u32 id : cargo_ids_) {
+        auto* e = registry.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* cargo = static_cast<Unit*>(e);
+        if (cargo->transport_id() == entity_id()) cargo->hang_from(*this);
     }
 
     // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
@@ -1754,6 +1786,65 @@ void Unit::set_intel_radius(const std::string& type, f32 radius) {
 // Transport system
 // ---------------------------------------------------------------------------
 
+TransportSlots* Unit::transport_slots() {
+    if (!transport_slots_ && bone_data())
+        transport_slots_ = std::make_unique<TransportSlots>(*bone_data(), transport_layout_);
+    return transport_slots_.get();
+}
+
+bool Unit::transport_has_space_for(const Unit& cargo) {
+    if (const TransportSlots* slots = transport_slots(); slots && slots->has_points())
+        return slots->has_space_for(cargo.transport_class());
+    return transport_capacity_ <= 0 || static_cast<i32>(cargo_ids_.size()) < transport_capacity_;
+}
+
+i32 Unit::transport_attach_bone() const {
+    // Moho's GetBestAttachPoint.
+    const i32 bone = bone_data() ? bone_data()->find_bone("AttachPoint") : -1;
+    if (bone < 0 && motion_type_ == "RULEUMT_Air") return 0;
+    return bone;
+}
+
+void Unit::hang_from(const Unit& transport) {
+    const TransportSlots* slots = transport.built_transport_slots();
+    const TransportSlots::Slot* slot = slots ? slots->slot_of(entity_id()) : nullptr;
+    if (!slot) {
+        set_position(transport.position());
+        return;
+    }
+    const Vector3 at = transport.bone_world_position(slot->bone);
+    const Quaternion facing =
+        quat_multiply(transport.orientation(), transport.bone_pose(slot->bone).rotation);
+    // Our AttachPoint bone, or our centre (Moho's bone -1: half our height up).
+    Vector3 anchor{0.0f, size_y_ * 0.5f, 0.0f};
+    if (bone_data() && bone_data()->is_valid(slot->unit_bone)) {
+        const Vector3 model = bone_pose(slot->unit_bone).position;
+        const f32 scale = bone_data()->model_scale;
+        anchor = {model.x * scale, model.y * scale, model.z * scale};
+    }
+    const Vector3 offset = quat_rotate(facing, anchor);
+    set_position({at.x - offset.x, at.y - offset.y, at.z - offset.z});
+    set_orientation(facing);
+}
+
+void Unit::release_stale_slots(const EntityRegistry& registry) {
+    std::vector<u32> stale;
+    for (const TransportSlots::Slot& slot : transport_slots_->slots()) {
+        const Entity* e = registry.find(slot.unit_id);
+        const auto* u =
+            e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+        const bool aboard =
+            u && u->transport_id() == entity_id() &&
+            std::find(cargo_ids_.begin(), cargo_ids_.end(), slot.unit_id) != cargo_ids_.end();
+        // A unit given a slot for the pickup keeps it while it still comes (M206m).
+        const bool coming =
+            u && !u->is_dying() && u->calls_transport(entity_id()) &&
+            std::find(pickup_ids_.begin(), pickup_ids_.end(), slot.unit_id) != pickup_ids_.end();
+        if (!aboard && !coming) stale.push_back(slot.unit_id);
+    }
+    for (const u32 id : stale) transport_slots_->release(id);
+}
+
 void Unit::remove_cargo(u32 id) {
     cargo_ids_.erase(std::remove(cargo_ids_.begin(), cargo_ids_.end(), id),
                      cargo_ids_.end());
@@ -1761,10 +1852,19 @@ void Unit::remove_cargo(u32 id) {
 
 void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
                                lua_State* L) {
-    // Capacity guard — reject if transport is full
-    if (transport->transport_capacity() > 0 &&
-        static_cast<i32>(transport->cargo_ids().size()) >=
-            transport->transport_capacity()) {
+    // A free slot of the unit's class (M206l); a transport without attach
+    // points counts its Class1Capacity instead. Scripts hear the bone.
+    std::string bone_name = "Attachpoint";
+    if (TransportSlots* slots = transport->transport_slots(); slots && slots->has_points()) {
+        const std::optional<i32> bone =
+            slots->assign(entity_id(), transport_class_, transport_attach_bone());
+        if (!bone) {
+            spdlog::warn("Transport #{} has no free slot for #{} (class {})",
+                         transport->entity_id(), entity_id(), transport_class_);
+            return;
+        }
+        bone_name = transport->bone_data()->bones[static_cast<size_t>(*bone)].name;
+    } else if (!transport->transport_has_space_for(*this)) {
         spdlog::warn("Transport #{} is full (capacity {}), cannot attach #{}",
                      transport->entity_id(), transport->transport_capacity(),
                      entity_id());
@@ -1776,8 +1876,8 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     set_unit_state("Attached", true);
     navigator_.abort_move();
     ground_speed_ = 0; // aboard, it no longer drives
-    // Boarding pops the unit onto the transport; the renderer jumps it.
-    set_position(transport->position());
+    // Boarding pops the unit onto its bone; the renderer jumps it.
+    hang_from(*transport);
     note_snap();
 
     spdlog::info("Transport: entity #{} loaded onto transport #{}",
@@ -1792,7 +1892,7 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
         lua_gettable(L, transport_tbl);
         if (lua_isfunction(L, -1)) {
             lua_pushvalue(L, transport_tbl); // self (transport)
-            lua_pushstring(L, "Attachpoint");  // bone placeholder
+            lua_pushstring(L, bone_name.c_str());
             lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref()); // cargo
             if (lua_pcall(L, 3, 0, 0) != 0) {
                 spdlog::warn("OnTransportAttach error: {}",
@@ -1806,11 +1906,26 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     }
 }
 
-void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L) {
-    detach_cargo(cargo_ids_, registry, L);
+void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L, const map::Terrain* terrain) {
+    detach_cargo(cargo_ids_, registry, L, terrain);
 }
 
-void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L) {
+bool Unit::footprint_fits(const map::PathfindingGrid& grid) const {
+    const f32 half_x = std::max(footprint_size_x(), 1.0f) * 0.5f;
+    const f32 half_z = std::max(footprint_size_z(), 1.0f) * 0.5f;
+    constexpr f32 kInside = 0.01f; // the footprint's own edge cells only
+    u32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    grid.world_to_grid(position().x - half_x + kInside, position().z - half_z + kInside, x0, z0);
+    grid.world_to_grid(position().x + half_x - kInside, position().z + half_z - kInside, x1, z1);
+    const bool amphibious = is_amphibious() || is_hover();
+    for (u32 gz = z0; gz <= z1; ++gz)
+        for (u32 gx = x0; gx <= x1; ++gx)
+            if (!grid.is_passable_for(gx, gz, "Land", naval_draft_, amphibious)) return false;
+    return true;
+}
+
+void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+                        const map::Terrain* terrain) {
     // Taken off the cargo list first (safety against modification during
     // Lua callbacks), in cargo order.
     std::vector<u32> snapshot;
@@ -1829,7 +1944,24 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
 
         cargo->set_transport_id(0);
         cargo->set_unit_state("Attached", false);
-        cargo->set_position(position()); // drop at transport position
+        // Set down where it hangs, level, its slot given up (M206l); a
+        // transport without slots drops it at its origin.
+        std::string bone_name = "Attachpoint";
+        const TransportSlots::Slot* slot =
+            transport_slots_ ? transport_slots_->slot_of(cargo_id) : nullptr;
+        if (slot) {
+            bone_name = bone_data()->bones[static_cast<size_t>(slot->bone)].name;
+            transport_slots_->release(cargo_id);
+        } else {
+            cargo->set_position(position());
+        }
+        cargo->set_orientation(euler_to_quat(quat_yaw(cargo->orientation()), 0.0f, 0.0f));
+        if (terrain) {
+            Vector3 at = cargo->position();
+            at.y = terrain->get_surface_height(at.x, at.z);
+            cargo->set_position(at);
+        }
+        cargo->note_snap();
 
         spdlog::info("Transport: entity #{} unloaded from transport #{}",
                      cargo_id, entity_id());
@@ -1843,7 +1975,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             lua_gettable(L, transport_tbl);
             if (lua_isfunction(L, -1)) {
                 lua_pushvalue(L, transport_tbl); // self (transport)
-                lua_pushstring(L, "Attachpoint");  // bone placeholder
+                lua_pushstring(L, bone_name.c_str());
                 lua_rawgeti(L, LUA_REGISTRYINDEX, cargo->lua_table_ref());
                 if (lua_pcall(L, 3, 0, 0) != 0) {
                     spdlog::warn("OnTransportDetach error: {}",
@@ -1995,6 +2127,94 @@ void Unit::coast(f64 dt, const map::Terrain* terrain) {
     p.z += osc::dmath::cos(heading) * ground_speed_ * step;
     if (terrain) p.y = terrain->get_surface_height(p.x, p.z);
     set_position(p);
+}
+
+void Unit::set_vert_event(const char* event, lua_State* L) {
+    if (vert_event_ == event) return;
+    const std::string old = vert_event_;
+    vert_event_ = event;
+    if (!L || lua_table_ref() < 0) return;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, lua_table_ref());
+    const int tbl = lua_gettop(L);
+    lua_pushstring(L, "OnMotionVertEventChange");
+    lua_gettable(L, tbl);
+    if (lua_isfunction(L, -1)) {
+        lua_pushvalue(L, tbl);
+        lua_pushstring(L, event);
+        lua_pushstring(L, old.c_str());
+        if (lua_pcall(L, 3, 0, 0) != 0) {
+            spdlog::warn("OnMotionVertEventChange error: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    } else {
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+}
+
+void Unit::start_dive(lua_State* L) {
+    vert_motion_ = VertMotion::Down;
+    set_unit_state("MovingUp", false);
+    set_unit_state("MovingDown", true);
+    set_vert_event("Down", L);
+}
+
+void Unit::start_surfacing(lua_State* L) {
+    vert_motion_ = VertMotion::Up;
+    set_unit_state("MovingDown", false);
+    set_unit_state("MovingUp", true);
+    set_vert_event("Up", L);
+}
+
+void Unit::tick_dive(const map::Terrain* terrain, lua_State* L) {
+    if (!terrain) return;
+    const f32 water = terrain->water_elevation();
+    if (vert_motion_ != VertMotion::None) {
+        // Down to its Physics.Elevation, but no deeper than a quarter over
+        // the seabed; at DiveSurfaceSpeed/10 a tick, eased along a sine
+        // (never under a tenth of that).
+        f32 limit = elevation_target_;
+        if (limit >= 0.0f) {
+            vert_motion_ = VertMotion::None;
+            set_unit_state("MovingDown", false);
+            set_unit_state("MovingUp", false);
+        } else {
+            const f32 floor = std::min(
+                0.0f, terrain->get_terrain_height(position().x, position().z) + 0.25f - water);
+            limit = std::max(limit, floor);
+            f32 phase = std::abs(sub_elevation_ / limit);
+            if (phase > 0.5f) phase = 1.0f - phase;
+            const f32 base = dive_surface_speed_ * 0.1f;
+            const f32 speed = std::max(base * 0.1f, osc::dmath::sin(phase * 3.1415927f) * base);
+            if (vert_motion_ == VertMotion::Up) {
+                sub_elevation_ = std::min(0.0f, sub_elevation_ + speed);
+                if (sub_elevation_ == 0.0f) {
+                    vert_motion_ = VertMotion::None;
+                    set_unit_state("MovingUp", false);
+                    set_layer_with_callback("Water", L);
+                    if (destroyed() || !in_registry()) return;
+                    set_vert_event("Top", L);
+                    if (destroyed() || !in_registry()) return;
+                }
+            } else if (sub_elevation_ - speed > limit) {
+                sub_elevation_ -= speed;
+            } else {
+                sub_elevation_ = limit;
+                vert_motion_ = VertMotion::None;
+                set_unit_state("MovingDown", false);
+                set_layer_with_callback("Sub", L);
+                if (destroyed() || !in_registry()) return;
+                set_vert_event("Bottom", L);
+                if (destroyed() || !in_registry()) return;
+            }
+        }
+    }
+    // Under the surface, or on its way: at its depth.
+    if (sub_elevation_ != 0.0f || vert_motion_ != VertMotion::None) {
+        Vector3 at = position();
+        at.y = water + sub_elevation_;
+        set_position(at);
+    }
 }
 
 void Unit::set_layer_with_callback(const std::string& new_layer, lua_State* L) {
