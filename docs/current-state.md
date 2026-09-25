@@ -23,17 +23,17 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`: CI's Linux jobs (GCC 14, Clang 18) build first-party code with `-Werror` (`OSC_WERROR`). |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
 | Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. Retail's own front end boots and reaches a hosted skirmish lobby. In a windowed game, retail's own game interface runs and draws: economy, score, avatars, unit view, orders and construction panels, command-mode clicks and the minimap window. The C++ HUD placeholders remain behind `--legacy-hud`. Preferences are retail's Lua `Game.prefs` (profiles, options, window positions) in `<config>/opensupcom/`; tests and captures keep them in memory. Audio plays FA's own XACT data through an app-owned cue engine: interface sounds, retail's music thread, unit and weapon sounds with FA's categories, falloff curves and limits. It has been checked headless only; a listening pass is still to do. The world is drawn between the sim's last two ticks (M190a): the sim still ticks at 10 Hz, but units, walk cycles, projectiles and overlays move every frame. |
-| Gameplay fidelity (Phase E, M200–M206) | The engine provides the machinery retail's own scripts expect, rather than parallel C++ behaviour:<br>• **Weapons:** retail's weapon state machines (targets, racks and salvos, priorities, restrictions, turret slew and firing tolerance, posed muzzles).<br>• **Projectiles:** script classes with `OnImpact`, and ballistic arcs. Swept collision against terrain, water, units, props, shields and projectiles, filtered by scripts.<br>• **Props and wreckage:** script classes. Trees split, fall and sink; wrecks are made by retail's scripts.<br>• **Movement:** acceleration, braking, turning and reversing; collision separation; retail's `formations.lua`.<br>• **Pathfinding:** cheaper after M205.<br>• **Missiles:** silo missile builds and launches, and anti-missile weapons.<br>• **Beams:** collision beams.<br>• **Economy events:** their resources are drawn (teleport, OverCharge).<br>• **Work ranges:** build, repair, reclaim and capture reach, measured by Moho's footprint gap.<br>• **Orders:** `Issue*` appends to the queue.<br>• **Ferries:** a transport's route carries units from its beacon to the last point and back.<br>• **Unloads:** `IssueTransportUnloadSpecific` drops only the cargo in its category, chosen when it is given.<br>Where the scripts left Moho's rules unclear, they come from the decompiled engine ([faf-re](https://github.com/Draiget/faf-re)). |
+| Gameplay fidelity (Phase E, M200–M206) | The engine provides the machinery retail's own scripts expect, rather than parallel C++ behaviour:<br>• **Weapons:** retail's weapon state machines (targets, racks and salvos, priorities, restrictions, turret slew and firing tolerance, posed muzzles).<br>• **Projectiles:** script classes with `OnImpact`, and ballistic arcs. Swept collision against terrain, water, units, props, shields and projectiles, filtered by scripts.<br>• **Props and wreckage:** script classes. Trees split, fall and sink; wrecks are made by retail's scripts.<br>• **Movement:** acceleration, braking, turning and reversing; collision separation; retail's `formations.lua`.<br>• **Pathfinding:** cheaper after M205.<br>• **Missiles:** silo missile builds and launches, and anti-missile weapons.<br>• **Beams:** collision beams.<br>• **Economy events:** their resources are drawn (teleport, OverCharge).<br>• **Work ranges:** build, repair, reclaim and capture reach, measured by Moho's footprint gap.<br>• **Orders:** `Issue*` appends to the queue.<br>• **Ferries:** a transport's route carries units from its beacon to the last point and back.<br>• **Unloads:** `IssueTransportUnloadSpecific` drops only the cargo in its category, chosen when it is given.<br>• **Factory assist:** a factory guarding a factory builds units from the guarded factory's queue.<br>Where the scripts left Moho's rules unclear, they come from the decompiled engine ([faf-re](https://github.com/Draiget/faf-re)). |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
 | Metric | Value |
 |---|---|
-| Unit tests (Catch2) | 443 cases / 38,987 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
+| Unit tests (Catch2) | 461 cases / 39,153 assertions (the RNG tests draw many values). CI builds and runs them on GCC, Clang, ASan and MSVC. |
 | Two-process MP tests (`ctest -L mp`, data-free) | 5/5 |
 | Static analysis (`ctest -L lint`, LLVM 22) | clang-tidy ratchet at its baseline of 33 triaged findings. Changed lines follow `.clang-format` (a moved file only where it changed). The library targets link without a cycle or a layer reaching up (`ctest -L arch`). |
-| Data-backed gate on retail (`ctest -L gate`) | All 127 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically, compared domain by domain), `data.replay_roundtrip` and `data.replay_flow`, the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
+| Data-backed gate on retail (`ctest -L gate`) | All 129 pass: 121 data modes (including the no-map lobby flow, `--gameui-test`, `--victory-test`, the offscreen `--interp-test`, and each Phase E system's own mode, e.g. `--missile-test`, `--beam-weapon-test`, `--range-test`, `--ferry-test`), `data.determinism` (two processes play a four-AI game identically, compared domain by domain), `data.replay_roundtrip` and `data.replay_flow`, `data.save_load` and `data.load_flow` (M208a), the `data.binding_coverage` ratchet, and two golden captures of FA's game interface at frame 600 (0.1% tolerance). New engine rules are mutation-checked: removing a rule makes its test fail. |
 | Data-backed modes failing on retail (`-L retail-gap`) | None. The last six closed with engine fixes: blueprints are read from the store, not FAF's `self.Blueprint`; `GiveStorage` persists; finished or paused animations hold their pose; `EnableIntel` ignores intel a unit lacks (retail `SetupIntel` had been cloaking every unit); `CanBuild` reads category names. Tests that assumed FAF-only script fields were also fixed. |
-| Retail-only engine API still unbound | 45 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
+| Retail-only engine API still unbound | 43 globals and 24 methods (`opensupcom --binding-coverage`, ratcheted by `tests/integration/binding_baseline_retail.txt`). Many are UI-only. |
 | Benchmark (Release, four retail AIs, SCMP_009) | About 21 s for 6,000 ticks (it was 25.2 s before M205's path-cost fix). An 18,000-tick game runs without Lua errors. Its sim takes about 256 s, against 450 s before M224 (compiled category matching, then unit-only radius queries; measured side by side). Late ticks are the slow ones: at 1,700–1,800 units, about 33 ms a tick. |
 
 ## Verified Locally
@@ -181,27 +181,36 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   `--replay <file>` plays one headlessly, reporting the first tick that
   differs. Two gate tests hold this: `data.replay_roundtrip` and
   `data.replay_flow`.
+- **Saved games (M208a):** a save is the game's recording, plus the orders
+  still to run. Retail's Save and Load dialogs and quick-save work through
+  `InternalSaveGame` and `LoadSavedGame`. A load catches up to the saved tick
+  in the game's frame loop, checked against the save's checksums, and then
+  the game is the player's again. Saves from another build are refused as
+  `WrongVersion`. `--load`, `--save` and `--save-at` do the same headlessly.
+  `data.save_load` chains three processes (save, load and save again, load),
+  and `data.load_flow` drives the dialogs' globals offscreen. Loading from
+  inside a running game isn't reliable yet. Any game started from another
+  needs a fresh UI Lua state, as retail gives each game, and the renderer
+  leaks on relaunch (see the M208 design).
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
-  The UI state's unit bindings (`UserUnit:GetPosition`, `GetHealth`, ...)
-  still read the live sim (M191 step 3 moves them to snapshots); what they
-  change goes through the command stream. `InputHandler` (picking, orders, the build
-  ghost) works on the live sim by design.
+  The UI state's units are Moho's `UserUnit` (M191 step 3). They read the
+  tick's snapshot, and change the sim only through the command stream.
+  `GetStat` and `CanAttackTarget` read the live unit (read-only). `InputHandler`
+  (picking, orders, the build ghost) works on the live sim by design.
 - **Architecture (Phase C):**
   - `Unit::update` runs in five named phases, and each order kind has its own handler in `src/sim/unit_orders.cpp` (M193).
   - The library cycle is broken (M191 step 1). The UI bindings that need the renderer live in `osc_lua_user`, and `arch.link_layers` guards the layering.
   - `moho_bindings.cpp` is split by class into `src/lua/bindings/{sim,ui}/` (M191 step 2).
-  - The UI changes units only through the command stream: `SetCustomName` was the one that wrote the live sim, and now travels as Moho's `CustomName` ProcessInfo pair (M191 step 3). The UI's unit reads still come from the live sim.
+  - The UI's units are Moho's `UserUnit` (M191 step 3). They read the tick's snapshot (the renderer's capture in a drawn game) and change units only through the command stream, as `SetCustomName` now does: it travels as Moho's `CustomName` ProcessInfo pair.
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
-  - Next:
-    - M192 step 2: split `app.cpp` into the boot, the loop and the reload;
-    - M191 step 3: the UI's unit methods read snapshots.
+  - `app.cpp` is split by concern (`cli`, `ui_globals`, `session`, `reload`, `frames`) and keeps only `run()` (M192 step 2a).
+  - `run()` is an `App` object with the boot, windowed loop and headless run as its methods, each in a file of its own (M192 step 2b).
+  - Next: M192 step 2c, the windowed loop's frame broken into handlers.
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
-  - A factory assisting a factory lends nothing; Moho copies its queue.
-  - Transports don't land, and their capacity isn't read from attach points.
-  - A surfaced sub's torpedoes don't dive, and a dived sub sinks only while moving.
-  - Platoons formed by `FormPlatoon` don't set `PlatoonHandle` (M207).
+  - A repeating factory's queue shows an order split by its trip round the queue as two entries; Moho shows one with its count.
+  - The AI's influence maps (M207b) take no false blips from jammers; nothing makes them yet. That is all M207 has left: `CheckBlockingTerrain` casts shots against the heightfield as Moho does (M207c).
 - Some lobby options are still stored-but-unenforced in C++ (difficulty-tier cheat
   multipliers are consumed by FA's AI Lua rather than the C++ economy; PrebuiltUnits
   needs blueprint/map data). Now enforced: **NoRush** (units confined near their
@@ -221,8 +230,8 @@ After M206, as agreed on 2026-09-24:
 3. ~~A checksum split by domain.~~ Done (#65).
 4. ~~M193: split `Unit::update`.~~ Done (#68).
 5. M192: split the executable. Step 1 in review (#69, with M191 step 2); step 2 decomposes `app.cpp`.
-6. M191: finish the Sim/User split. The cycle is broken (#66) and the bindings are split by class (step 2); next, UI changes through the command stream and UI reads from snapshots (step 3).
+6. ~~M191: finish the Sim/User split.~~ Done: the cycle is broken (#66), the bindings are split by class (step 2), and the UI's units are UserUnit, reading snapshots and changing the sim through the command stream (step 3).
 7. M206's remaining gaps, and M207.
-8. M208 save/load, then a first FAF regression run, then presentation (Phase F).
+8. M208 save/load: M208a done (saves as the game's history). Then M208b (load times), a first FAF regression run, and presentation (Phase F).
 
 The phases, exit criteria and Definition of Done are in `docs/ROADMAP.md`.

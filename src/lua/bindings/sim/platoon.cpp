@@ -954,10 +954,11 @@ static int platoon_FormPlatoon(lua_State* L) {
                             ? static_cast<int>(lua_tonumber(L, -1)) * multiplier
                             : multiplier;
         lua_pop(L, 1);
-        // Known gap (roadmap M207): FA's FormPlatoon returns nil when a squad
-        // cannot reach its minimum count; this forms a partial platoon. AI
-        // scripts usually gate on CanFormPlatoon (which does check minimums),
-        // so it only matters when they call FormPlatoon directly.
+        // As Moho's (cfunc_CPlatoonFormPlatoonL), a squad takes what matches,
+        // up to its count, and the platoon is returned even short of a
+        // squad's minimum: retail's managers check CanFormPlatoon first. Nor
+        // does Moho call OnUnitsAddedToPlatoon or set PlatoonHandle here, as
+        // AssignUnitsToPlatoon does; retail's managers don't expect it.
         static_cast<void>(min_count);
 
         lua_rawgeti(L, sub, 3);

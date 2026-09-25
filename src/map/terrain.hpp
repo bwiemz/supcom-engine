@@ -47,6 +47,11 @@ public:
     f32 water_elevation() const { return water_elevation_; }
     bool has_water() const { return has_water_; }
 
+    /// The share of the map under water, as Moho's brain:GetMapWaterRatio
+    /// measures it: heightfield vertices every 8 units, the border ring
+    /// left out, below the water's surface (none if the map has no water).
+    f32 water_ratio() const;
+
     const Heightmap& heightmap() const { return heightmap_; }
     u32 map_width() const { return heightmap_.map_width(); }
     u32 map_height() const { return heightmap_.map_height(); }

@@ -44,7 +44,11 @@ Besides the renderer and input-handler getters, they use 13 of the file's genera
      - The selection sets are the UI state's own bookkeeping.
      - `SetCustomName` wrote the live unit. It is used by the rename dialog, and by `OnFirstUpdate`, which names the commander for its player. In multiplayer only that player's sim had the name, and a replay lost it. It now goes through the queue as a `CustomName` ProcessInfo pair, as Moho's does (`ProcessInfoPair(id, "CustomName", name)` in the decompiled `UserUnit`), and the sim names the unit at the tick. The sim's own scripts (the scenario names each commander for its army) still name it at once.
    - **A read that was wrong:** `IsInCategory` took only a category object. UserUnit's takes a name, and retail's UI passes names (`'COMMAND'`, `'FACTORY'`, a faction). So `OnFirstUpdate` never recognised the commander, and the construction panel's category checks all failed. Only the UI calls it, so the sim is unchanged.
-   - **Next:** the 14 reads come from the snapshot rather than the live unit.
+   - **The reads (done):**
+     - The UI's units take `moho.user_unit_methods`, all 36 of Moho's `UserUnit` methods, instead of the sim's `unit_methods`. They read the tick's `WorldSnapshot`: the renderer's capture in a drawn game, or else the UI's own, captured the first time it asks after each tick.
+     - `EntityRecord` gained the settings and economy the methods report: auto mode, repeat queue, OverCharge pause, auto-surface, dying, fuel, shield, build rate, creator, economy and silo counts.
+     - Categories come from the unit's blueprint, as UserUnit's do.
+     - `GetStat` and `CanAttackTarget` read the live unit, read-only. The snapshot carries no stats or weapons, and no retail UI script calls either.
 
 ## Proof
 

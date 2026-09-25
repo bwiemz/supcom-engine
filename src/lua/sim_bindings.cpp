@@ -674,8 +674,48 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         unit->set_transport_class(static_cast<i32>(lua_tonumber(L, -1)));
                     lua_pop(L, 1);
+
+                    // The slot layout (M206l), Moho's defaults for what is absent
+                    sim::TransportLayout layout;
+                    const auto field = [&](const char* name, i32& out) {
+                        lua_pushstring(L, name);
+                        lua_rawget(L, -2);
+                        if (lua_isnumber(L, -1)) out = static_cast<i32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    };
+                    field("ClassGenericUpTo", layout.class_generic_up_to);
+                    field("Class2AttachSize", layout.class2_attach_size);
+                    field("Class3AttachSize", layout.class3_attach_size);
+                    field("Class4AttachSize", layout.class4_attach_size);
+                    field("ClassSAttachSize", layout.class_s_attach_size);
+                    unit->set_transport_layout(layout);
                 }
                 lua_pop(L, 1); // pop Transport (or nil)
+
+                // SizeY: a carried unit with no AttachPoint bone hangs by its
+                // centre; size and density: a transport loads the largest first.
+                const auto number = [&](const char* name, f32 fallback) {
+                    lua_pushstring(L, name);
+                    lua_rawget(L, -2);
+                    const f32 v =
+                        lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : fallback;
+                    lua_pop(L, 1);
+                    return v;
+                };
+                unit->set_size_y(number("SizeY", 1.0f));
+                unit->set_size_xz(number("SizeX", 1.0f), number("SizeZ", 1.0f));
+                unit->set_average_density(number("AverageDensity", 0.49f));
+                // Air.TransportHoverHeight: how low a transport hovers to load
+                lua_pushstring(L, "Air");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    lua_pushstring(L, "TransportHoverHeight");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_transport_hover_height(static_cast<f32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+                }
+                lua_pop(L, 1);
             }
             lua_pop(L, 1); // pop bp table
         }
@@ -793,6 +833,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     unit->set_elevation_target(elev);
                     unit->set_naval_draft(std::abs(elev));
                 }
+                lua_pop(L, 1);
+                // How fast a sub dives and surfaces (M206o; Moho's default 1)
+                lua_pushstring(L, "DiveSurfaceSpeed");
+                lua_gettable(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_dive_surface_speed(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
             }
             lua_pop(L, 2);
@@ -4736,23 +4782,35 @@ static int l_IssueMoveOffFactory(lua_State* L) {
     return 0;
 }
 
-// IssueFactoryRallyPoint(units_table, position) — sets rally point on each unit
+// IssueFactoryRallyPoint(units_table, position): a Move, after their other
+// rally orders, for what each factory among the units builds (Moho: one
+// command in each factory's command queue; M206j).
 static int l_IssueFactoryRallyPoint(lua_State* L) {
-    auto pos = extract_position(L, 2);
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void* c) {
-        u->set_rally_point(*static_cast<sim::Vector3*>(c));
-    }, &pos);
+    struct Rally {
+        sim::SimState* sim;
+        sim::UnitCommand move;
+    } rally{get_sim(L), {}};
+    rally.move.type = sim::CommandType::Move;
+    rally.move.target_pos = extract_position(L, 2);
+    for_each_unit_in_table(
+        L, 1,
+        [](sim::Unit* u, void* c) {
+            auto& r = *static_cast<Rally*>(c);
+            if (!u->keeps_rally_orders()) return;
+            // One command id for them all, taken only if a factory gets it.
+            if (r.move.command_id == 0 && r.sim) r.move.command_id = r.sim->next_command_id();
+            u->add_rally_order(r.move);
+        },
+        &rally);
     return 0;
 }
 
-// IssueClearFactoryCommands(units_table) — clears factory build QUEUE only.
-// In FA's engine, this clears pending build orders but does NOT abort the
-// unit currently under construction.  Our clear_commands() was too aggressive
-// and also removed the active BuildFactory command, stalling production.
+// IssueClearFactoryCommands(units_table): clears each factory's rally orders
+// (Moho's factory command queue), not its build orders. Retail's AI calls it
+// before IssueFactoryRallyPoint; clearing build orders here instead dropped
+// the builds it had queued.
 static int l_IssueClearFactoryCommands(lua_State* L) {
-    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) {
-        u->clear_queued_commands();
-    }, nullptr);
+    for_each_unit_in_table(L, 1, [](sim::Unit* u, void*) { u->clear_rally_orders(); }, nullptr);
     return 0;
 }
 

@@ -48,6 +48,7 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.unit_id = u.unit_id();
     r.icon = icon_class(u);
     r.footprint_size_x = u.footprint_size_x();
+    r.footprint_size_z = u.footprint_size_z();
     r.is_being_built = u.is_being_built();
     r.build_target_id = u.build_target_id();
     r.reclaim_target_id = u.reclaim_target_id();
@@ -60,6 +61,27 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.tactical_silo_ammo = u.tactical_silo_ammo();
     r.weapon_count = u.weapon_count();
 
+    r.auto_mode = u.auto_mode();
+    r.repeat_queue = u.repeat_queue();
+    r.overcharge_paused = u.overcharge_paused();
+    r.auto_surface = u.auto_surface_mode();
+    r.is_dying = u.is_dying();
+    r.fuel_ratio = u.fuel_ratio();
+    r.shield_ratio = u.shield_ratio();
+    r.build_rate = u.build_rate();
+    r.creator_id = u.creator_id();
+    const auto& econ = u.economy();
+    r.mass_produced = static_cast<f32>(econ.production_active ? econ.production_mass : 0.0);
+    r.energy_produced = static_cast<f32>(econ.production_active ? econ.production_energy : 0.0);
+    r.mass_consumed = static_cast<f32>(econ.consumption_active ? econ.consumption_mass : 0.0);
+    r.energy_consumed = static_cast<f32>(econ.consumption_active ? econ.consumption_energy : 0.0);
+    r.mass_requested = static_cast<f32>(econ.consumption_mass);
+    r.energy_requested = static_cast<f32>(econ.consumption_energy);
+    r.nuke_silo_max = u.silo_max_storage(true);
+    r.tactical_silo_max = u.silo_max_storage(false);
+    r.nuke_silo_builds = u.silo_build_count(true);
+    r.tactical_silo_builds = u.silo_build_count(false);
+
     const auto& pose = u.animated_bone_matrices();
     if (!pose.empty()) {
         r.bone_offset = static_cast<u32>(out.bones.size());
@@ -71,6 +93,10 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     for (const auto& c : u.command_queue())
         out.commands.push_back({c.type, c.target_id, c.target_pos});
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
+    r.rally_offset = static_cast<u32>(out.commands.size());
+    for (const auto& c : u.rally_orders())
+        out.commands.push_back({c.type, c.target_id, c.target_pos});
+    r.rally_count = static_cast<u32>(out.commands.size()) - r.rally_offset;
 
     // Only what can be drawn: a ring needs the intel on and a radius.
     r.intel_offset = static_cast<u32>(out.intel.size());

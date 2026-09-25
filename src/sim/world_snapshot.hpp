@@ -69,6 +69,7 @@ struct EntityRecord {
     std::string custom_name;
     IconClass icon = IconClass::Generic;
     f32 footprint_size_x = 1;
+    f32 footprint_size_z = 1;
     bool is_being_built = false;
     u32 build_target_id = 0;    ///< building when non-zero
     u32 reclaim_target_id = 0;
@@ -81,8 +82,25 @@ struct EntityRecord {
     i32 tactical_silo_ammo = 0;
     i32 weapon_count = 0;
     u32 command_offset = 0, command_count = 0;   ///< into WorldSnapshot::commands
+    u32 rally_offset = 0, rally_count = 0;       ///< a factory's rally orders, likewise
     u32 intel_offset = 0, intel_count = 0;       ///< into WorldSnapshot::intel
     u32 adjacent_offset = 0, adjacent_count = 0; ///< into WorldSnapshot::adjacent
+
+    // What the UI's unit objects read (UserUnit, M191 step 3)
+    bool auto_mode = false;
+    bool repeat_queue = false;
+    bool overcharge_paused = false;
+    bool auto_surface = false;
+    bool is_dying = false;
+    f32 fuel_ratio = -1;
+    f32 shield_ratio = 1;
+    f32 build_rate = 0;
+    u32 creator_id = 0;
+    f32 mass_produced = 0, energy_produced = 0;   ///< per second, when producing
+    f32 mass_consumed = 0, energy_consumed = 0;   ///< per second, when consuming
+    f32 mass_requested = 0, energy_requested = 0; ///< per second, asked
+    i32 nuke_silo_max = 0, tactical_silo_max = 0;
+    i32 nuke_silo_builds = 0, tactical_silo_builds = 0;
 
     // Shields
     u32 shield_owner_id = 0;
@@ -144,6 +162,9 @@ struct WorldSnapshot {
     }
     std::span<const BoneMatrix> bones_of(const EntityRecord& e) const {
         return {bones.data() + e.bone_offset, e.bone_count};
+    }
+    std::span<const CommandRecord> rally_of(const EntityRecord& e) const {
+        return {commands.data() + e.rally_offset, e.rally_count};
     }
     std::span<const CommandRecord> commands_of(const EntityRecord& e) const {
         return {commands.data() + e.command_offset, e.command_count};

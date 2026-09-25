@@ -102,8 +102,13 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     }
     if (tracking && has_target_position) {
         auto pos = position();
+        // A torpedo aims a quarter under the surface, so one launched above
+        // the water dives into it (Moho's underwater aim clamp, M206o).
+        f32 aim_y = target_position.y;
+        if (stay_underwater && terrain && terrain->has_water())
+            aim_y = std::min(aim_y, terrain->water_elevation() - 0.25f);
         f32 tx = target_position.x - pos.x;
-        f32 ty = target_position.y - pos.y;
+        f32 ty = aim_y - pos.y;
         f32 tz = target_position.z - pos.z;
         f32 to_len = std::sqrt(tx * tx + ty * ty + tz * tz);
         if (to_len > 0.01f) {
@@ -154,9 +159,11 @@ void Projectile::update(f64 dt, EntityRegistry& registry, lua_State* L,
     pos.y += velocity.y * step_dt - 0.5f * ballistic_accel * step_dt * step_dt;
     pos.z += velocity.z * step_dt;
 
-    // Torpedo/underwater projectile: clamp Y to water surface
-    if (stay_underwater && terrain && pos.y > terrain->water_elevation())
-        pos.y = terrain->water_elevation();
+    // A torpedo in the water stays just under its surface; one above it
+    // (launched from a surfaced sub) is free to fall in (Moho clamps only
+    // below the water, to a hundredth under).
+    if (stay_underwater && in_water && terrain && pos.y > terrain->water_elevation() - 0.01f)
+        pos.y = terrain->water_elevation() - 0.01f;
     set_position(pos);
 
     // SetScaleVelocity: an effect that grows or shrinks as it flies.
