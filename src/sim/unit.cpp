@@ -408,6 +408,13 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
 
     if (!drove_ && !is_air_unit()) coast(dt, ctx.terrain);
 
+    // An idle transport hovers low with cargo aboard, and climbs back to its
+    // flying height without (Moho's ShouldHoverInsteadOfLand; M206n).
+    if (transport_hover_height_ > 0 && is_air_unit() && !dying_ && command_queue_.empty() &&
+        !navigator_.is_moving())
+        hold_altitude(dt, ctx.terrain,
+                      cargo_ids_.empty() ? elevation_target_ : transport_hover_height_);
+
     // Amphibious layer transition: auto-switch Land↔Water based on terrain
     if (is_amphibious() && !dying_ && ctx.terrain) {
         f32 terrain_h = ctx.terrain->get_terrain_height(position().x, position().z);
@@ -1901,11 +1908,26 @@ void Unit::attach_to_transport(Unit* transport, EntityRegistry& registry,
     }
 }
 
-void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L) {
-    detach_cargo(cargo_ids_, registry, L);
+void Unit::detach_all_cargo(EntityRegistry& registry, lua_State* L, const map::Terrain* terrain) {
+    detach_cargo(cargo_ids_, registry, L, terrain);
 }
 
-void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L) {
+bool Unit::footprint_fits(const map::PathfindingGrid& grid) const {
+    const f32 half_x = std::max(footprint_size_x(), 1.0f) * 0.5f;
+    const f32 half_z = std::max(footprint_size_z(), 1.0f) * 0.5f;
+    constexpr f32 kInside = 0.01f; // the footprint's own edge cells only
+    u32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    grid.world_to_grid(position().x - half_x + kInside, position().z - half_z + kInside, x0, z0);
+    grid.world_to_grid(position().x + half_x - kInside, position().z + half_z - kInside, x1, z1);
+    const bool amphibious = is_amphibious() || is_hover();
+    for (u32 gz = z0; gz <= z1; ++gz)
+        for (u32 gx = x0; gx <= x1; ++gx)
+            if (!grid.is_passable_for(gx, gz, "Land", naval_draft_, amphibious)) return false;
+    return true;
+}
+
+void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_State* L,
+                        const map::Terrain* terrain) {
     // Taken off the cargo list first (safety against modification during
     // Lua callbacks), in cargo order.
     std::vector<u32> snapshot;
@@ -1936,6 +1958,12 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             cargo->set_position(position());
         }
         cargo->set_orientation(euler_to_quat(quat_yaw(cargo->orientation()), 0.0f, 0.0f));
+        if (terrain) {
+            Vector3 at = cargo->position();
+            at.y = terrain->get_surface_height(at.x, at.z);
+            cargo->set_position(at);
+        }
+        cargo->note_snap();
 
         spdlog::info("Transport: entity #{} unloaded from transport #{}",
                      cargo_id, entity_id());

@@ -141,6 +141,7 @@ constexpr Mode kModesBefore[] = {
     {"--ferry-test", test_ferry, false},
     {"--transport-slots-test", test_transport_slots, false},
     {"--transport-pickup-test", test_transport_pickup, false},
+    {"--transport-drop-test", test_transport_drop, false},
     {"--factory-assist-test", test_factory_assist, false},
     {"--factory-rally-test", test_factory_rally, false},
     {"--influence-test", test_influence, false},
