@@ -863,7 +863,7 @@ static int brain_GetThreatsAroundPosition(lua_State* L) {
                             ? static_cast<i32>(lua_tonumber(L, 6)) - 1
                             : -1;
 
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
+    const auto units = sim->entity_registry().units_in_radius(px, pz, radius);
 
     // Bucket threats into 32x32 cells. An ordered map, summed in id order:
     // the list goes to scripts, and a hash map's order differs between
@@ -872,9 +872,7 @@ static int brain_GetThreatsAroundPosition(lua_State* L) {
     constexpr f32 CELL_SIZE = 32.0f;
     std::map<std::pair<i32, i32>, f32> cells;
 
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+    for (auto* entity : units) {
         auto* unit = static_cast<sim::Unit*>(entity);
 
         if (filter_specific) {

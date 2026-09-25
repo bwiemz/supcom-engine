@@ -62,7 +62,9 @@ public:
 
     /// The live units within radius of a point (2D, ignoring Y), in ascending
     /// id order: collect_in_radius's units, from a grid of units alone (a
-    /// map's props aren't walked), as the units themselves.
+    /// map's props aren't walked), as the units themselves. The pointers
+    /// stay valid until collect_garbage() (the end of the tick), which frees
+    /// what was unregistered meanwhile.
     std::vector<Entity*> units_in_radius(f32 x, f32 z, f32 radius) const;
 
     /// Collect entity IDs within an axis-aligned rectangle (2D, ignoring Y),
