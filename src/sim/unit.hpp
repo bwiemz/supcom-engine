@@ -30,6 +30,7 @@ namespace osc::sim {
 
 struct SimContext;
 class EntityRegistry;
+class SimState;
 
 struct IntelState {
     f32 radius = 0;
@@ -122,11 +123,23 @@ public:
         categories_.insert(std::move(cat));
     }
 
-    // Rally point (factories send produced units here)
-    bool has_rally_point() const { return has_rally_point_; }
-    const Vector3& rally_point() const { return rally_point_; }
-    void set_rally_point(const Vector3& p) { rally_point_ = p; has_rally_point_ = true; }
-    void clear_rally_point() { rally_point_ = {}; has_rally_point_ = false; }
+    /// A factory's rally orders (Moho's builder factory command queue,
+    /// M206j): each unit it finishes takes a copy of them, after the
+    /// roll-off move its script gives it. Only an immobile FACTORY keeps
+    /// them.
+    bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
+    void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
+    void clear_rally_orders() { rally_orders_.clear(); }
+    /// The rally orders, first given the blueprint's initial rally if there
+    /// are none (Moho's BuilderSetUpInitialRally), as Moho keeps a factory's.
+    /// It changes sim state: only the sim's own steps may call it.
+    const std::vector<UnitCommand>& validated_rally_orders(lua_State* L, SimState* sim);
+    /// Where the first rally order goes (unit:GetRallyPoint), without
+    /// changing anything: the initial rally's point if there are none yet.
+    /// False for a unit that keeps none. `L` is the sim's Lua state, whose
+    /// blueprints it reads; the UI's unit objects ask it too.
+    bool rally_point(lua_State* L, Vector3& out) const;
 
     // Build state (builder side) — tracks what this unit is constructing
     u32 build_target_id() const { return build_target_id_; }
@@ -277,7 +290,6 @@ public:
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
     void clear_commands(const char* source = "?");
-    void clear_queued_commands(); // remove all but current command
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
     /// orders (tick_orders), coasting, layer changes and fuel
@@ -745,6 +757,10 @@ private:
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
     /// as a factory's build is when its order goes; an assist just stops.
     void end_guard_build(EntityRegistry& registry, lua_State* L);
+    /// The unit this factory just finished takes the rally orders of
+    /// `rally_id` (itself, or the factory it built the unit for); Moho's
+    /// CFactoryBuildTask::InheritQueuedCommandsTo.
+    void hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -778,8 +794,7 @@ private:
     std::unordered_set<std::string> categories_;
     std::deque<UnitCommand> command_queue_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
-    Vector3 rally_point_;
-    bool has_rally_point_ = false;
+    std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built
     f64 build_time_ = 0;          // target's Economy.BuildTime
     f64 build_cost_mass_ = 0;     // target's Economy.BuildCostMass

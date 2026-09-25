@@ -2027,6 +2027,17 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                 for (u32 id : cmd.unload_ids) orders.mix(id);
             }
         }
+        // A factory's rally orders (M206j), only where it has some.
+        if (!u.rally_orders().empty()) {
+            orders.mix(0x52414c4cu); // "RALL": apart from the queue above
+            orders.mix(static_cast<u64>(u.rally_orders().size()));
+            for (const UnitCommand& cmd : u.rally_orders()) {
+                orders.mix(static_cast<u64>(cmd.type));
+                orders.mix(cmd.target_id);
+                mix_vec(orders, cmd.target_pos);
+                orders.mix(cmd.command_id);
+            }
+        }
 
         navigation.mix(e.entity_id());
         navigation.mix(static_cast<u64>(u.navigator().status()));

@@ -991,35 +991,21 @@ static int unit_SetBuildRate(lua_State* L) {
     return 0;
 }
 
-// Rally point — factories send produced units here
+// The first of a factory's rally orders' positions (Moho: its factory command
+// queue's first target), or nil. Retail's roll-off reads it unguarded, and a
+// factory always has one: its initial rally until it is given another. Only
+// reads: the UI's unit objects share these methods, and a query from one
+// player's UI must not change the sim.
 static int unit_GetRallyPoint(lua_State* L) {
     auto* u = check_unit(L);
-    if (!u || !u->has_rally_point()) {
-        // Default: return own position
-        push_vector3(L, u ? u->position() : sim::Vector3{0, 0, 0});
+    auto* sim = get_sim(L);
+    sim::Vector3 point;
+    if (u && u->rally_point(sim ? sim->lua_state() : L, point)) {
+        push_vector3(L, point);
         return 1;
     }
-    push_vector3(L, u->rally_point());
+    lua_pushnil(L);
     return 1;
-}
-
-static int unit_SetRallyPoint(lua_State* L) {
-    auto* u = check_unit(L);
-    if (!u) return 0;
-    if (lua_istable(L, 2)) {
-        sim::Vector3 pos;
-        lua_rawgeti(L, 2, 1);
-        pos.x = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 2);
-        pos.y = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        pos.z = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        u->set_rally_point(pos);
-    }
-    return 0;
 }
 
 // ====================================================================
@@ -2437,7 +2423,6 @@ const MethodEntry unit_methods[] = {
     {"SetBlockCommandQueue",        unit_SetBlockCommandQueue},
     {"PlayCommanderWarpInEffect",   stub_noop},
     {"GetRallyPoint",                unit_GetRallyPoint},
-    {"SetRallyPoint",                unit_SetRallyPoint},
     {"SetBusy",                      unit_SetBusy},
     {"SetRotation",                  unit_SetRotation},
     {"GetGuardedUnit",               unit_GetGuardedUnit},
