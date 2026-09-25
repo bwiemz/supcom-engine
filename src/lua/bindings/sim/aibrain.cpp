@@ -59,6 +59,7 @@
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <map>
 #include <chrono>
@@ -2089,11 +2090,44 @@ static int brain_GetAttackVectors(lua_State* L) {
 }
 static int brain_SetGreaterOf(lua_State*) { return 0; }
 
-// brain:CheckBlockingTerrain(pos, maxRange, threatType)
-// No-op stub — returns false (no blocking terrain).
-// Called by aiattackutilities.lua for attack path validation.
+// brain:CheckBlockingTerrain(startPos, endPos, arcType): whether the terrain
+// stands between two points for a shot along a straight line ('none') or a
+// 'low' or high arc -- Moho's CAiBrain::CheckBlockingTerrain (faf-re). A
+// position that isn't a table reads as the origin, as Moho's does: retail's
+// CheckNavalPathing passes an end it never set.
 static int brain_CheckBlockingTerrain(lua_State* L) {
-    lua_pushboolean(L, 0);
+    if (lua_gettop(L) != 4) {
+        luaL_error(L, "%s\n  expected %d args, but got %d",
+                   "CAiBrain:CheckBlockingTerrain( startPos, endPos, arcType )", 4, lua_gettop(L));
+    }
+    const auto point = [L](int idx) {
+        std::array<f32, 3> p{0, 0, 0};
+        if (!lua_istable(L, idx)) return p;
+        for (int i = 0; i < 3; ++i) {
+            lua_rawgeti(L, idx, i + 1);
+            p[static_cast<size_t>(i)] = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        return p;
+    };
+    const auto a = point(2);
+    const auto b = point(3);
+    if (!lua_isstring(L, 4)) luaL_typerror(L, 4, "string");
+    const std::string_view arc_name = lua_tostring(L, 4);
+    const auto named = [&](std::string_view name) {
+        return std::equal(arc_name.begin(), arc_name.end(), name.begin(), name.end(),
+                          [](char x, char y) {
+                              return std::tolower(static_cast<unsigned char>(x)) ==
+                                     std::tolower(static_cast<unsigned char>(y));
+                          });
+    };
+    const map::ShotArc arc = named("none")  ? map::ShotArc::Straight
+                             : named("low") ? map::ShotArc::Low
+                                            : map::ShotArc::High;
+    auto* sim = get_sim(L);
+    const auto* terrain = sim ? sim->terrain() : nullptr;
+    lua_pushboolean(L, terrain && map::terrain_blocks_shot(terrain->heightmap(), a[0], a[1], a[2],
+                                                           b[0], b[1], b[2], arc));
     return 1;
 }
 
