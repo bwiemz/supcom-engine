@@ -188,10 +188,13 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   the game is the player's again. Saves from another build are refused as
   `WrongVersion`. `--load`, `--save` and `--save-at` do the same headlessly.
   `data.save_load` chains three processes (save, load and save again, load),
-  and `data.load_flow` drives the dialogs' globals offscreen. Loading from
-  inside a running game isn't reliable yet. Any game started from another
-  needs a fresh UI Lua state, as retail gives each game, and the renderer
-  leaks on relaunch (see the M208 design).
+  and `data.load_flow` drives the dialogs' globals offscreen: a load from the
+  front end, one from inside the game, a return to the lobby, and another.
+- **A UI Lua state per game (M191 step 4):** the front end and each game get
+  a fresh one, as Moho gives them. The old state goes with its controls,
+  threads, beat functions and key maps. `FrontEndData` carries data across
+  as copies. A second game in a run (lobby, game, lobby, game, or a load from
+  the game menu) works as the first.
 - **Sim/user boundary:** the renderer reads only per-tick snapshots (M190).
   The UI state's units are Moho's `UserUnit` (M191 step 3). They read the
   tick's snapshot, and change the sim only through the command stream.

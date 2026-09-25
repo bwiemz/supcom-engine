@@ -103,7 +103,7 @@ Loading from the game menu's Load dialog starts a new game from inside the one b
 - **A GPU allocation leaks** on each relaunch (VMA asserts at exit in Debug builds).
 - **Per-map textures are cached by name** (`__terrain_blend0/1`, `__normal_overlay__`) and not cleared with the scene. A second game on a different map would draw the first map's.
 
-M208a fixes one prerequisite: the Load and replay dialogs destroy `GetFrame(0)` as they leave, and the root frame now keeps itself while its children go. The rest is a follow-up milestone of its own. Loading from the front end (the main menu, the single-player lobby) works.
+M208a fixes one prerequisite: the Load and replay dialogs destroy `GetFrame(0)` as they leave, and the root frame now keeps itself while its children go. The rest is fixed: #94 fixed the renderer's two problems, and M191 step 4 gives every game a fresh UI state. Loading from the game menu works, and `data.load_flow` covers it.
 
 ## Risks
 

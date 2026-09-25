@@ -139,9 +139,11 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
-    # M208a: retail's Load dialog path -- GetSpecialFiles lists the save,
-    # LoadSavedGame loads it -- then the game catches up (never a replay
-    # meanwhile), plays on, and InternalSaveGame saves it again, offscreen.
+    # M208a, M191 step 4: retail's Load dialog path -- GetSpecialFiles lists
+    # the save, LoadSavedGame loads it -- then the game catches up (never a
+    # replay meanwhile), plays on, and InternalSaveGame saves it again. Then
+    # that save loads from inside the game, the game returns to the lobby,
+    # and the first loads again: each in a fresh UI state, offscreen.
     add_test(NAME data.load_flow
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/load_flow.py
                      $<TARGET_FILE:opensupcom>
