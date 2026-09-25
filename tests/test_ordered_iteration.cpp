@@ -9,6 +9,7 @@
 #include "sim/prop.hpp"
 #include "sim/unit.hpp"
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -154,4 +155,60 @@ TEST_CASE("A unit's neighbours and enhancements come in a fixed order", "[determ
     std::vector<std::string> slots;
     for (const auto& [slot, name] : u.enhancements()) slots.push_back(slot);
     CHECK(slots == std::vector<std::string>{"Back", "LCH", "RCH"});
+}
+
+TEST_CASE("units_in_radius is collect_in_radius's live units, in the same order", "[determinism]") {
+    // Units and props mixed across cells; units move between cells, one is
+    // destroyed but still registered, and a unit and a prop are removed.
+    const auto check_matches = [](EntityRegistry& reg) {
+        for (const auto& [x, z, r] : std::vector<std::array<float, 3>>{
+                 {100, 100, 60}, {0, 0, 300}, {37, 181, 25}, {199, 5, 0.5f}, {-50, -50, 10}}) {
+            std::vector<osc::u32> expected;
+            for (osc::u32 id : reg.collect_in_radius(x, z, r)) {
+                const Entity* e = reg.find(id);
+                if (e && e->is_unit() && !e->destroyed()) expected.push_back(id);
+            }
+            std::vector<osc::u32> got;
+            for (const Entity* e : reg.units_in_radius(x, z, r)) got.push_back(e->entity_id());
+            INFO("query at " << x << "," << z << " r " << r);
+            CHECK(got == expected);
+        }
+    };
+    const auto fill = [](EntityRegistry& reg) {
+        std::vector<osc::u32> units;
+        std::vector<osc::u32> props;
+        for (int i = 0; i < 60; ++i) {
+            const float x = static_cast<float>((i * 37) % 200);
+            const float z = static_cast<float>((i * 53) % 200);
+            if (i % 3 == 0) {
+                auto p = std::make_unique<Prop>();
+                p->set_position({x, 0, z});
+                props.push_back(reg.register_entity(std::move(p)));
+            } else {
+                units.push_back(add(reg, x, z));
+            }
+        }
+        for (size_t i = 0; i < units.size(); i += 3)
+            reg.find(units[i])->set_position(
+                {150.0f - static_cast<float>(i), 0, 20.0f + static_cast<float>(2 * i)});
+        reg.find(units[5])->mark_destroyed();
+        reg.unregister_entity(units[7]);
+        reg.unregister_entity(props[2]);
+        return units.size();
+    };
+
+    EntityRegistry grid;
+    grid.init_spatial_grid(512, 512);
+    fill(grid);
+    check_matches(grid);
+    CHECK(grid.units_in_radius(100, 100, 300).size() == 38); // 40 units, 1 gone, 1 destroyed
+
+    EntityRegistry late; // entities first, the grid after (props before map load)
+    fill(late);
+    late.init_spatial_grid(512, 512);
+    check_matches(late);
+
+    EntityRegistry flat; // no grid: the scan
+    fill(flat);
+    check_matches(flat);
 }

@@ -24,7 +24,7 @@ u32 EntityRegistry::register_entity(std::unique_ptr<Entity> entity) {
         auto* e = entities_[id].get();
         i32 cx, cz;
         world_to_cell(e->position().x, e->position().z, cx, cz);
-        grid_insert(id, cx, cz);
+        grid_insert(*e, cx, cz);
         e->set_grid_cell(cx, cz);
     }
 
@@ -51,7 +51,7 @@ void EntityRegistry::unregister_entity(u32 id) {
     if (grid_initialized_) {
         i32 cx = entity->grid_cell_x();
         i32 cz = entity->grid_cell_z();
-        if (cx >= 0) grid_remove(id, cx, cz);
+        if (cx >= 0) grid_remove(*entity, cx, cz);
     }
     entity->set_registry(nullptr);
     Entity& ref = *entity;
@@ -84,19 +84,21 @@ void EntityRegistry::init_spatial_grid(u32 map_width, u32 map_height) {
     // Reset all entity grid cells so stale coordinates are not reused on re-init
     for_each([](Entity& e) { e.set_grid_cell(-1, -1); });
     grid_cells_.clear();
+    unit_cells_.clear();
 
     grid_width_ = (map_width + CELL_SIZE - 1) / CELL_SIZE;
     grid_height_ = (map_height + CELL_SIZE - 1) / CELL_SIZE;
     if (grid_width_ == 0) grid_width_ = 1;
     if (grid_height_ == 0) grid_height_ = 1;
     grid_cells_.resize(static_cast<size_t>(grid_width_) * grid_height_);
+    unit_cells_.resize(grid_cells_.size());
     grid_initialized_ = true;
 
     // Retroactively insert all existing entities (e.g. props created before grid init)
     for_each([this](Entity& e) {
         i32 cx, cz;
         world_to_cell(e.position().x, e.position().z, cx, cz);
-        grid_insert(e.entity_id(), cx, cz);
+        grid_insert(e, cx, cz);
         e.set_grid_cell(cx, cz);
     });
 
@@ -115,16 +117,27 @@ size_t EntityRegistry::cell_index(i32 cx, i32 cz) const {
     return static_cast<size_t>(cz) * grid_width_ + static_cast<size_t>(cx);
 }
 
-void EntityRegistry::grid_insert(u32 entity_id, i32 cx, i32 cz) {
-    grid_cells_[cell_index(cx, cz)].push_back(entity_id);
+void EntityRegistry::grid_insert(Entity& entity, i32 cx, i32 cz) {
+    const size_t i = cell_index(cx, cz);
+    grid_cells_[i].push_back(entity.entity_id());
+    if (entity.is_unit()) unit_cells_[i].push_back({entity.entity_id(), &entity});
 }
 
-void EntityRegistry::grid_remove(u32 entity_id, i32 cx, i32 cz) {
-    auto& cell = grid_cells_[cell_index(cx, cz)];
-    auto it = std::find(cell.begin(), cell.end(), entity_id);
+void EntityRegistry::grid_remove(const Entity& entity, i32 cx, i32 cz) {
+    const size_t i = cell_index(cx, cz);
+    auto& cell = grid_cells_[i];
+    auto it = std::find(cell.begin(), cell.end(), entity.entity_id());
     if (it != cell.end()) {
         *it = cell.back(); // swap-and-pop for O(1) removal
         cell.pop_back();
+    }
+    if (!entity.is_unit()) return;
+    auto& units = unit_cells_[i];
+    auto u = std::find_if(units.begin(), units.end(),
+                          [&](const UnitRef& r) { return r.id == entity.entity_id(); });
+    if (u != units.end()) {
+        *u = units.back();
+        units.pop_back();
     }
 }
 
@@ -139,8 +152,8 @@ void EntityRegistry::notify_position_changed(Entity& entity) {
 
     if (old_cx == new_cx && old_cz == new_cz) return; // same cell, no update
 
-    if (old_cx >= 0) grid_remove(entity.entity_id(), old_cx, old_cz);
-    grid_insert(entity.entity_id(), new_cx, new_cz);
+    if (old_cx >= 0) grid_remove(entity, old_cx, old_cz);
+    grid_insert(entity, new_cx, new_cz);
     entity.set_grid_cell(new_cx, new_cz);
 }
 
@@ -180,6 +193,37 @@ std::vector<u32> EntityRegistry::collect_in_radius(f32 x, f32 z,
     }
     // A cell lists ids in the order they moved in; callers get a canonical order.
     std::sort(result.begin(), result.end());
+    return result;
+}
+
+std::vector<Entity*> EntityRegistry::units_in_radius(f32 x, f32 z, f32 radius) const {
+    std::vector<Entity*> result;
+    const f32 r2 = radius * radius;
+    const auto within = [&](const Entity& e) {
+        const f32 dx = e.position().x - x;
+        const f32 dz = e.position().z - z;
+        return dx * dx + dz * dz <= r2;
+    };
+    if (!grid_initialized_) {
+        for_each_unit([&](Entity& e) {
+            if (!e.destroyed() && within(e)) result.push_back(&e);
+        });
+        return result;
+    }
+    i32 cx_min, cz_min, cx_max, cz_max;
+    world_to_cell(x - radius, z - radius, cx_min, cz_min);
+    world_to_cell(x + radius, z + radius, cx_max, cz_max);
+    std::vector<UnitRef> found;
+    for (i32 cz = cz_min; cz <= cz_max; ++cz) {
+        for (i32 cx = cx_min; cx <= cx_max; ++cx) {
+            for (const UnitRef& unit : unit_cells_[cell_index(cx, cz)])
+                if (!unit.entity->destroyed() && within(*unit.entity)) found.push_back(unit);
+        }
+    }
+    std::sort(found.begin(), found.end(),
+              [](const UnitRef& a, const UnitRef& b) { return a.id < b.id; });
+    result.reserve(found.size());
+    for (const UnitRef& unit : found) result.push_back(unit.entity);
     return result;
 }
 

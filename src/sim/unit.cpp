@@ -428,12 +428,10 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     if (is_air_unit() && !dying_ && navigator_.is_moving()) {
         constexpr f32 SEPARATION_RADIUS = 8.0f;
         constexpr f32 SEPARATION_FORCE = 3.0f;
-        auto nearby = registry.collect_in_radius(position().x, position().z, SEPARATION_RADIUS);
+        const auto nearby = registry.units_in_radius(position().x, position().z, SEPARATION_RADIUS);
         f32 repulse_x = 0, repulse_z = 0;
-        for (u32 nid : nearby) {
-            if (nid == entity_id()) continue;
-            auto* ne = registry.find(nid);
-            if (!ne || ne->destroyed() || !ne->is_unit()) continue;
+        for (auto* ne : nearby) {
+            if (ne == this) continue;
             auto* nu = static_cast<Unit*>(ne);
             if (!nu->is_air_unit() || nu->army() != army()) continue;
             f32 ndx = position().x - ne->position().x;
