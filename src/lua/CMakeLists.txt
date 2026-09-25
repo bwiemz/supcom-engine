@@ -4,6 +4,23 @@ add_library(osc_lua STATIC
     engine_bindings.cpp
     blueprint_bindings.cpp
     moho_bindings.cpp
+    # moho.* by class (M191 step 2)
+    bindings/sim/aibrain.cpp
+    bindings/sim/blip.cpp
+    bindings/sim/effects.cpp
+    bindings/sim/entity.cpp
+    bindings/sim/manipulators.cpp
+    bindings/sim/navigator.cpp
+    bindings/sim/platoon.cpp
+    bindings/sim/projectile.cpp
+    bindings/sim/shield.cpp
+    bindings/sim/unit.cpp
+    bindings/sim/weapon.cpp
+    bindings/ui/controls.cpp
+    bindings/ui/lists.cpp
+    bindings/ui/lobby.cpp
+    bindings/ui/text.cpp
+    bindings/ui/world.cpp
     mp_net_state.cpp
     lan_lobby.cpp
     sim_bindings.cpp

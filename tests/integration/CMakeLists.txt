@@ -1,4 +1,21 @@
-# Integration tests that drive the real `opensupcom` executable.
+# Integration tests. The test modes run in osc_integration: the engine's run
+# (src/app) with the modes of runner/. The game's own features (AI games,
+# replays, captures, binding coverage) run in `opensupcom`.
+
+add_executable(osc_integration
+    runner/main.cpp
+    runner/test_modes.cpp
+    runner/lan_modes.cpp
+    runner/integration_tests.cpp
+    runner/audio_data_test.cpp
+)
+target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
+target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)
+# Beside opensupcom (on Windows with the same DLLs, which the cross-OS
+# check's artifact carries); crash backtraces show function names.
+set_target_properties(osc_integration PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    ENABLE_EXPORTS ON)
 #
 # Labels:
 #   mp          two processes over localhost TCP; need no game data (run in CI)
@@ -19,14 +36,14 @@ if(Python3_Interpreter_FOUND)
     set(_run_pair ${CMAKE_CURRENT_SOURCE_DIR}/run_pair.py)
     # Distinct ports so the tests can run in parallel.
     add_test(NAME mp.lockstep_sync
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:opensupcom> mp 47711)
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47711)
     add_test(NAME mp.lockstep_desync_detected
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:opensupcom> mp 47712
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47712
                      -- --mp-desync)
     add_test(NAME mp.lan_lobby_launch
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:opensupcom> lan 47713)
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47713)
     add_test(NAME mp.lan_peer_drop
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:opensupcom> lan 47714
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47714
                      --client-may-fail -- --mp-drop-at 20)
     set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected
                          mp.lan_lobby_launch mp.lan_peer_drop
@@ -35,7 +52,7 @@ else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
 
-add_test(NAME mp.lan_ui_globals COMMAND opensupcom --lan-ui-test)
+add_test(NAME mp.lan_ui_globals COMMAND osc_integration --lan-ui-test)
 set_tests_properties(mp.lan_ui_globals PROPERTIES LABELS mp TIMEOUT 60)
 
 # ── Data-backed modes (need Forged Alliance) ───────────────────────────────
@@ -46,10 +63,10 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/data_tests.cmake)
 
 function(osc_add_data_test mode group)
     if(ARGN STREQUAL "NO_MAP")
-        add_test(NAME data.${mode} COMMAND opensupcom --${mode})
+        add_test(NAME data.${mode} COMMAND osc_integration --${mode})
     else()
         add_test(NAME data.${mode}
-                 COMMAND opensupcom --map ${OSC_TEST_MAP} --${mode})
+                 COMMAND osc_integration --map ${OSC_TEST_MAP} --${mode})
     endif()
     set_tests_properties(data.${mode} PROPERTIES
         LABELS "data;${group}"

@@ -149,7 +149,7 @@ jobs:
       # played by this build under Wine and by a Linux build, on the same
       # game data. Release, since Wine has no debug C runtime.
       - name: Build Release for the cross-OS check
-        run: cmake --build build --config Release --target opensupcom
+        run: cmake --build build --config Release --target opensupcom osc_integration
 
       - name: Upload the Windows build
         uses: actions/upload-artifact@v4
@@ -157,6 +157,7 @@ jobs:
           name: opensupcom-windows
           path: |
             build/Release/opensupcom.exe
+            build/Release/osc_integration.exe
             build/Release/*.dll
           retention-days: 14
           if-no-files-found: error
