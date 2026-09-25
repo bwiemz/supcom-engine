@@ -91,3 +91,29 @@ TEST_CASE("A sim script's SetCustomName names the unit at once", "[userunit]") {
     REQUIRE(sim_lua.do_string("moho.entity_methods.SetCustomName(units[1], 'Fred')").ok());
     CHECK(static_cast<osc::sim::Unit*>(sim.entity_registry().find(id))->custom_name() == "Fred");
 }
+
+TEST_CASE("A UI script's IsInCategory takes a category's name", "[userunit]") {
+    // UserUnit:IsInCategory(category) takes a name: retail's UI passes
+    // 'COMMAND' (gamemain's OnFirstUpdate, before it names the commander),
+    // 'FACTORY', 'STRUCTURE' and the faction's name (the construction panel).
+    UiWorld w;
+    w.unit().add_category("COMMAND");
+    w.unit().add_category("UEF");
+    REQUIRE(w.ui.do_string(R"(
+        is_command = units[1]:IsInCategory('COMMAND')
+        is_uef = units[1]:IsInCategory('UEF')
+        is_factory = units[1]:IsInCategory('FACTORY')
+    )")
+                .ok());
+    lua_State* L = w.ui.raw();
+    const auto global = [&](const char* name) {
+        lua_pushstring(L, name);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const bool v = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return v;
+    };
+    CHECK(global("is_command"));
+    CHECK(global("is_uef"));
+    CHECK_FALSE(global("is_factory"));
+}

@@ -1800,9 +1800,15 @@ static int unit_GetCreator(lua_State* L) {
     return 1;
 }
 
+// unit:IsInCategory(category): a category's name, as UserUnit's takes it
+// (retail's UI asks 'COMMAND', 'FACTORY', a faction), or a category object.
 static int unit_IsInCategory(lua_State* L) {
     auto* u = check_unit(L);
     if (!u) { lua_pushboolean(L, 0); return 1; }
+    if (lua_type(L, 2) == LUA_TSTRING) {
+        lua_pushboolean(L, u->has_category(lua_tostring(L, 2)) ? 1 : 0);
+        return 1;
+    }
     if (!lua_istable(L, 2)) { lua_pushboolean(L, 0); return 1; }
     bool matches = osc::lua::unit_matches_category(L, 2, u->categories());
     lua_pushboolean(L, matches ? 1 : 0);

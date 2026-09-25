@@ -12190,6 +12190,16 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     //    OnFirstUpdate once and switches itself off. (Moho updates hidden
     //    controls too: the cluster is hidden under the loading fade, and
     //    OnFirstUpdate must create the score UI before InitialAnimations.)
+    //    OnFirstUpdate also names the commander for its player (4b, 6c); the
+    //    scenario script named it for its army at boot, so it gets a marker
+    //    name first, to tell the UI's rename from the boot name.
+    const u32 acu = army_acu_id(ctx.sim, 0);
+    const auto acu_name = [&]() -> std::string {
+        const auto* e = ctx.sim.entity_registry().find(acu);
+        return e ? e->custom_name() : std::string();
+    };
+    constexpr const char* kMarkerName = "__osc_test_unnamed";
+    if (auto* e = ctx.sim.entity_registry().find(acu)) e->set_custom_name(kMarkerName);
     pump_frames(5);
     lua_ok("Test 4: first frame ran OnFirstUpdate", R"(
         local cluster = import('/lua/ui/game/gamemain.lua').GetControlCluster()
@@ -12197,6 +12207,14 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             error('control cluster still waits for its first frame')
         end
     )");
+
+    // 4b. OnFirstUpdate's rename (UserUnit:SetCustomName) is, as in Moho, a
+    //     command to the sim: queued, not applied, since no tick has run it.
+    if (acu == 0) osc::test_status::fail("[FAIL] Test 4b: army 1 has no commander");
+    else if (acu_name() != kMarkerName)
+        osc::test_status::fail("[FAIL] Test 4b: the commander was renamed '{}' outside a tick",
+                               acu_name());
+    else spdlog::info("[PASS] Test 4b: the commander's new name waits for a tick");
 
     // 5. StopLoadingDialog's fade-out ends in InitialAnimations ->
     //    HideGameUI('off') after ~4 s of UI time.
@@ -12221,6 +12239,23 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             error('3 beats ran the beat function ' .. __osc_test_beats .. ' times')
         end
     )");
+    // 6c. The ticks ran the name command (4b): the commander bears its
+    //     player's name, as GetArmiesTable gives it.
+    if (lua_ok("Test 6c: read the focus army's nickname", R"(
+            local info = GetArmiesTable()
+            __osc_test_nickname = info.armiesTable[info.focusArmy].nickname
+        )")) {
+        lua_State* uL = ctx.lua_state.raw();
+        lua_pushstring(uL, "__osc_test_nickname");
+        lua_rawget(uL, LUA_GLOBALSINDEX);
+        const std::string nickname = lua_isstring(uL, -1) ? lua_tostring(uL, -1) : "";
+        lua_pop(uL, 1);
+        if (!nickname.empty() && acu_name() == nickname)
+            spdlog::info("[PASS] Test 6c: the commander bears its player's name, '{}'", nickname);
+        else
+            osc::test_status::fail("[FAIL] Test 6c: the commander is named '{}', its player '{}'",
+                                   acu_name(), nickname);
+    }
 
     // 7. Pausing reaches gamemain.OnPause(pausedBy, timeouts) / OnResume,
     //    running retail's own handlers (pause banner, tabs). A local pause
