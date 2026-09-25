@@ -347,6 +347,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
             set_unit_state("WaitForFerry", false);
+        // A factory whose guard order went while it built for the guarded
+        // factory drops that unit (M206h).
+        if (factory_assist_build_ && !(head && head->type == CommandType::Guard))
+            end_guard_build(ctx.registry, ctx.L);
     }
 
     // Paused units skip their orders, and what follows them, but still
