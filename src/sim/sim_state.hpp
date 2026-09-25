@@ -569,6 +569,18 @@ public:
     f32 playable_x1() const { return playable_x1_; }
     f32 playable_z1() const { return playable_z1_; }
 
+    /// Army `army`'s influence map (M207b), made on first use; null without a
+    /// map (terrain) or army.
+    InfluenceMap* influence_map(i32 army);
+    /// The playable area in `map`'s cells, for an "on map" threat query.
+    CellRect playable_cells(const InfluenceMap& map) const;
+    /// Whether army `army` has ever had entity `id` in line of sight (Moho's
+    /// RECON_LOSEver): kept while the entity lives.
+    bool ever_in_sight(u32 id, u32 army) const {
+        const auto it = los_ever_.find(id);
+        return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
+    }
+
     Vector3 clamp_to_playable(const Vector3& pos) const {
         if (!has_playable_rect_) return pos;
         Vector3 clamped = pos;
@@ -595,6 +607,13 @@ private:
     /// other. A push never takes a unit where its layer can't go.
     void separate_ground_units();
     void update_visibility();
+    /// Influence maps (M207b): the army whose turn it is (tick % army
+    /// count) reports what its intel sees to its map, after the visibility
+    /// pass, as Moho's recon tick does.
+    void feed_influence_map();
+    /// Each army's map updates every 30 ticks, army i when tick % 30 == i,
+    /// at the start of the tick as Moho's army OnTick does.
+    void update_influence_maps();
     void dispatch_due_commands();
     /// A Stop order: the unit drops its orders, and the one under way (a
     /// factory's build, an enhancement).
@@ -731,6 +750,10 @@ private:
     static constexpr u32 MAX_VIS_ARMIES = 16;
     std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
         prev_entity_vis_;
+
+    // Per entity, a bit per army that has ever had it in line of sight
+    // (see ever_in_sight). Looked up, never walked.
+    std::unordered_map<u32, u32> los_ever_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>

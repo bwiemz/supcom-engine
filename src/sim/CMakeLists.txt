@@ -4,6 +4,7 @@ add_library(osc_sim STATIC
     blueprint_categories.cpp
     category_expr.cpp
     build_placement.cpp
+    influence_map.cpp
     army_brain.cpp
     bone_cache.cpp
     bone_data.cpp
