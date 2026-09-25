@@ -59,6 +59,7 @@
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <map>
 #include <chrono>
@@ -667,13 +668,6 @@ static int brain_GetPersonality(lua_State* L) {
     return 1; // return the personality table
 }
 
-// brain:AssignThreatAtPosition(pos, amount, decay) — writes threat to the
-// threat map. Stub: our threat map is read-only (computed from units) so we
-// just accept and discard the manual override.
-static int brain_AssignThreatAtPosition(lua_State*) {
-    return 0;
-}
-
 // brain:ExecutePlan(planPath) — import the plan file, call its ExecutePlan(brain)
 static int brain_ExecutePlan(lua_State* L) {
     // Stack: [1]=self(brain), [2]=planPath
@@ -750,10 +744,12 @@ static int brain_GetStartVector3f(lua_State* L) {
     return 1;
 }
 
-// brain:GetMapWaterRatio() → fraction of map that is water (0.0–1.0)
+// brain:GetMapWaterRatio(): the share of the map under water (M207a), which
+// retail's AI weighs when it chooses naval builders.
 static int brain_GetMapWaterRatio(lua_State* L) {
-    // Stub: return 0.0 (land map)
-    lua_pushnumber(L, 0.0);
+    auto* sim = get_sim(L);
+    const auto* terrain = sim ? sim->terrain() : nullptr;
+    lua_pushnumber(L, terrain ? terrain->water_ratio() : 0.0f);
     return 1;
 }
 
@@ -782,249 +778,172 @@ static int brain_SetRepeatExecution(lua_State* L) {
 // Brain threat methods
 // ====================================================================
 
-// brain:GetThreatAtPosition(pos, rings, checkVis, threatType[, armyIdx])
-// Returns total threat of enemies (or specific army) within radius.
+// ====================================================================
+// Threat: the army's influence map (M207b, Moho's CInfluenceMap). The
+// queries count what the army's intel has reported, in the map's cells;
+// see sim/influence_map.hpp.
+// ====================================================================
+
+namespace {
+
+/// A position argument's x and z (a {x, y, z} table).
+sim::Vector3 threat_pos_arg(lua_State* L, int idx) {
+    sim::Vector3 pos{0, 0, 0};
+    if (!lua_istable(L, idx)) return pos;
+    lua_rawgeti(L, idx, 1);
+    pos.x = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    lua_rawgeti(L, idx, 3);
+    pos.z = static_cast<f32>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    return pos;
+}
+
+/// The threat type named at `idx`: Overall when absent (or nil); an unknown
+/// name is an error, as Moho's enum lookup makes it.
+sim::ThreatType threat_type_arg(lua_State* L, int idx) {
+    if (lua_gettop(L) < idx || lua_isnil(L, idx)) return sim::ThreatType::Overall;
+    if (lua_type(L, idx) != LUA_TSTRING) luaL_typerror(L, idx, "string");
+    sim::ThreatType type = sim::ThreatType::Overall;
+    if (!sim::threat_type_from_name(lua_tostring(L, idx), type))
+        luaL_error(L, "Invalid enum value '%s' for EThreatType", lua_tostring(L, idx));
+    return type;
+}
+
+/// The 1-based army at `idx` as 0-based, or -1 (every army) when absent.
+i32 threat_army_arg(lua_State* L, int idx, sim::SimState& sim) {
+    if (lua_gettop(L) < idx || lua_isnil(L, idx)) return -1;
+    const i32 army = static_cast<i32>(luaL_checknumber(L, idx));
+    if (army < 1 || static_cast<size_t>(army) > sim.army_count())
+        luaL_error(L, "Invalid army index %d", army);
+    return army - 1;
+}
+
+} // namespace
+
+// brain:GetThreatAtPosition(pos, rings, onMap[, type[, army]]): the threat in
+// the square of cells `rings` about pos's cell, clipped to the playable area
+// when onMap (Moho's fourth argument restricts to the map; it is no
+// visibility check).
 static int brain_GetThreatAtPosition(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!brain || !sim) {
+    sim::InfluenceMap* map = brain && sim ? sim->influence_map(brain->index()) : nullptr;
+    const sim::Vector3 pos = threat_pos_arg(L, 2);
+    const i32 rings = static_cast<i32>(lua_tonumber(L, 3));
+    const bool on_map = lua_toboolean(L, 4) != 0;
+    const sim::ThreatType type = threat_type_arg(L, 5);
+    if (!map) {
         lua_pushnumber(L, 0);
         return 1;
     }
-
-    // Extract position from arg 2
-    f32 px = 0, pz = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        px = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        pz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-
-    // rings → radius (rings=0 means pinpoint query)
-    i32 rings = static_cast<i32>(lua_tonumber(L, 3));
-    f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
-
-    // arg 4 = checkVis (ignored)
-    const char* threat_type = (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
-
-    // Optional armyIdx (arg 6) — filter to specific army instead of enemies
-    bool filter_specific = lua_isnumber(L, 6);
-    i32 specific_army = filter_specific
-                            ? static_cast<i32>(lua_tonumber(L, 6)) - 1 // Lua 1-based
-                            : -1;
-
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
-
-    f32 total = 0;
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
-        auto* unit = static_cast<sim::Unit*>(entity);
-
-        if (filter_specific) {
-            if (unit->army() != specific_army) continue;
-        } else {
-            if (!sim->is_enemy(brain->index(), unit->army())) continue;
-        }
-
-        total += get_unit_threat_for_type(unit, threat_type);
-    }
-
-    lua_pushnumber(L, total);
+    const i32 army = threat_army_arg(L, 6, *sim);
+    const sim::CellRect playable = sim->playable_cells(*map);
+    const i32 cell = map->cell_of(pos);
+    lua_pushnumber(L, map->threat_rect(cell % map->width(), cell / map->width(), rings,
+                                       on_map ? &playable : nullptr, type, army));
     return 1;
 }
 
-// brain:GetThreatsAroundPosition(pos, rings, checkVis, threatType)
-// Returns table of {cellX, cellZ, threatValue} entries bucketed into 32x32 cells.
+// brain:GetThreatsAroundPosition(pos, rings, onMap[, type[, army]]): a row
+// {x, z, threat} for each cell of that square with threat, at the cell's
+// centre, highest first.
 static int brain_GetThreatsAroundPosition(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!brain || !sim) {
-        lua_newtable(L);
-        return 1;
-    }
-
-    f32 px = 0, pz = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        px = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        pz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-
-    i32 rings = static_cast<i32>(lua_tonumber(L, 3));
-    f32 radius = rings <= 0 ? 1.0f : static_cast<f32>(rings) * 32.0f;
-    const char* threat_type = (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
-
-    // Optional armyIdx (arg 6) — filter to specific army instead of enemies
-    bool filter_specific = lua_isnumber(L, 6);
-    i32 specific_army = filter_specific
-                            ? static_cast<i32>(lua_tonumber(L, 6)) - 1
-                            : -1;
-
-    auto ids = sim->entity_registry().collect_in_radius(px, pz, radius);
-
-    // Bucket threats into 32x32 cells. An ordered map, summed in id order:
-    // the list goes to scripts, and a hash map's order differs between
-    // standard libraries -- the air-scout AI takes the first entry, so
-    // Windows and Linux games parted at their first scouting run.
-    constexpr f32 CELL_SIZE = 32.0f;
-    std::map<std::pair<i32, i32>, f32> cells;
-
-    for (u32 eid : ids) {
-        auto* entity = sim->entity_registry().find(eid);
-        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
-        auto* unit = static_cast<sim::Unit*>(entity);
-
-        if (filter_specific) {
-            if (unit->army() != specific_army) continue;
-        } else {
-            if (!sim->is_enemy(brain->index(), unit->army())) continue;
-        }
-
-        f32 threat = get_unit_threat_for_type(unit, threat_type);
-        if (threat <= 0) continue;
-
-        cells[{static_cast<i32>(std::floor(unit->position().x / CELL_SIZE)),
-               static_cast<i32>(std::floor(unit->position().z / CELL_SIZE))}] += threat;
-    }
-
-    // Return table of {cellX, cellZ, threatValue}: the most threatening
-    // first, as the scripts that take entry [1] expect; ties by cell.
-    std::vector<std::pair<std::pair<i32, i32>, f32>> ordered(cells.begin(), cells.end());
-    std::stable_sort(ordered.begin(), ordered.end(),
-                     [](const auto& a, const auto& b) { return a.second > b.second; });
+    sim::InfluenceMap* map = brain && sim ? sim->influence_map(brain->index()) : nullptr;
+    const sim::Vector3 pos = threat_pos_arg(L, 2);
+    const i32 rings = static_cast<i32>(lua_tonumber(L, 3));
+    const bool on_map = lua_toboolean(L, 4) != 0;
+    const sim::ThreatType type = threat_type_arg(L, 5);
+    const i32 army = map ? threat_army_arg(L, 6, *sim) : -1; // before pushing the result
     lua_newtable(L);
-    int idx = 1;
-    for (const auto& [key, threat] : ordered) {
-        lua_pushnumber(L, idx++);
+    if (!map) return 1;
+    const sim::CellRect playable = sim->playable_cells(*map);
+    const int result = lua_gettop(L);
+    int row = 1;
+    for (const auto& c :
+         map->threats_around(pos, rings, on_map ? &playable : nullptr, type, army)) {
         lua_newtable(L);
-        lua_pushnumber(L, 1);
-        lua_pushnumber(L, key.first * CELL_SIZE + CELL_SIZE * 0.5f);
-        lua_rawset(L, -3);
-        lua_pushnumber(L, 2);
-        lua_pushnumber(L, key.second * CELL_SIZE + CELL_SIZE * 0.5f);
-        lua_rawset(L, -3);
-        lua_pushnumber(L, 3);
-        lua_pushnumber(L, threat);
-        lua_rawset(L, -3);
-        lua_rawset(L, -3); // result[idx] = entry
+        lua_pushnumber(L, c.x);
+        lua_rawseti(L, -2, 1);
+        lua_pushnumber(L, c.z);
+        lua_rawseti(L, -2, 2);
+        lua_pushnumber(L, c.threat);
+        lua_rawseti(L, -2, 3);
+        lua_rawseti(L, result, row++);
     }
     return 1;
 }
 
-// brain:GetHighestThreatPosition(rings, checkVis, threatType[, armyIdx])
-// Returns position, threat (2 return values). Iterates ALL entities.
+// brain:GetHighestThreatPosition(rings, onMap[, type[, army]]): the centre of
+// the cell of most threat (summed over its square when rings > 0) and that
+// threat; ties go to the cell nearer the army's start.
 static int brain_GetHighestThreatPosition(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!brain || !sim) {
+    sim::InfluenceMap* map = brain && sim ? sim->influence_map(brain->index()) : nullptr;
+    const i32 rings = static_cast<i32>(lua_tonumber(L, 2));
+    const bool on_map = lua_toboolean(L, 3) != 0;
+    const sim::ThreatType type = threat_type_arg(L, 4);
+    if (!map) {
         push_vector3(L, {0, 0, 0});
         lua_pushnumber(L, 0);
         return 2;
     }
-
-    // arg 2 = rings (unused — we scan whole map)
-    // arg 3 = checkVis (ignored)
-    const char* threat_type = (lua_type(L, 4) == LUA_TSTRING) ? lua_tostring(L, 4) : "Overall";
-
-    bool filter_specific = lua_isnumber(L, 5);
-    i32 specific_army = filter_specific
-                            ? static_cast<i32>(lua_tonumber(L, 5)) - 1
-                            : -1;
-
-    f32 best_threat = 0;
-    sim::Vector3 best_pos{0, 0, 0};
-
-    sim->entity_registry().for_each_unit([&](const sim::Entity& e) {
-        if (!e.is_unit() || e.destroyed()) return;
-        auto* unit = static_cast<const sim::Unit*>(&e);
-
-        if (filter_specific) {
-            if (unit->army() != specific_army) return;
-        } else {
-            if (!sim->is_enemy(brain->index(), unit->army())) return;
-        }
-
-        f32 t = get_unit_threat_for_type(unit, threat_type);
-        if (t > best_threat) {
-            best_threat = t;
-            best_pos = unit->position();
-        }
-    });
-
-    push_vector3(L, best_pos);
-    lua_pushnumber(L, best_threat);
+    const i32 army = threat_army_arg(L, 5, *sim);
+    const sim::CellRect playable = sim->playable_cells(*map);
+    const auto best = map->highest_threat(rings, on_map ? &playable : nullptr, type, army,
+                                          brain->start_position());
+    push_vector3(L, {best.x, 0.0f, best.z});
+    lua_pushnumber(L, best.threat);
     return 2;
 }
 
-// brain:GetThreatBetweenPositions(pos1, pos2, checkVis, threatType)
-// Returns the maximum threat at any sample point along the line from pos1 to pos2.
-// Samples every 32 world units (one threat ring). Useful for evaluating path danger.
+// brain:GetThreatBetweenPositions(a, b, onMap[, type[, army]]): the threat of
+// each cell on the line from a's cell to b's, summed.
 static int brain_GetThreatBetweenPositions(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
-    if (!brain || !sim) {
+    sim::InfluenceMap* map = brain && sim ? sim->influence_map(brain->index()) : nullptr;
+    const sim::Vector3 a = threat_pos_arg(L, 2);
+    const sim::Vector3 b = threat_pos_arg(L, 3);
+    const bool on_map = lua_toboolean(L, 4) != 0;
+    const sim::ThreatType type = threat_type_arg(L, 5);
+    if (!map) {
         lua_pushnumber(L, 0);
         return 1;
     }
-
-    // arg 2: pos1
-    f32 x1 = 0, z1 = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1);
-        x1 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 2, 3);
-        z1 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-    // arg 3: pos2
-    f32 x2 = 0, z2 = 0;
-    if (lua_istable(L, 3)) {
-        lua_rawgeti(L, 3, 1);
-        x2 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 3, 3);
-        z2 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-    }
-    // arg 4: checkVis (ignored)
-    const char* threat_type =
-        (lua_type(L, 5) == LUA_TSTRING) ? lua_tostring(L, 5) : "Overall";
-
-    // Sample along line every 32 units (one threat ring)
-    f32 dx = x2 - x1, dz = z2 - z1;
-    f32 dist = std::sqrt(dx * dx + dz * dz);
-    constexpr f32 SAMPLE_SPACING = 32.0f;
-    i32 samples = std::max(1, static_cast<i32>(dist / SAMPLE_SPACING));
-
-    f32 max_threat = 0;
-    for (i32 i = 0; i <= samples; ++i) {
-        f32 t = static_cast<f32>(i) / static_cast<f32>(samples);
-        f32 px = x1 + dx * t;
-        f32 pz = z1 + dz * t;
-
-        auto ids = sim->entity_registry().collect_in_radius(
-            px, pz, SAMPLE_SPACING);
-        f32 sample_threat = 0;
-        for (u32 eid : ids) {
-            auto* entity = sim->entity_registry().find(eid);
-            if (!entity || !entity->is_unit() || entity->destroyed()) continue;
-            auto* unit = static_cast<sim::Unit*>(entity);
-            if (!sim->is_enemy(brain->index(), unit->army())) continue;
-            sample_threat += get_unit_threat_for_type(unit, threat_type);
-        }
-        max_threat = std::max(max_threat, sample_threat);
-    }
-
-    lua_pushnumber(L, max_threat);
+    const i32 army = threat_army_arg(L, 6, *sim);
+    const sim::CellRect playable = sim->playable_cells(*map);
+    lua_pushnumber(L, map->threat_between(a, b, on_map ? &playable : nullptr, type, army));
     return 1;
+}
+
+// brain:AssignThreatAtPosition(pos, amount[, rate[, type]]): a script's
+// threat in pos's cell of the army's influence map (M207b), fading by `rate`
+// of itself each update (clamped to [0, 1]; 0.01 when absent).
+static int brain_AssignThreatAtPosition(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    sim::InfluenceMap* map = brain && sim ? sim->influence_map(brain->index()) : nullptr;
+    if (!map) return 0;
+    const sim::Vector3 pos = threat_pos_arg(L, 2);
+    const f32 amount = static_cast<f32>(luaL_checknumber(L, 3));
+    // Absent, the rate is -1, which the map takes as 0.01. Given, it is
+    // clamped to [0, 1] first, as Moho's binding does, so a negative one is 0:
+    // threat that never fades.
+    f32 rate = -1.0f;
+    if (lua_gettop(L) >= 4 && !lua_isnil(L, 4))
+        rate = std::clamp(static_cast<f32>(luaL_checknumber(L, 4)), 0.0f, 1.0f);
+    sim::ThreatType type = sim::ThreatType::Overall;
+    if (lua_gettop(L) >= 5 && !lua_isnil(L, 5)) {
+        const char* name = luaL_checkstring(L, 5);
+        if (!sim::threat_type_from_name(name, type))
+            luaL_error(L, "Invalid enum value '%s' for EThreatType", name);
+    }
+    map->assign_threat(pos, type, amount, rate);
+    return 0;
 }
 
 // ====================================================================
@@ -1264,8 +1183,9 @@ static bool is_resource_builder_type(const std::string& type) {
 //   ({{types...}, {x, z, 0}, ...} groups) where the structure fits -- offset
 //   by the start location when `relative` -- the one nearest the target.
 // The answer is relative to the start location when `relative`: callers add
-// their own reference point. Not yet applied: the enemy-threat cutoff
-// (optIgnoreThreatOver) for resource sites.
+// their own reference point. With optIgnoreThreatOver above 0, a site whose
+// cell of the army's influence map holds that much AntiSurface threat or more
+// is passed over (M207b).
 static int brain_FindPlaceToBuild(lua_State* L) {
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
@@ -1298,10 +1218,22 @@ static int brain_FindPlaceToBuild(lua_State* L) {
     }
 
     const auto placement = placement_for(L, *sim, brain->index());
+    const i32 threat_over = lua_isnumber(L, 10) ? static_cast<i32>(lua_tonumber(L, 10)) : 0;
+    const sim::InfluenceMap* threat_map =
+        threat_over > 0 ? sim->influence_map(brain->index()) : nullptr;
+    const sim::CellRect playable = threat_map ? sim->playable_cells(*threat_map) : sim::CellRect{};
+    auto threatened = [&](f32 world_x, f32 world_z) {
+        if (!threat_map) return false;
+        const i32 cell = threat_map->cell_of({world_x, 0.0f, world_z});
+        return threat_map->threat_rect(cell % threat_map->width(), cell / threat_map->width(), 0,
+                                       &playable, sim::ThreatType::AntiSurface,
+                                       -1) >= static_cast<f32>(threat_over);
+    };
     bool found = false;
     f32 best_x = 0, best_z = 0, best_d2 = 0;
-    auto consider = [&](f32 answer_x, f32 answer_z, f32 world_x, f32 world_z,
-                        f32 from_x, f32 from_z) {
+    auto consider = [&](f32 answer_x, f32 answer_z, f32 world_x, f32 world_z, f32 from_x,
+                        f32 from_z) {
+        if (threatened(world_x, world_z)) return;
         if (!placement.can_build(structure, world_x, world_z)) return;
         const f32 d2 = (world_x - from_x) * (world_x - from_x) +
                        (world_z - from_z) * (world_z - from_z);
@@ -2164,11 +2096,44 @@ static int brain_GetAttackVectors(lua_State* L) {
 }
 static int brain_SetGreaterOf(lua_State*) { return 0; }
 
-// brain:CheckBlockingTerrain(pos, maxRange, threatType)
-// No-op stub — returns false (no blocking terrain).
-// Called by aiattackutilities.lua for attack path validation.
+// brain:CheckBlockingTerrain(startPos, endPos, arcType): whether the terrain
+// stands between two points for a shot along a straight line ('none') or a
+// 'low' or high arc -- Moho's CAiBrain::CheckBlockingTerrain (faf-re). A
+// position that isn't a table reads as the origin, as Moho's does: retail's
+// CheckNavalPathing passes an end it never set.
 static int brain_CheckBlockingTerrain(lua_State* L) {
-    lua_pushboolean(L, 0);
+    if (lua_gettop(L) != 4) {
+        luaL_error(L, "%s\n  expected %d args, but got %d",
+                   "CAiBrain:CheckBlockingTerrain( startPos, endPos, arcType )", 4, lua_gettop(L));
+    }
+    const auto point = [L](int idx) {
+        std::array<f32, 3> p{0, 0, 0};
+        if (!lua_istable(L, idx)) return p;
+        for (int i = 0; i < 3; ++i) {
+            lua_rawgeti(L, idx, i + 1);
+            p[static_cast<size_t>(i)] = static_cast<f32>(lua_tonumber(L, -1));
+            lua_pop(L, 1);
+        }
+        return p;
+    };
+    const auto a = point(2);
+    const auto b = point(3);
+    if (!lua_isstring(L, 4)) luaL_typerror(L, 4, "string");
+    const std::string_view arc_name = lua_tostring(L, 4);
+    const auto named = [&](std::string_view name) {
+        return std::equal(arc_name.begin(), arc_name.end(), name.begin(), name.end(),
+                          [](char x, char y) {
+                              return std::tolower(static_cast<unsigned char>(x)) ==
+                                     std::tolower(static_cast<unsigned char>(y));
+                          });
+    };
+    const map::ShotArc arc = named("none")  ? map::ShotArc::Straight
+                             : named("low") ? map::ShotArc::Low
+                                            : map::ShotArc::High;
+    auto* sim = get_sim(L);
+    const auto* terrain = sim ? sim->terrain() : nullptr;
+    lua_pushboolean(L, terrain && map::terrain_blocks_shot(terrain->heightmap(), a[0], a[1], a[2],
+                                                           b[0], b[1], b[2], arc));
     return 1;
 }
 

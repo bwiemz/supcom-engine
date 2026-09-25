@@ -29,6 +29,8 @@ add_executable(osc_tests
     test_init_loader.cpp
     test_blueprint_loading.cpp
     test_map.cpp
+    test_transport_slots.cpp
+    test_influence_map.cpp
     test_anim_blend.cpp
     test_emitter_blueprint.cpp
     test_ui_layout.cpp
@@ -59,6 +61,7 @@ add_executable(osc_tests
     test_no_rush.cpp
     test_replay.cpp
     test_category_match.cpp
+    test_saved_game.cpp
     test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp

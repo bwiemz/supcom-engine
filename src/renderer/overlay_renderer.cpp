@@ -383,7 +383,12 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
         for (u32 uid : *selected_ids) {
             auto* e = view.find(uid);
             if (!e || !e->is_unit) continue;
-            const auto cmds = snap.commands_of(*e);
+            // Its orders, then (a factory's) the rally orders what it builds
+            // takes (M206k), drawn on from where the orders end.
+            std::vector<sim::CommandRecord> cmds(snap.commands_of(*e).begin(),
+                                                 snap.commands_of(*e).end());
+            const auto rally = snap.rally_of(*e);
+            cmds.insert(cmds.end(), rally.begin(), rally.end());
             if (cmds.empty()) continue;
 
             // Start from unit position

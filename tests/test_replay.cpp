@@ -342,6 +342,59 @@ TEST_CASE("A formation order round-trips; a version 4 command loads without one"
     CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
 }
 
+TEST_CASE("A factory command round-trips; a version 6 command loads without the flag", "[replay]") {
+    // A player's rally order to a factory (M206k) travels with its flag.
+    Replay r;
+    ScheduledCommand c;
+    c.exec_tick = 5;
+    c.command.type = CommandType::Move;
+    c.command.target_pos = {10.0f, 0.0f, 20.0f};
+    c.command.factory = true;
+    c.unit_ids = {3};
+    r.commands.push_back(c);
+    Replay out;
+    REQUIRE(Replay::deserialize(r.serialize(), out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK(out.commands[0].command.factory);
+    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+
+    // Version 6 wrote no flag after the unload list.
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char ch : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<osc::u8>(ch));
+    w.u32v(6);  // version
+    w.u32v(12); // final tick
+    w.u32v(0);  // command delay
+    w.u64v(77); // seed
+    w.str("domination");
+    w.str("build");
+    w.u8v(0);  // no setup
+    w.u32v(0); // checksums from
+    w.u32v(0); // no checksums
+    w.u32v(1); // one command
+    w.u32v(5); // exec tick
+    w.u32v(0); // source
+    w.u8v(1);  // clear
+    w.u8v(static_cast<osc::u8>(CommandType::Move));
+    w.f32v(10.0f);
+    w.f32v(0.0f);
+    w.f32v(20.0f);
+    w.u32v(0); // target id
+    w.u32v(9); // command id
+    w.str(""); // blueprint
+    w.str(""); // formation
+    w.u8v(0);  // no facing
+    w.f32v(0); // facing
+    w.u32v(0); // no unload list
+    w.u32v(1); // one unit
+    w.u32v(3);
+    w.u8v(0); // no callback
+    REQUIRE(Replay::deserialize(bytes, out));
+    REQUIRE(out.commands.size() == 1);
+    CHECK_FALSE(out.commands[0].command.factory);
+    CHECK(out.commands[0].unit_ids == std::vector<osc::u32>{3});
+}
+
 TEST_CASE("A recorded replay reproduces the match", "[replay][sync]") {
     // --- Record ---
     LuaGuard ga;

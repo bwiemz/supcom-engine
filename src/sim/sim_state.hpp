@@ -339,12 +339,22 @@ public:
     /// deterministic AI/sim order under multiplayer) applies directly now.
     void route_command(const std::vector<u32>& unit_ids,
                        const UnitCommand& command, bool clear_existing);
+    /// A player's order for the units they selected, as Moho's UI issues it
+    /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
+    /// units among them (factories) as a factory command -- their rally
+    /// orders -- and to the rest as an order. Routed like route_command.
+    void route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                              bool clear_existing);
     /// What each unit of a group order gets: a formation order is laid out in
     /// its slots, the group held to its slowest member's speed (M204); any
     /// other order goes to every unit as it is. Done where the sim applies
     /// the order, so every peer and replay computes the same.
     std::vector<std::pair<u32, UnitCommand>> expand_group_command(const std::vector<u32>& unit_ids,
                                                                   const UnitCommand& command) const;
+    /// A factory command (Moho's UNIT_IssueFactoryCommand): each unit that
+    /// keeps rally orders takes it, clearing them first when `clear_existing`.
+    void apply_factory_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                               bool clear_existing);
 
     // --- Replay recording / playback ---
     // With recording on, every scheduled command is captured into a Replay that
@@ -367,6 +377,15 @@ public:
     /// carry their original exec ticks, so ticking the sim replays them in
     /// order. Also restores the recorded command delay / victory condition.
     void queue_replay(const Replay& replay);
+    /// Load a saved game (M208): its recording plays as a replay's does,
+    /// player input dropped, up to the tick it was saved on (its
+    /// final_tick); from the end of that tick the game is the player's
+    /// again. Orders it holds for later ticks (given before the save, not
+    /// yet run) run when they fall due.
+    void start_resume(const Replay& saved);
+    /// Catching up a loaded game. It is not a replay: the UI's
+    /// SessionIsReplay() stays false.
+    bool resuming() const { return resume_tick_ != 0; }
 
     // Game end state
     bool game_ended() const { return game_ended_; }
@@ -569,6 +588,18 @@ public:
     f32 playable_x1() const { return playable_x1_; }
     f32 playable_z1() const { return playable_z1_; }
 
+    /// Army `army`'s influence map (M207b), made on first use; null without a
+    /// map (terrain) or army.
+    InfluenceMap* influence_map(i32 army);
+    /// The playable area in `map`'s cells, for an "on map" threat query.
+    CellRect playable_cells(const InfluenceMap& map) const;
+    /// Whether army `army` has ever had entity `id` in line of sight (Moho's
+    /// RECON_LOSEver): kept while the entity lives.
+    bool ever_in_sight(u32 id, u32 army) const {
+        const auto it = los_ever_.find(id);
+        return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
+    }
+
     Vector3 clamp_to_playable(const Vector3& pos) const {
         if (!has_playable_rect_) return pos;
         Vector3 clamped = pos;
@@ -595,6 +626,13 @@ private:
     /// other. A push never takes a unit where its layer can't go.
     void separate_ground_units();
     void update_visibility();
+    /// Influence maps (M207b): the army whose turn it is (tick % army
+    /// count) reports what its intel sees to its map, after the visibility
+    /// pass, as Moho's recon tick does.
+    void feed_influence_map();
+    /// Each army's map updates every 30 ticks, army i when tick % 30 == i,
+    /// at the start of the tick as Moho's army OnTick does.
+    void update_influence_maps();
     void dispatch_due_commands();
     /// A Stop order: the unit drops its orders, and the one under way (a
     /// factory's build, an enhancement).
@@ -688,6 +726,7 @@ private:
     Replay recorded_replay_;
     bool recording_ = false;
     bool playback_ = false;
+    u32 resume_tick_ = 0; // a loaded game's saved tick, until it is reached
 
     // Temporary vision areas (scrying, Eye of Rhianne)
     struct TempVision {
@@ -731,6 +770,10 @@ private:
     static constexpr u32 MAX_VIS_ARMIES = 16;
     std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
         prev_entity_vis_;
+
+    // Per entity, a bit per army that has ever had it in line of sight
+    // (see ever_in_sight). Looked up, never walked.
+    std::unordered_map<u32, u32> los_ever_;
 
     // Dead-reckoning blip cache: per-entity per-army last-known data
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>

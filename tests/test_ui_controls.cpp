@@ -56,6 +56,49 @@ TEST_CASE("Control:Destroy is safe from its own OnDestroy", "[ui][lua]") {
     lua_pop(L, 1);
 }
 
+TEST_CASE("Destroying the root frame clears it but keeps it", "[ui][lua]") {
+    // Retail's Load and replay dialogs, opened in a game, destroy the
+    // control they were opened over -- GetFrame(0) -- as they leave for the
+    // next game. The next game builds its interface on the same frame.
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::ui::UIControlRegistry registry;
+    osc::lua::register_moho_bindings(lua, sim);
+    osc::lua::register_ui_bindings(lua, registry);
+
+    auto result = lua.do_string(R"(
+        local function make(parent)
+            local c = {}
+            setmetatable(c, { __index = moho.control_methods })
+            InternalCreateGroup(c, parent)
+            return c
+        end
+        local panel = make(GetFrame(0))
+        make(panel)
+        panel_gone = false
+        panel.OnDestroy = function(self) panel_gone = true end
+        -- A frame's Destroy is Control's (retail's Frame class derives it).
+        moho.control_methods.Destroy(GetFrame(0))
+        if not panel_gone then error('what the frame held survived') end
+        local after = make(GetFrame(0))
+        if moho.control_methods.GetParent(after) ~= GetFrame(0) then
+            error('the frame no longer takes children')
+        end
+    )");
+    INFO((result.ok() ? std::string() : result.error().message));
+    REQUIRE(result.ok());
+    lua_State* L = lua.raw();
+    lua_pushstring(L, "__osc_root_frame");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, -2);
+    auto* root = static_cast<osc::ui::UIControl*>(lua_touserdata(L, -1));
+    lua_pop(L, 2);
+    REQUIRE(root != nullptr);
+    CHECK_FALSE(root->destroyed());
+    CHECK(root->children().size() == 1);
+}
+
 namespace {
 osc::ui::UIControl* control_of(lua_State* L, const char* global) {
     lua_getglobal(L, global);

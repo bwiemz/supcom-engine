@@ -36,13 +36,13 @@ set(OSC_DATA_TESTS_GATE
     death-test decalsplat-test defence-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
     economy-test edit-render-test edit-test emitter-test enhance-test
-    gameui-test impact-test
-    enhance-wreck-test ferry-test fire-test flags-test formation-test font-test fow-test
+    gameui-test impact-test influence-test
+    enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test
     full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test
     layercap-test los-test lowstub-test manip-test massstub-test massstub2-test missile-test
-    massstub3-test massstub4-test medstub-test move-test normal-test
+    massstub3-test massstub4-test medstub-test move-test naval-depth-test normal-test
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test profile-test projectile-test prop-test range-test reclaim-test
     repair-test scale-test scissor-test scrollbar-render-test shadow-test
@@ -50,7 +50,7 @@ set(OSC_DATA_TESTS_GATE
     specular-test stall-test stats-test stress-test stub-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test
-    tiled-render-test toggle-test transport-silo-test transport-test ui-test
+    tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
     uiboot-test uirender-test unitsound-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test weapon-test wreck-test
 )

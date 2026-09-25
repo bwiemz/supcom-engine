@@ -53,7 +53,8 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
     for (u32 i = 0; i < count && r.ok(); ++i) {
         ScheduledCommand c;
         if (read_command(r, c, /*with_callback=*/out.version >= 3,
-                         /*with_formation=*/out.version >= 5, /*with_unload=*/out.version >= 6))
+                         /*with_formation=*/out.version >= 5, /*with_unload=*/out.version >= 6,
+                         /*with_factory=*/out.version >= 7))
             out.commands.push_back(std::move(c));
     }
     if (!r.ok()) {
@@ -66,6 +67,10 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
 void ReplayPlayback::start(SimState& sim) const {
     sim.set_playback(true);
     sim.queue_replay(replay_);
+}
+
+void ReplayPlayback::resume(SimState& sim) const {
+    sim.start_resume(replay_);
 }
 
 bool ReplayPlayback::check(const SimState& sim) {
