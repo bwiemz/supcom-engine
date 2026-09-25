@@ -1,12 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "lua/lua_state.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/sca_parser.hpp"
+#include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
+#include <cmath>
 #include <memory>
 
 using namespace osc;
@@ -121,4 +124,54 @@ TEST_CASE("With no manipulator moving a bone the pose is the bind pose", "[pose]
     const auto& skin = unit.animated_bone_matrices()[1];
     CHECK_THAT(skin[0], WithinAbs(1.0, 1e-6));
     CHECK_THAT(skin[14], WithinAbs(0.0, 1e-6));
+}
+
+TEST_CASE("A storage manipulator eases its bone with its army's stored resource", "[pose]") {
+    // A mass storage's block: 0.3 down when the army's storage is empty, level when full
+    // (CreateStorageManip(self, 'Block', 'MASS', 0, 0, -0.3, 0, 0, 0)).
+    lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    sim.add_army("ARMY_1", "ARMY_1");
+    auto& economy = sim.get_army(0)->economy();
+    economy.mass.max_storage = 1000;
+    economy.mass.stored = 1000;
+    economy.energy.max_storage = 1000;
+    economy.energy.stored = 0;
+    Unit unit;
+    unit.set_army(0);
+    StorageManipulator mass(&sim, true, {0, 0, -0.3f}, {0, 0, 0});
+    mass.set_owner(&unit);
+    CHECK(mass.current().z == -0.3f); // it starts empty
+
+    // A tenth of the way toward full each tick, as Moho eases it.
+    mass.tick(0.1f);
+    CHECK_THAT(mass.current().z, WithinAbs(-0.27, 1e-6));
+    for (int i = 0; i < 29; ++i) mass.tick(0.1f);
+    CHECK_THAT(mass.current().z, WithinAbs(-0.3 * std::pow(0.9, 30), 1e-5));
+
+    // An energy one follows energy, which is empty.
+    StorageManipulator energy(&sim, false, {0, 0, -0.3f}, {0, 0, 0});
+    energy.set_owner(&unit);
+    energy.tick(0.1f);
+    CHECK_THAT(energy.current().z, WithinAbs(-0.3, 1e-6));
+
+    // Held while the unit is being built.
+    const f32 held = mass.current().z;
+    unit.set_is_being_built(true);
+    mass.tick(0.1f);
+    CHECK(mass.current().z == held);
+
+    // An army with no storage at all reads as empty.
+    unit.set_is_being_built(false);
+    economy.mass.max_storage = 0;
+    mass.tick(0.1f);
+    CHECK_THAT(mass.current().z, WithinAbs(held * 0.9 - 0.3 * 0.1, 1e-6));
+
+    // It moves its bone along the bone's own axes.
+    PoseLocals pose;
+    pose.local.resize(2);
+    mass.set_bone_index(1);
+    mass.apply_pose(pose);
+    CHECK(pose.changed);
+    CHECK_THAT(pose.local[1].position.z, WithinAbs(mass.current().z, 1e-6));
 }

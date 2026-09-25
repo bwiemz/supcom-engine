@@ -3306,13 +3306,35 @@ static int l_CreateSlaver(lua_State* L) {
 }
 
 // ====================================================================
-// CreateStorageManipulator(unit) -> storage manipulator (visual)
+// CreateStorageManip(unit, bone, resource, minX, minY, minZ, maxX, maxY, maxZ)
+// A bone that moves from the min offset at empty storage to the max one at
+// full, for the army's MASS or ENERGY (faf-re cfunc_CreateStorageManipL).
 // ====================================================================
-static int l_CreateStorageManipulator(lua_State* L) {
+static int l_CreateStorageManip(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n < 2 || n > 9)
+        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
+                          "CreateStorageManip(unit, bone, resouceName, minX, minY, minZ, maxX, "
+                          "maxY, maxZ)",
+                          2, 9, n);
     auto* unit = manip_check_unit(L, 1);
     if (!unit) return stub_dummy_object(L);
+    const i32 bone = manip_resolve_bone(unit, L, 2);
+    if (lua_type(L, 3) != LUA_TSTRING) return luaL_typerror(L, 3, "string");
+    const std::string resource = lua_tostring(L, 3);
+    if (resource != "MASS" && resource != "ENERGY")
+        return luaL_error(L, "Invalid enum value %s", resource.c_str());
+    // Moho checks the offsets last to first.
+    f32 offsets[6] = {};
+    for (int arg = 9; arg >= 4; --arg) {
+        if (lua_type(L, arg) != LUA_TNUMBER) return luaL_typerror(L, arg, "number");
+        offsets[arg - 4] = static_cast<f32>(lua_tonumber(L, arg));
+    }
 
-    auto manip = std::make_unique<sim::StorageManipulator>();
+    auto manip = std::make_unique<sim::StorageManipulator>(
+        get_sim(L), resource == "MASS", sim::Vector3{offsets[0], offsets[1], offsets[2]},
+        sim::Vector3{offsets[3], offsets[4], offsets[5]});
+    manip->set_bone_index(bone);
     auto* raw = unit->add_manipulator(std::move(manip));
 
     lua_newtable(L);
@@ -5556,7 +5578,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("CreateRotator", l_CreateRotator);
     state.register_function("CreateSlider", l_CreateSlider);
     state.register_function("CreateSlaver", l_CreateSlaver);
-    state.register_function("CreateStorageManipulator", l_CreateStorageManipulator);
+    state.register_function("CreateStorageManip", l_CreateStorageManip);
     state.register_function("CreateThrustController", l_CreateThrustController);
 
     // WaitFor(manipulator) — real implementation with yield/resume
