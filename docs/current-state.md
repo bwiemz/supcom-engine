@@ -193,7 +193,8 @@ Army stats use Moho's names and meanings, which retail's score threads read:
   - The UI's units are Moho's `UserUnit` (M191 step 3). They read the tick's snapshot (the renderer's capture in a drawn game) and change units only through the command stream, as `SetCustomName` now does: it travels as Moho's `CustomName` ProcessInfo pair.
   - The game is `osc::app::run` (`src/app/`). Its test modes are the integration runner, `osc_integration`, which CTest runs (M192 step 1).
   - `app.cpp` is split by concern (`cli`, `ui_globals`, `session`, `reload`, `frames`) and keeps only `run()` (M192 step 2a).
-  - Next: M192 step 2b, `run()`'s boot, windowed loop and headless run over one `Engine` object.
+  - `run()` is an `App` object with the boot, windowed loop and headless run as its methods, each in a file of its own (M192 step 2b).
+  - Next: M192 step 2c, the windowed loop's frame broken into handlers.
 - **Determinism diagnostics:** the per-tick checksum has 11 domains: RNG, armies, entities, units, orders, navigation, weapons, projectiles, shields, economy events and script threads. `--checksum-trace` writes each one, and a lockstep desync names the domains that differ. Of the scripts' state it hashes only which threads live and when each wakes, not Lua tables.
 - **Multiplayer robustness:** a wire message is capped at 4 MiB (a peer claiming more is dropped), and a peer's orders and SimCallbacks move only its own army's units. Peers are not yet authenticated.
 - **Order fidelity gaps (after M206):**
