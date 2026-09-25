@@ -674,8 +674,29 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isnumber(L, -1))
                         unit->set_transport_class(static_cast<i32>(lua_tonumber(L, -1)));
                     lua_pop(L, 1);
+
+                    // The slot layout (M206l), Moho's defaults for what is absent
+                    sim::TransportLayout layout;
+                    const auto field = [&](const char* name, i32& out) {
+                        lua_pushstring(L, name);
+                        lua_rawget(L, -2);
+                        if (lua_isnumber(L, -1)) out = static_cast<i32>(lua_tonumber(L, -1));
+                        lua_pop(L, 1);
+                    };
+                    field("ClassGenericUpTo", layout.class_generic_up_to);
+                    field("Class2AttachSize", layout.class2_attach_size);
+                    field("Class3AttachSize", layout.class3_attach_size);
+                    field("Class4AttachSize", layout.class4_attach_size);
+                    field("ClassSAttachSize", layout.class_s_attach_size);
+                    unit->set_transport_layout(layout);
                 }
                 lua_pop(L, 1); // pop Transport (or nil)
+
+                // SizeY: a carried unit with no AttachPoint bone hangs by its centre
+                lua_pushstring(L, "SizeY");
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1)) unit->set_size_y(static_cast<f32>(lua_tonumber(L, -1)));
+                lua_pop(L, 1);
             }
             lua_pop(L, 1); // pop bp table
         }

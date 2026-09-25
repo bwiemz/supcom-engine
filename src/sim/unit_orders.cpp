@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <spdlog/spdlog.h>
 
@@ -1075,9 +1076,8 @@ OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) 
     }
     auto* transport = static_cast<Unit*>(target);
 
-    // Check capacity before moving
-    if (transport->transport_capacity() > 0 &&
-        static_cast<i32>(transport->cargo_ids().size()) >= transport->transport_capacity()) {
+    // A free slot of our class (M206l) before moving
+    if (!transport->transport_has_space_for(*this)) {
         set_unit_state("TransportLoading", false);
         command_queue_.pop_front();
         return OrderStep::Next;
@@ -1371,9 +1371,26 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
                 ++boarding;
         });
-        // (A capacity of 0 is unknown, and not a limit, as for a load
-        // order: retail transports count attach points, not read here.)
-        i32 room = transport_capacity() > 0
+        // Room is what the slots would still hold with those already
+        // boarding aboard (M206l): a trial copy takes their slots, then each
+        // new unit's that fits. A transport without attach points counts
+        // its Class1Capacity (0: no limit).
+        const TransportSlots* slots = transport_slots();
+        std::optional<TransportSlots> trial;
+        if (slots && slots->has_points()) {
+            trial.emplace(*slots);
+            registry.for_each_unit([&](const Entity& e) {
+                if (e.destroyed() || !e.is_unit() || e.army() != army()) return;
+                const auto& u = static_cast<const Unit&>(e);
+                if (u.is_dying() || u.transport_id() != 0 || u.command_queue().empty()) return;
+                const UnitCommand& wait = u.command_queue().front();
+                if (wait.type == CommandType::WaitForFerry && wait.assigned_id == entity_id())
+                    (void)trial->assign(u.entity_id(), u.transport_class(),
+                                        u.transport_attach_bone());
+            });
+        }
+        i32 room = trial ? std::numeric_limits<i32>::max()
+                   : transport_capacity() > 0
                        ? transport_capacity() - static_cast<i32>(cargo_ids_.size()) - boarding
                        : std::numeric_limits<i32>::max();
         if (room > 0) {
@@ -1387,6 +1404,9 @@ OrderStep Unit::order_ferry(UnitCommand& cmd, f64 dt, SimContext& ctx) {
                 const UnitCommand& wait = u.command_queue().front();
                 if (wait.type != CommandType::WaitForFerry || wait.target_id != beacon_id ||
                     wait.assigned_id != 0)
+                    return;
+                if (trial &&
+                    !trial->assign(u.entity_id(), u.transport_class(), u.transport_attach_bone()))
                     return;
                 u.board_ferry(entity_id());
                 --room;

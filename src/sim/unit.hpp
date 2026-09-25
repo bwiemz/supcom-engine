@@ -3,6 +3,7 @@
 #include "sim/entity.hpp"
 #include "sim/navigator.hpp"
 #include "sim/pose.hpp"
+#include "sim/transport_slots.hpp"
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
@@ -615,6 +616,23 @@ public:
     void set_transport_class(i32 c) { transport_class_ = c; }
     i32 transport_capacity() const { return transport_capacity_; }
     void set_transport_capacity(i32 c) { transport_capacity_ = c; }
+    void set_transport_layout(const TransportLayout& layout) { transport_layout_ = layout; }
+    /// The blueprint's SizeY: a carried unit with no AttachPoint bone hangs
+    /// by its centre, half of it up.
+    void set_size_y(f32 size_y) { size_y_ = size_y; }
+
+    /// The transport's attach points and who holds them (M206l), built from
+    /// its skeleton the first time they are asked for; null without one.
+    TransportSlots* transport_slots();
+    /// The slots, if they have been built.
+    const TransportSlots* built_transport_slots() const { return transport_slots_.get(); }
+    /// Whether this transport has room for `cargo` now: a free slot of its
+    /// class, or, for a transport without attach points, fewer units aboard
+    /// than its Class1Capacity (0: no limit).
+    bool transport_has_space_for(const Unit& cargo);
+    /// The bone a carried unit hangs by: its AttachPoint bone, else its root
+    /// for a flier, else -1 (its centre).
+    i32 transport_attach_bone() const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
     void detach_all_cargo(EntityRegistry& registry, lua_State* L);
@@ -862,8 +880,18 @@ private:
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
-    i32 transport_class_ = 0;        // cargo TransportClass (1=small, 2=medium, 3=large)
+    i32 transport_class_ = 1;        // cargo TransportClass (1=small, 2=medium, 3=large)
     i32 transport_capacity_ = 0;     // transport Class1Capacity (max small slots)
+    TransportLayout transport_layout_;
+    std::unique_ptr<TransportSlots> transport_slots_;
+    f32 size_y_ = 0.0f;
+    /// Hang from the transport's bone that holds our slot (or sit at its
+    /// origin without one): our AttachPoint bone, or centre, on it, facing
+    /// as it does.
+    void hang_from(const Unit& transport);
+    /// Give up slots whose unit is no longer aboard (it died, was taken off
+    /// the cargo list, or left), as Moho's TransportUnreserveUnattachedSpots.
+    void release_stale_slots(const EntityRegistry& registry);
     // Veterancy
     u8 vet_level_ = 0;
     f32 vet_xp_ = 0;

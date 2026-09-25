@@ -2164,6 +2164,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         mix_str(units, u.layer());
         units.mix(u.transport_id());
         units.mix(static_cast<u64>(u.cargo_ids().size()));
+        // Who holds which of a transport's attach points (M206l).
+        if (const auto* slots = u.built_transport_slots()) {
+            for (const auto& slot : slots->slots()) {
+                units.mix(slot.unit_id);
+                units.mix(static_cast<u64>(static_cast<u32>(slot.bone)));
+            }
+        }
         units.mix(u.build_target_id());
         units.mix(u.reclaim_target_id());
         units.mix(u.repair_target_id());
