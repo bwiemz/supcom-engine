@@ -61,6 +61,10 @@ struct UnitCommand {
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
     /// rest stays aboard. Empty: all of it.
     std::vector<u32> unload_ids;
+    /// A factory command (Moho's IssueFactoryCommand, M206k): it goes to the
+    /// units' rally orders, not their queues, and a fresh one clears those.
+    /// A player's move, patrol or transport call to a selected factory.
+    bool factory = false;
     /// A launch order's weapon has fired for it (runtime state: not sent
     /// with the order). The order then ends.
     bool launched = false;

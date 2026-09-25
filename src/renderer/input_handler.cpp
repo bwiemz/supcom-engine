@@ -146,7 +146,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             // Player-issued order: routed so it applies inside a tick (and a
             // networked match broadcasts it).
             sim.set_human_input_active(true);
-            sim.route_command(ids, cmd, !shift); // shift-click queues, no clear
+            sim.route_player_command(ids, cmd, !shift); // shift-click queues, no clear
             sim.set_human_input_active(false);
             spdlog::debug("Minimap move: {} units to ({:.0f},{:.0f})",
                           selected_.size(), mm_wx, mm_wz);
@@ -279,12 +279,19 @@ void InputHandler::handle_right_click(Renderer& renderer,
     for (u32 uid : selected_) {
         auto* e = sim.entity_registry().find(uid);
         if (!e || !e->is_unit() || e->destroyed()) continue;
+        // A factory can't attack (Moho's attack order passes over a unit
+        // without RULEUCC_Attack): it keeps its builds.
+        if (cmd.type == sim::CommandType::Attack &&
+            static_cast<const sim::Unit*>(e)->has_category("RALLYPOINT") &&
+            !static_cast<const sim::Unit*>(e)->has_command_cap("RULEUCC_Attack"))
+            continue;
         ids.push_back(uid);
     }
     // Player-issued order: routed so it applies inside a tick (and a
-    // networked match broadcasts it).
+    // networked match broadcasts it); a move goes to factories as their
+    // rally point (M206k).
     sim.set_human_input_active(true);
-    sim.route_command(ids, cmd, !shift); // shift-click queues without clearing
+    sim.route_player_command(ids, cmd, !shift); // shift-click queues without clearing
     sim.set_human_input_active(false);
 
     spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
@@ -375,7 +382,7 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
     out.target_id = cmd.target_id;
     // Player-issued order: routed so a networked match broadcasts it.
     sim.set_human_input_active(true);
-    sim.route_command(ids, cmd, !shift);
+    sim.route_player_command(ids, cmd, !shift);
     sim.set_human_input_active(false);
     return out;
 }

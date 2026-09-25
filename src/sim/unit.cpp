@@ -46,15 +46,6 @@ void Unit::push_command(const UnitCommand& cmd, bool clear_existing) {
     command_queue_.push_back(cmd);
 }
 
-void Unit::clear_queued_commands() {
-    // Keep the front command (currently executing), remove the rest
-    if (command_queue_.size() > 1) {
-        auto front = command_queue_.front();
-        command_queue_.clear();
-        command_queue_.push_back(front);
-    }
-}
-
 void Unit::clear_commands(const char*) {
     command_queue_.clear();
     navigator_.abort_move();
@@ -347,6 +338,10 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
             set_unit_state("WaitForFerry", false);
+        // A factory whose guard order went while it built for the guarded
+        // factory drops that unit (M206h).
+        if (factory_assist_build_ && !(head && head->type == CommandType::Guard))
+            end_guard_build(ctx.registry, ctx.L);
     }
 
     // Paused units skip their orders, and what follows them, but still
@@ -636,7 +631,8 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
 }
 
 bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                          map::PathfindingGrid* grid, f32 efficiency) {
+                          map::PathfindingGrid* grid, f32 efficiency, bool* built) {
+    if (built) *built = false;
     auto* target = registry.find(build_target_id_);
     if (!target || target->destroyed()) {
         finish_build(registry, L, false, grid);
@@ -645,6 +641,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
 
     // Guard: if an assister already pushed fraction to 1.0 this tick
     if (target->fraction_complete() >= 1.0f) {
+        if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false;
     }
@@ -662,6 +659,7 @@ bool Unit::progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
     work_progress_ = new_frac;
 
     if (new_frac >= 1.0f) {
+        if (built) *built = true;
         finish_build(registry, L, true, grid);
         return false; // command done
     }

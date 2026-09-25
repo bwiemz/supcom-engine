@@ -33,25 +33,26 @@ PathResult Pathfinder::find_path(f32 start_x, f32 start_z,
                                   f32 goal_x, f32 goal_z,
                                   const std::string& layer,
                                   f32 draft, bool amphibious) const {
-    if (!can_pathfind()) {
-        PathResult r;
-        r.throttled = true;
-        return r;
-    }
-    increment_request_count();
-
     PathResult result;
 
     u32 sx, sz, gx, gz;
     grid_.world_to_grid(start_x, start_z, sx, sz);
     grid_.world_to_grid(goal_x, goal_z, gx, gz);
 
-    // If start == goal (same cell), trivial path
+    // If start == goal (same cell), trivial path. It searches nothing, so it
+    // spends none of the tick's budget: a unit parked on its patrol point
+    // asks every tick, and must not starve everyone else's paths.
     if (sx == gx && sz == gz) {
         result.found = true;
         result.waypoints.push_back({goal_x, 0, goal_z});
         return result;
     }
+
+    if (!can_pathfind()) {
+        result.throttled = true;
+        return result;
+    }
+    increment_request_count();
 
     // If goal cell is impassable, find nearest passable cell
     if (!grid_.is_passable_for(gx, gz, layer, draft, amphibious)) {

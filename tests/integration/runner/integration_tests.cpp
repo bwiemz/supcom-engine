@@ -741,6 +741,15 @@ void test_threat(TestContext& ctx) {
             LOG('Threat test: ACU1 at (' .. string.format('%.0f,%.0f,%.0f', pos1[1], pos1[2], pos1[3]) .. ')')
             LOG('Threat test: ACU2 at (' .. string.format('%.0f,%.0f,%.0f', pos2[1], pos2[2], pos2[3]) .. ')')
 
+            -- Brain1 knows only what its intel has seen (M207b's influence
+            -- map): a scout of its own beside ACU2, then time for the map to
+            -- be fed and updated.
+            local scout = CreateUnitHPR('uel0101', brain1:GetArmyIndex(), pos2[1] + 10,
+                                        pos2[2], pos2[3], 0, 0, 0)
+            scout:SetFireState(1)
+            scout:SetImmobile(true)
+            WaitTicks(70)
+
             -- 1) GetThreatAtPosition — enemy threat at ACU2 pos from brain1's perspective
             local enemy_threat = brain1:GetThreatAtPosition(pos2, 16, false, 'Overall')
             LOG('Threat test: enemy threat at ACU2 pos = ' .. tostring(enemy_threat))
@@ -845,6 +854,16 @@ void test_threat(TestContext& ctx) {
 
             -- Cleanup
             brain2:DisbandPlatoon(platoon)
+            if not scout:IsDead() then scout:Destroy() end
+
+            -- GetMapWaterRatio: the share of the map under water, sampled
+            -- as Moho does (M207a). SCMP_009 is land and sea.
+            local ratio = brain1:GetMapWaterRatio()
+            LOG('Threat test: map water ratio ' .. ratio)
+            if ratio <= 0.05 or ratio >= 0.95 then
+                LOG('THREAT TEST FAILED: water ratio ' .. ratio)
+                return
+            end
 
             LOG('THREAT TEST: ALL PASSED')
         end)
@@ -889,6 +908,67 @@ void test_threat(TestContext& ctx) {
         )");
         if (r) spdlog::info("[PASS] Threat test: attack vectors group an army's structures");
         else osc::test_status::fail("[FAIL] Threat test: attack vectors: {}", r.error().message);
+    }
+
+    // CheckBlockingTerrain (M207c): whether the heightfield stands between
+    // two points for a straight or arcing shot, as Moho's does.
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local brain = ArmyBrains[1]
+            local x, z = 500, 500
+            local h = GetTerrainHeight(x, z)
+            -- A shot from under the ground is blocked; one high over the map isn't.
+            if not brain:CheckBlockingTerrain({x, h - 5, z}, {x + 30, 1000, z}, 'none') then
+                error('a buried start is not blocked')
+            end
+            for _, arc in {'none', 'NONE', 'Low', 'high'} do
+                if brain:CheckBlockingTerrain({x, 1000, z}, {x + 30, 1000, z + 30}, arc) then
+                    error('a shot above the map is blocked (' .. arc .. ')')
+                end
+            end
+            -- A ridge: two points on the ground, `dx`, `dz` apart, with the
+            -- ground between them at least 10 higher than both. Found along x,
+            -- and along a 3:1 slant toward -z (the usual shot is neither);
+            -- SCMP_009's best along those are about 11.5 and 13.5.
+            local function find_ridge(dx, dz)
+                for sz = 64, 900, 16 do
+                    for sx = 64, 900, 8 do
+                        local ha = GetTerrainHeight(sx, sz)
+                        local hb = GetTerrainHeight(sx + dx, sz + dz)
+                        local top = 0
+                        for s = 1, 39 do
+                            local f = s / 40
+                            top = math.max(top, GetTerrainHeight(sx + dx * f, sz + dz * f))
+                        end
+                        if top > math.max(ha, hb) + 10 then
+                            return {sx, ha, sz}, {sx + dx, hb, sz + dz}
+                        end
+                    end
+                end
+            end
+            for _, d in {{40, 0}, {36, -12}} do
+                local a, b = find_ridge(d[1], d[2])
+                if not a then error('no ridge found along ' .. d[1] .. ', ' .. d[2]) end
+                if not brain:CheckBlockingTerrain(a, b, 'none') then
+                    error('a ridge at ' .. a[1] .. ', ' .. a[3] .. ' does not block')
+                end
+                -- The same span, well above the ridge, is clear.
+                local over = math.max(a[2], b[2]) + 200
+                if brain:CheckBlockingTerrain({a[1], over, a[3]}, {b[1], over, b[3]}, 'none') then
+                    error('a shot over the ridge at ' .. a[1] .. ', ' .. a[3] .. ' is blocked')
+                end
+            end
+            -- Retail's CheckNavalPathing passes an end it never set.
+            local ok, err = pcall(function() return brain:CheckBlockingTerrain({x, h, z}, nil, 'none') end)
+            if not ok then error('a nil end errors: ' .. tostring(err)) end
+            if pcall(function() return brain:CheckBlockingTerrain({x, h, z}, {x, h, z}) end) then
+                error('three arguments are accepted')
+            end
+        )");
+        if (r) spdlog::info("[PASS] Threat test: CheckBlockingTerrain sees ridges");
+        else
+            osc::test_status::fail("[FAIL] Threat test: CheckBlockingTerrain: {}",
+                                   r.error().message);
     }
 
     spdlog::info("Threat test: {} entities, {} threads",
@@ -3969,7 +4049,22 @@ void test_canpath(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 4: {}", r.error().message); }
     }
 
-    // Test 5: GetThreatBetweenPositions detects enemy unit along line
+    // Test 5: GetThreatBetweenPositions detects enemy unit along line. ARMY_1
+    // knows only what its intel has seen (M207b's influence map): a scout of
+    // its own beside the enemy ACU, then time for the map to be fed and
+    // updated.
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local enemy = GetEntityById(__osc_test_acu_id(2))
+            local epos = enemy:GetPosition()
+            __osc_canpath_scout = CreateUnitHPR('uel0101', 1, epos[1] + 10, epos[2], epos[3],
+                                                0, 0, 0)
+            __osc_canpath_scout:SetFireState(1)
+            __osc_canpath_scout:SetImmobile(true)
+        )");
+        if (!r) osc::test_status::fail("[FAIL] Test 5 scout: {}", r.error().message);
+        for (int i = 0; i < 70; ++i) ctx.sim.tick();
+    }
     {
         auto r = ctx.lua_state.do_string(R"(
             -- Entity #2 is ARMY_2 ACU (an enemy of ARMY_1)
@@ -9579,6 +9674,462 @@ void test_range(TestContext& ctx) {
 }
 
 // ── Ferry test (M206f): beacons, waiting units, the ferry's round trip ──
+void test_factory_assist(TestContext& ctx) {
+    spdlog::info("=== FACTORY ASSIST TEST: a factory guarding a factory builds from its queue ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // Two UEF T1 land factories on flat ground east of the map's centre: A
+    // is given three T1 tanks to build, and B guards A (M206h; Moho's guard
+    // task for a factory, TryDispatchFactoryOrUpgradeFromGuardQueues).
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_queue(u) return table.getn(u:GetCommandQueue()) end
+        function __osc_building(u)
+            local f = u:GetFocusUnit()
+            return f and f:IsBeingBuilt() and f or nil
+        end
+        __osc_a = __osc_spawn('ueb0101', 1, 610, 100)
+        __osc_b = __osc_spawn('ueb0101', 1, 630, 100)
+        if not __osc_a or not __osc_b then error('no factories') end
+        IssueBuildFactory({__osc_a}, 'uel0201', 3)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+
+    // B took one of A's orders -- not the one A is building -- and builds a
+    // tank itself.
+    lua_check("B takes a build from A's queue", R"(
+        local a, b = __osc_building(__osc_a), __osc_building(__osc_b)
+        if not a then error('A is not building') end
+        if not b then error('B is not building') end
+        if b:GetBlueprint().BlueprintId ~= 'uel0201' then
+            error('B builds ' .. tostring(b:GetBlueprint().BlueprintId))
+        end
+        if a == b then error('B builds the unit A builds') end
+        __osc_seen = {[a] = true, [b] = true} -- every tank either one works on
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 2 expected (1 taken)')
+        end
+        __osc_b_first = b
+    )");
+
+    // The three are built between them, and no more.
+    for (int i = 0; i < 150; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            for _, f in {__osc_a, __osc_b} do
+                local u = __osc_building(f)
+                if u then __osc_seen[u] = true end
+            end
+            if __osc_queue(__osc_a) == 0 and not __osc_building(__osc_a)
+               and not __osc_building(__osc_b) then error('done') end
+        )");
+        if (!r) break;
+    }
+    lua_check("the queue is built between them, and no more", R"(
+        if __osc_b_first:IsDead() or __osc_b_first:IsBeingBuilt() then
+            error("B's tank was not finished")
+        end
+        local tanks = 0
+        for u in __osc_seen do
+            if u:IsDead() or u:IsBeingBuilt() then error('a tank was not finished') end
+            if u:GetBlueprint().BlueprintId ~= 'uel0201' then error('not a tank') end
+            tanks = tanks + 1
+        end
+        if tanks ~= 3 then error(tanks .. ' tanks built; 3 expected') end
+    )");
+
+    // Called off mid-build, B drops the unit it built for A, as a factory
+    // does when its build order goes; the order it took is gone with it.
+    lua_check("B's build ends with its guard order", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 2)
+    )");
+    run(20);
+    lua_check("B took the second order", R"(
+        __osc_b_second = __osc_building(__osc_b)
+        if not __osc_b_second then error('B is not building') end
+        IssueClearCommands({__osc_b})
+    )");
+    run(2);
+    lua_check("B's unfinished tank is gone", R"(
+        if __osc_building(__osc_b) then error('B still builds') end
+        if not __osc_b_second:IsDead() then error('its tank is still there') end
+    )");
+
+    // B takes nothing from a queue whose only order A is building, even
+    // repeating (Moho would restart that order's count; there are no counts
+    // or repeat queues here, so it would only be a duplicate).
+    lua_check("B, repeating, leaves A's only order alone", R"(
+        IssueClearCommands({__osc_a})
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        __osc_b:SetRepeatQueue(true)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("so B builds nothing", R"(
+        if not __osc_building(__osc_a) then error('A is not building its order') end
+        if __osc_building(__osc_b) then error('B builds a duplicate') end
+    )");
+
+    // Given a second order, the repeating B takes it and sends it to the
+    // back of A's queue rather than removing it.
+    lua_check("B, repeating, takes A's next order", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+    )");
+    run(20);
+    lua_check("which goes back on A's queue", R"(
+        if not __osc_building(__osc_b) then error('B is not building') end
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 2 expected (1 re-queued)')
+        end
+    )");
+
+    // An order the lobby forbids is taken and dropped, as Moho's build task
+    // fails after the take (and as A would drop it), rather than left for B
+    // to find again every tick -- even with B repeating, which would
+    // otherwise send it round A's queue for good.
+    auto* brain = ctx.sim.get_army(0);
+    if (brain) brain->add_build_restriction("ENGINEER");
+    lua_check("A and B are cleared", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+        if not __osc_b:IsRepeatQueue() then error('B is not repeating') end
+    )");
+    run(2);
+    lua_check("B takes an order the lobby forbids", R"(
+        if __osc_building(__osc_b) then error('B still builds') end
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+        IssueBuildFactory({__osc_a}, 'uel0105', 1)
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("and builds nothing from it", R"(
+        local b = __osc_building(__osc_b)
+        if b then error('B builds ' .. b:GetBlueprint().BlueprintId) end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected (1 dropped)')
+        end
+    )");
+    if (brain) brain->remove_build_restriction("ENGINEER");
+
+    // A factory repeating its queue builds its orders again (M206i), through
+    // retail's factory scripts: A, given one tank, finishes it and starts
+    // another, the order back on its queue.
+    lua_check("A and B are cleared again", R"(
+        IssueClearCommands({__osc_a, __osc_b})
+    )");
+    run(2);
+    lua_check("A, repeating, is given one tank", R"(
+        __osc_a:SetRepeatQueue(true)
+        IssueBuildFactory({__osc_a}, 'uel0201', 1)
+    )");
+    run(2);
+    lua_check("A builds it", R"(
+        __osc_a_first = __osc_building(__osc_a)
+        if not __osc_a_first then error('A is not building') end
+    )");
+    for (int i = 0; i < 150; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            local u = __osc_building(__osc_a)
+            if u and u ~= __osc_a_first then error('the next') end
+        )");
+        if (!r) break;
+    }
+    lua_check("and, that one built, starts another", R"(
+        if __osc_a_first:IsDead() or __osc_a_first:IsBeingBuilt() then
+            error("A's first tank was not finished")
+        end
+        local u = __osc_building(__osc_a)
+        if not u or u == __osc_a_first then error('A is not building a second tank') end
+        if __osc_queue(__osc_a) ~= 1 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; 1 expected')
+        end
+    )");
+    spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
+}
+
+void test_factory_rally(TestContext& ctx) {
+    spdlog::info("=== FACTORY RALLY TEST: what a factory builds takes its rally orders ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // Two UEF T1 land factories on flat ground east of the map's centre, as
+    // in --factory-assist-test (M206j; Moho's factory command queue).
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        end
+        function __osc_queue(u) return table.getn(u:GetCommandQueue()) end
+        function __osc_dist(u, x, z)
+            local p = u:GetPosition()
+            return VDist2(p[1], p[3], x, z)
+        end
+        function __osc_building(u)
+            local f = u:GetFocusUnit()
+            return f and f:IsBeingBuilt() and f or nil
+        end
+        __osc_a = __osc_spawn('ueb0101', 1, 610, 100)
+        __osc_b = __osc_spawn('ueb0101', 1, 630, 100)
+        if not __osc_a or not __osc_b then error('no factories') end
+    )");
+
+    // A factory rallies five ahead of itself until told otherwise (Moho's
+    // initial rally; retail's roll-off reads it). Asking changes nothing in
+    // the sim: the UI's unit objects ask too, and one player's UI must not
+    // put the sims out of step.
+    const auto checksum = ctx.sim.compute_sync_checksum();
+    lua_check("a factory rallies ahead of itself", R"(
+        local p = __osc_a:GetRallyPoint()
+        if not p then error('no rally point') end
+        local d = VDist2(p[1], p[3], 610, 100)
+        if math.abs(d - 5) > 0.01 then error('rally ' .. d .. ' from the factory; 5 expected') end
+    )");
+    if (ctx.sim.compute_sync_checksum() == checksum) {
+        pass++;
+        spdlog::info("[PASS] asking for the rally point leaves the sim as it was");
+    } else {
+        fail++;
+        osc::test_status::fail("[FAIL] asking for the rally point changed the sim");
+    }
+
+    // Retail's AI clears a factory's rally orders and sets its own; the
+    // builds it has queued stay. B, with a rally of its own, guards A.
+    lua_check("the builds stay when the rally orders are cleared", R"(
+        IssueBuildFactory({__osc_a}, 'uel0201', 3)
+        IssueClearFactoryCommands({__osc_a})
+        if __osc_queue(__osc_a) ~= 3 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' build orders; 3 expected')
+        end
+        IssueFactoryRallyPoint({__osc_a}, {610, GetTerrainHeight(610, 140), 140})
+        local p = __osc_a:GetRallyPoint()
+        if VDist2(p[1], p[3], 610, 140) > 0.01 then error('A rallies elsewhere') end
+        IssueClearFactoryCommands({__osc_b})
+        IssueFactoryRallyPoint({__osc_b}, {650, GetTerrainHeight(650, 140), 140})
+        IssueGuard({__osc_b}, __osc_a)
+    )");
+    run(20);
+    lua_check("A and B each build a tank", R"(
+        __osc_ta = __osc_building(__osc_a)
+        __osc_tb = __osc_building(__osc_b)
+        if not __osc_ta or not __osc_tb then error('A or B is not building') end
+    )");
+
+    // Built, each drives off to A's rally point: B built its tank for A.
+    for (int i = 0; i < 200; ++i) {
+        run(10);
+        auto r = ctx.lua_state.do_string(R"(
+            for _, t in {__osc_ta, __osc_tb} do
+                if t:IsDead() or t:IsBeingBuilt() or __osc_dist(t, 610, 140) > 6 then return end
+            end
+            error('there')
+        )");
+        if (!r) break;
+    }
+    lua_check("A's tank drives to A's rally point", R"(
+        if __osc_ta:IsDead() or __osc_ta:IsBeingBuilt() then error('not built') end
+        local d = __osc_dist(__osc_ta, 610, 140)
+        if d > 6 then error(d .. ' from the rally point') end
+    )");
+    lua_check("so does B's, built for A, not to B's", R"(
+        if __osc_tb:IsDead() or __osc_tb:IsBeingBuilt() then error('not built') end
+        local d = __osc_dist(__osc_tb, 610, 140)
+        if d > 6 then
+            error(d .. " from A's rally point, " .. __osc_dist(__osc_tb, 650, 140) .. " from B's")
+        end
+    )");
+    // A player's move to a factory (M206k): Moho's UI sends it as a factory
+    // command, so it sets A's rally point and leaves A's builds alone, where
+    // it had cleared them and queued a move A can't make.
+    lua_check("A is given builds", R"(
+        IssueClearCommands({__osc_a, __osc_b}) -- B no longer takes A's work
+        IssueBuildFactory({__osc_a}, 'uel0201', 2)
+        __osc_a_id = __osc_a:GetEntityId()
+    )");
+    {
+        lua_State* L = ctx.lua_state.raw();
+        lua_getglobal(L, "__osc_a_id");
+        const auto a_id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        osc::sim::UnitCommand move;
+        move.type = osc::sim::CommandType::Move;
+        move.target_pos = {560.0f, 0.0f, 180.0f};
+        ctx.sim.set_human_input_active(true);
+        ctx.sim.route_player_command({a_id}, move, true);
+        ctx.sim.set_human_input_active(false);
+    }
+    run(2);
+    lua_check("a player's move sets A's rally point, not its orders", R"(
+        local p = __osc_a:GetRallyPoint()
+        if VDist2(p[1], p[3], 560, 180) > 0.01 then
+            error('rally point ' .. p[1] .. ', ' .. p[3])
+        end
+        if __osc_queue(__osc_a) ~= 2 then
+            error('A has ' .. __osc_queue(__osc_a) .. ' orders; its 2 builds expected')
+        end
+    )");
+    spdlog::info("=== FACTORY RALLY TEST: {} passed, {} failed ===", pass, fail);
+}
+
+void test_influence(TestContext& ctx) {
+    spdlog::info("=== INFLUENCE TEST: the AI's threat is what its intel has seen ===");
+    int pass = 0, fail = 0;
+    auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        }
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+
+    // Army 1's influence map (M207b). An enemy (army 2) tank and power
+    // generator east of the map's centre, and a generator it never sees; on
+    // this map a cell is 64 across. Army 1's intel is fed every few ticks
+    // and its map updated every 30, so each step waits for both.
+    lua_check("setup", R"(
+        function __osc_spawn(bp, army, x, z)
+            local u = CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, 0, 0)
+            u:SetFireState(1) -- hold fire
+            u:SetImmobile(true)
+            return u
+        end
+        __osc_brain = ArmyBrains[1]
+        function __osc_threat(x, z, type)
+            return __osc_brain:GetThreatAtPosition({x, 0, z}, 0, true, type or 'Overall')
+        end
+        __osc_tank = __osc_spawn('uel0201', 2, 600, 100)
+        __osc_pgen = __osc_spawn('ueb1101', 2, 640, 100)
+        __osc_hidden = __osc_spawn('ueb1101', 2, 640, 300)
+    )");
+    run(70);
+    lua_check("army 1 knows nothing of units it hasn't seen", R"(
+        for _, p in {{600, 100}, {640, 100}, {640, 300}} do
+            local t = __osc_threat(p[1], p[2])
+            if t ~= 0 then error('threat ' .. t .. ' at ' .. p[1] .. ', ' .. p[2]) end
+        end
+    )");
+
+    // A scout of army 1's comes within sight of both.
+    lua_check("a scout comes", R"(
+        __osc_scout = __osc_spawn('uel0101', 1, 620, 100)
+    )");
+    run(70);
+    lua_check("it knows what the scout sees, closely", R"(
+        local t = __osc_threat(600, 100)
+        if math.abs(t - 1) > 1e-3 then error('tank cell threat ' .. t .. '; 1 expected') end
+        local s = __osc_threat(600, 100, 'AntiSurface')
+        if math.abs(s - 1) > 1e-3 then error('AntiSurface ' .. s .. '; 1 expected') end
+        local g = __osc_threat(640, 100, 'Structures')
+        if math.abs(g - 1) > 1e-3 then error('generator ' .. g .. '; 1 expected') end
+        if __osc_threat(640, 300) ~= 0 then error('it knows the hidden generator') end
+    )");
+    lua_check("the queries answer in cells", R"(
+        local rows = __osc_brain:GetThreatsAroundPosition({600, 0, 100}, 0, true, 'Overall')
+        if table.getn(rows) ~= 1 then error(table.getn(rows) .. ' rows; 1 expected') end
+        local r = rows[1]
+        if r[1] ~= 608 or r[2] ~= 96 then error('row at ' .. r[1] .. ', ' .. r[2]) end
+        if math.abs(r[3] - 1) > 1e-3 then error('row threat ' .. r[3]) end
+        local line = __osc_brain:GetThreatBetweenPositions({600, 0, 100}, {640, 0, 100}, true, 'Overall')
+        if math.abs(line - 2) > 1e-3 then error('line threat ' .. line .. '; 2 expected') end
+    )");
+
+    // FindPlaceToBuild passes over a site whose cell holds optIgnoreThreatOver
+    // AntiSurface threat or more: here the tank's cell.
+    lua_check("FindPlaceToBuild passes over threatened sites", R"(
+        local template = {{{'OscThreatTest'}, {590, 90, 0}, {700, 100, 0}}}
+        local near = __osc_brain:FindPlaceToBuild('OscThreatTest', 'ueb1101', template, false,
+                                                  nil, nil, 590, 90)
+        if not near or near[1] ~= 590 then error('without a cutoff: ' .. repr(near)) end
+        local safe = __osc_brain:FindPlaceToBuild('OscThreatTest', 'ueb1101', template, false,
+                                                  nil, nil, 590, 90, 1)
+        if not safe or safe[1] ~= 700 then error('with a cutoff of 1: ' .. repr(safe)) end
+    )");
+
+    // The scout goes: the tank's threat holds for 10 updates, then fades;
+    // the generator, a structure, stays.
+    lua_check("the scout goes", R"(
+        __osc_scout:Destroy()
+    )");
+    run(330);
+    lua_check("the unseen tank fades; the generator stays", R"(
+        local t = __osc_threat(600, 100)
+        if t <= 0 or t >= 0.999 then error('tank cell threat ' .. t .. '; fading expected') end
+        local g = __osc_threat(640, 100, 'Structures')
+        if math.abs(g - 1) > 1e-3 then error('generator ' .. g .. '; 1 expected') end
+    )");
+
+    // The generator dies unseen: army 1 still thinks it there until it
+    // looks again.
+    lua_check("the generator dies unseen", R"(
+        __osc_pgen:Destroy()
+    )");
+    run(70);
+    lua_check("it is still on the map", R"(
+        local g = __osc_threat(640, 100, 'Structures')
+        if math.abs(g - 1) > 1e-3 then error('generator ' .. g .. '; 1 expected') end
+    )");
+    // Near enough to have the generator's spot in sight: the first scout
+    // knew it by radar, and only sight shows a structure gone.
+    lua_check("another scout comes", R"(
+        __osc_scout = __osc_spawn('uel0101', 1, 636, 100)
+    )");
+    run(70);
+    lua_check("and sees it gone", R"(
+        local g = __osc_threat(640, 100, 'Structures')
+        if g ~= 0 then error('generator ' .. g .. '; 0 expected') end
+    )");
+
+    // A script's threat shows after the next update, fading by its rate.
+    lua_check("a script assigns threat", R"(
+        __osc_brain:AssignThreatAtPosition({100, 0, 900}, 50, 0.1, 'Overall')
+    )");
+    run(31);
+    lua_check("which shows, fading", R"(
+        local t = __osc_threat(100, 900)
+        if math.abs(t - 45) > 1e-3 then error('assigned threat ' .. t .. '; 45 expected') end
+        -- Given a negative rate, Moho clamps it to 0: it never fades.
+        __osc_brain:AssignThreatAtPosition({900, 0, 900}, 30, -1, 'Overall')
+    )");
+    run(61);
+    lua_check("a negative rate never fades", R"(
+        local t = __osc_threat(900, 900)
+        if math.abs(t - 30) > 1e-3 then error('assigned threat ' .. t .. '; 30 expected') end
+    )");
+    spdlog::info("=== INFLUENCE TEST: {} passed, {} failed ===", pass, fail);
+}
+
 void test_ferry(TestContext& ctx) {
     spdlog::info("=== FERRY TEST: a ferry carries units from its beacon to its drop-off ===");
     int pass = 0, fail = 0;

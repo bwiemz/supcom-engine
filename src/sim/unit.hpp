@@ -30,6 +30,7 @@ namespace osc::sim {
 
 struct SimContext;
 class EntityRegistry;
+class SimState;
 
 struct IntelState {
     f32 radius = 0;
@@ -122,16 +123,31 @@ public:
         categories_.insert(std::move(cat));
     }
 
-    // Rally point (factories send produced units here)
-    bool has_rally_point() const { return has_rally_point_; }
-    const Vector3& rally_point() const { return rally_point_; }
-    void set_rally_point(const Vector3& p) { rally_point_ = p; has_rally_point_ = true; }
-    void clear_rally_point() { rally_point_ = {}; has_rally_point_ = false; }
+    /// A factory's rally orders (Moho's builder factory command queue,
+    /// M206j): each unit it finishes takes a copy of them, after the
+    /// roll-off move its script gives it. Only an immobile FACTORY keeps
+    /// them.
+    bool keeps_rally_orders() const { return !is_mobile() && has_category("FACTORY"); }
+    const std::vector<UnitCommand>& rally_orders() const { return rally_orders_; }
+    void add_rally_order(const UnitCommand& cmd) { rally_orders_.push_back(cmd); }
+    void clear_rally_orders() { rally_orders_.clear(); }
+    /// The rally orders, first given the blueprint's initial rally if there
+    /// are none (Moho's BuilderSetUpInitialRally), as Moho keeps a factory's.
+    /// It changes sim state: only the sim's own steps may call it.
+    const std::vector<UnitCommand>& validated_rally_orders(lua_State* L, SimState* sim);
+    /// Where the first rally order goes (unit:GetRallyPoint), without
+    /// changing anything: the initial rally's point if there are none yet.
+    /// False for a unit that keeps none. `L` is the sim's Lua state, whose
+    /// blueprints it reads; the UI's unit objects ask it too.
+    bool rally_point(lua_State* L, Vector3& out) const;
 
     // Build state (builder side) — tracks what this unit is constructing
     u32 build_target_id() const { return build_target_id_; }
     void set_build_target_id(u32 id) { build_target_id_ = id; }
     bool is_building() const { return build_target_id_ != 0; }
+    /// This factory's build came from the queue of a factory it guards
+    /// (M206h): the guard order runs it, and cancels it when it ends.
+    bool factory_assist_build() const { return factory_assist_build_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -274,7 +290,6 @@ public:
     }
     void push_command(const UnitCommand& cmd, bool clear_existing);
     void clear_commands(const char* source = "?");
-    void clear_queued_commands(); // remove all but current command
 
     /// Per-tick update, in phases: dying or carried (tick_lifecycle), the
     /// orders (tick_orders), coasting, layer changes and fuel
@@ -290,9 +305,12 @@ public:
     /// Build helpers called from the order handlers (unit_orders.cpp)
     bool start_build(const UnitCommand& cmd, EntityRegistry& registry,
                      lua_State* L);
+    /// Works on the build under way; false once it has ended, and then
+    /// `built` (if given) says whether the unit was finished or the build
+    /// failed.
     bool progress_build(f64 dt, EntityRegistry& registry, lua_State* L,
-                         map::PathfindingGrid* grid = nullptr,
-                         f32 efficiency = 1.0f);
+                        map::PathfindingGrid* grid = nullptr, f32 efficiency = 1.0f,
+                        bool* built = nullptr);
     void finish_build(EntityRegistry& registry, lua_State* L, bool success,
                       map::PathfindingGrid* grid = nullptr);
 
@@ -508,6 +526,9 @@ public:
         return motion_type_ == "RULEUMT_Amphibious" || motion_type_ == "RULEUMT_AmphibiousFloating";
     }
     bool is_hover() const { return motion_type_ == "RULEUMT_Hover"; }
+    /// Moho's Unit::IsMobile: a blueprint that moves (a structure's
+    /// MotionType is RULEUMT_None).
+    bool is_mobile() const { return !motion_type_.empty() && motion_type_ != "RULEUMT_None"; }
     bool is_naval() const {
         return motion_type_ == "RULEUMT_Water" || motion_type_ == "RULEUMT_SurfacingSub";
     }
@@ -541,8 +562,10 @@ public:
     void set_sonar_stealth(bool v) { sonar_stealth_ = v; }
     bool auto_mode() const { return auto_mode_; }
     void set_auto_mode(bool v) { auto_mode_ = v; }
-    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue).
-    /// Stored; the factory queue does not repeat yet.
+    /// Factory repeat-build flag (UserUnit:IsRepeatQueue / SetRepeatQueue):
+    /// a finished build order goes to the back of the queue
+    /// (order_build_in_place), and one taken from a guarded factory goes to
+    /// the back of that factory's (order_guard).
     bool repeat_queue() const { return repeat_queue_; }
     void set_repeat_queue(bool v) { repeat_queue_ = v; }
     /// Submarine auto-surface flag (SetAutoSurfaceMode). Stored; submarines
@@ -731,6 +754,13 @@ private:
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A guard order ends: a factory's assisted build (M206h) is cancelled,
+    /// as a factory's build is when its order goes; an assist just stops.
+    void end_guard_build(EntityRegistry& registry, lua_State* L);
+    /// The unit this factory just finished takes the rally orders of
+    /// `rally_id` (itself, or the factory it built the unit for); Moho's
+    /// CFactoryBuildTask::InheritQueuedCommandsTo.
+    void hand_over_rally_orders(u32 built_id, u32 rally_id, SimContext& ctx);
     /// A submarine dives or surfaces.
     OrderStep order_dive(lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
@@ -764,8 +794,7 @@ private:
     std::unordered_set<std::string> categories_;
     std::deque<UnitCommand> command_queue_;
     std::vector<std::unique_ptr<Weapon>> weapons_;
-    Vector3 rally_point_;
-    bool has_rally_point_ = false;
+    std::vector<UnitCommand> rally_orders_; // see rally_orders()
     u32 build_target_id_ = 0;     // entity ID of unit being built
     f64 build_time_ = 0;          // target's Economy.BuildTime
     f64 build_cost_mass_ = 0;     // target's Economy.BuildCostMass
@@ -813,6 +842,7 @@ private:
     std::string enhance_name_;
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
+    bool factory_assist_build_ = false;           // see factory_assist_build()
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Bone visibility
