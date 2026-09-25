@@ -3,6 +3,14 @@
 # runs it as it is; the integration runner adds its test modes.
 add_library(osc_app STATIC
     app.cpp
+    boot.cpp
+    cli.cpp
+    frames.cpp
+    headless.cpp
+    reload.cpp
+    session.cpp
+    ui_globals.cpp
+    window.cpp
 )
 add_library(osc::app ALIAS osc_app)
 

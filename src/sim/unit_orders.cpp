@@ -473,11 +473,13 @@ OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
     }
     if (!nav_update(dt, ctx.terrain)) {
         // Reached patrol point — cycle to back of queue (moved out first:
-        // cmd is the element pop_front destroys)
+        // cmd is the element pop_front destroys). The next leg starts next
+        // tick: a patrol whose points it already stands on would otherwise
+        // go round them for ever within this one.
         auto finished = std::move(cmd);
         command_queue_.pop_front();
         command_queue_.push_back(std::move(finished));
-        return OrderStep::Next;
+        return OrderStep::Hold;
     }
     return OrderStep::Hold;
 }

@@ -19,8 +19,8 @@ namespace osc::sim {
 struct Replay {
     // 2: the game's seed; 3: SimCallbacks; 4: the game's setup, the build,
     // and a checksum trail; 5: formation orders; 6: a specific unload's
-    // cargo
-    static constexpr u32 kVersion = 6;
+    // cargo; 7: factory commands (a player's rally orders)
+    static constexpr u32 kVersion = 7;
 
     u32 version = kVersion;
     u32 final_tick = 0;               // last tick the recording covers
