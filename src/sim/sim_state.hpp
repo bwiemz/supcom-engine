@@ -339,12 +339,22 @@ public:
     /// deterministic AI/sim order under multiplayer) applies directly now.
     void route_command(const std::vector<u32>& unit_ids,
                        const UnitCommand& command, bool clear_existing);
+    /// A player's order for the units they selected, as Moho's UI issues it
+    /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
+    /// units among them (factories) as a factory command -- their rally
+    /// orders -- and to the rest as an order. Routed like route_command.
+    void route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                              bool clear_existing);
     /// What each unit of a group order gets: a formation order is laid out in
     /// its slots, the group held to its slowest member's speed (M204); any
     /// other order goes to every unit as it is. Done where the sim applies
     /// the order, so every peer and replay computes the same.
     std::vector<std::pair<u32, UnitCommand>> expand_group_command(const std::vector<u32>& unit_ids,
                                                                   const UnitCommand& command) const;
+    /// A factory command (Moho's UNIT_IssueFactoryCommand): each unit that
+    /// keeps rally orders takes it, clearing them first when `clear_existing`.
+    void apply_factory_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                               bool clear_existing);
 
     // --- Replay recording / playback ---
     // With recording on, every scheduled command is captured into a Replay that

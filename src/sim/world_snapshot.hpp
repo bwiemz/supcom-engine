@@ -81,6 +81,7 @@ struct EntityRecord {
     i32 tactical_silo_ammo = 0;
     i32 weapon_count = 0;
     u32 command_offset = 0, command_count = 0;   ///< into WorldSnapshot::commands
+    u32 rally_offset = 0, rally_count = 0;       ///< a factory's rally orders, likewise
     u32 intel_offset = 0, intel_count = 0;       ///< into WorldSnapshot::intel
     u32 adjacent_offset = 0, adjacent_count = 0; ///< into WorldSnapshot::adjacent
 
@@ -144,6 +145,9 @@ struct WorldSnapshot {
     }
     std::span<const BoneMatrix> bones_of(const EntityRecord& e) const {
         return {bones.data() + e.bone_offset, e.bone_count};
+    }
+    std::span<const CommandRecord> rally_of(const EntityRecord& e) const {
+        return {commands.data() + e.rally_offset, e.rally_count};
     }
     std::span<const CommandRecord> commands_of(const EntityRecord& e) const {
         return {commands.data() + e.command_offset, e.command_count};

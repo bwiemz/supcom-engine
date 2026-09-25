@@ -71,6 +71,10 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     for (const auto& c : u.command_queue())
         out.commands.push_back({c.type, c.target_id, c.target_pos});
     r.command_count = static_cast<u32>(out.commands.size()) - r.command_offset;
+    r.rally_offset = static_cast<u32>(out.commands.size());
+    for (const auto& c : u.rally_orders())
+        out.commands.push_back({c.type, c.target_id, c.target_pos});
+    r.rally_count = static_cast<u32>(out.commands.size()) - r.rally_offset;
 
     // Only what can be drawn: a ring needs the intel on and a radius.
     r.intel_offset = static_cast<u32>(out.intel.size());

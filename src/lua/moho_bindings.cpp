@@ -2458,7 +2458,7 @@ void issue_player_order(lua_State* L, const std::vector<u32>& ids, const sim::Un
     auto* sim = get_sim(L);
     if (!sim || ids.empty()) return;
     sim->set_human_input_active(true);
-    sim->route_command(ids, cmd, clear);
+    sim->route_player_command(ids, cmd, clear);
     sim->set_human_input_active(false);
 }
 
