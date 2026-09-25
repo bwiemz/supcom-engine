@@ -429,6 +429,7 @@ TEST_CASE("UI unit handles stop resolving once the unit is unregistered", "[ui][
     lua_pop(L, 1);
 
     sim.entity_registry().unregister_entity(id); // into the graveyard
+    sim.tick(); // the UI sees the world a tick at a time (M191 step 3)
     result = lua.do_string(R"(
         dead_idle = kept:IsIdle() and 1 or 0
         dead_avatars = GetArmyAvatars() == nil and 0 or 1 -- none: nil, as retail tests

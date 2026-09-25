@@ -67,6 +67,30 @@ The tests use nothing else. Nothing in `integration_tests.cpp` refers to `main.c
 - **Files:** `app.cpp` splits into files (`cli`, `frames`, `reload`, the boot, the windowed loop).
 - **One object:** `run`'s boot, windowed loop and headless run become functions over one `Engine` object, not one function's locals.
 - They are pure moves, checked as M193 was.
+- **2a (done):** the free functions moved into files: `cli.cpp`, `ui_globals.cpp` (with the seven registrations as one function), `session.cpp` (traces, recording, replays, scripted orders, sound, `WorldInterp` in `app_internal.hpp`), `reload.cpp` and `frames.cpp`.
+  - Each new file was trimmed to the includes it compiles with.
+  - A token count finds only 23 `static`s dropped (15 functions and 8 trace globals, now shared), plus the declarations and wrappers.
+  - A four-AI game's checksum trace is byte-identical over 3,000 ticks.
+- **2b (done):** `run()` is an `App` object (`app_internal.hpp`).
+  - **What moved where:**
+    - The command line is read once, into `Options` (`parse_options`, `cli.cpp`).
+    - `run()` keeps only what comes before the engine: the test modes' parse and `before_boot`/`before_init`, and the checks for FA and its init file.
+    - `App` owns everything `run()` built. Its phases are methods:
+      - `boot()` (`boot.cpp`) is `boot_engine`, `boot_game`, `boot_ui` and `start`;
+      - `run_window()` (`window.cpp`);
+      - `run_headless()` (`headless.cpp`).
+    - The tests' `Engine` is now a set of references into `App`.
+  - **Order kept:** the members are declared in the order `run()` made them, so they are destroyed in the same order as before. They are also built when `App` is, so three things are built earlier than before:
+    - the sound manager (its bank index, and the audio device in an interactive game);
+    - the UI state's Lua VM;
+    - the preferences' Lua VM.
+
+    Each is self-contained (Lua's per-type metatables are per VM), so only the log order moves.
+  - **Proof:**
+    - The bodies were moved by a script that checks the text of every line it deletes or rewrites, and prefixes the `Options` names with `opt.` only in code.
+    - A token diff of the old `run()` against the new code (with `opt.` ignored) shows only the moved declarations, the method frames and `parse_options`.
+    - The four-AI checksum trace is byte-identical over 3,000 ticks.
+  - **Next (2c):** the windowed loop is still one 770-line method. Break its frame into handlers (keys, the sim's advance, the UI frame, a launch, the return to the lobby).
 
 ## Proof
 

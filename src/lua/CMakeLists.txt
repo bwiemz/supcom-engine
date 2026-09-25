@@ -20,6 +20,7 @@ add_library(osc_lua STATIC
     bindings/ui/lists.cpp
     bindings/ui/lobby.cpp
     bindings/ui/text.cpp
+    bindings/ui/user_unit.cpp
     bindings/ui/world.cpp
     mp_net_state.cpp
     lan_lobby.cpp

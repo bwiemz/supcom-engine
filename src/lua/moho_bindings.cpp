@@ -1481,6 +1481,8 @@ static const MohoClassDef moho_classes[] = {
 
     // Inherit from entity_methods
     {"unit_methods",            unit_methods,           "entity_methods"},
+    // The UI's unit objects (no base: Moho's UserEntity adds no methods)
+    {"user_unit_methods",       user_unit_methods,      nullptr},
     {"projectile_methods",      projectile_methods,     "entity_methods"},
     {"prop_methods",            prop_methods,           "entity_methods"},
     {"shield_methods",          shield_methods,         "entity_methods"},
@@ -1733,9 +1735,15 @@ static osc::GameStateManager* get_game_state_mgr(lua_State* L) {
     return mgr;
 }
 
-/// Push a unit table for the UI Lua state with _c_object, EntityId, Army fields
-/// and moho.unit_methods metatable (cached as __osc_ui_unit_mt).
+/// Push a unit table for the UI Lua state: a handle by id with EntityId and
+/// Army fields, whose methods are UserUnit's (moho.user_unit_methods, M191
+/// step 3), which read the UI's snapshot of the tick. Cached metatable:
+/// __osc_ui_unit_mt.
 void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
+    push_user_unit(L, entity->entity_id(), entity->army());
+}
+
+void push_user_unit(lua_State* L, u32 id, i32 army) {
     lua_newtable(L);
     int tbl = lua_gettop(L);
 
@@ -1744,7 +1752,7 @@ void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
     // id on every call. The sim generation rejects handles from an earlier
     // game, whose ids a new sim reuses.
     lua_pushstring(L, "_c_entity_id");
-    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_pushnumber(L, static_cast<lua_Number>(id));
     lua_rawset(L, tbl);
     lua_pushstring(L, "_c_sim_gen");
     lua_pushnumber(L, static_cast<lua_Number>(sim::SimState::sim_generation()));
@@ -1752,12 +1760,12 @@ void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
 
     // EntityId
     lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, static_cast<lua_Number>(entity->entity_id()));
+    lua_pushnumber(L, static_cast<lua_Number>(id));
     lua_rawset(L, tbl);
 
     // Army (1-based for Lua)
     lua_pushstring(L, "Army");
-    lua_pushnumber(L, static_cast<lua_Number>(entity->army() + 1));
+    lua_pushnumber(L, static_cast<lua_Number>(army + 1));
     lua_rawset(L, tbl);
 
     // Set metatable: get or create cached __osc_ui_unit_mt
@@ -1765,17 +1773,17 @@ void push_unit_for_ui(lua_State* L, sim::Entity* entity) {
     lua_rawget(L, LUA_REGISTRYINDEX);
     if (!lua_istable(L, -1)) {
         lua_pop(L, 1);
-        // Build: { __index = moho.unit_methods }
+        // Build: { __index = moho.user_unit_methods }
         lua_newtable(L); // mt
         lua_pushstring(L, "__index");
         lua_pushstring(L, "moho");
         lua_rawget(L, LUA_GLOBALSINDEX);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "unit_methods");
+            lua_pushstring(L, "user_unit_methods");
             lua_rawget(L, -2);
             lua_remove(L, -2); // remove moho table
         }
-        lua_rawset(L, -3); // mt.__index = unit_methods (or nil if moho missing)
+        lua_rawset(L, -3); // mt.__index = user_unit_methods (or nil if moho missing)
 
         // Cache it
         lua_pushstring(L, "__osc_ui_unit_mt");

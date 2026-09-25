@@ -29,6 +29,7 @@ class Unit;
 class Weapon;
 struct UnitCommand;
 struct Vector3;
+struct WorldSnapshot;
 } // namespace osc::sim
 
 namespace osc::ui {
@@ -79,6 +80,12 @@ audio::SoundManager* get_sound_mgr(lua_State* L);
 bool extract_sound_table(lua_State* L, int idx, std::string& bank, std::string& cue,
                          std::string* lod_cutoff = nullptr);
 void push_vector3(lua_State* L, const sim::Vector3& v);
+/// A UI unit object for unit `id` of `army` (a handle by id; UserUnit's
+/// methods). push_unit_for_ui makes one from a live entity.
+void push_user_unit(lua_State* L, u32 id, i32 army);
+/// The world as the UI sees it: the sim's current tick, captured the first
+/// time the UI asks after each tick (lua/bindings/ui/user_unit.cpp).
+const sim::WorldSnapshot* ui_world(lua_State* L);
 f32 get_unit_threat_for_type(const sim::Unit* unit, const char* type);
 void stop_ambient(audio::SoundManager* mgr, sim::Entity* e, const char* name);
 i32 resolve_bone_index(const sim::Entity* e, lua_State* L, int arg);
@@ -153,6 +160,8 @@ extern const MethodEntry ui_wlduiprovider_methods[];
 extern const MethodEntry ui_world_mesh_methods[];
 extern const MethodEntry ui_worldview_methods[];
 extern const MethodEntry unit_methods[];
+/// The UI state's unit objects (lua/bindings/ui/user_unit.cpp).
+extern const MethodEntry user_unit_methods[];
 extern const MethodEntry weapon_methods[];
 
 } // namespace osc::lua

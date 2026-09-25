@@ -1,7 +1,8 @@
 # clang-tidy findings accepted when the ratchet started; they may only go down.
 # Rewritten by tools/clang_tidy_ratchet.py --update. Format: count path check
 # clang-tidy 22
-2 src/app/app.cpp bugprone-unchecked-string-to-number-conversion
+1 src/app/cli.cpp bugprone-unchecked-string-to-number-conversion
+1 src/app/window.cpp bugprone-unchecked-string-to-number-conversion
 1 src/lua/engine_bindings.cpp bugprone-unchecked-string-to-number-conversion
 2 src/lua/moho_bindings.cpp performance-no-int-to-ptr
 1 src/renderer/overlay_renderer.hpp bugprone-throwing-static-initialization
