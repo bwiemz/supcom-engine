@@ -2,6 +2,7 @@
 
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
@@ -601,6 +602,17 @@ public:
     f32 playable_x1() const { return playable_x1_; }
     f32 playable_z1() const { return playable_z1_; }
 
+    /// A structure blueprint's placement rules, from `read` the first time
+    /// they are asked for: blueprints don't change during a game (Moho
+    /// places by its typed copies), and the AI asks for the same few with
+    /// every candidate site it tries.
+    template <typename Read>
+    const PlacementRules& placement_rules(const std::string& bp_id, Read read) const {
+        auto it = placement_rules_.find(bp_id);
+        if (it == placement_rules_.end()) it = placement_rules_.emplace(bp_id, read()).first;
+        return it->second;
+    }
+
     /// Army `army`'s influence map (M207b), made on first use; null without a
     /// map (terrain) or army.
     InfluenceMap* influence_map(i32 army);
@@ -770,6 +782,7 @@ private:
     f32 playable_x0_ = 0, playable_z0_ = 0;
     f32 playable_x1_ = 0, playable_z1_ = 0;
     bool has_playable_rect_ = false;
+    mutable std::unordered_map<std::string, PlacementRules> placement_rules_; ///< lookup only
 
     static u32 s_sim_generation_;
 

@@ -35,12 +35,15 @@ Quaternion nlerp(const Quaternion& a, const Quaternion& b, f32 t) {
 }
 
 IconClass icon_class(const Unit& u) {
-    if (u.has_category("COMMAND")) return IconClass::Commander;
-    if (u.has_category("ENGINEER") || u.has_category("CONSTRUCTION")) return IconClass::Engineer;
-    if (u.has_category("STRUCTURE")) return IconClass::Structure;
-    if (u.has_category("AIR")) return IconClass::Air;
-    if (u.has_category("NAVAL")) return IconClass::Naval;
-    if (u.has_category("LAND")) return IconClass::Land;
+    static const CategoryName kCommand{"COMMAND"}, kEngineer{"ENGINEER"},
+        kConstruction{"CONSTRUCTION"}, kStructure{"STRUCTURE"}, kAir{"AIR"}, kNaval{"NAVAL"},
+        kLand{"LAND"};
+    if (u.has_category(kCommand)) return IconClass::Commander;
+    if (u.has_category(kEngineer) || u.has_category(kConstruction)) return IconClass::Engineer;
+    if (u.has_category(kStructure)) return IconClass::Structure;
+    if (u.has_category(kAir)) return IconClass::Air;
+    if (u.has_category(kNaval)) return IconClass::Naval;
+    if (u.has_category(kLand)) return IconClass::Land;
     return IconClass::Generic;
 }
 

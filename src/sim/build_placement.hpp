@@ -12,6 +12,7 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,7 +51,9 @@ struct StructureSite {
 };
 
 /// Placement checks for one army at one moment. Collects the army's pending
-/// build orders once, so a query over many candidate sites stays cheap.
+/// build orders once, the first time a site passes the terrain checks, so a
+/// query over many candidate sites stays cheap (and one the terrain rules
+/// out doesn't walk the units at all).
 class StructurePlacement {
 public:
     StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules);
@@ -69,9 +72,13 @@ private:
     bool structure_overlaps(const StructureSite& site) const;
     bool on_deposit(const PlacementRules& r, f32 x, f32 z) const;
 
+    /// The army's pending build orders.
+    const std::vector<StructureSite>& reserved() const;
+
     const SimState& sim_;
+    i32 army_;
     PlacementRulesLookup lookup_;
-    std::vector<StructureSite> reserved_; ///< the army's pending build orders
+    mutable std::optional<std::vector<StructureSite>> reserved_; ///< see reserved()
     mutable std::map<std::string, PlacementRules> rules_cache_;
 };
 
