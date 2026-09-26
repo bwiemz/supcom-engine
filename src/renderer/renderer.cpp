@@ -2701,8 +2701,13 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(strength), &strength);
         vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                 bloom_composite_layout_, 0, 1, &scene_ds_, 0, nullptr);
+        // Without bloom its input adds nothing (strength 0), but must still be
+        // an image in a defined layout. The bloom images are written only by
+        // bloom frames, and until the first one they are UNDEFINED (a NaN
+        // there would survive the 0), so the scene stands in.
+        VkDescriptorSet bloom_input = do_bloom ? bloom_blur_v_ds_ : scene_ds_;
         vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                bloom_composite_layout_, 1, 1, &bloom_blur_v_ds_, 0, nullptr);
+                                bloom_composite_layout_, 1, 1, &bloom_input, 0, nullptr);
         vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
     }
 
