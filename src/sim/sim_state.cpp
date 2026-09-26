@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/platoon.hpp"
@@ -1346,6 +1347,9 @@ void SimState::update_entities() {
         ctx.army_efficiency[i] = {armies_[i]->mass_efficiency(),
                                   armies_[i]->energy_efficiency()};
     }
+
+    // Units on paths look ahead for others they would meet (M203c).
+    steer_ground_units(*this);
 
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);

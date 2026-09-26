@@ -57,6 +57,39 @@ public:
 
     void set_sim_state(const SimState* sim) { sim_ = sim; }
 
+    // Steering (M203c; Moho's CAiSteeringImpl, see steering.hpp).
+    /// A meeting the unit expects on the path ahead (Moho's
+    /// COLLISIONTYPE_1): the unit it would meet, the tick and the spot.
+    struct Collision {
+        u32 other = 0;
+        i32 tick = 0;
+        Vector3 at{};
+    };
+    const Collision& collision() const { return collision_; }
+    bool has_collision() const { return collision_.other != 0; }
+    void set_collision(const Collision& c) { collision_ = c; }
+    void clear_collision() { collision_ = {}; }
+    /// The tick its next check is due (0: now). A new path is checked at
+    /// once, then again as the path ahead runs out.
+    i32 next_check() const { return next_check_; }
+    void set_next_check(i32 tick) { next_check_ = tick; }
+    /// Where it expects to be each of the next `nodes` ticks: its waypoints
+    /// sampled from `from` at its speed, rising toward `top_speed` at
+    /// `accel` a second (Moho's spline nodes, without their turns). Empty
+    /// when it has no path.
+    void path_ahead(const Vector3& from, f32 speed, f32 top_speed, f32 accel, int nodes,
+                    std::vector<Vector3>& out) const;
+    /// Step aside to overtake: drive to `point` first, then on (Moho's PT_2
+    /// path).
+    void sidestep(const Vector3& point);
+    bool sidestepping() const { return sidestep_ && waypoint_index_ <= sidestep_index_; }
+    /// Stop for unit `for_id` crossing or coming head-on (Moho's mode 4
+    /// path): brake at twice its brake, then wait `ticks` once still.
+    void hold(int ticks, u32 for_id);
+    bool holding() const { return hold_ticks_ > 0; }
+    /// The unit it is stopped for (while holding).
+    u32 held_for() const { return hold_ticks_ > 0 ? held_for_ : 0; }
+
     /// After a path request fails outright (nothing reachable is closer to
     /// the goal), identical requests -- same goal, unit still where it was --
     /// return without searching, except every Nth call, since a blocking
@@ -88,6 +121,8 @@ private:
     bool slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain* terrain);
     /// Reached the goal: no path left.
     void arrive();
+    /// No meeting expected, nothing under way: a new path's steering.
+    void reset_steering();
 
     const SimState* sim_ = nullptr;
     Vector3 goal_;
@@ -98,6 +133,16 @@ private:
     // Progress toward the goal, for arriving in a crowd (see CROWD_TICKS).
     f32 best_dist_ = 1e30f;
     int stalled_ = 0;
+
+    // Steering (M203c).
+    Collision collision_;
+    i32 next_check_ = 0;
+    bool sidestep_ = false;     ///< a sidestep point is on the path
+    size_t sidestep_index_ = 0; ///< its index; passed, the sidestep is done
+    int hold_ticks_ = 0;        ///< stopping, then this many ticks still
+    u32 held_for_ = 0;          ///< the unit it stops for
+    static constexpr f32 SIDESTEP_TOLERANCE =
+        0.25f; ///< a sidestep point is reached, not passed near
 
     // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
     bool has_failed_request_ = false;

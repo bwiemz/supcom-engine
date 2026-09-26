@@ -8410,6 +8410,212 @@ void test_drive(TestContext& ctx) {
     spdlog::info("Drive test: {}/{} passed", pass, pass + fail);
 }
 
+// ====================================================================
+// Steering (M203c; Moho's CAiSteeringImpl): units on paths look ahead
+// for others they would meet, and step aside to overtake or stop to let
+// one pass.
+// ====================================================================
+void test_steer(TestContext& ctx) {
+    spdlog::info("=== STEER TEST: units steer around each other (M203c) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const std::string& code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] steer script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto unit = [&](const char* global) -> osc::sim::Unit* {
+        lua_State* L = ctx.lua_state.raw();
+        if (!lua(std::string("__osc_id = ") + global + ":GetEntityId()")) return nullptr;
+        lua_pushstring(L, "__osc_id");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+
+    // Open, dry, flat ground for the lot: a cross of two roads, 110 long and
+    // 16 wide, whose cells are all land-passable, within 3 of one height.
+    auto* terrain = ctx.sim.terrain();
+    auto* grid = ctx.sim.pathfinding_grid();
+    float cx = 0, cz = 0;
+    for (float z = 100; z < 900 && cx == 0; z += 10)
+        for (float x = 100; x < 900 && cx == 0; x += 10) {
+            bool ok = terrain && grid;
+            float lo = 1e9f, hi = -1e9f;
+            for (float dz = -55; ok && dz <= 55; dz += 2)
+                for (float dx = -55; ok && dx <= 55; dx += 2) {
+                    if (std::abs(dx) > 8 && std::abs(dz) > 8) continue; // off both roads
+                    const float h = terrain->get_terrain_height(x + dx, z + dz);
+                    osc::u32 gx = 0, gz = 0;
+                    grid->world_to_grid(x + dx, z + dz, gx, gz);
+                    ok = terrain->get_surface_height(x + dx, z + dz) <= h + 0.01f &&
+                         grid->is_passable_for(gx, gz, "Land");
+                    lo = std::min(lo, h);
+                    hi = std::max(hi, h);
+                }
+            if (ok && hi - lo < 3) cx = x, cz = z;
+        }
+    if (cx == 0) {
+        check(false, "no open flat ground on the map");
+        return;
+    }
+    spdlog::info("Steer test ground: ({}, {})", cx, cz);
+
+    // A pair driving past each other: the closest their centres come, how
+    // far each strays off its line, whether each stopped or stepped aside.
+    // Each drives along x (`along_x`) or along z.
+    struct Watch {
+        float closest = 1e9f;
+        float stray[2] = {0, 0};
+        bool held[2] = {false, false};
+        bool stepped[2] = {false, false};
+        bool arrived[2] = {false, false};
+    };
+    const auto watch = [&](const char* a, const char* b, int ticks, bool a_along_x,
+                           bool b_along_x) {
+        Watch w;
+        osc::sim::Unit* u[2] = {unit(a), unit(b)};
+        if (!u[0] || !u[1]) return w;
+        const osc::u32 ids[2] = {u[0]->entity_id(), u[1]->entity_id()};
+        const bool along_x[2] = {a_along_x, b_along_x};
+        float line[2];
+        for (int i = 0; i < 2; ++i) line[i] = along_x[i] ? u[i]->position().z : u[i]->position().x;
+        for (int t = 0; t < ticks; ++t) {
+            ctx.sim.tick();
+            osc::sim::Unit* v[2];
+            for (int i = 0; i < 2; ++i) {
+                auto* e = ctx.sim.entity_registry().find(ids[i]);
+                v[i] = e && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+            }
+            if (!v[0] || !v[1]) break;
+            const float dx = v[0]->position().x - v[1]->position().x;
+            const float dz = v[0]->position().z - v[1]->position().z;
+            w.closest = std::min(w.closest, std::sqrt(dx * dx + dz * dz));
+            for (int i = 0; i < 2; ++i) {
+                const float off = along_x[i] ? v[i]->position().z : v[i]->position().x;
+                w.stray[i] = std::max(w.stray[i], std::abs(off - line[i]));
+                w.held[i] = w.held[i] || v[i]->navigator().holding();
+                w.stepped[i] = w.stepped[i] || v[i]->navigator().sidestepping();
+                w.arrived[i] = !v[i]->navigator().busy();
+            }
+        }
+        return w;
+    };
+    const auto reach = [&](const char* a, const char* b) {
+        auto* ua = unit(a);
+        auto* ub = unit(b);
+        return ua && ub ? ua->separation_radius() + ub->separation_radius() : 0.0f;
+    };
+    // Each case's units go before the next.
+    const auto clear = [&](std::initializer_list<const char*> globals) {
+        for (const char* g : globals) lua(std::string("if ") + g + " then " + g + ":Destroy() end");
+        ctx.sim.tick();
+    };
+
+    // Armies 1 and 2 are allies here, so they drive past without a fight.
+    if (!lua(fmt::format(R"(
+            SetAlliance('ARMY_1', 'ARMY_2', 'Ally')
+            __osc_cx, __osc_cz = {}, {}
+            function __osc_spawn(bp, army, dx, dz, heading)
+                local x, z = __osc_cx + dx, __osc_cz + dz
+                return CreateUnitHPR(bp, army, x, GetTerrainHeight(x, z), z, 0, heading or 0, 0)
+            end
+            function __osc_move(u, dx, dz)
+                local x, z = __osc_cx + dx, __osc_cz + dz
+                IssueMove({{u}}, {{x, GetTerrainHeight(x, z), z}})
+            end
+        )",
+                         cx, cz)))
+        return;
+
+    // 1. Overtaking: a Striker (3.4 u/s) comes up behind an engineer going
+    //    the same way (+z). It steps aside and passes.
+    lua(R"(
+        __osc_slow = __osc_spawn('uel0105', 'ARMY_2', 0, -40, 0)
+        __osc_fast = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
+        __osc_move(__osc_slow, 0, 5)
+        __osc_move(__osc_fast, 0, 30)
+    )");
+    {
+        const float r = reach("__osc_fast", "__osc_slow");
+        const Watch w = watch("__osc_fast", "__osc_slow", 300, false, false);
+        auto* fast = unit("__osc_fast");
+        auto* slow = unit("__osc_slow");
+        check(w.stepped[0] && w.closest >= 0.9f * r && fast && slow &&
+                  fast->position().z > slow->position().z && w.arrived[0] && w.arrived[1],
+              fmt::format("Test 1: overtaking, the faster steps aside and passes (stepped {}, "
+                          "closest {:.2f} of {:.2f}, strayed {:.2f})",
+                          w.stepped[0], w.closest, r, w.stray[0]));
+    }
+    clear({"__osc_slow", "__osc_fast"});
+
+    // 2. Crossing: two Strikers meet at right angles. One stops for the
+    //    other; they don't run into each other.
+    lua(R"(
+        __osc_east = __osc_spawn('uel0201', 'ARMY_1', -40, 0, math.pi / 2)
+        __osc_north = __osc_spawn('uel0201', 'ARMY_2', 0, -40, 0)
+        __osc_move(__osc_east, 40, 0)
+        __osc_move(__osc_north, 0, 40)
+    )");
+    {
+        const float r = reach("__osc_east", "__osc_north");
+        const Watch w = watch("__osc_east", "__osc_north", 300, true, false);
+        check((w.held[0] || w.held[1]) && w.closest >= 0.9f * r && w.arrived[0] && w.arrived[1],
+              fmt::format("Test 2: crossing, one stops for the other (held {} {}, closest {:.2f} "
+                          "of {:.2f})",
+                          w.held[0], w.held[1], w.closest, r));
+    }
+    clear({"__osc_east", "__osc_north"});
+
+    // 3. Head-on in one army: a Pillar (footprint 2) and an engineer (1),
+    //    half a unit apart sideways (exactly in line, separation would push
+    //    straight back). The engineer stops; the Pillar keeps its line. The
+    //    engineer is made first, so its smaller footprint decides, not its id.
+    lua(R"(
+        __osc_eng = __osc_spawn('uel0105', 'ARMY_1', 40, 0.5, -math.pi / 2)
+        __osc_big = __osc_spawn('uel0202', 'ARMY_1', -40, 0, math.pi / 2)
+        __osc_move(__osc_big, 40, 0)
+        __osc_move(__osc_eng, -40, 0.5)
+    )");
+    {
+        const Watch w = watch("__osc_big", "__osc_eng", 600, true, true);
+        check(w.held[1] && !w.held[0] && !w.stepped[0] && w.stray[0] < 0.5f && w.arrived[0] &&
+                  w.arrived[1],
+              fmt::format("Test 3: head-on, the engineer stops and the Pillar keeps its line "
+                          "(engineer held {}, Pillar held {} strayed {:.2f}, arrived {} {})",
+                          w.held[1], w.held[0], w.stray[0], w.arrived[0], w.arrived[1]));
+    }
+    clear({"__osc_big", "__osc_eng"});
+
+    // 4. Parked: a unit standing on the way isn't on a path, so the mover
+    //    neither stops nor steps aside for it (separation makes way).
+    lua(R"(
+        __osc_parked = __osc_spawn('uel0201', 'ARMY_1', 0, 0, 0)
+        __osc_mover = __osc_spawn('uel0201', 'ARMY_1', -40, 0, math.pi / 2)
+        __osc_move(__osc_mover, 40, 0)
+    )");
+    {
+        const Watch w = watch("__osc_mover", "__osc_parked", 300, true, true);
+        check(!w.held[0] && !w.stepped[0] && w.arrived[0],
+              fmt::format("Test 4: a parked unit isn't steered around (held {}, stepped {}, "
+                          "arrived {})",
+                          w.held[0], w.stepped[0], w.arrived[0]));
+    }
+    clear({"__osc_parked", "__osc_mover"});
+
+    spdlog::info("=== STEER TEST: {} passed, {} failed ===", pass, fail);
+}
+
 void test_crowd(TestContext& ctx) {
     spdlog::info("=== CROWD TEST: ground units keep apart ===");
     int pass = 0, fail = 0;

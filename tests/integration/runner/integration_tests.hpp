@@ -93,6 +93,7 @@ void test_arc(TestContext& ctx);
 void test_collide(TestContext& ctx);
 void test_area(TestContext& ctx);
 void test_drive(TestContext& ctx);
+void test_steer(TestContext& ctx);
 void test_crowd(TestContext& ctx);
 void test_formation(TestContext& ctx);
 void test_missile(TestContext& ctx);

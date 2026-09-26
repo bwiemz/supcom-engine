@@ -709,6 +709,9 @@ public:
         size_x_ = size_x;
         size_z_ = size_z;
     }
+    /// The blueprint's SizeX and SizeZ: steering's boxes (M203c).
+    f32 size_x() const { return size_x_; }
+    f32 size_z() const { return size_z_; }
     void set_average_density(f32 d) { average_density_ = d; }
     /// Size x density: a transport picks up the largest first (M206m).
     f32 load_metric() const { return size_x_ * size_y_ * size_z_ * average_density_; }
