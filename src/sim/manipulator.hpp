@@ -118,6 +118,11 @@ public:
                    AnimCache* cache = nullptr);
     void set_rate(f32 rate) { rate_ = rate; }
     f32 rate() const { return rate_; }
+    /// SetDirectionalAnim: the animation runs backward while its unit backs
+    /// up (Moho's CAnimationManipulator: rate negated while the unit's
+    /// velocity is against its facing; the Megalith's walk).
+    void set_directional(bool on) { directional_ = on; }
+    bool directional() const { return directional_; }
     void set_animation_fraction(f32 frac) { fraction_ = frac; finished_ = false; }
     f32 animation_fraction() const { return fraction_; }
     f32 animation_duration() const { return duration_; }
@@ -145,6 +150,7 @@ private:
     f32 fraction_ = 0.0f;     // 0.0-1.0
     f32 duration_ = 1.0f;     // default (no .sca parsing yet)
     bool looping_ = false;
+    bool directional_ = false;
     bool finished_ = false;
 
     const SCAData* sca_data_ = nullptr;

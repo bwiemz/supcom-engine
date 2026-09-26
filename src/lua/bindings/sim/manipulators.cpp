@@ -293,6 +293,14 @@ static int anim_SetRate(lua_State* L) {
     return 1;
 }
 
+/// SetDirectionalAnim(bool): play backward while the unit backs up.
+static int anim_SetDirectionalAnim(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (m) static_cast<sim::AnimManipulator*>(m)->set_directional(lua_toboolean(L, 2) != 0);
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
 /// GetRate(): the animator's playback rate (1 until SetRate changes it).
 static int anim_GetRate(lua_State* L) {
     auto* m = check_manip_base(L);
@@ -516,6 +524,7 @@ static int anim_SetBlendTime(lua_State* L) {
 const MethodEntry animation_manipulator_methods[] = {
     {"PlayAnim",                anim_PlayAnim},
     {"SetRate",                 anim_SetRate},
+    {"SetDirectionalAnim",      anim_SetDirectionalAnim},
     {"GetRate",                 anim_GetRate},
     {"SetAnimationFraction",    anim_SetAnimationFraction},
     {"GetAnimationFraction",    anim_GetAnimationFraction},

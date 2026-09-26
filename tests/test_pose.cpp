@@ -207,3 +207,28 @@ TEST_CASE("A storage manipulator eases its bone with its army's stored resource"
     CHECK(pose.changed);
     CHECK_THAT(pose.local[1].position.z, WithinAbs(mass.current().z, 1e-6));
 }
+
+TEST_CASE("A directional animation runs backward while its unit backs up", "[pose]") {
+    // Moho's CAnimationManipulator negates the rate while the unit's
+    // velocity is against its facing (SetDirectionalAnim; the Megalith's walk).
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide()); // one second long
+    Unit unit;
+    AnimManipulator anim;
+    anim.set_owner(&unit);
+    anim.play_anim("/slide.sca", true, &cache);
+    anim.tick(0.5f);
+    REQUIRE_THAT(anim.animation_fraction(), WithinAbs(0.5, 1e-6));
+
+    unit.note_drive(-1.0f, -1.0f, 2.0f, Unit::MotionTurn::Straight);
+    anim.tick(0.25f); // backing up, but not directional: forward
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.75, 1e-6));
+
+    anim.set_directional(true);
+    anim.tick(0.25f); // now backward
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.5, 1e-6));
+
+    unit.note_drive(1.0f, 1.0f, 2.0f, Unit::MotionTurn::Straight);
+    anim.tick(0.25f); // moving ahead again: forward
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.75, 1e-6));
+}

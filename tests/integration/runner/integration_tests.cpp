@@ -19023,6 +19023,34 @@ void test_deposits(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 12: {}", r.error().message); }
     }
 
+    // Test 13: brain:TakeResource takes up to what is stored (Moho's
+    // CAiBrain::TakeResource; the Eye of Rhianne's scrying cost).
+    {
+        auto r = ctx.lua_state.do_string(R"(
+            local brain = GetArmyBrain('ARMY_1')
+            brain:GiveStorage('ENERGY', 1000)
+            brain:GiveResource('ENERGY', 1000)
+            local have = brain:GetEconomyStored('ENERGY')
+            local a = brain:TakeResource('ENERGY', 30)
+            local after_a = brain:GetEconomyStored('ENERGY')
+            local b = brain:TakeResource('ENERGY', have * 10)
+            local after_b = brain:GetEconomyStored('ENERGY')
+            if a ~= 30 or math.abs(after_a - (have - 30)) > 1e-6 then
+                error('took ' .. tostring(a) .. ', left ' .. tostring(after_a) .. ' of ' .. tostring(have))
+            end
+            if math.abs(b - (have - 30)) > 1e-6 or after_b ~= 0 then
+                error('took ' .. tostring(b) .. ' of the rest, left ' .. tostring(after_b))
+            end
+        )");
+        if (r) {
+            pass++;
+            spdlog::info("[PASS] Test 13: TakeResource takes up to the store, down to 0");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 13: {}", r.error().message);
+        }
+    }
+
     spdlog::info("Deposit test: {}/{} passed", pass, pass + fail);
 }
 
