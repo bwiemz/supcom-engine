@@ -140,7 +140,7 @@ public:
 
 private:
     std::string current_anim_;
-    f32 rate_ = 0.0f;         // default 0 = paused until SetRate called
+    f32 rate_ = 1.0f;         // Moho's starts at 1: PlayAnim alone plays it
     f32 fraction_ = 0.0f;     // 0.0-1.0
     f32 duration_ = 1.0f;     // default (no .sca parsing yet)
     bool looping_ = false;

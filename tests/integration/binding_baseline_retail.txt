@@ -58,7 +58,6 @@ M CreateResourceBuildingNearest
 M CreateUnitNearSpot
 M EnableTerrainCheck
 M GetCollisionExtents
-M GetRate
 M GetUnit
 M GiveUnitOrder
 M OnApplyBuff

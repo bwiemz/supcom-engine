@@ -122,3 +122,35 @@ TEST_CASE("With no manipulator moving a bone the pose is the bind pose", "[pose]
     CHECK_THAT(skin[0], WithinAbs(1.0, 1e-6));
     CHECK_THAT(skin[14], WithinAbs(0.0, 1e-6));
 }
+
+TEST_CASE("An animator plays at rate 1, and is done as Moho's is", "[pose]") {
+    // Retail's FactoryUnit.FinishBuildThread: CreateAnimator(self):PlayAnim(anim),
+    // then WaitFor it. Moho's starts at rate 1 and signals done with no
+    // animation, at rate 0, or at a one-shot's end (faf-re).
+    AnimCache cache(nullptr);
+    cache.inject("/slide.sca", root_slide()); // one second long
+    AnimManipulator anim;
+    CHECK(anim.is_at_goal()); // nothing played
+
+    anim.play_anim("/slide.sca", false, &cache);
+    CHECK(anim.rate() == 1.0f); // PlayAnim alone plays it
+    CHECK_FALSE(anim.is_at_goal());
+    anim.tick(0.5f);
+    CHECK_THAT(anim.animation_fraction(), WithinAbs(0.5, 1e-6));
+    CHECK_FALSE(anim.is_at_goal());
+    anim.tick(0.5f);
+    CHECK(anim.is_at_goal()); // a one-shot at its end
+
+    // A looping one is never done while it plays...
+    anim.play_anim("/slide.sca", true, &cache);
+    for (int i = 0; i < 5; ++i) anim.tick(0.5f);
+    CHECK_FALSE(anim.is_at_goal());
+    // ...but at rate 0 (a held pose) it is.
+    anim.set_rate(0.0f);
+    CHECK(anim.is_at_goal());
+
+    // An animation that doesn't load is done at once.
+    anim.set_rate(1.0f);
+    anim.play_anim("/missing.sca", false, &cache);
+    CHECK(anim.is_at_goal());
+}

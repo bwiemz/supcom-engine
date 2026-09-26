@@ -176,7 +176,11 @@ void AnimManipulator::tick(f32 dt) {
 }
 
 bool AnimManipulator::is_at_goal() const {
-    return finished_;
+    // Done, for WaitFor, as Moho's CAnimationManipulator signals it (faf-re
+    // UpdateTriggeredState): no animation (none played, or it failed to
+    // load), a rate of 0, or a one-shot at its end (its start, played
+    // backwards). A looping one at rate is never done.
+    return !sca_data_ || rate_ == 0.0f || finished_;
 }
 
 void AnimManipulator::set_bone_enabled(i32 scm_idx, bool enabled) {
