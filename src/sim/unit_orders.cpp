@@ -430,6 +430,12 @@ OrderStep Unit::order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f3
 OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
+    // A factory whose unit is done keeps the order while it rolls the unit
+    // off (holds_for_rolloff), and only then goes on to its next.
+    if (cmd.rolloff_wait > 0) {
+        if (holds_for_rolloff(cmd.rolloff_wait)) return OrderStep::Hold;
+        return end_factory_build_order(cmd);
+    }
     if (build_target_id_ == 0) {
         // Factory: spawn immediately at own position
         if (build_blocked_by_lobby_rules(*this, cmd, ctx)) {
@@ -452,20 +458,45 @@ OrderStep Unit::order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, 
         if (command_queue_.empty() || &command_queue_.front() != &cmd ||
             command_queue_.front().command_id != order_id)
             return OrderStep::Next;
-        // A factory repeating its queue sends a finished build order to the
-        // back, and starts the next one next tick (Moho's command dispatch;
-        // an order for n units is n orders here, so each goes back alone,
-        // which builds them in Moho's order). A failed build still goes.
-        if (built && repeat_queue_ && cmd.type == CommandType::BuildFactory) {
-            auto finished = std::move(cmd); // cmd is the element pop_front destroys
-            command_queue_.pop_front();
-            command_queue_.push_back(std::move(finished));
+        if (built && factory_build) {
+            cmd.rolloff_wait = 2; // the roll-off, above
             return OrderStep::Hold;
         }
+        // A failed build (or a finished upgrade) goes at once.
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     return OrderStep::Hold;
+}
+
+bool Unit::holds_for_rolloff(i32& wait) const {
+    // Moho's CFactoryBuildTask, its unit built: two steps (Starting, then
+    // Processing), then 10 ticks at a time while the factory is busy -- its
+    // FinishBuildThread and RolloffBody keep it so until the new unit's
+    // roll-off move is done.
+    if (wait <= 0) return false;
+    if (--wait > 0) return true;
+    if (busy_) {
+        wait = 10;
+        return true;
+    }
+    return false;
+}
+
+OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
+    // A factory repeating its queue sends a finished build order to the
+    // back, and starts the next one next tick (Moho's command dispatch; an
+    // order for n units is n orders here, so each goes back alone, which
+    // builds them in Moho's order).
+    if (repeat_queue_) {
+        auto finished = std::move(cmd); // cmd is the element pop_front destroys
+        finished.rolloff_wait = 0;
+        command_queue_.pop_front();
+        command_queue_.push_back(std::move(finished));
+        return OrderStep::Hold;
+    }
+    command_queue_.pop_front();
+    return OrderStep::Next;
 }
 
 OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
@@ -719,6 +750,7 @@ OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 eco
 void Unit::end_guard_build(EntityRegistry& registry, lua_State* L) {
     if (factory_assist_build_) {
         factory_assist_build_ = false;
+        assist_rolloff_wait_ = 0;
         cancel_factory_build(registry, L);
     } else if (is_building()) {
         stop_assisting();
@@ -805,15 +837,21 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
     // is never taken.
     if (!is_mobile() && has_category("FACTORY") && target_unit->has_category("FACTORY")) {
         if (factory_assist_build_) {
+            // Its unit built, it rolls it off as a build of its own does.
+            if (assist_rolloff_wait_ > 0) {
+                if (!holds_for_rolloff(assist_rolloff_wait_)) factory_assist_build_ = false;
+                return OrderStep::Hold;
+            }
             const u32 built_id = build_target_id_;
             const u32 guarded_id = cmd.target_id; // cmd may go with the scripts' changes
             bool built = false;
             if (!progress_build(dt, registry, L, ctx.pathfinding_grid, econ_eff, &built)) {
-                factory_assist_build_ = false; // built (or failed): free again
                 // Built for the guarded factory, the unit takes its rally
                 // orders: Moho's guard task hands the build task that
                 // factory as the one whose orders the unit takes.
                 if (built) hand_over_rally_orders(built_id, guarded_id, ctx);
+                if (built) assist_rolloff_wait_ = 2;
+                else factory_assist_build_ = false; // failed: free again
             }
             return OrderStep::Hold;
         }
