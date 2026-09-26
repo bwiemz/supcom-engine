@@ -115,6 +115,13 @@ struct UnitCommand {
     /// between checks of a docked unit's tank).
     DockPhase dock_phase = DockPhase::Reserve;
     i32 dock_wait = 0;
+    /// A refuel a patrol broke off for (Moho's patrol task handing its unit
+    /// to a refuel task): it gives up, rather than waits, when there is no
+    /// room, and ends without waiting for others. Runtime state.
+    bool patrol_refuel = false;
+    /// A patrol's ticks to wait before it next looks for a platform to refuel
+    /// at (Moho's patrol task runs every 6 ticks). Runtime state.
+    i32 patrol_scan = 0;
 };
 
 } // namespace osc::sim

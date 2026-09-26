@@ -75,7 +75,17 @@ struct StagingRules {
     f32 repair_amount = 20.0f; ///< health a second
     f32 repair_energy = 2.0f;  ///< a tick
     f32 repair_mass = 0.5f;    ///< a tick
+    f32 scan_radius = 300.0f;  ///< AI.StagingPlatformScanRadius: how far patrols look
 };
+
+/// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
+/// where missing): what building it, or repairing it, costs.
+struct BuildEconomy {
+    f64 time = 0.0;
+    f64 mass = 0.0;
+    f64 energy = 0.0;
+};
+BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_id);
 
 /// What an order did this tick (Unit::run_order, M193).
 enum class OrderStep : u8 {
@@ -935,6 +945,11 @@ private:
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A repair of a unit under construction (Moho's repair task builds it):
+    /// it builds alongside any builder, and completes it if it gets there
+    /// first.
+    OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                        Unit& target);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
@@ -985,6 +1000,10 @@ private:
     /// A tick of a unit attached to a staging platform: its refuel order, if
     /// that is still its head, and its fuel and repair.
     void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
+    /// A patrolling aircraft that needs fuel or repair (Moho's
+    /// Unit::FindPlatform): the first of its army's idle staging platforms
+    /// in reach with room for it; null when it needs none or finds none.
+    Unit* find_platform(SimContext& ctx);
     /// Fuel (Moho's CUnitMotion::ProcessFuelLevels): it refuels and repairs
     /// docked at `platform`, and burns in flight. False if a script killed it.
     bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
@@ -1089,6 +1108,12 @@ private:
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     bool factory_assist_build_ = false;           // see factory_assist_build()
+    /// The order a build (build_target_id_) is for, and whether the builder
+    /// lets it go once that order is no longer the head (M206u): a mobile
+    /// build, a repair's or a guard's help. A factory's build is cancelled
+    /// by its own paths (stop_unit, end_guard_build), an upgrade by its own.
+    u32 build_command_id_ = 0;
+    bool build_released_with_order_ = false;
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)

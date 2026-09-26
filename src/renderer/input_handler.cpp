@@ -2,6 +2,7 @@
 #include "sim/build_placement.hpp"
 #include "renderer/renderer.hpp"
 
+#include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/entity.hpp"
 #include "sim/unit.hpp"
@@ -240,63 +241,133 @@ void InputHandler::handle_right_click(Renderer& renderer,
     if (!cam.screen_to_world(mx, my, w, h, 0, wx, wz))
         return;
 
-    // Clicking on an enemy unit attacks it: the one drawn nearest the click.
-    auto nearby = sim.entity_registry().collect_in_radius(wx, wz, 5.0f);
-    u32 enemy_id = 0;
-    f32 best_d2 = std::numeric_limits<f32>::max();
-    for (u32 id : nearby) {
-        auto* e = sim.entity_registry().find(id);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
-        if (e->army() == player_army_ || e->army() < 0) continue;
-        const sim::Vector3 pos = view_.position(*e);
-        const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
-        if (d2 < best_d2) {
-            best_d2 = d2;
-            enemy_id = id;
+    // Check if Shift is held (queue commands without clearing)
+    const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
+                       renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
+    const auto issued = right_click_at(sim, wx, wz, shift);
+    spdlog::debug("Right-click: {} order(s) for {} units at ({:.0f},{:.0f})", issued.size(),
+                  selected_.size(), wx, wz);
+}
+
+std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 wx, f32 wz,
+                                                        bool shift) {
+    auto& registry = sim.entity_registry();
+    const sim::ArmyBrain* me = sim.get_army(player_army_);
+    const auto allied = [&](i32 army) {
+        return army == player_army_ || (me && army >= 0 && me->is_ally(army));
+    };
+    const auto live = [&](u32 id) -> sim::Entity* {
+        sim::Entity* e = registry.find(id);
+        return e && !e->destroyed() ? e : nullptr;
+    };
+    // What the click is on: an enemy within 5 (the one drawn nearest), else
+    // an ally or a wreck the click falls on (within its footprint).
+    enum class On : u8 { Ground, Enemy, Ally, Wreck };
+    On on = On::Ground;
+    u32 target = 0;
+    {
+        f32 best = 25.0f;
+        for (u32 id : registry.collect_in_radius(wx, wz, 5.0f)) {
+            const sim::Entity* e = live(id);
+            if (!e || !e->is_unit() || e->army() < 0 || allied(e->army())) continue;
+            const sim::Vector3 pos = view_.position(*e);
+            const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
+            if (d2 < best) {
+                best = d2;
+                target = id;
+                on = On::Enemy;
+            }
+        }
+    }
+    if (on == On::Ground) {
+        f32 best = std::numeric_limits<f32>::max();
+        for (u32 id : registry.collect_in_radius(wx, wz, 16.0f)) {
+            const sim::Entity* e = live(id);
+            if (!e) continue;
+            const bool ally = e->is_unit() && allied(e->army());
+            const bool wreck = e->is_prop() && e->reclaimable();
+            if (!ally && !wreck) continue;
+            const sim::Vector3 pos = view_.position(*e);
+            const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
+            const f32 reach = std::max(
+                1.0f, 0.5f * std::max(e->footprint_size_x(), e->footprint_size_z()) + 0.5f);
+            if (d2 > reach * reach || d2 >= best) continue;
+            best = d2;
+            target = id;
+            on = ally ? On::Ally : On::Wreck;
         }
     }
 
-    // Get terrain height at target for Y coordinate
-    f32 wy = 0;
-    if (sim.terrain())
-        wy = sim.terrain()->get_surface_height(wx, wz);
-
-    // Check if Shift is held (queue commands without clearing)
-    bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-
-    // Build one group order and route it to all selected units.
-    sim::UnitCommand cmd;
-    if (enemy_id != 0) {
-        cmd.type = sim::CommandType::Attack;
-        cmd.target_id = enemy_id;
-        cmd.target_pos = {wx, wy, wz};
-    } else {
+    const f32 wy = sim.terrain() ? sim.terrain()->get_surface_height(wx, wz) : 0.0f;
+    const sim::Entity* t = target ? live(target) : nullptr;
+    const auto* tu = t && t->is_unit() ? static_cast<const sim::Unit*>(t) : nullptr;
+    // Each unit's default order there.
+    const auto order_for = [&](const sim::Unit& u) {
+        sim::UnitCommand cmd;
         cmd.type = sim::CommandType::Move;
         cmd.target_pos = {wx, wy, wz};
-    }
-    std::vector<u32> ids;
-    for (u32 uid : selected_) {
-        auto* e = sim.entity_registry().find(uid);
-        if (!e || !e->is_unit() || e->destroyed()) continue;
-        // A factory can't attack (Moho's attack order passes over a unit
-        // without RULEUCC_Attack): it keeps its builds.
-        if (cmd.type == sim::CommandType::Attack &&
-            static_cast<const sim::Unit*>(e)->has_category("RALLYPOINT") &&
-            !static_cast<const sim::Unit*>(e)->has_command_cap("RULEUCC_Attack"))
-            continue;
-        ids.push_back(uid);
-    }
-    // Player-issued order: routed so it applies inside a tick (and a
-    // networked match broadcasts it); a move goes to factories as their
-    // rally point (M206k).
-    sim.set_human_input_active(true);
-    sim.route_player_command(ids, cmd, !shift); // shift-click queues without clearing
-    sim.set_human_input_active(false);
+        const auto aim = [&](sim::CommandType type) {
+            cmd.type = type;
+            cmd.target_id = target;
+            cmd.target_pos = view_.position(*t);
+        };
+        if (on == On::Enemy) {
+            if (u.has_command_cap("RULEUCC_Attack")) aim(sim::CommandType::Attack);
+            else if (u.has_command_cap("RULEUCC_Capture")) aim(sim::CommandType::Capture);
+        } else if (on == On::Ally && tu) {
+            if (tu->has_category("AIRSTAGINGPLATFORM") && u.has_command_cap("RULEUCC_Dock") &&
+                u.is_air_unit())
+                aim(sim::CommandType::Dock);
+            else if (tu->has_category("TRANSPORTATION") &&
+                     u.has_command_cap("RULEUCC_CallTransport") && !u.is_air_unit())
+                aim(sim::CommandType::TransportLoad);
+            else if (tu->is_being_built() && u.has_command_cap("RULEUCC_Repair"))
+                aim(sim::CommandType::Repair);
+            else if (u.has_command_cap("RULEUCC_Guard")) aim(sim::CommandType::Guard);
+        } else if (on == On::Wreck && t) {
+            if (u.has_command_cap("RULEUCC_Reclaim")) aim(sim::CommandType::Reclaim);
+        }
+        return cmd;
+    };
 
-    spdlog::debug("Right-click: {} to {} units at ({:.0f},{:.0f})",
-                  enemy_id ? "Attack" : "Move",
-                  selected_.size(), wx, wz);
+    // One order per kind (and target), in id order, each routed to its units.
+    std::vector<u32> ids;
+    for (u32 id : selected_)
+        if (const sim::Entity* e = live(id); e && e->is_unit() && id != target) ids.push_back(id);
+    std::sort(ids.begin(), ids.end());
+    std::vector<std::pair<sim::UnitCommand, std::vector<u32>>> groups;
+    for (u32 id : ids) {
+        const sim::UnitCommand cmd = order_for(static_cast<const sim::Unit&>(*live(id)));
+        auto it = std::find_if(groups.begin(), groups.end(), [&](const auto& g) {
+            return g.first.type == cmd.type && g.first.target_id == cmd.target_id;
+        });
+        if (it == groups.end()) groups.push_back({cmd, {id}});
+        else it->second.push_back(id);
+    }
+    std::vector<IssuedCommand> issued;
+    for (const auto& [cmd, units] : groups) {
+        // Player-issued: routed so it applies inside a tick (and a networked
+        // match broadcasts it); a move goes to factories as their rally point.
+        sim.set_human_input_active(true);
+        sim.route_player_command(units, cmd, !shift);
+        sim.set_human_input_active(false);
+        IssuedCommand out;
+        out.position = cmd.target_pos;
+        out.target_id = cmd.target_id;
+        out.clear = !shift;
+        switch (cmd.type) {
+        case sim::CommandType::Attack: out.type = "Attack"; break;
+        case sim::CommandType::Capture: out.type = "Capture"; break;
+        case sim::CommandType::Guard: out.type = "Guard"; break;
+        case sim::CommandType::Repair: out.type = "Repair"; break;
+        case sim::CommandType::TransportLoad: out.type = "TransportLoadUnits"; break;
+        case sim::CommandType::Dock: out.type = "Dock"; break;
+        case sim::CommandType::Reclaim: out.type = "Reclaim"; break;
+        default: out.type = "Move"; break;
+        }
+        issued.push_back(out);
+    }
+    return issued;
 }
 
 namespace {
