@@ -141,7 +141,7 @@ bool Unit::settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, Sim
         to.x += (at.x - to.x) / dist * step;
         to.z += (at.z - to.z) / dist * step;
     }
-    const f32 ground = ctx.terrain ? ctx.terrain->get_terrain_height(to.x, to.z) : 0.0f;
+    const f32 ground = air_floor(ctx.terrain, to.x, to.z);
     const f32 want_alt = at.y - ground;
     const f32 climb = climb_rate_ * fdt;
     current_altitude_ = current_altitude_ < want_alt

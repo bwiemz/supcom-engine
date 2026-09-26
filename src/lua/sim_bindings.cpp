@@ -948,6 +948,12 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     unit->set_turn_rate_rad(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
 
+                // Air.FlyInWater: it may fly under the water's surface
+                lua_pushstring(L, "FlyInWater");
+                lua_rawget(L, -2);
+                unit->set_fly_in_water(lua_toboolean(L, -1) != 0);
+                lua_pop(L, 1);
+
                 // Air.AccelerateRate
                 lua_pushstring(L, "AccelerateRate");
                 lua_rawget(L, -2);
@@ -1131,13 +1137,10 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
     // Air units: start at flight altitude
     if (unit_ptr->is_air_unit()) {
         unit_ptr->set_current_altitude(unit_ptr->elevation_target());
-        // Set Y position above terrain
-        f32 terrain_h = 0;
-        if (sim && sim->terrain())
-            terrain_h = sim->terrain()->get_terrain_height(unit_ptr->position().x,
-                                                           unit_ptr->position().z);
+        // At its height over its air floor (the water's surface at sea)
         auto p = unit_ptr->position();
-        p.y = terrain_h + unit_ptr->elevation_target();
+        p.y = unit_ptr->air_floor(sim ? sim->terrain() : nullptr, p.x, p.z) +
+              unit_ptr->elevation_target();
         unit_ptr->set_position(p);
         // Initialize heading and orientation
         unit_ptr->set_heading(0);

@@ -124,8 +124,8 @@ void Unit::remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* 
     if (unit.is_air_unit()) {
         unit.current_airspeed_ = unit.max_airspeed_;
         // It flies on from the height it left at: the air navigator holds an
-        // aircraft's height over the ground (the seabed, at sea).
-        if (terrain) unit.current_altitude_ = at.y - terrain->get_terrain_height(at.x, at.z);
+        // aircraft's height over its air floor.
+        if (terrain) unit.current_altitude_ = at.y - unit.air_floor(terrain, at.x, at.z);
     }
 }
 
