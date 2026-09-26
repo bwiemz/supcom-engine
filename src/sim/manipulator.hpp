@@ -287,9 +287,14 @@ public:
 
     void watch_bone(i32 bone_idx) { watched_bones_.push_back(bone_idx); }
     const std::vector<i32>& watched_bones() const { return watched_bones_; }
+    /// Whether the watched bones are to be tested against the terrain too
+    /// (EnableTerrainCheck; the CZAR's crash sets it).
+    void set_terrain_check(bool on) { terrain_check_ = on; }
+    bool terrain_check() const { return terrain_check_; }
 
 private:
     std::vector<i32> watched_bones_;
+    bool terrain_check_ = false;
 };
 
 // ---------------------------------------------------------------------------

@@ -103,6 +103,13 @@ void SimState::on_entity_unregistered(Entity& entity) {
         auto& unit = static_cast<Unit&>(entity);
         unit.release_manipulators(L_);
         unit.release_weapon_scripts(L_);
+        // A stored unit leaves its carrier's storage; a carrier's stored
+        // units go with it (Moho's ~CAiTransportImpl), destroyed once this
+        // unregistration is over (M206q).
+        if (unit.transport_id() != 0)
+            if (Entity* c = entity_registry_.find(unit.transport_id()); c && c->is_unit())
+                static_cast<Unit*>(c)->forget_stored(unit.entity_id());
+        for (const u32 id : unit.stored_ids()) stored_to_destroy_.push_back(id);
     }
 
     // The Lua table outlives the C++ object: null its _c_object so methods
@@ -121,6 +128,23 @@ void SimState::on_entity_unregistered(Entity& entity) {
         lua_pop(L_, 1);
         luaL_unref(L_, LUA_REGISTRYINDEX, ref);
         entity.set_lua_table_ref(LUA_NOREF);
+    }
+}
+
+void SimState::destroy_orphaned_stored_units() {
+    while (!stored_to_destroy_.empty()) {
+        const u32 id = stored_to_destroy_.back();
+        stored_to_destroy_.pop_back();
+        Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<Unit*>(e);
+        unit->set_transport_id(0);
+        if (L_) unit->call_lua_method(L_, "Destroy");
+        e = entity_registry_.find(id);
+        if (e && !e->destroyed()) { // no script object (or no Destroy)
+            e->mark_destroyed();
+            entity_registry_.unregister_entity(id);
+        }
     }
 }
 
@@ -1014,6 +1038,8 @@ void SimState::tick() {
         tick_economy_events();
     }
 
+    destroy_orphaned_stored_units();
+
     // VFX: expire timed effects (decals, splats) and garbage collect destroyed ones
     {
         PROFILE_ZONE("Sim::vfx_gc");
@@ -1486,9 +1512,12 @@ ThreatSource threat_source_of(const Unit& u) {
     s.economy = u.economy_threat();
     s.mobile = moves(u);
     s.flies = u.motion_type() == "RULEUMT_Air";
-    s.mass_extractor = u.has_category("MASSEXTRACTION");
-    s.experimental = u.has_category("EXPERIMENTAL");
-    s.commander = u.has_category("COMMAND");
+    static const CategoryName kMassExtraction{"MASSEXTRACTION"};
+    static const CategoryName kExperimental{"EXPERIMENTAL"};
+    static const CategoryName kCommand{"COMMAND"};
+    s.mass_extractor = u.has_category(kMassExtraction);
+    s.experimental = u.has_category(kExperimental);
+    s.commander = u.has_category(kCommand);
     return s;
 }
 } // namespace
@@ -1506,10 +1535,11 @@ void SimState::feed_influence_map() {
 
     // Every unit of another army its intel detects -- an ally's always -- and
     // every structure it has once had in sight (a remembered blip).
+    static const CategoryName kVisibleToRecon{"VISIBLETORECON"};
     entity_registry_.for_each_unit([&](Entity& e) {
         if (!alive(&e) || e.army() == owner) return;
         auto& u = static_cast<Unit&>(e);
-        if (!u.has_category("VISIBLETORECON")) return;
+        if (!u.has_category(kVisibleToRecon)) return;
         const bool detected =
             is_ally(owner, u.army()) || has_any_intel_cached(&e, a, u.has_radar_stealth(),
                                                              u.has_sonar_stealth(), u.is_cloaked());
@@ -2204,6 +2234,11 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         // An assist build's roll-off, only while under way.
         if (u.assist_rolloff_wait() != 0)
             units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
+        // What a carrier keeps inside (M206q), only when it keeps something.
+        if (!u.stored_ids().empty()) {
+            units.mix(0x53544f5200000000ull | u.stored_ids().size()); // "STOR"
+            for (u32 id : u.stored_ids()) units.mix(id);
+        }
         // A stun, only while it lasts.
         if (u.stun_ticks() > 0)
             units.mix(0x5354554e00000000ull | static_cast<u32>(u.stun_ticks())); // "STUN"
@@ -2254,6 +2289,13 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             if (cmd.rolloff_wait != 0) {
                 orders.mix(0x524f4c4cu); // "ROLL"
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
+            }
+            // A carrier's launch under way (M206q), only then.
+            if (cmd.launch_wait >= 0) {
+                orders.mix(0x4c4e4348u); // "LNCH"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.launch_wait)));
+                orders.mix(static_cast<u64>(cmd.launch_queue.size()));
+                for (u32 id : cmd.launch_queue) orders.mix(id);
             }
             // A specific unload's cargo; only when set, so other orders hash
             // as before it existed.

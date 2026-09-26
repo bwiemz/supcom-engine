@@ -190,3 +190,40 @@ TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
     CHECK(x == 10.5f);
     CHECK(z == 20.0f);
 }
+
+TEST_CASE("placement: a blueprint's rules are read once per game", "[placement]") {
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    int reads = 0;
+    const auto read = [&] {
+        ++reads;
+        return rules_for("factory");
+    };
+    CHECK(sim.placement_rules("factory", read).size_x == rules_for("factory").size_x);
+    CHECK(sim.placement_rules("factory", read).size_x == rules_for("factory").size_x);
+    CHECK(reads == 1);
+}
+
+TEST_CASE("placement: pending orders are gathered only for a site the terrain allows",
+          "[placement]") {
+    // Walking every unit's queue is most of a query's cost; a site off the
+    // map or on the wrong layer is refused before it.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    auto* engineer = spawn(sim, 0, 10.0f, 10.0f);
+    order_build(engineer, "factory", 30.0f, 30.0f);
+
+    std::vector<std::string> looked_up;
+    StructurePlacement p(sim, 0, [&](const std::string& bp) {
+        looked_up.push_back(bp);
+        return rules_for(bp);
+    });
+    CHECK(looked_up.empty());
+    CHECK_FALSE(p.can_build("pgen", 100.0f, 20.0f)); // at sea: the terrain refuses it
+    CHECK(looked_up == std::vector<std::string>{"pgen"});
+    CHECK_FALSE(p.can_build("pgen", 30.0f, 30.0f)); // on land, inside the queued factory
+    CHECK(looked_up == std::vector<std::string>{"pgen", "factory"});
+    CHECK(p.can_build("pgen", 42.0f, 30.0f));
+    CHECK(looked_up.size() == 2); // gathered once
+}

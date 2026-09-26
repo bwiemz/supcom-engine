@@ -23,6 +23,14 @@ public:
     static std::optional<u32> find(std::string_view name);
 };
 
+/// A category name interned once, for a test made often: a hot path keeps
+/// one in a function-local static (`static const CategoryName kLand{"LAND"};`)
+/// and asks `unit.has_category(kLand)`, a bit test rather than a string hash.
+struct CategoryName {
+    explicit CategoryName(std::string_view name) : id(CategoryIds::intern(name)) {}
+    u32 id;
+};
+
 /// A set of category ids.
 class CategoryBits {
 public:

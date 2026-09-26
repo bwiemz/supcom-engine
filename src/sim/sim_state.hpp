@@ -2,6 +2,7 @@
 
 #include "sim/armor_definition.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/build_placement.hpp"
 #include "sim/command_scheduler.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/entity_registry.hpp"
@@ -554,6 +555,8 @@ public:
     /// world transforms). Each reads its parent's pose from before the step,
     /// so the result is the same in any iteration order (lockstep).
     void follow_attachments();
+    /// Destroy the stored units of carriers that went this tick (M206q).
+    void destroy_orphaned_stored_units();
 
     static u32 sim_generation() { return s_sim_generation_; }
     static void increment_sim_generation() { ++s_sim_generation_; }
@@ -600,6 +603,17 @@ public:
     f32 playable_z0() const { return playable_z0_; }
     f32 playable_x1() const { return playable_x1_; }
     f32 playable_z1() const { return playable_z1_; }
+
+    /// A structure blueprint's placement rules, from `read` the first time
+    /// they are asked for: blueprints don't change during a game (Moho
+    /// places by its typed copies), and the AI asks for the same few with
+    /// every candidate site it tries.
+    template <typename Read>
+    const PlacementRules& placement_rules(const std::string& bp_id, Read read) const {
+        auto it = placement_rules_.find(bp_id);
+        if (it == placement_rules_.end()) it = placement_rules_.emplace(bp_id, read()).first;
+        return it->second;
+    }
 
     /// Army `army`'s influence map (M207b), made on first use; null without a
     /// map (terrain) or army.
@@ -704,6 +718,9 @@ private:
     /// never iterated, so the unordered order cannot leak into the sim).
     struct Footprint { f32 x, z, size_x, size_z; };
     std::unordered_map<u32, Footprint> occupied_footprints_;
+    /// Stored units whose carrier is gone, destroyed at a safe point of the
+    /// tick (destroy_orphaned_stored_units).
+    std::vector<u32> stored_to_destroy_;
 
     /// Registry unregister hook: sever the entity's Lua table from the C++
     /// object and release its footprint.
@@ -770,6 +787,7 @@ private:
     f32 playable_x0_ = 0, playable_z0_ = 0;
     f32 playable_x1_ = 0, playable_z1_ = 0;
     bool has_playable_rect_ = false;
+    mutable std::unordered_map<std::string, PlacementRules> placement_rules_; ///< lookup only
 
     static u32 s_sim_generation_;
 

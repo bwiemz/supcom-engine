@@ -27,18 +27,22 @@ bool StructureSite::overlaps(const StructureSite& o) const {
            std::abs(z - o.z) * 2.0f < size_z + o.size_z;
 }
 
-StructurePlacement::StructurePlacement(const SimState& sim, i32 army,
-                                       PlacementRulesLookup rules)
-    : sim_(sim), lookup_(std::move(rules)) {
+StructurePlacement::StructurePlacement(const SimState& sim, i32 army, PlacementRulesLookup rules)
+    : sim_(sim), army_(army), lookup_(std::move(rules)) {}
+
+const std::vector<StructureSite>& StructurePlacement::reserved() const {
+    if (reserved_) return *reserved_;
+    auto& sites = reserved_.emplace();
     sim_.entity_registry().for_each_unit([&](const Entity& e) {
-        if (e.destroyed() || !e.is_unit() || e.army() != army) return;
+        if (e.destroyed() || !e.is_unit() || e.army() != army_) return;
         const auto& unit = static_cast<const Unit&>(e);
         for (const auto& cmd : unit.command_queue()) {
             if (cmd.type != CommandType::BuildMobile || cmd.blueprint_id.empty()) continue;
-            const auto& r = this->rules(cmd.blueprint_id);
-            reserved_.push_back({cmd.target_pos.x, cmd.target_pos.z, r.size_x, r.size_z});
+            const auto& r = rules(cmd.blueprint_id);
+            sites.push_back({cmd.target_pos.x, cmd.target_pos.z, r.size_x, r.size_z});
         }
     });
+    return sites;
 }
 
 const PlacementRules& StructurePlacement::rules(const std::string& bp_id) const {
@@ -53,8 +57,8 @@ bool StructurePlacement::can_build(const std::string& bp_id, f32 x, f32 z) const
     const StructureSite site{x, z, r.size_x, r.size_z};
     if (!terrain_allows(r, site)) return false;
     if (r.deposit != PlacementRules::Deposit::None && !on_deposit(r, x, z)) return false;
-    for (const auto& reserved : reserved_)
-        if (reserved.overlaps(site)) return false;
+    for (const auto& pending : reserved())
+        if (pending.overlaps(site)) return false;
     return !structure_overlaps(site);
 }
 

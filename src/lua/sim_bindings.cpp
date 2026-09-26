@@ -698,6 +698,13 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                         unit->set_transport_class(static_cast<i32>(lua_tonumber(L, -1)));
                     lua_pop(L, 1);
 
+                    // A carrier's storage (M206q)
+                    lua_pushstring(L, "StorageSlots");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_storage_slots(static_cast<i32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+
                     // The slot layout (M206l), Moho's defaults for what is absent
                     sim::TransportLayout layout;
                     const auto field = [&](const char* name, i32& out) {
