@@ -1664,6 +1664,18 @@ static int unit_GetFuelRatio(lua_State* L) {
     return 1;
 }
 
+// GetVelocity(): how far it moved over its last tick, per tick (x, y, z),
+// as Moho's gives it. FAF reads it for its targets (projectile area damage
+// leads a moving unit by it) and caches moho.unit_methods.GetVelocity.
+static int unit_GetVelocity(lua_State* L) {
+    auto* u = check_unit(L);
+    const sim::Vector3 v = u ? u->velocity() : sim::Vector3{};
+    lua_pushnumber(L, v.x * 0.1f);
+    lua_pushnumber(L, v.y * 0.1f);
+    lua_pushnumber(L, v.z * 0.1f);
+    return 3;
+}
+
 static int unit_SetFuelRatio(lua_State* L) {
     auto* u = check_unit(L);
     if (u) u->set_fuel_ratio(static_cast<f32>(luaL_checknumber(L, 2)));
@@ -2376,6 +2388,7 @@ const MethodEntry unit_methods[] = {
     {"RevertRegenRate",             unit_RevertRegenRate},
     // Stubs — fuel
     {"GetFuelRatio",                unit_GetFuelRatio},
+    {"GetVelocity",                 unit_GetVelocity},
     {"SetFuelRatio",                unit_SetFuelRatio},
     {"GetFuelUseTime",              unit_GetFuelUseTime},
     {"SetFuelUseTime",              unit_SetFuelUseTime},
