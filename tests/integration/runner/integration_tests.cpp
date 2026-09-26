@@ -11,6 +11,7 @@
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/input_handler.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/ui_renderer.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -11144,6 +11145,269 @@ void test_carrier(TestContext& ctx) {
                       stored, c3 && c3->busy()));
 
     spdlog::info("Carrier test: {}/{} passed", pass, pass + fail);
+}
+
+void test_right_click(TestContext& ctx) {
+    spdlog::info("=== RIGHT CLICK TEST: FA's default orders ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] right click script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    if (!lua(R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 50000)
+        brain:GiveStorage('ENERGY', 500000)
+        brain:GiveResource('MASS', 50000)
+        brain:GiveResource('ENERGY', 500000)
+        local sx, sz = brain:GetArmyStartPos()
+        __osc_x, __osc_z = sx + 40, sz + 40
+        local function at(dx, dz) return __osc_x + dx, GetTerrainHeight(__osc_x + dx, __osc_z + dz), __osc_z + dz end
+        local x, y, z = at(0, 0)
+        __osc_eng = CreateUnitHPR('uel0105', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(4, 0)
+        __osc_tank = CreateUnitHPR('uel0201', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(8, 0)
+        __osc_tank2 = CreateUnitHPR('uel0201', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(20, 20)
+        __osc_xport = CreateUnitHPR('uea0107', 'ARMY_1', x, y + 20, z, 0, 0, 0)
+        x, y, z = at(-10, 10)
+        __osc_plane = CreateUnitHPR('uea0102', 'ARMY_1', x, y + 20, z, 0, 0, 0)
+        x, y, z = at(-30, -30)
+        __osc_pad = CreateUnitHPR('ueb5202', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(30, -20)
+        __osc_enemy = CreateUnitHPR('uel0201', 'ARMY_2', x, y, z, 0, 0, 0)
+        IssueBuildMobile({__osc_eng}, {__osc_x + 12, 0, __osc_z - 12}, 'ueb1101', {})
+    )"))
+        return;
+    auto* eng = unit("__osc_eng");
+    auto* tank = unit("__osc_tank");
+    auto* tank2 = unit("__osc_tank2");
+    auto* xport = unit("__osc_xport");
+    auto* plane = unit("__osc_plane");
+    auto* pad = unit("__osc_pad");
+    auto* enemy = unit("__osc_enemy");
+    if (!eng || !tank || !tank2 || !xport || !plane || !pad || !enemy) {
+        check(false, "the units exist");
+        return;
+    }
+    // A power generator under construction.
+    const osc::sim::Unit* unbuilt = nullptr;
+    for (int i = 0; i < 600 && !unbuilt; ++i) {
+        ctx.sim.tick();
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            const auto& u = static_cast<const osc::sim::Unit&>(e);
+            if (!e.destroyed() && e.army() == 0 && u.is_being_built() &&
+                u.blueprint_id() == "ueb1101")
+                unbuilt = &u;
+        });
+    }
+    // A reclaimable prop near by (the map's trees and rocks).
+    const osc::sim::Entity* prop = nullptr;
+    {
+        float best = 1e9f;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (e.destroyed() || !e.is_prop() || !e.reclaimable()) return;
+            const float d =
+                std::hypot(e.position().x - eng->position().x, e.position().z - eng->position().z);
+            if (d < best) {
+                best = d;
+                prop = &e;
+            }
+        });
+    }
+
+    osc::renderer::InputHandler input;
+    input.set_player_army(0);
+    // Right-click `on` (its position) with `sel` selected; one tick applies it.
+    std::vector<osc::renderer::IssuedCommand> issued;
+    const auto right_click = [&](const std::unordered_set<osc::u32>& sel,
+                                 const osc::sim::Entity& on) {
+        input.set_selected(sel);
+        issued = input.right_click_at(ctx.sim, on.position().x, on.position().z, false);
+        ctx.sim.tick();
+    };
+    // Whether the click issued an order of this kind at this target.
+    const auto gave = [&](const char* type, osc::u32 target) {
+        return std::any_of(issued.begin(), issued.end(),
+                           [&](const auto& c) { return c.type == type && c.target_id == target; });
+    };
+    const auto head = [](const osc::sim::Unit& u, osc::sim::CommandType type, osc::u32 target) {
+        const auto& q = u.command_queue();
+        return !q.empty() && q.front().type == type && q.front().target_id == target;
+    };
+    using CT = osc::sim::CommandType;
+
+    right_click({tank->entity_id(), eng->entity_id()}, *enemy);
+    check(head(*tank, CT::Attack, enemy->entity_id()) &&
+              head(*eng, CT::Capture, enemy->entity_id()),
+          "on an enemy: the tank attacks, the engineer captures");
+
+    right_click({eng->entity_id(), tank2->entity_id()}, *tank);
+    check(head(*eng, CT::Guard, tank->entity_id()) && head(*tank2, CT::Guard, tank->entity_id()),
+          "on an ally: both assist (guard) it");
+
+    right_click({tank->entity_id(), tank2->entity_id()}, *tank);
+    check(head(*tank2, CT::Guard, tank->entity_id()) && !head(*tank, CT::Guard, tank->entity_id()),
+          "on a selected unit: the others guard it, it takes no order of its own");
+
+    if (unbuilt) {
+        right_click({eng->entity_id(), tank2->entity_id()}, *unbuilt);
+        // (The engineer was building it: the repair order hands it straight
+        // back to that work.)
+        check(gave("Repair", unbuilt->entity_id()) && gave("Guard", unbuilt->entity_id()) &&
+                  issued.size() == 2 && eng->build_target_id() == unbuilt->entity_id() &&
+                  head(*tank2, CT::Guard, unbuilt->entity_id()),
+              fmt::format("on construction: the engineer repairs (builds) it, the tank guards it "
+                          "(repair {}, guard {}, {} issued, building #{} repairing #{}, tank "
+                          "guards {})",
+                          gave("Repair", unbuilt->entity_id()), gave("Guard", unbuilt->entity_id()),
+                          issued.size(), eng->build_target_id(), eng->repair_target_id(),
+                          head(*tank2, CT::Guard, unbuilt->entity_id())));
+    } else {
+        check(false, "a structure under construction");
+    }
+
+    // A second engineer, right-clicking it, builds it alongside the first;
+    // completed, it hears OnStopBeingBuilt once.
+    if (unbuilt) {
+        const osc::u32 pgen = unbuilt->entity_id();
+        lua(("__osc_pgen = " + std::to_string(pgen)).c_str());
+        lua(R"(
+            __osc_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', __osc_x + 8, GetTerrainHeight(__osc_x + 8, __osc_z - 8), __osc_z - 8, 0, 0, 0)
+            __osc_done = 0
+            local u = GetEntityById(__osc_pgen)
+            local base = u.OnStopBeingBuilt
+            u.OnStopBeingBuilt = function(self, a, b) __osc_done = __osc_done + 1 return base(self, a, b) end
+        )");
+        auto* eng2 = unit("__osc_eng2");
+        if (eng2) right_click({eng2->entity_id()}, *unbuilt);
+        bool helped = eng2 && eng2->build_target_id() == pgen;
+        for (int i = 0; i < 3000 && unbuilt->is_being_built(); ++i) {
+            ctx.sim.tick();
+            helped = helped || (eng2 && eng2->build_target_id() == pgen);
+        }
+        for (int i = 0; i < 3; ++i) ctx.sim.tick();
+        // Both let it go when it is done, neither paying on.
+        const auto released = [](const osc::sim::Unit& u) {
+            return u.build_target_id() == 0 && !u.economy().consumption_active;
+        };
+        check(helped && !unbuilt->is_being_built() && number("__osc_done") == 1 && eng2 &&
+                  eng2->command_queue().empty() && released(*eng2) && released(*eng),
+              fmt::format("two engineers build it; it completes once ({} OnStopBeingBuilt; "
+                          "helped {})",
+                          number("__osc_done"), helped));
+    }
+
+    // One left unfinished (its builder called off) is built and completed by
+    // an engineer that right-clicks it alone.
+    {
+        // (Tried at a few spots near by: a tree or rock may be in the way.)
+        const osc::sim::Unit* left = nullptr;
+        const std::array<std::pair<int, int>, 5> spots{
+            {{-12, 12}, {20, 12}, {-20, -8}, {0, 24}, {24, 0}}};
+        for (const auto& [dx, dz] : spots) {
+            if (left) break;
+            lua(fmt::format("IssueClearCommands({{__osc_eng}}) IssueBuildMobile({{__osc_eng}}, "
+                            "{{__osc_x + {}, 0, __osc_z + {}}}, 'ueb1101', {{}})",
+                            dx, dz)
+                    .c_str());
+            for (int i = 0; i < 200 && !left; ++i) {
+                ctx.sim.tick();
+                ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+                    const auto& u = static_cast<const osc::sim::Unit&>(e);
+                    if (!e.destroyed() && e.army() == 0 && u.is_being_built() &&
+                        u.blueprint_id() == "ueb1101")
+                        left = &u;
+                });
+            }
+        }
+        for (int i = 0; i < 20; ++i) ctx.sim.tick();
+        lua(("__osc_left = " + std::to_string(left ? left->entity_id() : 0)).c_str());
+        const bool was_building = left && eng->build_target_id() == left->entity_id();
+        lua(R"(
+            IssueClearCommands({__osc_eng})
+            __osc_done2 = 0
+            local u = GetEntityById(__osc_left)
+            if u then
+                local base = u.OnStopBeingBuilt
+                u.OnStopBeingBuilt = function(self, a, b) __osc_done2 = __osc_done2 + 1 return base(self, a, b) end
+            end
+        )");
+        ctx.sim.tick();
+        // Its orders cleared, the builder lets the build go and stops paying.
+        check(was_building && eng->build_target_id() == 0 && !eng->economy().consumption_active,
+              "a builder whose orders are cleared lets its build go");
+        const osc::u32 left_id = static_cast<osc::u32>(number("__osc_left"));
+        const auto* le = left_id ? ctx.sim.entity_registry().find(left_id) : nullptr;
+        left = le && !le->destroyed() && le->is_unit() ? static_cast<const osc::sim::Unit*>(le)
+                                                       : nullptr;
+        if (left && left->is_being_built()) {
+            const float stalled = left->fraction_complete();
+            right_click({eng->entity_id()}, *left);
+            for (int i = 0; i < 3000 && left->is_being_built(); ++i) ctx.sim.tick();
+            check(stalled < 1.0f && !left->is_being_built() && number("__osc_done2") == 1,
+                  fmt::format("an abandoned one ({:.0f}% built) is finished by a right-click "
+                              "({} OnStopBeingBuilt)",
+                              stalled * 100.0f, number("__osc_done2")));
+        } else {
+            check(false, "an abandoned structure to finish");
+        }
+    }
+
+    right_click({tank2->entity_id()}, *xport);
+    check(head(*tank2, CT::TransportLoad, xport->entity_id()),
+          "on a transport: the tank loads onto it");
+
+    right_click({plane->entity_id()}, *pad);
+    check(head(*plane, CT::Dock, pad->entity_id()), "on a staging platform: the plane docks");
+
+    if (prop) {
+        right_click({eng->entity_id(), tank->entity_id()}, *prop);
+        check(head(*eng, CT::Reclaim, prop->entity_id()) && gave("Reclaim", prop->entity_id()) &&
+                  gave("Move", 0) && issued.size() == 2,
+              "on a wreck or prop: the engineer reclaims it, the tank moves there");
+    } else {
+        check(false, "a reclaimable prop near by");
+    }
+
+    {
+        input.set_selected({eng->entity_id()});
+        const float gx = eng->position().x + 60.0f, gz = eng->position().z + 60.0f;
+        const auto issued = input.right_click_at(ctx.sim, gx, gz, false);
+        ctx.sim.tick();
+        check(issued.size() == 1 && issued[0].type == "Move" && head(*eng, CT::Move, 0),
+              "on open ground: a move");
+    }
+    // Allied, the other army's tank is an ally: a right-click guards it.
+    lua("SetAlliance('ARMY_1', 'ARMY_2', 'Ally')");
+    right_click({tank2->entity_id()}, *enemy);
+    check(head(*tank2, CT::Guard, enemy->entity_id()),
+          "on an allied army's unit: the tank guards it, not attacks");
+    spdlog::info("Right click test: {}/{} passed", pass, pass + fail);
 }
 
 void test_carrier_land(TestContext& ctx) {

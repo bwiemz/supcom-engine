@@ -77,6 +77,15 @@ struct StagingRules {
     f32 repair_mass = 0.5f;    ///< a tick
 };
 
+/// A blueprint's Economy.BuildTime, BuildCostMass and BuildCostEnergy (0
+/// where missing): what building it, or repairing it, costs.
+struct BuildEconomy {
+    f64 time = 0.0;
+    f64 mass = 0.0;
+    f64 energy = 0.0;
+};
+BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_id);
+
 /// What an order did this tick (Unit::run_order, M193).
 enum class OrderStep : u8 {
     Next, ///< finished or dropped (taken off the queue): run the next order now
@@ -935,6 +944,11 @@ private:
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     OrderStep order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A repair of a unit under construction (Moho's repair task builds it):
+    /// it builds alongside any builder, and completes it if it gets there
+    /// first.
+    OrderStep order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                        Unit& target);
     /// Help with what the guarded unit works on, or follow it. Never ends.
     OrderStep order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A guard order ends: a factory's assisted build (M206h) is cancelled,
@@ -1089,6 +1103,12 @@ private:
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     bool factory_assist_build_ = false;           // see factory_assist_build()
+    /// The order a build (build_target_id_) is for, and whether the builder
+    /// lets it go once that order is no longer the head (M206u): a mobile
+    /// build, a repair's or a guard's help. A factory's build is cancelled
+    /// by its own paths (stop_unit, end_guard_build), an upgrade by its own.
+    u32 build_command_id_ = 0;
+    bool build_released_with_order_ = false;
     i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)

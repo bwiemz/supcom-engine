@@ -91,6 +91,16 @@ public:
                                                        const CommandMode& mode,
                                                        f32 wx, f32 wz, bool shift);
 
+    /// A plain right-click at world (wx, wz): each selected unit's default
+    /// order there, as FA gives it. On an enemy: Attack (Capture for a unit
+    /// that can capture but not attack). On an ally: Assist (Guard); Repair
+    /// for an engineer on one under construction; a load for a unit it can
+    /// carry; a Dock for an aircraft at a staging platform. On a wreck:
+    /// Reclaim for an engineer. Units that can't take the order, and every
+    /// unit on open ground, move there. One order per kind, routed to its
+    /// units; what was issued comes back (headless clicks and tests).
+    std::vector<IssuedCommand> right_click_at(sim::SimState& sim, f32 wx, f32 wz, bool shift);
+
     /// Replace the current selection (called from Lua SelectUnits).
     void set_selected(const std::unordered_set<u32>& sel) {
         selected_ = sel;

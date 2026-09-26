@@ -607,20 +607,27 @@ OrderStep Unit::order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx) {
 OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
     auto& registry = ctx.registry;
     auto* L = ctx.L;
-    if (cmd.target_id == 0) {
+    // Whatever work this order started on its target ends with it: a repair,
+    // or the build of one under construction.
+    const auto let_go = [&] {
         if (is_repairing()) stop_repairing(L, registry);
+        if (build_target_id_ != 0 && build_target_id_ == cmd.target_id) stop_assisting();
+    };
+    if (cmd.target_id == 0) {
+        let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
     auto* rtarget = registry.find(cmd.target_id);
     if (!rtarget || rtarget->destroyed() || !rtarget->is_unit()) {
-        if (is_repairing()) stop_repairing(L, registry);
+        let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
-    // Already at full health? Done.
-    if (rtarget->health() >= rtarget->max_health()) {
-        if (is_repairing()) stop_repairing(L, registry);
+    // Already at full health? Done. (One under construction is built first.)
+    const bool under_construction = static_cast<const Unit&>(*rtarget).is_being_built();
+    if (!under_construction && rtarget->health() >= rtarget->max_health()) {
+        let_go();
         command_queue_.pop_front();
         return OrderStep::Next;
     }
@@ -632,7 +639,9 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
     {
         const auto& runit = static_cast<const Unit&>(*rtarget);
         const f32 gap = work_gap(*this, rtarget->position(), skirt_extent(runit));
-        if (repair_target_id_ != cmd.target_id) {
+        const bool working =
+            repair_target_id_ == cmd.target_id || build_target_id_ == cmd.target_id;
+        if (!working) {
             if (!cmd.approached && gap > max_build_distance_) {
                 if (effective_speed() <= 0) {
                     command_queue_.pop_front();
@@ -647,17 +656,22 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
             }
             if (cmd.approached && approach_update(dt, ctx)) return OrderStep::Hold;
             if (gap > max_build_distance_) {
-                if (is_repairing()) stop_repairing(L, registry);
+                let_go();
                 command_queue_.pop_front();
                 return OrderStep::Next;
             }
         } else if (gap > 2 * max_build_distance_) {
-            stop_repairing(L, registry);
+            let_go();
             command_queue_.pop_front();
             return OrderStep::Next;
         }
     }
     navigator_.abort_move();
+
+    if (under_construction) {
+        if (is_repairing()) stop_repairing(L, registry);
+        return order_repair_construction(cmd, dt, ctx, econ_eff, *static_cast<Unit*>(rtarget));
+    }
 
     // Start repair if not already repairing this target
     if (repair_target_id_ != cmd.target_id) {
@@ -674,6 +688,40 @@ OrderStep Unit::order_repair(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ
         return OrderStep::Next;
     }
     return OrderStep::Hold;
+}
+
+OrderStep Unit::order_repair_construction(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff,
+                                          Unit& target) {
+    auto& registry = ctx.registry;
+    const u32 order_id = cmd.command_id;
+    const u32 tid = target.entity_id();
+    const auto done = [&] {
+        if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+            command_queue_.front().command_id == order_id)
+            command_queue_.pop_front();
+        return OrderStep::Next;
+    };
+    if (build_target_id_ != tid) {
+        // Its blueprint's build time and costs set the pace and the bill.
+        if (is_building()) stop_assisting();
+        const BuildEconomy costs = blueprint_build_economy(ctx.L, target.unit_id());
+        if (costs.time <= 0 || build_rate_ <= 0) return done();
+        build_target_id_ = tid;
+        build_command_id_ = cmd.command_id;
+        build_released_with_order_ = true;
+        build_time_ = costs.time;
+        build_cost_mass_ = costs.mass;
+        build_cost_energy_ = costs.energy;
+        work_progress_ = target.fraction_complete();
+        economy_.consumption_mass = costs.mass * static_cast<f64>(build_rate_) / costs.time;
+        economy_.consumption_energy = costs.energy * static_cast<f64>(build_rate_) / costs.time;
+        economy_.consumption_active = true;
+    }
+    // It builds alongside any builder; whoever completes it finishes it
+    // (OnStopBeingBuilt, once).
+    if (progress_build(dt, registry, ctx.L, ctx.pathfinding_grid, econ_eff)) return OrderStep::Hold;
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    return done();
 }
 
 OrderStep Unit::order_capture(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff) {
@@ -886,6 +934,7 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
             if (build_blocked_by_lobby_rules(*this, build, ctx)) break;
             if (repeat_queue_) queue.push_back(taken);
             factory_assist_build_ = start_build(build, registry, L);
+            if (factory_assist_build_) build_command_id_ = cmd.command_id; // the guard's
             break;
         }
         return OrderStep::Hold;
@@ -950,6 +999,8 @@ OrderStep Unit::order_guard(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_
                 if (is_building()) stop_assisting();
 
                 build_target_id_ = target_build_id;
+                build_command_id_ = cmd.command_id;
+                build_released_with_order_ = true;
                 build_time_ = target_unit->build_time();
                 build_cost_mass_ = target_unit->build_cost_mass();
                 build_cost_energy_ = target_unit->build_cost_energy();
