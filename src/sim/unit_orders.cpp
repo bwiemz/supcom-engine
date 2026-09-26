@@ -1175,24 +1175,33 @@ bool Unit::calls_transport(u32 transport_id) const {
 }
 
 OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) {
-    // Moho dispatches Dock and TransportLoadUnits alike: at an air staging
-    // platform, the unit refuels (M206r). A carrier's landing isn't modelled
-    // yet, so a Dock order to one (or to anything else) ends.
+    // Moho dispatches Dock and TransportLoadUnits alike. At an air staging
+    // platform the unit refuels (M206r); a carrier takes a load order's
+    // units in to store them (M206s), and a Dock there refuels too. A Dock
+    // at anything else ends.
+    static const CategoryName kCarrier{"CARRIER"};
     if (cmd.target_id != entity_id()) {
-        static const CategoryName kCarrier{"CARRIER"};
         const Entity* e = ctx.registry.find(cmd.target_id);
         const auto* target =
             e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
-        if (target && target->is_staging_platform() && !target->has_category(kCarrier))
-            return order_refuel(cmd, dt, ctx);
+        if (target && target->has_category(kCarrier))
+            return cmd.type == CommandType::Dock ? order_refuel(cmd, dt, ctx)
+                                                 : order_carrier_landing(cmd, dt, ctx);
+        if (target && target->is_staging_platform()) return order_refuel(cmd, dt, ctx);
         if (cmd.type == CommandType::Dock) {
             set_unit_state("Refueling", false);
             command_queue_.pop_front();
             return OrderStep::Next;
         }
     }
-    if (cmd.target_id != 0 && cmd.target_id == entity_id())
-        return order_transport_pickup(cmd, dt, ctx);
+    if (cmd.target_id != 0 && cmd.target_id == entity_id()) {
+        if (cmd.type == CommandType::Dock) { // at itself: nothing to do
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+        return has_category(kCarrier) ? order_carrier_retrieve(cmd, ctx)
+                                      : order_transport_pickup(cmd, dt, ctx);
+    }
     return order_call_transport(cmd, dt, ctx);
 }
 

@@ -738,9 +738,45 @@ public:
     /// Take `unit` out of storage: its script hears OnRemoveFromStorage(carrier),
     /// and it is set at the carrier's next launch bone, facing as the bone
     /// does (else at the carrier).
-    void remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* L);
+    void remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* L,
+                             const map::Terrain* terrain = nullptr);
     /// Forget a stored unit that is gone.
     void forget_stored(u32 id);
+    /// A place in a carrier's storage an aircraft lands at (M206s; Moho's
+    /// TransportReserveStorage): the attach point it comes down onto, the
+    /// way the point faces, its height over the carrier, and the ticks the
+    /// aircraft waits its turn (0, then 3 more for each pass round).
+    struct StoragePlace {
+        Vector3 point{};
+        f32 heading = 0;
+        f32 height = 0;
+        i32 delay = 0;
+    };
+    /// Reserve the carrier's next generic attach point, round robin, for
+    /// `unit_id`; nothing without any. Reserved places count as taken.
+    std::optional<StoragePlace> reserve_storage(u32 unit_id);
+    void clear_storage_reservation(u32 unit_id);
+    /// The round robin starts over (Moho's TransportResetReservation).
+    void reset_storage_reservation();
+    const std::vector<u32>& storage_reserved_ids() const { return storage_reserved_; }
+    /// The round robin's next point and wait (for the checksum).
+    u32 next_storage_point() const { return next_generic_; }
+    i32 storage_overflow() const { return generic_overflow_; }
+    /// A carrier's retrieve under way: its phase (0: none), the units it
+    /// waits for, its wait (for the checksum).
+    u32 retrieve_phase() const { return static_cast<u32>(retrieve_phase_); }
+    const std::vector<u32>& retrieve_ids() const { return retrieve_ids_; }
+    i32 retrieve_wait() const { return retrieve_wait_; }
+    /// A landing under way (for the checksum): phase (0: none) and wait.
+    u32 landing_phase() const { return static_cast<u32>(landing_.phase); }
+    i32 landing_wait() const { return landing_.wait; }
+    /// A landing's place and the point it comes in from.
+    const StoragePlace& landing_place() const { return landing_.place; }
+    const Vector3& landing_approach() const { return landing_.approach; }
+    /// Whether this unit is landing on that carrier (M206s).
+    bool lands_on(u32 carrier_id) const {
+        return landing_.phase != LandPhase::None && landing_.carrier == carrier_id;
+    }
     /// Whether an unload order launches this carrier's stored units rather
     /// than dropping cargo: a CARRIER that is an air (or pod) staging
     /// platform, with something stored (Moho's dispatch of TransportUnload).
@@ -946,6 +982,25 @@ private:
     /// Fuel (Moho's CUnitMotion::ProcessFuelLevels): it refuels and repairs
     /// docked at `platform`, and burns in flight. False if a script killed it.
     bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
+    /// An aircraft ordered aboard a carrier (M206s): it lands, and is stored.
+    OrderStep order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A carrier's share of a load order onto it (Moho's CUnitCarrierRetrieve):
+    /// it stops (surfacing, if under water) and waits while its aircraft land.
+    OrderStep order_carrier_retrieve(UnitCommand& cmd, SimContext& ctx);
+    /// The retrieve is over: the script hears it, the reservations start over,
+    /// and, cut short, the aircraft still coming stop.
+    void end_retrieve(bool complete, SimContext& ctx);
+    /// A tick of a landing on `carrier` (Moho's CUnitCarrierLand): reserve a
+    /// place, fly in, wait its turn, come down, be stored. `refuel`: landing
+    /// to refuel, which needs the carrier idle rather than loading.
+    enum class LandStep : u8 { Landing, Stored, Failed };
+    LandStep carrier_land_step(Unit& carrier, bool refuel, f64 dt, SimContext& ctx);
+    /// A landing given up: its place and its loading state go.
+    void abandon_landing(EntityRegistry& registry);
+    /// Fly to `at` until it is within the unit's turning circle, then glide
+    /// over it, coming down to `y` turned to `heading` (M206r's approach).
+    /// True once settled there.
+    bool settle_over(const Vector3& at, f32 heading, bool& glided, f64 dt, SimContext& ctx);
     /// A staging platform's unload (M206r): its aircraft go from where they
     /// sit to the drop point.
     OrderStep order_staging_release(UnitCommand& cmd, SimContext& ctx);
@@ -1049,6 +1104,30 @@ private:
     i32 storage_slots_ = 0;           // Transport.StorageSlots (M206q)
     std::vector<u32> stored_ids_;     // stored units, in the order they were stored
     u32 launch_index_ = 0;            // the launch bone used last
+    // Landing on carriers (M206s): the units with a place reserved, the
+    // next generic point, and the queue's wait for the next pass round.
+    std::vector<u32> storage_reserved_;
+    u32 next_generic_ = 0;
+    i32 generic_overflow_ = 0;
+    // A carrier taking in aircraft ordered aboard (Moho's
+    // CUnitCarrierRetrieve): those it waits for, and where it is.
+    enum class RetrievePhase : u8 { None, Gather, Surface, Watch };
+    RetrievePhase retrieve_phase_ = RetrievePhase::None;
+    std::vector<u32> retrieve_ids_;
+    i32 retrieve_wait_ = 0;
+    // An aircraft landing on a carrier (Moho's CUnitCarrierLand): its place,
+    // the point it comes in from, and where it is.
+    enum class LandPhase : u8 { None, Approach, Hold, Descend };
+    struct CarrierLanding {
+        u32 carrier = 0;
+        LandPhase phase = LandPhase::None;
+        StoragePlace place{};
+        Vector3 approach{};
+        i32 wait = 0;
+        bool glided = false;   // came near enough to glide the rest
+        bool deck_set = false; // its turn and the deck's height fixed
+    };
+    CarrierLanding landing_;
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
     i32 transport_class_ = 1;        // cargo TransportClass (1=small, 2=medium, 3=large)

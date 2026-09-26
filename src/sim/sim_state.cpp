@@ -2239,6 +2239,21 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             units.mix(0x53544f5200000000ull | u.stored_ids().size()); // "STOR"
             for (u32 id : u.stored_ids()) units.mix(id);
         }
+        // Landing on carriers (M206s), only while under way: a carrier's
+        // reservations and retrieve, a unit's landing.
+        if (!u.storage_reserved_ids().empty() || u.next_storage_point() != 0 ||
+            u.storage_overflow() != 0 || u.retrieve_phase() != 0 || u.landing_phase() != 0) {
+            units.mix(0x4c414e4400000000ull); // "LAND"
+            units.mix(static_cast<u64>(u.storage_reserved_ids().size()));
+            for (u32 id : u.storage_reserved_ids()) units.mix(id);
+            units.mix(u.next_storage_point());
+            units.mix(static_cast<u64>(static_cast<u32>(u.storage_overflow())));
+            units.mix(u.retrieve_phase());
+            for (u32 id : u.retrieve_ids()) units.mix(id);
+            units.mix(static_cast<u64>(static_cast<u32>(u.retrieve_wait())));
+            units.mix(u.landing_phase());
+            units.mix(static_cast<u64>(static_cast<u32>(u.landing_wait())));
+        }
         // A stun, only while it lasts.
         if (u.stun_ticks() > 0)
             units.mix(0x5354554e00000000ull | static_cast<u32>(u.stun_ticks())); // "STUN"
