@@ -58,10 +58,8 @@ M PickBestAttackVector
 M RecoilImpulse
 M SetAIResult
 M SetDamageRadius
-M SetDirectionalAnim
 M SetStrategicUnderlay
 M SetWeaponDisableByLabel
-M TakeResource
 M UnloadAllAtLocation
 M UseFerryBeacon
 M Whack

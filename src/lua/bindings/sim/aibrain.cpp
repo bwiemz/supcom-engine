@@ -281,6 +281,33 @@ static int brain_GiveResource(lua_State* L) {
     return 0;
 }
 
+// brain:TakeResource(type, amount) -> taken: up to `amount` from the army's
+// store, which never goes below 0 (Moho's CAiBrain::TakeResource; the Eye of
+// Rhianne pays its scrying this way). A NaN amount is taken as is, as
+// Moho's `request > stored ? stored : request` does.
+static int brain_TakeResource(lua_State* L) {
+    auto* brain = check_brain(L);
+    if (!brain || lua_type(L, 2) != LUA_TSTRING || lua_type(L, 3) != LUA_TNUMBER) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    const char* res = lua_tostring(L, 2);
+    const f64 request = lua_tonumber(L, 3);
+    auto& econ = brain->economy();
+    auto* store = std::strcmp(res, "ENERGY") == 0 || std::strcmp(res, "Energy") == 0 ? &econ.energy
+                  : std::strcmp(res, "MASS") == 0 || std::strcmp(res, "Mass") == 0   ? &econ.mass
+                                                                                     : nullptr;
+    if (!store) {
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    const f64 taken = request > store->stored ? store->stored : request;
+    const f64 left = store->stored - taken;
+    store->stored = left > 0.0 ? left : 0.0;
+    lua_pushnumber(L, taken);
+    return 1;
+}
+
 static int brain_IsDefeated(lua_State* L) {
     auto* brain = check_brain(L);
     lua_pushboolean(L, brain ? brain->is_defeated() : 0);
@@ -2292,6 +2319,7 @@ const MethodEntry aibrain_methods[] = {
     {"GetEconomyStored",            brain_GetEconomyStored},
     {"GetEconomyStoredRatio",       brain_GetEconomyStoredRatio},
     {"GiveResource",                brain_GiveResource},
+    {"TakeResource",                brain_TakeResource},
     {"IsDefeated",                  brain_IsDefeated},
     {"GetCurrentUnits",             brain_GetCurrentUnits},
     {"GetBrainStatus",              brain_GetBrainStatus},

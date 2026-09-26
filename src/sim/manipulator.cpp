@@ -143,10 +143,11 @@ void AnimManipulator::tick(f32 dt) {
     // resets all bones to identity first. Scripts rely on this to hold a
     // pose (PlayAnim + SetRate(0) + SetAnimationFraction, or a one-shot
     // animation left at its last frame).
-    if (!finished_ && rate_ != 0) {
-        fraction_ += (rate_ * dt) / duration_;
+    const f32 rate = directional_ && owner() && owner()->ground_speed() < 0 ? -rate_ : rate_;
+    if (!finished_ && rate != 0) {
+        fraction_ += (rate * dt) / duration_;
 
-        if (rate_ > 0) {
+        if (rate > 0) {
             if (fraction_ >= 1.0f) {
                 if (looping_) {
                     fraction_ = std::fmod(fraction_, 1.0f);
