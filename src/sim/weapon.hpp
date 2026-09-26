@@ -52,6 +52,9 @@ public:
     /// shape, where it will be when the shot arrives for a weapon that leads.
     Vector3 aim_point(const Entity& target, const Vector3& from) const;
     bool fire_on_death = false;
+    /// DummyWeapon, or a Death weapon (a structure's explosion): never one
+    /// a unit attacks with.
+    bool dummy = false;
     /// ManualFire: fires only at what its unit's launch order names.
     bool manual_fire = false;
     /// CountedProjectile: fires missiles its unit stores and builds (M206).

@@ -499,6 +499,25 @@ static int camera_GetPitch(lua_State* L) {
     return 1;
 }
 
+/// UISelectAndZoomTo(unit [, seconds]): select that unit alone and bring the
+/// world camera to it -- the idle-engineer and commander avatars' click.
+/// (Moho frames the unit's box over `seconds`; the camera here recentres,
+/// as UIZoomTo does.)
+static int l_UIZoomTo(lua_State* L);
+static int l_SelectUnits(lua_State* L);
+static int l_UISelectAndZoomTo(lua_State* L) {
+    if (!lua_istable(L, 1)) return 0;
+    lua_newtable(L);
+    lua_pushvalue(L, 1);
+    lua_rawseti(L, -2, 1);
+    lua_replace(L, 1); // arg 1 = {unit}
+    lua_settop(L, 1);
+    l_SelectUnits(L);
+    lua_settop(L, 1);
+    l_UIZoomTo(L);
+    return 0;
+}
+
 /// UIZoomTo(units, duration) — animate camera to center on units.
 /// units is a Lua array of unit objects with _c_object lightuserdata.
 static int l_UIZoomTo(lua_State* L) {
@@ -670,6 +689,31 @@ static int l_SelectUnits(lua_State* L) {
     }
     ih->set_selected(new_sel);
     return 0;
+}
+
+/// GetValidAttackingUnits() -> the selected units that can attack: those
+/// with a weapon other than a dummy or their death's explosion (the attack
+/// order's reticle asks). Moho's also tests them against the hovered
+/// target; this doesn't.
+static int l_GetValidAttackingUnits(lua_State* L) {
+    auto* ih = get_input_handler(L);
+    auto* sim = get_sim(L);
+    lua_newtable(L);
+    if (!ih || !sim) return 1;
+    const int result = lua_gettop(L);
+    int idx = 1;
+    for (u32 eid : ih->selected()) {
+        auto* entity = sim->entity_registry().find(eid);
+        if (!entity || !entity->is_unit() || entity->destroyed()) continue;
+        const auto& weapons = static_cast<const sim::Unit*>(entity)->weapons();
+        const bool armed = std::any_of(weapons.begin(), weapons.end(), [](const auto& w) {
+            return w && !w->fire_on_death && !w->dummy;
+        });
+        if (!armed) continue;
+        push_unit_for_ui(L, entity);
+        lua_rawseti(L, result, idx++);
+    }
+    return 1;
 }
 
 static int l_AddSelectUnits(lua_State* L) {
@@ -986,6 +1030,8 @@ void register_user_bindings(LuaState& state) {
     state.register_function("IssueBlueprintCommand", l_IssueBlueprintCommand);
     state.register_function("IsKeyDown", l_IsKeyDown);
     state.register_function("UIZoomTo", l_UIZoomTo);
+    state.register_function("UISelectAndZoomTo", l_UISelectAndZoomTo);
+    state.register_function("GetValidAttackingUnits", l_GetValidAttackingUnits);
     state.register_function("GetRolloverInfo", l_GetRolloverInfo);
 
     // Methods of the classes register_moho_bindings made: before any UI
