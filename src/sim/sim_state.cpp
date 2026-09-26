@@ -1022,7 +1022,10 @@ void SimState::tick() {
             return !e || e->destroyed();
         });
         effect_registry_.expire_timed(game_time_);
-        effect_registry_.gc();
+        effect_registry_.gc([&](IEffect& fx) {
+            if (L_ && fx.lua_table_ref() >= 0)
+                luaL_unref(L_, LUA_REGISTRYINDEX, fx.lua_table_ref());
+        });
     }
 
     // Periodic Lua garbage collection to prevent unbounded memory growth.

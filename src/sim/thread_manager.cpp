@@ -124,13 +124,6 @@ int ThreadManager::fork_thread(lua_State* L) {
     entry.dead = false;
     entry.source = std::move(source_info);
 
-    // If we're inside resume_all, buffer to avoid iterator invalidation
-    if (resuming_) {
-        pending_threads_.push_back(entry);
-    } else {
-        threads_.push_back(entry);
-    }
-
     // Pop the raw thread — we return a wrapper table instead.
     // The raw thread stays alive via the registry ref.
     lua_pop(L, 1);
@@ -156,6 +149,16 @@ int ThreadManager::fork_thread(lua_State* L) {
         create_thread_metatable(L);
     }
     lua_setmetatable(L, wrapper);
+
+    lua_pushvalue(L, wrapper);
+    entry.wrapper_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    // If we're inside resume_all, buffer to avoid iterator invalidation
+    if (resuming_) {
+        pending_threads_.push_back(std::move(entry));
+    } else {
+        threads_.push_back(std::move(entry));
+    }
 
     return 1;
 }
@@ -322,6 +325,12 @@ void ThreadManager::cleanup_dead_threads() {
     auto it = threads_.begin();
     while (it != threads_.end()) {
         if (it->dead) {
+            // The handle's ref first: Lua reuses the last one freed, and
+            // the next thread forked takes the coroutine's.
+            if (it->wrapper_ref >= 0) {
+                luaL_unref(L_, LUA_REGISTRYINDEX, it->wrapper_ref);
+                it->wrapper_ref = -2;
+            }
             if (it->lua_ref >= 0) {
                 luaL_unref(L_, LUA_REGISTRYINDEX, it->lua_ref);
                 it->lua_ref = -2; // LUA_NOREF — prevent double-unref

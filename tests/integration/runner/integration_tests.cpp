@@ -17818,6 +17818,43 @@ void test_emitter(TestContext& ctx) {
         }
     }
 
+    // Test 17: an effect keeps its Lua handle alive, as Moho's object keeps
+    // its Lua object. Scripts hold effects in trash bags, which are weak
+    // tables; a handle collected from one was never destroyed through it.
+    // Once the effect is freed, its handle goes like any other table.
+    {
+        run_lua(R"(
+            local acu = rawget(_G, '_emtest_entity')
+            local bag = setmetatable({}, {__mode = 'v'})
+            bag[1] = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/plasma_cannon_trail_01_emit.bp')
+            bag[2] = CreateAttachedEmitter(acu, -1, 1, '/effects/emitters/plasma_cannon_trail_01_emit.bp')
+            rawset(_G, '_emtest17_bag', bag)
+        )");
+        lua_setgcthreshold(L, 0); // a full collection
+        run_lua(R"(
+            local bag = rawget(_G, '_emtest17_bag')
+            local kept = bag[1] ~= nil and bag[2] ~= nil
+            if kept then bag[1]:Destroy() end
+            rawset(_G, '_emtest17_kept', kept and 'yes' or 'no')
+        )");
+        const bool kept = check_result("_emtest17_kept") == "yes";
+        ctx.sim.tick(); // frees the destroyed effect
+        lua_setgcthreshold(L, 0);
+        run_lua(R"(
+            local bag = rawget(_G, '_emtest17_bag')
+            rawset(_G, '_emtest17_after', (bag[1] == nil and bag[2] ~= nil) and 'ok'
+                or ('first=' .. tostring(bag[1]) .. ' second=' .. tostring(bag[2])))
+        )");
+        const std::string after = check_result("_emtest17_after");
+        if (kept && after == "ok") {
+            pass++;
+            spdlog::info("[PASS] Test 17: an effect keeps its handle alive until it is freed");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 17: kept={} after={}", kept, after);
+        }
+    }
+
     spdlog::info("Emitter test: {}/{} passed", pass, pass + fail);
 }
 

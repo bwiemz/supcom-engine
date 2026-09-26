@@ -133,3 +133,38 @@ TEST_CASE("KillThread: a stale handle can't kill the thread that took its ref", 
     tm.resume_all(4);
     CHECK(tm.active_count() == 1); // the sleeper lives on
 }
+
+TEST_CASE("A thread's handle lives as long as the thread, even in a weak table", "[threads]") {
+    // Retail keeps threads in trash bags, which are weak tables. A handle
+    // collected from one was never killed when the bag was destroyed: a
+    // disbanded platoon's threads ran on.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    tm.register_in_registry(L);
+    lua_register(L, "Sleep", sleep_ticks);
+    REQUIRE(state.do_string(R"(
+        function sleeper() Sleep(1000) end
+        bag = setmetatable({}, {__mode = 'v'})
+    )"));
+    lua_settop(L, 0);
+    lua_pushstring(L, "sleeper");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    tm.fork_thread(L);
+    lua_pushstring(L, "bag");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushvalue(L, -2);
+    lua_rawseti(L, -2, 1); // bag[1] = the handle, held nowhere else
+    lua_settop(L, 0);
+    tm.resume_all(1);
+
+    lua_setgcthreshold(L, 0); // a full collection
+    REQUIRE(state.do_string("kept = bag[1] ~= nil; if kept then bag[1]:Destroy() end"));
+    CHECK(global_true(L, "kept"));
+    tm.resume_all(2); // the killed thread is released
+    CHECK(tm.active_count() == 0);
+
+    lua_setgcthreshold(L, 0);
+    REQUIRE(state.do_string("gone = bag[1] == nil"));
+    CHECK(global_true(L, "gone")); // and now its handle can go
+}
