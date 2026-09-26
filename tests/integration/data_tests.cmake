@@ -45,7 +45,7 @@ set(OSC_DATA_TESTS_GATE
     massstub3-test massstub4-test medstub-test move-test naval-depth-test normal-test
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test
-    repair-test scale-test scissor-test scrollbar-render-test shadow-test
+    repair-test right-click-test scale-test scissor-test scrollbar-render-test shadow-test
     shield-render-test shield-test silo-test smoke-test spatial-test
     specular-test stall-test stats-test stress-test stub-test targeting-test
     teamcolor-test

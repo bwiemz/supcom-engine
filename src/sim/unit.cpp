@@ -387,6 +387,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
         // factory drops that unit (M206h).
         if (factory_assist_build_ && !(head && head->type == CommandType::Guard))
             end_guard_build(ctx.registry, ctx.L);
+        // A mobile build, or a repair's or guard's help, whose order is gone
+        // (replaced or stopped): the builder lets it go and stops paying; the
+        // unfinished unit stays (Moho's build task ends with its command). It
+        // had built on from afar, and the next build order had gone on with
+        // the old one.
+        if (build_target_id_ != 0 && build_released_with_order_ &&
+            !(head && head->command_id == build_command_id_))
+            stop_assisting();
     }
 
     // Paused units skip their orders, and what follows them, but still
@@ -615,6 +623,8 @@ bool Unit::start_build(const UnitCommand& cmd, EntityRegistry& registry,
     }
 
     build_target_id_ = static_cast<u32>(lua_tonumber(L, -2));
+    build_command_id_ = cmd.command_id;
+    build_released_with_order_ = cmd.type == CommandType::BuildMobile;
     int target_tbl = lua_gettop(L); // target Lua table
 
     // Read BuildTime, BuildCostMass, BuildCostEnergy from target's blueprint
@@ -765,7 +775,9 @@ void Unit::finish_build(EntityRegistry& registry, lua_State* L, bool success,
                         map::PathfindingGrid* grid) {
     if (success && build_target_id_ != 0) {
         auto* target = registry.find(build_target_id_);
-        if (target && target->is_unit()) {
+        // Completed once: another builder (or a repairer) may have finished
+        // it already this tick.
+        if (target && target->is_unit() && static_cast<Unit*>(target)->is_being_built()) {
             auto* target_unit = static_cast<Unit*>(target);
             target_unit->set_is_being_built(false);
             target_unit->set_fraction_complete(1.0f);
@@ -1045,6 +1057,35 @@ bool Unit::progress_reclaim_assist(f64 dt, EntityRegistry& registry) {
     return new_frac > 0.0f;
 }
 
+BuildEconomy blueprint_build_economy(lua_State* L, const std::string& blueprint_id) {
+    BuildEconomy out;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, blueprint_id.c_str());
+        lua_gettable(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Economy");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                const auto field = [&](const char* name, f64& v) {
+                    lua_pushstring(L, name);
+                    lua_gettable(L, -2);
+                    if (lua_isnumber(L, -1)) v = lua_tonumber(L, -1);
+                    lua_pop(L, 1);
+                };
+                field("BuildTime", out.time);
+                field("BuildCostMass", out.mass);
+                field("BuildCostEnergy", out.energy);
+            }
+            lua_pop(L, 1); // Economy
+        }
+        lua_pop(L, 1); // blueprint entry
+    }
+    lua_pop(L, 1); // __blueprints
+    return out;
+}
+
 bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
                         lua_State* L) {
     auto* target = registry.find(cmd.target_id);
@@ -1057,43 +1098,11 @@ bool Unit::start_repair(const UnitCommand& cmd, EntityRegistry& registry,
     if (target->health() >= target->max_health()) return false;
     if (build_rate_ <= 0) return false;
 
-    // Read BuildTime/BuildCostMass/BuildCostEnergy from target's blueprint
-    repair_build_time_ = 0;
-    repair_cost_mass_ = 0;
-    repair_cost_energy_ = 0;
-
-    lua_pushstring(L, "__blueprints");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_pushstring(L, target_unit->unit_id().c_str());
-        lua_gettable(L, -2);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Economy");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "BuildTime");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    repair_build_time_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
-
-                lua_pushstring(L, "BuildCostMass");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    repair_cost_mass_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
-
-                lua_pushstring(L, "BuildCostEnergy");
-                lua_gettable(L, -2);
-                if (lua_isnumber(L, -1))
-                    repair_cost_energy_ = lua_tonumber(L, -1);
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 1); // Economy
-        }
-        lua_pop(L, 1); // blueprint entry
-    }
-    lua_pop(L, 1); // __blueprints
+    // Its blueprint's BuildTime/BuildCostMass/BuildCostEnergy
+    const BuildEconomy costs = blueprint_build_economy(L, target_unit->unit_id());
+    repair_build_time_ = costs.time;
+    repair_cost_mass_ = costs.mass;
+    repair_cost_energy_ = costs.energy;
 
     if (repair_build_time_ <= 0) return false;
 
