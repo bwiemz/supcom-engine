@@ -8448,22 +8448,24 @@ void test_steer(TestContext& ctx) {
     auto* terrain = ctx.sim.terrain();
     auto* grid = ctx.sim.pathfinding_grid();
     float cx = 0, cz = 0;
-    for (float z = 100; z < 900 && cx == 0; z += 10)
-        for (float x = 100; x < 900 && cx == 0; x += 10) {
+    for (int z = 100; z < 900 && cx == 0; z += 10)
+        for (int x = 100; x < 900 && cx == 0; x += 10) {
             bool ok = terrain && grid;
             float lo = 1e9f, hi = -1e9f;
-            for (float dz = -55; ok && dz <= 55; dz += 2)
-                for (float dx = -55; ok && dx <= 55; dx += 2) {
+            for (int dz = -55; ok && dz <= 55; dz += 2)
+                for (int dx = -55; ok && dx <= 55; dx += 2) {
                     if (std::abs(dx) > 8 && std::abs(dz) > 8) continue; // off both roads
-                    const float h = terrain->get_terrain_height(x + dx, z + dz);
+                    const auto wx = static_cast<float>(x + dx);
+                    const auto wz = static_cast<float>(z + dz);
+                    const float h = terrain->get_terrain_height(wx, wz);
                     osc::u32 gx = 0, gz = 0;
-                    grid->world_to_grid(x + dx, z + dz, gx, gz);
-                    ok = terrain->get_surface_height(x + dx, z + dz) <= h + 0.01f &&
+                    grid->world_to_grid(wx, wz, gx, gz);
+                    ok = terrain->get_surface_height(wx, wz) <= h + 0.01f &&
                          grid->is_passable_for(gx, gz, "Land");
                     lo = std::min(lo, h);
                     hi = std::max(hi, h);
                 }
-            if (ok && hi - lo < 3) cx = x, cz = z;
+            if (ok && hi - lo < 3) cx = static_cast<float>(x), cz = static_cast<float>(z);
         }
     if (cx == 0) {
         check(false, "no open flat ground on the map");
