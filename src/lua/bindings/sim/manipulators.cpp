@@ -293,6 +293,13 @@ static int anim_SetRate(lua_State* L) {
     return 1;
 }
 
+/// GetRate(): the animator's playback rate (1 until SetRate changes it).
+static int anim_GetRate(lua_State* L) {
+    auto* m = check_manip_base(L);
+    lua_pushnumber(L, m ? static_cast<sim::AnimManipulator*>(m)->rate() : 0.0);
+    return 1;
+}
+
 static int anim_SetAnimationFraction(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
@@ -509,6 +516,7 @@ static int anim_SetBlendTime(lua_State* L) {
 const MethodEntry animation_manipulator_methods[] = {
     {"PlayAnim",                anim_PlayAnim},
     {"SetRate",                 anim_SetRate},
+    {"GetRate",                 anim_GetRate},
     {"SetAnimationFraction",    anim_SetAnimationFraction},
     {"GetAnimationFraction",    anim_GetAnimationFraction},
     {"GetAnimationDuration",    anim_GetAnimationDuration},

@@ -3962,6 +3962,47 @@ void test_manip(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
+    // Test 8: an animator plays at rate 1 without SetRate, and WaitFor on it
+    // returns once it has played -- as retail's factory FinishBuildThread
+    // and many unit scripts rely on (CreateAnimator(self):PlayAnim(anim)).
+    {
+        auto setup = ctx.lua_state.do_string(R"(
+            local e = GetEntityById(__osc_test_acu_id(1))
+            local anim = e:GetBlueprint().Display.AnimationWalk
+            if not anim then error('no walk animation') end
+            __osc_played = CreateAnimator(e):PlayAnim(anim)
+            if __osc_played:GetRate() ~= 1 then error('rate ' .. __osc_played:GetRate()) end
+            __osc_played_done = false
+            ForkThread(function() WaitFor(__osc_played); __osc_played_done = true end)
+            -- A looping one is never done while it plays; set to rate 0 (a
+            -- held pose) between ticks, its waiter goes on.
+            __osc_held = CreateAnimator(e):PlayAnim(anim, true)
+            __osc_held_done = false
+            ForkThread(function() WaitFor(__osc_held); __osc_held_done = true end)
+        )");
+        for (osc::u32 i = 0; i < 5; i++) ctx.sim.tick();
+        auto early = ctx.lua_state.do_string(R"(
+            if __osc_held_done then error('a looping animator was done') end
+            __osc_held:SetRate(0)
+        )");
+        for (osc::u32 i = 0; i < 60; i++) ctx.sim.tick();
+        auto r = ctx.lua_state.do_string(R"(
+            if not __osc_played_done then
+                error('WaitFor(animator) still waiting at fraction ' .. __osc_played:GetAnimationFraction())
+            end
+            if not __osc_held_done then error('WaitFor(held animator) still waiting') end
+        )");
+        if (setup && early && r) {
+            pass++;
+            spdlog::info("[PASS] Test 8: animators play at rate 1; WaitFor ends as in Moho");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8: {}", !setup   ? setup.error().message
+                                                        : !early ? early.error().message
+                                                                 : r.error().message);
+        }
+    }
+
     spdlog::info("Manip test: {}/{} passed", pass, pass + fail);
     spdlog::info("Manip test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -9986,35 +10027,64 @@ void test_factory_rally(TestContext& ctx) {
         if not __osc_ta or not __osc_tb then error('A or B is not building') end
     )");
 
-    // Once its tank is built, A holds its next build while the tank rolls
-    // off: retail's RolloffBody keeps it busy until IsCommandDone says the
-    // IssueMove it gave the tank is done.
-    lua_check("A waits for its tank to roll off",
-              "__osc_rolloff_waited = 0; __osc_rolloff_over = false");
-    auto rolloff_over = [&] {
-        lua_State* L = ctx.lua_state.raw();
-        lua_pushstring(L, "__osc_rolloff_over");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        const bool over = lua_toboolean(L, -1) != 0;
-        lua_pop(L, 1);
-        return over;
+    // Once its tank is built, each factory holds its next build while the
+    // tank rolls off -- A its own, and B, which guards A, the one it built
+    // for A: retail's RolloffBody keeps the factory busy until IsCommandDone
+    // says the tank's roll-off IssueMove is done, and Moho's factory build
+    // task waits for that.
+    lua_check("A and B wait for their tanks to roll off", R"(
+        __osc_roll = {}
+        for k, pair in {a = {__osc_a, __osc_ta}, b = {__osc_b, __osc_tb}} do
+            __osc_roll[k] = {f = pair[1], t = pair[2], waited = 0, over = false, built_while_busy = 0}
+        end
+    )");
+    auto rolloffs_over = [&] {
+        auto r = ctx.lua_state.do_string(
+            "if not (__osc_roll.a.over and __osc_roll.b.over) then error('rolling') end");
+        return r.ok();
     };
-    for (int i = 0; i < 400 && !rolloff_over(); ++i) {
+    for (int i = 0; i < 400 && !rolloffs_over(); ++i) {
         run(1);
         (void)ctx.lua_state.do_string(R"(
-            if __osc_ta:IsBeingBuilt() then return end
-            local cmd = __osc_a.MoveCommand
-            if cmd and not IsCommandDone(cmd) then
-                if __osc_a:IsUnitState('Busy') then __osc_rolloff_waited = __osc_rolloff_waited + 1 end
-            elseif __osc_rolloff_waited > 0 then
-                __osc_rolloff_over = true
+            for _, r in __osc_roll do
+                if not r.over and not r.t:IsBeingBuilt() then
+                    local cmd = r.f.MoveCommand
+                    if cmd and not IsCommandDone(cmd) then
+                        if r.f:IsUnitState('Busy') then r.waited = r.waited + 1 end
+                        local f = __osc_building(r.f)
+                        if f and f ~= r.t then r.built_while_busy = r.built_while_busy + 1 end
+                    elseif r.waited > 0 then
+                        r.over = true
+                    end
+                end
             end
         )");
     }
-    lua_check("A was busy while its tank rolled off, until the move was done", R"(
-        if __osc_rolloff_waited < 3 or not __osc_rolloff_over then
-            error('A waited ' .. __osc_rolloff_waited .. ' ticks; over: ' .. tostring(__osc_rolloff_over))
+    lua_check("A and B were busy while their tanks rolled off, until the moves were done", R"(
+        for k, r in __osc_roll do
+            if r.waited < 3 or not r.over then
+                error(k .. ' waited ' .. r.waited .. ' ticks; over: ' .. tostring(r.over))
+            end
         end
+    )");
+    lua_check("neither started a tank while busy rolling one off", R"(
+        for k, r in __osc_roll do
+            if r.built_while_busy > 0 then
+                error(k .. ' was building its next tank for ' .. r.built_while_busy .. ' ticks of the roll-off')
+            end
+        end
+    )");
+    // Then each lets the finished build go: A's last order went to B, which
+    // builds it once it has rolled its own tank off.
+    run(30);
+    lua_check("the finished builds are let go after the roll-offs", R"(
+        if __osc_a:IsUnitState('Busy') or __osc_b:IsUnitState('Busy') then
+            error('still busy: A ' .. tostring(__osc_a:IsUnitState('Busy')) .. ', B ' ..
+                  tostring(__osc_b:IsUnitState('Busy')))
+        end
+        local a_left = table.getn(__osc_a:GetCommandQueue())
+        local next_build = __osc_building(__osc_a) or __osc_building(__osc_b)
+        if a_left > 0 and not next_build then error('A holds ' .. a_left .. ' orders, and nothing builds them') end
     )");
 
     // Built, each drives off to A's rally point: B built its tank for A.

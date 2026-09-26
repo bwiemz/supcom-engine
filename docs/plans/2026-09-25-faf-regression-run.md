@@ -1,6 +1,6 @@
 # The FAF regression run
 
-Status: first run 2026-09-25. It runs FAForever's current game Lua (`develop`) on the engine, which has been built against retail FA since it moved to Linux (M175+).
+Status: three runs, 2026-09-25: the first, a second after the fixes, and an 18,000-tick third. It runs FAForever's current game Lua (`develop`) on the engine, which has been built against retail FA since it moved to Linux (M175+).
 
 ## Why
 
@@ -53,6 +53,48 @@ Now:
 
 `OrientFromDir` is also a stub that returns the identity; FAF and retail both use it. It is to be fixed with the quaternion work.
 
+## Second run: what the rows turned out to be
+
+Two of the first run's diagnoses were wrong, and both mistakes came from reading error messages at face value. FAF gives `nil` a metatable, so `nil:Method()` fails with "attempt to call method `X' (a nil value)" instead of "attempt to index a nil value". A "missing method" can therefore be a nil receiver. The way to tell is to probe the call site: mount a patched copy of the FAF file first in a copy of the harness's init, and `LOG` the receiver.
+
+| Row | What it was | Fixed by |
+|---|---|---|
+| `EulerToQuaternion(...) * GetOrientation()` (141), and the factory fallout (313) | As diagnosed. Quaternions now carry the one vector metatable, `EulerToQuaternion` uses Moho's formula, and `OrientFromDir` builds `COORDS_Orient`'s frame. | #97 |
+| Slider `SetGoal` (42) | Fallout of the row above: UEB1101 makes its sliders later in the `OnCreate` that failed. | #97 |
+| `SetHeadingPitch` (42) | `self.rightGunLabel` was nil, so FAF looked up a weapon labelled nil. FAF's ACUs and SCUs set it in their class's `__init`, and the engine never ran a unit's `__init`. Moho makes an entity's object by calling its class (`CScriptObject::CreateLuaObject`). | #98 |
+| `OpenURL` (1) | Missing UI global. It now opens a URL only when its scheme is in the init file's `protocols` list, as Moho's does, through the system's handler and never a shell. | #99 |
+| `centery` (3) | FAF's `wreckage.lua` reads `bp.CollisionOffsetY` unguarded, and 398 of its 606 units omit it. Moho's blueprints carry `REntityBlueprint`'s default of 0. | #105 |
+| `RateOfFire` (2) | The UEF T1 transport's guidance system has none. `RUnitBlueprintWeapon`'s default is 1. | #105 |
+
+The fixes also closed gaps that retail shares with FAF:
+- `CreateStorageManip`: every storage building's script errored there (#100).
+- `IncreaseBuildCountInQueue`: the factory queue's left-click (#101).
+- `Issue*` return values and `IsCommandDone`: factory roll-off (#102).
+- Animators play at rate 1, and `WaitFor` on them returns. Before, every retail `WaitFor` on an animator nobody had set a rate for hung for ever (#103).
+
+**The run on main after #100** (3,000 ticks, four AIs): the game reaches tick 3,000 with 244 units alive, and the only script errors left are `centery` ×2, `RateOfFire` ×2 and `IncreaseBuildCountInQueue` ×1. With #101 and #105 as well, **FAF's game plays its 3,000 ticks without a script error**. What the harness still reports are FAF's own blueprint-check warnings: "Overriding the x axis of collision box", and a missing preferences file in its `Blueprints.lua`.
+
+## Third run: 18,000 ticks
+
+A long game reaches the late game: T3 units and experimentals, with more than 1,600 units alive. Run on main plus the fixes still open (#103–#105 and #107–#110), merged locally.
+
+| Count | Where FAF failed | What it was | Fixed by |
+|---|---|---|---|
+| 11,561 | `Unit.OnMotionHorzEventChange`: a nil weapon | The UEF T1 mobile AA's first weapon has no `Label`. FAF keys `WeaponInstances` by it, and the nil key stopped `Unit.OnCreate` at "table index is nil" (367×), leaving the table half built. Moho's `Label` string defaults to `""`. | #105 |
+| 72 | `MobileUnit.DestroyAllTrashBags`: `Destroy` on nil | Fallout from the same `OnCreate` failure. | #105 |
+| ~550 | `GetVelocity` on units, and FAF's cached `moho.unit_methods.GetVelocity` | Units had no `GetVelocity`. Moho's is per tick, and so is its projectile `GetVelocity`, where ours was per second: retail's Miasma shell and split missiles depend on that. | #108 |
+| 5 | Cruise missiles: `Physics.MaxSpeedRange` nil | The projectile `*Range` defaults (`RProjectileBlueprintPhysics`). | #109 |
+| 11 | Bombers: `UnitGetTargetEntity` nil | Units had no `GetTargetEntity`: the attack order's target, as Moho's attacker's desired target. | #110 |
+
+With all of these in, the 18,000-tick game has **no script errors**. What remains:
+- FAF's own blueprint-check warnings.
+- Three "It was a unit!" warnings: FAF's shield collider is told of a collision with a unit, which it doesn't expect.
+- About 635 AI warnings, "Invalid location - Large Expansion Area N". Builder conditions still ask about an expansion base after FAF's `DeadBaseMonitor` removed it. Whether FAF does the same on Moho, or our manager teardown leaves builders running, is not yet known.
+
 ## Next
 
-Fix the rows above, one PR each, and rerun until FAF's game plays without Lua errors. Each fix must also leave retail's gate green: retail and FAF both run on the same engine.
+- Longer and wider runs: 18,000 ticks, other maps and other seeds. The first 3,000 ticks cover the early game only: no experimentals, and little T3.
+- `--fail-on-errors` in the harness, once #101 and #105 merge, so that a regression fails the run.
+- FAF's UI states (its lobby and front end) are untested. The harness plays a skirmish from the command line.
+
+Each fix must also leave retail's gate green: retail and FAF both run on the same engine.

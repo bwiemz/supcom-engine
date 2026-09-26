@@ -62,6 +62,7 @@ add_executable(osc_tests
     test_replay.cpp
     test_front_end_data.cpp
     test_projectile_defaults.cpp
+    test_blueprint_defaults.cpp
     test_command_handles.cpp
     test_url_bindings.cpp
     test_script_object.cpp

@@ -235,6 +235,7 @@ After M206, as agreed on 2026-09-24:
 5. M192: split the executable. Step 1 in review (#69, with M191 step 2); step 2 decomposes `app.cpp`.
 6. ~~M191: finish the Sim/User split.~~ Done: the cycle is broken (#66), the bindings are split by class (step 2), and the UI's units are UserUnit, reading snapshots and changing the sim through the command stream (step 3).
 7. M206's remaining gaps, and M207.
-8. M208 save/load: M208a done (saves as the game's history). Then M208b (load times), a first FAF regression run, and presentation (Phase F).
+8. M208 save/load: M208a done (saves as the game's history). M208b measured: a load replays the game, so it costs what playing it cost, and long games need M208c's snapshots.
+9. ~~A first FAF regression run.~~ Done (`docs/plans/2026-09-25-faf-regression-run.md`). With #101 and #105, FAF's current game Lua plays 3,000 ticks without a script error. Next: longer runs, and presentation (Phase F).
 
 The phases, exit criteria and Definition of Done are in `docs/ROADMAP.md`.
