@@ -72,7 +72,9 @@ At each step it asks whether the units will collide (`UnitsWillCollide`):
 - Each unit is a box in plan view. It is (SizeX + SizeZ) / 4 wide either
   side, and its length is SizeZ plus a braking lead of `speed² / 2
   MaxAcceleration` (speed per second).
-- The box sits ahead of the unit by the lead, along its facing.
+- The box's centre sits the whole lead ahead of the unit, along its
+  facing (`BuildCollisionObb2D`). With a lead longer than the unit, the box
+  no longer covers its rear.
 - They collide if the boxes overlap: a separating-axis test over the four
   axes.
 

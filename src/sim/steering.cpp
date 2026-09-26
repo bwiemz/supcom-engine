@@ -131,7 +131,10 @@ f32 braking_lead(V2 v, const Unit& u, bool ignore_braking) {
     return a > 0 ? speed_sq / (a * 2.0f) : 0.0f;
 }
 
-/// A unit's box in plan view, led by its braking distance.
+/// A unit's box in plan view, led by its braking distance: Moho's
+/// BuildCollisionObb2D, centred the whole lead ahead of the unit and
+/// (SizeZ + lead) long. So a unit braking further than its own length has
+/// a box that no longer covers its rear; that is Moho's placement, kept.
 struct Box {
     V2 center, axis0, axis1;
     f32 extent0 = 0, extent1 = 0;
