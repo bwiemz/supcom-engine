@@ -3962,6 +3962,47 @@ void test_manip(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 7: {}", r.error().message); }
     }
 
+    // Test 8: an animator plays at rate 1 without SetRate, and WaitFor on it
+    // returns once it has played -- as retail's factory FinishBuildThread
+    // and many unit scripts rely on (CreateAnimator(self):PlayAnim(anim)).
+    {
+        auto setup = ctx.lua_state.do_string(R"(
+            local e = GetEntityById(__osc_test_acu_id(1))
+            local anim = e:GetBlueprint().Display.AnimationWalk
+            if not anim then error('no walk animation') end
+            __osc_played = CreateAnimator(e):PlayAnim(anim)
+            if __osc_played:GetRate() ~= 1 then error('rate ' .. __osc_played:GetRate()) end
+            __osc_played_done = false
+            ForkThread(function() WaitFor(__osc_played); __osc_played_done = true end)
+            -- A looping one is never done while it plays; set to rate 0 (a
+            -- held pose) between ticks, its waiter goes on.
+            __osc_held = CreateAnimator(e):PlayAnim(anim, true)
+            __osc_held_done = false
+            ForkThread(function() WaitFor(__osc_held); __osc_held_done = true end)
+        )");
+        for (osc::u32 i = 0; i < 5; i++) ctx.sim.tick();
+        auto early = ctx.lua_state.do_string(R"(
+            if __osc_held_done then error('a looping animator was done') end
+            __osc_held:SetRate(0)
+        )");
+        for (osc::u32 i = 0; i < 60; i++) ctx.sim.tick();
+        auto r = ctx.lua_state.do_string(R"(
+            if not __osc_played_done then
+                error('WaitFor(animator) still waiting at fraction ' .. __osc_played:GetAnimationFraction())
+            end
+            if not __osc_held_done then error('WaitFor(held animator) still waiting') end
+        )");
+        if (setup && early && r) {
+            pass++;
+            spdlog::info("[PASS] Test 8: animators play at rate 1; WaitFor ends as in Moho");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 8: {}", !setup   ? setup.error().message
+                                                        : !early ? early.error().message
+                                                                 : r.error().message);
+        }
+    }
+
     spdlog::info("Manip test: {}/{} passed", pass, pass + fail);
     spdlog::info("Manip test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
