@@ -501,6 +501,30 @@ OrderStep Unit::end_factory_build_order(UnitCommand& cmd) {
 }
 
 OrderStep Unit::order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // Every 6 ticks (Moho's patrol task returns 7), an aircraft low on fuel or damaged
+    // looks for a staging platform, and breaks off to refuel there; the
+    // patrol goes on after (Moho's FindPlatform and IssueRefuelTask).
+    if (cmd.patrol_scan > 0) {
+        --cmd.patrol_scan;
+    } else if (is_air_unit()) {
+        cmd.patrol_scan = 5; // the next look 6 ticks on
+        if (Unit* pad = find_platform(ctx)) {
+            // As Moho's patrol task does (TransportResetReservation): a
+            // carrier's landing points go round again from the first, so two
+            // patrols breaking off to one carrier moments apart can share a
+            // point.
+            pad->reset_storage_reservation();
+            UnitCommand refuel;
+            refuel.type = CommandType::Dock;
+            refuel.target_id = pad->entity_id();
+            refuel.target_pos = pad->position();
+            refuel.command_id = cmd.command_id;
+            refuel.patrol_refuel = true;
+            navigator_.abort_move();
+            command_queue_.push_front(refuel); // cmd stays valid: a deque keeps references
+            return OrderStep::Hold;
+        }
+    }
     if (!navigator_.is_moving() || navigator_.goal().x != cmd.target_pos.x ||
         navigator_.goal().z != cmd.target_pos.z) {
         navigator_.set_goal(cmd.target_pos, ctx.pathfinder, position(), layer_, naval_draft_,

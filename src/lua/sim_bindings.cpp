@@ -767,6 +767,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     rules.repair_amount = number("RefuelingRepairAmount", rules.repair_amount);
                     rules.repair_energy = number("RepairConsumeEnergy", rules.repair_energy);
                     rules.repair_mass = number("RepairConsumeMass", rules.repair_mass);
+                    rules.scan_radius = number("StagingPlatformScanRadius", rules.scan_radius);
                     unit->set_staging_rules(rules);
                 }
                 lua_pop(L, 1);
