@@ -61,6 +61,7 @@ add_executable(osc_tests
     test_no_rush.cpp
     test_replay.cpp
     test_front_end_data.cpp
+    test_blueprint_defaults.cpp
     test_url_bindings.cpp
     test_script_object.cpp
     test_quaternions.cpp

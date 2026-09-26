@@ -4,6 +4,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <utility>
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -91,18 +93,22 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     lua_pop(L, 1); // Display
 
     // Moho hands scripts blueprints rebuilt from its typed copies, so a
-    // numeric weapon field a .bp leaves out reads as 0. Retail's weapon
-    // scripts rely on it: GetDamageTable adds DamageRadius (which 228 of
-    // retail's 494 weapons omit, the UEF commander's gun among them) and the
-    // firing states compare the rack times without nil checks.
-    static constexpr const char* kWeaponNumberDefaults[] = {
-        "Damage",
-        "DamageRadius",
-        "RackRecoilDistance",
-        "RackReloadTimeout",
-        "RackSalvoChargeTime",
-        "RackSalvoReloadTime",
-        "WeaponRepackTimeout",
+    // numeric weapon field a .bp leaves out reads as its default
+    // (RUnitBlueprintWeapon's: 0, and RateOfFire 1). Retail's weapon scripts
+    // rely on it: GetDamageTable adds DamageRadius (which 228 of retail's 494
+    // weapons omit, the UEF commander's gun among them) and the firing
+    // states compare the rack times without nil checks; FAF's projectile
+    // weapons divide by RateOfFire as they are made (the UEF T1 transport's
+    // guidance system has none).
+    static constexpr std::pair<const char*, lua_Number> kWeaponNumberDefaults[] = {
+        {"Damage", 0},
+        {"DamageRadius", 0},
+        {"RackRecoilDistance", 0},
+        {"RackReloadTimeout", 0},
+        {"RackSalvoChargeTime", 0},
+        {"RackSalvoReloadTime", 0},
+        {"RateOfFire", 1},
+        {"WeaponRepackTimeout", 0},
     };
     lua_pushstring(L, "Weapon");
     lua_rawget(L, 1);
@@ -115,14 +121,14 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
                 break;
             }
             if (lua_istable(L, -1)) {
-                for (const char* field : kWeaponNumberDefaults) {
+                for (const auto& [field, value] : kWeaponNumberDefaults) {
                     lua_pushstring(L, field);
                     lua_rawget(L, -2);
                     const bool missing = lua_isnil(L, -1);
                     lua_pop(L, 1);
                     if (!missing) continue;
                     lua_pushstring(L, field);
-                    lua_pushnumber(L, 0);
+                    lua_pushnumber(L, value);
                     lua_rawset(L, -3);
                 }
             }
