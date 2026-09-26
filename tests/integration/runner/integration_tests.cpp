@@ -6769,6 +6769,23 @@ void test_weapon(TestContext& ctx) {
         if weapon ~= seen then error('weapon saw: ' .. weapon) end
     )");
 
+    // GetTargetEntity: its attack order's target (Moho's attacker's desired
+    // target), else nil; FAF's bombers lead their drop at it.
+    lua_check("Test 13: GetTargetEntity is the attack order's target", R"(
+        if moho.unit_methods.GetTargetEntity == nil then error('not on moho.unit_methods') end
+        local x, z = 300, 910
+        local tank = CreateUnitHPR('uel0201', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        local target = CreateUnitHPR('ueb1101', 'ARMY_2', x + 40, GetTerrainHeight(x + 40, z), z, 0, 0, 0)
+        if tank:GetTargetEntity() ~= nil then error('a target before any order') end
+        IssueAttack({tank}, target)
+        if tank:GetTargetEntity() ~= target then error('not the attack order target') end
+        target:Destroy()
+        if tank:GetTargetEntity() ~= nil then error('still the destroyed target') end
+        IssueClearCommands({tank})
+        IssueMove({tank}, {x, GetTerrainHeight(x, z + 10), z + 10})
+        if tank:GetTargetEntity() ~= nil then error('a target while moving') end
+    )");
+
     if (osc::test_status::failure_count() == failures_before) {
         pass++;
         spdlog::info("[PASS] Test 11: the weapon and motion scripts ran without errors");
