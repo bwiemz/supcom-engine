@@ -217,6 +217,7 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
     u.set_repeat_queue(true);
     u.set_overcharge_paused(true);
     u.set_auto_surface_mode(true);
+    u.set_stunned(2.0);
     u.economy().production_active = true;
     u.economy().production_mass = 2;
     u.economy().production_energy = 20;
@@ -265,7 +266,7 @@ TEST_CASE("Each UserUnit method reads the unit's tick", "[userunit]") {
         expect('IsRepeatQueue', u:IsRepeatQueue(), true)
         expect('IsOverchargePaused', u:IsOverchargePaused(), true)
         expect('IsAutoSurfaceMode', u:IsAutoSurfaceMode(), true)
-        expect('IsStunned', u:IsStunned(), false)
+        expect('IsStunned', u:IsStunned(), true)
         expect('IsIdle', u:IsIdle(), false)
         local econ = u:GetEconData()
         expect('massProduced', econ.massProduced, 2)

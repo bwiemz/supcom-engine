@@ -8,6 +8,7 @@
 #include "sim/unit_command.hpp"
 #include "sim/weapon.hpp"
 
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <memory>
@@ -186,6 +187,14 @@ public:
     // State flags
     bool busy() const { return busy_; }
     void set_busy(bool b) { busy_ = b; }
+    /// Stunned for `seconds` (Moho's SetStunned: ten ticks a second, from
+    /// now; a non-positive time ends it). A stunned unit's weapons don't
+    /// fire (Moho's UnitWeapon::CanFire and Fire).
+    void set_stunned(f64 seconds) {
+        stun_ticks_ = seconds > 0 ? static_cast<i32>(std::min(seconds * 10.0, 1e9)) : 0;
+    }
+    bool is_stunned() const { return stun_ticks_ > 0; }
+    i32 stun_ticks() const { return stun_ticks_; }
 
     bool block_command_queue() const { return block_command_queue_; }
     void set_block_command_queue(bool b) { block_command_queue_ = b; }
@@ -913,6 +922,7 @@ private:
     void coast(f64 dt, const map::Terrain* terrain);
     u32 shield_entity_id_ = 0;       // entity ID of shield (set by _c_CreateShield)
     bool busy_ = false;
+    i32 stun_ticks_ = 0; ///< ticks of stun left (set_stunned)
     bool block_command_queue_ = false;
     i32 fire_state_ = 0;         // 0=ReturnFire, 1=HoldFire, 2=HoldGround
     u16 script_bits_ = 0;        // 9 toggle bits (0-8)

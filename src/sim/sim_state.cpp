@@ -2172,6 +2172,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                   (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u) |
                   (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u) |
                   (u.factory_assist_build() ? 64u : 0u));
+        // A stun, only while it lasts.
+        if (u.stun_ticks() > 0)
+            units.mix(0x5354554e00000000ull | static_cast<u32>(u.stun_ticks())); // "STUN"
         mix_str(units, u.layer());
         // A sub's depth and dive (M206o), only when under or on its way, so
         // other units hash as before.
