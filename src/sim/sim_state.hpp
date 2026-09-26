@@ -675,6 +675,8 @@ private:
     void update_victory();
     /// Dispose of a just-defeated army's units per the active share condition.
     void dispose_defeated_army(i32 army);
+    /// Give a unit to `army` (a defeated army's share): true when it went.
+    bool give_unit(Unit& unit, i32 army);
     /// Recipient army index for unit transfer on defeat, or -1 to destroy.
     i32 find_share_recipient(i32 defeated_army) const;
     /// Count alliance-connected components among the given (alive) army indices.

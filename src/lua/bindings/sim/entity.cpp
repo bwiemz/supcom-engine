@@ -500,15 +500,17 @@ int entity_Destroy(lua_State* L) {
         if (e->destroyed()) return 0;
 
         // A unit destroyed without being killed is lost all the same (a
-        // killed one was counted when it died).
-        if (e->is_unit() && !static_cast<sim::Unit*>(e)->is_dying())
+        // killed one was counted when it died). One whose replacement took
+        // its place (ChangeUnitArmy) is handed over, not lost.
+        const bool handed_over = e->is_unit() && static_cast<sim::Unit*>(e)->transferred();
+        if (e->is_unit() && !handed_over && !static_cast<sim::Unit*>(e)->is_dying())
             record_unit_death(L, static_cast<sim::Unit*>(e));
 
         u32 id = e->entity_id();
         int lua_ref = e->lua_table_ref();
 
         // Fire death event for renderer explosion VFX (units only)
-        if (e->is_unit()) {
+        if (e->is_unit() && !handed_over) {
             auto pos = e->position();
             f32 scale = 1.0f;
             if (e->footprint_size_x() > 0) scale = e->footprint_size_x() * 0.5f;

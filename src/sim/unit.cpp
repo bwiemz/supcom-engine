@@ -241,13 +241,6 @@ void Unit::fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L) {
     }
 }
 
-void Unit::clear_on_given_callbacks(lua_State* L) {
-    for (int ref : on_given_callbacks_) {
-        luaL_unref(L, LUA_REGISTRYINDEX, ref);
-    }
-    on_given_callbacks_.clear();
-}
-
 void Unit::begin_dying() {
     if (dying_) return;
     dying_ = true;
@@ -1347,9 +1340,6 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
     if (work_progress_ >= 1.0f) {
         // Capture complete
         u32 target_id = capture_target_id_;
-        i32 target_old_army = -1;
-        if (target->is_unit())
-            target_old_army = static_cast<Unit*>(target)->army();
 
         // Clear being_captured on target
         if (target->is_unit())
@@ -1391,7 +1381,9 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
         target = registry.find(target_id);
         if (!target || target->destroyed()) return false;
 
-        // Call target:OnCaptured(self) — FA Lua handles ownership transfer
+        // Call target:OnCaptured(self): the script hands the unit over
+        // (ChangeUnitArmy makes the captor's new unit). Moho does nothing
+        // more; a script that doesn't leaves the unit where it was.
         if (target->lua_table_ref() >= 0 && lua_table_ref() >= 0) {
             lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
             int target_tbl = lua_gettop(L);
@@ -1409,29 +1401,6 @@ bool Unit::progress_capture(f64 dt, EntityRegistry& registry, lua_State* L,
                 lua_pop(L, 1);
             }
             lua_pop(L, 1); // target_tbl
-        }
-
-        // Re-validate target
-        target = registry.find(target_id);
-        if (!target || target->destroyed()) return false;
-
-        // C++ fallback: if OnCaptured didn't change army, do it directly
-        if (target->is_unit()) {
-            auto* tu = static_cast<Unit*>(target);
-            if (tu->army() == target_old_army) {
-                spdlog::info("capture C++ fallback: transferring #{} "
-                             "from army {} to army {}",
-                             target_id, target_old_army, army());
-                tu->set_army(army());
-                // Update Army field on Lua table
-                if (target->lua_table_ref() >= 0) {
-                    lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
-                    lua_pushstring(L, "Army");
-                    lua_pushnumber(L, army() + 1); // 1-based for Lua
-                    lua_rawset(L, -3);
-                    lua_pop(L, 1);
-                }
-            }
         }
 
         return false; // capture done
@@ -2485,7 +2454,6 @@ void Unit::release_weapon_scripts(lua_State* L) {
         unref(w->blueprint_ref);
         unref(w->weapon_priorities_ref);
     }
-    clear_on_given_callbacks(L);
 }
 
 void Unit::remove_manipulator(Manipulator* m) {

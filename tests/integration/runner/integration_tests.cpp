@@ -1608,127 +1608,71 @@ void test_upgrade(TestContext& ctx) {
 
 // Capture test: ARMY_1 ACU builds enemy pgen, captures it
 void test_capture(TestContext& ctx) {
-    spdlog::info("=== CAPTURE TEST: Build enemy pgen, capture it ===");
-
-    auto ct_result = ctx.lua_state.do_string(R"(
-        ForkThread(function()
-            WaitTicks(10)
-
-            local acu = GetEntityById(__osc_test_acu_id(1)) -- ARMY_1 ACU
-            if not acu then
-                LOG('CAPTURE TEST FAILED: no entity #1')
-                return
-            end
-            local acu_army = acu:GetArmy()
-            LOG('Capture test: ACU #' .. acu:GetEntityId() ..
-                ' army=' .. acu_army)
-
-            -- Build a T1 pgen via ACU so it goes through the normal
-            -- build lifecycle (avoids OnCreate/OnStopBeingBuilt issues
-            -- from CreateUnitHPR for non-ACU units)
-            local pos = acu:GetPosition()
-            local build_pos = {pos[1] + 10, pos[2], pos[3]}
-            LOG('Capture test: ACU building ueb1101')
-            IssueBuildMobile({acu}, build_pos, 'ueb1101', {})
-
-            -- Wait for build to complete
-            for i = 1, 200 do
-                WaitTicks(5)
-                if acu:IsIdleState() then break end
-            end
-
-            -- Find the pgen
-            local enemy_pgen = nil
-            enemy_pgen = __osc_test_find_unit('ueb1101')
-
-            if not enemy_pgen then
-                LOG('CAPTURE TEST FAILED: pgen not found after build')
-                return
-            end
-            LOG('Capture test: pgen #' .. enemy_pgen:GetEntityId() ..
-                ' built, army=' .. enemy_pgen:GetArmy())
-
-            -- Transfer pgen to ARMY_2 using ChangeUnitArmy
-            ChangeUnitArmy(enemy_pgen, 2)
-            LOG('Capture test: transferred pgen to ARMY_2, army=' ..
-                enemy_pgen:GetArmy())
-            local pgen_id = enemy_pgen:GetEntityId()
-            local pgen_army_before = enemy_pgen:GetArmy()
-            LOG('Capture test: enemy pgen #' .. pgen_id ..
-                ' army=' .. pgen_army_before ..
-                ' health=' .. enemy_pgen:GetHealth() .. '/' ..
-                enemy_pgen:GetMaxHealth())
-
-            -- Verify it belongs to ARMY_2
-            if pgen_army_before ~= 2 then
-                LOG('CAPTURE TEST FAILED: pgen army=' ..
-                    pgen_army_before .. ' expected 2')
-                return
-            end
-
-            -- Hold fire so ACU doesn't kill pgen during capture
-            acu:SetFireState(1) -- HoldFire
-            IssueCapture({acu}, enemy_pgen)
-            LOG('Capture test: ACU capturing enemy pgen (fire=hold)')
-
-            -- Wait for capture to complete
-            local captured = false
-            for i = 1, 500 do
-                WaitTicks(5)
-                if IsDestroyed(enemy_pgen) then
-                    LOG('CAPTURE TEST FAILED: pgen destroyed during capture')
-                    return
-                end
-                local cur_army = enemy_pgen:GetArmy()
-                if math.mod(i, 20) == 0 then
-                    local wp = acu:GetWorkProgress()
-                    LOG('Capture test: tick ' .. (i*5) ..
-                        ' army=' .. cur_army ..
-                        ' workProgress=' .. string.format('%.2f', wp))
-                end
-                if cur_army == acu_army then
-                    LOG('Capture test: pgen captured at tick ' .. (i*5))
-                    captured = true
-                    break
-                end
-            end
-
-            if not captured then
-                LOG('CAPTURE TEST FAILED: pgen not captured after timeout')
-                return
-            end
-
-            -- Verify entity still alive
-            if IsDestroyed(enemy_pgen) then
-                LOG('CAPTURE TEST FAILED: pgen destroyed after capture')
-                return
-            end
-
-            local final_army = enemy_pgen:GetArmy()
-            local final_hp = enemy_pgen:GetHealth()
-            local max_hp = enemy_pgen:GetMaxHealth()
-            LOG('CAPTURE TEST: ALL PASSED (army=' .. final_army ..
-                ' health=' .. string.format('%.0f', final_hp) ..
-                '/' .. max_hp .. ')')
-        end)
-    )");
-    if (!ct_result) {
-        spdlog::warn("Capture test injection error: {}",
-                     ct_result.error().message);
-    }
-
-    spdlog::info("Running capture test ticks...");
-    for (int i = 0; i < 500; i++) {
-        ctx.sim.tick();
-        if ((i + 1) % 100 == 0) {
-            spdlog::info("  tick {}: {} entities",
-                         i + 1, ctx.sim.entity_registry().count());
+    spdlog::info("=== CAPTURE TEST: the commander captures a power generator ===");
+    const auto lua = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (r) spdlog::info("[PASS] {}", what);
+        else osc::test_status::fail("[FAIL] {}: {}", what, r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto run_until = [&](const char* done, int max_ticks) {
+        for (int i = 0; i < max_ticks; i += 5) {
+            for (int t = 0; t < 5; ++t) ctx.sim.tick();
+            if (ctx.lua_state.do_string(std::string("if not (") + done + ") then error() end"))
+                return true;
         }
-    }
+        return false;
+    };
 
-    spdlog::info("Capture test: {} entities, {} threads",
-                 ctx.sim.entity_registry().count(),
-                 ctx.sim.thread_manager().active_count());
+    // The commander builds a T1 power generator, which is given to ARMY_2:
+    // ChangeUnitArmy gives the new army a new unit in its place.
+    if (!lua("setup: the commander builds a power generator", R"(
+            __osc_acu = GetEntityById(__osc_test_acu_id(1))
+            local pos = __osc_acu:GetPosition()
+            IssueBuildMobile({__osc_acu}, {pos[1] + 10, pos[2], pos[3]}, 'ueb1101', {})
+        )"))
+        return;
+    if (!run_until("__osc_test_find_unit('ueb1101') and "
+                   "__osc_test_find_unit('ueb1101'):GetFractionComplete() >= 1",
+                   1500)) {
+        osc::test_status::fail("[FAIL] the power generator was never finished");
+        return;
+    }
+    if (!lua("Test 1: given to ARMY_2, a new power generator of ARMY_2 takes its place, hurt as it "
+             "was",
+             R"(
+            local built = __osc_test_find_unit('ueb1101')
+            __osc_pgen_hp = built:GetMaxHealth() - 50
+            built:SetHealth(nil, __osc_pgen_hp)
+            __osc_enemy_pgen = ChangeUnitArmy(built, 2)
+            if not __osc_enemy_pgen or __osc_enemy_pgen:GetArmy() ~= 2 then error('not given') end
+            if not IsDestroyed(built) then error('the given one is still there') end
+            if math.abs(__osc_enemy_pgen:GetHealth() - __osc_pgen_hp) > 0.01 then
+                error('health ' .. __osc_enemy_pgen:GetHealth())
+            end
+            __osc_pgen_id = __osc_enemy_pgen:GetEntityId()
+            __osc_pgen_pos = __osc_enemy_pgen:GetPosition()
+            __osc_lost_before = GetArmyBrain('ARMY_2'):GetArmyStat('Units_Killed', 0).Value
+            __osc_acu:SetFireState(1) -- hold fire: capture it, don't kill it
+            IssueCapture({__osc_acu}, __osc_enemy_pgen)
+        )"))
+        return;
+
+    // Retail's OnCaptured hands it over (TransferUnitsOwnership ->
+    // ChangeUnitArmy): the captor's army gets a new one where it stood.
+    if (!run_until("IsDestroyed(__osc_enemy_pgen)", 2500)) {
+        osc::test_status::fail("[FAIL] Test 2: the power generator was never captured");
+        return;
+    }
+    lua("Test 2: captured, ARMY_1 has a new power generator where it stood", R"(
+        local mine = __osc_test_find_unit('ueb1101', 1)
+        if not mine then error('ARMY_1 has none') end
+        if mine:GetEntityId() == __osc_pgen_id then error('the same unit') end
+        if VDist3(mine:GetPosition(), __osc_pgen_pos) > 0.01 then error('elsewhere') end
+        if math.abs(mine:GetHealth() - __osc_pgen_hp) > 0.01 then error('health ' .. mine:GetHealth()) end
+        local lost = GetArmyBrain('ARMY_2'):GetArmyStat('Units_Killed', 0).Value
+        if lost ~= __osc_lost_before then error('ARMY_2 counted it lost') end
+    )");
 }
 
 // Path test: A* pathfinding around obstacles + terrain height tracking
@@ -11513,6 +11457,269 @@ void test_carrier_land(TestContext& ctx) {
     spdlog::info("Carrier land test: {}/{} passed", pass, pass + fail);
 }
 
+// ====================================================================
+// ChangeUnitArmy by replacement (M206v; Moho's Sim::TransferUnit): a new
+// unit of the new army takes the old one's place, with its health, name
+// and cargo; the old one is destroyed, script state and all.
+// ====================================================================
+void test_change_army(TestContext& ctx) {
+    spdlog::info("=== CHANGE ARMY TEST: units change army by replacement (M206v) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] change army script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto lua_check = [&](const char* what, const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        check(static_cast<bool>(r),
+              r ? std::string(what) : std::string(what) + ": " + r.error().message);
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua_State* L = ctx.lua_state.raw();
+        if (!lua(("__osc_id = " + expr + " and " + expr + ":GetEntityId()").c_str()))
+            return nullptr;
+        lua_pushstring(L, "__osc_id");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        auto* e = ctx.sim.entity_registry().find(id);
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    const auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) ctx.sim.tick();
+    };
+    auto& registry = ctx.sim.entity_registry();
+    lua_State* L = ctx.lua_state.raw();
+
+    // A hurt, named tank of army 1 with a thread of its own and a field its
+    // script set.
+    if (!lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        function __osc_at(dx, dz, up)
+            return x + 20 + dx, GetTerrainHeight(x + 20 + dx, z + 20 + dz) + (up or 0), z + 20 + dz
+        end
+        local tx, ty, tz = __osc_at(0, 0)
+        __osc_tank = CreateUnitHPR('uel0201', 'ARMY_1', tx, ty, tz, 0, 0, 0)
+        __osc_tank:SetHealth(nil, __osc_tank:GetMaxHealth() - 100)
+        __osc_tank.OldOwnerMark = true
+        __osc_ticks = 0
+        __osc_tank:ForkThread(function()
+            while true do
+                __osc_ticks = __osc_ticks + 1
+                WaitTicks(1)
+            end
+        end)
+    )"))
+        return;
+    if (auto* t = unit("__osc_tank")) t->set_custom_name("Fred");
+    run(3);
+    lua(R"(
+        __osc_lost_before = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
+        __osc_old_tank, __osc_old_id = __osc_tank, __osc_tank:GetEntityId()
+        __osc_old_pos = __osc_tank:GetPosition()
+        __osc_new_tank = ChangeUnitArmy(__osc_tank, 2)
+        __osc_ticks_at = __osc_ticks
+    )");
+    run(5);
+    lua_check("Test 1: a new unit of the new army takes the old one's place, with its health", R"(
+        local n = __osc_new_tank
+        if not n then error('ChangeUnitArmy gave nil') end
+        if n:GetEntityId() == __osc_old_id then error('the same unit came back') end
+        if n:GetArmy() ~= 2 then error('army ' .. n:GetArmy()) end
+        if VDist3(n:GetPosition(), __osc_old_pos) > 0.01 then error('it moved') end
+        if math.abs(n:GetHealth() - (n:GetMaxHealth() - 100)) > 0.01 then error('health ' .. n:GetHealth()) end
+    )");
+    lua_check("Test 2: the old unit is gone, script state and thread with it, and not as a loss",
+              R"(
+        if not IsDestroyed(__osc_old_tank) then error('the old unit is still there') end
+        if __osc_new_tank.OldOwnerMark then error('the old script state came along') end
+        if __osc_ticks ~= __osc_ticks_at then error('the old thread still runs') end
+        local lost = GetArmyBrain('ARMY_1'):GetArmyStat('Units_Killed', 0).Value
+        if lost ~= __osc_lost_before then error('counted as lost: ' .. lost) end
+    )");
+    {
+        auto* t = unit("__osc_new_tank");
+        check(t && t->custom_name() == "Fred", "Test 3: its custom name comes with it");
+    }
+    lua_check("Test 4: a unit already of that army is an error", R"(
+        local ok, err = pcall(ChangeUnitArmy, __osc_new_tank, 2)
+        if ok or not string.find(tostring(err), 'already belongs') then error(tostring(err)) end
+    )");
+
+    // A structure: its replacement stands where it stood, so its footprint
+    // stays blocked.
+    lua(R"(
+        local x, y, z = __osc_at(40, 0)
+        __osc_pgen = CreateUnitHPR('ueb1101', 'ARMY_1', x, y, z, 0, 0, 0)
+        __osc_new_pgen = ChangeUnitArmy(__osc_pgen, 2)
+    )");
+    run(2);
+    {
+        auto* p = unit("__osc_new_pgen");
+        auto* grid = ctx.sim.pathfinding_grid();
+        bool blocked = false;
+        if (p && grid) {
+            osc::u32 gx = 0, gz = 0;
+            grid->world_to_grid(p->position().x, p->position().z, gx, gz);
+            blocked = grid->get(gx, gz) == osc::map::CellPassability::Obstacle;
+        }
+        check(p && p->army() == 1 && blocked,
+              "Test 5: a structure's replacement blocks the ground it stood on");
+        // ...until it goes: the old one's claim went with it.
+        if (p && grid) {
+            osc::u32 gx = 0, gz = 0;
+            grid->world_to_grid(p->position().x, p->position().z, gx, gz);
+            lua("__osc_new_pgen:Destroy()");
+            run(1);
+            check(grid->get(gx, gz) != osc::map::CellPassability::Obstacle,
+                  "Test 5b: when the replacement is destroyed its ground is clear");
+        }
+    }
+
+    // A transport with two engineers aboard: they change army too, and ride
+    // the new transport.
+    lua(R"(
+        local x, y, z = __osc_at(0, 60, 12)
+        __osc_xport = CreateUnitHPR('uea0107', 'ARMY_1', x, y, z, 0, 0, 0)
+        __osc_eng1 = CreateUnitHPR('uel0105', 'ARMY_1', x + 4, y - 12, z, 0, 0, 0)
+        __osc_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', x - 4, y - 12, z, 0, 0, 0)
+    )");
+    std::vector<osc::u32> old_engs;
+    if (auto* xport = unit("__osc_xport"))
+        for (const char* eng : {"__osc_eng1", "__osc_eng2"})
+            if (auto* e = unit(eng)) {
+                old_engs.push_back(e->entity_id());
+                e->attach_to_transport(xport, registry, L);
+            }
+    lua("__osc_new_xport = ChangeUnitArmy(__osc_xport, 2)");
+    run(2);
+    {
+        auto* x = unit("__osc_new_xport");
+        bool all = x && x->army() == 1 && x->cargo_ids().size() == 2;
+        for (const osc::u32 id : x ? x->cargo_ids() : std::vector<osc::u32>{}) {
+            const auto* e = registry.find(id);
+            all = all && e && e->is_unit() && e->army() == 1 &&
+                  std::find(old_engs.begin(), old_engs.end(), id) == old_engs.end() &&
+                  static_cast<const osc::sim::Unit*>(e)->transport_id() == x->entity_id();
+        }
+        for (const osc::u32 id : old_engs) {
+            const auto* o = registry.find(id);
+            all = all && (!o || o->destroyed());
+        }
+        check(all && old_engs.size() == 2,
+              fmt::format("Test 6: a transport's cargo changes army with it, aboard the new one "
+                          "({} aboard)",
+                          x ? x->cargo_ids().size() : 0));
+    }
+
+    // One carrying a commander stays as it is.
+    lua(R"(
+        local x, y, z = __osc_at(0, 90, 12)
+        __osc_xport2 = CreateUnitHPR('uea0107', 'ARMY_1', x, y, z, 0, 0, 0)
+    )");
+    const osc::u32 acu_id = army_acu_id(ctx.sim, 0);
+    if (auto* x2 = unit("__osc_xport2")) {
+        x2->add_cargo(acu_id);
+        lua("__osc_given = ChangeUnitArmy(__osc_xport2, 2) or false");
+        x2 = unit("__osc_xport2");
+        lua_check("Test 7: a transport carrying a commander stays as it is (nil)", R"(
+            if __osc_given ~= false then error('it was given') end
+            if IsDestroyed(__osc_xport2) or __osc_xport2:GetArmy() ~= 1 then error('it changed') end
+        )");
+        if (x2) x2->remove_cargo(acu_id);
+    }
+
+    // An aircraft in flight keeps its height and heading (a new one starts
+    // facing 0), flying east.
+    lua(R"(
+        local x, y, z = __osc_at(30, 30)
+        __osc_plane = CreateUnitHPR('uea0102', 'ARMY_1', x, y, z, 0, 0, 0)
+        local tx, ty, tz = __osc_at(230, 30)
+        IssueMove({__osc_plane}, {tx, ty, tz})
+    )");
+    run(30);
+    {
+        auto* p = unit("__osc_plane");
+        const float y = p ? p->position().y : 0.0f;
+        const float heading = p ? p->heading() : 0.0f;
+        lua("__osc_new_plane = ChangeUnitArmy(__osc_plane, 2)");
+        auto* n = unit("__osc_new_plane");
+        check(p && n && n->layer() == "Air" && std::abs(n->position().y - y) < 0.01f &&
+                  std::abs(heading) > 0.5f && std::abs(n->heading() - heading) < 1e-4f,
+              fmt::format("Test 8: an aircraft in flight keeps its height and heading "
+                          "({:.2f} -> {:.2f}, heading {:.2f} -> {:.2f})",
+                          y, n ? n->position().y : 0.0f, heading, n ? n->heading() : 0.0f));
+    }
+
+    // A carrier with an aircraft stored: it is stored in the new carrier.
+    lua(R"(
+        local cx, cz
+        for tz = 100, 900, 16 do
+            for tx = 100, 900, 16 do
+                if not cx and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 8 then
+                    cx, cz = tx, tz
+                end
+            end
+        end
+        if cx then
+            __osc_carrier = CreateUnitHPR('uas0303', 'ARMY_1', cx, GetSurfaceHeight(cx, cz), cz, 0, 0, 0)
+            __osc_stored = CreateUnitHPR('uaa0303', 'ARMY_1', cx, GetSurfaceHeight(cx, cz) + 10, cz, 0, 0, 0)
+            __osc_stored2 = CreateUnitHPR('uaa0303', 'ARMY_1', cx, GetSurfaceHeight(cx, cz) + 12, cz, 0, 0, 0)
+        end
+    )");
+    if (auto* carrier = unit("__osc_carrier")) {
+        std::vector<osc::u32> old_planes;
+        for (const char* plane : {"__osc_stored", "__osc_stored2"})
+            if (auto* s = unit(plane)) {
+                old_planes.push_back(s->entity_id());
+                carrier->add_to_storage(*s, registry, L);
+            }
+        lua("__osc_new_carrier = ChangeUnitArmy(__osc_carrier, 2)");
+        run(2);
+        auto* c = unit("__osc_new_carrier");
+        bool all = c && old_planes.size() == 2 && c->stored_ids().size() == 2;
+        for (const osc::u32 id : c ? c->stored_ids() : std::vector<osc::u32>{}) {
+            const auto* s = registry.find(id);
+            all = all && s && s->army() == 1 &&
+                  std::find(old_planes.begin(), old_planes.end(), id) == old_planes.end();
+        }
+        for (const osc::u32 id : old_planes) all = all && !registry.find(id);
+        check(all, fmt::format("Test 9: a carrier's stored aircraft change army, stored in the "
+                               "new carrier ({} stored)",
+                               c ? c->stored_ids().size() : 0));
+    } else {
+        check(false, "Test 9: no carrier (no deep water on the map)");
+    }
+
+    // A defeated army's units defect (the engine's share on defeat) through
+    // ChangeUnitArmy too: new units of the army they go to.
+    lua(R"(
+        __osc_defector = __osc_new_tank
+        __osc_defector_pos = __osc_defector:GetPosition()
+    )");
+    ctx.sim.set_share_condition("Defectors");
+    ctx.sim.defeat_army(1);
+    lua_check("Test 10: a defeated army's units go over to an enemy as new units", R"(
+        if not IsDestroyed(__osc_defector) then error('the defector is still there') end
+        local found = __osc_test_find_unit('uel0201', 1)
+        if not found or VDist3(found:GetPosition(), __osc_defector_pos) > 0.01 then
+            error('ARMY_1 has no tank where it stood')
+        end
+    )");
+
+    spdlog::info("=== CHANGE ARMY TEST: {} passed, {} failed ===", pass, fail);
+}
+
 void test_air_turn(TestContext& ctx) {
     spdlog::info("=== AIR TURN TEST: aircraft turn at Air.TurnSpeed radians a second ===");
     int pass = 0, fail = 0;
@@ -13427,53 +13634,31 @@ void test_medstub(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 3: SetBoneEnabled nonexistent — {}", r.error().message); }
     }
 
-    // --- AddOnGivenCallback tests ---
-    // Test 4: Register callback via C++ moho binding, call ChangeUnitArmy, callback fires
+    // --- ChangeUnitArmy test ---
+    // Test 4: giving a unit to its own army is an error (Moho's
+    // "Unit already belongs to army"), and the unit stays.
     {
         auto r = ctx.lua_state.do_string(
-            "local e = GetEntityById(" + id_str + ")\n"
-            "_test_given_fired = false\n"
-            "-- Call the C++ moho binding directly (bypassing FA Lua class override)\n"
-            "local moho_fn = moho.unit_methods.AddOnGivenCallback\n"
-            "if not moho_fn then error('moho.unit_methods.AddOnGivenCallback is nil') end\n"
-            "moho_fn(e, function(unit)\n"
-            "    _test_given_fired = true\n"
-            "end)\n"
-            "local orig_army = e:GetArmy()\n"
-            "ChangeUnitArmy(e, orig_army, true)\n"  // noRestrictions=true to bypass COMMAND check
-            "if not _test_given_fired then error('callback did not fire') end\n");
+            "local e = GetEntityById(" + id_str +
+            ")\n"
+            "local ok, err = pcall(ChangeUnitArmy, e, e:GetArmy())\n"
+            "if ok or not string.find(tostring(err), 'already belongs') then\n"
+            "    error('expected an error, got ' .. tostring(err))\n"
+            "end\n"
+            "if IsDestroyed(e) then error('the unit went') end\n");
         bool ok = !!r;
-        if (ok) { pass++; spdlog::info("[PASS] Test 4: AddOnGivenCallback fires on ChangeUnitArmy"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: AddOnGivenCallback — {}", r.error().message); }
-    }
-
-    // Test 5: ChangeUnitArmy without moho callback → no crash
-    {
-        // Find a second unit to test on (no moho callbacks registered)
-        osc::u32 test_id2 = 0;
-        for (osc::u32 id = test_id + 1; id <= static_cast<osc::u32>(reg.count()) + 200; id++) {
-            auto* e = reg.find(id);
-            if (e && !e->destroyed() && e->is_unit()) {
-                test_id2 = id;
-                break;
-            }
-        }
-        if (test_id2 > 0) {
-            std::string id2_str = std::to_string(test_id2);
-            auto r = ctx.lua_state.do_string(
-                "local e = GetEntityById(" + id2_str + ")\n"
-                "local army = e:GetArmy()\n"
-                "ChangeUnitArmy(e, army)\n");
-            bool ok = !!r;
-            if (ok) { pass++; spdlog::info("[PASS] Test 5: ChangeUnitArmy without callback (no crash)"); }
-            else { fail++; osc::test_status::fail("[FAIL] Test 5: ChangeUnitArmy no callback — {}", r.error().message); }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 4: ChangeUnitArmy to its own army is an error");
         } else {
-            pass++; spdlog::info("[PASS] Test 5: Skipped (only one unit), counting as pass");
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: ChangeUnitArmy own army — {}",
+                                   r.error().message);
         }
     }
 
     // --- AddBoundedProp test ---
-    // Test 6: AddBoundedProp on a prop entity returns nil, no crash
+    // Test 5: AddBoundedProp on a prop entity returns nil, no crash
     // AddBoundedProp is in prop_methods, so call it via moho.prop_methods
     {
         auto r = ctx.lua_state.do_string(
@@ -13483,8 +13668,13 @@ void test_medstub(TestContext& ctx) {
             "local result = fn(e)\n"
             "if result ~= nil then error('expected nil, got ' .. tostring(result)) end\n");
         bool ok = !!r;
-        if (ok) { pass++; spdlog::info("[PASS] Test 6: AddBoundedProp returns nil"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 6: AddBoundedProp — {}", r.error().message); }
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 5: AddBoundedProp returns nil");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 5: AddBoundedProp — {}", r.error().message);
+        }
     }
 
     spdlog::info("Medium stub test: {}/{} passed", pass, pass + fail);
