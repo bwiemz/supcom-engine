@@ -337,8 +337,15 @@ public:
     /// issued while human input is active) go to the network sink to be
     /// broadcast + scheduled; every other order (single-player, or a
     /// deterministic AI/sim order under multiplayer) applies directly now.
-    void route_command(const std::vector<u32>& unit_ids,
-                       const UnitCommand& command, bool clear_existing);
+    /// Returns the command id an order applied now went into queues with
+    /// (a fresh one unless it came with its own), which is what Issue* hands
+    /// scripts for IsCommandDone; 0 for a scheduled order, a Stop, a factory
+    /// command, or one no unit took.
+    u32 route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                      bool clear_existing);
+    /// Whether a live unit still has the command in its queue (IsCommandDone
+    /// is its negation: a command is done once no unit holds it).
+    bool command_queued(u32 command_id) const;
     /// A player's order for the units they selected, as Moho's UI issues it
     /// (M206k): a move, patrol or transport call goes to the RALLYPOINT
     /// units among them (factories) as a factory command -- their rally

@@ -38,6 +38,14 @@ template <typename T> const T* arg(const SimCallbackEntry& cb, const char* key) 
     return it == cb.args.end() ? nullptr : std::get_if<T>(&it->second);
 }
 
+/// A number argument within [lo, hi], else nullptr. The check is a range
+/// that NaN fails: callbacks arrive over the network, and a NaN cast to an
+/// integer is undefined (and may differ between peers).
+const f64* number_in(const SimCallbackEntry& cb, const char* key, f64 lo, f64 hi) {
+    const auto* v = arg<f64>(cb, key);
+    return v && *v >= lo && *v <= hi ? v : nullptr;
+}
+
 /// The live units a callback names, in its order.
 template <typename Fn> void for_each_unit(SimState& sim, const SimCallbackEntry& cb, Fn fn) {
     for (u32 eid : cb.unit_ids) {
@@ -149,19 +157,33 @@ bool push_callbacks_module(lua_State* L) {
 
 /// DecreaseBuildCountInQueue: fewer of one of a factory's queued blueprints.
 void decrease_build_count(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
-    const auto* index = arg<f64>(cb, "Index");
-    const auto* count = arg<f64>(cb, "Count");
-    if (!index || !count || *index < 1 || *index > 1e6 || *count < 1 || *count > 1e6) return;
+    const auto* index = number_in(cb, "Index", 1, 1e6);
+    const auto* count = number_in(cb, "Count", 1, 1e6);
+    if (!index || !count) return;
     for_each_unit(sim, cb, [&](Unit& u) {
         u.decrease_build_count(static_cast<int>(*index), static_cast<int>(*count),
                                sim.entity_registry(), L);
     });
 }
 
+/// IncreaseBuildCountInQueue: more of one of a factory's queued blueprints.
+/// FA's queue display asks for 1 or 5 at a time; a request comes from the
+/// network, so a count past kMaxBuildCountIncrease (which would only grow
+/// the queue by that many orders) is refused.
+constexpr f64 kMaxBuildCountIncrease = 1000;
+void increase_build_count(SimState& sim, const SimCallbackEntry& cb) {
+    const auto* index = number_in(cb, "Index", 1, 1e6);
+    const auto* count = number_in(cb, "Count", 1, kMaxBuildCountIncrease);
+    if (!index || !count) return;
+    for_each_unit(sim, cb, [&](Unit& u) {
+        u.increase_build_count(static_cast<int>(*index), static_cast<int>(*count));
+    });
+}
+
 /// A dropped player's army is defeated.
 void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
-    const auto* army = arg<f64>(cb, "Army");
-    if (!army || *army < 0 || *army >= static_cast<f64>(sim.army_count())) return;
+    const auto* army = number_in(cb, "Army", 0, static_cast<f64>(sim.army_count()) - 1);
+    if (!army) return;
     sim.defeat_army(static_cast<i32>(*army));
 }
 
@@ -213,6 +235,7 @@ void SimState::run_sim_callback(const SimCallbackEntry& cb) {
     if (cb.func_name == kProcessInfoCallback) process_info(*this, L, cb);
     else if (cb.func_name == kUnitSettingCallback) unit_setting(*this, L, cb);
     else if (cb.func_name == kDecreaseBuildCountCallback) decrease_build_count(*this, L, cb);
+    else if (cb.func_name == kIncreaseBuildCountCallback) increase_build_count(*this, cb);
     else if (cb.func_name == kDefeatArmyCallback) defeat_dropped_army(*this, cb);
     else do_callback(*this, L, cb);
     lua_settop(L, top);
