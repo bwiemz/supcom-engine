@@ -15622,6 +15622,26 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             osc::test_status::fail("[FAIL] Test 10w: after Stop the commander is {}",
                                    acu && acu->is_enhancing() ? "still enhancing" : "not idle");
     }
+    // The sim's enhancement table reaches the UI (retail SimSync's
+    // SyncUnitEnhancements -> Sync.UserUnitEnhancements -> UserSync), keyed
+    // by the id GetEntityId gives: the construction and unit views look an
+    // enhancement up by it.
+    const char* kAcu = "ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]";
+    sim_lua(
+        (std::string("AddUnitEnhancement(") + kAcu + ", 'AdvancedEngineering', 'LCH')").c_str());
+    play(1);
+    lua_ok("Test 10w1: the UI hears of the commander's enhancement", R"(
+        local id = GetArmyAvatars()[1]:GetEntityId()
+        if type(id) ~= 'string' then error('GetEntityId gave a ' .. type(id)) end
+        local e = import('/lua/enhancementcommon.lua').GetEnhancements(id)
+        if not e or e.LCH ~= 'AdvancedEngineering' then error('enhancements: ' .. repr(e)) end
+    )");
+    sim_lua((std::string("RemoveAllUnitEnhancements(") + kAcu + ")").c_str());
+    play(1);
+    lua_ok("Test 10w2: ...and of its removal", R"(
+        local id = GetArmyAvatars()[1]:GetEntityId()
+        if import('/lua/enhancementcommon.lua').GetEnhancements(id) then error('still listed') end
+    )");
     // The orders panel's Dock (M206r): six interceptors and two pads of four,
     // 40 and 90 from them. The nearest can't take all six, so they are
     // shared among the pads within 100 of its distance, the roomiest first
