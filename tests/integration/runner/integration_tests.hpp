@@ -105,6 +105,7 @@ void test_transport_slots(TestContext& ctx);
 void test_transport_pickup(TestContext& ctx);
 void test_transport_drop(TestContext& ctx);
 void test_carrier(TestContext& ctx);
+void test_air_turn(TestContext& ctx);
 void test_factory_assist(TestContext& ctx);
 void test_factory_rally(TestContext& ctx);
 void test_naval_depth(TestContext& ctx);

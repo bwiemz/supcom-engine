@@ -1094,7 +1094,7 @@ private:
     f32 current_airspeed_ = 0;   // current speed (ramps toward max_airspeed_)
     f32 current_altitude_ = 0;   // actual Y offset above terrain
     f32 max_airspeed_ = 0;       // from blueprint Air.MaxAirspeed (fallback: max_speed_)
-    f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (deg→rad)
+    f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
     f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
