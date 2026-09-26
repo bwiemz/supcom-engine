@@ -89,6 +89,10 @@ struct UnitCommand {
     /// A WaitForFerry order: the ferry that took the unit, which it boards
     /// (runtime state; 0 while it waits).
     u32 assigned_id = 0;
+    /// A factory build whose unit is done: ticks until it next looks at
+    /// whether the factory is still busy rolling the unit off (runtime
+    /// state; 0 while it builds). See Unit::order_build_in_place.
+    i32 rolloff_wait = 0;
 };
 
 } // namespace osc::sim

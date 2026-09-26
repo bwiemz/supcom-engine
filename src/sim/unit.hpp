@@ -154,6 +154,7 @@ public:
     /// This factory's build came from the queue of a factory it guards
     /// (M206h): the guard order runs it, and cancels it when it ends.
     bool factory_assist_build() const { return factory_assist_build_; }
+    i32 assist_rolloff_wait() const { return assist_rolloff_wait_; }
 
     f64 build_time() const { return build_time_; }
     void set_build_time(f64 t) { build_time_ = t; }
@@ -804,6 +805,12 @@ private:
     OrderStep order_build_mobile(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
     /// A factory's build, or an upgrade: started where the unit stands.
     OrderStep order_build_in_place(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A finished factory build order's end: to the back of a repeating
+    /// queue, else out of it.
+    OrderStep end_factory_build_order(UnitCommand& cmd);
+    /// Whether a factory whose unit is built still holds for the roll-off,
+    /// counting `wait` down (see the definition).
+    bool holds_for_rolloff(i32& wait) const;
     /// Go to the point, then queue it again at the back.
     OrderStep order_patrol(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_reclaim(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -929,6 +936,7 @@ private:
     std::string enhance_slot_; // blueprint Slot of enhance_name_, "" if none
     bool immobile_ = false;
     bool factory_assist_build_ = false;           // see factory_assist_build()
+    i32 assist_rolloff_wait_ = 0; ///< an assist build's roll-off (holds_for_rolloff)
     std::unordered_set<std::string> unit_states_; // generic string-based states
     f32 shield_ratio_ = 1.0f;    // shield health ratio (0-1)
     // Bone visibility

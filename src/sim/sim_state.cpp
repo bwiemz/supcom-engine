@@ -2198,6 +2198,9 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                   (u.repeat_queue() ? 4u : 0u) | (u.auto_surface_mode() ? 8u : 0u) |
                   (u.is_dying() ? 16u : 0u) | (u.is_being_built() ? 32u : 0u) |
                   (u.factory_assist_build() ? 64u : 0u));
+        // An assist build's roll-off, only while under way.
+        if (u.assist_rolloff_wait() != 0)
+            units.mix(0x524f4c4c00000000ull | static_cast<u32>(u.assist_rolloff_wait())); // "ROLL"
         mix_str(units, u.layer());
         // A sub's depth and dive (M206o), only when under or on its way, so
         // other units hash as before.
@@ -2241,6 +2244,11 @@ SimState::ChecksumParts SimState::checksum_parts() const {
                        (cmd.approached ? 4u : 0u) | (cmd.in_band ? 8u : 0u));
             orders.mix(cmd.beacon_id);
             orders.mix(cmd.assigned_id);
+            // A factory rolling its unit off, only then (as the cargo below).
+            if (cmd.rolloff_wait != 0) {
+                orders.mix(0x524f4c4cu); // "ROLL"
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
+            }
             // A specific unload's cargo; only when set, so other orders hash
             // as before it existed.
             if (!cmd.unload_ids.empty()) {
