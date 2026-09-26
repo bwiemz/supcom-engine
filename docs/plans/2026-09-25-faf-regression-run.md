@@ -91,6 +91,17 @@ With all of these in, the 18,000-tick game has **no script errors**. What remain
 - Three "It was a unit!" warnings: FAF's shield collider is told of a collision with a unit, which it doesn't expect.
 - About 635 AI warnings, "Invalid location - Large Expansion Area N". Builder conditions still ask about an expansion base after FAF's `DeadBaseMonitor` removed it. Whether FAF does the same on Moho, or our manager teardown leaves builders running, is not yet known.
 
+## Fourth run: Sung Island, and the engine's own override
+
+On 2026-09-26, main after M206r–M206t and the aircraft fixes (#120–#123) played 18,000 ticks on Sung Island (SCMP_010, four AIs, seed 7), an island map, and on SCMP_009.
+
+| Count | Where FAF failed | What it was | Fixed by |
+|---|---|---|---|
+| 2 | `navutils.lua` `PathToWithThreatThreshold`: `originSection` nil | The engine's own Lua. Since March it had replaced FAF's `NavUtils.CanPathTo` with one that always says yes, from when FAF's navigation mesh (`NavGenerator`) didn't build on the engine. It builds now. So a Water path from a point on land passed the check, and FAF indexed the section it doesn't have. It also told every AI reachability check "yes". A probe of the call site showed the function's source was a `do_string` chunk, not FAF's file. | removing the override |
+| 17 | `projectile.lua`: `SetNewTargetGroundXYZ` nil | FAF's engine adds the three-number form of `SetNewTargetGround`, and its `OnTrackTargetGround` calls it. | the binding |
+
+With both, the Sung Island and SCMP_009 games have **no script errors** at 18,000 ticks. The AI's "Invalid location - (Large) Expansion Area" warnings remain: about 1,700 without the fix and 1,400 with it, depending on how each game goes.
+
 ## Next
 
 - Longer and wider runs: 18,000 ticks, other maps and other seeds. The first 3,000 ticks cover the early game only: no experimentals, and little T3.
