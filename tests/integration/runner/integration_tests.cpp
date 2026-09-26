@@ -11407,10 +11407,8 @@ void test_carrier_land(TestContext& ctx) {
                       "the water)",
                       d->fuel_ratio(), d->health(), d->max_health(), d->position().y - surface));
     for (int i = 0; i < 200 && !d->command_queue().empty(); ++i) ctx.sim.tick();
-    // (Its height is held over the ground, the seabed here: from the deck
-    // it may already be over it.)
     check(d->command_queue().empty() && !d->has_unit_state("Refueling") &&
-              d->current_altitude() >= d->elevation_target(),
+              d->current_altitude() == d->elevation_target(),
           fmt::format("it climbs back to its flying height, and its order is done ({:.1f} of "
                       "{:.1f})",
                       d->current_altitude(), d->elevation_target()));
@@ -11585,6 +11583,45 @@ void test_air_turn(TestContext& ctx) {
     check(turned(fighter->heading(), 3.14159265f) < 0.2f,
           fmt::format("the interceptor has turned about in 4 s (heading {:.2f})",
                       fighter->heading()));
+    // Over deep water, an aircraft holds its height over the water's surface,
+    // not the seabed (Moho's CUnitMotion samples max(terrain, water)).
+    r = ctx.lua_state.do_string(R"(
+        local x, z
+        for tz = 100, 900, 16 do
+            for tx = 100, 900, 16 do
+                if not x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 8 and
+                   GetSurfaceHeight(tx + 40, tz) - GetTerrainHeight(tx + 40, tz) > 8 then
+                    x, z = tx, tz
+                end
+            end
+        end
+        if not x then error('no deep water on the map') end
+        __osc_sea_x, __osc_sea_z = x, z
+        __osc_sea = CreateUnitHPR('uea0102', 'ARMY_1', x, GetSurfaceHeight(x, z) + 18, z, 0, 0, 0)
+        IssueMove({__osc_sea}, {x + 40, 0, z})
+        __osc_sea_id = __osc_sea:GetEntityId()
+    )");
+    if (!r) {
+        check(false, "sea script: " + r.error().message);
+    } else if (const auto* sea = unit("__osc_sea_id")) {
+        // Made there, it starts at its height over the surface, not under it.
+        const auto* terrain = ctx.sim.terrain();
+        const float made_over =
+            sea->position().y - terrain->get_surface_height(sea->position().x, sea->position().z);
+        check(std::abs(made_over - sea->elevation_target()) < 0.01f,
+              fmt::format("made over water, it starts {:.1f} over the surface", made_over));
+        for (int i = 0; i < 30; ++i) ctx.sim.tick();
+        const float over_water =
+            sea->position().y - terrain->get_surface_height(sea->position().x, sea->position().z);
+        const float depth = terrain->get_surface_height(sea->position().x, sea->position().z) -
+                            terrain->get_terrain_height(sea->position().x, sea->position().z);
+        check(depth > 0.5f && std::abs(over_water - sea->elevation_target()) < 0.5f,
+              fmt::format("over water {:.1f} deep, it flies {:.1f} over the surface (its "
+                          "height {:.1f})",
+                          depth, over_water, sea->elevation_target()));
+    } else {
+        check(false, "the sea plane exists");
+    }
     spdlog::info("Air turn test: {}/{} passed", pass, pass + fail);
 }
 
@@ -11961,8 +11998,10 @@ void test_transport_drop(TestContext& ctx) {
         return e && e->is_unit() ? static_cast<osc::sim::Unit*>(e) : nullptr;
     };
     const auto* terrain = ctx.sim.terrain();
+    // Its height over the ground, or over the water at sea (an aircraft's
+    // floor, as Moho's CUnitMotion measures it).
     const auto altitude = [&](const osc::sim::Unit& u) {
-        return u.position().y - terrain->get_terrain_height(u.position().x, u.position().z);
+        return u.position().y - terrain->get_surface_height(u.position().x, u.position().z);
     };
 
     // A UEF T1 transport (hovering 3 over the ground to unload) with 6 tanks

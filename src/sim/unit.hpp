@@ -571,6 +571,12 @@ public:
     /// Its vertical motion event: Top, Down, Bottom or Up.
     const std::string& vert_event() const { return vert_event_; }
     bool is_air_unit() const { return layer_ == "Air"; }
+    /// Air.FlyInWater: an aircraft that may fly under the water's surface.
+    void set_fly_in_water(bool b) { fly_in_water_ = b; }
+    /// What an aircraft holds its height over at (x, z): the ground, or the
+    /// water's surface above it unless it flies in water (Moho's CUnitMotion
+    /// samples max(terrain, water) for fliers).
+    f32 air_floor(const map::Terrain* terrain, f32 x, f32 z) const;
 
     // Motion type (from blueprint Physics.MotionType)
     const std::string& motion_type() const { return motion_type_; }
@@ -1236,7 +1242,8 @@ private:
     f32 turn_rate_rad_ = 0;      // yaw rate rad/s, from Air.TurnSpeed (rad/s)
     f32 accel_rate_ = 0;         // from Air.AccelerateRate (fallback: max_airspeed * 0.5)
     f32 climb_rate_ = 5.0f;      // vertical speed limit (units/sec)
-    f32 elevation_target_ = 18.0f; // target altitude above terrain, from Physics.Elevation
+    f32 elevation_target_ = 18.0f; // target altitude above its air floor, from Physics.Elevation
+    bool fly_in_water_ = false;    // Air.FlyInWater
     // Diving and surfacing (M206o).
     enum class VertMotion : u8 { None, Down, Up };
     VertMotion vert_motion_ = VertMotion::None;
