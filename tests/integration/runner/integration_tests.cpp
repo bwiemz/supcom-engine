@@ -11144,6 +11144,86 @@ void test_carrier(TestContext& ctx) {
     spdlog::info("Carrier test: {}/{} passed", pass, pass + fail);
 }
 
+void test_air_turn(TestContext& ctx) {
+    spdlog::info("=== AIR TURN TEST: aircraft turn at Air.TurnSpeed radians a second ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    // An interceptor (TurnSpeed 1.5) and a bomber (0.7), flying north.
+    auto r = ctx.lua_state.do_string(R"(
+        local y = GetTerrainHeight(300, 700) + 20
+        __osc_fighter = CreateUnitHPR('uea0102', 'ARMY_1', 300, y, 700, 0, 0, 0)
+        __osc_bomber = CreateUnitHPR('uea0103', 'ARMY_1', 340, y, 700, 0, 0, 0)
+        IssueMove({__osc_fighter}, {300, 0, 1000})
+        IssueMove({__osc_bomber}, {340, 0, 1000})
+        __osc_fighter_id = __osc_fighter:GetEntityId()
+        __osc_bomber_id = __osc_bomber:GetEntityId()
+    )");
+    if (!r) {
+        check(false, "script: " + r.error().message);
+        return;
+    }
+    const auto unit = [&](const char* id_global) -> const osc::sim::Unit* {
+        const auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number(id_global)));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<const osc::sim::Unit*>(e)
+                                                    : nullptr;
+    };
+    const auto* fighter = unit("__osc_fighter_id");
+    const auto* bomber = unit("__osc_bomber_id");
+    if (!fighter || !bomber) {
+        check(false, "the aircraft exist");
+        return;
+    }
+    check(fighter->turn_rate_rad() == 1.5f && bomber->turn_rate_rad() == 0.7f,
+          fmt::format("TurnSpeed is read as radians a second ({}, {})", fighter->turn_rate_rad(),
+                      bomber->turn_rate_rad()));
+    for (int i = 0; i < 60; ++i) ctx.sim.tick();
+    // Turned about to a point behind them, each turns TurnSpeed / 10 a tick.
+    (void)ctx.lua_state.do_string(R"(
+        IssueClearCommands({__osc_fighter, __osc_bomber})
+        IssueMove({__osc_fighter}, {300, 0, 400})
+        IssueMove({__osc_bomber}, {340, 0, 400})
+    )");
+    const auto turned = [](float from, float to) {
+        float d = to - from;
+        while (d > 3.14159265f) d -= 6.28318530f;
+        while (d < -3.14159265f) d += 6.28318530f;
+        return std::abs(d);
+    };
+    const float f0 = fighter->heading(), b0 = bomber->heading();
+    ctx.sim.tick();
+    const float f1 = fighter->heading(), b1 = bomber->heading();
+    ctx.sim.tick();
+    const float f2 = fighter->heading(), b2 = bomber->heading();
+    check(std::abs(turned(f0, f1) - 0.15f) < 1e-4f && std::abs(turned(f1, f2) - 0.15f) < 1e-4f,
+          fmt::format("the interceptor turns 0.15 rad a tick ({:.4f}, {:.4f})", turned(f0, f1),
+                      turned(f1, f2)));
+    check(std::abs(turned(b0, b1) - 0.07f) < 1e-4f && std::abs(turned(b1, b2) - 0.07f) < 1e-4f,
+          fmt::format("the bomber turns 0.07 rad a tick ({:.4f}, {:.4f})", turned(b0, b1),
+                      turned(b1, b2)));
+    // About in 2 s, the interceptor comes back past where it turned.
+    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    check(turned(fighter->heading(), 3.14159265f) < 0.2f,
+          fmt::format("the interceptor has turned about in 4 s (heading {:.2f})",
+                      fighter->heading()));
+    spdlog::info("Air turn test: {}/{} passed", pass, pass + fail);
+}
+
 void test_transport_drop(TestContext& ctx) {
     spdlog::info(
         "=== TRANSPORT DROP TEST: a transport comes down to set its cargo down (M206n) ===");

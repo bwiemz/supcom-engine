@@ -914,13 +914,14 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     unit->set_max_airspeed(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
 
-                // Air.TurnSpeed (degrees -> radians)
+                // Air.TurnSpeed, in radians a second: Moho turns an aircraft
+                // by up to TurnSpeed x 0.1 radians a tick (faf-re
+                // CUnitMotion). Read as degrees, aircraft had turned 57
+                // times too slowly.
                 lua_pushstring(L, "TurnSpeed");
                 lua_rawget(L, -2);
-                if (lua_isnumber(L, -1)) {
-                    f32 deg = static_cast<f32>(lua_tonumber(L, -1));
-                    unit->set_turn_rate_rad(deg * 3.14159265f / 180.0f);
-                }
+                if (lua_isnumber(L, -1))
+                    unit->set_turn_rate_rad(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
 
                 // Air.AccelerateRate
