@@ -102,8 +102,8 @@ bool StructurePlacement::terrain_allows(const PlacementRules& r,
             case map::CellPassability::Passable:
                 if (!r.on_land) return false;
                 break;
-            case map::CellPassability::Water:
-                if (!r.on_water) return false;
+            case map::CellPassability::Water: // afloat, or on the ground under it
+                if (!r.on_water && !r.on_seabed) return false;
                 break;
             case map::CellPassability::Impassable:
             case map::CellPassability::Obstacle:

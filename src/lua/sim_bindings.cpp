@@ -173,6 +173,15 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
         return 0;
     }
 
+    // Its id as the store keeps it -- lowercase, as Moho's blueprint names
+    // are (retail scripts write 'UEB1103'): the script class and every
+    // __blueprints lookup key on it.
+    std::string lower_id = entry ? entry->id : std::string(bp_id);
+    if (!entry)
+        std::transform(lower_id.begin(), lower_id.end(), lower_id.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    bp_id = lower_id.c_str();
+
     auto unit = std::make_unique<sim::Unit>();
     unit->set_blueprint_id(bp_id);
     unit->set_unit_id(bp_id);
@@ -5674,11 +5683,24 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IsEnemy", l_IsEnemy);
     state.register_function("IsNeutral", l_IsNeutral);
     state.register_function("SetCommandSource", stub_noop);
+    // ArmyInitializePrebuiltUnits(army): the army's brain spawns the lobby's
+    // prebuilt units (Moho runs its OnSpawnPreBuiltUnits).
     state.register_function("ArmyInitializePrebuiltUnits", [](lua_State* L) -> int {
-        // In skirmish, there are no prebuilt units — the ACU is spawned by
-        // SetupSession -> army brain Lua code. Campaign save parsing is out of scope.
-        spdlog::debug("ArmyInitializePrebuiltUnits called for army: {}",
-                      lua_tostring(L, 1) ? lua_tostring(L, 1) : "(nil)");
+        auto* sim = get_sim(L);
+        const i32 army = resolve_army(L, 1, sim);
+        auto* brain = sim && army >= 0 ? sim->get_army(army) : nullptr;
+        if (!brain || brain->lua_table_ref() < 0) return 0;
+        lua_rawgeti(L, LUA_REGISTRYINDEX, brain->lua_table_ref());
+        const int self = lua_gettop(L);
+        lua_pushstring(L, "OnSpawnPreBuiltUnits");
+        lua_gettable(L, self);
+        if (lua_isfunction(L, -1)) {
+            lua_pushvalue(L, self);
+            lua_call(L, 1, 0); // a script error is the caller's, as in Moho
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
         return 0;
     });
     state.register_function("SetArmyUnitCap", l_SetArmyUnitCap);

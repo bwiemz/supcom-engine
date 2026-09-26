@@ -152,6 +152,26 @@ TEST_CASE("placement: extractors need a free deposit", "[placement]") {
     CHECK_FALSE(after.can_build("mex", 30.0f, 40.0f)); // deposit taken
 }
 
+TEST_CASE("placement: a seabed structure goes on the ground under the sea", "[placement]") {
+    // An extractor's BuildOnLayerCaps give LAYER_Land and LAYER_Seabed: it
+    // stands on dry land or on the sea floor, never afloat on its own.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    make_coast_world(sim);
+    const auto rules = [](const std::string& bp) {
+        PlacementRules r = rules_for(bp);
+        if (bp == "seabed") {
+            r.size_x = r.size_z = 2.0f;
+            r.on_seabed = true;
+        }
+        return r;
+    };
+    StructurePlacement p(sim, 0, rules);
+    CHECK(p.can_build("seabed", 100.0f, 20.0f)); // under the sea
+    CHECK(p.can_build("seabed", 20.0f, 20.0f));  // on land
+    CHECK_FALSE(p.can_build("pgen", 100.0f, 20.0f));
+}
+
 TEST_CASE("Structure placement snaps to the build grid", "[placement]") {
     // Odd footprints center on a cell, even ones on a cell corner, so the
     // footprint covers whole cells -- the ghost and the order agree.

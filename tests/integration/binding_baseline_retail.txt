@@ -50,8 +50,6 @@ G _c_CreateDecal
 G _c_CreatePathDebugger
 G errro
 M AddOnKilledCallback
-M CreateResourceBuildingNearest
-M CreateUnitNearSpot
 M GetCollisionExtents
 M GetUnit
 M GiveUnitOrder

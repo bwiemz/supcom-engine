@@ -101,6 +101,7 @@ void test_beam_weapon(TestContext& ctx);
 void test_charge(TestContext& ctx);
 void test_range(TestContext& ctx);
 void test_ferry(TestContext& ctx);
+void test_prebuilt(TestContext& ctx);
 void test_transport_slots(TestContext& ctx);
 void test_transport_pickup(TestContext& ctx);
 void test_transport_drop(TestContext& ctx);

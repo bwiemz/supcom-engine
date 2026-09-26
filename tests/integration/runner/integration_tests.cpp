@@ -6,6 +6,8 @@
 #include "core/profiler.hpp"
 #include "core/types.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/session_manager.hpp"
+#include "sim/build_placement.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
@@ -11512,6 +11514,225 @@ void test_influence(TestContext& ctx) {
         if math.abs(t - 30) > 1e-3 then error('assigned threat ' .. t .. '; 30 expected') end
     )");
     spdlog::info("=== INFLUENCE TEST: {} passed, {} failed ===", pass, fail);
+}
+
+// test_prebuilt -- the lobby's Prebuilt Units: InitializePrebuiltUnits runs
+// the brain's OnSpawnPreBuiltUnits, whose CreateResourceBuildingNearest puts
+// extractors on the nearest free deposits and CreateUnitNearSpot a factory
+// and power by the start (Moho's CAiBrain; retail aibrain.lua).
+void test_prebuilt(TestContext& ctx) {
+    spdlog::info("=== PREBUILT TEST: the lobby's prebuilt units ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    lua_State* L = ctx.L;
+    // A script error fails the test (an unchecked one once hid a nil global).
+    const auto run = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) check(false, fmt::format("prebuilt script: {}", r.error().message));
+        return static_cast<bool>(r);
+    };
+    auto* brain = ctx.sim.get_army(0);
+    if (!brain) {
+        check(false, "ARMY_1 has a brain");
+        return;
+    }
+    const auto units_of_army = [&] {
+        std::vector<osc::sim::Unit*> out;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            if (!e.destroyed() && e.army() == 0) out.push_back(static_cast<osc::sim::Unit*>(&e));
+        });
+        return out;
+    };
+    const auto taken = [&](const osc::sim::ResourceDeposit& d) {
+        bool on = false;
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            const auto& u = static_cast<osc::sim::Unit&>(e);
+            if (!e.destroyed() && u.has_category("MASSEXTRACTION") &&
+                std::abs(e.position().x - d.x) < 0.6f && std::abs(e.position().z - d.z) < 0.6f)
+                on = true;
+        });
+        return on;
+    };
+    std::vector<osc::sim::ResourceDeposit> free_mass;
+    for (const auto& d : ctx.sim.resource_deposits())
+        if (d.type == osc::sim::ResourceDeposit::Mass && !taken(d)) free_mass.push_back(d);
+    const auto before = units_of_army();
+
+    auto r = ctx.lua_state.do_string("InitializePrebuiltUnits('ARMY_1')"); // checked below
+    check(static_cast<bool>(r),
+          fmt::format("InitializePrebuiltUnits runs ({})", r ? "" : r.error().message));
+    std::vector<osc::sim::Unit*> made;
+    for (auto* u : units_of_army())
+        if (std::find(before.begin(), before.end(), u) == before.end()) made.push_back(u);
+    std::vector<osc::sim::Unit*> extractors, others;
+    for (auto* u : made) (u->has_category("MASSEXTRACTION") ? extractors : others).push_back(u);
+
+    // Four extractors, each on its own mass deposit, the nearest free ones.
+    const osc::sim::Vector3 start = brain->start_position();
+    const auto dist2 = [&](osc::f32 x, osc::f32 z) {
+        return (x - start.x) * (x - start.x) + (z - start.z) * (z - start.z);
+    };
+    osc::f32 farthest = 0;
+    int on_deposit = 0;
+    for (const auto* u : extractors) {
+        for (const auto& d : free_mass)
+            if (std::abs(u->position().x - d.x) < 0.6f && std::abs(u->position().z - d.z) < 0.6f) {
+                ++on_deposit;
+                farthest = std::max(farthest, dist2(d.x, d.z));
+            }
+    }
+    int nearer_left = 0;
+    for (const auto& d : free_mass)
+        if (dist2(d.x, d.z) < farthest && !taken(d)) ++nearer_left;
+    check(extractors.size() == 4 && on_deposit == 4 && nearer_left == 0,
+          fmt::format("4 extractors on the 4 nearest free mass deposits ({} made, {} on one, {} "
+                      "nearer left free)",
+                      extractors.size(), on_deposit, nearer_left));
+
+    // An extractor on a mass deposit under water sits on the seabed (its
+    // LAYER_Seabed), not at the surface. SCMP_009 has none, so one is made
+    // in deep water, as a map script's CreateResourceDeposit would.
+    const auto* terrain = ctx.sim.terrain();
+    run(R"(
+        __osc_seabed_x, __osc_seabed_z = false, false
+        for tz = 100, 900, 8 do
+            for tx = 100, 900, 8 do
+                if not __osc_seabed_x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 4 and
+                   GetSurfaceHeight(tx + 3, tz + 3) - GetTerrainHeight(tx + 3, tz + 3) > 4 and
+                   GetSurfaceHeight(tx - 3, tz - 3) - GetTerrainHeight(tx - 3, tz - 3) > 4 then
+                    __osc_seabed_x, __osc_seabed_z = tx + 0.5, tz + 0.5
+                end
+            end
+        end
+        if __osc_seabed_x then
+            CreateResourceDeposit('Mass', __osc_seabed_x, GetTerrainHeight(__osc_seabed_x, __osc_seabed_z), __osc_seabed_z, 1)
+        end
+    )");
+    const osc::sim::ResourceDeposit* wet = nullptr;
+    for (const auto& d : ctx.sim.resource_deposits())
+        if (d.type == osc::sim::ResourceDeposit::Mass && terrain && !taken(d) &&
+            terrain->get_terrain_height(d.x, d.z) < terrain->water_elevation() - 1.0f) {
+            wet = &d;
+            break;
+        }
+    if (wet) {
+        lua_pushnumber(L, wet->x);
+        lua_setglobal(L, "__osc_wx");
+        lua_pushnumber(L, wet->z);
+        lua_setglobal(L, "__osc_wz");
+        run("__osc_wet = GetArmyBrain('ARMY_1'):CreateResourceBuildingNearest('UEB1103', __osc_wx, "
+            "__osc_wz)");
+    }
+    osc::sim::Unit* wet_mex = nullptr;
+    for (auto* u : units_of_army())
+        if (wet && u->has_category("MASSEXTRACTION") && std::abs(u->position().x - wet->x) < 0.6f &&
+            std::abs(u->position().z - wet->z) < 0.6f)
+            wet_mex = u;
+    check(
+        wet && wet_mex &&
+            std::abs(wet_mex->position().y - terrain->get_terrain_height(wet->x, wet->z)) < 0.01f,
+        fmt::format("an extractor on an underwater deposit sits on the seabed ({:.2f} under water "
+                    "at {:.2f})",
+                    wet_mex ? terrain->water_elevation() - wet_mex->position().y : -1.0f,
+                    wet_mex ? wet_mex->position().y : -1.0f));
+
+    // A factory and four power generators by the start: off the start spot
+    // (+-5), clear of each other, and close.
+    const osc::sim::StructureSite start_box{static_cast<osc::f32>(static_cast<int>(start.x)),
+                                            static_cast<osc::f32>(static_cast<int>(start.z)), 10,
+                                            10};
+    bool clear_of_start = true, clear_of_each_other = true;
+    osc::f32 farthest_other = 0;
+    for (size_t i = 0; i < others.size(); ++i) {
+        const auto* a = others[i];
+        const osc::sim::StructureSite sa{a->position().x, a->position().z, a->footprint_size_x(),
+                                         a->footprint_size_z()};
+        if (start_box.overlaps(sa)) clear_of_start = false;
+        for (size_t j = i + 1; j < others.size(); ++j) {
+            const auto* b = others[j];
+            if (sa.overlaps({b->position().x, b->position().z, b->footprint_size_x(),
+                             b->footprint_size_z()}))
+                clear_of_each_other = false;
+        }
+        farthest_other =
+            std::max(farthest_other, std::sqrt(dist2(a->position().x, a->position().z)));
+    }
+    check(others.size() == 5 && clear_of_start && clear_of_each_other && farthest_other < 30.0f,
+          fmt::format("a factory and 4 power by the start ({} made, clear of the start {}, of each "
+                      "other {}, {:.1f} out at most)",
+                      others.size(), clear_of_start, clear_of_each_other, farthest_other));
+
+    // The session calls it for each army but the civilians, and only with
+    // the option on.
+    run(R"(
+        __osc_real_init = InitializePrebuiltUnits
+        __osc_inits = {}
+        rawset(_G, 'InitializePrebuiltUnits', function(name) table.insert(__osc_inits, name) end)
+        ScenarioInfo.Options.PrebuiltUnits = 'Off'
+    )");
+    // The last army is made civilian for the check: the session skips it.
+    auto* civilian = ctx.sim.get_army(static_cast<osc::i32>(ctx.sim.army_count()) - 1);
+    const bool was_civilian = civilian && civilian->is_civilian();
+    if (civilian) civilian->set_civilian(true);
+    osc::lua::SessionManager session;
+    session.spawn_prebuilt_units(L, ctx.sim);
+    run("__osc_off = table.getn(__osc_inits); ScenarioInfo.Options.PrebuiltUnits = 'On'");
+    session.spawn_prebuilt_units(L, ctx.sim);
+    run(R"(
+        __osc_on = table.getn(__osc_inits)
+        __osc_first = __osc_inits[1] or ''
+        rawset(_G, 'InitializePrebuiltUnits', __osc_real_init)
+        ScenarioInfo.Options.PrebuiltUnits = 'Off'
+    )");
+    if (civilian) civilian->set_civilian(was_civilian);
+    // (Counted before the civilian was restored: all but it.)
+    size_t armies = ctx.sim.army_count() > 0 ? ctx.sim.army_count() - 1 : 0;
+    for (size_t i = 0; i + 1 < ctx.sim.army_count(); ++i)
+        if (const auto* b = ctx.sim.get_army(static_cast<osc::i32>(i)); b && b->is_civilian())
+            --armies;
+    lua_pushstring(L, "__osc_off");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int off = static_cast<int>(lua_tonumber(L, -1));
+    lua_pushstring(L, "__osc_on");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int on = static_cast<int>(lua_tonumber(L, -1));
+    lua_pushstring(L, "__osc_first");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string first = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pop(L, 3);
+    check(off == 0 && on == static_cast<int>(armies) && armies > 0 && first == brain->name(),
+          fmt::format("the session calls it per army but the civilians, with the option on ({} "
+                      "off, {} of {} on, first {})",
+                      off, on, armies, first));
+
+    // A unit made by an uppercase blueprint name is the blueprint's own,
+    // as Moho's lowercase names are: its id and its script class.
+    run(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        local u = CreateUnitHPR('UEB1101', 'ARMY_1', x + 40, GetTerrainHeight(x + 40, z), z, 0, 0, 0)
+        __osc_upper_id = u and u:GetUnitId() or ''
+        __osc_upper_class = (u and u.CreateTarmac) and 1 or 0
+    )");
+    lua_pushstring(L, "__osc_upper_id");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string upper_id = lua_tostring(L, -1) ? lua_tostring(L, -1) : "";
+    lua_pushstring(L, "__osc_upper_class");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int upper_class = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 2);
+    check(upper_id == "ueb1101" && upper_class == 1,
+          fmt::format("CreateUnitHPR('UEB1101') makes a ueb1101 with its script class ({}, {})",
+                      upper_id, upper_class));
+
+    spdlog::info("Prebuilt test: {}/{} passed", pass, pass + fail);
 }
 
 void test_ferry(TestContext& ctx) {
