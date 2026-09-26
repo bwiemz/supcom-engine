@@ -59,14 +59,12 @@ Result<void> SimLoader::boot_sim(LuaState& state,
         }
     }
 
-    // Step 4: Pre-import Unit.lua to make the Unit class available.
-    // This must happen after globalInit.lua (which sets up Class, ClassUnit,
-    // TrashBag, moho class conversions) but before any CreateUnit calls.
-    // Pre-register ArmyBrains as an empty table — simutils.lua captures it
-    // at file scope, but SetupSession hasn't run yet to populate it.
-    // Use rawset to bypass strict mode on _G
-    state.do_string(
-        "if rawget(_G, 'ArmyBrains') == nil then rawset(_G, 'ArmyBrains', {}) end");
+    spdlog::info("Sim environment ready.");
+    return {};
+}
+
+void SimLoader::import_script_classes(LuaState& state) {
+    // The generic Unit class, for units whose blueprint names no script.
     // Use pcall so failure doesn't kill the session — we fall back to
     // moho.unit_methods as the unit metatable if this fails.
     // import() returns a module table, so Unit class is at module.Unit,
@@ -91,7 +89,7 @@ Result<void> SimLoader::boot_sim(LuaState& state,
                       import_result.error().message);
     }
 
-    // Step 5: Pre-import platoon.lua to make the Platoon class available.
+    // The Platoon class.
     // Engine-created platoons (ArmyPool, MakePlatoon, FormPlatoon) need
     // the full FA Platoon class as metatable so Lua methods like
     // PlatoonDisband, SetPlatoonData, SetPriority are accessible.
@@ -122,9 +120,6 @@ Result<void> SimLoader::boot_sim(LuaState& state,
         spdlog::warn("platoon.lua import failed: {}",
                       platoon_result.error().message);
     }
-
-    spdlog::info("Sim environment ready.");
-    return {};
 }
 
 void SimLoader::run_ticks(sim::SimState& sim, u32 count) {
