@@ -36,7 +36,6 @@ G SetQueueState
 G SetUIControlsAlpha
 G SoundIsPrepared
 G StartSound
-G UnProject
 G ValidateIPAddress
 G _c_CreateDecal
 G _c_CreatePathDebugger

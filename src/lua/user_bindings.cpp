@@ -27,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -543,6 +544,38 @@ static int l_UIZoomTo(lua_State* L) {
         r->camera().set_target(sum_x / count, sum_z / count);
     }
     return 0;
+}
+
+/// UnProject(worldview, Vector2(x, y)) -- the point on the ground under a
+/// screen point of the view, as Project's inverse (retail's worldview.lua
+/// moves a dragged ping there). NaNs where the view sees no ground there,
+/// which that script checks for.
+static int l_UnProject(lua_State* L) {
+    auto* wv = check_world_view(L, 1);
+    f32 sx = 0.0f, sy = 0.0f;
+    if (lua_istable(L, 2)) {
+        const auto component = [&](int index, const char* name) {
+            lua_rawgeti(L, 2, index);
+            if (!lua_isnumber(L, -1)) {
+                lua_pop(L, 1);
+                lua_pushstring(L, name);
+                lua_gettable(L, 2); // x/y through a vector's metatable
+            }
+            const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+            lua_pop(L, 1);
+            return v;
+        };
+        sx = component(1, "x");
+        sy = component(2, "y");
+    }
+    if (auto* r = get_renderer(L); r && wv) wv->set_viewport(r->width(), r->height());
+    sim::Vector3 at{};
+    if (!wv || !wv->camera() || !wv->get_mouse_world_pos(sx, sy, at.x, at.y, at.z)) {
+        const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+        at = {nan, nan, nan};
+    }
+    push_vector3(L, at);
+    return 1;
 }
 
 // --- GetMouseWorldPos global (M136a) ---
@@ -1138,6 +1171,7 @@ void register_user_bindings(LuaState& state) {
     // Globals of the UI state.
     state.register_function("InternalCreateWldUIProvider", l_InternalCreateWldUIProvider);
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
+    state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
     state.register_function("SelectUnits", l_SelectUnits);
