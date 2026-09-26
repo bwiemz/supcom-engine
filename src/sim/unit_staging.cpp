@@ -208,6 +208,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
             circle(*pad);
             if (still_waiting(cmd.dock_wait)) return OrderStep::Hold;
             if (!pad->transport_has_available_storage()) {
+                if (cmd.patrol_refuel) return finish(); // a patrol flies on instead
                 cmd.dock_wait = kRefuelPollTicks;
                 return OrderStep::Hold;
             }
@@ -252,6 +253,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         TransportSlots* slots = pad->transport_slots();
         if (!air_class_ || !slots ||
             !slots->assign(entity_id(), transport_class_, transport_attach_bone())) {
+            if (cmd.patrol_refuel) return finish(); // a patrol flies on instead
             cmd.dock_wait = kRefuelPollTicks;
             return OrderStep::Hold;
         }
@@ -319,7 +321,7 @@ OrderStep Unit::order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx) {
         return OrderStep::Hold;
     }
     set_unit_state("Refueling", false);
-    if (command_queue_.size() > 1) {
+    if (command_queue_.size() > 1 && !cmd.patrol_refuel) {
         bool waiting_for_others = false;
         registry.for_each_unit([&](Entity& e) {
             if (waiting_for_others || e.destroyed() || !e.is_unit() || &e == this) return;
@@ -455,6 +457,44 @@ OrderStep Unit::order_carrier_landing(UnitCommand& cmd, f64 dt, SimContext& ctx)
     if (step == LandStep::Landing) return OrderStep::Hold;
     command_queue_.pop_front(); // stored, or given up
     return OrderStep::Next;
+}
+
+Unit* Unit::find_platform(SimContext& ctx) {
+    // Moho's thresholds (sim console variables): under a fifth of a tank, or
+    // under three quarters of its health. (faf-re's decompile compares the
+    // repair threshold with max health over health, which could never hold;
+    // health over max health is the ratio the name means.)
+    constexpr f32 kNeedRefuelThresholdRatio = 0.2f;
+    constexpr f32 kNeedRepairThresholdRatio = 0.75f;
+    if (is_dying() || !is_air_unit() || fuel_ratio_ < 0 || !has_command_cap("RULEUCC_Dock"))
+        return nullptr;
+    const bool needs = kNeedRefuelThresholdRatio > fuel_ratio_ ||
+                       (max_health() > 0 && health() / max_health() < kNeedRepairThresholdRatio);
+    if (!needs) return nullptr;
+    static const CategoryName kStaging{"AIRSTAGINGPLATFORM"};
+    static const CategoryName kCarrier{"CARRIER"};
+    const SimState* sim = ctx.sim;
+    Unit* found = nullptr;
+    ctx.registry.for_each_unit([&](Entity& e) {
+        if (found || e.destroyed() || !e.is_unit() || e.army() != army()) return;
+        auto& pad = static_cast<Unit&>(e);
+        if (!pad.has_category(kStaging) || pad.is_dying() || pad.is_being_built()) return;
+        const f32 dx = position().x - pad.position().x;
+        const f32 dz = position().z - pad.position().z;
+        if (std::sqrt(dx * dx + dz * dz) > pad.staging_rules_.scan_radius) return;
+        if (sim && sim->has_playable_rect() &&
+            (pad.position().x < sim->playable_x0() || pad.position().x > sim->playable_x1() ||
+             pad.position().z < sim->playable_z0() || pad.position().z > sim->playable_z1()))
+            return;
+        if (!pad.is_idle_state() || pad.layer() == "Sub" || pad.layer() == "Seabed") return;
+        if (pad.has_category(kCarrier)) {
+            if (pad.transport_has_available_storage()) found = &pad;
+        } else if (const TransportSlots* slots = pad.transport_slots();
+                   slots && slots->has_space_for(transport_class_)) {
+            found = &pad;
+        }
+    });
+    return found;
 }
 
 void Unit::tick_docked(f64 dt, SimContext& ctx, Unit& platform) {

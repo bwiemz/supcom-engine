@@ -75,6 +75,7 @@ struct StagingRules {
     f32 repair_amount = 20.0f; ///< health a second
     f32 repair_energy = 2.0f;  ///< a tick
     f32 repair_mass = 0.5f;    ///< a tick
+    f32 scan_radius = 300.0f;  ///< AI.StagingPlatformScanRadius: how far patrols look
 };
 
 /// What an order did this tick (Unit::run_order, M193).
@@ -985,6 +986,10 @@ private:
     /// A tick of a unit attached to a staging platform: its refuel order, if
     /// that is still its head, and its fuel and repair.
     void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
+    /// A patrolling aircraft that needs fuel or repair (Moho's
+    /// Unit::FindPlatform): the first of its army's idle staging platforms
+    /// in reach with room for it; null when it needs none or finds none.
+    Unit* find_platform(SimContext& ctx);
     /// Fuel (Moho's CUnitMotion::ProcessFuelLevels): it refuels and repairs
     /// docked at `platform`, and burns in flight. False if a script killed it.
     bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
