@@ -131,6 +131,19 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
                     lua_pushnumber(L, value);
                     lua_rawset(L, -3);
                 }
+                // Its Label, an empty string when the .bp gives none (Moho's
+                // string default): FAF's weapons copy it to self.Label and
+                // the unit indexes its WeaponInstances by it, which a nil
+                // key breaks (the UEF T1 mobile AA's first weapon has none).
+                lua_pushstring(L, "Label");
+                lua_rawget(L, -2);
+                const bool unlabelled = lua_isnil(L, -1);
+                lua_pop(L, 1);
+                if (unlabelled) {
+                    lua_pushstring(L, "Label");
+                    lua_pushstring(L, "");
+                    lua_rawset(L, -3);
+                }
             }
             lua_pop(L, 1);
         }

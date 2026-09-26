@@ -55,7 +55,23 @@ TEST_CASE("A weapon's omitted RateOfFire reads as 1, its other numbers as 0", "[
         RegisterUnitBlueprint(bp)
         local guidance, gun = bp.Weapon[1], bp.Weapon[2]
         assert(guidance.RateOfFire == 1, 'RateOfFire ' .. tostring(guidance.RateOfFire))
+        assert(guidance.Label == 'GuidanceSystem' and gun.Label == 'Gun', 'labels changed')
         assert(guidance.Damage == 0 and guidance.DamageRadius == 0, 'numbers not 0')
         assert(gun.RateOfFire == 0.5 and gun.DamageRadius == 2, 'own values lost')
+    )"));
+}
+
+TEST_CASE("A weapon without a Label reads as the empty string", "[blueprints]") {
+    // The UEF T1 mobile AA's first weapon has none; FAF's weapons copy it to
+    // self.Label and its unit indexes WeaponInstances by it, which a nil key
+    // breaks ("table index is nil" in Unit.OnCreate).
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        local bp = {BlueprintId = 'aa', Weapon = {{MaxRadius = 28}, {Label = 'AAGun'}}}
+        RegisterUnitBlueprint(bp)
+        assert(bp.Weapon[1].Label == '', 'Label ' .. tostring(bp.Weapon[1].Label))
+        assert(bp.Weapon[2].Label == 'AAGun', 'own label lost')
+        local instances = {}
+        instances[bp.Weapon[1].Label] = true -- a key, as FAF's unit makes it
     )"));
 }
