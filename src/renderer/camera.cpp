@@ -228,11 +228,14 @@ bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
                               f32 window_w, f32 window_h,
                               f32 ground_y,
                               f32& out_x, f32& out_z) const {
-    // Convert screen pixel to NDC [-1, 1]
+    // Convert screen pixel to NDC [-1, 1]. Screen y runs down, and our
+    // perspective flips Y for Vulkan (view-space up lands at the top of the
+    // screen), so a point up the screen lies along +up: the ray takes -ndc_y.
+    // (It had taken +ndc_y, which sent every click to the point mirrored
+    // about the view's centre line; view_proj and WorldView::project agree
+    // with what is drawn.)
     f32 ndc_x = (2.0f * screen_x / window_w) - 1.0f;
-    f32 ndc_y = (2.0f * screen_y / window_h) - 1.0f;
-    // Vulkan Y-flip: NDC y is flipped in our projection
-    // Our perspective already flips Y, so ndc_y maps correctly
+    f32 ndc_y = 1.0f - (2.0f * screen_y / window_h);
 
     f32 aspect = window_w / window_h;
 

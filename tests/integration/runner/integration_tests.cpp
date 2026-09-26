@@ -15691,6 +15691,17 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     lua_ok("Test 10x5: reselect the commander", "SelectUnits(GetArmyAvatars())");
     play(1);
+    // UnProject: this test's views have no camera (no renderer), so it can
+    // find no ground and gives NaNs, which retail's ping drag checks for
+    // (the round trip through a camera: tests/test_world_view.cpp).
+    lua_ok("Test 10y: UnProject with no camera gives NaNs", R"(
+        local wv = import('/lua/ui/game/worldview.lua').viewLeft
+        if not wv then error('no main world view') end
+        local back = UnProject(wv, Vector2(100, 100))
+        for i = 1, 3 do
+            if type(back[i]) ~= 'number' or back[i] == back[i] then error('component ' .. i) end
+        end
+    )");
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
