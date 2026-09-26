@@ -275,6 +275,10 @@ public:
     /// factory_queue(), newest first (DecreaseBuildCountInQueue). Removing
     /// the order in progress cancels it (cancel_factory_build).
     void decrease_build_count(int index, int count, EntityRegistry& registry, lua_State* L);
+    /// IncreaseBuildCountInQueue: `count` more of the index-th group of its
+    /// factory queue (1-based, as factory_queue() groups it), after the
+    /// group's last order. An index past the queue changes nothing.
+    void increase_build_count(int index, int count);
     /// A factory's build under way is cancelled: the factory hears
     /// OnFailedToBuild, and the unit it was building is destroyed, as in Moho.
     void cancel_factory_build(EntityRegistry& registry, lua_State* L);
