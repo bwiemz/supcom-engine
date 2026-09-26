@@ -9265,6 +9265,18 @@ void test_defence(TestContext& ctx) {
         if EntityCategoryContains(categories.ALLUNITS, m) then error('the missile is a unit') end
         if EntityCategoryContains(categories.ALLPROJECTILES, tank) then error('the tank is a projectile') end
         if not EntityCategoryContains(categories.ALLUNITS, tank) then error('the tank is not a unit') end
+        -- Each blueprint's id is one of its categories (Moho's
+        -- RegisterBlueprintCategoryMembership): a unit's short id, a
+        -- projectile's path.
+        if not EntityCategoryContains(categories.uel0201, tank) then error('the tank is not uel0201') end
+        if EntityCategoryContains(categories.uel0201, tml) then error('the launcher is uel0201') end
+        local path = '/projectiles/tifmissilecruise01/tifmissilecruise01_proj.bp'
+        if not EntityCategoryContains(categories[path], m) then error('the missile is not ' .. path) end
+        local listed = false
+        for _, u in GetArmyBrain('ARMY_2'):GetListOfUnits(categories.uel0201, false) do
+            if u == tank then listed = true end
+        end
+        if not listed then error('GetListOfUnits(categories.uel0201) left the tank out') end
         local kept = EntityCategoryFilterDown(categories.MISSILE, {m, __osc_shell, tank})
         if table.getn(kept) ~= 1 or kept[1] ~= m then error('FilterDown kept ' .. table.getn(kept)) end
     )");

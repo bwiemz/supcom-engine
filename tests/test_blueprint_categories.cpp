@@ -57,3 +57,12 @@ TEST_CASE("missing or malformed category data yields nothing", "[categories]") {
     CHECK(categories_of("{ Categories = { 1, true, 'LAND' } }") ==
           std::unordered_set<std::string>{"LAND"});
 }
+
+TEST_CASE("the blueprint's own id is one of its categories", "[categories]") {
+    // Moho's RegisterBlueprintCategoryMembership adds mBlueprintId to every
+    // entity blueprint's categories (units' short id, projectiles' path).
+    CHECK(categories_of("{ BlueprintId = 'uel0201', Categories = { 'LAND' } }") ==
+          std::unordered_set<std::string>{"LAND", "uel0201"});
+    CHECK(categories_of("{ BlueprintId = 7, Categories = { 'LAND' } }") ==
+          std::unordered_set<std::string>{"LAND"});
+}
