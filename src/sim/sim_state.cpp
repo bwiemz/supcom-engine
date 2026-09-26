@@ -573,34 +573,60 @@ bool apply_silo_build(Unit& unit, const UnitCommand& cmd) {
 
 } // namespace
 
-void SimState::route_command(const std::vector<u32>& unit_ids,
-                             const UnitCommand& command, bool clear_existing) {
+u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand& command,
+                            bool clear_existing) {
     // A player's order is a command, applied inside a tick as Moho applies
     // it: under a network session it is broadcast and every peer schedules it
     // for the same tick; in single-player it is scheduled for the next tick.
     // Either way a replay can record it.
     if (human_input_active_) {
-        if (playback_) return; // a replay plays only what it recorded
+        if (playback_) return 0; // a replay plays only what it recorded
         if (local_command_sink_) local_command_sink_(unit_ids, command, clear_existing);
         else schedule_command(0, unit_ids, command, clear_existing);
-        return;
+        return 0;
     }
     // An AI or script order, issued inside a tick: apply now. (AI runs
     // identically on every client, so its orders stay in sync without being
     // sent over the wire.)
     if (command.factory) {
         apply_factory_command(unit_ids, command, clear_existing);
-        return;
+        return 0;
     }
-    for (const auto& [uid, cmd] : expand_group_command(unit_ids, command)) {
+    // It goes into queues as one command with an id of its own, from the
+    // sim's counter (so every peer numbers it alike), as Moho's issue
+    // returns the one CUnitCommand its units share.
+    UnitCommand issued = command;
+    if (issued.type != CommandType::Stop && issued.command_id == 0)
+        issued.command_id = next_command_id();
+    bool queued = false;
+    for (const auto& [uid, cmd] : expand_group_command(unit_ids, issued)) {
         auto* e = entity_registry_.find(uid);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto* unit = static_cast<Unit*>(e);
         // Stop clears the queue outright (rather than queueing a Stop order), so
         // it matches the old IssueStop's immediate clear_commands() semantics.
-        if (cmd.type == CommandType::Stop) stop_unit(*unit);
-        else if (!apply_silo_build(*unit, cmd)) unit->push_command(cmd, clear_existing);
+        if (cmd.type == CommandType::Stop) {
+            stop_unit(*unit);
+        } else if (!apply_silo_build(*unit, cmd)) {
+            unit->push_command(cmd, clear_existing);
+            queued = true;
+        }
     }
+    return queued ? issued.command_id : 0;
+}
+
+bool SimState::command_queued(u32 command_id) const {
+    if (command_id == 0) return false;
+    bool found = false;
+    entity_registry_.for_each_unit([&](const Entity& e) {
+        if (found || e.destroyed()) return;
+        for (const auto& c : static_cast<const Unit&>(e).command_queue())
+            if (c.command_id == command_id) {
+                found = true;
+                return;
+            }
+    });
+    return found;
 }
 
 void SimState::route_player_command(const std::vector<u32>& unit_ids, const UnitCommand& command,

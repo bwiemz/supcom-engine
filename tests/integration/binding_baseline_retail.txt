@@ -27,7 +27,6 @@ G IN_ClearKeyMap
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService
-G IsCommandDone
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
