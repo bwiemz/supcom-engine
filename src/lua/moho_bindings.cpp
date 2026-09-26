@@ -2845,19 +2845,30 @@ static int l_ClearCurrentFactoryForQueueDisplay(lua_State* L) {
     return 0;
 }
 
-/// DecreaseBuildCountInQueue(index, count) -- for the factory the queue
-/// display shows. A request the sim applies in its next tick.
-static int l_DecreaseBuildCountInQueue(lua_State* L) {
+/// A change to the count at `index` of the queue display's factory's
+/// queue: a request the sim applies in its next tick.
+static int push_build_count_request(lua_State* L, const char* func_name) {
     auto* fq = get_factory_queue(L);
     auto* queue = get_callback_queue(L);
     if (!fq || !queue || fq->current_factory_id() == 0) return 0;
     sim::SimCallbackEntry entry;
-    entry.func_name = sim::kDecreaseBuildCountCallback;
+    entry.func_name = func_name;
     entry.args["Index"] = static_cast<f64>(luaL_checknumber(L, 1));
     entry.args["Count"] = static_cast<f64>(luaL_optnumber(L, 2, 1));
     entry.unit_ids.push_back(fq->current_factory_id());
     queue->push(std::move(entry));
     return 0;
+}
+
+/// DecreaseBuildCountInQueue(index, count): the queue display's
+/// right-click (fewer of one of the factory's queued units).
+static int l_DecreaseBuildCountInQueue(lua_State* L) {
+    return push_build_count_request(L, sim::kDecreaseBuildCountCallback);
+}
+
+/// IncreaseBuildCountInQueue(index, count): its left-click (more of one).
+static int l_IncreaseBuildCountInQueue(lua_State* L) {
+    return push_build_count_request(L, sim::kIncreaseBuildCountCallback);
 }
 
 /// GetOrderBitmapNames(bitmapId) → 8 return values
@@ -4017,6 +4028,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PeekCurrentFactoryForQueueDisplay",  l_PeekCurrentFactoryForQueueDisplay);
     state.register_function("ClearCurrentFactoryForQueueDisplay", l_ClearCurrentFactoryForQueueDisplay);
     state.register_function("DecreaseBuildCountInQueue",          l_DecreaseBuildCountInQueue);
+    state.register_function("IncreaseBuildCountInQueue", l_IncreaseBuildCountInQueue);
 
     // Order bitmap helpers (M141a)
     state.register_function("GetOrderBitmapNames", l_GetOrderBitmapNames);
