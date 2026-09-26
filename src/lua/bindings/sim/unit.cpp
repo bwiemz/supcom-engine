@@ -1664,6 +1664,18 @@ static int unit_GetFuelRatio(lua_State* L) {
     return 1;
 }
 
+// GetVelocity(): how far it moved over its last tick, per tick (x, y, z),
+// as Moho's gives it. FAF reads it for its targets (projectile area damage
+// leads a moving unit by it) and caches moho.unit_methods.GetVelocity.
+static int unit_GetVelocity(lua_State* L) {
+    auto* u = check_unit(L);
+    const sim::Vector3 v = u ? u->velocity() : sim::Vector3{};
+    lua_pushnumber(L, v.x * 0.1f);
+    lua_pushnumber(L, v.y * 0.1f);
+    lua_pushnumber(L, v.z * 0.1f);
+    return 3;
+}
+
 static int unit_SetFuelRatio(lua_State* L) {
     auto* u = check_unit(L);
     if (u) u->set_fuel_ratio(static_cast<f32>(luaL_checknumber(L, 2)));
@@ -2146,18 +2158,6 @@ static int unit_IsAutoSurfaceMode(lua_State* L) {
     lua_pushboolean(L, u && u->auto_surface_mode() ? 1 : 0);
     return 1;
 }
-// GetVelocity(): how far it moved over its last tick, per tick (x, y, z),
-// as Moho's gives it. FAF reads it for its targets (projectile area damage
-// leads a moving unit by it) and caches moho.unit_methods.GetVelocity.
-static int unit_GetVelocity(lua_State* L) {
-    auto* u = check_unit(L);
-    const sim::Vector3 v = u ? u->velocity() : sim::Vector3{};
-    lua_pushnumber(L, v.x * 0.1f);
-    lua_pushnumber(L, v.y * 0.1f);
-    lua_pushnumber(L, v.z * 0.1f);
-    return 3;
-}
-
 // Not simulated yet: nothing stuns.
 static int unit_IsStunned(lua_State* L) { lua_pushboolean(L, 0); return 1; }
 
