@@ -332,6 +332,17 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (lua_isboolean(L, -1)) weapon->fire_on_death = lua_toboolean(L, -1) != 0;
                     lua_pop(L, 1);
 
+                    lua_pushstring(L, "DummyWeapon");
+                    lua_gettable(L, we);
+                    weapon->dummy = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "WeaponCategory");
+                    lua_gettable(L, we);
+                    if (lua_type(L, -1) == LUA_TSTRING &&
+                        std::string_view(lua_tostring(L, -1)) == "Death")
+                        weapon->dummy = true;
+                    lua_pop(L, 1);
+
                     // Every retail nuke launcher writes ManualFire = 1.
                     lua_pushstring(L, "ManualFire");
                     lua_gettable(L, we);

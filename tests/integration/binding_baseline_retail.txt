@@ -21,7 +21,6 @@ G GenerateArmyStart
 G GenerateBuildTemplateFromSelection
 G GetArmy
 G GetMovieDuration
-G GetValidAttackingUnits
 G IN_ClearKeyMap
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
@@ -38,7 +37,6 @@ G SetQueueState
 G SetUIControlsAlpha
 G SoundIsPrepared
 G StartSound
-G UISelectAndZoomTo
 G UnProject
 G ValidateIPAddress
 G _c_CreateDecal

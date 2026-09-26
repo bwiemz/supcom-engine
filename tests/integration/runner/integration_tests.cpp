@@ -14606,6 +14606,41 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             error('unit view alpha ' .. bg:GetAlpha())
         end
     )");
+
+    // 10b2. The avatars' click: UISelectAndZoomTo selects the unit alone; the
+    //    attack reticle's GetValidAttackingUnits keeps the armed ones (a power
+    //    generator, unarmed, made for the check and gone after it).
+    sim_lua(R"(
+        local x, z = GetArmyBrain('ARMY_1'):GetArmyStartPos()
+        __osc_ui_pgen = CreateUnitHPR('ueb1101', 'ARMY_1', x + 12, GetTerrainHeight(x + 12, z), z + 12, 0, 0, 0)
+    )");
+    osc::u32 unarmed_id = 0;
+    ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+        if (!e.destroyed() && e.army() == 0 && e.blueprint_id() == "ueb1101")
+            unarmed_id = e.entity_id();
+    });
+    play(2);
+    lua_ok("Test 10b2: UISelectAndZoomTo selects the unit; only the armed attack",
+           fmt::format(R"(
+        local acu = GetArmyAvatars()[1]
+        SelectUnits({{}})
+        UISelectAndZoomTo(acu)
+        local sel = GetSelectedUnits()
+        if table.getn(sel) ~= 1 or sel[1]:GetEntityId() ~= acu:GetEntityId() then
+            error('not selected alone: ' .. table.getn(sel))
+        end
+        SelectUnits({{acu, {{EntityId = {}}}}})
+        if table.getn(GetSelectedUnits()) ~= 2 then error('the power generator was not selected') end
+        local attackers = GetValidAttackingUnits()
+        if table.getn(attackers) ~= 1 or attackers[1]:GetEntityId() ~= acu:GetEntityId() then
+            error(table.getn(attackers) .. ' attackers')
+        end
+        SelectUnits({{acu}})
+    )",
+                       unarmed_id)
+               .c_str());
+    sim_lua("__osc_ui_pgen:Destroy()");
+    play(2);
     lua_ok("Test 10d: the orders panel has the commander's orders", R"(
         local grid = import('/lua/ui/game/orders.lua').controls.orderButtonGrid
         local n = 0
