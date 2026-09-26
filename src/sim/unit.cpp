@@ -87,6 +87,33 @@ void Unit::decrease_build_count(int index, int count, EntityRegistry& registry, 
     if (cancel) cancel_factory_build(registry, L);
 }
 
+void Unit::increase_build_count(int index, int count) {
+    if (index < 1 || count < 1) return;
+    // The group's last order, as factory_queue() groups them.
+    std::optional<size_t> last;
+    int g = 0;
+    const std::string* run = nullptr;
+    for (size_t i = 0; i < command_queue_.size(); ++i) {
+        const auto& c = command_queue_[i];
+        if (c.type != CommandType::BuildFactory) continue;
+        if (!run || *run != c.blueprint_id) {
+            if (++g > index) break;
+            run = &c.blueprint_id;
+        }
+        if (g == index) last = i;
+    }
+    if (!last) return;
+    // More of the same order, as Moho counts one factory command up: the
+    // blueprint and the command it was issued as, none of the runtime state
+    // of the group's last order (which may be the one under way).
+    UnitCommand more;
+    more.type = CommandType::BuildFactory;
+    more.blueprint_id = command_queue_[*last].blueprint_id;
+    more.command_id = command_queue_[*last].command_id;
+    command_queue_.insert(command_queue_.begin() + static_cast<std::ptrdiff_t>(*last + 1),
+                          static_cast<size_t>(count), more);
+}
+
 void Unit::cancel_factory_build(EntityRegistry& registry, lua_State* L) {
     const u32 target_id = build_target_id_;
     if (target_id == 0) return;
@@ -2430,10 +2457,11 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
-        bool was_at_goal = m->is_at_goal();
         m->tick(dt);
-        // If just reached goal and someone is waiting, wake the thread
-        if (!was_at_goal && m->is_at_goal() && m->has_waiting_thread()) {
+        // A thread waiting for it goes on once it is at its goal -- reached
+        // in this tick, or set so between ticks (an animator a script sets
+        // to rate 0, say).
+        if (m->is_at_goal() && m->has_waiting_thread()) {
             // Look up ThreadManager from Lua registry
             lua_pushstring(L, "osc_thread_mgr");
             lua_rawget(L, LUA_REGISTRYINDEX);

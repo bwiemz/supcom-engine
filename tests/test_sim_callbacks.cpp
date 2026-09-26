@@ -21,6 +21,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -420,6 +421,116 @@ TEST_CASE("A factory's queue is its build orders; decreasing takes the newest", 
     q = f.factory_queue();
     REQUIRE(q.size() == 1);
     CHECK((q[0].blueprint_id == "a" && q[0].count == 4));
+}
+
+TEST_CASE("Increasing a factory's queue adds to one group, after its last order", "[simcallback]") {
+    CallbackSim w;
+    const osc::u32 id = w.spawn();
+    Unit& f = w.unit(id);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    auto queue = [&](const char* bp, int n, osc::u32 command_id) {
+        build.blueprint_id = bp;
+        build.command_id = command_id;
+        for (int i = 0; i < n; ++i) f.push_command(build, false);
+    };
+    queue("a", 3, 11);
+    queue("b", 1, 12);
+    // The group's last order has run state of its own (say it is under way).
+    build.approached = true;
+    queue("b", 1, 12);
+    build.approached = false;
+    queue("a", 1, 13);
+
+    // IncreaseBuildCountInQueue(2, 3), as the sim runs it.
+    SimCallbackEntry cb;
+    cb.func_name = osc::sim::kIncreaseBuildCountCallback;
+    cb.args["Index"] = 2.0;
+    cb.args["Count"] = 3.0;
+    cb.unit_ids = {id};
+    w.sim.run_sim_callback(cb);
+    auto q = f.factory_queue();
+    REQUIRE(q.size() == 3);
+    CHECK((q[0].blueprint_id == "a" && q[0].count == 3));
+    CHECK((q[1].blueprint_id == "b" && q[1].count == 5));
+    CHECK((q[2].blueprint_id == "a" && q[2].count == 1));
+    // The new orders are the group's command, without its run state.
+    const auto& orders = f.command_queue();
+    for (size_t i = 5; i < 8; ++i) {
+        CHECK(orders[i].blueprint_id == "b");
+        CHECK(orders[i].command_id == 12);
+        CHECK_FALSE(orders[i].approached);
+    }
+    CHECK(orders[4].approached); // the one under way is left as it was
+
+    // The first group too.
+    cb.args["Index"] = 1.0;
+    cb.args["Count"] = 1.0;
+    w.sim.run_sim_callback(cb);
+    CHECK(f.factory_queue()[0].count == 4);
+
+    // Past the queue, or nonsense: nothing changes. A count past 1,000 is
+    // refused: the request comes over the network, and FA asks for 1 or 5.
+    const size_t before = f.command_queue().size();
+    for (const auto& [index, count] :
+         {std::pair{4.0, 1.0}, std::pair{0.0, 1.0}, std::pair{1.0, 0.0}, std::pair{1.0, 1001.0}}) {
+        cb.args["Index"] = index;
+        cb.args["Count"] = count;
+        w.sim.run_sim_callback(cb);
+    }
+    cb.args["Index"] = std::string("1");
+    cb.args["Count"] = 1.0;
+    w.sim.run_sim_callback(cb);
+    CHECK(f.command_queue().size() == before);
+    cb.args["Index"] = 1.0;
+    cb.args["Count"] = 1000.0;
+    w.sim.run_sim_callback(cb);
+    CHECK(f.factory_queue()[0].count == 1004);
+}
+
+TEST_CASE("A callback's NaN or infinite numbers change nothing", "[simcallback]") {
+    // They arrive over the network as raw doubles; NaN passes a `< lo || > hi`
+    // guard and a NaN cast to an integer is undefined.
+    CallbackSim w;
+    w.sim.add_army("ARMY_1", "ARMY_1");
+    w.sim.add_army("ARMY_2", "ARMY_2");
+    const osc::u32 id = w.spawn();
+    Unit& f = w.unit(id);
+    osc::sim::UnitCommand build;
+    build.type = osc::sim::CommandType::BuildFactory;
+    build.blueprint_id = "a";
+    for (int i = 0; i < 3; ++i) f.push_command(build, false);
+
+    const double bad[] = {std::numeric_limits<double>::quiet_NaN(),
+                          std::numeric_limits<double>::infinity(),
+                          -std::numeric_limits<double>::infinity()};
+    for (const char* func :
+         {osc::sim::kDecreaseBuildCountCallback, osc::sim::kIncreaseBuildCountCallback}) {
+        for (const double v : bad) {
+            SimCallbackEntry cb;
+            cb.func_name = func;
+            cb.unit_ids = {id};
+            cb.args["Index"] = v;
+            cb.args["Count"] = 1.0;
+            w.sim.run_sim_callback(cb);
+            cb.args["Index"] = 1.0;
+            cb.args["Count"] = v;
+            w.sim.run_sim_callback(cb);
+        }
+    }
+    CHECK(f.command_queue().size() == 3);
+
+    SimCallbackEntry defeat;
+    defeat.func_name = osc::sim::kDefeatArmyCallback;
+    for (const double v : bad) {
+        defeat.args["Army"] = v;
+        w.sim.run_sim_callback(defeat);
+    }
+    CHECK_FALSE(w.sim.army_at(0)->is_defeated());
+    CHECK_FALSE(w.sim.army_at(1)->is_defeated());
+    defeat.args["Army"] = 1.0; // and a real one still works
+    w.sim.run_sim_callback(defeat);
+    CHECK(w.sim.army_at(1)->is_defeated());
 }
 
 TEST_CASE("Cancelling a factory's build under way destroys the unit it was building",

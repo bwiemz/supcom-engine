@@ -24,11 +24,9 @@ G GetArmy
 G GetMovieDuration
 G GetValidAttackingUnits
 G IN_ClearKeyMap
-G IncreaseBuildCountInQueue
 G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService
-G IsCommandDone
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
@@ -57,7 +55,6 @@ M CreateResourceBuildingNearest
 M CreateUnitNearSpot
 M EnableTerrainCheck
 M GetCollisionExtents
-M GetRate
 M GetUnit
 M GiveUnitOrder
 M OnApplyBuff
