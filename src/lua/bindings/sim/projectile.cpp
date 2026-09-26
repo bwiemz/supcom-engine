@@ -116,17 +116,16 @@ static int proj_GetCurrentSpeed(lua_State* L) {
     return 1;
 }
 
+// GetVelocity(): its velocity per tick, as Moho's gives it -- SetVelocity
+// takes it per second. Retail's scripts rely on the scale: the Miasma shell
+// multiplies by 10 for its speed, and the split tactical missiles add a
+// spread of about 1 to it.
 static int proj_GetVelocity(lua_State* L) {
     auto* p = check_projectile(L);
-    if (!p) {
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        lua_pushnumber(L, 0);
-        return 3;
-    }
-    lua_pushnumber(L, p->velocity.x);
-    lua_pushnumber(L, p->velocity.y);
-    lua_pushnumber(L, p->velocity.z);
+    const sim::Vector3 v = p ? p->velocity : sim::Vector3{};
+    lua_pushnumber(L, v.x * 0.1f);
+    lua_pushnumber(L, v.y * 0.1f);
+    lua_pushnumber(L, v.z * 0.1f);
     return 3;
 }
 

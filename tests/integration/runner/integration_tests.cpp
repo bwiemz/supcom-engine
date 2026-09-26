@@ -7517,6 +7517,10 @@ void test_impact(TestContext& ctx) {
         if vx <= 0 or math.abs(vy) > 1e-3 or math.abs(vz) > 1e-3 then
             error('heading ' .. vx .. ',' .. vy .. ',' .. vz .. ', not +X')
         end
+        -- Per tick, as Moho's is: ten ticks of it are its speed.
+        if math.abs(vx * 10 - p:GetCurrentSpeed()) > 1e-2 then
+            error('GetVelocity ' .. vx .. ' per tick at speed ' .. p:GetCurrentSpeed())
+        end
         p:Destroy()
     )");
     lua_check("Test 11: CreateProjectileAtBone(bp, bone) starts at the bone", R"(
@@ -8272,6 +8276,27 @@ void test_drive(TestContext& ctx) {
     run(20);
     lua_check("Test 9: released, it drives", R"(
         if __osc_held.u:GetPosition()[1] < 641 then error('still held') end
+    )");
+
+    // GetVelocity: how far it moved over its last tick, per tick (Moho's;
+    // FAF leads a moving target's area damage by it).
+    lua_check("setup: a Striker driving off", R"(
+        __osc_mover = __osc_spawn('uel0201', 'ARMY_1', 600, 140, 0)
+        IssueMove({__osc_mover}, {600, GetTerrainHeight(600, 200), 200})
+    )");
+    run(40);
+    lua_check("Test 11: its GetVelocity is its last tick's move", R"(
+        __osc_before = __osc_mover:GetPosition()
+    )");
+    run(1);
+    lua_check("Test 11b: per tick", R"(
+        local a, b = __osc_before, __osc_mover:GetPosition()
+        local vx, vy, vz = __osc_mover:GetVelocity()
+        if math.abs(vz - (b[3] - a[3])) > 1e-3 or math.abs(vx - (b[1] - a[1])) > 1e-3 then
+            error('velocity ' .. vx .. ',' .. vz .. ' for a move of ' .. (b[1] - a[1]) .. ',' .. (b[3] - a[3]))
+        end
+        if vz <= 0.1 then error('not moving: ' .. vz) end
+        if moho.unit_methods.GetVelocity == nil then error('not on moho.unit_methods') end
     )");
 
     check(osc::test_status::failure_count() - fail == failures_before, "Test 10: no script errors");
