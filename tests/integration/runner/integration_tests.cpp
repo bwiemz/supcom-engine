@@ -7951,6 +7951,14 @@ void test_collide(TestContext& ctx) {
         p:SetCollideSurface(false)
         p:TrackTarget(true):SetTurnRate(720)
         p:SetNewTargetGround(__osc_spot)
+        -- FAF's engine's three-number form (its Projectile.lua calls it).
+        __osc_sent_xyz = {}
+        local u = __osc_spawn('uel0201', 'ARMY_1', 200, 950)
+        __osc_spot_xyz = {215, __osc_ground(215, 950), 950}
+        local q = __osc_shoot(u, 200, __osc_ground(200, 950) + 30, 960, 1.0, __osc_sent_xyz)
+        q:SetCollideSurface(false)
+        q:TrackTarget(true):SetTurnRate(720)
+        q:SetNewTargetGroundXYZ(__osc_spot_xyz[1], __osc_spot_xyz[2], __osc_spot_xyz[3])
     )");
     run(60);
     lua_check("Test 8: a shot out of time bursts in the air", R"(
@@ -7960,6 +7968,12 @@ void test_collide(TestContext& ctx) {
         local r = __osc_sent
         if not r.at then error('it never arrived') end
         local d = VDist3(r.at, __osc_spot)
+        if d > 1.5 then error(r.type .. ' ' .. d .. ' from the spot') end
+    )");
+    lua_check("Test 9b: SetNewTargetGroundXYZ sends one there too", R"(
+        local r = __osc_sent_xyz
+        if not r.at then error('it never arrived') end
+        local d = VDist3(r.at, __osc_spot_xyz)
         if d > 1.5 then error(r.type .. ' ' .. d .. ' from the spot') end
     )");
 
