@@ -12198,6 +12198,108 @@ void test_air_staging(TestContext& ctx) {
         check(false, "an engineer starts a pad");
     }
 
+    // On patrol, an aircraft low on fuel breaks off to the pad (Moho's
+    // FindPlatform, every 6 ticks), refuels, and patrols on; one with a full
+    // tank doesn't.
+    lua(R"(
+        __osc_p1 = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 60, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 60, 0, 0, 0)
+        __osc_p2 = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 70, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 60, 0, 0, 0)
+        __osc_p1:SetFuelRatio(0.1)
+        IssuePatrol({__osc_p1, __osc_p2}, {__osc_px + 80, 0, __osc_pz + 80})
+        IssuePatrol({__osc_p1, __osc_p2}, {__osc_px + 40, 0, __osc_pz + 80})
+    )");
+    {
+        auto* p1 = unit("__osc_p1");
+        auto* p2 = unit("__osc_p2");
+        int broke_off = -1;
+        bool p2_broke = false, p1_docked = false, p1_back = false;
+        for (int i = 0; i < 1500 && p1 && p2 && !p1_back; ++i) {
+            ctx.sim.tick();
+            const auto& q1 = p1->command_queue();
+            if (broke_off < 0 && !q1.empty() && q1.front().type == osc::sim::CommandType::Dock &&
+                q1.front().patrol_refuel && q1.front().target_id == pad->entity_id())
+                broke_off = i;
+            p2_broke =
+                p2_broke || (!p2->command_queue().empty() &&
+                             p2->command_queue().front().type != osc::sim::CommandType::Patrol);
+            p1_docked = p1_docked || p1->transport_id() == pad->entity_id();
+            p1_back = p1_docked && p1->transport_id() == 0 && !q1.empty() &&
+                      q1.front().type == osc::sim::CommandType::Patrol;
+        }
+        check(broke_off >= 0 && broke_off <= 6 && p1_docked && p1_back &&
+                  p1->fuel_ratio() > 0.95f && !p2_broke,
+              fmt::format("low on fuel, a patrolling plane breaks off to the pad (tick {}), "
+                          "refuels, and patrols on; a full one doesn't (docked {}, back {}, "
+                          "fuel {:.3f}, the other broke off {})",
+                          broke_off, p1_docked, p1_back, p1->fuel_ratio(), p2_broke));
+    }
+
+    // Running low mid-patrol, a plane breaks off at its patrol's next look,
+    // within 6 ticks.
+    // (A long leg: each leg is its own patrol order, which looks at once.)
+    lua(R"(
+        __osc_p3 = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 60, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 70, 0, 0, 0)
+        IssuePatrol({__osc_p3}, {__osc_px + 60, 0, __osc_pz + 400})
+        IssuePatrol({__osc_p3}, {__osc_px + 60, 0, __osc_pz + 70})
+    )");
+    if (auto* p3 = unit("__osc_p3")) {
+        for (int i = 0; i < 20; ++i) ctx.sim.tick();
+        lua("__osc_p3:SetFuelRatio(0.1)");
+        int took = -1;
+        for (int i = 1; i <= 20 && took < 0; ++i) {
+            ctx.sim.tick();
+            if (!p3->command_queue().empty() &&
+                p3->command_queue().front().type == osc::sim::CommandType::Dock)
+                took = i;
+        }
+        check(took >= 1 && took <= 6,
+              fmt::format("run low mid-patrol, it breaks off within 6 ticks ({})", took));
+        lua("IssueClearCommands({__osc_p3})");
+    } else {
+        check(false, "the third patrol plane exists");
+    }
+
+    // Damaged under three quarters, with a full tank, it breaks off too.
+    lua(R"(
+        __osc_p5 = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 60, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 100, 0, 0, 0)
+        __osc_p5:SetHealth(nil, 100)
+        IssuePatrol({__osc_p5}, {__osc_px + 60, 0, __osc_pz + 400})
+    )");
+    if (auto* p5 = unit("__osc_p5")) {
+        bool broke = false;
+        for (int i = 0; i < 8 && !broke; ++i) {
+            ctx.sim.tick();
+            broke = !p5->command_queue().empty() &&
+                    p5->command_queue().front().type == osc::sim::CommandType::Dock;
+        }
+        check(broke && p5->fuel_ratio() > 0.9f,
+              fmt::format("damaged ({:.0f} of {:.0f}), a full plane breaks off to repair",
+                          p5->health(), p5->max_health()));
+        lua("IssueClearCommands({__osc_p5})");
+    } else {
+        check(false, "the fifth patrol plane exists");
+    }
+
+    // One that can't dock (its script took the Dock cap) flies its patrol on.
+    lua(R"(
+        __osc_p4 = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 60, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 90, 0, 0, 0)
+        __osc_p4:RemoveCommandCap('RULEUCC_Dock')
+        __osc_p4:SetFuelRatio(0.1)
+        IssuePatrol({__osc_p4}, {__osc_px + 60, 0, __osc_pz + 400})
+    )");
+    if (auto* p4 = unit("__osc_p4")) {
+        bool broke = false;
+        for (int i = 0; i < 20; ++i) {
+            ctx.sim.tick();
+            broke = broke || (!p4->command_queue().empty() &&
+                              p4->command_queue().front().type == osc::sim::CommandType::Dock);
+        }
+        check(!broke, "a plane without the Dock cap patrols on, dry");
+        lua("IssueClearCommands({__osc_p4})");
+    } else {
+        check(false, "the fourth patrol plane exists");
+    }
+
     // A plane killed while it repairs aboard stops asking its army.
     lua(R"(
         __osc_e = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz - 30, 0, 0, 0)
@@ -15994,6 +16096,17 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     lua_ok("Test 10x5: reselect the commander", "SelectUnits(GetArmyAvatars())");
     play(1);
+    // UnProject: this test's views have no camera (no renderer), so it can
+    // find no ground and gives NaNs, which retail's ping drag checks for
+    // (the round trip through a camera: tests/test_world_view.cpp).
+    lua_ok("Test 10y: UnProject with no camera gives NaNs", R"(
+        local wv = import('/lua/ui/game/worldview.lua').viewLeft
+        if not wv then error('no main world view') end
+        local back = UnProject(wv, Vector2(100, 100))
+        for i = 1, 3 do
+            if type(back[i]) ~= 'number' or back[i] == back[i] then error('component ' .. i) end
+        end
+    )");
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
