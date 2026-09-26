@@ -27,6 +27,7 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <cmath>
 #include <cstring>
 #include <ostream>
 #include <unordered_map>
@@ -638,11 +639,12 @@ void Renderer::create_shadow_resources() {
         VK_CHECK(vkCreateSampler(device_, &ci, nullptr, &shadow_sampler_));
     }
 
-    // --- Light UBO (64B, persistently mapped, per-frame for FIF safety) ---
+    // --- Light UBO (LightUboData, persistently mapped, per-frame for FIF safety) ---
+    static_assert(sizeof(LightUboData) == 144, "LightUBO is std140: a mat4 and five vec4s");
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo ubo_ci{};
         ubo_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        ubo_ci.size = sizeof(f32) * 16;
+        ubo_ci.size = sizeof(LightUboData);
         ubo_ci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
         VmaAllocationCreateInfo alloc_ci{};
@@ -654,6 +656,7 @@ void Renderer::create_shadow_resources() {
                         &light_ubo_[i].buffer, &light_ubo_[i].allocation, &info));
         light_ubo_mapped_[i] = info.pMappedData;
     }
+    upload_lighting();
 
     // --- Shadow descriptor set layout (binding 0: shadow sampler, binding 1: light UBO) ---
     {
@@ -704,7 +707,7 @@ void Renderer::create_shadow_resources() {
             VkDescriptorBufferInfo buf_info{};
             buf_info.buffer = light_ubo_[i].buffer;
             buf_info.offset = 0;
-            buf_info.range = sizeof(f32) * 16;
+            buf_info.range = sizeof(LightUboData);
 
             std::array<VkWriteDescriptorSet, 2> writes{};
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -729,25 +732,35 @@ void Renderer::create_shadow_resources() {
     spdlog::info("Shadow resources created ({}x{} depth map)", SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
 }
 
+void Renderer::upload_lighting() {
+    const map::ScmapLighting& l = lighting_;
+    LightUboData d{};
+    for (int i = 0; i < 3; ++i) {
+        // As the map stores it: Moho hands SunDirection to the shaders
+        // unnormalized (retail maps' have unit length).
+        d.sun_direction[i] = l.sun_direction[i];
+        d.sun_color[i] = l.sun_color[i];
+        d.sun_ambience[i] = l.sun_ambience[i];
+        d.shadow_fill[i] = l.shadow_fill[i];
+    }
+    d.sun_color[3] = l.multiplier;
+    d.sun_ambience[3] = terrain_xp_ ? 1.0f : 0.0f;
+    for (int i = 0; i < 4; ++i) d.specular[i] = l.specular[i];
+    for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
+        if (!light_ubo_mapped_[f]) continue;
+        // The matrix (the first 64 bytes) is the shadow pass's, each frame.
+        std::memcpy(static_cast<char*>(light_ubo_mapped_[f]) + sizeof(d.light_vp),
+                    reinterpret_cast<const char*>(&d) + sizeof(d.light_vp),
+                    sizeof(d) - sizeof(d.light_vp));
+    }
+}
+
 std::array<f32, 16> Renderer::compute_light_vp() const {
-    // Light direction (matches all lit shaders)
-    constexpr f32 lx = 0.5f, ly = 1.0f, lz = 0.3f;
-    constexpr f32 len = 1.1576f; // sqrt(0.25 + 1.0 + 0.09)
-    constexpr f32 dx = lx / len, dy = ly / len, dz = lz / len;
-
-    // Ortho frustum centered on camera target, proportional to zoom
-    f32 half = std::clamp(camera_.distance() * 0.8f, 50.0f, 800.0f);
-    f32 far_off = half * 2.0f;
-
-    f32 ex = camera_.target_x() + dx * far_off;
-    f32 ey = dy * far_off;
-    f32 ez = camera_.target_z() + dz * far_off;
-
-    auto view = math::look_at(ex, ey, ez,
-                              camera_.target_x(), 0.0f, camera_.target_z(),
-                              0.0f, 1.0f, 0.0f);
-    auto proj = math::ortho(-half, half, -half, half, 0.1f, far_off * 2.0f);
-    return math::mat4_mul(proj, view);
+    // Looking down the map's sun, as every lit shader lights by it (M210a),
+    // over a box centred on the camera's target, proportional to zoom.
+    const f32 half = std::clamp(camera_.distance() * 0.8f, 50.0f, 800.0f);
+    return math::light_view_proj(lighting_.sun_direction, camera_.target_x(), camera_.target_z(),
+                                 half);
 }
 
 void Renderer::create_pipelines() {
@@ -1514,6 +1527,10 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
 
     terrain_mesh_.build(*terrain, device_, allocator_, cmd_pool_,
                         graphics_queue_);
+    // The map's light (M210a).
+    lighting_ = terrain->lighting();
+    terrain_xp_ = terrain->environment().terrain_shader == "TTerrainXP";
+    upload_lighting();
 
     unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
 
@@ -2268,7 +2285,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Always render scene to offscreen HDR image (scene_render_pass_).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
-    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // sky haze (matches atmos fog)
+    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // the sky, until the sky dome (M210b)
     clear_values[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rp_begin{};

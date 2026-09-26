@@ -117,16 +117,29 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
                    bool has_water, ScmapData& result) {
     // --- Water properties (only present when has_water is true) ---
     if (has_water) {
-        // 20 floats: surfaceColor(3), colorLerpMin, colorLerpMax, refraction,
-        // fresnelBias, fresnelPower, reflectionUnit, reflectionSky,
-        // sunShininess, sunStrength, sunGlow, unknown8, unknown9,
-        // sunColor(3), reflectionSun, unknown10
+        // 20 floats: surfaceColor(3), colorLerp(2), refractionScale,
+        // fresnelBias, fresnelPower, unitReflection, skyReflection,
+        // sunShininess, sunStrength, sunDirection(3), sunColor(3),
+        // sunReflection, sunGlow
         if (!r.has_remaining(80)) return false;
-        r.skip(80);
+        ScmapWater& w = result.water;
+        for (f32& v : w.surface_color) v = r.read_f32();
+        for (f32& v : w.color_lerp) v = r.read_f32();
+        w.refraction_scale = r.read_f32();
+        w.fresnel_bias = r.read_f32();
+        w.fresnel_power = r.read_f32();
+        w.unit_reflection = r.read_f32();
+        w.sky_reflection = r.read_f32();
+        w.sun_shininess = r.read_f32();
+        w.sun_strength = r.read_f32();
+        for (f32& v : w.sun_direction) v = r.read_f32();
+        for (f32& v : w.sun_color) v = r.read_f32();
+        w.sun_reflection = r.read_f32();
+        w.sun_glow = r.read_f32();
 
         // 2 water texture paths (cubemap, ramp)
-        r.read_cstring();
-        r.read_cstring();
+        w.cubemap = r.read_cstring();
+        w.ramp = r.read_cstring();
 
         // 4 wave normal frequencies
         if (!r.has_remaining(16)) return false;
@@ -431,9 +444,10 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     if (!r.has_remaining(1)) return Error("SCMAP truncated before shader section");
     r.skip(1); // unknown flag byte before shader strings
 
-    r.read_cstring(); // terrain shader
-    r.read_cstring(); // background texture
-    r.read_cstring(); // sky cubemap
+    ScmapEnvironment environment;
+    environment.terrain_shader = r.read_cstring();
+    environment.background = r.read_cstring();
+    environment.sky_cubemap = r.read_cstring();
 
     // Environment cubemaps: int32 count + (name, file) pairs per entry
     if (!r.has_remaining(4)) return Error("SCMAP truncated before env cubemap count");
@@ -442,13 +456,23 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
         return Error("SCMAP invalid env cubemap count: " + std::to_string(env_cubemap_count));
     }
     for (i32 i = 0; i < env_cubemap_count; i++) {
-        r.read_cstring(); // cubemap name
-        r.read_cstring(); // cubemap file
+        std::string name = r.read_cstring();
+        environment.cubemaps.emplace_back(std::move(name), r.read_cstring());
     }
 
-    // Lighting data: 23 floats = 92 bytes
+    // Lighting: 23 floats (M210a)
     if (!r.has_remaining(92)) return Error("SCMAP truncated before lighting data");
-    r.skip(92);
+    ScmapLighting lighting;
+    lighting.multiplier = r.read_f32();
+    for (f32& v : lighting.sun_direction) v = r.read_f32();
+    for (f32& v : lighting.sun_ambience) v = r.read_f32();
+    for (f32& v : lighting.sun_color) v = r.read_f32();
+    for (f32& v : lighting.shadow_fill) v = r.read_f32();
+    for (f32& v : lighting.specular) v = r.read_f32();
+    lighting.bloom = r.read_f32();
+    for (f32& v : lighting.fog_color) v = r.read_f32();
+    lighting.fog_start = r.read_f32();
+    lighting.fog_end = r.read_f32();
 
     // --- Water ---
     bool has_water = false;
@@ -475,6 +499,8 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     result.water_elevation = water_elevation;
     result.water_deep_elevation = water_deep_elevation;
     result.water_abyss_elevation = water_abyss_elevation;
+    result.lighting = lighting;
+    result.environment = std::move(environment);
     result.version_minor = version_minor;
     result.preview_dds = std::move(preview_dds);
 

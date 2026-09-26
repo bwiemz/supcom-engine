@@ -81,6 +81,8 @@ void test_normal(TestContext& ctx);
 void test_prop(TestContext& ctx);
 void test_scale(TestContext& ctx);
 void test_specular(TestContext& ctx);
+/// --lighting-test (M210a), in lighting_test.cpp.
+void test_lighting(TestContext& ctx);
 void test_terrain_normal(TestContext& ctx);
 void test_decal(TestContext& ctx);
 void test_projectile(TestContext& ctx);

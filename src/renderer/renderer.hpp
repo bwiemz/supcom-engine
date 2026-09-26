@@ -1,5 +1,7 @@
 #pragma once
 
+#include "map/scmap_parser.hpp"
+
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
@@ -358,6 +360,21 @@ private:
 
     AllocatedBuffer light_ubo_[FRAMES_IN_FLIGHT] = {};
     void* light_ubo_mapped_[FRAMES_IN_FLIGHT] = {};
+    /// The lit shaders' LightUBO (std140): the shadow matrix, then the map's
+    /// lighting as FA's shaders read it (M210a).
+    struct LightUboData {
+        f32 light_vp[16];
+        f32 sun_direction[4]; ///< xyz toward the sun
+        f32 sun_color[4];     ///< rgb; w: LightingMultiplier
+        f32 sun_ambience[4];  ///< rgb; w: 1 for the TTerrainXP terrain shader
+        f32 shadow_fill[4];   ///< rgb
+        f32 specular[4];      ///< SpecularColor
+    };
+    /// The scene's lighting: its map's, else SCMP_009's.
+    map::ScmapLighting lighting_{};
+    bool terrain_xp_ = false;
+    /// Write the lighting into every frame's UBO.
+    void upload_lighting();
 
     // Particle system
     ParticleSystem particle_system_;

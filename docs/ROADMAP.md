@@ -256,7 +256,7 @@ In order of how much they change what the player feels:
 
 | # | Milestone | Scope |
 |---|---|---|
-| M210 | Map lighting and sky | Parse the `.scmap` lighting block (sun, ambient, shadow colour, fog), the sky cubemap and water parameters. |
+| M210 | Map lighting and sky | Parse the `.scmap` lighting block (sun, ambient, shadow colour, fog), the sky cubemap and water parameters. **M210a ✅** The map's lighting, from FA's `terrain.fx` and `mesh.fx`. Design: `docs/plans/2026-09-26-m210a-map-lighting-design.md`.<br>• The parser reads the terrain shader, the sky and environment cubemaps, the 23 lighting floats and the water block.<br>• Terrain and meshes light as FA's shaders do: the map's sun and colour, ambience, shadow fill and multiplier, and each terrain shader's specular (`TTerrain`, `TTerrainXP`). The shadow map looks down the map's sun.<br>• The engine's invented haze, fill light and hemisphere ambient are gone: no FA shader fogs.<br>• FA's formula exposed three renderer bugs, now fixed. Stratum normal maps were decoded as DXT5nm, where FA reads RGB, so the terrain barely took the sun. The strata textures were bound before they had loaded, so the terrain drew white all game. With bloom off, the composite pass read an unwritten image.<br>• `--lighting-test` (gate) checks two maps' data and renders one view under several lights; flat ground's light matches the formula to 0.01.<br>• *Left:* the sky dome (M210b), the map's water lighting (M213), bloom from the map's value (M214), mesh specular (M211) and stratum masks and the upper stratum (M212). |
 | M211 | Material system | Per-`ShaderName` unit shaders (faction and special), glow and the build shader. A hand port of FA's `.fx` semantics to GLSL, validated against reference captures. |
 | M212 | Terrain | Shader variants, the upper stratum, projected decals (albedo, normal, glow, water), runtime scorch and track decals. |
 | M213 | Water | Reflection and refraction, map normal maps and ramp, shoreline. |
@@ -388,7 +388,8 @@ in the repo if they contain game assets).
 | C | In progress: M190 (the sim/user boundary: interpolation, and a renderer that reads only snapshots) and M194 (the style and static-analysis ratchets, a contributor guide) are done. M191–M193 come back to the front, in the order agreed after an external review (2026-09-24). A checksum split by domain comes first, as the refactors' oracle. Then M193 (split `Unit::update`), M192 (split the executable, taking the integration tests out of it) and M191 (break the renderer/blueprints/Lua link cycle; finish the Sim/User split). |
 | D | **Done.** M195 (ordered iteration), M196 (one sim RNG, checksum traces), M197 (floating-point policy), M198 (all mutation in-tick; dropped peers decided by agreement) and M199 (replays: record, play back in the game and headlessly, and a Windows build and a Linux build play a real game identically). |
 | E | In progress: M200–M206 done. Weapons, projectiles, props and wrecks, movement and formations, pathfinding cost, silo missiles and missile defence, beams, economy events, work ranges and the order queue follow retail's scripts and the decompiled engine. Next: M207 (AI query fidelity), after the architecture and determinism work below. |
-| F–I | Not started. |
+| F | In progress: M210a (the map's lighting) done. |
+| G–I | Not started. |
 
 ### Findings from the first Linux captures (feed Phases A′ and F)
 - ~~**Fog of war** looks wrong around the focus army's ACU~~ Diagnosed with
@@ -396,9 +397,9 @@ in the repo if they contain game assets).
   second blend texture duplicates the first while strata 5–8 have no
   textures, and those strata painted the black placeholder over the terrain.
   **Fixed**: texture-less strata get no weight.
-- **The base stratum renders pale grey-white.** The `.scmap` lighting block
-  (sun colour, lighting multiplier, specular) is still ignored. Compare with a
-  capture of the original game under Proton before tuning (M210).
+- ~~**The base stratum renders pale grey-white.**~~ **Fixed (M210a):** the
+  strata textures were bound before they had loaded, so the terrain drew the
+  white fallback. The map's own lighting now replaces the invented one.
 - **The initial camera starts at the map centre.** FA starts on the focus
   army's start position (M217).
 - **Close-range terrain is blurry.** Per-stratum UV scales and normal-map

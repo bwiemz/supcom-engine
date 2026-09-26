@@ -1,8 +1,10 @@
 #pragma once
 
 #include "map/heightmap.hpp"
+#include "map/scmap_parser.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::map {
@@ -71,6 +73,15 @@ public:
     void set_normal_decals(std::vector<NormalDecalInfo> decals);
     const std::vector<NormalDecalInfo>& normal_decals() const { return normal_decals_; }
 
+    /// The map's lighting and environment (M210a): SCMP_009's until a map
+    /// sets them.
+    void set_lighting(const ScmapLighting& lighting, ScmapEnvironment environment) {
+        lighting_ = lighting;
+        environment_ = std::move(environment);
+    }
+    const ScmapLighting& lighting() const { return lighting_; }
+    const ScmapEnvironment& environment() const { return environment_; }
+
     /// The map's terrain types, one TypeCode per map cell, row by row.
     void set_terrain_types(std::vector<u8> types);
     /// The terrain type at a world position: its TypeCode in
@@ -88,6 +99,8 @@ private:
     std::vector<DecalInfo> decals_;
     std::vector<NormalDecalInfo> normal_decals_;
     std::vector<u8> terrain_types_;
+    ScmapLighting lighting_;
+    ScmapEnvironment environment_;
 };
 
 } // namespace osc::map

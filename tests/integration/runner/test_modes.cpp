@@ -119,6 +119,7 @@ constexpr Mode kModesBefore[] = {
     {"--prop-test", test_prop, false},
     {"--scale-test", test_scale, false},
     {"--specular-test", test_specular, false},
+    {"--lighting-test", test_lighting, false},
     {"--terrain-normal-test", test_terrain_normal, false},
     {"--decal-test", test_decal, false},
     {"--projectile-test", test_projectile, false},
@@ -269,6 +270,7 @@ void IntegrationModes::print_usage() const {
               << "  --prop-test        Map prop rendering (SCMAP parsing, prop meshes, orientation)\n"
               << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
+              << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"

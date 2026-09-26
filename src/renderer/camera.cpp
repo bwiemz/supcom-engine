@@ -222,6 +222,26 @@ std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
     return r;
 }
 
+std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_z,
+                                    f32 half) {
+    const f32* s = sun_direction;
+    const f32 len = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+    const f32 dx = len > 1e-6f ? s[0] / len : 0.0f;
+    const f32 dy = len > 1e-6f ? s[1] / len : 1.0f;
+    const f32 dz = len > 1e-6f ? s[2] / len : 0.0f;
+
+    const f32 far_off = half * 2.0f;
+    const f32 ex = target_x + dx * far_off;
+    const f32 ey = dy * far_off;
+    const f32 ez = target_z + dz * far_off;
+
+    const bool overhead = std::abs(dy) > 0.99f;
+    auto view = look_at(ex, ey, ez, target_x, 0.0f, target_z, 0.0f, overhead ? 0.0f : 1.0f,
+                        overhead ? 1.0f : 0.0f);
+    auto proj = ortho(-half, half, -half, half, 0.1f, far_off * 2.0f);
+    return mat4_mul(proj, view);
+}
+
 } // namespace math
 
 bool Camera::screen_to_world(f32 screen_x, f32 screen_y,

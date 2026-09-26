@@ -47,6 +47,7 @@ add_executable(osc_tests
     test_dds_decode.cpp
     test_normal_overlay.cpp
     test_frustum.cpp
+    test_light_view.cpp
     test_lod.cpp
     test_death_anim.cpp
     test_preferences.cpp

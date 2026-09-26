@@ -115,7 +115,14 @@ layout(set = 0, binding = 21) uniform sampler2D normalOverlay;
 
 // Shadow map (set=1)
 layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
-layout(set = 1, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+layout(set = 1, binding = 1) uniform LightUBO {
+    mat4 lightViewProj;
+    vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
+    vec4 sunColor;      // rgb; w: LightingMultiplier
+    vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
+    vec4 shadowFill;    // rgb: ShadowFillColor
+    vec4 specularColor;
+} lightUbo;
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec2 fragWorldXZ;
@@ -175,27 +182,28 @@ void main() {
     vec2 uv8 = fragWorldXZ / max(pc.scales8_pad.x, 1.0);
 
     // Sample each stratum albedo
-    vec3 s0 = texture(stratum0, uv0).rgb;
-    vec3 s1 = texture(stratum1, uv1).rgb;
-    vec3 s2 = texture(stratum2, uv2).rgb;
-    vec3 s3 = texture(stratum3, uv3).rgb;
-    vec3 s4 = texture(stratum4, uv4).rgb;
-    vec3 s5 = texture(stratum5, uv5).rgb;
-    vec3 s6 = texture(stratum6, uv6).rgb;
-    vec3 s7 = texture(stratum7, uv7).rgb;
-    vec3 s8 = texture(stratum8, uv8).rgb;
+    vec4 s0 = texture(stratum0, uv0);
+    vec4 s1 = texture(stratum1, uv1);
+    vec4 s2 = texture(stratum2, uv2);
+    vec4 s3 = texture(stratum3, uv3);
+    vec4 s4 = texture(stratum4, uv4);
+    vec4 s5 = texture(stratum5, uv5);
+    vec4 s6 = texture(stratum6, uv6);
+    vec4 s7 = texture(stratum7, uv7);
+    vec4 s8 = texture(stratum8, uv8);
 
     // Sequential alpha compositing: each stratum replaces a portion
     // of the layer below (FA blending — NOT additive)
-    vec3 color = s0;
-    color = mix(color, s1, b0.r);
-    color = mix(color, s2, b0.g);
-    color = mix(color, s3, b0.b);
-    color = mix(color, s4, b0.a);
-    color = mix(color, s5, b1.r);
-    color = mix(color, s6, b1.g);
-    color = mix(color, s7, b1.b);
-    color = mix(color, s8, b1.a);
+    vec4 albedo = s0;
+    albedo = mix(albedo, s1, b0.r);
+    albedo = mix(albedo, s2, b0.g);
+    albedo = mix(albedo, s3, b0.b);
+    albedo = mix(albedo, s4, b0.a);
+    albedo = mix(albedo, s5, b1.r);
+    albedo = mix(albedo, s6, b1.g);
+    albedo = mix(albedo, s7, b1.b);
+    albedo = mix(albedo, s8, b1.a);
+    vec3 color = albedo.rgb;
 
     // Decode and blend per-stratum normal maps (same UV as albedo)
     vec3 n0 = decodeNormal(normalMap0, uv0);
@@ -250,32 +258,31 @@ void main() {
 
     vec3 worldNormal = normalize(TBN * blendedTangentNormal);
 
-    // Lighting with perturbed normal + shadow
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float NdotL = max(dot(worldNormal, lightDir), 0.0);
+    // FA's terrain lighting (terrain.fx), by the map's light (M210a).
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
-
-    // Fill light from opposite side to soften steep slope darkness
-    vec3 fillDir = normalize(vec3(-0.4, 0.6, -0.2));
-    float fillNdotL = max(dot(worldNormal, fillDir), 0.0);
-
-    // Hemisphere ambient: warm sunlit sky from above, cool shadow from below
-    vec3 skyColor = vec3(0.55, 0.52, 0.48);
-    vec3 groundColor = vec3(0.30, 0.28, 0.26);
-    float hemi = worldNormal.y * 0.5 + 0.5; // remap [-1,1] to [0,1]
-    vec3 ambient = mix(groundColor, skyColor, hemi) * 0.50;
-
-    // Diffuse (main sun + fill light)
-    vec3 diffuse = vec3(0.55) * NdotL * shadow + vec3(0.15) * fillNdotL;
-
-    // Blinn-Phong specular on terrain (subtle)
-    vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float NdotH = max(dot(worldNormal, halfDir), 0.0);
-    float spec = pow(NdotH, 24.0) * 0.15 * shadow;
-
-    vec3 lit = color * (ambient + diffuse) + vec3(spec);
+    vec3 S = lightUbo.sunDirection.xyz;
+    float SdotN = dot(S, worldNormal);
+    vec3 V = normalize(worldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ)); // eye to point
+    float multiplier = lightUbo.sunColor.w;
+    vec3 fill = lightUbo.shadowFill.rgb;
+    vec3 lit;
+    if (lightUbo.sunAmbience.w < 0.5) {
+        // TTerrain (CalculateLighting): specular where the albedo's alpha
+        // is low, added into the light.
+        vec3 R = S - 2.0 * SdotN * worldNormal;
+        float spec = pow(clamp(dot(R, V), 0.0, 1.0), 80.0) * lightUbo.specularColor.x * (1.0 - albedo.a);
+        vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb + spec;
+        light = multiplier * light + fill * (1.0 - light);
+        lit = light * color;
+    } else {
+        // TTerrainXP (TerrainAlbedoXP): specular from the albedo's alpha.
+        vec3 r = reflect(V, worldNormal);
+        vec3 spec = pow(clamp(dot(r, S), 0.0, 1.0), 80.0) * albedo.a * lightUbo.specularColor.a * lightUbo.specularColor.rgb;
+        vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
+        light = multiplier * light + fill * (1.0 - light);
+        lit = light * (color + spec);
+    }
 
     // Fog of war: CPU-blurred texture, smooth transitions
     // FA shows unexplored at ~45% brightness with mild desaturation
@@ -286,13 +293,7 @@ void main() {
     vec3 gray = vec3(dot(lit, vec3(0.299, 0.587, 0.114)));
     lit = mix(gray, lit, fogSat);
     lit *= fogBright;
-
-    // Atmospheric distance fog: fade to haze at distance
-    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - worldPos);
-    float fogDensity = 0.0005;
-    float atmosFog = 1.0 - exp(-dist * fogDensity);
-    vec3 hazeColor = vec3(0.55, 0.62, 0.72) * fogBright;
-    lit = mix(lit, hazeColor, atmosFog);
+    // No distance fog: FA's shaders have none (M210a).
 
     outColor = vec4(lit, 1.0);
 }
@@ -336,7 +337,14 @@ layout(push_constant) uniform PushConstants {
 
 // Shadow map (set=0)
 layout(set = 0, binding = 0) uniform sampler2DShadow shadowMap;
-layout(set = 0, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+layout(set = 0, binding = 1) uniform LightUBO {
+    mat4 lightViewProj;
+    vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
+    vec4 sunColor;      // rgb; w: LightingMultiplier
+    vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
+    vec4 shadowFill;    // rgb: ShadowFillColor
+    vec4 specularColor;
+} lightUbo;
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec4 fragColor;
@@ -370,21 +378,13 @@ float calcShadow(vec3 worldPos) {
 }
 
 void main() {
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float NdotL = max(dot(normalize(fragNormal), lightDir), 0.0);
+    // FA's ComputeLight (mesh.fx), by the map's light (M210a).
+    float NdotL = dot(lightUbo.sunDirection.xyz, normalize(fragNormal));
     float shadow = calcShadow(fragWorldPos);
-    float lighting = 0.4 + 0.6 * NdotL * shadow;
+    vec3 light = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
+    light = lightUbo.sunColor.w * light + (1.0 - light) * lightUbo.shadowFill.rgb;
 
-    vec3 lit = fragColor.rgb * lighting;
-
-    // Atmospheric distance fog
-    float dist = length(vec3(upc.eyeX, upc.eyeY, upc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0005;
-    float atmosFog = 1.0 - exp(-dist * fogDensity);
-    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
-    lit = mix(lit, hazeColor, atmosFog);
-
-    outColor = vec4(lit, fragColor.a);
+    outColor = vec4(fragColor.rgb * light, fragColor.a);
 }
 )glsl";
 
@@ -509,15 +509,9 @@ void main() {
     // Alpha: more opaque in deep water, semi-transparent at shore
     float alpha = mix(0.50, 0.88, d);
 
-    // Atmospheric distance fog
-    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0005;
-    float atmosFog = 1.0 - exp(-dist * fogDensity);
-    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
-    waterColor = mix(clamp(waterColor, 0.0, 1.0), hazeColor, atmosFog);
-    alpha = mix(alpha, 1.0, atmosFog); // fog is opaque at distance
-
-    outColor = vec4(waterColor, alpha);
+    // No distance fog: FA's shaders have none (M210a). The water's own
+    // lighting is M213's.
+    outColor = vec4(clamp(waterColor, 0.0, 1.0), alpha);
 }
 )glsl";
 
@@ -599,7 +593,14 @@ layout(set = 3, binding = 0) uniform sampler2D texNormal;
 
 // Shadow map (set=4)
 layout(set = 4, binding = 0) uniform sampler2DShadow shadowMap;
-layout(set = 4, binding = 1) uniform LightUBO { mat4 lightViewProj; } lightUbo;
+layout(set = 4, binding = 1) uniform LightUBO {
+    mat4 lightViewProj;
+    vec4 sunDirection;  // xyz toward the sun (the map's, M210a)
+    vec4 sunColor;      // rgb; w: LightingMultiplier
+    vec4 sunAmbience;   // rgb; w: 1 for the TTerrainXP terrain shader
+    vec4 shadowFill;    // rgb: ShadowFillColor
+    vec4 specularColor;
+} lightUbo;
 
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec4 fragColor;  // army color (RGB) + build alpha (A)
@@ -651,11 +652,12 @@ void main() {
     mat3 TBN = mat3(T, B, N);
     vec3 worldNormal = normalize(TBN * tangentNormal);
 
-    // Diffuse lighting (Lambertian) + shadow
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    float NdotL = max(dot(worldNormal, lightDir), 0.0);
+    // FA's ComputeLight (mesh.fx), by the map's light (M210a).
+    vec3 lightDir = lightUbo.sunDirection.xyz;
+    float NdotL = dot(worldNormal, lightDir);
     float shadow = calcShadow(fragWorldPos);
-    float lighting = 0.4 + 0.6 * NdotL * shadow;
+    vec3 light = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
+    light = lightUbo.sunColor.w * light + (1.0 - light) * lightUbo.shadowFill.rgb;
 
     vec4 texColor = texture(texAlbedo, fragUV);
     vec4 specTeam = texture(texSpecTeam, fragUV);
@@ -677,14 +679,8 @@ void main() {
     float specIntensity = wreck ? specTeam.r * 0.25 : specTeam.r;
     float spec = pow(NdotH, 32.0) * specIntensity * shadow;
 
-    vec3 lit = blended * lighting + vec3(spec);
-
-    // Atmospheric distance fog
-    float dist = length(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-    float fogDensity = 0.0005;
-    float atmosFog = 1.0 - exp(-dist * fogDensity);
-    vec3 hazeColor = vec3(0.55, 0.62, 0.72);
-    lit = mix(lit, hazeColor, atmosFog);
+    // The specular stays the engine's until the material system (M211).
+    vec3 lit = blended * light + vec3(spec);
 
     float finalAlpha = texColor.a * fragColor.a;
     if (finalAlpha < 0.1) discard;
