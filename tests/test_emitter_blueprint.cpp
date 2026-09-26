@@ -25,6 +25,7 @@ TEST_CASE("emitter blueprints load through the VFS as FA writes them", "[rendere
 EmitterBlueprint {
     BlueprintId = 'mist',
     Lifetime = 80.00,
+    Repeattime = 120.00,
     Blendmode = 3.00,
     LODCutoff = 100.00,
     Texture = [[/textures/particles/cloud_smoke_alpha_10.dds]],
@@ -58,6 +59,7 @@ EmitterBlueprint {
         const auto* bp = cache.get("/effects/emitters/mist_emit.bp", L);
         REQUIRE(bp != nullptr);
         CHECK(bp->lifetime == 80.0f);
+        CHECK(bp->repeattime == 120.0f); // Moho's spelling
         CHECK(bp->blendmode == 3u);
         CHECK(bp->lod_cutoff == 100.0f);
         CHECK(bp->texture_path == "/textures/particles/cloud_smoke_alpha_10.dds");
@@ -66,6 +68,7 @@ EmitterBlueprint {
         REQUIRE(spark != nullptr);
         CHECK(spark->blendmode == 3u);
         CHECK(spark->lifetime == -1.0f);
+        CHECK(spark->repeattime == 0.0f);                            // Moho's default
         CHECK(cache.get("/effects/emitters/mist_emit.bp", L) == bp); // cached
         CHECK(lua_gettop(L) == top);
         lua_getglobal(L, "EmitterBlueprint");

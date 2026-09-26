@@ -37,7 +37,8 @@ struct EmitterCurve {
 struct EmitterBlueprintData {
     std::string blueprint_id;
     f32 lifetime = 1.0f;
-    f32 repeattime = 1.0f;
+    f32 repeattime =
+        0.0f; // ticks: the emission curves' period in Moho (not a pause between bursts)
     u32 texture_frame_count = 1;
     u32 texture_strip_count = 1;
     u32 blendmode = 0; // FA's Blendmode: 3 is additive (glows, sparks, mist)

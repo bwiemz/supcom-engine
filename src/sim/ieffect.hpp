@@ -3,18 +3,31 @@
 #include "core/types.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace osc::sim {
 
+/// How many ticks an emitter with this Lifetime (ticks: its blueprint's, or
+/// a LIFETIME param) emits before it ends, or -1 for one that emits on.
+/// Moho's CEfxEmitter::ProcessLifetime counts the emitter's age from 0 and
+/// ends it once age >= Lifetime, so a fraction rounds up (a muzzle flash's
+/// 0.1 emits for one tick), 0 ends it before it emits, and only a negative
+/// Lifetime (smoke, a projectile's trail) never ends. Repeattime has no part
+/// in it: Moho samples the emission curves at the age modulo Repeattime.
+inline f64 emitter_life_ticks(f64 lifetime) {
+    return lifetime >= 0 ? std::ceil(lifetime) : -1.0;
+}
+
 /// Effect type determines creation semantics and future rendering behavior.
 enum class EffectType : u8 {
-    EMITTER_AT_ENTITY,     // CreateEmitterAtEntity / CreateEmitterOnEntity
+    EMITTER_AT_ENTITY,     // CreateEmitterAtEntity
     EMITTER_AT_BONE,       // CreateEmitterAtBone
-    ATTACHED_EMITTER,      // CreateAttachedEmitter (persistent, follows entity)
+    ATTACHED_EMITTER,      // CreateAttachedEmitter / CreateEmitterOnEntity (follows entity)
     BEAM_EMITTER,          // CreateBeamEmitter (unattached beam visual)
     ATTACHED_BEAM,         // CreateAttachedBeam (fixed-length beam on entity)
     BEAM_ENTITY_TO_ENTITY, // AttachBeamEntityToEntity / CreateBeamEntityToEntity
@@ -77,6 +90,25 @@ public:
         return it != params_.end() ? it->second : 0.0;
     }
 
+    /// When an emitter stops of itself (game seconds; negative: it emits
+    /// on): its blueprint's Lifetime after it was made, or a script's
+    /// LIFETIME param. Its effect then ends, as Moho's emitter does; the
+    /// renderer lets the particles already out fade.
+    f64 ends_at() const { return ends_at_; }
+    void set_ends_at(f64 t) { ends_at_ = t; }
+    /// The tick it was made on, which an emitter's lifetime counts from.
+    u32 created_tick() const { return created_tick_; }
+    void set_created_tick(u32 tick) { created_tick_ = tick; }
+    /// Whether it runs a particle emitter blueprint, whose Lifetime ends it.
+    /// (A beam made through an emitter creator runs until its entity goes.)
+    bool has_emitter_blueprint() const { return has_emitter_blueprint_; }
+    void set_has_emitter_blueprint(bool v) { has_emitter_blueprint_ = v; }
+    /// End this emitter once it has emitted for `lifetime` ticks (see
+    /// emitter_life_ticks); a negative lifetime emits on. The end is a whole
+    /// tick, times `seconds_per_tick` as game time is, so it falls exactly
+    /// on that tick.
+    void end_after(f64 lifetime, f64 seconds_per_tick);
+
     /// Birth time for lifetime tracking (game seconds).
     f64 birth_time() const { return birth_time_; }
     /// get_param("LIFETIME"), kept at hand: expire_timed asks it of every
@@ -111,6 +143,9 @@ private:
 
     f64 birth_time_ = -1.0; // -1 = no auto-expiry
     f64 lifetime_ = 0.0;    // params_' LIFETIME (0 when unset)
+    f64 ends_at_ = -1.0;    // an emitter's end (see ends_at)
+    u32 created_tick_ = 0;
+    bool has_emitter_blueprint_ = false;
 
     // Light particle fields
     f32 light_size_ = 0;
@@ -118,6 +153,11 @@ private:
     std::string glow_texture_;
     std::string ramp_texture_;
 };
+
+inline void IEffect::end_after(f64 lifetime, f64 seconds_per_tick) {
+    const f64 ticks = emitter_life_ticks(lifetime);
+    ends_at_ = ticks >= 0 ? (static_cast<f64>(created_tick_) + ticks) * seconds_per_tick : -1.0;
+}
 
 /// Registry that owns all IEffect instances. Provides creation, lookup, and cleanup.
 /// Scripts refer to effects by id (never by pointer): gc() frees destroyed
@@ -140,10 +180,16 @@ public:
         return it != by_id_.end() && !it->second->destroyed() ? it->second : nullptr;
     }
 
-    /// Mark timed effects whose lifetime has expired as destroyed.
+    /// Mark timed effects whose lifetime has expired as destroyed: decals,
+    /// splats and lights by their LIFETIME, and emitters that have stopped
+    /// emitting.
     void expire_timed(f64 game_time) {
         for (auto& fx : effects_) {
             if (!fx || fx->destroyed()) continue;
+            if (fx->ends_at() >= 0 && game_time >= fx->ends_at()) {
+                fx->mark_destroyed();
+                continue;
+            }
             if (fx->birth_time() < 0) continue; // no auto-expiry
             f64 lifetime = fx->lifetime();
             if (lifetime > 0 && (game_time - fx->birth_time()) >= lifetime) {
@@ -183,9 +229,20 @@ public:
     const std::vector<std::unique_ptr<IEffect>>& all() const { return effects_; }
     size_t count() const { return effects_.size(); }
 
+    /// An emitter blueprint's Lifetime (ticks; none for a path that isn't
+    /// an emitter blueprint), from `compute` the first time it is asked.
+    template <typename Compute>
+    std::optional<f64> blueprint_lifetime(const std::string& path, Compute compute) {
+        auto it = lifetime_by_blueprint_.find(path);
+        if (it == lifetime_by_blueprint_.end())
+            it = lifetime_by_blueprint_.emplace(path, compute()).first;
+        return it->second;
+    }
+
 private:
     std::vector<std::unique_ptr<IEffect>> effects_;
     std::unordered_map<u32, IEffect*> by_id_; ///< lookup only; never iterated
+    std::unordered_map<std::string, std::optional<f64>> lifetime_by_blueprint_; ///< lookup only
     u32 next_id_ = 1;
 };
 

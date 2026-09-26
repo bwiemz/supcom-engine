@@ -17719,6 +17719,105 @@ void test_emitter(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 14: result={}", v); }
     }
 
+    // The effect behind a Lua handle stored in global `key`.
+    auto effect_of = [&](const char* key) -> sim::IEffect* {
+        lua_pushstring(L, key);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        sim::IEffect* fx = nullptr;
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "_c_effect_id");
+            lua_rawget(L, -2);
+            if (lua_type(L, -1) == LUA_TNUMBER)
+                fx = ctx.sim.effect_registry().find(static_cast<u32>(lua_tonumber(L, -1)));
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        return fx;
+    };
+
+    // Test 15: an emitter ends when its blueprint's Lifetime (ticks, rounded
+    // up) runs out, however long its Repeattime: Lifetime 20 after 20 ticks,
+    // a muzzle flash's 0.1 after one, and Lifetime 2 with Repeattime 6 after
+    // two. A negative Lifetime (a trail) or a blueprint the store doesn't
+    // know emits on. A LIFETIME param (ticks from when the emitter was made)
+    // retimes it: 0 ends it now, negative lets it emit on. A beam made by
+    // CreateBeamEmitterOnEntity has no emitter blueprint, so neither its
+    // Lifetime nor a LIFETIME param ends it: it goes with its entity. (A tick
+    // first, so the emitters aren't made on tick 0.)
+    {
+        ctx.sim.tick();
+        run_lua(R"(
+            local acu = rawget(_G, '_emtest_entity')
+            local at = function(bp) return CreateEmitterAtEntity(acu, 1, '/effects/emitters/' .. bp) end
+            rawset(_G, '_emtest15_mist', CreateEmitterAtBone(acu, -1, 1,
+                '/effects/emitters/weapon_mist_01_emit.bp'))
+            rawset(_G, '_emtest15_flash', at('gauss_cannon_muzzle_flash_01_emit.bp'))
+            rawset(_G, '_emtest15_plume', at('water_splash_plume_02_emit.bp'))
+            rawset(_G, '_emtest15_trail', CreateAttachedEmitter(acu, -1, 1,
+                '/effects/emitters/plasma_cannon_trail_01_emit.bp'))
+            rawset(_G, '_emtest15_unknown', at('test.bp'))
+            rawset(_G, '_emtest15_retimed',
+                at('plasma_cannon_trail_01_emit.bp'):SetEmitterParam('LIFETIME', 30))
+            rawset(_G, '_emtest15_now', at('weapon_mist_01_emit.bp'):SetEmitterParam('LIFETIME', 0))
+            rawset(_G, '_emtest15_on', at('weapon_mist_01_emit.bp'):SetEmitterParam('LIFETIME', -1))
+            rawset(_G, '_emtest15_beam', CreateBeamEmitterOnEntity(acu, -1, 1,
+                '/effects/emitters/transport_thruster_beam_01_emit.bp'):SetEmitterParam('LIFETIME', 5))
+        )");
+        const u32 tick = ctx.sim.tick_count();
+        const auto ends = [&](const char* key, f64 ticks) {
+            const auto* fx = effect_of(key);
+            const f64 want = ticks < 0 ? -1.0 : (tick + ticks) * sim::SimState::SECONDS_PER_TICK;
+            if (fx && fx->ends_at() == want) return true;
+            spdlog::error("Test 15: {} ends at {}, not {}", key, fx ? fx->ends_at() : -2.0, want);
+            return false;
+        };
+        bool ok = ends("_emtest15_mist", 20);
+        ok = ends("_emtest15_flash", 1) && ok;
+        ok = ends("_emtest15_plume", 2) && ok;
+        ok = ends("_emtest15_trail", -1) && ok;
+        ok = ends("_emtest15_unknown", -1) && ok;
+        ok = ends("_emtest15_retimed", 30) && ok;
+        ok = ends("_emtest15_now", 0) && ok;
+        ok = ends("_emtest15_on", -1) && ok;
+        ok = ends("_emtest15_beam", -1) && ok;
+        if (tick > 0 && ok) {
+            pass++;
+            spdlog::info("[PASS] Test 15: emitters end when their Lifetime runs out");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 15: emitter ends wrong (tick {})", tick);
+        }
+    }
+
+    // Test 16: CreateEmitterOnEntity attaches its emitter, which goes with
+    // the entity -- a projectile's looping trail ends with the shot.
+    {
+        run_lua(R"(
+            local acu = rawget(_G, '_emtest_entity')
+            local proj = acu:CreateProjectile('/projectiles/test', 0, 1, 0)
+            rawset(_G, '_emtest16_proj', proj)
+            rawset(_G, '_emtest16_trail', CreateEmitterOnEntity(proj, 1,
+                '/effects/emitters/plasma_cannon_trail_01_emit.bp'))
+        )");
+        auto* trail = effect_of("_emtest16_trail");
+        const bool attached = trail && trail->type() == sim::EffectType::ATTACHED_EMITTER &&
+                              trail->entity_id() != 0 && trail->ends_at() < 0;
+        const u32 trail_id = trail ? trail->id() : 0;
+        ctx.sim.tick();
+        const bool kept = ctx.sim.effect_registry().find(trail_id) != nullptr;
+        run_lua("rawget(_G, '_emtest16_proj'):Destroy()");
+        ctx.sim.tick();
+        const bool gone = ctx.sim.effect_registry().find(trail_id) == nullptr;
+        if (attached && kept && gone) {
+            pass++;
+            spdlog::info("[PASS] Test 16: an on-entity emitter goes with its entity");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 16: attached={} kept={} gone={}", attached, kept,
+                                   gone);
+        }
+    }
+
     spdlog::info("Emitter test: {}/{} passed", pass, pass + fail);
 }
 

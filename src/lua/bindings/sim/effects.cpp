@@ -123,6 +123,10 @@ static int ieffect_SetEmitterParam(lua_State* L) {
         const char* name = luaL_optstring(L, 2, "");
         f64 value = luaL_optnumber(L, 3, 0);
         fx->set_param(name, value);
+        // An emitter's LIFETIME (ticks from when it was made) sets when it
+        // ends, as its blueprint's Lifetime did; negative, it emits on.
+        if (std::string_view(name) == "LIFETIME" && fx->has_emitter_blueprint())
+            fx->end_after(value, sim::SimState::SECONDS_PER_TICK);
     }
     lua_pushvalue(L, 1);
     return 1;

@@ -1,6 +1,7 @@
 #include "renderer/particle_system.hpp"
 #include "renderer/frustum.hpp"
 
+#include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
 
 #include <algorithm>
@@ -202,20 +203,15 @@ void ParticleSystem::update(f32 dt_seconds) {
         if (es.active) {
             es.emitter_time += dt;
 
-            // An emitter emits for its Lifetime: once, like a muzzle flash
-            // (made per shot and never destroyed, so it must end by itself);
-            // forever when Lifetime is negative, like smoke; or every
-            // Repeattime when that is longer, idle in between.
+            // An emitter emits for its Lifetime, rounded up to whole ticks
+            // (a muzzle flash's 0.1 emits for one), then ends; a negative
+            // Lifetime emits on, like smoke. Moho's rule (see
+            // sim::emitter_life_ticks), which the sim ends the effect by too.
             bool emitting = true;
-            if (es.blueprint && es.blueprint->lifetime > 0 &&
-                es.emitter_time >= es.blueprint->lifetime) {
-                if (es.blueprint->repeattime > es.blueprint->lifetime) {
-                    es.emitter_time = std::fmod(es.emitter_time, es.blueprint->repeattime);
-                    emitting = es.emitter_time < es.blueprint->lifetime;
-                } else {
-                    es.active = false;
-                    emitting = false;
-                }
+            const f64 life = es.blueprint ? sim::emitter_life_ticks(es.blueprint->lifetime) : -1.0;
+            if (life >= 0 && es.emitter_time >= life) {
+                es.active = false;
+                emitting = false;
             }
 
             if (emitting) emit_particles(es, dt, running_total);
