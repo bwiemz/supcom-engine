@@ -6810,6 +6810,36 @@ void test_weapon(TestContext& ctx) {
         if weapon ~= seen then error('weapon saw: ' .. weapon) end
     )");
 
+    // A stunned unit's weapons hold their fire (Moho's UnitWeapon::CanFire
+    // and Fire), ten ticks of stun a second; then it fires again.
+    lua_check("Test 12: a stunned tank holds its fire", R"(
+        local x, z = 300, 850
+        local tank = CreateUnitHPR('uel0201', 'ARMY_1', x, GetTerrainHeight(x, z), z, 0, 0, 0)
+        CreateUnitHPR('ueb1101', 'ARMY_2', x + 12, GetTerrainHeight(x + 12, z), z, 0, 0, 0)
+        local w = tank:GetWeapon(1)
+        w.__osc_stun_shots = 0
+        local fire = w.CreateProjectileAtMuzzle
+        w.CreateProjectileAtMuzzle = function(self, muzzle)
+            self.__osc_stun_shots = self.__osc_stun_shots + 1
+            return fire(self, muzzle)
+        end
+        tank:SetStunned(3)
+        if not tank:IsStunned() then error('not stunned') end
+        __osc_stunned_tank, __osc_stunned_weapon = tank, w
+    )");
+    for (int i = 0; i < 25; ++i) ctx.sim.tick();
+    lua_check("Test 12b: no shot while stunned", R"(
+        if not __osc_stunned_tank:IsStunned() then error('the stun ended early') end
+        if __osc_stunned_weapon.__osc_stun_shots > 0 then
+            error(__osc_stunned_weapon.__osc_stun_shots .. ' shots while stunned')
+        end
+    )");
+    for (int i = 0; i < 40; ++i) ctx.sim.tick();
+    lua_check("Test 12c: the stun wears off, and it fires", R"(
+        if __osc_stunned_tank:IsStunned() then error('still stunned after 6.5 s') end
+        if __osc_stunned_weapon.__osc_stun_shots == 0 then error('no shot after the stun') end
+    )");
+
     if (osc::test_status::failure_count() == failures_before) {
         pass++;
         spdlog::info("[PASS] Test 11: the weapon and motion scripts ran without errors");

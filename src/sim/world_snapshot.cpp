@@ -65,6 +65,7 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.repeat_queue = u.repeat_queue();
     r.overcharge_paused = u.overcharge_paused();
     r.auto_surface = u.auto_surface_mode();
+    r.stunned = u.is_stunned();
     r.is_dying = u.is_dying();
     r.fuel_ratio = u.fuel_ratio();
     r.shield_ratio = u.shield_ratio();

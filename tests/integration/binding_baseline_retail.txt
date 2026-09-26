@@ -64,7 +64,6 @@ M SetAIResult
 M SetDamageRadius
 M SetDirectionalAnim
 M SetStrategicUnderlay
-M SetStunned
 M SetWeaponDisableByLabel
 M TakeResource
 M TransportHasAvailableStorage

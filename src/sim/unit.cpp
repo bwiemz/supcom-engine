@@ -509,6 +509,8 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    if (stun_ticks_ > 0) --stun_ticks_; // a stun wears off a tick at a time
+
     if (was_assisting_silo && !assisting_silo_ && !is_building() && !is_reclaiming() &&
         !is_repairing() && !is_capturing() && !enhancing_) {
         economy_.consumption_energy = 0;

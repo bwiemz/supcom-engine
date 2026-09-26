@@ -104,7 +104,7 @@ std::optional<Vector3> Weapon::target_point(const EntityRegistry& registry) cons
 }
 
 bool Weapon::can_fire(const Unit& owner, const EntityRegistry& registry) const {
-    if (!enabled || !has_target() || owner.busy()) return false;
+    if (!enabled || !has_target() || owner.busy() || owner.is_stunned()) return false;
     if (counted_projectile && owner.silo_ammo(nuke_weapon) <= 0) return false;
     if (above_water_fire_only && is_underwater(owner.layer())) return false;
     // A script callback earlier this tick may have destroyed the target.
