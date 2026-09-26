@@ -14,6 +14,7 @@
 #include "lua/smoke_test.hpp"
 #include "lua/user_bindings.hpp"
 #include "map/terrain.hpp"
+#include "platform/browser.hpp"
 #include "platform/paths.hpp"
 #include "sim/anim_cache.hpp"
 #include "sim/bone_cache.hpp"
@@ -286,6 +287,13 @@ std::optional<int> App::init_ui_state() {
 
     // Replays and saved games (FA's special files), set up once (boot_ui)
     osc::lua::register_special_file_bindings(ui_lua_state, &*special_files);
+
+    // OpenURL: the protocols the init file allows, opened in the browser
+    url_opener.protocols = loader.url_protocols();
+    url_opener.open = [](const std::string& url) {
+        if (!osc::platform::open_url(url)) spdlog::warn("OpenURL: no handler started for {}", url);
+    };
+    osc::lua::register_url_bindings(ui_lua_state, &url_opener);
 
     // WldUIProvider — long-lived instance stored in registry for InternalCreateWldUIProvider
     {

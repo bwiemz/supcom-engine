@@ -1,7 +1,9 @@
 #include "sim/manipulator.hpp"
 #include "sim/anim_cache.hpp"
+#include "sim/army_brain.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/sca_parser.hpp"
+#include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 
 #include <algorithm>
@@ -354,6 +356,25 @@ void RotateManipulator::apply_pose(PoseLocals& pose) {
 
 void SlideManipulator::apply_pose(PoseLocals& pose) {
     pose.slide(bone_index_, current_);
+}
+
+// ---------------------------------------------------------------------------
+// StorageManipulator
+// ---------------------------------------------------------------------------
+
+void StorageManipulator::tick(f32 /*dt*/) {
+    if (!owner_ || owner_->is_being_built()) return;
+    f32 full = 0;
+    if (auto* army = sim_ ? sim_->get_army(owner_->army()) : nullptr) {
+        const auto& res = mass_ ? army->economy().mass : army->economy().energy;
+        if (res.max_storage > 0)
+            full = static_cast<f32>(res.stored) / static_cast<f32>(res.max_storage);
+    }
+    const f32 empty = 1.0f - full;
+    const Vector3 target{empty_.x * empty + full_.x * full, empty_.y * empty + full_.y * full,
+                         empty_.z * empty + full_.z * full};
+    current_ = {current_.x * 0.9f + target.x * 0.1f, current_.y * 0.9f + target.y * 0.1f,
+                current_.z * 0.9f + target.z * 0.1f};
 }
 
 // ---------------------------------------------------------------------------
