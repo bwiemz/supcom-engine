@@ -17,7 +17,6 @@ G EjectSessionClient
 G EngineStartFrontEndUI
 G ExecLuaInSim
 G FlushIntelInRect
-G GameTime
 G GenerateArmyStart
 G GenerateBuildTemplateFromSelection
 G GetArmy
@@ -30,12 +29,9 @@ G InternalStartSteamDiscoveryService
 G IsSignedInToSteam
 G IssueDockCommand
 G IssueEnhance
-G MapBorderAdd
-G MapBorderClear
 G RefreshSteamGames
 G RemoveProfileDirectories
 G RenderOverlayEconomy
-G SessionIsPaused
 G SetAllianceOneWay
 G SetQueueGrid
 G SetQueueState
@@ -45,7 +41,6 @@ G StartSound
 G UISelectAndZoomTo
 G UnProject
 G ValidateIPAddress
-G WorldIsPlaying
 G _c_CreateDecal
 G _c_CreatePathDebugger
 G errro
