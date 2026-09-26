@@ -193,7 +193,26 @@ A `--steer-test` (gate) on flat ground:
    reach their goals.
 4. **Parked:** a unit parked on the path isn't a candidate (it isn't on a
    path). Separation (M203b) handles it.
+5. **Overtaking one that outranks it:** a Striker overtakes a slower Pillar
+   of its own army (footprint 2, so the Pillar never yields on its own).
+   The Striker steps aside, and the Pillar is made to stop while it passes.
 5. **Determinism:** the pass runs in the two-process determinism test.
 
 The existing movement tests (drive, crowd, formation, move) must stay green.
 Their arrival times may shift, and each shift is checked, not loosened.
+
+**Mutation check:** 9 mutants. Eight are killed:
+- no pass;
+- no sidestep;
+- never stopping;
+- no tiebreak;
+- no footprint rank;
+- a loose sidestep tolerance;
+- checking every 20 ticks;
+- the overtaken unit not stopping.
+
+One survives: no deferral, where the lower-ranked of one army is recorded
+as the owner's instead. In each test both units check, and the tiebreak
+reaches the same decision. Deferral only changes *when* the yielder learns
+of the meeting, when its own, smaller query radius hasn't reached the other
+yet.

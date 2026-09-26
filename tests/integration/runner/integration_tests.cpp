@@ -8613,6 +8613,29 @@ void test_steer(TestContext& ctx) {
     }
     clear({"__osc_parked", "__osc_mover"});
 
+    // 5. Overtaking one that outranks it: a Striker comes up behind a slower
+    //    Pillar of its own army (footprint 2, so the Pillar never yields on
+    //    its own). The Striker steps aside, and the Pillar is made to stop
+    //    while it passes (Moho's repath of the unit overtaken).
+    lua(R"(
+        __osc_pillar = __osc_spawn('uel0202', 'ARMY_1', 0, -40, 0)
+        __osc_striker = __osc_spawn('uel0201', 'ARMY_1', 0, -50, 0)
+        __osc_move(__osc_pillar, 0, 10)
+        __osc_move(__osc_striker, 0, 40)
+    )");
+    {
+        const float r = reach("__osc_striker", "__osc_pillar");
+        const Watch w = watch("__osc_striker", "__osc_pillar", 300, false, false);
+        auto* striker = unit("__osc_striker");
+        auto* pillar = unit("__osc_pillar");
+        check(w.stepped[0] && w.held[1] && w.closest >= 0.9f * r && striker && pillar &&
+                  striker->position().z > pillar->position().z && w.arrived[0] && w.arrived[1],
+              fmt::format("Test 5: overtaking one that outranks it, it steps aside and the other "
+                          "stops (stepped {}, overtaken held {}, closest {:.2f} of {:.2f})",
+                          w.stepped[0], w.held[1], w.closest, r));
+    }
+    clear({"__osc_pillar", "__osc_striker"});
+
     spdlog::info("=== STEER TEST: {} passed, {} failed ===", pass, fail);
 }
 
