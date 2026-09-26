@@ -540,6 +540,12 @@ public:
     f32 sim_rand_range(f32 lo, f32 hi) { return sim_random_.range(lo, hi); }
 
     static constexpr f64 SECONDS_PER_TICK = 0.1;
+    /// Every this many ticks the sim forces a full collection of its Lua
+    /// state, as Moho's Sim::AdvanceBeat does (faf-re Sim.cpp); between,
+    /// Lua 5.0 collects when its heap doubles. The heap is mostly live
+    /// (about 150 MB late in a four-AI game, 10% garbage), so each full
+    /// collection costs 60-90 ms there.
+    static constexpr u32 LUA_GC_PERIOD_TICKS = 70;
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.

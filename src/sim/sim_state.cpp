@@ -1028,11 +1028,11 @@ void SimState::tick() {
         });
     }
 
-    // Periodic Lua garbage collection to prevent unbounded memory growth.
-    // Lua 5.0 uses stop-the-world mark-and-sweep GC. Setting threshold to 0
-    // forces an immediate full collection. Running every 50 ticks (5 seconds
-    // game time) amortizes GC cost while preventing heap growth.
-    if (tick_count_ % 50 == 0) {
+    // A full collection of the sim's Lua state (Lua 5.0's collector is
+    // stop-the-world; a threshold of 0 forces one now), on Moho's schedule.
+    // Its timing is part of the game: weak tables (trash bags) lose what it
+    // frees, so it must fall on the same ticks on every peer.
+    if (tick_count_ % LUA_GC_PERIOD_TICKS == 0) {
         PROFILE_ZONE("Sim::lua_gc");
         lua_setgcthreshold(L_, 0);
     }

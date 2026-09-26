@@ -68,6 +68,7 @@ add_executable(osc_tests
     test_quaternions.cpp
     test_category_match.cpp
     test_effect_expiry.cpp
+    test_sim_lua_gc.cpp
     test_saved_game.cpp
     test_common_army.cpp
     test_handicap.cpp
