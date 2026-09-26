@@ -21,6 +21,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
@@ -1772,7 +1773,7 @@ void push_user_unit(lua_State* L, u32 id, i32 army) {
 
     // EntityId
     lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, static_cast<lua_Number>(id));
+    sim::push_entity_id(L, id);
     lua_rawset(L, tbl);
 
     // Army (1-based for Lua)

@@ -1062,7 +1062,7 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
 
     // Standard fields
     lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, id);
+    sim::push_entity_id(L, id);
     lua_rawset(L, -3);
     lua_pushstring(L, "Army");
     lua_pushnumber(L, army + 1);
@@ -5186,7 +5186,7 @@ static int l_CreateShield(lua_State* L) {
 
     // Set EntityId on self table
     lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, id);
+    sim::push_entity_id(L, id);
     lua_rawset(L, 1);
 
     // Store Lua table ref on the C++ entity

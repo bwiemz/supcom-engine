@@ -117,7 +117,7 @@ void create_prop_object(lua_State* L, SimState& sim, Prop& prop, bool push) {
     lua_pushnumber(L, static_cast<lua_Number>(SimState::sim_generation()));
     lua_rawset(L, obj);
     lua_pushstring(L, "EntityId");
-    lua_pushnumber(L, static_cast<lua_Number>(prop.entity_id()));
+    push_entity_id(L, prop.entity_id());
     lua_rawset(L, obj);
     // self.Blueprint, as FAF's scripts read it (retail calls GetBlueprint);
     // and the collision box it gives, until a script sets another.

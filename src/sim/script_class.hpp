@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/types.hpp"
+
 #include <string>
 #include <string_view>
 
@@ -31,5 +33,12 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
 /// call fails or returns no table, a warning names `kind` and the object
 /// is the plain instance. A non-table on top becomes an empty table.
 void push_new_script_object(lua_State* L, const char* kind);
+
+/// Push an entity id as scripts see it: a string of its decimal digits, as
+/// Moho formats every id it hands Lua ("%d": GetEntityId, EntityId fields,
+/// command queues' targetId; faf-re). Scripts key tables by it -- retail's
+/// SimUnitEnhancements, FAF's UnitData -- and look those up with ids from
+/// other sources, so a number from one and a string from another miss.
+void push_entity_id(lua_State* L, u32 id);
 
 } // namespace osc::sim

@@ -12,6 +12,7 @@
 #include "renderer/renderer.hpp"
 #include "ui/world_view.hpp"
 #include "lua/sim_sync.hpp"
+#include "sim/script_class.hpp"
 
 namespace osc::app {
 
@@ -123,7 +124,7 @@ void report_command_issued(lua_State* uiL, const osc::renderer::IssuedCommand& c
     lua_rawset(uiL, -3);
     if (c.target_id) {
         lua_pushstring(uiL, "EntityId");
-        lua_pushnumber(uiL, c.target_id);
+        osc::sim::push_entity_id(uiL, c.target_id);
         lua_rawset(uiL, -3);
     }
     lua_pushstring(uiL, "Position");

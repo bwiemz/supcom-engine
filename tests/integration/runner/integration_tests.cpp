@@ -668,6 +668,7 @@ void test_reclaim(TestContext& ctx) {
         end
         LOG('Reclaim test: created prop #' .. prop:GetEntityId() ..
             ' near ACU at (' .. pos[1] .. ', ' .. pos[3] .. ')')
+        __osc_prop_ids = {type(prop:GetEntityId()), prop.EntityId == prop:GetEntityId()}
 
         -- Set reclaim values (normally done by Prop:SetMaxReclaimValues)
         prop.MaxMassReclaim = 100
@@ -685,6 +686,15 @@ void test_reclaim(TestContext& ctx) {
         spdlog::warn("Reclaim test Lua error: {}",
                      reclaim_result.error().message);
     }
+    // A prop's EntityId is the id GetEntityId gives: a string, as Moho's.
+    if (auto r = ctx.lua_state.do_string(R"(
+            if __osc_prop_ids[1] ~= 'string' or not __osc_prop_ids[2] then
+                error('GetEntityId gave a ' .. __osc_prop_ids[1] .. '; EntityId matches: ' ..
+                      tostring(__osc_prop_ids[2]))
+            end
+        )"))
+        spdlog::info("[PASS] Reclaim test: the prop's EntityId is GetEntityId's string");
+    else osc::test_status::fail("[FAIL] Reclaim test: {}", r.error().message);
 
     // Run 200 ticks (plenty of time for ACU to move + reclaim)
     spdlog::info("Running 200 reclaim ticks...");
@@ -2052,31 +2062,21 @@ void test_enhance(TestContext& ctx) {
     auto result = ctx.lua_state.do_string(R"(
         -- Find ACU (entity #1, uel0001)
         local acu = GetEntityById(__osc_test_acu_id(1))
-        if not acu then
-            LOG('ENHANCE TEST FAILED: no entity #1')
-            return
-        end
+        if not acu then error('no ACU') end
         LOG('ENHANCE TEST: ACU found - ' .. (acu.UnitId or 'nil'))
 
         -- Verify Blueprint.Enhancements exists
         local bp = acu:GetBlueprint()
-        if not bp or not bp.Enhancements then
-            LOG('ENHANCE TEST FAILED: no Blueprint.Enhancements')
-            return
-        end
+        if not bp or not bp.Enhancements then error('no Blueprint.Enhancements') end
 
         local enh = bp.Enhancements.AdvancedEngineering
-        if not enh then
-            LOG('ENHANCE TEST FAILED: no AdvancedEngineering enhancement')
-            return
-        end
+        if not enh then error('no AdvancedEngineering enhancement') end
         LOG('ENHANCE TEST: AdvancedEngineering found - BuildTime=' ..
             tostring(enh.BuildTime) .. ' Slot=' .. tostring(enh.Slot))
 
         -- Test 1: HasEnhancement should be false initially
         if acu:HasEnhancement('AdvancedEngineering') then
-            LOG('ENHANCE TEST 1 FAILED: HasEnhancement returned true before enhance')
-            return
+            error('Test 1: HasEnhancement returned true before enhance')
         end
         LOG('ENHANCE TEST 1 PASSED: HasEnhancement=false before enhance')
 
@@ -2085,7 +2085,8 @@ void test_enhance(TestContext& ctx) {
         IssueEnhancement({acu}, 'AdvancedEngineering')
     )");
     if (!result) {
-        spdlog::warn("Enhance test setup Lua error: {}", result.error().message);
+        osc::test_status::fail("[FAIL] Enhance test setup: {}", result.error().message);
+        return;
     }
 
     // Run ticks to let the enhancement complete
@@ -2108,56 +2109,34 @@ void test_enhance(TestContext& ctx) {
     // Verify enhancement completed
     result = ctx.lua_state.do_string(R"(
         local acu = GetEntityById(__osc_test_acu_id(1))
-        if not acu then
-            LOG('ENHANCE TEST FAILED: ACU gone after ticks')
-            return
+        if not acu then error('ACU gone after ticks') end
+        if not acu:HasEnhancement('AdvancedEngineering') then
+            error('Test 2: HasEnhancement=false after enhance')
         end
+        LOG('ENHANCE TEST 2 PASSED: HasEnhancement=true after enhance')
 
-        -- Test 2: HasEnhancement should be true after completion
-        if acu:HasEnhancement('AdvancedEngineering') then
-            LOG('ENHANCE TEST 2 PASSED: HasEnhancement=true after enhance')
-        else
-            LOG('ENHANCE TEST 2 FAILED: HasEnhancement=false after enhance')
+        -- Test 3: SimSync keys its table by GetEntityId, a string as in Moho,
+        -- and the engine's EntityId field is the same value.
+        local id = acu:GetEntityId()
+        if type(id) ~= 'string' then error('Test 3: GetEntityId gave a ' .. type(id)) end
+        if acu.EntityId ~= id then error('Test 3: EntityId ' .. tostring(acu.EntityId)) end
+        local sue = SimUnitEnhancements[id]
+        if not sue or sue.LCH ~= 'AdvancedEngineering' then
+            error('Test 3: SimUnitEnhancements[' .. id .. '] = ' .. repr(sue))
         end
-
-        -- Test 3: SimUnitEnhancements should have the entry
-        local sue = SimUnitEnhancements[acu.EntityId]
-        if sue then
-            local found = false
-            for k, v in sue do
-                if v == 'AdvancedEngineering' then
-                    found = true
-                    LOG('ENHANCE TEST 3 PASSED: SimUnitEnhancements[' ..
-                        tostring(acu.EntityId) .. '][' .. k .. '] = ' .. v)
-                    break
-                end
-            end
-            if not found then
-                LOG('ENHANCE TEST 3 FAILED: AdvancedEngineering not in SimUnitEnhancements')
-            end
-        else
-            LOG('ENHANCE TEST 3 FAILED: no SimUnitEnhancements entry for ACU')
+        local common = import('/lua/enhancementcommon.lua').GetEnhancements(id)
+        if not common or common.LCH ~= 'AdvancedEngineering' then
+            error('Test 3: enhancementcommon has ' .. repr(common))
         end
+        LOG('ENHANCE TEST 3 PASSED: SimUnitEnhancements[' .. id .. '].LCH = AdvancedEngineering')
 
-        -- Test 4: Unit should not be enhancing anymore
-        if acu:IsUnitState('Enhancing') then
-            LOG('ENHANCE TEST 4 FAILED: still in Enhancing state')
-        else
-            LOG('ENHANCE TEST 4 PASSED: not in Enhancing state')
-        end
-
-        -- Test 5: Unit should be mobile again
-        if acu:IsMobile() then
-            LOG('ENHANCE TEST 5 PASSED: ACU is mobile again')
-        else
-            LOG('ENHANCE TEST 5 FAILED: ACU is still immobile')
-        end
-
-        LOG('ENHANCE TEST: ALL PASSED')
+        if acu:IsUnitState('Enhancing') then error('Test 4: still in Enhancing state') end
+        LOG('ENHANCE TEST 4 PASSED: not in Enhancing state')
+        if not acu:IsMobile() then error('Test 5: ACU is still immobile') end
+        LOG('ENHANCE TEST 5 PASSED: ACU is mobile again')
     )");
-    if (!result) {
-        spdlog::warn("Enhance test verify Lua error: {}", result.error().message);
-    }
+    if (!result) osc::test_status::fail("[FAIL] Enhance test: {}", result.error().message);
+    else spdlog::info("ENHANCE TEST: ALL PASSED");
 
     spdlog::info("Enhancement test: {} entities, {} threads",
                  ctx.sim.entity_registry().count(),
@@ -2390,6 +2369,16 @@ void test_shield(TestContext& ctx) {
     if (!result) {
         spdlog::warn("Shield test Lua error: {}", result.error().message);
     }
+    // The shield's EntityId is the id GetEntityId gives: a string, as Moho's.
+    result = ctx.lua_state.do_string(R"(
+        local shield = GetEntityById(__osc_test_acu_id(1)).MyShield
+        local id = shield:GetEntityId()
+        if type(id) ~= 'string' or shield.EntityId ~= id then
+            error(type(id) .. ' ' .. tostring(id) .. ', EntityId ' .. tostring(shield.EntityId))
+        end
+    )");
+    if (result) spdlog::info("[PASS] Shield test: EntityId is GetEntityId's string");
+    else osc::test_status::fail("[FAIL] Shield test: {}", result.error().message);
 
     // Run more ticks for regen thread to work
     spdlog::info("Running 100 post-shield ticks for regen...");
@@ -10021,6 +10010,8 @@ void test_factory_assist(TestContext& ctx) {
         if not u or u:GetBlueprint().BlueprintId ~= 'uel0201' then error('C is not building a tank') end
         local q = __osc_c:GetCommandQueue()
         if table.getn(q) ~= 1 then error('C has ' .. table.getn(q) .. ' orders; its guard alone expected') end
+        -- targetId as Moho gives it: the target's GetEntityId string.
+        if q[1].targetId ~= __osc_a2:GetEntityId() then error('targetId ' .. tostring(q[1].targetId)) end
     )");
     spdlog::info("=== FACTORY ASSIST TEST: {} passed, {} failed ===", pass, fail);
 }
@@ -15422,6 +15413,10 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         if not info then error('no rollover info for the selection') end
         if info.blueprintId ~= 'uel0001' then
             error('rollover blueprint ' .. tostring(info.blueprintId))
+        end
+        -- unitview.lua looks up UnitData[info.entityId], keyed by GetEntityId.
+        if info.entityId ~= GetArmyAvatars()[1]:GetEntityId() then
+            error('rollover entityId ' .. tostring(info.entityId))
         end
         local bg = import('/lua/ui/game/unitview.lua').controls.bg
         if bg:GetAlpha() < 0.99 then
