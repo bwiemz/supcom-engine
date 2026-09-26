@@ -3006,6 +3006,74 @@ static int l_WorldIsLoading(lua_State* L) {
     return 1;
 }
 
+/// SessionIsActive() -> boolean: a game session exists -- loading, playing or
+/// at its score screen -- and hasn't been ended (Moho: an active world
+/// session). The front end has none. (Retail's UI gates Quick Save, the
+/// camera zoom and more on it; a fallback had answered false in game too.)
+static int l_ui_SessionIsActive(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    const auto state = mgr ? mgr->current() : osc::GameState::INIT;
+    const bool in_session = state == osc::GameState::LOADING || state == osc::GameState::GAME ||
+                            state == osc::GameState::SCORE;
+    lua_pushboolean(L, in_session && !mgr->sim_stopped() ? 1 : 0);
+    return 1;
+}
+
+/// WorldIsPlaying() -> boolean: the world is running (Moho: its frame action
+/// is Playing), not loading or gone.
+static int l_WorldIsPlaying(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, mgr && mgr->current() == osc::GameState::GAME ? 1 : 0);
+    return 1;
+}
+
+/// GameTime() -> seconds of game time. Moho adds the time since the last
+/// tick; this is the tick's.
+static int l_GameTime(lua_State* L) {
+    auto* sim = get_sim(L);
+    lua_pushnumber(L, sim ? sim->game_time() : 0.0);
+    return 1;
+}
+
+/// SessionIsPaused() -> boolean
+static int l_SessionIsPaused(lua_State* L) {
+    auto* mgr = get_game_state_mgr(L);
+    lua_pushboolean(L, mgr && mgr->paused() ? 1 : 0);
+    return 1;
+}
+
+/// MapBorderClear() / MapBorderAdd(mesh): the decorative meshes around the
+/// map's edge (the skin's "imager" mesh; retail's UpdateWorldBorderState).
+/// They are kept for the world view; nothing draws them yet.
+static int l_MapBorderClear(lua_State* L) {
+    lua_pushstring(L, "__osc_map_border_meshes");
+    lua_newtable(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+static int l_MapBorderAdd(lua_State* L) {
+    if (lua_type(L, 1) != LUA_TSTRING) return 0;
+    lua_pushstring(L, "__osc_map_border_meshes");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        l_MapBorderClear(L);
+        lua_pushstring(L, "__osc_map_border_meshes");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+    }
+    lua_pushvalue(L, 1);
+    lua_rawseti(L, -2, luaL_getn(L, -2) + 1);
+    lua_pop(L, 1);
+    return 0;
+}
+
+/// IsNISMode() -> false: no in-game cinematic (a campaign's NIS) runs here.
+static int l_IsNISMode(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
 /// LaunchSinglePlayerSession(sessionConfig) — launch a game from lobby config.
 /// Reads ScenarioFile from GameOptions or the legacy top-level field, stores
 /// config in FrontEndData, signals main loop.
@@ -4200,6 +4268,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);
     state.register_function("WorldIsLoading", l_WorldIsLoading);
+    state.register_function("SessionIsActive", l_ui_SessionIsActive);
+    state.register_function("WorldIsPlaying", l_WorldIsPlaying);
+    state.register_function("GameTime", l_GameTime);
+    state.register_function("SessionIsPaused", l_SessionIsPaused);
+    state.register_function("IsNISMode", l_IsNISMode);
+    state.register_function("MapBorderClear", l_MapBorderClear);
+    state.register_function("MapBorderAdd", l_MapBorderAdd);
     state.register_function("LaunchSinglePlayerSession", l_LaunchSinglePlayerSession);
     state.register_function("StartFrontEndUI", l_StartFrontEndUI);
 

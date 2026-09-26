@@ -47,8 +47,14 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
     lua_pushstring(L, "");
     lua_rawset(L, -3);
 
+    // {width, height}, as a scenario file gives it (retail indexes size[1],
+    // size[2]: the world border, the map's km in the lobby's info).
     lua_pushstring(L, "size");
+    lua_newtable(L);
     lua_pushnumber(L, sim->terrain()->map_width());
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, sim->terrain()->map_height());
+    lua_rawseti(L, -2, 2);
     lua_rawset(L, -3);
 
     lua_pushstring(L, "PlayableArea");

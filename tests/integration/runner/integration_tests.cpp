@@ -14908,6 +14908,22 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
         Prefs.SetToCurrentProfile('mini_ui_minimap', nil)
     )");
 
+    lua_ok("Test 8b: a game session answers as Moho's does (retail's Quick Save and camera "
+           "zoom ask)",
+           R"(
+        if not SessionIsActive() then error('no active session in game') end
+        if not WorldIsPlaying() then error('the world is not playing') end
+        if IsNISMode() then error('an NIS is running') end
+        if math.abs(GameTime() - GetGameTimeSeconds()) > 1e-6 then
+            error('GameTime ' .. GameTime() .. ' vs ' .. GetGameTimeSeconds())
+        end
+        if SessionIsPaused() then error('paused at the start') end
+        SessionRequestPause()
+        local paused = SessionIsPaused()
+        SessionResume()
+        if not paused or SessionIsPaused() then error('pause not reported') end
+    )");
+
     lua_ok("Test 9a: NoteGameOver requests observer focus", R"(
         import('/lua/ui/uimain.lua').NoteGameOver()
         if GetFocusArmy() == -1 then error('focus changed before the beat') end
