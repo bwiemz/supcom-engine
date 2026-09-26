@@ -407,6 +407,30 @@ static int unit_GetFocusUnit(lua_State* L) {
     return 1;
 }
 
+// GetTargetEntity(): the entity its attack order is for -- Moho's attacker's
+// desired target (faf-re cfunc_UnitGetTargetEntityL) -- or nil. FAF's
+// bombers lead their drop at it, caching moho.unit_methods.GetTargetEntity.
+// Only the attack tasks set that target in Moho (CUnitAttackTargetTask and
+// its melee twin); the move, patrol and guard tasks clear it, and a
+// weapon's own pick is not it -- FAF's bombers then aim at the weapon's
+// target position instead, as they do there.
+static int unit_GetTargetEntity(lua_State* L) {
+    auto* u = check_unit(L);
+    auto* sim = get_sim(L);
+    if (u && sim && !u->command_queue().empty()) {
+        const auto& head = u->command_queue().front();
+        if (head.type == sim::CommandType::Attack && head.target_id != 0) {
+            auto* target = sim->entity_registry().find(head.target_id);
+            if (target && !target->destroyed() && target->lua_table_ref() >= 0) {
+                lua_rawgeti(L, LUA_REGISTRYINDEX, target->lua_table_ref());
+                return 1;
+            }
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
 
 static int unit_GetWorkProgress(lua_State* L) {
     auto* u = check_unit(L);
@@ -2434,6 +2458,7 @@ const MethodEntry unit_methods[] = {
     {"Stop",                        unit_Stop},
     {"Kill",                        entity_Kill},
     {"GetFocusUnit",                unit_GetFocusUnit},
+    {"GetTargetEntity",             unit_GetTargetEntity},
     {"RestoreBuildRestrictions",    unit_RestoreBuildRestrictions},
     {"SetCreator",                  unit_SetCreator},
     {"GetCreator",                  unit_GetCreator},
