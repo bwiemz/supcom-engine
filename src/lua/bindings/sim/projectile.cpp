@@ -203,6 +203,20 @@ static int proj_SetNewTargetGround(lua_State* L) {
     return 0;
 }
 
+// SetNewTargetGroundXYZ(x, y, z): SetNewTargetGround with the point as three
+// numbers. FAF's engine adds it, and its Projectile.lua (the tracking
+// fuzziness of OnTrackTargetGround) calls it.
+static int proj_SetNewTargetGroundXYZ(lua_State* L) {
+    auto* p = check_projectile(L);
+    if (!p) return 0;
+    p->target_position = {static_cast<f32>(luaL_checknumber(L, 2)),
+                          static_cast<f32>(luaL_checknumber(L, 3)),
+                          static_cast<f32>(luaL_checknumber(L, 4))};
+    p->target_entity_id = 0; // ground target
+    p->has_target_position = true;
+    return 0;
+}
+
 // proj:SetMaxSpeed(speed) — set max speed, return self for chaining
 static int proj_SetMaxSpeed(lua_State* L) {
     auto* p = check_projectile(L);
@@ -432,6 +446,7 @@ const MethodEntry projectile_methods[] = {
     {"SetLifetime",                 proj_SetLifetime},
     {"SetNewTarget",                proj_SetNewTarget},
     {"SetNewTargetGround",          proj_SetNewTargetGround},
+    {"SetNewTargetGroundXYZ",       proj_SetNewTargetGroundXYZ},
     // Stubs — return self for chaining
     {"GetTrackingTarget",           proj_GetTrackingTarget},
     {"GetCurrentTargetPosition",    proj_GetCurrentTargetPosition},
