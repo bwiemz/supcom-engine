@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
 namespace osc::sim {
@@ -176,6 +177,17 @@ void path_ahead(const Unit& u, std::vector<Vector3>& out) {
     u.navigator().path_ahead(u.position(), u.ground_speed(), u.max_speed(), accel(u), kNodes, out);
 }
 
+/// Each unit's path ahead, made once a tick: the pass runs before anything
+/// moves, and a unit meets many others. A resolution that changes a unit's
+/// path drops its entry. (Looked up by id only; nothing walks it.)
+using PathCache = std::unordered_map<u32, std::vector<Vector3>>;
+
+const std::vector<Vector3>& cached_path(PathCache& cache, const Unit& u) {
+    auto [it, fresh] = cache.try_emplace(u.entity_id());
+    if (fresh) path_ahead(u, it->second);
+    return it->second;
+}
+
 /// Moho's PredictCollisionForSteerings: walk `rec`'s path and `other`'s
 /// together, every third node, and record in `rec`'s navigator the first
 /// meeting nearer than the one it holds.
@@ -224,11 +236,10 @@ void predict(Unit& rec, const std::vector<Vector3>& rec_path, const Unit& other,
 
 /// Moho's CheckCollisions: the units near `owner` it would meet, each
 /// predicted for whichever of the two yields.
-void check(SimState& sim, Unit& owner, i32 now, std::vector<Vector3>& owner_path,
-           std::vector<Vector3>& cand_path) {
+void check(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
     Navigator& nav = owner.navigator();
     nav.clear_collision();
-    path_ahead(owner, owner_path);
+    const std::vector<Vector3>& owner_path = cached_path(cache, owner);
     nav.set_next_check(now + kCheckEvery);
     if (owner.layer() == "Sub") return; // Moho checks no submerged owner
     const f32 a = accel(owner);
@@ -239,7 +250,7 @@ void check(SimState& sim, Unit& owner, i32 now, std::vector<Vector3>& owner_path
         auto& c = static_cast<Unit&>(*e);
         if (ignored(owner, c)) continue;
         if (c.navigator().sidestepping()) continue; // a PT_2 path under way
-        path_ahead(c, cand_path);
+        const std::vector<Vector3>& cand_path = cached_path(cache, c);
         if (c.army() == owner.army() && !outranks(c, owner)) {
             predict(c, cand_path, owner, owner_path, now); // it yields
         } else if (!cand_path.empty() || can_fly(c)) {
@@ -257,10 +268,13 @@ bool wins(const Unit& a, const Unit& b) {
 }
 
 /// Moho's ResolvePossibleCollision, at the tick of the meeting.
-void resolve(SimState& sim, Unit& owner, i32 now) {
+void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
     Navigator& nav = owner.navigator();
     const Navigator::Collision col = nav.collision();
     nav.clear_collision();
+    // Whatever it decides changes the paths ahead of the two.
+    cache.erase(owner.entity_id());
+    cache.erase(col.other);
     Entity* oe = sim.entity_registry().find(col.other);
     if (!oe || oe->destroyed() || !oe->is_unit()) {
         nav.set_next_check(now);
@@ -363,15 +377,15 @@ void steer_ground_units(SimState& sim) {
         if (auto& u = static_cast<Unit&>(e); steers(u) && moving(u)) ids.push_back(u.entity_id());
     });
     std::sort(ids.begin(), ids.end());
-    std::vector<Vector3> owner_path, cand_path;
+    PathCache cache;
     for (const u32 id : ids) {
         Entity* e = sim.entity_registry().find(id);
         if (!e || e->destroyed() || !e->is_unit()) continue;
         auto& u = static_cast<Unit&>(*e);
         Navigator& nav = u.navigator();
         if (!steers(u) || !nav.is_moving() || nav.holding() || nav.sidestepping()) continue;
-        if (nav.has_collision() && now >= nav.collision().tick) resolve(sim, u, now);
-        else if (now >= nav.next_check()) check(sim, u, now, owner_path, cand_path);
+        if (nav.has_collision() && now >= nav.collision().tick) resolve(sim, u, now, cache);
+        else if (now >= nav.next_check()) check(sim, u, now, cache);
     }
 }
 

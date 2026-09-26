@@ -141,8 +141,8 @@ private:
     size_t sidestep_index_ = 0; ///< its index; passed, the sidestep is done
     int hold_ticks_ = 0;        ///< stopping, then this many ticks still
     u32 held_for_ = 0;          ///< the unit it stops for
-    static constexpr f32 SIDESTEP_TOLERANCE =
-        0.25f; ///< a sidestep point is reached, not passed near
+    /// A sidestep point is reached, not passed near.
+    static constexpr f32 SIDESTEP_TOLERANCE = 0.25f;
 
     // Memo of the last outright path failure (see FAILED_PATH_RETRY_CALLS).
     bool has_failed_request_ = false;
