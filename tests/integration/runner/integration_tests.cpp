@@ -11144,6 +11144,370 @@ void test_carrier(TestContext& ctx) {
     spdlog::info("Carrier test: {}/{} passed", pass, pass + fail);
 }
 
+void test_carrier_land(TestContext& ctx) {
+    spdlog::info("=== CARRIER LAND TEST: aircraft land on carriers (M206s) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] carrier land script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+
+    // An Aeon carrier (six landing points, 60 storage slots, refuels at x100)
+    // on deep water, with resources to spare.
+    if (!lua(R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 50000)
+        brain:GiveStorage('ENERGY', 500000)
+        brain:GiveResource('MASS', 50000)
+        brain:GiveResource('ENERGY', 500000)
+        local x, z
+        for tz = 100, 900, 16 do
+            for tx = 100, 900, 16 do
+                if not x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 8 and
+                   GetSurfaceHeight(tx + 30, tz + 30) - GetTerrainHeight(tx + 30, tz + 30) > 8 and
+                   GetSurfaceHeight(tx - 30, tz - 30) - GetTerrainHeight(tx - 30, tz - 30) > 8 then
+                    x, z = tx, tz
+                end
+            end
+        end
+        if not x then error('no deep water on the map') end
+        __osc_cx, __osc_cz = x, z
+        __osc_carrier = CreateUnitHPR('uas0303', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+        __osc_started, __osc_stopped = 0, 0
+        local start, stop = __osc_carrier.OnStartTransportLoading, __osc_carrier.OnStopTransportLoading
+        __osc_carrier.OnStartTransportLoading = function(self)
+            __osc_started = __osc_started + 1
+            if start then return start(self) end
+        end
+        __osc_carrier.OnStopTransportLoading = function(self)
+            __osc_stopped = __osc_stopped + 1
+            if stop then return stop(self) end
+        end
+    )"))
+        return;
+    auto* carrier = unit("__osc_carrier");
+    if (!carrier) {
+        check(false, "the carrier exists");
+        return;
+    }
+
+    // Reservations go round the landing points; each pass round makes those
+    // after wait 3 ticks more, and a reserved place counts as taken.
+    {
+        std::vector<osc::sim::Unit::StoragePlace> places;
+        for (osc::u32 id = 900001; id <= 900007; ++id)
+            if (auto p = carrier->reserve_storage(id)) places.push_back(*p);
+        bool distinct = places.size() == 7;
+        for (size_t i = 0; distinct && i < 6; ++i)
+            for (size_t j = i + 1; j < 6; ++j) {
+                const float dx = places[i].point.x - places[j].point.x;
+                const float dz = places[i].point.z - places[j].point.z;
+                if (dx * dx + dz * dz < 1e-4f) distinct = false;
+            }
+        const bool wrapped = places.size() == 7 &&
+                             std::abs(places[6].point.x - places[0].point.x) < 1e-3f &&
+                             std::abs(places[6].point.z - places[0].point.z) < 1e-3f;
+        check(
+            distinct && wrapped && places[0].delay == 0 && places[5].delay == 0 &&
+                places[6].delay == 3 && carrier->storage_reserved_ids().size() == 7,
+            fmt::format("seven reservations: six points, then round again 3 ticks later ({} made, "
+                        "delays {} {})",
+                        places.size(), places.empty() ? -1 : places[5].delay,
+                        places.size() < 7 ? -1 : places[6].delay));
+        // Reserved places count as taken: the 60 slots fill with 60.
+        osc::u32 next = 900008;
+        while (carrier->transport_has_available_storage() && next < 900200)
+            (void)carrier->reserve_storage(next++);
+        check(carrier->storage_reserved_ids().size() == 60 &&
+                  !carrier->transport_has_available_storage(),
+              fmt::format("reserved places fill the storage ({} reserved)",
+                          carrier->storage_reserved_ids().size()));
+        for (osc::u32 id = 900001; id < next; ++id) carrier->clear_storage_reservation(id);
+        carrier->reset_storage_reservation();
+        check(carrier->storage_reserved_ids().empty() && carrier->next_storage_point() == 0 &&
+                  carrier->storage_overflow() == 0,
+              "reservations clear and start over");
+    }
+
+    // Seven interceptors ordered aboard (IssueTransportLoad): the carrier
+    // takes its share of the order and stops for them; each lands on its
+    // place in turn and is stored; then the carrier's order ends.
+    lua(R"(
+        __osc_planes = {}
+        for i = 1, 7 do
+            __osc_planes[i] = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx + 40 + i * 4, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz + 40, 0, 0, 0)
+        end
+        IssueTransportLoad(__osc_planes, __osc_carrier)
+    )");
+    const auto stored_count = [&] {
+        int n = 0;
+        for (int i = 1; i <= 7; ++i)
+            if (auto* p = unit("__osc_planes[" + std::to_string(i) + "]");
+                p && carrier->is_stored_unit(p->entity_id()))
+                ++n;
+        return n;
+    };
+    ctx.sim.tick();
+    ctx.sim.tick();
+    auto* first = unit("__osc_planes[1]");
+    const bool loading =
+        carrier->has_unit_state("TransportLoading") && number("__osc_started") == 1 && first &&
+        first->has_unit_state("TransportLoading") && first->lands_on(carrier->entity_id());
+    check(loading, fmt::format("the carrier takes them in ({} heard), and they are landing",
+                               number("__osc_started")));
+    // Each plane: where it comes in from, the tick it starts its wait and
+    // the tick it comes down, and whether its place outlived its landing.
+    std::vector<osc::sim::Unit*> planes;
+    for (int i = 1; i <= 7; ++i) planes.push_back(unit("__osc_planes[" + std::to_string(i) + "]"));
+    std::vector<int> held(7, -1), descending(7, -1), delays(7, -1);
+    bool standoff_ok = true, reservation_kept = false;
+    for (int k = 0; k < 7; ++k) {
+        auto* p = planes[static_cast<size_t>(k)];
+        if (!p || p->landing_phase() == 0) {
+            standoff_ok = false;
+            continue;
+        }
+        const auto& place = p->landing_place();
+        const auto& from = p->landing_approach();
+        const float d = std::hypot(from.x - place.point.x, from.z - place.point.z);
+        standoff_ok =
+            standoff_ok && std::abs(d - (20.0f + static_cast<float>(place.delay))) < 0.01f;
+        delays[static_cast<size_t>(k)] = place.delay;
+    }
+    int all_in = -1;
+    for (int i = 0; i < 3000 && all_in < 0; ++i) {
+        ctx.sim.tick();
+        for (int k = 0; k < 7; ++k) {
+            auto* p = planes[static_cast<size_t>(k)];
+            if (!p) continue;
+            if (held[static_cast<size_t>(k)] < 0 && p->landing_phase() == 2)
+                held[static_cast<size_t>(k)] = i;
+            if (descending[static_cast<size_t>(k)] < 0 && p->landing_phase() == 3)
+                descending[static_cast<size_t>(k)] = i;
+            const auto& r = carrier->storage_reserved_ids();
+            if (carrier->is_stored_unit(p->entity_id()) &&
+                std::find(r.begin(), r.end(), p->entity_id()) != r.end())
+                reservation_kept = true;
+        }
+        if (stored_count() == 7) all_in = i;
+    }
+    check(standoff_ok, "each comes in from 20 (and its turn's wait) back from its place");
+    {
+        // The seventh reservation goes round again: it waits 3 ticks, the
+        // others none (Moho's task waits: descending 2 ticks after, not 1).
+        bool timed = true;
+        for (size_t k = 0; k < 7; ++k) {
+            const int want = delays[k] == 3 ? 2 : 1;
+            if (delays[k] < 0 || held[k] < 0 || descending[k] - held[k] != want) timed = false;
+        }
+        check(timed && std::count(delays.begin(), delays.end(), 3) == 1,
+              fmt::format("each waits its turn over its place (delays {} {}; waits {} {})",
+                          delays[0], delays[6], descending[0] - held[0], descending[6] - held[6]));
+    }
+    check(!reservation_kept, "a stored plane's place is no longer reserved");
+    check(all_in >= 0 && first && first->transport_id() == carrier->entity_id() &&
+              !first->has_unit_state("TransportLoading") && first->command_queue().empty(),
+          fmt::format("all seven land and are stored ({} stored)", stored_count()));
+    for (int i = 0; i < 30; ++i) ctx.sim.tick();
+    check(carrier->command_queue().empty() && !carrier->has_unit_state("TransportLoading") &&
+              number("__osc_stopped") == 1 && carrier->storage_reserved_ids().empty() &&
+              carrier->next_storage_point() == 0,
+          fmt::format("the carrier's order ends when all are in ({} stop heard, {} orders)",
+                      number("__osc_stopped"), carrier->command_queue().size()));
+
+    // A second load order while the carrier takes in a first: it has its own
+    // share of each, so the later plane lands too (each load order is its
+    // own Moho command).
+    lua(R"(
+        __osc_c5 = CreateUnitHPR('uas0303', 'ARMY_1', __osc_cx - 60, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz - 60, 0, 0, 0)
+        __osc_early = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx - 60, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz - 30, 0, 0, 0)
+        __osc_late = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx - 60, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz + 30, 0, 0, 0)
+        IssueTransportLoad({__osc_early}, __osc_c5)
+    )");
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    lua("IssueTransportLoad({__osc_late}, __osc_c5)");
+    {
+        auto* c5 = unit("__osc_c5");
+        auto* early = unit("__osc_early");
+        auto* late = unit("__osc_late");
+        bool both = false;
+        for (int i = 0; i < 3000 && c5 && early && late && !both; ++i) {
+            ctx.sim.tick();
+            both = c5->is_stored_unit(early->entity_id()) && c5->is_stored_unit(late->entity_id());
+        }
+        for (int i = 0; i < 30; ++i) ctx.sim.tick();
+        check(both && c5->command_queue().empty() && !c5->has_unit_state("TransportLoading"),
+              "a second load order while the first lands: both planes are stored");
+    }
+
+    // Docked at the carrier: a damaged, half-empty plane lands, refuels (x100)
+    // and repairs stored, and is launched when full.
+    lua(R"(
+        __osc_d = CreateUnitHPR('uea0203', 'ARMY_1', __osc_cx - 40, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz - 40, 0, 0, 0)
+        __osc_d:SetFuelRatio(0.5)
+        __osc_d:SetHealth(nil, 50)
+    )");
+    auto* d = unit("__osc_d");
+    if (!d) return;
+    {
+        osc::sim::UnitCommand dock;
+        dock.type = osc::sim::CommandType::Dock;
+        dock.target_id = carrier->entity_id();
+        dock.target_pos = carrier->position();
+        ctx.sim.route_command({d->entity_id()}, dock, true);
+    }
+    bool stored = false;
+    float f0 = 0.0f, f1 = 0.0f;
+    for (int i = 0; i < 3000 && !stored; ++i) {
+        ctx.sim.tick();
+        stored = carrier->is_stored_unit(d->entity_id());
+    }
+    if (stored) {
+        f0 = d->fuel_ratio();
+        ctx.sim.tick();
+        f1 = d->fuel_ratio();
+    }
+    check(stored && d->has_unit_state("Refueling") &&
+              std::abs((f1 - f0) - 5.0f / 400.0f * 0.1f * 100.0f) < 1e-5f,
+          fmt::format("docked, it lands and refuels stored, {:.4f} a tick", f1 - f0));
+    bool launched = false;
+    for (int i = 0; i < 300 && !launched; ++i) {
+        ctx.sim.tick();
+        launched = stored && d->transport_id() == 0;
+    }
+    const float surface =
+        ctx.sim.terrain() ? ctx.sim.terrain()->get_surface_height(d->position().x, d->position().z)
+                          : 0.0f;
+    check(launched && d->fuel_ratio() > 0.99f && d->health() == d->max_health() &&
+              !carrier->is_stored_unit(d->entity_id()) && d->position().y > surface,
+          fmt::format("full and repaired, it is launched ({:.2f} fuel, {:.0f}/{:.0f}, {:.1f} over "
+                      "the water)",
+                      d->fuel_ratio(), d->health(), d->max_health(), d->position().y - surface));
+    for (int i = 0; i < 200 && !d->command_queue().empty(); ++i) ctx.sim.tick();
+    // (Its height is held over the ground, the seabed here: from the deck
+    // it may already be over it.)
+    check(d->command_queue().empty() && !d->has_unit_state("Refueling") &&
+              d->current_altitude() >= d->elevation_target(),
+          fmt::format("it climbs back to its flying height, and its order is done ({:.1f} of "
+                      "{:.1f})",
+                      d->current_altitude(), d->elevation_target()));
+
+    // An interceptor (flying height 18) launched off the deck climbs to it
+    // before its order ends.
+    lua(R"(
+        __osc_g = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx - 40, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz - 60, 0, 0, 0)
+        __osc_g:SetFuelRatio(0.6)
+    )");
+    if (auto* g = unit("__osc_g")) {
+        osc::sim::UnitCommand dock;
+        dock.type = osc::sim::CommandType::Dock;
+        dock.target_id = carrier->entity_id();
+        dock.target_pos = carrier->position();
+        ctx.sim.route_command({g->entity_id()}, dock, true);
+        bool went_in = false;
+        for (int i = 0; i < 3000 && !(went_in && g->transport_id() == 0); ++i) {
+            ctx.sim.tick();
+            went_in = went_in || carrier->is_stored_unit(g->entity_id());
+        }
+        const float launch_alt = g->current_altitude();
+        for (int i = 0; i < 300 && !g->command_queue().empty(); ++i) ctx.sim.tick();
+        check(went_in && launch_alt < g->elevation_target() && g->command_queue().empty() &&
+                  g->current_altitude() == g->elevation_target(),
+              fmt::format("an interceptor launched from {:.1f} climbs to its {:.1f}", launch_alt,
+                          g->elevation_target()));
+    } else {
+        check(false, "the interceptor exists");
+    }
+
+    // A plane stored without landing (a script's AddUnitToStorage, as a
+    // carrier stores what it builds) leaves at the launch bone's height and
+    // flies on from there, not from the height it had before.
+    lua(R"(
+        __osc_c4 = CreateUnitHPR('uas0303', 'ARMY_1', __osc_cx + 60, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz + 60, 0, 0, 0)
+        __osc_h = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx + 60, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz + 90, 0, 0, 0)
+    )");
+    for (int i = 0; i < 20; ++i) ctx.sim.tick(); // up at its flying height
+    lua(R"(
+        __osc_c4:AddUnitToStorage(__osc_h)
+        IssueTransportUnload({__osc_c4}, {__osc_cx + 120, 0, __osc_cz + 60})
+    )");
+    auto* c4 = unit("__osc_c4");
+    if (auto* h = unit("__osc_h"); h && c4) {
+        for (int i = 0; i < 10 && h->transport_id() != 0; ++i) ctx.sim.tick();
+        // Where it is after its launch tick: by its launch bone (one tick's
+        // climb off), not back at the height it had.
+        float nearest = 1e9f;
+        if (const auto* slots = c4->built_transport_slots())
+            for (const osc::i32 bone : slots->launch_bones())
+                nearest =
+                    std::min(nearest, std::abs(h->position().y - c4->bone_world_position(bone).y));
+        check(h->transport_id() == 0 && nearest < 1.0f,
+              fmt::format("a plane launched from storage flies on from its launch height ({:.2f} "
+                          "off it)",
+                          nearest));
+    } else {
+        check(false, "the stored plane and its carrier exist");
+    }
+
+    // Ordered aboard a carrier busy with an order of its own, a plane gives
+    // up once under way: the carrier isn't taking units in.
+    lua(R"(
+        __osc_c3 = CreateUnitHPR('uas0303', 'ARMY_1', __osc_cx - 60, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz + 60, 0, 0, 0)
+        IssueMove({__osc_c3}, {__osc_cx - 60, 0, __osc_cz + 70})
+        __osc_f = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx - 20, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz + 60, 0, 0, 0)
+        IssueTransportLoad({__osc_f}, __osc_c3)
+    )");
+    auto* f = unit("__osc_f");
+    auto* c3 = unit("__osc_c3");
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    check(f && c3 && f->command_queue().empty() && f->transport_id() == 0 &&
+              f->landing_phase() == 0 && c3->storage_reserved_ids().empty(),
+          "ordered aboard a busy carrier, a plane gives up");
+
+    // A carrier that dies mid-landing: the plane gives up, its place freed.
+    lua(R"(
+        __osc_c2 = CreateUnitHPR('uas0303', 'ARMY_1', __osc_cx + 60, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz - 60, 0, 0, 0)
+        __osc_e = CreateUnitHPR('uea0102', 'ARMY_1', __osc_cx + 140, GetSurfaceHeight(__osc_cx, __osc_cz) + 20, __osc_cz - 60, 0, 0, 0)
+        IssueTransportLoad({__osc_e}, __osc_c2)
+    )");
+    auto* e = unit("__osc_e");
+    bool coming = false;
+    for (int i = 0; i < 20 && e && !coming; ++i) {
+        ctx.sim.tick();
+        coming = e->landing_phase() != 0;
+    }
+    lua("__osc_c2:Kill()");
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    check(coming && e && e->landing_phase() == 0 && !e->has_unit_state("TransportLoading") &&
+              e->command_queue().empty(),
+          "a carrier killed mid-landing: the plane gives up");
+
+    spdlog::info("Carrier land test: {}/{} passed", pass, pass + fail);
+}
+
 void test_air_turn(TestContext& ctx) {
     spdlog::info("=== AIR TURN TEST: aircraft turn at Air.TurnSpeed radians a second ===");
     int pass = 0, fail = 0;

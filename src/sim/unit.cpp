@@ -364,6 +364,19 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
             set_unit_state("WaitForFerry", false);
+        // A carrier's retrieve, or a landing on one (M206s), whose order is
+        // gone.
+        if (retrieve_phase_ != RetrievePhase::None &&
+            !(head && head->type == CommandType::TransportLoad && head->target_id == entity_id())) {
+            end_retrieve(false, ctx);
+            if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+        }
+        if (landing_.phase != LandPhase::None &&
+            !(head &&
+              (head->type == CommandType::TransportLoad || head->type == CommandType::Dock) &&
+              head->target_id == landing_.carrier))
+            abandon_landing(ctx.registry);
         // A refuel (M206r) whose order is gone.
         if (has_unit_state("Refueling") && !(head && (head->type == CommandType::Dock ||
                                                       head->type == CommandType::TransportLoad))) {
@@ -410,8 +423,16 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
         if (destroyed() || !in_registry()) return false;
     }
 
-    // A transport gives up the slots of units no longer aboard (M206l).
+    // A transport gives up the slots of units no longer aboard (M206l), and
+    // a carrier the places of units no longer landing on it (M206s).
     if (transport_slots_ && !transport_slots_->slots().empty()) release_stale_slots(registry);
+    if (!storage_reserved_.empty())
+        std::erase_if(storage_reserved_, [&](u32 id) {
+            const Entity* e = registry.find(id);
+            const auto* u =
+                e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+            return !u || u->is_dying() || !u->lands_on(entity_id());
+        });
 
     // Cargo position following: if loaded on a transport, skip all processing
     if (transport_id_ != 0) {

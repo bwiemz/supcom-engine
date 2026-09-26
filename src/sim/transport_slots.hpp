@@ -67,6 +67,10 @@ public:
     /// TransportRemoveFromStorage). Empty when it has neither.
     std::vector<i32> launch_bones() const;
 
+    /// The generic attach points' bones, in skeleton order: where aircraft
+    /// land on a carrier (Moho's TransportReserveStorage, M206s).
+    std::vector<i32> generic_bones() const;
+
 private:
     struct Point {
         i32 bone = -1;

@@ -862,14 +862,11 @@ static int l_IssueDockCommand(lua_State* L) {
         i32 room;
     };
     static const sim::CategoryName kStaging{"AIRSTAGINGPLATFORM"};
-    static const sim::CategoryName kCarrier{"CARRIER"};
     std::vector<Pad> pads;
     registry.for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || !e.is_unit() || e.army() != focus) return;
         const auto& pad = static_cast<const sim::Unit&>(e);
         if (pad.is_being_built() || pad.is_dying() || !pad.has_category(kStaging)) return;
-        // Landing on a carrier isn't modelled yet: carriers are left out.
-        if (pad.has_category(kCarrier)) return;
         if (pad.layer() == "Sub" || pad.layer() == "Seabed" || !pad.command_queue().empty()) return;
         const i32 room = pad.storage_slots() != 0
                              ? pad.storage_slots() - static_cast<i32>(pad.stored_ids().size())
