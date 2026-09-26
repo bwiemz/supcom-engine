@@ -1624,10 +1624,13 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                      terrain->map_width(), terrain->map_height());
 
         // Stratum albedo textures (0-8) at bindings 2-10
-        // Empty strata use black (zero) so blend weights don't add white
+        // Empty strata use black (zero) so blend weights don't add white.
+        // The set is written once, so the textures must be loaded now: an
+        // async get() of a first load returned nothing, and the terrain kept
+        // the white fallback all game.
         for (size_t i = 0; i < 9; i++) {
             if (i < strata.size() && !strata[i].albedo_path.empty()) {
-                auto* tex = texture_cache_.get(strata[i].albedo_path);
+                auto* tex = texture_cache_.get_blocking(strata[i].albedo_path);
                 views[2 + i] = tex ? tex->image.view : white_view;
             } else {
                 views[2 + i] = zero_view; // black = no color contribution
@@ -1637,7 +1640,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         // Stratum normal map textures (0-8) at bindings 11-19
         for (size_t i = 0; i < 9; i++) {
             if (i < strata.size() && !strata[i].normal_path.empty()) {
-                auto* tex = texture_cache_.get(strata[i].normal_path);
+                auto* tex = texture_cache_.get_blocking(strata[i].normal_path);
                 views[11 + i] = tex ? tex->image.view : normal_fb_view;
             } else {
                 views[11 + i] = normal_fb_view;
