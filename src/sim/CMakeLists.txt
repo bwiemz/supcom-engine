@@ -18,6 +18,7 @@ add_library(osc_sim STATIC
     scm_parser.cpp
     unit.cpp
     unit_orders.cpp
+    unit_staging.cpp
     unit_storage.cpp
     weapon.cpp
     projectile.cpp

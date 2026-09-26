@@ -216,13 +216,7 @@ static int unit_IsDead(lua_State* L) {
 
 static int unit_IsIdleState(lua_State* L) {
     auto* u = check_unit(L);
-    bool idle = false;
-    if (u) {
-        idle = u->command_queue().empty() && !u->is_building() &&
-               !u->is_being_built() && !u->is_repairing() &&
-               !u->is_capturing();
-    }
-    lua_pushboolean(L, idle ? 1 : 0);
+    lua_pushboolean(L, u && u->is_idle_state() ? 1 : 0);
     return 1;
 }
 

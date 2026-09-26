@@ -709,6 +709,17 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                         unit->set_transport_class(static_cast<i32>(lua_tonumber(L, -1)));
                     lua_pop(L, 1);
 
+                    // Only AirClass units dock at a staging platform (M206r)
+                    lua_pushstring(L, "AirClass");
+                    lua_rawget(L, -2);
+                    unit->set_air_class(lua_toboolean(L, -1) != 0);
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "DockingSlots");
+                    lua_rawget(L, -2);
+                    if (lua_isnumber(L, -1))
+                        unit->set_docking_slots(static_cast<i32>(lua_tonumber(L, -1)));
+                    lua_pop(L, 1);
+
                     // A carrier's storage (M206q)
                     lua_pushstring(L, "StorageSlots");
                     lua_rawget(L, -2);
@@ -746,6 +757,19 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 unit->set_size_y(number("SizeY", 1.0f));
                 unit->set_size_xz(number("SizeX", 1.0f), number("SizeZ", 1.0f));
                 unit->set_average_density(number("AverageDensity", 0.49f));
+                // A staging platform's refuelling and repair (M206r)
+                lua_pushstring(L, "AI");
+                lua_rawget(L, -2);
+                if (lua_istable(L, -1)) {
+                    sim::StagingRules rules;
+                    rules.refuel_multiplier =
+                        number("RefuelingMultiplier", rules.refuel_multiplier);
+                    rules.repair_amount = number("RefuelingRepairAmount", rules.repair_amount);
+                    rules.repair_energy = number("RepairConsumeEnergy", rules.repair_energy);
+                    rules.repair_mass = number("RepairConsumeMass", rules.repair_mass);
+                    unit->set_staging_rules(rules);
+                }
+                lua_pop(L, 1);
                 // Air.TransportHoverHeight: how low a transport hovers to load
                 lua_pushstring(L, "Air");
                 lua_rawget(L, -2);
@@ -985,6 +1009,11 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                     if (t > 0) unit->set_fuel_ratio(1.0f); // start with full fuel
                     // FuelUseTime=0 means infinite fuel -- fuel_ratio_ stays at -1 (sentinel)
                 }
+                lua_pop(L, 1);
+                lua_pushstring(L, "FuelRechargeRate"); // refuelling (M206r)
+                lua_rawget(L, -2);
+                if (lua_isnumber(L, -1))
+                    unit->set_fuel_recharge_rate(static_cast<f32>(lua_tonumber(L, -1)));
                 lua_pop(L, 1);
             }
             lua_pop(L, 2); // Physics table (or nil) + bp table

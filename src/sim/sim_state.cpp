@@ -2272,6 +2272,14 @@ SimState::ChecksumParts SimState::checksum_parts() const {
         units.mix_f32(static_cast<f32>(econ.consumption_energy));
         units.mix_f32(static_cast<f32>(econ.production_mass));
         units.mix_f32(static_cast<f32>(econ.production_energy));
+        // Docked at a staging platform (M206r), only then: its tank and its
+        // repair's ask.
+        if (u.refuel_started() || econ.dock_repair_energy != 0 || econ.dock_repair_mass != 0) {
+            units.mix(0x4655454c00000000ull); // "FUEL"
+            units.mix_f32(u.fuel_ratio());
+            units.mix_f32(static_cast<f32>(econ.dock_repair_energy));
+            units.mix_f32(static_cast<f32>(econ.dock_repair_mass));
+        }
 
         orders.mix(e.entity_id());
         orders.mix(static_cast<u64>(u.command_queue().size()));
@@ -2289,6 +2297,12 @@ SimState::ChecksumParts SimState::checksum_parts() const {
             if (cmd.rolloff_wait != 0) {
                 orders.mix(0x524f4c4cu); // "ROLL"
                 orders.mix(static_cast<u64>(static_cast<u32>(cmd.rolloff_wait)));
+            }
+            // A refuel under way (M206r), only once it has a slot or waits.
+            if (cmd.dock_phase != DockPhase::Reserve || cmd.dock_wait != 0) {
+                orders.mix(0x444f434bu); // "DOCK"
+                orders.mix(static_cast<u64>(cmd.dock_phase));
+                orders.mix(static_cast<u64>(static_cast<u32>(cmd.dock_wait)));
             }
             // A carrier's launch under way (M206q), only then.
             if (cmd.launch_wait >= 0) {

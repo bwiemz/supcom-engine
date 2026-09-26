@@ -294,7 +294,8 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Guard: return order_guard(cmd, dt, ctx, econ_eff);
     case CommandType::Dive: return order_dive(ctx.L);
     case CommandType::Enhance: return order_enhance(cmd, dt, ctx, econ_eff);
-    case CommandType::TransportLoad: return order_transport_load(cmd, dt, ctx);
+    case CommandType::TransportLoad:
+    case CommandType::Dock: return order_transport_load(cmd, dt, ctx);
     case CommandType::TransportUnload: return order_transport_unload(cmd, dt, ctx);
     case CommandType::Nuke:
     case CommandType::Tactical:
@@ -1174,6 +1175,22 @@ bool Unit::calls_transport(u32 transport_id) const {
 }
 
 OrderStep Unit::order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // Moho dispatches Dock and TransportLoadUnits alike: at an air staging
+    // platform, the unit refuels (M206r). A carrier's landing isn't modelled
+    // yet, so a Dock order to one (or to anything else) ends.
+    if (cmd.target_id != entity_id()) {
+        static const CategoryName kCarrier{"CARRIER"};
+        const Entity* e = ctx.registry.find(cmd.target_id);
+        const auto* target =
+            e && !e->destroyed() && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+        if (target && target->is_staging_platform() && !target->has_category(kCarrier))
+            return order_refuel(cmd, dt, ctx);
+        if (cmd.type == CommandType::Dock) {
+            set_unit_state("Refueling", false);
+            command_queue_.pop_front();
+            return OrderStep::Next;
+        }
+    }
     if (cmd.target_id != 0 && cmd.target_id == entity_id())
         return order_transport_pickup(cmd, dt, ctx);
     return order_call_transport(cmd, dt, ctx);
@@ -1506,6 +1523,7 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
         command_queue_.pop_front();
         return OrderStep::Next;
     }
+    if (is_staging_platform()) return order_staging_release(cmd, ctx);
 
     // Move to drop position
     constexpr f32 unload_range = 5.0f;
@@ -1534,6 +1552,34 @@ OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx
     const std::vector<u32> ids = cmd.unload_ids;
     if (!unload_step(dt, ctx, ids)) return OrderStep::Hold;
     if (destroyed() || !in_registry()) return OrderStep::Gone;
+    set_unit_state("TransportUnloading", false);
+    if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
+        command_queue_.front().command_id == order_id)
+        command_queue_.pop_front();
+    return OrderStep::Next;
+}
+
+OrderStep Unit::order_staging_release(UnitCommand& cmd, SimContext& ctx) {
+    // A staging platform stays put (Moho's CUnitUnloadUnits for one): it lets
+    // its aircraft go where they sit, and sends them to the drop point,
+    // their queues cleared. Scripts ran: the order goes only if it is still
+    // the head.
+    const u32 order_id = cmd.command_id;
+    std::vector<u32> released;
+    for (const u32 id : cmd.unload_ids.empty() ? cargo_ids_ : cmd.unload_ids)
+        if (std::find(cargo_ids_.begin(), cargo_ids_.end(), id) != cargo_ids_.end())
+            released.push_back(id);
+    UnitCommand move;
+    move.type = CommandType::Move;
+    move.target_pos = cmd.target_pos;
+    detach_cargo(released, ctx.registry, ctx.L, ctx.terrain);
+    if (destroyed() || !in_registry()) return OrderStep::Gone;
+    for (const u32 id : released) {
+        Entity* e = ctx.registry.find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<Unit*>(e);
+        if (unit->transport_id() == 0) unit->push_command(move, true);
+    }
     set_unit_state("TransportUnloading", false);
     if (!command_queue_.empty() && &command_queue_.front() == &cmd &&
         command_queue_.front().command_id == order_id)

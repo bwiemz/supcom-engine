@@ -60,6 +60,21 @@ struct UnitEconomy {
     /// own request, beside the consumption the unit's script sets.
     f64 silo_mass = 0.0;
     f64 silo_energy = 0.0;
+    /// What an aircraft docked at a staging platform asks per second for its
+    /// repair there (M206r): the platform's RepairConsume*, only while the
+    /// aircraft is damaged.
+    f64 dock_repair_mass = 0.0;
+    f64 dock_repair_energy = 0.0;
+};
+
+/// An air staging platform's service (its blueprint's AI.RefuelingMultiplier,
+/// RefuelingRepairAmount, RepairConsumeEnergy and RepairConsumeMass; M206r),
+/// with Moho's defaults.
+struct StagingRules {
+    f32 refuel_multiplier = 1.0f;
+    f32 repair_amount = 20.0f; ///< health a second
+    f32 repair_energy = 2.0f;  ///< a tick
+    f32 repair_mass = 0.5f;    ///< a tick
 };
 
 /// What an order did this tick (Unit::run_order, M193).
@@ -188,6 +203,12 @@ public:
 
     // State flags
     bool busy() const { return busy_; }
+    /// Moho's IsIdleState: nothing queued, and not building, being built,
+    /// repairing or capturing.
+    bool is_idle_state() const {
+        return command_queue_.empty() && !is_building() && !is_being_built() && !is_repairing() &&
+               !is_capturing();
+    }
     void set_busy(bool b) { busy_ = b; }
     /// Stunned for `seconds` (Moho's SetStunned: ten ticks a second, from
     /// now; a non-positive time ends it). A stunned unit's weapons don't
@@ -514,6 +535,10 @@ public:
     void set_fuel_ratio(f32 r) { fuel_ratio_ = r; }
     f32 fuel_use_time() const { return fuel_use_time_; }
     void set_fuel_use_time(f32 t) { fuel_use_time_ = t; }
+    /// Physics.FuelRechargeRate: how fast it refuels (M206r).
+    void set_fuel_recharge_rate(f32 r) { fuel_recharge_rate_ = r; }
+    /// Docked at a staging platform, refuelling or repairing (M206r).
+    bool refuel_started() const { return refuel_started_; }
 
     // Air movement (populated from blueprint Air subtable)
     f32 heading() const { return heading_; }
@@ -643,6 +668,21 @@ public:
 
     i32 transport_class() const { return transport_class_; }
     void set_transport_class(i32 c) { transport_class_ = c; }
+    /// Transport.AirClass: only these dock at a staging platform (Moho's
+    /// TransportValidateType).
+    void set_air_class(bool air_class) { air_class_ = air_class; }
+    bool air_class() const { return air_class_; }
+    /// A staging platform's refuelling and repair (M206r).
+    void set_staging_rules(const StagingRules& rules) { staging_rules_ = rules; }
+    const StagingRules& staging_rules() const { return staging_rules_; }
+    /// Transport.DockingSlots: how many aircraft the UI's Dock sends to it.
+    void set_docking_slots(i32 n) { docking_slots_ = n; }
+    i32 docking_slots() const { return docking_slots_; }
+    /// An air or pod staging platform (Moho's TransportIsAirStagingPlatform).
+    bool is_staging_platform() const;
+    /// Whether the unit's head order is a refuel at that platform that holds
+    /// a slot there (M206r): the platform keeps the slot while it comes.
+    bool docks_at(u32 platform_id) const;
     i32 transport_capacity() const { return transport_capacity_; }
     void set_transport_capacity(i32 c) { transport_capacity_ = c; }
     void set_transport_layout(const TransportLayout& layout) { transport_layout_ = layout; }
@@ -897,6 +937,18 @@ private:
     void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// An aircraft's refuel at a staging platform (M206r, Moho's CUnitRefuel):
+    /// a slot, the flight to its bone, docking, and the climb away once full.
+    OrderStep order_refuel(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A tick of a unit attached to a staging platform: its refuel order, if
+    /// that is still its head, and its fuel and repair.
+    void tick_docked(f64 dt, SimContext& ctx, Unit& platform);
+    /// Fuel (Moho's CUnitMotion::ProcessFuelLevels): it refuels and repairs
+    /// docked at `platform`, and burns in flight. False if a script killed it.
+    bool tick_fuel(f64 dt, SimContext& ctx, Unit* platform);
+    /// A staging platform's unload (M206r): its aircraft go from where they
+    /// sit to the drop point.
+    OrderStep order_staging_release(UnitCommand& cmd, SimContext& ctx);
     /// A carrier's unload: its stored units are launched (M206q).
     OrderStep order_carrier_launch(UnitCommand& cmd, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
@@ -1086,7 +1138,15 @@ private:
     // Fuel system
     f32 fuel_ratio_ = -1.0f;     // -1 = no fuel system (sentinel)
     f32 fuel_use_time_ = 0.0f;   // seconds of flight time
-    bool out_of_fuel_ = false;   // OnRunOutOfFuel raised, OnGotFuel not yet
+    f32 fuel_recharge_rate_ = 0.0f; // Physics.FuelRechargeRate
+    /// Docked, it has heard OnStartRefueling (Moho's mHasDoneCallback).
+    bool refuel_started_ = false;
+    /// Docked and damaged, it asked its army for its repair last tick: the
+    /// heal comes from the next tick (Moho's economy request).
+    bool dock_repair_asked_ = false;
+    bool air_class_ = false;     // Transport.AirClass
+    i32 docking_slots_ = 0;      // Transport.DockingSlots
+    StagingRules staging_rules_; // a staging platform's service
     // Air movement state
     f32 heading_ = 0;            // yaw in radians
     f32 pitch_ = 0;              // pitch in radians (visual only for dive/climb)

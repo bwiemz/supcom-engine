@@ -26,7 +26,6 @@ G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService
 G IsSignedInToSteam
-G IssueDockCommand
 G IssueEnhance
 G RefreshSteamGames
 G RemoveProfileDirectories

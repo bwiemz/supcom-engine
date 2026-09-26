@@ -259,8 +259,13 @@ void Unit::begin_dying() {
     economy_.production_mass = 0;
     economy_.production_energy = 0;
     economy_.production_active = false;
-    // Its missile under way stops asking for resources.
+    // Its missile under way, and a repair on a staging platform (M206r),
+    // stop asking for resources.
     abandon_silo_build();
+    economy_.dock_repair_mass = 0;
+    economy_.dock_repair_energy = 0;
+    dock_repair_asked_ = false;
+    refuel_started_ = false;
     // Killed in flight: it falls, tumbling, until it lands.
     if (is_air_unit()) {
         crashing_ = true;
@@ -359,6 +364,12 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
             set_unit_state("WaitForFerry", false);
+        // A refuel (M206r) whose order is gone.
+        if (has_unit_state("Refueling") && !(head && (head->type == CommandType::Dock ||
+                                                      head->type == CommandType::TransportLoad))) {
+            set_unit_state("Refueling", false);
+            navigator_.set_speed_through_goal(false);
+        }
         // A factory whose guard order went while it built for the guarded
         // factory drops that unit (M206h).
         if (factory_assist_build_ && !(head && head->type == CommandType::Guard))
@@ -406,7 +417,19 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
     if (transport_id_ != 0) {
         auto* transport_entity = registry.find(transport_id_);
         if (transport_entity && !transport_entity->destroyed() && transport_entity->is_unit()) {
-            hang_from(*static_cast<const Unit*>(transport_entity));
+            auto& transport = static_cast<Unit&>(*transport_entity);
+            hang_from(transport);
+            // Docked at a staging platform (M206r): it refuels and repairs,
+            // and its refuel order lets it go when done. A platform that dies
+            // lets its aircraft go (Moho detaches them all).
+            if (transport.is_staging_platform()) {
+                if (transport.is_dying()) {
+                    transport.detach_cargo({entity_id()}, registry, ctx.L, ctx.terrain);
+                } else {
+                    tick_docked(dt, ctx, transport);
+                }
+                if (destroyed() || !in_registry()) return false;
+            }
         } else {
             // Transport gone — auto-detach and clean up stale cargo entry
             if (transport_entity && transport_entity->is_unit()) {
@@ -490,17 +513,9 @@ bool Unit::tick_after_orders(f64 dt, SimContext& ctx) {
     }
 
     // Fuel: flying burns it. Running dry doesn't bring an aircraft down: its
-    // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel).
-    if (fuel_ratio_ >= 0 && fuel_use_time_ > 0) {
-        if (is_air_unit())
-            fuel_ratio_ = std::max(0.0f, fuel_ratio_ - static_cast<f32>(dt) / fuel_use_time_);
-        const bool dry = fuel_ratio_ <= 0;
-        if (dry != out_of_fuel_) {
-            out_of_fuel_ = dry;
-            if (L) call_lua_method(L, dry ? "OnRunOutOfFuel" : "OnGotFuel");
-            if (destroyed() || dying_) return false;
-        }
-    }
+    // script slows it (OnRunOutOfFuel) until refuelling restores it (OnGotFuel,
+    // docked at a staging platform: see tick_docked).
+    if (!tick_fuel(dt, ctx, nullptr)) return false;
 
     return true;
 }
@@ -1865,8 +1880,10 @@ void Unit::release_stale_slots(const EntityRegistry& registry) {
             std::find(cargo_ids_.begin(), cargo_ids_.end(), slot.unit_id) != cargo_ids_.end();
         // A unit given a slot for the pickup keeps it while it still comes (M206m).
         const bool coming =
-            u && !u->is_dying() && u->calls_transport(entity_id()) &&
-            std::find(pickup_ids_.begin(), pickup_ids_.end(), slot.unit_id) != pickup_ids_.end();
+            u && !u->is_dying() &&
+            ((u->calls_transport(entity_id()) && std::find(pickup_ids_.begin(), pickup_ids_.end(),
+                                                           slot.unit_id) != pickup_ids_.end()) ||
+             u->docks_at(entity_id())); // an aircraft on its way to dock (M206r)
         if (!aboard && !coming) stale.push_back(slot.unit_id);
     }
     for (const u32 id : stale) transport_slots_->release(id);
@@ -1962,6 +1979,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
         return true;
     });
 
+    const bool staging = is_staging_platform();
     for (u32 cargo_id : snapshot) {
         auto* cargo_entity = registry.find(cargo_id);
         if (!cargo_entity || cargo_entity->destroyed() ||
@@ -1983,7 +2001,18 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             cargo->set_position(position());
         }
         cargo->set_orientation(euler_to_quat(quat_yaw(cargo->orientation()), 0.0f, 0.0f));
-        if (terrain) {
+        if (staging && cargo->is_air_unit()) {
+            // An aircraft leaving a staging platform stays where it sat, and
+            // flies from there (M206r; Moho resets only its height hold).
+            cargo->heading_ = quat_yaw(cargo->orientation());
+            cargo->pitch_ = 0.0f;
+            cargo->bank_angle_ = 0.0f;
+            cargo->current_airspeed_ = 0.0f;
+            if (terrain)
+                cargo->current_altitude_ =
+                    cargo->position().y -
+                    terrain->get_terrain_height(cargo->position().x, cargo->position().z);
+        } else if (terrain) {
             Vector3 at = cargo->position();
             at.y = terrain->get_surface_height(at.x, at.z);
             cargo->set_position(at);

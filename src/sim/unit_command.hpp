@@ -37,6 +37,18 @@ enum class CommandType : u8 {
     // A land unit waiting at a ferry beacon to be carried (IssueTransportLoad
     // at a beacon; Moho's CUnitWaitForFerryTask). target_id = the beacon.
     WaitForFerry = 78,
+    // An aircraft docks at an air staging platform to refuel and repair
+    // (the orders panel's Dock; Moho's UNITCOMMAND_Dock, M206r). target_id =
+    // the platform. A TransportLoad onto a platform docks the same way.
+    Dock = 79,
+};
+
+/// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
+enum class DockPhase : u8 {
+    Reserve,  ///< asking the platform for a slot, heading for it meanwhile
+    Approach, ///< flying to the slot's bone, down to it, turning to its facing
+    Docked,   ///< attached: refuelling and repairing until full
+    Lift,     ///< released: climbing back to its flying height
 };
 
 struct UnitCommand {
@@ -98,6 +110,11 @@ struct UnitCommand {
     /// launch has not started).
     std::vector<u32> launch_queue;
     i32 launch_wait = -1;
+    /// A refuel order (M206r; runtime state): its phase, and ticks until it
+    /// next looks (Moho's task waits: 9 ticks between asks for a slot and
+    /// between checks of a docked unit's tank).
+    DockPhase dock_phase = DockPhase::Reserve;
+    i32 dock_wait = 0;
 };
 
 } // namespace osc::sim

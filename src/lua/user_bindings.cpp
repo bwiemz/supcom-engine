@@ -858,6 +858,124 @@ static int l_IssueCommand(lua_State* L) {
     return 0;
 }
 
+/// IssueDockCommand(clear) -- the orders panel's Dock (M206r), as Moho's
+/// cfunc_IssueDockCommandL gives it: the selection's units that can dock go
+/// to the focus army's idle air staging platforms. All go to the nearest if
+/// it has room for them; otherwise they are shared among those within 100 of
+/// its distance, the roomiest first, each taking its share. Measured from the
+/// units' centre (from where their queued orders end, when not clearing).
+static int l_IssueDockCommand(lua_State* L) {
+    const bool clear = lua_toboolean(L, 1) != 0;
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    int focus = -1;
+    lua_pushstring(L, "__osc_focus_army");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_isnumber(L, -1)) focus = static_cast<int>(lua_tonumber(L, -1));
+    lua_pop(L, 1);
+    if (focus < 0) return 0;
+    auto& registry = sim->entity_registry();
+    const auto live_unit = [&](u32 id) -> const sim::Unit* {
+        const sim::Entity* e = registry.find(id);
+        return e && !e->destroyed() && e->is_unit() ? static_cast<const sim::Unit*>(e) : nullptr;
+    };
+
+    std::vector<u32> docking;
+    f32 cx = 0.0f;
+    f32 cz = 0.0f;
+    for (const u32 id : selected_unit_ids(L)) {
+        const sim::Unit* u = live_unit(id);
+        if (!u || !u->has_command_cap("RULEUCC_Dock")) continue;
+        sim::Vector3 at = u->position();
+        if (!clear && !u->command_queue().empty()) {
+            const sim::UnitCommand& last = u->command_queue().back();
+            const sim::Unit* target = last.target_id != 0 ? live_unit(last.target_id) : nullptr;
+            at = target ? target->position() : last.target_pos;
+        }
+        cx += at.x;
+        cz += at.z;
+        docking.push_back(id);
+    }
+    if (docking.empty()) return 0;
+    cx /= static_cast<f32>(docking.size());
+    cz /= static_cast<f32>(docking.size());
+
+    struct Pad {
+        const sim::Unit* unit;
+        f32 d2;
+        i32 room;
+    };
+    static const sim::CategoryName kStaging{"AIRSTAGINGPLATFORM"};
+    static const sim::CategoryName kCarrier{"CARRIER"};
+    std::vector<Pad> pads;
+    registry.for_each_unit([&](sim::Entity& e) {
+        if (e.destroyed() || !e.is_unit() || e.army() != focus) return;
+        const auto& pad = static_cast<const sim::Unit&>(e);
+        if (pad.is_being_built() || pad.is_dying() || !pad.has_category(kStaging)) return;
+        // Landing on a carrier isn't modelled yet: carriers are left out.
+        if (pad.has_category(kCarrier)) return;
+        if (pad.layer() == "Sub" || pad.layer() == "Seabed" || !pad.command_queue().empty()) return;
+        const i32 room = pad.storage_slots() != 0
+                             ? pad.storage_slots() - static_cast<i32>(pad.stored_ids().size())
+                             : pad.docking_slots();
+        if (room <= 0) return;
+        const f32 dx = pad.position().x - cx;
+        const f32 dz = pad.position().z - cz;
+        pads.push_back({&pad, dz * dz + dx * dx, room});
+    });
+    if (pads.empty()) return 0;
+    std::sort(pads.begin(), pads.end(), [](const Pad& a, const Pad& b) {
+        if (a.d2 != b.d2) return a.d2 < b.d2;
+        return a.unit->entity_id() < b.unit->entity_id();
+    });
+
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Dock;
+    const auto dock = [&](const std::vector<u32>& ids, const sim::Unit& pad) {
+        cmd.target_id = pad.entity_id();
+        cmd.target_pos = pad.position();
+        issue_player_order(L, ids, cmd, clear);
+    };
+    const i32 count = static_cast<i32>(docking.size());
+    if (count <= pads.front().room) {
+        dock(docking, *pads.front().unit);
+        return 0;
+    }
+    const f32 reach = std::sqrt(pads.front().d2) + 100.0f;
+    std::vector<Pad> nearby;
+    i32 total = 0;
+    for (const Pad& pad : pads) {
+        if (reach * reach > pad.d2) {
+            nearby.push_back(pad);
+            total += pad.room;
+        }
+    }
+    std::sort(nearby.begin(), nearby.end(), [](const Pad& a, const Pad& b) {
+        if (a.room != b.room) return a.room > b.room;
+        if (a.d2 != b.d2) return a.d2 < b.d2;
+        return a.unit->entity_id() < b.unit->entity_id();
+    });
+    // Each takes its room times max(1, units / total room), rounded, and
+    // rounded up on any remainder. (faf-re's decompile walks the units from
+    // the start for every platform, which would send the same ones to each;
+    // each takes the next ones here, as the shares mean.)
+    const f32 ratio = static_cast<f32>(count) / static_cast<f32>(total);
+    const f32 scale = ratio > 1.0f ? ratio : 1.0f;
+    size_t next = 0;
+    for (const Pad& pad : nearby) {
+        const f32 share = static_cast<f32>(pad.room) * scale;
+        const f32 rounded = std::rint(share);
+        i32 quota = static_cast<i32>(rounded);
+        if (share > rounded) ++quota;
+        std::vector<u32> ids;
+        while (next < docking.size() && static_cast<i32>(ids.size()) < quota)
+            ids.push_back(docking[next++]);
+        if (ids.empty()) break;
+        dock(ids, *pad.unit);
+    }
+    return 0;
+}
+
 /// IssueBlueprintCommand(command, blueprint [, count [, clear]]) -- for the
 /// selection: the construction panel's factory builds and upgrades.
 static int l_IssueBlueprintCommand(lua_State* L) {
@@ -1027,6 +1145,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("SimCallback", l_SimCallback);
     state.register_function("GetUnitCommandFromCommandCap", l_GetUnitCommandFromCommandCap);
     state.register_function("IssueCommand", l_IssueCommand);
+    state.register_function("IssueDockCommand", l_IssueDockCommand);
     state.register_function("IssueBlueprintCommand", l_IssueBlueprintCommand);
     state.register_function("IsKeyDown", l_IsKeyDown);
     state.register_function("UIZoomTo", l_UIZoomTo);

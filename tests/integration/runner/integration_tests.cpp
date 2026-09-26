@@ -7357,14 +7357,16 @@ void test_death(TestContext& ctx) {
         -- With nothing to play its landing out, it still goes.
         if not __osc_bare_plane:BeenDestroyed() then error('the plane without OnImpact lies dead') end
     )");
-    lua_check("Test 7: running out of fuel slows an aircraft, and refuelling restores it", R"(
+    lua_check("Test 7: running dry tells an aircraft's script, which slows it; it flies on", R"(
         if __osc_fuel[1] ~= 'OnRunOutOfFuel' then error('events: ' .. table.concat(__osc_fuel, ',')) end
         if __osc_scout:IsDead() then error('the scout died') end
         __osc_scout:SetFuelRatio(1)
     )");
     ctx.sim.tick();
-    lua_check("Test 8: ...OnGotFuel", R"(
-        if __osc_fuel[2] ~= 'OnGotFuel' then error('events: ' .. table.concat(__osc_fuel, ',')) end
+    // Moho's OnGotFuel comes from refuelling (at a staging platform, M206r),
+    // not from a script setting the tank, as ProcessFuelLevels fires it.
+    lua_check("Test 8: a script filling the tank is not a refuel", R"(
+        if table.getn(__osc_fuel) ~= 1 then error('events: ' .. table.concat(__osc_fuel, ',')) end
     )");
 
     if (osc::test_status::failure_count() - fail == failures_before) {
@@ -11224,6 +11226,343 @@ void test_air_turn(TestContext& ctx) {
     spdlog::info("Air turn test: {}/{} passed", pass, pass + fail);
 }
 
+void test_air_staging(TestContext& ctx) {
+    spdlog::info("=== AIR STAGING TEST: dock, refuel, repair, leave (M206r) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] air staging script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+    const auto dock = [&](osc::sim::Unit& plane, const osc::sim::Unit& pad) {
+        osc::sim::UnitCommand cmd;
+        cmd.type = osc::sim::CommandType::Dock;
+        cmd.target_id = pad.entity_id();
+        cmd.target_pos = pad.position();
+        ctx.sim.route_command({plane.entity_id()}, cmd, true);
+    };
+    const auto ground = [&](const osc::sim::Unit& u) {
+        return ctx.sim.terrain()->get_terrain_height(u.position().x, u.position().z);
+    };
+    // The name of the pad bone a plane holds, or "".
+    const auto slot_bone = [](const osc::sim::Unit& pad, const osc::sim::Unit& plane) {
+        const auto* slots = pad.built_transport_slots();
+        const auto* slot = slots ? slots->slot_of(plane.entity_id()) : nullptr;
+        return slot && pad.bone_data()
+                   ? pad.bone_data()->bones[static_cast<size_t>(slot->bone)].name
+                   : std::string();
+    };
+
+    // A UEF pad (4 docking slots) by army 1's start, resources to spare, and
+    // two aircraft: a half-empty, badly damaged interceptor to dock (the
+    // orders panel's Dock) and a gunship loaded onto the pad (retail AI's
+    // IssueTransportLoad).
+    if (!lua(R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 50000)
+        brain:GiveStorage('ENERGY', 500000)
+        brain:GiveResource('MASS', 50000)
+        brain:GiveResource('ENERGY', 500000)
+        local sx, sz = brain:GetArmyStartPos()
+        __osc_px, __osc_pz = sx - 40, sz + 40
+        __osc_pad = CreateUnitHPR('ueb5202', 'ARMY_1', __osc_px, GetTerrainHeight(__osc_px, __osc_pz), __osc_pz, 0, 0, 0)
+        __osc_a = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz, 0, 0, 0)
+        __osc_b = CreateUnitHPR('uea0203', 'ARMY_1', __osc_px - 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz, 0, 0, 0)
+        __osc_a:SetFuelRatio(0.5)
+        __osc_a:SetHealth(nil, 10)
+        __osc_b:SetFuelRatio(0.3)
+        __osc_b:SetHealth(nil, 10)
+        __osc_started = 0
+        __osc_a.OnStartRefueling = function(self) __osc_started = __osc_started + 1 end
+    )"))
+        return;
+    auto* pad = unit("__osc_pad");
+    auto* a = unit("__osc_a");
+    auto* b = unit("__osc_b");
+    if (!pad || !a || !b) {
+        check(false, "the pad and the planes exist");
+        return;
+    }
+    const auto& rules = pad->staging_rules();
+    check(pad->is_staging_platform() && pad->docking_slots() == 4 &&
+              rules.refuel_multiplier == 50.0f && rules.repair_amount == 500.0f &&
+              rules.repair_energy == 5.0f && rules.repair_mass == 0.5f && a->air_class() &&
+              b->air_class(),
+          fmt::format("the pad's blueprint: 4 slots, refuel x{}, repair {} for {}E {}M",
+                      rules.refuel_multiplier, rules.repair_amount, rules.repair_energy,
+                      rules.repair_mass));
+
+    // In flight, fuel burns 1 / (FuelUseTime x 10) a tick (300 s for this one).
+    ctx.sim.tick();
+    check(std::abs(a->fuel_ratio() - (0.5f - 1.0f / 3000.0f)) < 1e-6f,
+          fmt::format("flying burns a 3000th of the tank a tick ({:.6f})", a->fuel_ratio()));
+
+    // Ticks from here; whether (and on what) the gunship docked, and its
+    // health and tank when it left.
+    int now = 0;
+    bool b_docked = false;
+    std::string b_bone;
+    float b_left_health = -1.0f;
+    float b_left_fuel = -1.0f;
+    const auto step = [&] {
+        ctx.sim.tick();
+        ++now;
+        if (!b_docked && b->transport_id() == pad->entity_id()) {
+            b_docked = true;
+            b_bone = slot_bone(*pad, *b);
+        }
+        if (b_docked && b_left_health < 0 && b->transport_id() == 0) {
+            b_left_health = b->health();
+            b_left_fuel = b->fuel_ratio();
+        }
+    };
+    dock(*a, *pad);
+    lua("IssueTransportLoad({__osc_b}, __osc_pad)");
+    int attach_tick = -1;
+    for (int i = 0; i < 1500 && attach_tick < 0; ++i) {
+        step();
+        if (a->transport_id() == pad->entity_id()) attach_tick = now;
+    }
+    const std::string a_bone = slot_bone(*pad, *a);
+    check(attach_tick >= 0 && a->has_unit_state("Refueling") &&
+              a_bone.rfind("Attachpoint", 0) == 0 && a_bone.find("_Med") == std::string::npos &&
+              a_bone.find("_Lrg") == std::string::npos,
+          fmt::format("the interceptor docks on a small bone ({}) after {} ticks", a_bone,
+                      attach_tick));
+    // It came in turned the way its bone faces.
+    {
+        const auto* slot = pad->built_transport_slots()->slot_of(a->entity_id());
+        const auto facing = osc::sim::quat_multiply(pad->orientation(),
+                                                    pad->bone_pose(slot ? slot->bone : 0).rotation);
+        const auto fwd = osc::sim::quat_rotate(facing, osc::sim::Vector3{0, 0, 1});
+        const float want = std::atan2(fwd.x, fwd.z);
+        check(slot && std::cos(a->heading() - want) > 0.95f,
+              fmt::format("it docked facing its bone (cos {:.3f})", std::cos(a->heading() - want)));
+    }
+
+    // Docked: fuel rises by FuelRechargeRate / FuelUseTime / 10 times the
+    // pad's multiplier a tick (5 / 300 / 10 x 50), and it heard
+    // OnStartRefueling once. Its repair is asked for at once, and heals from
+    // the next tick: 500 / 10 a tick.
+    const float f0 = a->fuel_ratio();
+    const float h0 = a->health();
+    step();
+    const float f1 = a->fuel_ratio();
+    const float h1 = a->health();
+    const double ask_e = a->economy().dock_repair_energy;
+    const double ask_m = a->economy().dock_repair_mass;
+    step();
+    const float h2 = a->health();
+    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')");
+    const double asked_with = number("__osc_req");
+    // Every docked, damaged plane (the gunship too, once it is aboard) asks
+    // 50 energy a second.
+    const double asks = a->economy().dock_repair_energy + b->economy().dock_repair_energy;
+    check(std::abs((f1 - f0) - 5.0f / 300.0f * 0.1f * 50.0f) < 1e-5f,
+          fmt::format("docked, the tank rises {:.5f} a tick", f1 - f0));
+    check(number("__osc_started") == 1,
+          fmt::format("OnStartRefueling heard {} time(s)", number("__osc_started")));
+    check(h1 == h0 && std::abs(h2 - std::min(a->max_health(), h1 + 50.0f)) < 0.01f &&
+              ask_e == 50.0 && ask_m == 5.0,
+          fmt::format("repair: asks 50E 5M a second ({}, {}), heals from the next tick ({} {} {})",
+                      ask_e, ask_m, h0, h1, h2));
+
+    // Full and repaired, it is let go at the pad's next look (every 9 ticks
+    // from the tick after it docked), where it sat, and climbs away.
+    int detach_tick = -1;
+    float docked_y = 0.0f;
+    for (int i = 0; i < 300 && detach_tick < 0; ++i) {
+        docked_y = a->position().y;
+        step();
+        if (a->transport_id() == 0) detach_tick = now;
+    }
+    check(detach_tick > 0 && (detach_tick - attach_tick - 1) % 9 == 0 && a->fuel_ratio() > 0.99f &&
+              a->health() == a->max_health() && std::abs(a->position().y - docked_y) < 0.01f &&
+              a->position().y > ground(*a) + 0.5f,
+          fmt::format("full, it leaves on a 9-tick look ({} ticks after docking), from its "
+                      "seat ({:.2f} over the ground)",
+                      detach_tick - attach_tick, a->position().y - ground(*a)));
+    for (int i = 0; i < 200 && !a->command_queue().empty(); ++i) step();
+    for (int i = 0; i < 600 && !b_docked; ++i) step();
+    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')");
+    check(asks >= 50.0 && std::abs(asked_with - number("__osc_req") - asks) < 0.01,
+          fmt::format("its army pays for the repair ({:.2f} energy asked with {:.0f} for "
+                      "repairs, {:.2f} after)",
+                      asked_with, asks, number("__osc_req")));
+    check(a->command_queue().empty() && !a->has_unit_state("Refueling") &&
+              a->current_altitude() == a->elevation_target() &&
+              !pad->built_transport_slots()->slot_of(a->entity_id()) &&
+              a->economy().dock_repair_energy == 0,
+          fmt::format("back at its height ({:.1f}), the order done and its slot free",
+                      a->current_altitude()));
+    check(b_docked && b_bone.find("_Med") != std::string::npos,
+          fmt::format("the gunship loaded onto the pad (the AI's way) docked on a medium bone "
+                      "({})",
+                      b_bone));
+    for (int i = 0; i < 600 && !b->command_queue().empty(); ++i) step();
+    // Its tank fills well before its hull (1100 health at 50 a tick): it
+    // stays until both are full.
+    check(b_left_health == b->max_health() && b_left_fuel > 0.99f,
+          fmt::format("the gunship leaves only refuelled and repaired ({:.0f} of {:.0f} health, "
+                      "{:.3f} fuel)",
+                      b_left_health, b->max_health(), b_left_fuel));
+
+    // Running dry fires OnRunOutOfFuel, as the tank reaches 0; refuelling
+    // from empty fires OnGotFuel.
+    lua(R"(
+        __osc_c = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz + 30, 0, 0, 0)
+        __osc_dry, __osc_got = 0, 0
+        local dry, got = __osc_c.OnRunOutOfFuel, __osc_c.OnGotFuel
+        __osc_c.OnRunOutOfFuel = function(self) __osc_dry = __osc_dry + 1 dry(self) end
+        __osc_c.OnGotFuel = function(self) __osc_got = __osc_got + 1 got(self) end
+        __osc_c:SetFuelRatio(0.0002)
+    )");
+    auto* c = unit("__osc_c");
+    ctx.sim.tick();
+    ctx.sim.tick();
+    check(c && c->fuel_ratio() == 0.0f && number("__osc_dry") == 1 && number("__osc_got") == 0,
+          fmt::format("OnRunOutOfFuel once, at empty ({} heard)", number("__osc_dry")));
+    if (c) dock(*c, *pad);
+    for (int i = 0; i < 1500 && c && c->transport_id() == 0; ++i) ctx.sim.tick();
+    // Slowed to a quarter by running dry, it still docked turned its bone's
+    // way: it waits over the bone until it is.
+    if (c && c->transport_id() == pad->entity_id()) {
+        const auto* slot = pad->built_transport_slots()->slot_of(c->entity_id());
+        const auto facing = osc::sim::quat_multiply(pad->orientation(),
+                                                    pad->bone_pose(slot ? slot->bone : 0).rotation);
+        const auto fwd = osc::sim::quat_rotate(facing, osc::sim::Vector3{0, 0, 1});
+        const float want = std::atan2(fwd.x, fwd.z);
+        check(slot && std::cos(c->heading() - want) > 0.95f,
+              fmt::format("the slowed plane docked facing its bone too (cos {:.3f})",
+                          std::cos(c->heading() - want)));
+    } else {
+        check(false, "the empty plane docked");
+    }
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    check(c && c->fuel_ratio() > 0.0f && number("__osc_got") == 1 && number("__osc_dry") == 1,
+          fmt::format("OnGotFuel once, refuelling from empty ({} heard)", number("__osc_got")));
+
+    // The AI lets its planes go by unloading the pad: they leave from where
+    // they sit for the point, their refuel done.
+    if (c && c->transport_id() == pad->entity_id()) {
+        lua(R"(
+            IssueClearCommands({__osc_pad})
+            IssueTransportUnload({__osc_pad}, {__osc_px + 60, 0, __osc_pz + 60})
+        )");
+        const float seat = c->position().y;
+        ctx.sim.tick();
+        const auto* order = c->command_queue().empty() ? nullptr : &c->command_queue().front();
+        check(c->transport_id() == 0 && order && order->type == osc::sim::CommandType::Move &&
+                  std::abs(order->target_pos.x - static_cast<float>(number("__osc_px") + 60)) <
+                      0.01f &&
+                  std::abs(c->position().y - seat) < 1.0f && !c->has_unit_state("Refueling") &&
+                  pad->cargo_ids().empty(),
+              "unloading the pad sends its plane from its seat to the point");
+    } else {
+        check(false, "the empty plane docked for the unload");
+    }
+
+    // A plane whose order is taken while it heads for its bone gives the
+    // slot up.
+    lua(R"(
+        __osc_d = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px - 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz - 30, 0, 0, 0)
+        __osc_d:SetFuelRatio(0.2)
+    )");
+    auto* d = unit("__osc_d");
+    if (d) dock(*d, *pad);
+    bool approaching = false;
+    for (int i = 0; i < 100 && d && !approaching; ++i) {
+        ctx.sim.tick();
+        approaching = !d->command_queue().empty() &&
+                      d->command_queue().front().dock_phase == osc::sim::DockPhase::Approach;
+    }
+    const bool held = d && pad->built_transport_slots()->slot_of(d->entity_id()) != nullptr;
+    lua("IssueClearCommands({__osc_d})");
+    ctx.sim.tick();
+    check(approaching && held && !pad->built_transport_slots()->slot_of(d->entity_id()) &&
+              !d->has_unit_state("Refueling"),
+          "a plane called off on its way gives its slot up");
+
+    // A pad still being built takes nobody (Moho's IssueRefuelTask): the
+    // order ends at once.
+    lua(R"(
+        __osc_eng = CreateUnitHPR('uel0105', 'ARMY_1', __osc_px + 40, GetTerrainHeight(__osc_px + 40, __osc_pz - 40), __osc_pz - 40, 0, 0, 0)
+        IssueBuildMobile({__osc_eng}, {__osc_px + 50, 0, __osc_pz - 40}, 'ueb5202', {})
+    )");
+    const osc::sim::Unit* unbuilt = nullptr;
+    for (int i = 0; i < 600 && !unbuilt; ++i) {
+        ctx.sim.tick();
+        ctx.sim.entity_registry().for_each_unit([&](osc::sim::Entity& e) {
+            const auto& u = static_cast<const osc::sim::Unit&>(e);
+            if (!e.destroyed() && e.army() == 0 && u.is_being_built() &&
+                u.blueprint_id() == "ueb5202")
+                unbuilt = &u;
+        });
+    }
+    if (unbuilt && d) {
+        dock(*d, *unbuilt);
+        ctx.sim.tick();
+        ctx.sim.tick();
+        const auto* slots = unbuilt->built_transport_slots();
+        check(unbuilt->is_being_built() && d->command_queue().empty() &&
+                  !(slots && slots->slot_of(d->entity_id())),
+              "a pad still being built takes no plane");
+    } else {
+        check(false, "an engineer starts a pad");
+    }
+
+    // A plane killed while it repairs aboard stops asking its army.
+    lua(R"(
+        __osc_e = CreateUnitHPR('uea0102', 'ARMY_1', __osc_px + 30, GetTerrainHeight(__osc_px, __osc_pz) + 20, __osc_pz - 30, 0, 0, 0)
+        __osc_e:SetHealth(nil, 10)
+    )");
+    auto* e = unit("__osc_e");
+    if (e) dock(*e, *pad);
+    for (int i = 0; i < 1500 && e && e->transport_id() == 0; ++i) ctx.sim.tick();
+    for (int i = 0; i < 2; ++i) ctx.sim.tick();
+    const double asking = e ? e->economy().dock_repair_energy : 0.0;
+    lua("__osc_e:Kill()");
+    ctx.sim.tick();
+    check(e && asking == 50.0 && e->is_dying() && e->economy().dock_repair_energy == 0.0 &&
+              e->economy().dock_repair_mass == 0.0,
+          fmt::format("killed aboard, a plane stops paying for its repair ({} asked before)",
+                      asking));
+
+    // A pad that dies lets its planes go, where they sit.
+    if (d) dock(*d, *pad);
+    for (int i = 0; i < 1500 && d && d->transport_id() == 0; ++i) ctx.sim.tick();
+    const bool docked = d && d->transport_id() == pad->entity_id();
+    lua("__osc_pad:Kill()");
+    for (int i = 0; i < 3; ++i) ctx.sim.tick();
+    check(docked && d->transport_id() == 0 && !d->destroyed() &&
+              d->position().y > ground(*d) + 0.5f,
+          "a dying pad lets its plane go, still in the air");
+
+    spdlog::info("Air staging test: {}/{} passed", pass, pass + fail);
+}
+
 void test_transport_drop(TestContext& ctx) {
     spdlog::info(
         "=== TRANSPORT DROP TEST: a transport comes down to set its cargo down (M206n) ===");
@@ -14885,6 +15224,109 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
             osc::test_status::fail("[FAIL] Test 10w: after Stop the commander is {}",
                                    acu && acu->is_enhancing() ? "still enhancing" : "not idle");
     }
+    // The orders panel's Dock (M206r): six interceptors and two pads of four,
+    // 40 and 90 from them. The nearest can't take all six, so they are
+    // shared among the pads within 100 of its distance, the roomiest first
+    // (the nearer on ties): four to the near pad, two to the far one. An
+    // Aeon pad (five slots) 200 off is out of reach, and the commander,
+    // selected with them, can't dock.
+    sim_lua(R"(
+        local acu = ArmyBrains[1]:GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        local function at(dx, dz, up)
+            return p[1] + dx, GetTerrainHeight(p[1] + dx, p[3] + dz) + up, p[3] + dz
+        end
+        local x, y, z = at(-60, 40, 0)
+        CreateUnitHPR('ueb5202', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(-60, 90, 0)
+        CreateUnitHPR('ueb5202', 'ARMY_1', x, y, z, 0, 0, 0)
+        x, y, z = at(-60, 200, 0)
+        CreateUnitHPR('uab5202', 'ARMY_1', x, y, z, 0, 0, 0)
+        for i = 1, 6 do
+            x, y, z = at(-75 + i * 5, 0, 20)
+            CreateUnitHPR('uea0102', 'ARMY_1', x, y, z, 0, 0, 0)
+        end
+    )");
+    // Army 1's live units of a blueprint, in id order.
+    auto army1_units = [&](const char* bp) {
+        std::vector<const osc::sim::Unit*> found;
+        ctx.sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
+            if (e.is_unit() && !e.destroyed() && e.army() == 0 &&
+                static_cast<const osc::sim::Unit&>(e).blueprint_id() == bp)
+                found.push_back(static_cast<const osc::sim::Unit*>(&e));
+        });
+        std::sort(found.begin(), found.end(),
+                  [](const auto* a, const auto* b) { return a->entity_id() < b->entity_id(); });
+        return found;
+    };
+    const auto pads = army1_units("ueb5202");
+    const auto planes = army1_units("uea0102");
+    lua_newtable(L);
+    for (size_t i = 0; i < planes.size(); ++i) {
+        lua_pushnumber(L, planes[i]->entity_id());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
+    lua_pushstring(L, "__osc_dock_planes");
+    lua_insert(L, -2);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_ok("Test 10x: the Dock button for six interceptors", R"(
+        local u = {}
+        for i, id in __osc_dock_planes do table.insert(u, GetUnitById(id)) end
+        table.insert(u, GetArmyAvatars()[1])
+        SelectUnits(u)
+        IssueDockCommand(true)
+    )");
+    play(1);
+    {
+        // Which pad each plane docks at: 0 near, 1 far, -1 none.
+        std::vector<int> to;
+        for (const auto* plane : planes) {
+            const auto& q = plane->command_queue();
+            int at = -1;
+            if (!q.empty() && q.front().type == osc::sim::CommandType::Dock && pads.size() == 2)
+                at = q.front().target_id == pads[0]->entity_id()   ? 0
+                     : q.front().target_id == pads[1]->entity_id() ? 1
+                                                                   : -1;
+            to.push_back(at);
+        }
+        const auto count = [&](int pad) { return std::count(to.begin(), to.end(), pad); };
+        const auto* acu = army1_unit("uel0001");
+        const bool acu_docks = acu && !acu->command_queue().empty() &&
+                               acu->command_queue().front().type == osc::sim::CommandType::Dock;
+        if (planes.size() == 6 && count(0) == 4 && count(1) == 2 && to[0] == 0 && to[5] == 1 &&
+            !acu_docks)
+            spdlog::info("[PASS] Test 10x2: four dock at the near pad, two at the far one");
+        else
+            osc::test_status::fail("[FAIL] Test 10x2: Dock sent {} to the near pad and {} to the "
+                                   "far ({} planes; the commander {})",
+                                   count(0), count(1), planes.size(),
+                                   acu_docks ? "docks" : "stays");
+    }
+    // Queued (not clearing), the pads are measured from where the plane's
+    // orders end: at the far pad, which it docks at again.
+    lua_ok("Test 10x3: Dock for one, queued", R"(
+        SelectUnits({GetUnitById(__osc_dock_planes[6])})
+        IssueDockCommand(false)
+    )");
+    play(1);
+    {
+        const auto& q =
+            planes.size() == 6 ? planes[5]->command_queue() : std::deque<osc::sim::UnitCommand>{};
+        if (q.size() == 2 && q.back().type == osc::sim::CommandType::Dock &&
+            q.back().target_id == pads[1]->entity_id())
+            spdlog::info("[PASS] Test 10x4: queued, a plane docks nearest where its orders end");
+        else
+            osc::test_status::fail("[FAIL] Test 10x4: {} orders, the last to #{}", q.size(),
+                                   q.empty() ? 0 : q.back().target_id);
+    }
+    // Gone again, the commander selected, for the tests that follow.
+    sim_lua(R"(
+        for _, u in ArmyBrains[1]:GetListOfUnits(categories.AIRSTAGINGPLATFORM + categories.uea0102, false) do
+            u:Destroy()
+        end
+    )");
+    lua_ok("Test 10x5: reselect the commander", "SelectUnits(GetArmyAvatars())");
+    play(1);
     // Command modes: a build icon or order button puts FA in a command
     // mode, and the next world click issues it (then OnCommandIssued ends
     // the mode).
