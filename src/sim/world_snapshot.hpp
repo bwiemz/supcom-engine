@@ -91,6 +91,7 @@ struct EntityRecord {
     bool repeat_queue = false;
     bool overcharge_paused = false;
     bool auto_surface = false;
+    bool stunned = false;
     bool is_dying = false;
     f32 fuel_ratio = -1;
     f32 shield_ratio = 1;

@@ -264,8 +264,7 @@ int uu_IsAutoSurfaceMode(lua_State* L) {
 }
 
 int uu_IsStunned(lua_State* L) {
-    lua_pushboolean(L, 0); // nothing stuns a unit yet
-    return 1;
+    return push_bool_of(L, &sim::EntityRecord::stunned);
 }
 
 int uu_IsDead(lua_State* L) {

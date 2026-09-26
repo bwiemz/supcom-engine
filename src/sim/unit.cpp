@@ -509,6 +509,8 @@ void Unit::tick_upkeep(f64 dt, SimContext& ctx, f32 econ_eff, bool was_assisting
     auto& registry = ctx.registry;
     auto* L = ctx.L;
 
+    if (stun_ticks_ > 0) --stun_ticks_; // a stun wears off a tick at a time
+
     if (was_assisting_silo && !assisting_silo_ && !is_building() && !is_reclaiming() &&
         !is_repairing() && !is_capturing() && !enhancing_) {
         economy_.consumption_energy = 0;
@@ -2455,10 +2457,11 @@ void Unit::tick_manipulators(f32 dt, lua_State* L) {
     for (size_t i = 0; i < manipulators_.size(); ++i) {
         Manipulator* m = manipulators_[i].get();
         if (m->is_destroyed() || !m->enabled()) continue;
-        bool was_at_goal = m->is_at_goal();
         m->tick(dt);
-        // If just reached goal and someone is waiting, wake the thread
-        if (!was_at_goal && m->is_at_goal() && m->has_waiting_thread()) {
+        // A thread waiting for it goes on once it is at its goal -- reached
+        // in this tick, or set so between ticks (an animator a script sets
+        // to rate 0, say).
+        if (m->is_at_goal() && m->has_waiting_thread()) {
             // Look up ThreadManager from Lua registry
             lua_pushstring(L, "osc_thread_mgr");
             lua_rawget(L, LUA_REGISTRYINDEX);

@@ -1688,6 +1688,18 @@ static int unit_GetFuelRatio(lua_State* L) {
     return 1;
 }
 
+// GetVelocity(): how far it moved over its last tick, per tick (x, y, z),
+// as Moho's gives it. FAF reads it for its targets (projectile area damage
+// leads a moving unit by it) and caches moho.unit_methods.GetVelocity.
+static int unit_GetVelocity(lua_State* L) {
+    auto* u = check_unit(L);
+    const sim::Vector3 v = u ? u->velocity() : sim::Vector3{};
+    lua_pushnumber(L, v.x * 0.1f);
+    lua_pushnumber(L, v.y * 0.1f);
+    lua_pushnumber(L, v.z * 0.1f);
+    return 3;
+}
+
 static int unit_SetFuelRatio(lua_State* L) {
     auto* u = check_unit(L);
     if (u) u->set_fuel_ratio(static_cast<f32>(luaL_checknumber(L, 2)));
@@ -2170,8 +2182,21 @@ static int unit_IsAutoSurfaceMode(lua_State* L) {
     lua_pushboolean(L, u && u->auto_surface_mode() ? 1 : 0);
     return 1;
 }
-// Not simulated yet: nothing stuns.
-static int unit_IsStunned(lua_State* L) { lua_pushboolean(L, 0); return 1; }
+// IsStunned(): stun ticks left (Moho's cfunc_UnitIsStunnedL).
+static int unit_IsStunned(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->is_stunned() ? 1 : 0);
+    return 1;
+}
+
+// SetStunned(time): stunned for `time` seconds, ten ticks a second
+// (Moho's cfunc_UnitSetStunnedL). EMP weapons, the Aeon Chrono Dampener
+// and stun buffs call it.
+static int unit_SetStunned(lua_State* L) {
+    auto* u = check_unit(L);
+    if (u) u->set_stunned(luaL_checknumber(L, 2));
+    return 0;
+}
 
 // Selection sets: named groups a unit belongs to (selection.lua's
 // control-group hotkeys). Per-UI-state bookkeeping keyed by entity id.
@@ -2304,7 +2329,8 @@ const MethodEntry unit_methods[] = {
     {"IsAutoSurfaceMode",           unit_IsAutoSurfaceMode},   // UserUnit
     {"IsRepeatQueue",               unit_IsRepeatQueue},       // UserUnit
     {"SetRepeatQueue",              unit_SetRepeatQueue},
-    {"IsStunned",                   unit_IsStunned},           // UserUnit
+    {"IsStunned",                   unit_IsStunned},
+    {"SetStunned",                  unit_SetStunned},
     {"AddSelectionSet",             unit_AddSelectionSet},     // UserUnit
     {"RemoveSelectionSet",          unit_RemoveSelectionSet},  // UserUnit
     {"HasSelectionSet",             unit_HasSelectionSet},     // UserUnit
@@ -2386,6 +2412,7 @@ const MethodEntry unit_methods[] = {
     {"RevertRegenRate",             unit_RevertRegenRate},
     // Stubs — fuel
     {"GetFuelRatio",                unit_GetFuelRatio},
+    {"GetVelocity",                 unit_GetVelocity},
     {"SetFuelRatio",                unit_SetFuelRatio},
     {"GetFuelUseTime",              unit_GetFuelUseTime},
     {"SetFuelUseTime",              unit_SetFuelUseTime},

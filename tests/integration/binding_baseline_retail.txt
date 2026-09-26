@@ -55,7 +55,6 @@ M CreateResourceBuildingNearest
 M CreateUnitNearSpot
 M EnableTerrainCheck
 M GetCollisionExtents
-M GetRate
 M GetUnit
 M GiveUnitOrder
 M OnApplyBuff
@@ -65,7 +64,6 @@ M SetAIResult
 M SetDamageRadius
 M SetDirectionalAnim
 M SetStrategicUnderlay
-M SetStunned
 M SetWeaponDisableByLabel
 M TakeResource
 M TransportHasAvailableStorage

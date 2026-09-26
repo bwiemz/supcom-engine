@@ -439,6 +439,11 @@ static int weapon_FireWeapon(lua_State* L) {
         lua_pushboolean(L, 0); return 1;
     }
     auto& unit = static_cast<sim::Unit&>(*owner);
+    // A stunned unit's weapons don't fire (Moho's UnitWeapon::Fire).
+    if (unit.is_stunned()) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
     // A weapon its script fires hears OnFire, as the fire clock would give
     // it (the Othuy's beam fires this way); the engine fires the rest.
     if (w->fires_through_script() && w->lua_table_ref >= 0) {

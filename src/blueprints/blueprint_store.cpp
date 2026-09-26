@@ -81,6 +81,21 @@ void apply_unit_defaults(lua_State* L, int bp) {
     default_min_max(L, intel, "SpoofRadius");
     lua_pop(L, 1);
 
+    // Its collision box's offset, which Moho's REntityBlueprint defaults to
+    // 0: FAF's wreckage.lua reads CollisionOffsetY unguarded as a unit dies,
+    // and most units (398 of FAF's 606) leave it out.
+    for (const char* axis : {"CollisionOffsetX", "CollisionOffsetY", "CollisionOffsetZ"}) {
+        lua_pushstring(L, axis);
+        lua_rawget(L, bp);
+        const bool missing = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, axis);
+            lua_pushnumber(L, 0);
+            lua_rawset(L, bp);
+        }
+    }
+
     // Every unit has a weapon list, if an empty one: Unit.DoDeathWeapon
     // loops over bp.Weapon on every death, and 321 of retail's 568 units
     // (engineers, economy, most structures) have none.
