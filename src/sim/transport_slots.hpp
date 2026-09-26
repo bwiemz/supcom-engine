@@ -62,6 +62,11 @@ public:
     /// Every slot held, in the order they were assigned.
     const std::vector<Slot>& slots() const { return slots_; }
 
+    /// The bones a carrier launches stored units from, in skeleton order:
+    /// its Launchpoint bones, else its generic attach points (Moho's
+    /// TransportRemoveFromStorage). Empty when it has neither.
+    std::vector<i32> launch_bones() const;
+
 private:
     struct Point {
         i32 bone = -1;

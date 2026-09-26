@@ -125,6 +125,7 @@ public:
     bool has_category(const std::string& cat) const {
         return categories_.count(cat) > 0;
     }
+    bool has_category(CategoryName cat) const { return category_bits_.test(cat.id); }
     void add_category(std::string cat) {
         category_bits_.set(CategoryIds::intern(cat));
         categories_.insert(std::move(cat));
@@ -681,6 +682,29 @@ public:
     bool calls_transport(u32 transport_id) const;
 
     void attach_to_transport(Unit* transport, EntityRegistry& registry, lua_State* L);
+
+    // Carrier storage (M206q; Moho's CAiTransportImpl storage): units a
+    // carrier keeps inside -- the aircraft it builds -- beside its cargo
+    // slots. A stored unit rides at the carrier's centre, its transport set
+    // to the carrier, so it neither moves nor fights.
+    void set_storage_slots(i32 n) { storage_slots_ = n; }
+    i32 storage_slots() const { return storage_slots_; }
+    const std::vector<u32>& stored_ids() const { return stored_ids_; }
+    bool is_stored_unit(u32 id) const;
+    /// Whether another unit fits in storage (Transport.StorageSlots).
+    bool transport_has_available_storage() const;
+    /// Store `unit`: its script hears OnAddToStorage(carrier) first.
+    void add_to_storage(Unit& unit, EntityRegistry& registry, lua_State* L);
+    /// Take `unit` out of storage: its script hears OnRemoveFromStorage(carrier),
+    /// and it is set at the carrier's next launch bone, facing as the bone
+    /// does (else at the carrier).
+    void remove_from_storage(Unit& unit, EntityRegistry& registry, lua_State* L);
+    /// Forget a stored unit that is gone.
+    void forget_stored(u32 id);
+    /// Whether an unload order launches this carrier's stored units rather
+    /// than dropping cargo: a CARRIER that is an air (or pod) staging
+    /// platform, with something stored (Moho's dispatch of TransportUnload).
+    bool launches_on_unload() const;
     /// Drop the cargo (all of it, or those of `ids` still aboard, in cargo
     /// order): each is set down where it hung, level, and on the ground when
     /// `terrain` is given (M206n).
@@ -873,6 +897,8 @@ private:
     void hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude);
     /// A transport flies to the point and drops all its cargo.
     OrderStep order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx);
+    /// A carrier's unload: its stored units are launched (M206q).
+    OrderStep order_carrier_launch(UnitCommand& cmd, SimContext& ctx);
     /// A nuke, a tactical missile or an OverCharge, by its weapon.
     OrderStep order_launch(UnitCommand& cmd, f64 dt, SimContext& ctx);
     OrderStep order_sacrifice(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -968,6 +994,9 @@ private:
     void update_pose();
     // Transport system
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
+    i32 storage_slots_ = 0;           // Transport.StorageSlots (M206q)
+    std::vector<u32> stored_ids_;     // stored units, in the order they were stored
+    u32 launch_index_ = 0;            // the launch bone used last
     u32 transport_id_ = 0;           // entity ID of transport this unit is on (0 = not loaded)
     f32 speed_mult_ = 1.0f;          // speed multiplier (reduced when carrying cargo)
     i32 transport_class_ = 1;        // cargo TransportClass (1=small, 2=medium, 3=large)

@@ -424,9 +424,21 @@ static int coldet_WatchBone(lua_State* L) {
     return 1;
 }
 
+// detector:EnableTerrainCheck(bool): test the watched bones against the
+// terrain as well. The detector records it; its collision tests are not
+// modelled yet.
+static int coldet_EnableTerrainCheck(lua_State* L) {
+    auto* m = check_manip_base(L);
+    if (!m) return 0;
+    static_cast<sim::CollisionDetectorManipulator*>(m)->set_terrain_check(lua_toboolean(L, 2) != 0);
+    lua_pushvalue(L, 1);
+    return 1;
+}
+
 // clang-format off
 static const MethodEntry collision_manipulator_methods[] = {
     {"WatchBone",               coldet_WatchBone},
+    {"EnableTerrainCheck",      coldet_EnableTerrainCheck},
     {nullptr, nullptr},
 };
 // clang-format on

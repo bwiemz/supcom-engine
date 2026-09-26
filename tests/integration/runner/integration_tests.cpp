@@ -10905,10 +10905,251 @@ void test_transport_pickup(TestContext& ctx) {
     spdlog::info("Transport pickup test: {} passed, {} failed", pass, fail);
 }
 
+namespace {
+osc::sim::SimState* g_board_sim = nullptr;
+
+// __osc_board(transport, unit): a test's shortcut aboard -- the unit is
+// attached as the load's beam-up attaches it. (AddUnitToStorage is a
+// carrier's storage, which a transport has none of.)
+int test_board(lua_State* L) {
+    const auto id_of = [L](int idx) -> osc::u32 {
+        if (!lua_istable(L, idx)) return 0;
+        lua_pushstring(L, "GetEntityId");
+        lua_gettable(L, idx);
+        lua_pushvalue(L, idx);
+        lua_call(L, 1, 1);
+        const auto id = static_cast<osc::u32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return id;
+    };
+    auto& registry = g_board_sim->entity_registry();
+    auto* transport = registry.find(id_of(1));
+    auto* unit = registry.find(id_of(2));
+    if (transport && unit && transport->is_unit() && unit->is_unit())
+        static_cast<osc::sim::Unit*>(unit)->attach_to_transport(
+            static_cast<osc::sim::Unit*>(transport), registry, L);
+    return 0;
+}
+} // namespace
+
+// test_carrier -- M206q: a carrier keeps the aircraft it builds in storage
+// and launches them when told to unload (Moho's CAiTransportImpl storage and
+// CUnitCarrierLaunch).
+void test_carrier(TestContext& ctx) {
+    spdlog::info("=== CARRIER TEST: storage and launch (M206q) ===");
+    int pass = 0, fail = 0;
+    const auto check = [&](bool ok, const std::string& what) {
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] {}", what);
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] {}", what);
+        }
+    };
+    const auto lua = [&](const char* code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] carrier script: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto number = [&](const char* global) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, global);
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        const double v = lua_tonumber(L, -1);
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto unit = [&](const std::string& expr) -> osc::sim::Unit* {
+        lua(("__osc_id = " + expr + ":GetEntityId()").c_str());
+        auto* e = ctx.sim.entity_registry().find(static_cast<osc::u32>(number("__osc_id")));
+        return e && e->is_unit() && !e->destroyed() ? static_cast<osc::sim::Unit*>(e) : nullptr;
+    };
+
+    // A Cybran carrier (50 storage slots) on deep water, and 51 interceptors.
+    if (!lua(R"(
+        local x, z
+        for tz = 100, 900, 16 do
+            for tx = 100, 900, 16 do
+                if not x and GetSurfaceHeight(tx, tz) - GetTerrainHeight(tx, tz) > 8 and
+                   GetSurfaceHeight(tx + 12, tz + 12) - GetTerrainHeight(tx + 12, tz + 12) > 8 and
+                   GetSurfaceHeight(tx - 12, tz - 12) - GetTerrainHeight(tx - 12, tz - 12) > 8 then
+                    x, z = tx, tz
+                end
+            end
+        end
+        if not x then error('no deep water on the map') end
+        __osc_cx, __osc_cz = x, z
+        __osc_carrier = CreateUnitHPR('urs0303', 'ARMY_1', x, GetSurfaceHeight(x, z), z, 0, 0, 0)
+        __osc_planes = {}
+        for i = 1, 51 do
+            __osc_planes[i] = CreateUnitHPR('ura0102', 'ARMY_1', x + 20, GetSurfaceHeight(x, z) + 20, z, 0, 0, 0)
+        end
+        __osc_room = __osc_carrier:TransportHasAvailableStorage() and 1 or 0
+    )"))
+        return;
+    auto* carrier = unit("__osc_carrier");
+    auto* first = unit("__osc_planes[1]");
+    check(carrier && first && carrier->storage_slots() == 50 && number("__osc_room") == 1,
+          fmt::format("the carrier has 50 storage slots, free ({})",
+                      carrier ? carrier->storage_slots() : -1));
+    if (!carrier || !first) return;
+
+    // Stored: the plane rides at the carrier's centre, and its script (retail
+    // Unit.OnAddToStorage) made it untouchable.
+    lua(R"(
+        __osc_carrier:AddUnitToStorage(__osc_planes[1])
+        __osc_touchable = __osc_planes[1].CanTakeDamage and 1 or 0
+    )");
+    ctx.sim.tick();
+    const auto at = [](const osc::sim::Unit& a, const osc::sim::Unit& b) {
+        const osc::f32 dx = a.position().x - b.position().x, dy = a.position().y - b.position().y,
+                       dz = a.position().z - b.position().z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    check(first->transport_id() == carrier->entity_id() &&
+              carrier->is_stored_unit(first->entity_id()) && first->has_unit_state("Attached") &&
+              at(*first, *carrier) < 0.01f && number("__osc_touchable") == 0 &&
+              carrier->cargo_ids().empty(),
+          fmt::format("a stored plane rides inside, attached and untouchable ({:.2f} off, "
+                      "touchable {})",
+                      at(*first, *carrier), number("__osc_touchable")));
+
+    // Full at 50: the 51st isn't taken.
+    lua(R"(
+        for i = 2, 51 do __osc_carrier:AddUnitToStorage(__osc_planes[i]) end
+        __osc_room = __osc_carrier:TransportHasAvailableStorage() and 1 or 0
+    )");
+    auto* last = unit("__osc_planes[51]");
+    check(carrier->stored_ids().size() == 50 && number("__osc_room") == 0 && last &&
+              last->transport_id() == 0,
+          fmt::format("storage holds 50 and no more ({} stored, 51st aboard: {})",
+                      carrier->stored_ids().size(), last && last->transport_id() != 0));
+
+    // CalculateWorldPositionFromRelative turns the offset with the carrier.
+    lua(R"(
+        local p = __osc_carrier:CalculateWorldPositionFromRelative({0, 0, -20})
+        __osc_rx, __osc_ry, __osc_rz = p[1], p[2], p[3]
+    )");
+    const auto turned = osc::sim::quat_rotate(carrier->orientation(), osc::sim::Vector3{0, 0, -20});
+    const osc::sim::Vector3 want{carrier->position().x + turned.x, carrier->position().y + turned.y,
+                                 carrier->position().z + turned.z};
+    check(std::abs(number("__osc_rx") - want.x) < 1e-3 &&
+              std::abs(number("__osc_ry") - want.y) < 1e-3 &&
+              std::abs(number("__osc_rz") - want.z) < 1e-3,
+          fmt::format("CalculateWorldPositionFromRelative gives ({:.2f}, {:.2f}, {:.2f})",
+                      number("__osc_rx"), number("__osc_ry"), number("__osc_rz")));
+
+    // Told to unload, it launches them: the first a tick after the order
+    // starts, then one every 2 ticks (Moho's task timing), each ordered to
+    // the point.
+    lua("IssueTransportUnload({__osc_carrier}, {__osc_cx + 60, 0, __osc_cz})");
+    const auto launched = [&] {
+        int n = 0;
+        for (int i = 1; i <= 50; ++i)
+            if (auto* p = unit("__osc_planes[" + std::to_string(i) + "]");
+                p && p->transport_id() == 0)
+                ++n;
+        return n;
+    };
+    ctx.sim.tick();
+    const int after1 = launched();
+    ctx.sim.tick();
+    const int after2 = launched();
+    ctx.sim.tick();
+    const int after3 = launched();
+    ctx.sim.tick();
+    const int after4 = launched();
+    check(after1 == 0 && after2 == 1 && after3 == 1 && after4 == 2,
+          fmt::format("one leaves a tick on, the next 2 later ({}, {}, {}, {})", after1, after2,
+                      after3, after4));
+    lua("__osc_touchable = __osc_planes[1].CanTakeDamage and 1 or 0");
+    const osc::sim::UnitCommand* order =
+        first->command_queue().empty() ? nullptr : &first->command_queue().front();
+    check(first->transport_id() == 0 && number("__osc_touchable") == 1 && order &&
+              order->type == osc::sim::CommandType::Move &&
+              std::abs(order->target_pos.x - static_cast<osc::f32>(number("__osc_cx") + 60)) <
+                  0.01f,
+          "a launched plane is out, touchable again, and heads for the point");
+    for (int i = 0; i < 160; ++i) ctx.sim.tick();
+    check(launched() == 50 && carrier->stored_ids().empty() && carrier->command_queue().empty(),
+          fmt::format("all 50 launched and the order done ({} out)", launched()));
+
+    // What a carrier keeps goes with it (Moho's ~CAiTransportImpl).
+    lua(R"(
+        __osc_c2 = CreateUnitHPR('urs0303', 'ARMY_1', __osc_cx, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz + 40, 0, 0, 0)
+        __osc_kept = {}
+        for i = 1, 3 do
+            __osc_kept[i] = CreateUnitHPR('ura0102', 'ARMY_1', __osc_cx, 30, __osc_cz + 40, 0, 0, 0)
+            __osc_c2:AddUnitToStorage(__osc_kept[i])
+        end
+        __osc_c2:Destroy()
+        __osc_left_before = 0
+        for i = 1, 3 do if not __osc_kept[i]:BeenDestroyed() then __osc_left_before = __osc_left_before + 1 end end
+    )");
+    ctx.sim.tick();
+    lua(R"(
+        __osc_left = 0
+        for i = 1, 3 do if not __osc_kept[i]:BeenDestroyed() then __osc_left = __osc_left + 1 end end
+    )");
+    check(number("__osc_left_before") == 3 && number("__osc_left") == 0,
+          fmt::format("a destroyed carrier's stored planes go with it, by the end of the tick "
+                      "({} before, {} after)",
+                      number("__osc_left_before"), number("__osc_left")));
+
+    // TransportDetachAllUnits (a dying transport's script) destroys what is
+    // stored, after DestroyedOnTransport.
+    lua(R"(
+        __osc_c4 = CreateUnitHPR('urs0303', 'ARMY_1', __osc_cx + 40, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz + 40, 0, 0, 0)
+        __osc_held = {}
+        __osc_heard = 0
+        for i = 1, 2 do
+            __osc_held[i] = CreateUnitHPR('ura0102', 'ARMY_1', __osc_cx + 40, 30, __osc_cz + 40, 0, 0, 0)
+            __osc_held[i].DestroyedOnTransport = function(self) __osc_heard = __osc_heard + 1 end
+            __osc_c4:AddUnitToStorage(__osc_held[i])
+        end
+        __osc_c4:TransportDetachAllUnits(true)
+        __osc_gone = 0
+        for i = 1, 2 do if __osc_held[i]:BeenDestroyed() then __osc_gone = __osc_gone + 1 end end
+    )");
+    auto* c4 = unit("__osc_c4");
+    check(number("__osc_gone") == 2 && number("__osc_heard") == 2 && c4 && c4->stored_ids().empty(),
+          fmt::format("TransportDetachAllUnits destroys the stored units ({} gone, {} heard)",
+                      number("__osc_gone"), number("__osc_heard")));
+
+    // The retail flow: a carrier builds a plane and stores it, and is free
+    // to build again (its script asks TransportHasAvailableStorage).
+    lua(R"(
+        local brain = GetArmyBrain('ARMY_1')
+        brain:GiveStorage('MASS', 50000)
+        brain:GiveStorage('ENERGY', 500000)
+        brain:GiveResource('MASS', 50000)
+        brain:GiveResource('ENERGY', 500000)
+        __osc_c3 = CreateUnitHPR('urs0303', 'ARMY_1', __osc_cx, GetSurfaceHeight(__osc_cx, __osc_cz), __osc_cz - 40, 0, 0, 0)
+        IssueBuildFactory({__osc_c3}, 'ura0102', 1)
+    )");
+    auto* c3 = unit("__osc_c3");
+    bool stored = false;
+    for (int i = 0; i < 2000 && c3 && !stored; ++i) {
+        ctx.sim.tick();
+        stored = !c3->stored_ids().empty();
+    }
+    for (int i = 0; i < 5; ++i) ctx.sim.tick();
+    check(c3 && stored && !c3->busy(),
+          fmt::format("a carrier stores the plane it builds and is free again (stored {}, busy {})",
+                      stored, c3 && c3->busy()));
+
+    spdlog::info("Carrier test: {}/{} passed", pass, pass + fail);
+}
+
 void test_transport_drop(TestContext& ctx) {
     spdlog::info(
         "=== TRANSPORT DROP TEST: a transport comes down to set its cargo down (M206n) ===");
     int pass = 0, fail = 0;
+    g_board_sim = &ctx.sim;
+    lua_pushstring(ctx.L, "__osc_board");
+    lua_pushcfunction(ctx.L, test_board);
+    lua_rawset(ctx.L, LUA_GLOBALSINDEX);
     const auto check = [&](bool ok, const std::string& what) {
         if (ok) {
             pass++;
@@ -10951,7 +11192,7 @@ void test_transport_drop(TestContext& ctx) {
         __osc_tanks = {}
         for i = 1, 6 do
             __osc_tanks[i] = spawn('uel0201', 600 + i, 104)
-            __osc_xport:AddUnitToStorage(__osc_tanks[i])
+            __osc_board(__osc_xport, __osc_tanks[i])
         end
         function __osc_attached(list)
             local n = 0
@@ -11024,7 +11265,7 @@ void test_transport_drop(TestContext& ctx) {
         end
         if not x then error('no deep water on the map') end
         __osc_wx, __osc_wz = x, z
-        for _, t in __osc_tanks do __osc_xport:AddUnitToStorage(t) end
+        for _, t in __osc_tanks do __osc_board(__osc_xport, t) end
         IssueTransportUnload({__osc_xport}, {x, GetSurfaceHeight(x, z), z})
     )"))
         return;
@@ -11044,7 +11285,7 @@ void test_transport_drop(TestContext& ctx) {
     if (!lua(R"(
         __osc_x2 = CreateUnitHPR('uea0107', 'ARMY_1', 560, GetTerrainHeight(560, 140), 140, 0, 0, 0)
         __osc_one = CreateUnitHPR('uel0201', 'ARMY_1', 561, GetTerrainHeight(561, 144), 144, 0, 0, 0)
-        __osc_x2:AddUnitToStorage(__osc_one)
+        __osc_board(__osc_x2, __osc_one)
         IssueTransportUnload({__osc_x2}, {585, GetTerrainHeight(585, 140), 140})
     )"))
         return;

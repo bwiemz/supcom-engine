@@ -1490,6 +1490,8 @@ OrderStep Unit::order_call_transport(UnitCommand& cmd, f64 dt, SimContext& ctx) 
 }
 
 OrderStep Unit::order_transport_unload(UnitCommand& cmd, f64 dt, SimContext& ctx) {
+    // A carrier launches what it keeps in storage instead (M206q).
+    if (cmd.launch_wait >= 0 || launches_on_unload()) return order_carrier_launch(cmd, ctx);
     // Transport drops its cargo at target position: the order's
     // (IssueTransportUnloadSpecific) or all of it. With none of it aboard,
     // the order ends.

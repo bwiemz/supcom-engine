@@ -50,10 +50,8 @@ G _c_CreateDecal
 G _c_CreatePathDebugger
 G errro
 M AddOnKilledCallback
-M CalculateWorldPositionFromRelative
 M CreateResourceBuildingNearest
 M CreateUnitNearSpot
-M EnableTerrainCheck
 M GetCollisionExtents
 M GetUnit
 M GiveUnitOrder
@@ -64,7 +62,6 @@ M SetAIResult
 M SetDamageRadius
 M SetStrategicUnderlay
 M SetWeaponDisableByLabel
-M TransportHasAvailableStorage
 M UnloadAllAtLocation
 M UseFerryBeacon
 M Whack

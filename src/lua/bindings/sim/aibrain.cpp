@@ -1183,8 +1183,9 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
 
 static sim::StructurePlacement placement_for(lua_State* L, const sim::SimState& sim,
                                              i32 army) {
-    return sim::StructurePlacement(
-        sim, army, [L](const std::string& bp_id) { return placement_rules_of(L, bp_id); });
+    return sim::StructurePlacement(sim, army, [L, &sim](const std::string& bp_id) {
+        return sim.placement_rules(bp_id, [&] { return placement_rules_of(L, bp_id); });
+    });
 }
 
 // Builder types whose FindPlaceToBuild answer is a deposit, not a template
