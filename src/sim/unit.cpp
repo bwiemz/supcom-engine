@@ -1877,6 +1877,11 @@ i32 Unit::transport_attach_bone() const {
     return bone;
 }
 
+f32 Unit::air_floor(const map::Terrain* terrain, f32 x, f32 z) const {
+    if (!terrain) return 0.0f;
+    return fly_in_water_ ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
+}
+
 void Unit::hang_from(const Unit& transport) {
     const TransportSlots* slots = transport.built_transport_slots();
     const TransportSlots::Slot* slot = slots ? slots->slot_of(entity_id()) : nullptr;
@@ -2041,7 +2046,7 @@ void Unit::detach_cargo(std::vector<u32> ids, EntityRegistry& registry, lua_Stat
             if (terrain)
                 cargo->current_altitude_ =
                     cargo->position().y -
-                    terrain->get_terrain_height(cargo->position().x, cargo->position().z);
+                    cargo->air_floor(terrain, cargo->position().x, cargo->position().z);
         } else if (terrain) {
             Vector3 at = cargo->position();
             at.y = terrain->get_surface_height(at.x, at.z);

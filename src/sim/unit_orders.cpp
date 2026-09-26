@@ -1426,7 +1426,7 @@ void Unit::hold_altitude(f64 dt, const map::Terrain* terrain, f32 altitude) {
     current_altitude_ = alt;
     current_airspeed_ = 0.0f;
     Vector3 at = position();
-    at.y = terrain->get_terrain_height(at.x, at.z) + alt;
+    at.y = air_floor(terrain, at.x, at.z) + alt;
     set_position(at);
 }
 

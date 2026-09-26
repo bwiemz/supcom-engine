@@ -389,9 +389,9 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     pos.z += osc::dmath::cos(heading) * step;
 
     // --- 5. Altitude management ---
-    // Use get_terrain_height (NOT get_surface_height) — air units fly above terrain,
-    // not above water surface. Ground navigator uses get_surface_height instead.
-    f32 terrain_h = terrain ? terrain->get_terrain_height(pos.x, pos.z) : 0;
+    // Over its air floor: the water's surface at sea (Moho's CUnitMotion
+    // samples max(terrain, water) for fliers), unless it flies in water.
+    f32 terrain_h = unit.air_floor(terrain, pos.x, pos.z);
     f32 target_alt = unit.elevation_target();
     f32 alt = unit.current_altitude();
     f32 climb = unit.climb_rate() * fdt;
