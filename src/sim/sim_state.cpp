@@ -1486,9 +1486,12 @@ ThreatSource threat_source_of(const Unit& u) {
     s.economy = u.economy_threat();
     s.mobile = moves(u);
     s.flies = u.motion_type() == "RULEUMT_Air";
-    s.mass_extractor = u.has_category("MASSEXTRACTION");
-    s.experimental = u.has_category("EXPERIMENTAL");
-    s.commander = u.has_category("COMMAND");
+    static const CategoryName kMassExtraction{"MASSEXTRACTION"};
+    static const CategoryName kExperimental{"EXPERIMENTAL"};
+    static const CategoryName kCommand{"COMMAND"};
+    s.mass_extractor = u.has_category(kMassExtraction);
+    s.experimental = u.has_category(kExperimental);
+    s.commander = u.has_category(kCommand);
     return s;
 }
 } // namespace
@@ -1506,10 +1509,11 @@ void SimState::feed_influence_map() {
 
     // Every unit of another army its intel detects -- an ally's always -- and
     // every structure it has once had in sight (a remembered blip).
+    static const CategoryName kVisibleToRecon{"VISIBLETORECON"};
     entity_registry_.for_each_unit([&](Entity& e) {
         if (!alive(&e) || e.army() == owner) return;
         auto& u = static_cast<Unit&>(e);
-        if (!u.has_category("VISIBLETORECON")) return;
+        if (!u.has_category(kVisibleToRecon)) return;
         const bool detected =
             is_ally(owner, u.army()) || has_any_intel_cached(&e, a, u.has_radar_stealth(),
                                                              u.has_sonar_stealth(), u.is_cloaked());

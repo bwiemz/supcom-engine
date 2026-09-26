@@ -218,3 +218,15 @@ TEST_CASE("A unit's category bits follow its categories", "[category]") {
     CHECK(tank.matches(unit.categories()));
     CHECK_FALSE(air.matches(unit.category_bits()));
 }
+
+TEST_CASE("An interned category name tests a unit as its name does", "[category]") {
+    osc::sim::Unit unit;
+    unit.add_category("LAND");
+    unit.add_category("TECH2");
+    for (const char* name : {"LAND", "TECH2", "AIR", "NEVER_SEEN_CATEGORY_M224F"}) {
+        const osc::sim::CategoryName interned{name};
+        CHECK(unit.has_category(interned) == unit.has_category(std::string(name)));
+    }
+    CHECK(unit.has_category(osc::sim::CategoryName{"LAND"}));
+    CHECK_FALSE(unit.has_category(osc::sim::CategoryName{"AIR"}));
+}

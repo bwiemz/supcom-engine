@@ -125,6 +125,7 @@ public:
     bool has_category(const std::string& cat) const {
         return categories_.count(cat) > 0;
     }
+    bool has_category(CategoryName cat) const { return category_bits_.test(cat.id); }
     void add_category(std::string cat) {
         category_bits_.set(CategoryIds::intern(cat));
         categories_.insert(std::move(cat));
