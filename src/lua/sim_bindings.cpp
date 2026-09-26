@@ -30,6 +30,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <spdlog/spdlog.h>
@@ -2634,8 +2635,39 @@ static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
     lua_setmetatable(L, -2);
 }
 
-// CreateEmitterAtEntity(entity, army, blueprintPath)
-// CreateEmitterOnEntity(entity, army, blueprintPath)  (identical semantics)
+/// An emitter blueprint's Lifetime (ticks; Moho's default 0), or none when
+/// `path` names no emitter blueprint -- e.g. a beam's, which
+/// CreateBeamEmitterOnEntity passes to the attached-emitter creator.
+static std::optional<f64> emitter_blueprint_lifetime(lua_State* L, sim::SimState& sim,
+                                                     const std::string& path) {
+    return sim.effect_registry().blueprint_lifetime(path, [&]() -> std::optional<f64> {
+        auto* store = sim.blueprint_store();
+        const auto* entry = store && !path.empty() ? store->find(path) : nullptr;
+        if (!entry || entry->type != blueprints::BlueprintType::Emitter) return std::nullopt;
+        store->push_lua_table(*entry, L);
+        lua_pushstring(L, "Lifetime");
+        lua_rawget(L, -2);
+        const f64 lifetime = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : 0.0;
+        lua_pop(L, 2);
+        return lifetime;
+    });
+}
+
+/// An emitter made now ends when its blueprint's Lifetime runs out (see
+/// sim::emitter_life_ticks). Without this, every muzzle flash and explosion
+/// stayed in the registry for the rest of the game: 388,000 effects by tick
+/// 16,000 of a four-AI game, walked three times a tick. One without an
+/// emitter blueprint (a beam; Moho makes no emitter for an unknown one) runs
+/// until it is destroyed or its entity goes.
+static void time_emitter(lua_State* L, sim::SimState& sim, sim::IEffect& fx) {
+    fx.set_created_tick(sim.tick_count());
+    const std::optional<f64> lifetime = emitter_blueprint_lifetime(L, sim, fx.blueprint_path());
+    fx.set_has_emitter_blueprint(lifetime.has_value());
+    fx.end_after(lifetime.value_or(-1.0), sim::SimState::SECONDS_PER_TICK);
+}
+
+// CreateEmitterAtEntity(entity, army, blueprintPath): an emitter where the
+// entity is, not attached to it.
 static int l_CreateEmitterAtEntity(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
@@ -2647,6 +2679,30 @@ static int l_CreateEmitterAtEntity(lua_State* L) {
     fx->set_entity_id(entity ? entity->entity_id() : 0);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
+    time_emitter(L, *sim, *fx);
+    push_ieffect_table(L, fx);
+    return 1;
+}
+
+// CreateEmitterOnEntity(entity, army, blueprintPath): an emitter attached to
+// the entity, which it follows and goes with -- a projectile's trail, whose
+// emitter emits on (Moho: "creates an emitter on an object and attaches the
+// emitter to it"). As an at-entity emitter, every trail outlived its shot.
+static int l_CreateEmitterOnEntity(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* entity = effect_check_entity(L, 1);
+    const i32 army = static_cast<i32>(luaL_optnumber(L, 2, 0));
+    const char* bp = luaL_optstring(L, 3, "");
+    auto* fx = sim->effect_registry().create();
+    fx->set_type(sim::EffectType::ATTACHED_EMITTER);
+    fx->set_entity_id(entity ? entity->entity_id() : 0);
+    fx->set_army(army);
+    fx->set_blueprint_path(bp);
+    time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
 }
@@ -2665,6 +2721,7 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
+    time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
 }
@@ -2683,6 +2740,7 @@ static int l_CreateAttachedEmitter(lua_State* L) {
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
+    time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
 }
@@ -5554,7 +5612,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     // Effects — real IEffect creation (state tracking, rendering deferred)
     state.register_function("CreateEmitterAtBone", l_CreateEmitterAtBone);
     state.register_function("CreateEmitterAtEntity", l_CreateEmitterAtEntity);
-    state.register_function("CreateEmitterOnEntity", l_CreateEmitterAtEntity); // same semantics
+    state.register_function("CreateEmitterOnEntity", l_CreateEmitterOnEntity);
     state.register_function("CreateAttachedEmitter", l_CreateAttachedEmitter);
     state.register_function("CreateTrail", l_CreateTrail);
     state.register_function("CreateAttachedBeam", l_CreateAttachedBeam);

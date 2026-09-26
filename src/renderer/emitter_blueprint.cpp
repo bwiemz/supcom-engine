@@ -181,7 +181,11 @@ EmitterBlueprintData EmitterBlueprintCache::parse_from_lua(lua_State* L,
 
     // Scalar fields
     bp.lifetime = lua_field_f32(L, table_idx, "Lifetime", 1.0f);
-    bp.repeattime = lua_field_f32(L, table_idx, "RepeatTime", 1.0f);
+    // Moho's field is "Repeattime" (REmitterBlueprint), as every retail
+    // emitter spells it, and unset it is 0. It was read as "RepeatTime"
+    // with a default of 1.
+    bp.repeattime =
+        lua_field_f32(L, table_idx, "Repeattime", lua_field_f32(L, table_idx, "RepeatTime", 0.0f));
     bp.texture_frame_count =
         lua_field_u32(L, table_idx, "TextureFrameCount", 1);
     bp.texture_strip_count =
