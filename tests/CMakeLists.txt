@@ -35,6 +35,7 @@ add_executable(osc_tests
     test_emitter_blueprint.cpp
     test_particle_system.cpp
     test_ui_layout.cpp
+    test_world_view.cpp
     test_ui_controls.cpp
     test_overlay_filters.cpp
     test_font_cache.cpp
