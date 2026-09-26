@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -170,6 +171,43 @@ void apply_unit_defaults(lua_State* L, int bp) {
     lua_pop(L, 2); // Physics, Footprint
 }
 
+/// A projectile's Physics spreads (the *Range fields) a .bp leaves out read
+/// as Moho's RProjectileBlueprintPhysics defaults: 0, but a direction spread
+/// of 1.5 across (faf-re). FAF's cruise missiles add MaxSpeedRange to
+/// MaxSpeed as they are made (TIFMissileCruise01 has none). The engine's own
+/// flight reads none of them, so only scripts see these.
+void apply_projectile_defaults(lua_State* L, int bp) {
+    lua_pushstring(L, "Physics");
+    lua_rawget(L, bp);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushstring(L, "Physics");
+        lua_newtable(L);
+        lua_rawset(L, bp);
+        lua_pushstring(L, "Physics");
+        lua_rawget(L, bp);
+    }
+    const int physics = lua_gettop(L);
+    static constexpr std::pair<const char*, lua_Number> kRangeDefaults[] = {
+        {"AccelerationRange", 0}, {"DirectionXRange", 1.5},       {"DirectionYRange", 0},
+        {"DirectionZRange", 1.5}, {"InitialSpeedRange", 0},       {"LifetimeRange", 0},
+        {"MaxSpeedRange", 0},     {"PositionXRange", 0},          {"PositionYRange", 0},
+        {"PositionZRange", 0},    {"RotationalVelocityRange", 0}, {"TurnRateRange", 0},
+    };
+    for (const auto& [field, value] : kRangeDefaults) {
+        lua_pushstring(L, field);
+        lua_rawget(L, physics);
+        const bool missing = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, field);
+            lua_pushnumber(L, value);
+            lua_rawset(L, physics);
+        }
+    }
+    lua_pop(L, 1); // Physics
+}
+
 /// Moho reads a prop's reclaim values as numbers, so an empty string (162
 /// of retail's prop blueprints write ReclaimEnergyMax = '', and the default
 /// wreck too) is 0. Prop.lua's GetReclaimCosts does arithmetic with them.
@@ -236,10 +274,12 @@ void BlueprintStore::register_blueprint(lua_State* L, BlueprintType type,
     std::transform(id.begin(), id.end(), id.begin(),
                    [](unsigned char c) { return std::tolower(c); });
 
-    if (type == BlueprintType::Unit || type == BlueprintType::Prop) {
+    if (type == BlueprintType::Unit || type == BlueprintType::Prop ||
+        type == BlueprintType::Projectile) {
         const int bp = stack_index > 0 ? stack_index : lua_gettop(L) + stack_index + 1;
         if (type == BlueprintType::Unit) apply_unit_defaults(L, bp);
-        else apply_prop_defaults(L, bp);
+        else if (type == BlueprintType::Prop) apply_prop_defaults(L, bp);
+        else apply_projectile_defaults(L, bp);
     }
 
     // Create a Lua registry reference for the table
