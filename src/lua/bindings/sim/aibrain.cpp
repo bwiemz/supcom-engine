@@ -1913,6 +1913,141 @@ static int brain_CanBuildStructureAt(lua_State* L) {
     return 1;
 }
 
+/// A blueprint id as Moho names blueprints: lowercase (retail's
+/// aibrain.lua writes 'UEB1103'; the blueprint tables are keyed lowercase).
+static std::string blueprint_name(const char* id) {
+    std::string out = id;
+    std::transform(out.begin(), out.end(), out.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return out;
+}
+
+// Make a unit for the brain's army as a script's CreateUnitHPR does (its
+// full creation path), facing north; its table on the stack, or nil.
+static void create_brain_unit(lua_State* L, const sim::ArmyBrain& brain, const std::string& bp,
+                              f32 x, f32 y, f32 z) {
+    lua_pushstring(L, "CreateUnitHPR");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushstring(L, bp.c_str());
+    lua_pushnumber(L, brain.index() + 1);
+    lua_pushnumber(L, x);
+    lua_pushnumber(L, y);
+    lua_pushnumber(L, z);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    lua_pushnumber(L, 0);
+    if (lua_pcall(L, 8, 1, 0) != 0) {
+        spdlog::warn("creating {} for army {}: {}", bp, brain.index(), lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+}
+
+/// Where a structure stands on the map: the water's surface, or the ground
+/// under it for one that sits on the seabed or with no water.
+static f32 structure_elevation(const sim::SimState& sim, f32 x, f32 z) {
+    const auto* terrain = sim.terrain();
+    return terrain ? terrain->get_surface_height(x, z) : 0.0f;
+}
+
+// brain:CreateResourceBuildingNearest(bp, x, z) -> unit or nil: the
+// resource building on the free deposit of its kind nearest (x, z) -- a
+// hydrocarbon plant's on hydrocarbon, anything else's on mass (Moho's
+// CAiBrain::CreateResourceBuildingNearest; the lobby's prebuilt units).
+static int brain_CreateResourceBuildingNearest(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim || lua_type(L, 2) != LUA_TSTRING || lua_type(L, 3) != LUA_TNUMBER ||
+        lua_type(L, 4) != LUA_TNUMBER) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const std::string bp = blueprint_name(lua_tostring(L, 2));
+    const f32 x = static_cast<f32>(lua_tonumber(L, 3));
+    const f32 z = static_cast<f32>(lua_tonumber(L, 4));
+    const auto placement = placement_for(L, *sim, brain->index());
+    const auto wanted = placement.rules(bp).deposit == sim::PlacementRules::Deposit::Hydrocarbon
+                            ? sim::ResourceDeposit::Hydrocarbon
+                            : sim::ResourceDeposit::Mass;
+    struct Candidate {
+        f32 x, z, distance_sq;
+    };
+    std::vector<Candidate> candidates;
+    for (const auto& d : sim->resource_deposits()) {
+        if (d.type != wanted) continue;
+        const f32 dx = x - d.x, dz = z - d.z;
+        candidates.push_back({d.x, d.z, dx * dx + dz * dz});
+    }
+    // Nearest first; ties in deposit order (stable, as lockstep needs).
+    std::stable_sort(
+        candidates.begin(), candidates.end(),
+        [](const Candidate& a, const Candidate& b) { return a.distance_sq < b.distance_sq; });
+    for (const auto& c : candidates) {
+        if (!placement.can_build(bp, c.x, c.z)) continue;
+        create_brain_unit(L, *brain, bp, c.x, structure_elevation(*sim, c.x, c.z), c.z);
+        if (!lua_isnil(L, -1)) return 1;
+        lua_pop(L, 1);
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+// brain:CreateUnitNearSpot(bp, x, z) -> unit or nil: the unit at the first
+// free site found about (x, z), keeping clear of the army's start spot
+// (Moho's CAiBrain::CreateUnitNearSpot occupies the start +-5 while it
+// looks). The search is Moho's TryBuildStructureAt: the spot itself, then
+// square rings one cell further out each time, up to 900 tries.
+static int brain_CreateUnitNearSpot(lua_State* L) {
+    auto* brain = check_brain(L);
+    auto* sim = get_sim(L);
+    if (!brain || !sim || lua_type(L, 2) != LUA_TSTRING || lua_type(L, 3) != LUA_TNUMBER ||
+        lua_type(L, 4) != LUA_TNUMBER) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const std::string bp = blueprint_name(lua_tostring(L, 2));
+    const f32 x = static_cast<f32>(lua_tonumber(L, 3));
+    const f32 z = static_cast<f32>(lua_tonumber(L, 4));
+    const auto placement = placement_for(L, *sim, brain->index());
+    const auto& rules = placement.rules(bp);
+    const sim::Vector3& start = brain->start_position();
+    const sim::StructureSite start_box{static_cast<f32>(static_cast<i32>(start.x)),
+                                       static_cast<f32>(static_cast<i32>(start.z)), 10.0f, 10.0f};
+    const auto free_at = [&](f32 cx, f32 cz, f32& out_x, f32& out_z) {
+        sim::snap_structure_center(cx, cz, rules.size_x, rules.size_z);
+        if (start_box.overlaps({cx, cz, rules.size_x, rules.size_z})) return false;
+        if (!placement.can_build(bp, cx, cz)) return false;
+        out_x = cx;
+        out_z = cz;
+        return true;
+    };
+    f32 at_x = 0, at_z = 0;
+    bool found = free_at(x, z, at_x, at_z);
+    constexpr i32 kBorder = 1; // the cell step (Moho passes `true` for its border)
+    for (i32 ring = 1, attempts = 0; !found && attempts < 900; ++ring) {
+        const i32 lower = -ring, upper = ring;
+        for (i32 i = lower; i <= upper && !found; ++i) {
+            const i32 dj = (i == lower || i == upper) ? 1 : 2 * upper;
+            for (i32 j = lower; j <= upper && !found; j += dj) {
+                ++attempts;
+                found = free_at(x + static_cast<f32>(kBorder * i),
+                                z + static_cast<f32>(kBorder * j), at_x, at_z);
+            }
+        }
+    }
+    if (!found) {
+        lua_pushnil(L);
+        return 1;
+    }
+    create_brain_unit(L, *brain, bp, at_x, structure_elevation(*sim, at_x, at_z), at_z);
+    return 1;
+}
+
 // brain:IsAnyEngineerBuilding(category) -> bool
 // Check if any engineer/commander in this army is building a unit matching category
 static int brain_IsAnyEngineerBuilding(lua_State* L) {
@@ -2198,6 +2333,8 @@ const MethodEntry aibrain_methods[] = {
     {"GetAttackVectors",            brain_GetAttackVectors},
     {"FindPlaceToBuild",            brain_FindPlaceToBuild},
     {"CanBuildStructureAt",         brain_CanBuildStructureAt},
+    {"CreateResourceBuildingNearest", brain_CreateResourceBuildingNearest},
+    {"CreateUnitNearSpot",          brain_CreateUnitNearSpot},
     {"BuildUnit",                   brain_BuildUnit},
     {"BuildStructure",              brain_BuildStructure},
     {"DecideWhatToBuild",           brain_DecideWhatToBuild},

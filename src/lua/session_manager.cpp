@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include <array>
+#include <string_view>
 
 extern "C" {
 #include <lua.h>
@@ -336,6 +337,7 @@ Result<void> SessionManager::start_session(LuaState& state,
         spdlog::warn("  BeginSession() failed: {} (continuing anyway)",
                       begin_result.error().message);
     }
+    spawn_prebuilt_units(L, sim);
 
     // Retail and FAF start /lua/victory.lua's CheckVictory from BeginSession
     // (a schook hook in retail): then the scripts decide the game, as in
@@ -827,6 +829,44 @@ Result<void> SessionManager::create_army_brain(lua_State* L,
 
     lua_pop(L, 1); // pop brain table
     return {};
+}
+
+void SessionManager::spawn_prebuilt_units(lua_State* L, sim::SimState& sim) {
+    // Moho's Sim::PostInitialize: with the lobby's PrebuiltUnits "On", the
+    // script's InitializePrebuiltUnits(armyName) for each army but the
+    // civilians (it runs the brain's OnSpawnPreBuiltUnits: extractors on the
+    // nearest deposits, a factory and power by the start).
+    lua_getglobal(L, "ScenarioInfo");
+    bool on = false;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "Options");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "PrebuiltUnits");
+            lua_rawget(L, -2);
+            on = lua_type(L, -1) == LUA_TSTRING && std::string_view(lua_tostring(L, -1)) == "On";
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    if (!on) return;
+    for (size_t i = 0; i < sim.army_count(); ++i) {
+        const auto* brain = sim.get_army(static_cast<i32>(i));
+        if (!brain || brain->is_civilian()) continue;
+        lua_pushstring(L, "InitializePrebuiltUnits");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (!lua_isfunction(L, -1)) {
+            lua_pop(L, 1);
+            return;
+        }
+        lua_pushstring(L, brain->name().c_str());
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("  InitializePrebuiltUnits({}) error: {}", brain->name(),
+                         lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown");
+            lua_pop(L, 1);
+        }
+    }
 }
 
 Result<void> SessionManager::call_begin_session(lua_State* L) {

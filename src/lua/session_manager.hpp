@@ -108,6 +108,11 @@ public:
                          index) != ai_army_indices_.end();
     }
 
+    /// The lobby's prebuilt units, after BeginSession (Moho's
+    /// Sim::PostInitialize): with ScenarioInfo.Options.PrebuiltUnits "On",
+    /// the script's InitializePrebuiltUnits for each army but the civilians.
+    void spawn_prebuilt_units(lua_State* L, sim::SimState& sim);
+
 private:
     void setup_army_info(lua_State* L, const ScenarioMetadata& meta);
     Result<void> call_setup_session(lua_State* L);

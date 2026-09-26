@@ -51,8 +51,6 @@ G _c_CreatePathDebugger
 G errro
 M AddOnKilledCallback
 M CalculateWorldPositionFromRelative
-M CreateResourceBuildingNearest
-M CreateUnitNearSpot
 M EnableTerrainCheck
 M GetCollisionExtents
 M GetUnit
