@@ -28,7 +28,6 @@ G InternalCreateMesh
 G InternalCreateSteamDiscoveryService
 G InternalStartSteamDiscoveryService
 G IsSignedInToSteam
-G IssueDockCommand
 G IssueEnhance
 G MapBorderAdd
 G MapBorderClear
