@@ -106,6 +106,7 @@ void test_transport_slots(TestContext& ctx);
 void test_transport_pickup(TestContext& ctx);
 void test_transport_drop(TestContext& ctx);
 void test_carrier(TestContext& ctx);
+void test_right_click(TestContext& ctx);
 void test_carrier_land(TestContext& ctx);
 void test_air_turn(TestContext& ctx);
 void test_air_staging(TestContext& ctx);
