@@ -36,6 +36,14 @@ TransportSlots::TransportSlots(const BoneData& skeleton, const TransportLayout& 
     }
 }
 
+std::vector<i32> TransportSlots::launch_bones() const {
+    const std::vector<Point>& points = !launch_.empty() ? launch_ : generic_;
+    std::vector<i32> bones;
+    bones.reserve(points.size());
+    for (const Point& p : points) bones.push_back(p.bone);
+    return bones;
+}
+
 bool TransportSlots::has_points() const {
     return !class1_.empty() || !class2_.empty() || !class3_.empty() || !class4_.empty() ||
            !special_.empty() || !generic_.empty();

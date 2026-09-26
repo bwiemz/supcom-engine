@@ -507,15 +507,50 @@ static int unit_TransportHasSpaceFor(lua_State* L) {
     return 1;
 }
 
+// carrier:AddUnitToStorage(unit): keep the unit inside (M206q) -- a
+// carrier's storage, beside its cargo slots -- if it has room (Moho's
+// TransportHasAvailableStorage), as carriers do with the aircraft they build.
 static int unit_AddUnitToStorage(lua_State* L) {
     auto* u = check_unit(L);
-    auto* cargo_entity = check_entity(L, 2);
+    auto* stored_entity = check_entity(L, 2);
     auto* sim = get_sim(L);
-    if (!u || !cargo_entity || !cargo_entity->is_unit() || !sim) return 0;
-    auto* cargo = static_cast<sim::Unit*>(cargo_entity);
-    // Route through attach_to_transport for consistent behavior
-    cargo->attach_to_transport(u, sim->entity_registry(), L);
+    if (!u || !stored_entity || !stored_entity->is_unit() || !sim) return 0;
+    if (!u->transport_has_available_storage()) {
+        spdlog::warn("AddUnitToStorage: #{} has no free storage for #{}", u->entity_id(),
+                     stored_entity->entity_id());
+        return 0;
+    }
+    u->add_to_storage(*static_cast<sim::Unit*>(stored_entity), sim->entity_registry(), L);
     return 0;
+}
+
+// carrier:TransportHasAvailableStorage() -> bool
+static int unit_TransportHasAvailableStorage(lua_State* L) {
+    auto* u = check_unit(L);
+    lua_pushboolean(L, u && u->transport_has_available_storage() ? 1 : 0);
+    return 1;
+}
+
+// unit:CalculateWorldPositionFromRelative({x, y, z}) -> vector: the offset
+// turned by the unit's orientation, from its position (a carrier's
+// roll-off point).
+static int unit_CalculateWorldPositionFromRelative(lua_State* L) {
+    auto* u = check_unit(L);
+    if (!u || !lua_istable(L, 2)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    sim::Vector3 rel{};
+    f32* const out[3] = {&rel.x, &rel.y, &rel.z};
+    for (int i = 0; i < 3; ++i) {
+        lua_rawgeti(L, 2, i + 1);
+        *out[i] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    const sim::Vector3 turned = sim::quat_rotate(u->orientation(), rel);
+    const sim::Vector3& at = u->position();
+    push_vector3(L, {at.x + turned.x, at.y + turned.y, at.z + turned.z});
+    return 1;
 }
 
 static int unit_TransportDetachAllUnits(lua_State* L) {
@@ -554,6 +589,19 @@ static int unit_TransportDetachAllUnits(lua_State* L) {
         }
     } else {
         u->detach_all_cargo(sim->entity_registry(), L);
+    }
+    // What it keeps in storage is destroyed with it (Moho's
+    // TransportDetachAllUnits): its script hears DestroyedOnTransport first.
+    const std::vector<u32> stored = u->stored_ids();
+    for (const u32 id : stored) {
+        auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        auto* unit = static_cast<sim::Unit*>(e);
+        u->forget_stored(id);
+        unit->set_transport_id(0);
+        unit->call_lua_method(L, "DestroyedOnTransport");
+        e = sim->entity_registry().find(id);
+        if (e && !e->destroyed()) static_cast<sim::Unit*>(e)->call_lua_method(L, "Destroy");
     }
     return 0;
 }
@@ -2394,6 +2442,8 @@ const MethodEntry unit_methods[] = {
     {"GetCargo",                    unit_GetCargo},
     {"TransportHasSpaceFor",        unit_TransportHasSpaceFor},
     {"AddUnitToStorage",            unit_AddUnitToStorage},
+    {"TransportHasAvailableStorage", unit_TransportHasAvailableStorage},
+    {"CalculateWorldPositionFromRelative", unit_CalculateWorldPositionFromRelative},
     {"TransportDetachAllUnits",     unit_TransportDetachAllUnits},
     // Stubs — missiles
     {"GetNukeSiloAmmoCount",        unit_GetNukeSiloAmmoCount},

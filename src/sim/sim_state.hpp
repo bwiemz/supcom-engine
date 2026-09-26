@@ -555,6 +555,8 @@ public:
     /// world transforms). Each reads its parent's pose from before the step,
     /// so the result is the same in any iteration order (lockstep).
     void follow_attachments();
+    /// Destroy the stored units of carriers that went this tick (M206q).
+    void destroy_orphaned_stored_units();
 
     static u32 sim_generation() { return s_sim_generation_; }
     static void increment_sim_generation() { ++s_sim_generation_; }
@@ -716,6 +718,9 @@ private:
     /// never iterated, so the unordered order cannot leak into the sim).
     struct Footprint { f32 x, z, size_x, size_z; };
     std::unordered_map<u32, Footprint> occupied_footprints_;
+    /// Stored units whose carrier is gone, destroyed at a safe point of the
+    /// tick (destroy_orphaned_stored_units).
+    std::vector<u32> stored_to_destroy_;
 
     /// Registry unregister hook: sever the entity's Lua table from the C++
     /// object and release its footprint.
