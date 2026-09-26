@@ -1137,6 +1137,7 @@ static sim::PlacementRules placement_rules_of(lua_State* L, const std::string& b
             };
             r.on_land = cap("LAYER_Land");
             r.on_water = cap("LAYER_Water");
+            r.on_seabed = cap("LAYER_Seabed");
         }
         lua_pop(L, 1);
         lua_pushstring(L, "BuildRestriction");
@@ -1948,11 +1949,14 @@ static void create_brain_unit(lua_State* L, const sim::ArmyBrain& brain, const s
     }
 }
 
-/// Where a structure stands on the map: the water's surface, or the ground
-/// under it for one that sits on the seabed or with no water.
-static f32 structure_elevation(const sim::SimState& sim, f32 x, f32 z) {
+/// Where a structure stands: on the ground for one that can sit on the
+/// seabed (Moho: its footprint occupies OC_SEABED, which BuildOnLayerCaps'
+/// LAYER_Seabed gives), else on the water's surface where there is water.
+static f32 structure_elevation(const sim::SimState& sim, const sim::PlacementRules& rules, f32 x,
+                               f32 z) {
     const auto* terrain = sim.terrain();
-    return terrain ? terrain->get_surface_height(x, z) : 0.0f;
+    if (!terrain) return 0.0f;
+    return rules.on_seabed ? terrain->get_terrain_height(x, z) : terrain->get_surface_height(x, z);
 }
 
 // brain:CreateResourceBuildingNearest(bp, x, z) -> unit or nil: the
@@ -1989,7 +1993,8 @@ static int brain_CreateResourceBuildingNearest(lua_State* L) {
         [](const Candidate& a, const Candidate& b) { return a.distance_sq < b.distance_sq; });
     for (const auto& c : candidates) {
         if (!placement.can_build(bp, c.x, c.z)) continue;
-        create_brain_unit(L, *brain, bp, c.x, structure_elevation(*sim, c.x, c.z), c.z);
+        create_brain_unit(L, *brain, bp, c.x,
+                          structure_elevation(*sim, placement.rules(bp), c.x, c.z), c.z);
         if (!lua_isnil(L, -1)) return 1;
         lua_pop(L, 1);
     }
@@ -2044,7 +2049,7 @@ static int brain_CreateUnitNearSpot(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    create_brain_unit(L, *brain, bp, at_x, structure_elevation(*sim, at_x, at_z), at_z);
+    create_brain_unit(L, *brain, bp, at_x, structure_elevation(*sim, rules, at_x, at_z), at_z);
     return 1;
 }
 

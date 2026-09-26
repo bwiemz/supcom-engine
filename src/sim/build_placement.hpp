@@ -25,6 +25,7 @@ struct PlacementRules {
     f32 size_z = 1.0f;
     bool on_land = true;   ///< Physics.BuildOnLayerCaps
     bool on_water = false;
+    bool on_seabed = false; ///< it sits on the ground under water (an extractor)
     enum class Deposit : u8 { None, Mass, Hydrocarbon } deposit = Deposit::None;
 };
 
