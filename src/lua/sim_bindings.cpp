@@ -2590,10 +2590,18 @@ static i32 effect_bone_arg(lua_State* L, int idx, const sim::Entity* entity, i32
     return fallback;
 }
 
-/// Push a new IEffect Lua table (with __osc_ieffect_mt) onto the stack. It
-/// names its effect by id, resolved through the registry on every call: the
-/// registry frees destroyed effects while scripts still hold the handles.
+/// Push an effect's Lua table (with __osc_ieffect_mt). It names its effect
+/// by id, resolved through the registry on every call: the registry frees
+/// destroyed effects while scripts still hold the handles. Each effect has
+/// one table, which the effect keeps alive until it is freed, as Moho's C++
+/// object holds its Lua object: scripts keep effects in trash bags, which
+/// are weak tables, and a handle collected from one was never destroyed
+/// through it (a builder's build beams outlived the build).
 static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
+    if (fx->lua_table_ref() >= 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, fx->lua_table_ref());
+        return;
+    }
     lua_newtable(L); // the effect table
 
     lua_pushstring(L, "_c_effect_id");
@@ -2633,6 +2641,8 @@ static void push_ieffect_table(lua_State* L, sim::IEffect* fx) {
         lua_rawset(L, LUA_REGISTRYINDEX);
     }
     lua_setmetatable(L, -2);
+    lua_pushvalue(L, -1);
+    fx->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
 }
 
 /// An emitter blueprint's Lifetime (ticks; Moho's default 0), or none when

@@ -13,6 +13,10 @@ namespace osc::sim {
 struct ThreadEntry {
     lua_State* coroutine = nullptr;
     int lua_ref = -2;       // LUA_NOREF — no registry ref yet
+    // Keeps the handle ForkThread gave out alive until the thread ends, as
+    // Moho's task keeps its Lua object: scripts hold threads in trash bags,
+    // which are weak tables, and one collected there was never killed.
+    int wrapper_ref = -2;
     i32 wait_until_tick = 0; // Tick at which to resume (0 = resume next tick)
     bool dead = false;
     std::string source;     // Debug: where this thread was forked from

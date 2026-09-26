@@ -77,6 +77,8 @@ public:
     bool destroyed() const { return destroyed_; }
     void mark_destroyed() { destroyed_ = true; }
 
+    /// The registry reference that keeps its Lua handle alive while it
+    /// lives (LUA_NOREF, -2, before a script first sees it).
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int r) { lua_table_ref_ = r; }
 
@@ -214,9 +216,14 @@ public:
     }
 
     /// Remove destroyed effects (call periodically).
-    void gc() {
+    /// Free the destroyed effects; `release(fx)` runs for each first (the
+    /// sim drops its Lua handle there).
+    template <typename Release> void gc(Release release) {
         for (const auto& fx : effects_) {
-            if (fx && fx->destroyed()) by_id_.erase(fx->id());
+            if (fx && fx->destroyed()) {
+                release(*fx);
+                by_id_.erase(fx->id());
+            }
         }
         effects_.erase(
             std::remove_if(effects_.begin(), effects_.end(),
@@ -224,6 +231,9 @@ public:
                                return !fx || fx->destroyed();
                            }),
             effects_.end());
+    }
+    void gc() {
+        gc([](IEffect&) {});
     }
 
     const std::vector<std::unique_ptr<IEffect>>& all() const { return effects_; }
