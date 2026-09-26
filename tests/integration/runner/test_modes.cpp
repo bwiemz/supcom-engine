@@ -316,7 +316,7 @@ void IntegrationModes::print_usage() const {
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
               << "  --border-render-test Border 9-patch rendering (6-texture ninepatch)\n"
               << "  --edit-render-test Edit control visuals (background, text, caret)\n"
-              << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
+              << "  --terrain-normal-test Terrain normal maps (per-stratum RGB normals, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --emitter-test     IEffect/emitter system (Create*Emitter, beams, decals, chaining)\n"
               << "  --collision-test   CollisionBeam entity (__init, Enable/Disable, SetBeamFx, GetLauncher)\n"

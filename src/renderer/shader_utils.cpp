@@ -148,14 +148,11 @@ float calcShadow(vec3 worldPos) {
     return mix(1.0, shadow, edgeFade);
 }
 
-// Decode FA DXT5nm normal map: X=Green, Y=Alpha, Z=derived
+// A stratum normal map is an ordinary tangent-space normal in RGB, z up,
+// whatever its compression (DXT1, 3 or 5): FA's TerrainNormalsPS reads it
+// as tex * 2 - 1. Only decal normals are DXT5nm (green, alpha).
 vec3 decodeNormal(sampler2D nmap, vec2 uv) {
-    vec4 s = texture(nmap, uv);
-    vec3 n;
-    n.x = s.g * 2.0 - 1.0;
-    n.y = s.a * 2.0 - 1.0;
-    n.z = sqrt(max(0.0, 1.0 - n.x*n.x - n.y*n.y));
-    return n;
+    return texture(nmap, uv).rgb * 2.0 - 1.0;
 }
 
 void main() {
