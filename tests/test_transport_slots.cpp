@@ -148,3 +148,18 @@ TEST_CASE("Transport slot rules at the edges", "[transport]") {
         CHECK_FALSE(special.has_space_for(1));
     }
 }
+
+TEST_CASE("A carrier launches from its Launchpoint bones, else its generic points", "[transport]") {
+    // Moho's TransportRemoveFromStorage: launch bones first, then the
+    // generic attach points; a skeleton with neither launches from the
+    // carrier itself (M206q).
+    const BoneData launchers = skeleton(
+        {{"Attachpoint01", {1, 0, 0}}, {"Launchpoint01", {0, 0, 2}}, {"Launchpoint02", {0, 0, 4}}});
+    CHECK(TransportSlots(launchers, TransportLayout{}).launch_bones() == std::vector<i32>{2, 3});
+
+    TransportLayout generic;
+    generic.class_generic_up_to = 1; // its Attachpoint bones are generic
+    const BoneData hooks = skeleton({{"Attachpoint01", {1, 0, 0}}, {"Attachpoint02", {2, 0, 0}}});
+    CHECK(TransportSlots(hooks, generic).launch_bones() == std::vector<i32>{1, 2});
+    CHECK(TransportSlots(hooks, TransportLayout{}).launch_bones().empty()); // class 1, not generic
+}
