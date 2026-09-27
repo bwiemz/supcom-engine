@@ -8,6 +8,7 @@
 // Frames of the same view are compared per pixel.
 
 #include "integration_tests.hpp"
+#include "plate_fixtures.hpp"
 #include "render_probe.hpp"
 
 #include "blueprints/blueprint_store.hpp"
@@ -49,129 +50,6 @@ constexpr f32 kCentre = kSize / 2.0f;
 constexpr f32 kPlateZ = 58.0f;
 constexpr f32 kTiltedX = 52.0f;
 constexpr f32 kTiltedVZ = 42.0f;
-
-/// No sun, a white fill: every surface's light is 1.
-map::ScmapLighting white_fill() {
-    map::ScmapLighting l;
-    for (int i = 0; i < 3; ++i) {
-        l.sun_color[i] = 0.0f;
-        l.sun_ambience[i] = 0.0f;
-        l.shadow_fill[i] = 1.0f;
-    }
-    for (f32& v : l.specular) v = 0.0f;
-    return l;
-}
-
-/// An uncompressed BGRA DDS, `width` by `height`, of `faces` faces (6: a
-/// cubemap, +X -X +Y -Y +Z -Z, as D3D and Vulkan address them alike), each
-/// texel's RGBA from `texel(face, column, row)`.
-template <typename Texel>
-void write_dds(const std::filesystem::path& path, int faces, Texel texel, u32 width = 4,
-               u32 height = 4) {
-    std::vector<char> d(128 + static_cast<size_t>(faces) * width * height * 4, 0);
-    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
-    std::memcpy(d.data(), "DDS ", 4);
-    put(4, 124);
-    put(8, 0x1 | 0x2 | 0x4 | 0x8 | 0x1000);
-    put(12, height);
-    put(16, width);
-    put(20, width * 4);
-    put(28, 1);
-    put(76, 32);
-    put(80, 0x40 | 0x1); // RGB, alpha
-    put(88, 32);
-    put(92, 0x00FF0000);
-    put(96, 0x0000FF00);
-    put(100, 0x000000FF);
-    put(104, 0xFF000000);
-    put(108, faces == 6 ? 0x1000 | 0x8 : 0x1000); // a texture (complex, a cube's)
-    put(112, faces == 6 ? 0x200 | 0xFC00 : 0);    // a cubemap, all six faces
-    for (int face = 0; face < faces; ++face) {
-        for (u32 i = 0; i < width * height; ++i) {
-            const std::array<u8, 4> rgba = texel(face, i % width, i / width);
-            const size_t at = 128 + (static_cast<size_t>(face) * width * height + i) * 4;
-            d[at] = static_cast<char>(rgba[2]);
-            d[at + 1] = static_cast<char>(rgba[1]);
-            d[at + 2] = static_cast<char>(rgba[0]);
-            d[at + 3] = static_cast<char>(rgba[3]);
-        }
-    }
-    std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
-}
-
-/// A cubemap white where `white(face, column, row)` says, black elsewhere.
-template <typename White> void write_cube(const std::filesystem::path& path, White white) {
-    write_dds(path, 6, [&](int face, u32 column, u32 row) {
-        const u8 v = white(face, column, row) ? 255 : 0;
-        return std::array<u8, 4>{v, v, v, 255};
-    });
-}
-
-/// A one-bone SCM mesh: a square `half` units either side of the origin,
-/// flat and facing up, cut into `segments` squared cells, wound both ways so
-/// that either culling draws it.
-void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments = 1) {
-    std::vector<char> d(48, 0);
-    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
-    const auto append = [&](const void* p, size_t n) {
-        const char* c = static_cast<const char*>(p);
-        d.insert(d.end(), c, c + n);
-    };
-    const auto f = [&](std::initializer_list<f32> vs) {
-        for (const f32 v : vs) append(&v, 4);
-    };
-    const auto u = [&](std::initializer_list<u32> vs) {
-        for (const u32 v : vs) append(&v, 4);
-    };
-    std::memcpy(d.data(), "MODL", 4);
-    put(4, 5); // version
-    append("NAME", 4);
-    append("root", 5); // and its terminator
-    d.resize(60, 0);
-    append("SKEL", 4);
-    const auto bone_offset = static_cast<u32>(d.size());
-    f({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}); // rest pose: identity
-    f({0, 0, 0});                                        // position
-    f({1, 0, 0, 0});                                     // rotation (w, x, y, z)
-    u({52, 0xFFFFFFFFu, 0, 0});                          // name, no parent
-    d.resize(188, 0);
-    append("VTXL", 4);
-    const auto vert_offset = static_cast<u32>(d.size());
-    const u32 side = segments + 1;
-    for (u32 j = 0; j < side; ++j) {
-        for (u32 i = 0; i < side; ++i) {
-            const f32 u_at = static_cast<f32>(i) / static_cast<f32>(segments);
-            const f32 v_at = static_cast<f32>(j) / static_cast<f32>(segments);
-            f({-half + 2.0f * half * u_at, 0, -half + 2.0f * half * v_at}); // position
-            f({0, 1, 0});                                                   // normal
-            f({1, 0, 0});                                                   // tangent: along u
-            f({0, 0, 1});                                                   // binormal: along v
-            f({u_at, v_at});                                                // uv
-            f({0, 0});                                                      // second uv
-            u({0});                                                         // bones
-        }
-    }
-    const auto index_offset = static_cast<u32>(d.size());
-    std::vector<u16> indices;
-    for (u32 j = 0; j < segments; ++j) {
-        for (u32 i = 0; i < segments; ++i) {
-            const auto a = static_cast<u16>(j * side + i);
-            const auto b = static_cast<u16>(a + 1);
-            const auto c = static_cast<u16>(a + side + 1);
-            const auto e = static_cast<u16>(a + side);
-            indices.insert(indices.end(), {a, b, c, a, c, e, a, c, b, a, e, c});
-        }
-    }
-    append(indices.data(), indices.size() * sizeof(u16));
-    put(8, bone_offset);
-    put(12, 1); // bones the vertices use
-    put(16, vert_offset);
-    put(24, side * side);
-    put(28, index_offset);
-    put(32, static_cast<u32>(indices.size()));
-    put(44, 1); // bones in all
-    std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
-}
 
 } // namespace
 
@@ -404,46 +282,11 @@ void test_material(TestContext& ctx) {
         return n;
     };
 
-    // A plate's material: its textures (the test's own) and technique.
-    struct Plate {
-        std::string normals = "plate_normals.dds";
-        std::string albedo = "plate_albedo.dds";
-        std::string specteam = "plate_specteam.dds";
-        std::string shader = "Unit";
-        std::string mesh = "plate.scm";
-        std::string lookup; // its LookupName, if any
-    };
     // Stand the test's plate in for blueprint `bp`'s mesh at (x, z), on the
-    // ground, through a mesh blueprint of the test's own: a unit of ARMY_1's,
-    // or a prop.
+    // ground: a unit of ARMY_1's, or a prop.
     const auto make_plate = [&](const std::string& bp, const Plate& plate, f32 x, f32 z,
                                 bool prop = false, f32 lift = 0.0f) {
-        std::string key = bp;
-        for (char& c : key)
-            if (c == '/' || c == '.') c = '_';
-        const std::string lookup =
-            plate.lookup.empty() ? "nil" : fmt::format("'/osc_material_test/{}'", plate.lookup);
-        const std::string create =
-            prop ? fmt::format("CreatePropHPR('{}', {}, {}, {}, 0, 0, 0)", bp, x, ground_y, z)
-                 : fmt::format("CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)", bp, x, z);
-        const std::string lua =
-            fmt::format("local mesh = '/osc_material_test/{0}_plate'\n"
-                        "__blueprints[mesh] = {{ BlueprintId = mesh, LODs = {{ {{\n"
-                        "  LODCutoff = 1000, ShaderName = '{1}',\n"
-                        "  MeshName = '/osc_material_test/{11}',\n"
-                        "  AlbedoName = '/osc_material_test/{2}',\n"
-                        "  SpecularName = '/osc_material_test/{10}',\n"
-                        "  NormalsName = '/osc_material_test/{3}', LookupName = {4} }} }} }}\n"
-                        "local bp = __blueprints['{5}']\n"
-                        "bp.Display = bp.Display or {{}}\n"
-                        "bp.Display.MeshBlueprint = mesh\n"
-                        "bp.Display.UniformScale = 1\n"
-                        "Warp({6}, Vector({7}, {8}, {9}))\n",
-                        key, plate.shader, plate.albedo, plate.normals, lookup, bp, create, x,
-                        ground_y + 0.5f + lift, z, plate.specteam, plate.mesh);
-        const auto made = ctx.lua_state.do_string(lua);
-        if (!made) spdlog::warn("the plate: {}", made.error().message);
-        ctx.sim.tick();
+        stand_plate(ctx, "/osc_material_test", bp, plate, x, z, ground_y, prop, lift);
     };
     // No light: a plate shows 2 * env alone.
     map::ScmapLighting dark = white_fill();

@@ -14,6 +14,7 @@ add_executable(osc_integration
     runner/meshless_test.cpp
     runner/camera_test.cpp
     runner/material_test.cpp
+    runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
