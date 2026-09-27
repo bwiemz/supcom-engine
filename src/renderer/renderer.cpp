@@ -875,14 +875,14 @@ void Renderer::create_pipelines() {
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup = 84 bytes)
+        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time = 88 bytes)
         bindings[1].binding = 1;
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 13 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
-        // bone_weights(9), tangent(10), binormal(11), colour lookup(12)
-        std::array<VkVertexInputAttributeDescription, 13> attrs{};
+        // 14 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+        // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13)
+        std::array<VkVertexInputAttributeDescription, 14> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -897,6 +897,7 @@ void Renderer::create_pipelines() {
         attrs[11] = {11, 0, VK_FORMAT_R32G32B32_SFLOAT,
                      offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
         attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
+        attrs[13] = {13, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, shader_time)};
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
         // eye (12B)
