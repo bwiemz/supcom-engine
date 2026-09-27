@@ -131,6 +131,7 @@ constexpr Mode kModesBefore[] = {
     {"--collide-test", test_collide, false},
     {"--area-test", test_area, false},
     {"--drive-test", test_drive, false},
+    {"--steer-test", test_steer, false},
     {"--crowd-test", test_crowd, false},
     {"--formation-test", test_formation, false},
     {"--missile-test", test_missile, false},
