@@ -1,5 +1,7 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
+
+#include "core/color.hpp"
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
@@ -529,29 +531,16 @@ std::pair<i32, i32> read_dds_dimensions(lua_State* L, const std::string& path) {
 // ====================================================================
 
 /// Helper: parse a hex color string like "ff00ff00" or "AARRGGBB" to u32.
-u32 parse_color_hex(const char* s) {
-    if (!s) return 0xFFFFFFFF;
-    // Count hex digits
-    int len = 0;
-    for (int i = 0; i < 8 && s[i]; i++) {
-        char c = s[i];
-        if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))
-            len++;
-        else
-            break;
+u32 check_color(lua_State* L, int idx) {
+    // Moho's SCR_DecodeColor: a colour name or 6/8 hex digits, else an error.
+    const char* text = lua_tostring(L, idx);
+    if (!text) {
+        luaL_error(L, "Invalid color, must be a string.");
+        return 0;
     }
-    u32 val = 0;
-    for (int i = 0; i < len; i++) {
-        char c = s[i];
-        u32 nibble = 0;
-        if (c >= '0' && c <= '9') nibble = c - '0';
-        else if (c >= 'a' && c <= 'f') nibble = 10 + (c - 'a');
-        else if (c >= 'A' && c <= 'F') nibble = 10 + (c - 'A');
-        val = (val << 4) | nibble;
-    }
-    // 6-char hex = RRGGBB → default alpha to FF (fully opaque)
-    if (len <= 6) val |= 0xFF000000;
-    return val;
+    if (const auto color = decode_color(std::string_view(text, lua_strlen(L, idx)))) return *color;
+    luaL_error(L, "Unknown color: %s", text);
+    return 0;
 }
 
 /// Helper: update font metrics on a control using stb_truetype via FontMetricsProvider.

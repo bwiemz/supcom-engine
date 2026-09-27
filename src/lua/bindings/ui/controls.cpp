@@ -575,8 +575,7 @@ static int bitmap_InternalSetSolidColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     if (lua_type(L, 2) == LUA_TSTRING) {
-        const char* hex = lua_tostring(L, 2);
-        u32 color = static_cast<u32>(strtoul(hex, nullptr, 16));
+        u32 color = check_color(L, 2);
         ctrl->set_solid_color(color);
         ctrl->set_has_solid_color(true);
     }
@@ -587,8 +586,7 @@ static int bitmap_SetColorMask(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     if (lua_type(L, 2) == LUA_TSTRING) {
-        const char* hex = lua_tostring(L, 2);
-        u32 color = static_cast<u32>(strtoul(hex, nullptr, 16));
+        u32 color = check_color(L, 2);
         ctrl->set_color_mask(color);
     }
     return 0;
@@ -847,7 +845,7 @@ static int border_SetSolidColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     if (lua_type(L, 2) == LUA_TSTRING) {
-        u32 color = parse_color_hex(lua_tostring(L, 2));
+        u32 color = check_color(L, 2);
         ctrl->set_border_solid_color(color);
         ctrl->set_has_border_solid_color(true);
     }

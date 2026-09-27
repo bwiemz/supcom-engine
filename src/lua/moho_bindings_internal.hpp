@@ -96,7 +96,9 @@ std::string lowercase_arg(lua_State* L, int idx);
 sim::Manipulator* check_manip_base(lua_State* L);
 int been_destroyed_check(lua_State* L);
 std::pair<i32, i32> read_dds_dimensions(lua_State* L, const std::string& path);
-u32 parse_color_hex(const char* s);
+/// The colour at stack index `idx`, as Moho's SCR_DecodeColor decodes it;
+/// a Lua error for an unknown one.
+u32 check_color(lua_State* L, int idx);
 void update_font_metrics(ui::UIControl* ctrl);
 void update_text_advance(ui::UIControl* ctrl);
 void push_font_lazyvars(lua_State* L, int self_idx, ui::UIControl* ctrl);

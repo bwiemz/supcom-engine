@@ -1,4 +1,6 @@
 #include "lua/session_manager.hpp"
+
+#include "core/color.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
@@ -31,17 +33,6 @@ constexpr std::array<std::array<u8, 3>, 8> kArmyColors = {{
     {51, 230, 230},
     {230, 230, 230},
 }};
-
-void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain) {
-    if (!cfg || !brain) return;
-    brain->set_faction(cfg->faction);
-    int color_idx = cfg->army_color >= 0 ? cfg->army_color : cfg->player_color;
-    if (color_idx >= 0 && color_idx < static_cast<int>(kArmyColors.size())) {
-        const auto& color = kArmyColors[static_cast<size_t>(color_idx)];
-        brain->set_color(color[0], color[1], color[2]);
-    }
-    if (cfg->handicap > 0) brain->set_handicap(cfg->handicap / 100.0);
-}
 
 void apply_game_options_to_brain(const GameOptionsConfig& options,
                                  sim::ArmyBrain* brain) {
@@ -131,6 +122,60 @@ void push_game_option(lua_State* L, int table_idx, const std::string& key,
 }
 
 } // anonymous namespace
+
+/// FA's army colours (/lua/GameColors.lua, GameColors.ArmyColors), decoded
+/// as Moho decodes them (ARGB); empty if the script can't be read.
+std::vector<u32> game_army_colors(lua_State* L) {
+    std::vector<u32> colors;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "/lua/GameColors.lua");
+        if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+            lua_pushstring(L, "GameColors");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "ArmyColors");
+                lua_gettable(L, -2);
+                if (lua_istable(L, -1)) {
+                    for (int i = 1;; ++i) {
+                        lua_rawgeti(L, -1, i);
+                        if (lua_type(L, -1) != LUA_TSTRING) break;
+                        const auto color =
+                            decode_color(std::string_view(lua_tostring(L, -1), lua_strlen(L, -1)));
+                        colors.push_back(color.value_or(0xFFFFFFFFu));
+                        lua_pop(L, 1);
+                    }
+                }
+            }
+        } else {
+            spdlog::warn("GameColors: {}",
+                         lua_isstring(L, -1) ? lua_tostring(L, -1) : "not loaded");
+        }
+    }
+    lua_settop(L, top);
+    return colors;
+}
+
+void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
+                           const std::vector<u32>& army_colors) {
+    if (!cfg || !brain) return;
+    brain->set_faction(cfg->faction);
+    // The session's colour index names GameColors.ArmyColors[index + 1], as
+    // Moho reads it. Without that table, the engine's own stand in.
+    const int color_idx = cfg->army_color >= 0 ? cfg->army_color : cfg->player_color;
+    if (color_idx >= 0 && color_idx < static_cast<int>(army_colors.size())) {
+        const u32 argb = army_colors[static_cast<size_t>(color_idx)];
+        brain->set_color(static_cast<u8>(argb >> 16), static_cast<u8>(argb >> 8),
+                         static_cast<u8>(argb));
+    } else if (army_colors.empty() && color_idx >= 0 &&
+               color_idx < static_cast<int>(kArmyColors.size())) {
+        const auto& color = kArmyColors[static_cast<size_t>(color_idx)];
+        brain->set_color(color[0], color[1], color[2]);
+    }
+    if (cfg->handicap > 0) brain->set_handicap(cfg->handicap / 100.0);
+}
 
 sim::GameSetup read_session_config(lua_State* L, int table_idx) {
     sim::GameSetup setup;
@@ -302,6 +347,7 @@ Result<void> SessionManager::start_session(LuaState& state,
     spdlog::info("  Creating army brains ({} of {} armies)...",
                  army_limit, meta.armies.size());
     i32 brains_created = 0;
+    const std::vector<u32> army_colors = game_army_colors(L);
     for (size_t i = 0; i < army_limit; i++) {
         auto result = create_army_brain(L, sim, static_cast<i32>(i),
                                          meta.armies[i], meta.armies[i]);
@@ -310,8 +356,7 @@ Result<void> SessionManager::start_session(LuaState& state,
                           meta.armies[i], result.error().message);
         } else {
             auto* brain = sim.get_army(static_cast<i32>(i));
-            apply_config_to_brain(slot_config_for_army(static_cast<int>(i)),
-                                  brain);
+            apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, army_colors);
             apply_game_options_to_brain(game_options_, brain);
             brains_created++;
         }
