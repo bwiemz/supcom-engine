@@ -15,6 +15,7 @@ add_executable(osc_integration
     runner/camera_test.cpp
     runner/material_test.cpp
     runner/bloom_test.cpp
+    runner/build_shader_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )

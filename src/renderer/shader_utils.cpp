@@ -543,6 +543,8 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     float eyeX, eyeY, eyeZ;
     uint technique; // MeshTechnique (M211b)
+    uint pass;      // a build technique's pass: 0, or 1 for its overlay (M211f)
+    float time;     // FA's time: the newest tick plus the interpolant (M211f)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -557,6 +559,8 @@ layout(location = 11) in vec3 inBinormal;
 layout(location = 12) in float inColorLookup;
 // Per-instance: the tick its mesh instance was made (FA's material.x, M211d)
 layout(location = 13) in float inShaderTime;
+// Per-instance: the fraction complete (FA's material.y for the build techniques, M211f)
+layout(location = 14) in float inParameter;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -575,6 +579,7 @@ layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec3 fragWorldPos;
 layout(location = 6) flat out float fragColorLookup;
 layout(location = 7) flat out float fragShaderTime;
+layout(location = 8) flat out float fragParameter;
 
 void main() {
     // Blend-weight skeletal skinning: skip for unskinned meshes (bonesPerInst == 0)
@@ -588,7 +593,11 @@ void main() {
     } else {
         bone = mat4(1.0); // identity — no skinning for props/unskinned meshes
     }
-    vec4 skinnedPos = bone * vec4(inPosition, 1.0);
+    // AeonBuildVS and SeraphimBuildVS grow the mesh as it's built.
+    float grow = 1.0;
+    if (pc.technique == 6u) grow = max(inParameter, 0.75);
+    else if (pc.technique == 8u) grow = 0.25 + inParameter * 0.75;
+    vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     if (inColor.r < 0.0) {
         // A wreck (WreckageVS, mesh.fx) crumples: each vertex shifts by up to
@@ -611,6 +620,7 @@ void main() {
     fragColor = inColor;
     fragColorLookup = inColorLookup;
     fragShaderTime = inShaderTime;
+    fragParameter = inParameter;
     fragUV = inUV;
 }
 )glsl";
@@ -625,7 +635,11 @@ layout(push_constant) uniform PushConstants {
     uint boneBase;
     uint bonesPerInst;
     float eyeX, eyeY, eyeZ;
-    uint technique; // MeshTechnique: 0 Unit, 1 Aeon, 2 Insect, 3 Metal, 4 Seraphim (M211b)
+    // MeshTechnique: 0 Unit, 1 Aeon, 2 Insect, 3 Metal, 4 Seraphim (M211b);
+    // 5 UEFBuild, 6 AeonBuild, 7 CybranBuild, 8 SeraphimBuild (M211f)
+    uint technique;
+    uint pass;  // a build technique's pass: 0, or 1 for its overlay
+    float time; // FA's time: the newest tick plus the interpolant, wrapped
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
@@ -651,6 +665,8 @@ layout(set = 4, binding = 5) uniform sampler2D anisotropicLookup;
 layout(set = 4, binding = 6) uniform sampler2D insectLookup;
 // The mesh's own lookup, its LOD's LookupName (Seraphim's falloff, M211c)
 layout(set = 5, binding = 0) uniform sampler2D texLookup;
+// The mesh's SecondaryName: its faction's build overlay (M211f)
+layout(set = 6, binding = 0) uniform sampler2D texSecondary;
 
 layout(location = 0) in vec3 fragNormal;
 // Army colour (RGB) + build alpha (A). A negative red marks a wreck, a
@@ -662,6 +678,7 @@ layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec3 fragWorldPos;
 layout(location = 6) flat in float fragColorLookup; // the army's row of texLookup
 layout(location = 7) flat in float fragShaderTime;  // the tick its mesh instance was made
+layout(location = 8) flat in float fragParameter;   // the fraction complete
 
 layout(location = 0) out vec4 outColor;
 
@@ -707,24 +724,132 @@ vec3 faViewDirection(vec3 worldPos) {
     return normalize(ndc.x * right + ndc.y * upDevice + ndc.z * back);
 }
 
-void main() {
-    // FA's ComputeNormal (mesh.fx): the map's green runs along the binormal,
-    // its alpha along the tangent (DXT5nm's y and x), and z is what's left.
-    vec4 nmap = texture(texNormal, fragUV);
-    vec3 tangentNormal;
-    tangentNormal.x = nmap.g * 2.0 - 1.0;
-    tangentNormal.y = nmap.a * 2.0 - 1.0;
-    tangentNormal.z = sqrt(max(0.0, 1.0 - tangentNormal.x*tangentNormal.x
-                                         - tangentNormal.y*tangentNormal.y));
-    mat3 basis = mat3(fragBitangent, fragTangent, fragNormal);
-    vec3 worldNormal = normalize(basis * tangentNormal);
+// FA's ComputeNormal (mesh.fx): the map's green runs along the binormal,
+// its alpha along the tangent (DXT5nm's y and x), and z is what's left.
+vec3 computeNormal(vec2 uv) {
+    vec4 nmap = texture(texNormal, uv);
+    vec3 n = vec3(nmap.g * 2.0 - 1.0, nmap.a * 2.0 - 1.0, 0.0);
+    n.z = sqrt(max(0.0, 1.0 - n.x * n.x - n.y * n.y));
+    return normalize(mat3(fragBitangent, fragTangent, fragNormal) * n);
+}
 
-    // FA's ComputeLight (mesh.fx), by the map's light (M210a).
+// FA's ComputeLight (mesh.fx), by the map's light (M210a): the sun scaled by
+// `sun` (the insect's twice over), the lit part by `scale` (Aeon's 0.6).
+vec3 computeLight(float NdotL, float shadow, float sun, float scale) {
+    vec3 light = sun * lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow +
+                 lightUbo.sunAmbience.rgb;
+    return scale * lightUbo.sunColor.w * light + (1.0 - light) * lightUbo.shadowFill.rgb;
+}
+
+// FA's falloffSampler (point, clamped): the mesh's lookup, across by how
+// squarely the surface faces the eye, down at the army's row.
+vec4 fallOffAt(float across) {
+    ivec2 size = textureSize(texLookup, 0);
+    ivec2 at = clamp(ivec2(vec2(across, fragColorLookup) * vec2(size)), ivec2(0), size - 1);
+    return texelFetch(texLookup, at, 0);
+}
+
+// FA's build techniques (mesh.fx, M211f), for an instance f built, `age`
+// ticks after its mesh instance was made. `alpha` is what the pass blends
+// by. The overlays' texture coordinates are FA's vertex shaders' (scaled
+// and shifted per vertex, so the same at each pixel).
+vec3 buildColor(vec4 texColor, vec4 specTeam, vec3 N, vec3 V, float shadow, out float alpha) {
+    vec3 S = lightUbo.sunDirection.xyz;
+    float NdotL = dot(N, S);
+    float f = fragParameter;
+    float age = pc.time - fragShaderTime;
+    // The overlays fade out over the last 5%.
+    float fade = f >= 0.95 ? 1.0 - (f - 0.95) * 20.0 : 1.0;
+    // The team's colour fades in over the last tenth, under the SpecTeam's mask.
+    vec3 team = fragColor.rgb * (f >= 0.90 ? (f - 0.9) * 10.0 : 0.0);
+    vec3 albedo = mix(team, texColor.rgb, 1.0 - specTeam.a);
+    vec3 environment = texture(environmentMap, reflect(-V, N)).rgb; // no "environment" named
+    float phongAmount = clamp(dot(reflect(S, N), -V), 0.0, 1.0);
+    float emissive = 2.0 * specTeam.b; // glowMultiplier
+    if (pc.technique == 5u && pc.pass == 0u) {
+        // UEFBuildHiFiPS: pulsing toward blue (by FA's time, every 50
+        // ticks), less so as it's built, under a scrolling secondary.
+        vec4 secondary = texture(texSecondary, vec2(fragUV.x, fragUV.y + age * 0.0124) * 50.0);
+        vec3 color = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 1.0) +
+                               2.0 * environment * specTeam.r) +
+                     pow(phongAmount, 8.0) * specTeam.g;
+        float t = min(max(fract(0.02 * pc.time), 0.35), 0.7);
+        alpha = max(f, 0.5);
+        return mix(mix(color + secondary.rgb, vec3(0.0, 0.0, 1.0), t), color, f);
+    }
+    if (pc.technique == 5u) {
+        // UEFBuildOverlayHiFiPS, by EffectVertexNormalHiFiVS(16, 8, 0.0192,
+        // 0.0176, -0.0122, -0.0122), which adds both of the second read's
+        // shifts to both its coordinates.
+        vec4 x = texture(texSecondary, fragUV * 16.0 + age * vec2(0.0192, 0.0176));
+        vec4 y = texture(texSecondary, fragUV * 8.0 + age * (-0.0122 - 0.0122));
+        alpha = max((x.a + y.a) * (1.0 - f), 0.25) * fade;
+        return x.rgb + y.rgb;
+    }
+    if (pc.technique == 6u && pc.pass == 0u) {
+        // AeonBuildPS: AeonPS's light, opaque (its glow isn't written).
+        alpha = 1.0;
+        return albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
+                         specTeam.r * environment) +
+               pow(phongAmount, 8.0) * specTeam.g;
+    }
+    if (pc.technique == 6u) {
+        // AeonBuildOverlayPS: two reads of the secondary, scrolling apart,
+        // make a grey sheen, which bends the normal it's lit by.
+        vec4 mask1 = texture(texSecondary, (fragUV + vec2(-0.001, 0.00162) * age) * 2.0);
+        vec4 mask2 = texture(texSecondary, (fragUV - vec2(0.0, 0.00162) * age) * 2.0);
+        vec3 sheen = vec3(mask1.r - mask2.g + mask1.g * mask2.r);
+        sheen = mix(sheen, vec3(0.5), 0.75);
+        vec3 n = mix(texture(texNormal, fragUV).gaa, texture(texSecondary, fragUV * 7.0).baa, 0.5);
+        n = 2.0 * mix(n, sheen, 0.5) - 1.0;
+        n.z = sqrt(abs(1.0 - n.x * n.x - n.y * n.y)); // ps_2_0's sqrt takes |x|
+        n = normalize(mat3(fragBitangent, fragTangent, fragNormal) * n);
+        float lit = clamp(dot(S, n), 0.0, 1.0);
+        vec3 reflection = normalize(2.0 * lit * n - normalize(S));
+        vec3 color = sheen * lit + pow(clamp(dot(reflection, V), 0.0, 1.0), 8.0);
+        alpha = clamp(fade * color.r * 2.0, 0.0, 1.0);
+        return color;
+    }
+    if (pc.technique == 7u && pc.pass == 0u) {
+        // CybranBuildPS: NormalMappedInsectPS, 40% opaque until 70% built.
+        vec2 anisoAt = vec2(dot(reflect(S, N), -V), NdotL);
+        vec3 phongAdditive = (texture(insectLookup, anisoAt).rgb * specTeam.g +
+                              0.5 * specTeam.r * environment) *
+                             (1.0 - specTeam.a);
+        alpha = f >= 0.7 ? 0.4 + 0.6 * ((f - 0.7) * 3.33) : 0.4;
+        return albedo * (emissive + computeLight(NdotL, shadow, 2.0, 1.0)) + phongAdditive;
+    }
+    if (pc.technique == 7u) {
+        // CybranBuildOverlayPS, by EffectVertexNormalLoFiVS(14, 4, 0, 0,
+        // -0.008, 0.008): red lines, masked by a second, scrolling read.
+        vec4 secondary = texture(texSecondary, fragUV * 14.0);
+        vec4 mask = texture(texSecondary, fragUV * 4.0 + age * vec2(-0.008, 0.008));
+        alpha = mask.r * secondary.a * fade;
+        return vec3(secondary.a * 0.75, 0.0, 0.0);
+    }
+    // SeraphimBuildPS: the secondary, scrolling, shifts every read until
+    // it's 90% built (ten times over at the start), then UnitFalloffPS's
+    // colour, from the default environment.
+    vec4 uvaddress = texture(texSecondary, vec2(fragUV.x, fragUV.y + age * 0.005) * 0.5) * 0.03;
+    vec2 uv = fragUV + mix(uvaddress.rb, vec2(0.0), (f - 0.9) * 10.0);
+    vec3 normal = computeNormal(uv);
+    vec4 fallOff = fallOffAt(pow(1.0 - clamp(dot(V, normal), 0.0, 1.0), 0.6));
+    vec4 diffuse = texture(texAlbedo, uv);
+    vec4 specular = texture(texSpecTeam, uv);
+    vec3 fill = lightUbo.sunAmbience.rgb +
+                (1.0 - lightUbo.sunAmbience.rgb) * lightUbo.shadowFill.rgb;
+    alpha = max(f, 0.25);
+    return diffuse.rgb * fill +
+           texture(environmentMap, reflect(-V, normal)).rgb * specular.r * fallOff.a +
+           fallOff.rgb * diffuse.a;
+}
+
+void main() {
+    vec3 worldNormal = computeNormal(fragUV);
     vec3 S = lightUbo.sunDirection.xyz;
     float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
-    vec3 light = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
-    light = lightUbo.sunColor.w * light + (1.0 - light) * lightUbo.shadowFill.rgb;
+    vec3 light = computeLight(NdotL, shadow, 1.0, 1.0);
 
     vec4 texColor = texture(texAlbedo, fragUV);
     // r: how much the environment is reflected, g: the highlight, b: glow,
@@ -732,6 +857,15 @@ void main() {
     vec4 specTeam = texture(texSpecTeam, fragUV);
 
     bool prop = fragColor.g < 0.0;
+    // Alpha: the build ghost's fade, which its pipeline blends by, leaving
+    // the frame's alpha; a build technique's own (M211f); else the glow FA's
+    // techniques write there (M211e): a unit's SpecTeam blue plus
+    // glowMinimum, a wreck's glowMinimum, a prop's none (FA writes it no
+    // alpha, and what's beneath is at most 0.01 and terrain specular).
+    const float glowMinimum = 0.01;
+    float alpha = fragColor.a < 1.0
+                      ? fragColor.a
+                      : (prop ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum));
     vec3 lit;
     if (fragColor.r < 0.0) {
         // WreckagePS (mesh.fx): a wreck's "specular" is a crunch noise
@@ -740,14 +874,14 @@ void main() {
         // crunchiness makes for bad artifacts").
         float offset = fract(0.01 * fragShaderTime);
         vec4 crunch = texture(texSpecTeam, (fragUV + vec2(offset, -offset)) * 5.15);
-        vec3 wreckLight = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) +
-                          lightUbo.sunAmbience.rgb;
-        wreckLight = lightUbo.sunColor.w * wreckLight + (1.0 - wreckLight) * lightUbo.shadowFill.rgb;
-        lit = texColor.rgb * wreckLight;
+        lit = texColor.rgb * computeLight(NdotL, 1.0, 1.0, 1.0);
         if (crunch.g < 0.22)
             lit *= (texColor.rgb + crunch.r + crunch.a) * crunch.b * 2.5;
         else
             lit *= crunch.b * 2.0;
+    } else if (pc.technique >= 5u) {
+        lit = buildColor(texColor, specTeam, worldNormal, faViewDirection(fragWorldPos), shadow,
+                         alpha);
     } else {
         // FA's mesh.fx, by the mesh's technique. Props (NormalMappedAlpha)
         // tint by their colour; units mask the team's colour in.
@@ -760,11 +894,9 @@ void main() {
             // AeonPS: its own cube and highlight, and the sun at 0.6.
             vec3 environment = texture(aeonEnvironment, R).rgb;
             vec3 phongAdditive = vec3(0.8, 0.85, 1.10) * pow(phongAmount, 3.0) * specTeam.g;
-            vec3 aeonLight = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow +
-                             lightUbo.sunAmbience.rgb;
-            aeonLight = 0.6 * lightUbo.sunColor.w * aeonLight +
-                        (1.0 - aeonLight) * lightUbo.shadowFill.rgb;
-            lit = albedo * (emissive + aeonLight + specTeam.r * environment) + phongAdditive;
+            lit = albedo * (emissive + computeLight(NdotL, shadow, 1.0, 0.6) +
+                            specTeam.r * environment) +
+                  phongAdditive;
         } else if (pc.technique == 2u || pc.technique == 3u) {
             // NormalMappedInsectPS (Cybran) and NormalMappedMetalPS: an
             // anisotropic highlight from a lookup, half the environment.
@@ -778,10 +910,7 @@ void main() {
                 // The insect's highlight stays off its team colour, and it
                 // takes the sun twice over.
                 phongAdditive *= 1.0 - specTeam.a;
-                meshLight = 2.0 * lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow +
-                            lightUbo.sunAmbience.rgb;
-                meshLight = lightUbo.sunColor.w * meshLight +
-                            (1.0 - meshLight) * lightUbo.shadowFill.rgb;
+                meshLight = computeLight(NdotL, shadow, 2.0, 1.0);
             }
             lit = albedo * (emissive + meshLight) + phongAdditive;
         } else if (pc.technique == 4u) {
@@ -791,10 +920,7 @@ void main() {
             // eye, point-sampled from the mesh's lookup. Its alpha weighs
             // the environment; the albedo's alpha masks its colour in.
             vec3 environment = texture(seraphimEnvironment, R).rgb;
-            float NdotV = pow(1.0 - clamp(dot(V, worldNormal), 0.0, 1.0), 0.6);
-            ivec2 size = textureSize(texLookup, 0);
-            ivec2 at = clamp(ivec2(vec2(NdotV, fragColorLookup) * vec2(size)), ivec2(0), size - 1);
-            vec4 fallOff = texelFetch(texLookup, at, 0);
+            vec4 fallOff = fallOffAt(pow(1.0 - clamp(dot(V, worldNormal), 0.0, 1.0), 0.6));
             vec3 phongAdditive = vec3(0.5, 0.6, 0.7) * pow(phongAmount, 9.0) * specTeam.g;
             vec3 seraphimLight = lightUbo.sunAmbience.rgb;
             seraphimLight = seraphimLight + (1.0 - seraphimLight) * lightUbo.shadowFill.rgb;
@@ -813,14 +939,7 @@ void main() {
     // 0x80); a unit's albedo alpha is a mask its technique reads (Seraphim's
     // glow).
     if (prop && texColor.a <= 128.0 / 255.0) discard;
-    // Alpha: a fading instance's fade (a unit under construction, the build
-    // ghost), which its pipeline blends by, leaving the frame's alpha; else
-    // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
-    // plus glowMinimum, a wreck's glowMinimum, a prop's none (FA writes it
-    // no alpha, and what's beneath is at most 0.01 and terrain specular).
-    const float glowMinimum = 0.01;
-    float glow = prop ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum);
-    outColor = vec4(lit, fragColor.a < 1.0 ? fragColor.a : glow);
+    outColor = vec4(lit, alpha);
 }
 )glsl";
 
@@ -887,6 +1006,7 @@ layout(push_constant) uniform PushConstants {
     mat4 lightViewProj;
     uint boneBase;
     uint bonesPerInst;
+    uint technique; // MeshTechnique (M211f)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -900,6 +1020,7 @@ layout(location = 10) in vec3 inTangent;
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
 layout(location = 7) in vec4 inColor;
+layout(location = 14) in float inParameter; // the fraction complete
 
 // Bone SSBO (set=0, binding=0)
 layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
@@ -917,7 +1038,9 @@ void main() {
     } else {
         bone = mat4(1.0);
     }
-    vec4 skinnedPos = bone * vec4(inPosition, 1.0);
+    // SeraphimBuildDepthVS: a Seraphim unit's shadow grows as it's built.
+    float grow = pc.technique == 8u ? 0.25 + inParameter * 0.75 : 1.0;
+    vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
     vec4 worldPos = inModel * skinnedPos;
     gl_Position = pc.lightViewProj * worldPos;
 }

@@ -17,6 +17,10 @@ public:
     PipelineBuilder& set_cull_mode(VkCullModeFlags cull, VkFrontFace front);
     PipelineBuilder& set_depth_test(bool test, bool write);
     PipelineBuilder& set_blend(bool enable);
+    /// How a blending pipeline blends alpha (by default the source's
+    /// replaces it). D3D9 without a separate alpha blend, as FA draws,
+    /// blends alpha by the colour's factors.
+    PipelineBuilder& set_alpha_blend(VkBlendFactor src, VkBlendFactor dst);
     /// Which of the colour attachment's channels the pipeline writes (all,
     /// by default). Alpha carries the frame's glow, which only some write.
     PipelineBuilder& set_color_write_mask(VkColorComponentFlags mask);
@@ -46,6 +50,8 @@ private:
     bool depth_test_ = true;
     bool depth_write_ = true;
     bool blend_ = false;
+    VkBlendFactor src_alpha_ = VK_BLEND_FACTOR_ONE;
+    VkBlendFactor dst_alpha_ = VK_BLEND_FACTOR_ZERO;
     VkColorComponentFlags write_mask_ = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     uint32_t push_constant_size_ = 0;

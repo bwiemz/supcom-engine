@@ -27,11 +27,23 @@ enum class MeshTechnique : u32 {
     Aeon = 1,     ///< AeonPS
     Insect = 2,   ///< NormalMappedInsectPS: Cybran
     Metal = 3,    ///< NormalMappedMetalPS
-    Seraphim = 4, ///< UnitFalloffPS (drawn as Unit until M211c)
+    Seraphim = 4, ///< UnitFalloffPS
+    // A unit under construction's build mesh (M211f).
+    UEFBuild = 5,      ///< UEFBuildHiFiPS, then UEFBuildOverlayHiFiPS
+    AeonBuild = 6,     ///< AeonBuildPS, then AeonBuildOverlayPS; grows from 75%
+    CybranBuild = 7,   ///< CybranBuildPS, then CybranBuildOverlayPS
+    SeraphimBuild = 8, ///< SeraphimBuildPS; grows from 25%
 };
 
 /// The technique a ShaderName names; Unit for any other.
 MeshTechnique mesh_technique(const std::string& shader_name);
+
+/// One of the build techniques: translucent, drawn after the opaque meshes,
+/// fed the instance's fraction complete.
+inline bool is_build_technique(MeshTechnique t) {
+    return t == MeshTechnique::UEFBuild || t == MeshTechnique::AeonBuild ||
+           t == MeshTechnique::CybranBuild || t == MeshTechnique::SeraphimBuild;
+}
 
 struct GPUMesh {
     AllocatedBuffer vertex_buf{};
@@ -42,6 +54,7 @@ struct GPUMesh {
     std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
     std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)
     std::string lookup_path;    // VFS path to the LOD's LookupName (Seraphim's falloff)
+    std::string secondary_path; // VFS path to the LOD's SecondaryName (the build shaders')
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
     MeshTechnique technique = MeshTechnique::Unit;
 };
@@ -119,8 +132,11 @@ private:
                                               lua_State* L);
     std::string resolve_normal_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
                                             lua_State* L);
-    std::string resolve_lookup_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
-                                            lua_State* L);
+    /// A file the LOD names in `field` (LookupName, SecondaryName), LOD 1's
+    /// if it names none, relative to the mesh blueprint's folder unless
+    /// absolute; empty if neither names one.
+    std::string resolve_lod_file(const std::string& mesh_bp_id, i32 lod_index, const char* field,
+                                 lua_State* L);
 
     /// Read a string field from __blueprints[mesh_bp_id].LODs[lod_index].
     /// Returns empty string if not found.
