@@ -918,17 +918,19 @@ void Renderer::create_pipelines() {
         // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) = 96B
         // Opaque meshes write their glow to alpha (M211e); fading ones blend
         // by their alpha and write colour only; the build overlays that
-        // write alpha blend it too, as D3D9 does (M211f). The layouts match.
-        enum class Blend { Opaque, Fade, Overlay };
+        // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
+        // leaves depth unwritten (M211g). The layouts match.
+        enum class Blend { Opaque, Fade, Overlay, FadeNoDepthWrite };
         const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
+            const bool colour_only = blend == Blend::Fade || blend == Blend::FadeNoDepthWrite;
             return PipelineBuilder()
                 .set_shaders(mv, mf)
                 .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                                   static_cast<u32>(attrs.size()))
-                .set_depth_test(true, true)
+                .set_depth_test(true, blend != Blend::FadeNoDepthWrite)
                 .set_blend(blend != Blend::Opaque)
                 .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
-                .set_color_write_mask(blend == Blend::Fade ? kColorOnly : kColorAndGlow)
+                .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
                                        sizeof(u32) * 2 + sizeof(f32),
@@ -945,6 +947,7 @@ void Renderer::create_pipelines() {
         mesh_pipeline_ = build_mesh(Blend::Opaque, &mesh_layout_);
         mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
         mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
+        mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     }
 
     // --- Water pipeline (tessellated grid with wave animation) ---
@@ -2373,9 +2376,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
             for (auto& group : unit_renderer_.mesh_groups()) {
                 if (!group.mesh || group.instance_count == 0) continue;
-                // AeonBuild has no depth technique: a unit Aeon are
-                // building casts no shadow (M211f).
-                if (group.mesh->technique == MeshTechnique::AeonBuild) continue;
+                // AeonBuild and AlphaFade have no depth stage: a unit Aeon
+                // are building, and UEF's build slices, cast no shadow
+                // (M211f/g).
+                if (group.mesh->technique == MeshTechnique::AeonBuild ||
+                    group.mesh->technique == MeshTechnique::AlphaFade)
+                    continue;
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
@@ -2696,6 +2702,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
                 passes[1] = mesh_overlay_pipeline_;
             else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
+            // The build effects' (M211g): AlphaFade blends colour and alpha,
+            // UEF's cube colour only and writes no depth.
+            else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
+            else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
             mesh_pc.boneBase = group.bone_base_offset;
             mesh_pc.bonesPerInst = group.bones_per_instance;
             mesh_pc.technique = static_cast<u32>(technique);
@@ -3505,6 +3515,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_fade_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_overlay_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_overlay_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_cube_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);

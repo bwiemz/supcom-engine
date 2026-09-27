@@ -3,6 +3,7 @@
 // Test fixtures of the render tests' own: textures, a flat plate mesh, and
 // a plate stood in for a blueprint's mesh (M211, M211e).
 
+#include "core/image.hpp"
 #include "core/types.hpp"
 #include "map/scmap_parser.hpp"
 
@@ -11,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::test {
@@ -73,6 +75,45 @@ template <typename White> void write_cube(const std::filesystem::path& path, Whi
         return std::array<u8, 4>{v, v, v, 255};
     });
 }
+
+/// A colour, 0..1 per channel.
+using Rgb = std::array<f32, 3>;
+
+/// `colour` blended over `below` at `alpha`.
+Rgb over(const Rgb& below, const Rgb& colour, f32 alpha);
+
+Rgb scaled(const Rgb& colour, f32 by);
+
+/// A frame's middle pixel ({-1, -1, -1} if it has none).
+Rgb middle(const ImageRGBA8& image);
+
+/// Within 3.5 of 255 in each channel.
+bool near(const Rgb& a, const Rgb& b);
+
+/// "(r, g, b)", 0..255.
+std::string show(const Rgb& c);
+
+/// The first and last columns of the run of pixels along the frame's middle
+/// row, through the middle, that differ from `sky` by more than 12 of 255
+/// ({0, -1} if the middle is sky).
+std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky);
+
+int plate_width(const ImageRGBA8& image, const Rgb& sky);
+
+/// Retail structures a test's plates stand in for, one each (a plate's mesh
+/// blueprint replaces its blueprint's): plain ones, whose scripts leave the
+/// unit be. Each kept a plate still over 100 ticks (M211g): sensors,
+/// storages, T3 generators and fabricators animate, and turn a plate with
+/// them.
+inline constexpr std::array<const char*, 53> kPlateBlueprints = {
+    "uab1201", "uab1202", "uab1302", "uab5101", "uab5202", "uab0101", "uab0102", "uab0103",
+    "uab0201", "uab0202", "uab0203", "uab0301", "uab0302", "uab0303", "ueb1102", "ueb1201",
+    "ueb1202", "ueb1301", "ueb1302", "ueb1104", "ueb5101", "ueb5202", "ueb0102", "ueb0103",
+    "ueb0201", "ueb0202", "ueb0203", "ueb0301", "ueb0302", "ueb0303", "urb1201", "urb1202",
+    "urb1301", "urb1302", "urb5101", "xsb1201", "xsb1104", "xsb5101", "urb0101", "urb0102",
+    "urb0103", "urb0201", "urb0202", "urb0203", "urb0301", "urb0302", "urb0303", "xsb0101",
+    "xsb0102", "xsb0103", "xsb0201", "xsb0202", "xsb0203",
+};
 
 /// A one-bone SCM mesh: a square `half` units either side of the origin,
 /// flat and facing up, cut into `segments` squared cells, wound both ways so

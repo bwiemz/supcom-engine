@@ -6,7 +6,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <string>
 #include <string_view>
+#include <utility>
 
 extern "C" {
 #include "lua.h"
@@ -131,13 +133,42 @@ GPUMesh MeshCache::upload_scm_mesh(const std::string& mesh_path) {
 }
 
 namespace {
-/// The shaders Blueprints.lua gives a unit's wreck mesh (ExtractWreckageBlueprint).
+/// The shader Blueprints.lua gives a unit's wreck mesh (ExtractWreckageBlueprint).
+/// (A tree's, BlackenedNormalMappedAlpha, is a technique of its own.)
 bool is_wreckage_shader(const std::string& shader) {
-    return shader == "Wreckage" || shader == "BlackenedNormalMappedAlpha";
+    return shader == "Wreckage";
 }
 } // namespace
 
-MeshTechnique mesh_technique(const std::string& shader_name) {
+std::string resolve_shader_name(const std::string& shader_name) {
+    // ShaderDictionary's table (faf-re mesh/ShaderDictionary.cpp).
+    static const std::pair<const char*, const char*> kRemaps[] = {
+        {"TMeshNoLighting", "Flat"},
+        {"TMeshNoNormals", "VertexNormal"},
+        {"TMeshAlpha", "NormalMappedAlpha"},
+        {"TMeshGlow", "NormalMappedGlow"},
+        {"TMeshTerrain", "NormalMappedTerrain"},
+        {"Simple", "Unit"},
+        {"Team", "Unit"},
+        {"TMeshAlphaGlowFade", "UnitBuild"},
+        {"TMeshMetalBuild", "AeonBuild"},
+        {"TMeshShield", "Shield"},
+        {"TMeshZFill", "ShieldFill"},
+        {"TMeshAdd", "Effect"},
+        {"TMeshExplosion", "Explosion"},
+        {"TMeshCloud", "Cloud"},
+        {"TMeshOuterCloud", "OuterCloud"},
+        {"TMeshEMPNuke", "NukeEMP"},
+        {"TMeshQuantumNuke", "NukeQuantum"},
+        {"TMeshTemporalBubble", "TemporalBubble"},
+    };
+    for (const auto& [legacy, current] : kRemaps)
+        if (shader_name == legacy) return current;
+    return shader_name.empty() ? std::string("Unit") : shader_name;
+}
+
+MeshTechnique mesh_technique(const std::string& shader) {
+    const std::string shader_name = resolve_shader_name(shader);
     if (shader_name == "Aeon") return MeshTechnique::Aeon;
     if (shader_name == "Insect") return MeshTechnique::Insect;
     if (shader_name == "Metal") return MeshTechnique::Metal;
@@ -146,6 +177,13 @@ MeshTechnique mesh_technique(const std::string& shader_name) {
     if (shader_name == "AeonBuild") return MeshTechnique::AeonBuild;
     if (shader_name == "CybranBuild") return MeshTechnique::CybranBuild;
     if (shader_name == "SeraphimBuild") return MeshTechnique::SeraphimBuild;
+    if (shader_name == "NormalMappedAlpha") return MeshTechnique::NormalMappedAlpha;
+    if (shader_name == "NormalMappedGlow") return MeshTechnique::NormalMappedGlow;
+    if (shader_name == "AlphaFade") return MeshTechnique::AlphaFade;
+    if (shader_name == "UEFBuildCube") return MeshTechnique::UEFBuildCube;
+    if (shader_name == "AeonBuildPuddle") return MeshTechnique::AeonBuildPuddle;
+    if (shader_name == "BlackenedNormalMappedAlpha")
+        return MeshTechnique::BlackenedNormalMappedAlpha;
     return MeshTechnique::Unit;
 }
 

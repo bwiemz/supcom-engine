@@ -16,6 +16,7 @@ add_executable(osc_integration
     runner/material_test.cpp
     runner/bloom_test.cpp
     runner/build_shader_test.cpp
+    runner/effect_mesh_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )

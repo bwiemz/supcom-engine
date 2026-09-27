@@ -33,9 +33,21 @@ enum class MeshTechnique : u32 {
     AeonBuild = 6,     ///< AeonBuildPS, then AeonBuildOverlayPS; grows from 75%
     CybranBuild = 7,   ///< CybranBuildPS, then CybranBuildOverlayPS
     SeraphimBuild = 8, ///< SeraphimBuildPS; grows from 25%
+    // Props' and the build effects' (M211g).
+    NormalMappedAlpha = 9,           ///< NormalMappedPS unmasked, alpha-tested by f * albedo.a
+    NormalMappedGlow = 10,           ///< NormalMappedPS unmasked, glowing
+    AlphaFade = 11,                  ///< AlphaFadePS: fades out from two ticks old
+    UEFBuildCube = 12,               ///< UEFBuildCubePS: unlit, writes no depth
+    AeonBuildPuddle = 13,            ///< AeonBuildPuddlePS: scrolling, glowing
+    BlackenedNormalMappedAlpha = 14, ///< burnt trees: NormalMappedAlpha, greyed
 };
 
-/// The technique a ShaderName names; Unit for any other.
+/// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
+/// ShaderName's current one (TMeshGlow is NormalMappedGlow); any other
+/// unchanged, and an empty one "Unit".
+std::string resolve_shader_name(const std::string& shader_name);
+
+/// The technique a ShaderName names, once resolved; Unit for any other.
 MeshTechnique mesh_technique(const std::string& shader_name);
 
 /// One of the build techniques: translucent, drawn after the opaque meshes,
@@ -43,6 +55,12 @@ MeshTechnique mesh_technique(const std::string& shader_name);
 inline bool is_build_technique(MeshTechnique t) {
     return t == MeshTechnique::UEFBuild || t == MeshTechnique::AeonBuild ||
            t == MeshTechnique::CybranBuild || t == MeshTechnique::SeraphimBuild;
+}
+
+/// A technique that blends: drawn after the opaque meshes (M211f/g).
+inline bool is_blended_technique(MeshTechnique t) {
+    return is_build_technique(t) || t == MeshTechnique::AlphaFade ||
+           t == MeshTechnique::UEFBuildCube;
 }
 
 struct GPUMesh {

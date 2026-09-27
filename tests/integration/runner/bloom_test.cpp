@@ -38,13 +38,6 @@ namespace {
 constexpr u32 kSize = 64;
 constexpr const char* kRoot = "/osc_bloom_test";
 
-/// The frame's middle pixel, 0..1.
-std::array<f32, 3> middle(const ImageRGBA8& image) {
-    const size_t i = (static_cast<size_t>(image.height / 2) * image.width + image.width / 2) * 4;
-    if (i + 2 >= image.pixels.size()) return {-1, -1, -1};
-    return {image.pixels[i] / 255.0f, image.pixels[i + 1] / 255.0f, image.pixels[i + 2] / 255.0f};
-}
-
 } // namespace
 
 void test_bloom(TestContext& ctx) {
@@ -106,6 +99,9 @@ void test_bloom(TestContext& ctx) {
                 ground_y);
     stand_plate(ctx, kRoot, "ueb5101", plate("albedo_128.dds", "glow_none.dds"), 160, 100,
                 ground_y);
+    // A build slice (AlphaFade, M211g), whole and just made.
+    stand_plate(ctx, kRoot, "ueb0201", plate("albedo_10.dds", "glow_none.dds", "AlphaFade"), 250,
+                100, ground_y);
     // Half built, with the build shaders (M211f).
     for (const auto& [bp, shader, x] : {std::tuple{"ueb3101", "SeraphimBuild", 190.0f},
                                         std::tuple{"ueb3201", "UEFBuild", 220.0f}}) {
@@ -233,6 +229,16 @@ void test_bloom(TestContext& ctx) {
                 fmt::format("Test 5: the bloom brightens a glowing plate under construction "
                             "{:.3f} times drawn by SeraphimBuild, {:.2f} by UEFBuild (3.34)",
                             seraphim, uef));
+    }
+
+    // Test 6: UEF's build slices (AlphaFade, M211g) blend colour and alpha:
+    // one just made, at alpha 1, glows fully whatever its SpecTeam, as the
+    // first plate: 6.04 times (in the fill's light, its albedo lit).
+    {
+        const f32 slice = lift(250.0f, 1.0f, 0.0f);
+        t.check(
+            slice > 5.6f && slice < 6.5f,
+            fmt::format("Test 6: the bloom brightens a build slice {:.2f} times (6.04)", slice));
     }
 
     r.set_bloom_enabled(false);
