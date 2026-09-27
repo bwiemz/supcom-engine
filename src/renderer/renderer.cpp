@@ -1059,13 +1059,15 @@ void Renderer::create_shadow_pipelines() {
     auto smv = compile_glsl(device_, shaders::shadow_mesh_vert, "shadow_mesh.vert", true);
     auto suv = compile_glsl(device_, shaders::shadow_unit_vert, "shadow_unit.vert", true);
     auto sf = compile_glsl(device_, shaders::shadow_frag, "shadow.frag", false);
+    auto smf = compile_glsl(device_, shaders::shadow_mesh_frag, "shadow_mesh.frag", false);
 
-    if (!sv || !smv || !suv || !sf) {
+    if (!sv || !smv || !suv || !sf || !smf) {
         spdlog::error("Shadow shader compilation failed");
         auto safe_destroy = [&](VkShaderModule m) {
             if (m) vkDestroyShaderModule(device_, m, nullptr);
         };
         safe_destroy(sv); safe_destroy(smv); safe_destroy(suv); safe_destroy(sf);
+        safe_destroy(smf);
         return;
     }
 
@@ -1116,17 +1118,19 @@ void Renderer::create_shadow_pipelines() {
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
         attrs[11] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
-        // Push constant 76B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
-        // uint technique (4, M211f)
+        // Push constant 80B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
+        // uint technique (4, M211f) + float time (4, M211j)
         shadow_mesh_pipeline_ =
             PipelineBuilder()
-                .set_shaders(smv, sf)
+                .set_shaders(smv, smf)
                 .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                                   static_cast<u32>(attrs.size()))
                 .set_depth_test(true, true)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 3, VK_SHADER_STAGE_VERTEX_BIT)
-                .set_descriptor_set_layout(bone_ds_layout_) // set=0: bone SSBO
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 3 + sizeof(f32),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(bone_ds_layout_)    // set=0: bone SSBO
+                .add_descriptor_set_layout(texture_ds_layout_) // set=1: albedo (M211j)
                 .set_no_color_attachment()
                 .set_depth_bias(4.0f, 1.5f)
                 .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
@@ -1167,6 +1171,7 @@ void Renderer::create_shadow_pipelines() {
     vkDestroyShaderModule(device_, smv, nullptr);
     vkDestroyShaderModule(device_, suv, nullptr);
     vkDestroyShaderModule(device_, sf, nullptr);
+    vkDestroyShaderModule(device_, smf, nullptr);
 
     spdlog::info("Shadow pipelines created (terrain + mesh + unit)");
 }
@@ -2371,8 +2376,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 u32 boneBase;
                 u32 bonesPerInst;
                 u32 technique; // MeshTechnique (M211f)
+                f32 time;      // FA's time, for the swaying trees (M211j)
             } spc{};
+            static_assert(sizeof(ShadowMeshPC) == 80, "matches shadow_mesh_vert/frag's push block");
             std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
+            spc.time = unit_renderer_.shader_time();
+            VkDescriptorSet albedo_fallback = texture_cache_.fallback_descriptor();
 
             for (auto& group : unit_renderer_.mesh_groups()) {
                 if (!group.mesh || group.instance_count == 0) continue;
@@ -2387,8 +2396,15 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 spc.bonesPerInst = group.bones_per_instance;
                 spc.technique = static_cast<u32>(group.mesh->technique);
                 vkCmdPushConstants(cmd_buf_[fi], shadow_mesh_layout_,
-                                   VK_SHADER_STAGE_VERTEX_BIT,
-                                   0, sizeof(spc), &spc);
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(spc), &spc);
+                // The albedo, whose alpha cuts an alpha-tested mesh's shadow
+                // (DepthClip, M211j).
+                VkDescriptorSet albedo = group.texture_ds ? group.texture_ds : albedo_fallback;
+                if (albedo) {
+                    vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            shadow_mesh_layout_, 1, 1, &albedo, 0, nullptr);
+                }
 
                 VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
                                     unit_renderer_.mesh_instance_buffer()};
