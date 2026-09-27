@@ -1,6 +1,7 @@
 #include "renderer/unit_renderer.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_types.hpp"
 #include "sim/world_snapshot.hpp"
@@ -242,6 +243,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         u32 id = 0;          // 0 = no bones (props, projectiles)
         u32 bone_count = 0;  // 0 = no skinning
         u64 hidden = 0;      // bones Unit:HideBone hid (bit i, bone i)
+        const std::vector<sim::BoneMatrix>* frozen = nullptr; // a remembered structure's pose
     };
 
     // Group mesh instances by GPUMesh pointer, with bone info
@@ -270,6 +272,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             birth.tick = now;
         }
         birth.frame = frame_;
+
+        // What the player's intel doesn't show, it doesn't draw (M215a).
+        const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
+        if (!shows_mesh(sight)) continue;
+        const bool remembered = sight == Sight::Remembered;
 
         if (cube_count + mesh_count >= MAX_INSTANCES)
             continue;
@@ -351,8 +358,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             inst.color_lookup = team_color_lookup(
                 view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
             inst.shader_time = std::fmod(static_cast<f32>(birth.tick), kShaderTimeWrap);
-            // UserEntity copies the fraction complete at each sync.
-            inst.parameter = entity.fraction_complete;
+            // UserEntity copies the fraction complete at each sync (a
+            // remembered structure's, when it was last seen).
+            inst.parameter = remembered
+                                 ? recon_->frozen_fraction(entity.id, entity.fraction_complete)
+                                 : entity.fraction_complete;
 
             auto& gd = mesh_groups[is_blended_technique(gpu->technique) ? 1 : 0][gpu];
             gd.instances.push_back(inst);
@@ -362,7 +372,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             if (entity.is_unit || entity.bone_count > 0) {
                 u32 bc = entity.bone_count;
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
-                gd.bones.push_back({entity.id, bc, entity.hidden_bones});
+                gd.bones.push_back({entity.id, bc, entity.hidden_bones,
+                                    remembered ? recon_->frozen_pose(entity.id) : nullptr});
             } else {
                 gd.bones.push_back({0, 0});
             }
@@ -436,8 +447,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                     u32 base = bone_offset + i * group_bones;
 
                     u32 bc = 0;
-                    if (gd.bones[i].id && view.bones(gd.bones[i].id, blended)) {
-                        const auto& mats = blended;
+                    const std::vector<sim::BoneMatrix>* pose = gd.bones[i].frozen;
+                    if (!pose && gd.bones[i].id && view.bones(gd.bones[i].id, blended))
+                        pose = &blended;
+                    if (pose) {
+                        const auto& mats = *pose;
                         bc = static_cast<u32>(mats.size());
                         if (bc > group_bones) bc = group_bones;
 

@@ -1,5 +1,6 @@
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
@@ -110,7 +111,10 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     camera.eye_position(eye_x, eye_y, eye_z);
 
     // --- Consume death events and spawn explosion VFX ---
+    // A death's flash stands in for its effects, which show only where the
+    // player's army sees them (M215a).
     for (const auto& de : events.deaths) {
+        if (recon_ && !recon_->sees_at(view, de.army, de.x, de.z)) continue;
         if (explosions_.size() < MAX_EXPLOSIONS) {
             explosions_.push_back({de.x, de.y, de.z,
                                    std::max(de.scale, 1.0f),
@@ -162,6 +166,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     // Iterate all entities for health bars + selection circles
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit) continue;
+        if (recon_ && recon_->sight(entity) != Sight::Seen) continue;
 
         auto pos = view.position(entity);
 
@@ -566,6 +571,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     if (cam_dist < 600.0f) {
         for (const sim::EntityRecord& entity : view.entities()) {
             if (!entity.is_unit) continue;
+            if (recon_ && recon_->sight(entity) != Sight::Seen) continue;
             const sim::EntityRecord* unit = &entity;
 
             // Determine beam target and color

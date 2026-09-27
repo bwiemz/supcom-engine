@@ -1,0 +1,299 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include "map/visibility_grid.hpp"
+#include "renderer/recon_view.hpp"
+#include "sim/world_snapshot.hpp"
+
+using namespace osc;
+using map::VisFlag;
+using renderer::ReconView;
+using renderer::Sight;
+
+namespace {
+
+/// A 256 x 256 world of three armies (0 the player's), whose snapshot the
+/// tests edit between ticks.
+struct World {
+    sim::WorldSnapshot snap;
+
+    World() {
+        snap.visibility.emplace(256, 256);
+        snap.armies.resize(3);
+        for (auto& a : snap.armies) a.valid = true;
+    }
+
+    sim::EntityRecord& add(u32 id, i32 army, f32 x, f32 z) {
+        sim::EntityRecord e;
+        e.id = id;
+        e.army = army;
+        e.position = {x, 0, z};
+        snap.entities.push_back(e);
+        return snap.entities.back();
+    }
+    sim::EntityRecord& unit(u32 id, i32 army, f32 x, f32 z, bool mobile) {
+        sim::EntityRecord& e = add(id, army, x, z);
+        e.is_unit = true;
+        e.is_mobile = mobile;
+        return e;
+    }
+    sim::EntityRecord* find(u32 id) {
+        for (auto& e : snap.entities)
+            if (e.id == id) return &e;
+        return nullptr;
+    }
+
+    /// Army 0's senses over (x, z)'s cell this tick: nothing else.
+    void sense(f32 x, f32 z, VisFlag flag) {
+        snap.visibility->clear_transient();
+        if (flag != VisFlag::None) snap.visibility->paint_circle(0, x, z, 12.0f, flag);
+    }
+
+    /// The next tick, as `recon` sees it.
+    void tick(ReconView& recon) {
+        ++snap.tick;
+        recon.update(sim::FrameView(&snap, &snap, 1.0f));
+    }
+};
+
+} // namespace
+
+TEST_CASE("ReconView: an observer, or a world without a grid, sees everything",
+          "[renderer][recon]") {
+    World w;
+    w.unit(1, 1, 100, 100, true);
+    w.add(2, 1, 100, 100).is_projectile = true;
+
+    ReconView recon;
+    recon.set_focus_army(-1);
+    w.tick(recon);
+    CHECK(recon.sees_everything());
+    CHECK(recon.sight(*w.find(1)) == Sight::Seen);
+    CHECK(recon.sight(*w.find(2)) == Sight::Seen);
+
+    recon.set_focus_army(0);
+    w.tick(recon);
+    CHECK_FALSE(recon.sees_everything());
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+
+    w.snap.visibility.reset();
+    w.tick(recon);
+    CHECK(recon.sees_everything());
+    CHECK(recon.sight(*w.find(1)) == Sight::Seen);
+}
+
+TEST_CASE("ReconView: its own and its allies' units, props and wrecks show anywhere",
+          "[renderer][recon]") {
+    World w;
+    w.snap.armies[0].allies = 1u << 1;
+    w.unit(1, 0, 100, 100, true);          // its own
+    w.unit(2, 1, 100, 100, true);          // an ally's
+    w.unit(3, 2, 100, 100, true);          // an enemy's
+    w.add(4, -1, 100, 100).is_prop = true; // a tree
+    w.add(5, 1, 100, 100).is_projectile = true;
+
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Seen);
+    CHECK(recon.sight(*w.find(2)) == Sight::Seen);
+    CHECK(recon.sight(*w.find(3)) == Sight::Hidden);
+    CHECK(recon.sight(*w.find(4)) == Sight::Seen);
+    CHECK(recon.sight(*w.find(5)) == Sight::Seen);
+
+    // An alliance broken: the former ally's unit is judged by intel.
+    w.snap.armies[0].allies = 0;
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(2)) == Sight::Hidden);
+    CHECK(recon.sight(*w.find(5)) == Sight::Hidden);
+}
+
+TEST_CASE("ReconView: an enemy mobile unit shows in sight, as a blip when detected",
+          "[renderer][recon]") {
+    World w;
+    const sim::EntityRecord& tank = w.unit(1, 1, 100, 100, true);
+    ReconView recon;
+    recon.set_focus_army(0);
+
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Hidden);
+
+    // Radar alone: a blip, never seen.
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Blip);
+    CHECK(recon.frozen_pose(1) == nullptr);
+
+    // In sight: itself.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Seen);
+
+    // Out of sight, still on radar: a blip it has seen.
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::SeenBlip);
+
+    // Lost to every sense, then found again: never seen, as far as the blip
+    // knows.
+    w.sense(100, 100, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Hidden);
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Blip);
+
+    // Sonar and omni detect as radar does.
+    w.sense(100, 100, VisFlag::Sonar);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Blip);
+    w.sense(100, 100, VisFlag::Omni);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Blip);
+
+    // Senses elsewhere don't count.
+    w.sense(200, 200, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sight(tank) == Sight::Hidden);
+}
+
+TEST_CASE("ReconView: an enemy structure, once seen, is remembered as it was",
+          "[renderer][recon]") {
+    World w;
+    sim::EntityRecord& pd = w.unit(1, 1, 100, 100, false);
+    pd.bone_count = 1;
+    pd.bone_offset = 0;
+    pd.fraction_complete = 0.5f;
+    sim::BoneMatrix seen{};
+    seen[12] = 1.0f; // the pose it was seen in
+    w.snap.bones.push_back(seen);
+
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(pd) == Sight::Blip);
+
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sight(pd) == Sight::Seen);
+    CHECK(recon.frozen_pose(1) == nullptr); // live while in sight
+    CHECK(recon.frozen_fraction(1, 0.7f) == 0.7f);
+
+    // Out of sight, it turns and builds on; the player's army sees it as it
+    // was, with or without a sense on it.
+    w.snap.bones[0][12] = 2.0f;
+    pd.fraction_complete = 0.9f;
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(pd) == Sight::Remembered);
+    REQUIRE(recon.frozen_pose(1) != nullptr);
+    CHECK((*recon.frozen_pose(1))[0][12] == 1.0f);
+    CHECK(recon.frozen_fraction(1, pd.fraction_complete) == 0.5f);
+
+    w.sense(100, 100, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(pd) == Sight::Remembered);
+
+    // Seen again: live again.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sight(pd) == Sight::Seen);
+    CHECK(recon.frozen_pose(1) == nullptr);
+}
+
+TEST_CASE("ReconView: an enemy projectile shows only in sight", "[renderer][recon]") {
+    World w;
+    w.add(1, 1, 100, 100).is_projectile = true;
+    ReconView recon;
+    recon.set_focus_army(0);
+
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Seen);
+}
+
+TEST_CASE("ReconView: memory is per army, per entity, per tick", "[renderer][recon]") {
+    World w;
+    w.unit(1, 1, 100, 100, false);
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    w.sense(100, 100, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
+
+    // A tick already seen isn't judged again.
+    w.sense(100, 100, VisFlag::Radar);
+    recon.update(sim::FrameView(&w.snap, &w.snap, 0.5f));
+    CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
+
+    // Another army's view starts from nothing (army 2 senses nothing).
+    recon.set_focus_army(2);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+    recon.set_focus_army(0);
+    w.sense(100, 100, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+
+    // An entity gone from the world is forgotten; one with its id later is
+    // new.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    w.snap.entities.clear();
+    w.sense(100, 100, VisFlag::None);
+    w.tick(recon);
+    w.unit(1, 1, 100, 100, false);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+}
+
+TEST_CASE("ReconView: effects show where the player's army sees", "[renderer][recon]") {
+    World w;
+    w.snap.armies[0].allies = 1u << 1;
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    const sim::FrameView view(&w.snap, &w.snap, 1.0f);
+    // Its own and an ally's anywhere; another army's, or none's, in sight.
+    CHECK(recon.sees_at(view, 0, 200, 200));
+    CHECK(recon.sees_at(view, 1, 200, 200));
+    CHECK_FALSE(recon.sees_at(view, 2, 200, 200));
+    CHECK_FALSE(recon.sees_at(view, -1, 200, 200));
+    CHECK(recon.sees_at(view, 2, 100, 100));
+    // Radar isn't sight.
+    w.sense(200, 200, VisFlag::Radar);
+    w.tick(recon);
+    CHECK_FALSE(recon.sees_at(view, 2, 200, 200));
+    // An observer sees all.
+    recon.set_focus_army(-1);
+    w.tick(recon);
+    CHECK(recon.sees_at(view, 2, 200, 200));
+}
+
+TEST_CASE("ReconView: shields and beams are left to M215b", "[renderer][recon]") {
+    World w;
+    w.add(1, 1, 100, 100).is_shield = true;
+    w.add(2, 1, 100, 100).is_collision_beam = true;
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Seen);
+    CHECK(recon.sight(*w.find(2)) == Sight::Seen);
+}
+
+TEST_CASE("ReconView: the unidentified colour's channels", "[renderer][recon]") {
+    ReconView recon;
+    recon.set_unidentified_color(0xFF336699u);
+    const auto [r, g, b] = recon.unidentified_rgb();
+    CHECK(r == 0x33 / 255.0f);
+    CHECK(g == 0x66 / 255.0f);
+    CHECK(b == 0x99 / 255.0f);
+}

@@ -50,6 +50,7 @@ IconClass icon_class(const Unit& u) {
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.unit_id = u.unit_id();
     r.icon = icon_class(u);
+    r.is_mobile = u.is_mobile();
     r.footprint_size_x = u.footprint_size_x();
     r.footprint_size_z = u.footprint_size_z();
     r.is_being_built = u.is_being_built();
@@ -225,6 +226,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
                     econ.energy.requested};
         a.mass_efficiency = brain->mass_efficiency();
         a.energy_efficiency = brain->energy_efficiency();
+        for (i32 j = 0; j < static_cast<i32>(sim.army_count()) && j < 32; ++j)
+            if (j != static_cast<i32>(i) && brain->is_ally(j)) a.allies |= 1u << j;
     }
 
     if (const auto* grid = sim.visibility_grid()) out.visibility = *grid;

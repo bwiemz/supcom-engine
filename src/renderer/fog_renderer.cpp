@@ -165,6 +165,11 @@ void FogRenderer::stage(const osc::map::VisibilityGrid& grid, u32 army) {
     blur_to_staging();
 }
 
+void FogRenderer::stage_clear() {
+    if (!initialized_ || !staging_mapped_[fi_]) return;
+    std::memset(staging_mapped_[fi_], 255, static_cast<size_t>(grid_width_) * grid_height_);
+}
+
 void FogRenderer::blur_to_staging() {
     u32 w = grid_width_;
     u32 h = grid_height_;

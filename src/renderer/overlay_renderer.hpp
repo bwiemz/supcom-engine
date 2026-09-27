@@ -18,6 +18,7 @@ struct WorldEvents;
 namespace osc::renderer {
 
 class Camera;
+class ReconView;
 class TextureCache;
 
 /// Every intel type a selected unit can show a range ring for.
@@ -68,11 +69,17 @@ public:
 
     u32 quad_count() const { return quad_count_; }
 
+    /// The player's intel: a unit's health bar, selection ring and work
+    /// beams show only while it is in sight, a death's flash only where the
+    /// player's army sees (null: everything seen; M215a).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
+
     static constexpr u32 MAX_OVERLAY_QUADS = 8192;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
     std::unordered_set<std::string> intel_ring_types_ = kAllIntelRingTypes;
+    const ReconView* recon_ = nullptr;
     /// Project world position to screen pixel coordinates.
     /// Returns false if behind camera.
     static bool world_to_screen(f32 wx, f32 wy, f32 wz, const std::array<f32, 16>& vp, f32 sw,

@@ -11,6 +11,13 @@ namespace osc::lua {
 /// a request the next sim beat applies, as Moho's CWldSession does.
 inline constexpr const char* kFocusArmyRequestKey = "__osc_focus_army_request";
 
+/// The UI state's focus army: 0-based, -1 for an observer (0 when unset).
+int focus_army(lua_State* ui_L);
+
+/// Set both states' focus army outright, as a game starts (no
+/// NoteFocusArmyChanged, no Sync.FocusArmyChanged; either state may be null).
+void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army);
+
 /// Plain-data deep copy between states (see core/lua_copy.hpp).
 using core::copy_lua_value;
 

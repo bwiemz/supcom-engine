@@ -1,6 +1,7 @@
 #include "renderer/strategic_icon_renderer.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
@@ -255,6 +256,14 @@ StrategicIconType StrategicIconRenderer::classify_unit(const sim::EntityRecord& 
     return StrategicIconType::Generic;
 }
 
+StrategicIconType StrategicIconRenderer::classify_blip(const sim::EntityRecord& unit) {
+    if (!unit.is_mobile || unit.icon == sim::IconClass::Structure)
+        return StrategicIconType::Structure;
+    if (unit.icon == sim::IconClass::Air) return StrategicIconType::Air;
+    if (unit.icon == sim::IconClass::Naval) return StrategicIconType::Naval;
+    return StrategicIconType::Land;
+}
+
 // --- Rendering ---
 
 bool StrategicIconRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
@@ -301,7 +310,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view,
 
     f32 cam_dist = camera.distance();
     strategic_zoom_active_ = (cam_dist >= ZOOM_THRESHOLD);
-    if (!strategic_zoom_active_) return false;
+    // Closer in, only the blips the player's intel has, which have no mesh.
+    if (!strategic_zoom_active_ && (!recon_ || recon_->sees_everything())) return false;
 
     f32 sw = static_cast<f32>(viewport_w);
     f32 sh = static_cast<f32>(viewport_h);
@@ -325,6 +335,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view,
 
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit) continue;
+        const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
+        if (!shows_icon(sight) || (!strategic_zoom_active_ && shows_mesh(sight))) continue;
 
         auto pos = view.position(entity);
 
@@ -343,14 +355,24 @@ bool StrategicIconRenderer::update(const sim::FrameView& view,
             sy < -icon_size || sy > sh + icon_size)
             continue;
 
-        // Get army color
+        // Get army color (a blip not seen since it was detected: a generic
+        // icon in GameColors' UnidentifiedColor)
         f32 r, g, b;
-        get_army_color(entity, view, r, g, b);
+        StrategicIconType type = classify_unit(entity);
+        if (sight == Sight::Blip) {
+            const auto [ur, ug, ub] = recon_->unidentified_rgb();
+            r = ur;
+            g = ug;
+            b = ub;
+            type = classify_blip(entity);
+        } else {
+            get_army_color(entity, view, r, g, b);
+        }
 
         bool is_selected = selected_ids &&
                            selected_ids->count(entity.id) > 0;
 
-        visible.push_back({sx, sy, r, g, b, classify_unit(entity), is_selected});
+        visible.push_back({sx, sy, r, g, b, type, is_selected});
     }
 
     // Pass 1: Selection rings (drawn with white_ds, behind icons)
@@ -397,7 +419,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view,
                     count * sizeof(UIInstance));
     }
 
-    return true;
+    return strategic_zoom_active_;
 }
 
 void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,

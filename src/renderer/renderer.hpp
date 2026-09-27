@@ -16,6 +16,7 @@
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
 #include "ui/ui_dispatch.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
@@ -144,8 +145,13 @@ public:
 
     Camera& camera() { return camera_; }
     const Camera& camera() const { return camera_; }
+    /// The player's army (0-based), whose fog of war and intel the view
+    /// shows; -1 for an observer, who sees everything.
     void set_player_army(i32 army) { player_army_ = army; }
     i32 player_army() const { return player_army_; }
+    /// What the player's army sees of the world as of the last frame (M215a).
+    const ReconView& recon() const { return recon_; }
+    /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
     void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
@@ -333,6 +339,7 @@ private:
     FontCache font_cache_;
     Camera camera_;
     i32 player_army_ = 0;
+    ReconView recon_;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
     bool b_key_was_pressed_ = false;

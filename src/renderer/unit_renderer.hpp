@@ -23,6 +23,7 @@ struct ArmyRecord;
 namespace osc::renderer {
 
 class Camera;       // forward
+class ReconView;    // forward
 class TextureCache; // forward
 
 /// Per-instance data for cube fallback (old format).
@@ -73,6 +74,10 @@ public:
 
     /// The game's colour tables, which pick each army's lookup row.
     void set_game_colors(sim::GameColors colors) { game_colors_ = std::move(colors); }
+
+    /// The player's intel, which hides what it doesn't see and freezes the
+    /// structures it remembers (null: everything seen; M215a).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
 
     /// Pre-load GPU meshes for these blueprints (sim::world_blueprints).
     void preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
@@ -146,6 +151,7 @@ private:
     std::vector<MeshDrawGroup> mesh_groups_;
 
     sim::GameColors game_colors_;
+    const ReconView* recon_ = nullptr;
 
     /// When each entity's mesh instance was made: FA makes one when an
     /// entity appears or changes mesh, stamped with the tick (material.x).

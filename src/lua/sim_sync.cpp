@@ -94,6 +94,15 @@ void apply_focus_request(lua_State* sim_L, lua_State* ui_L) {
 
 } // namespace
 
+int focus_army(lua_State* ui_L) {
+    return registry_int(ui_L, "__osc_focus_army", 0);
+}
+
+void set_focus_army(lua_State* sim_L, lua_State* ui_L, int army) {
+    if (sim_L) set_registry_int(sim_L, "__osc_focus_army", army);
+    if (ui_L) set_registry_int(ui_L, "__osc_focus_army", army);
+}
+
 void sync_beat(lua_State* sim_L, lua_State* ui_L) {
     if (!sim_L || !ui_L) return;
     apply_focus_request(sim_L, ui_L);
