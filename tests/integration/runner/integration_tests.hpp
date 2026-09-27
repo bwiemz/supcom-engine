@@ -101,6 +101,8 @@ void test_effect_meshes(TestContext& ctx);
 void test_skinning(TestContext& ctx);
 /// --prop-material-test (M211i), in prop_material_test.cpp.
 void test_prop_materials(TestContext& ctx);
+/// --clipped-shadow-test (M211j), in clipped_shadow_test.cpp.
+void test_clipped_shadows(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

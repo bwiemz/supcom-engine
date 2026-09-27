@@ -1089,6 +1089,7 @@ layout(push_constant) uniform PushConstants {
     uint boneBase;
     uint bonesPerInst;
     uint technique; // MeshTechnique (M211f)
+    float time;     // FA's time, for the swaying trees (M211j)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -1103,6 +1104,9 @@ layout(location = 10) in vec3 inTangent;
 layout(location = 3) in mat4 inModel;
 layout(location = 7) in vec4 inColor;
 layout(location = 14) in float inParameter; // the fraction complete
+
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) flat out float fragProp; // 1 for a prop (its colour's negative green)
 
 // Bone SSBO (set=0, binding=0)
 layout(std430, set = 0, binding = 0) readonly buffer BoneBuffer {
@@ -1124,7 +1128,15 @@ void main() {
     float grow = pc.technique == 8u ? 0.25 + inParameter * 0.75 : 1.0;
     vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
     vec4 worldPos = inModel * skinnedPos;
+    if (pc.technique == 17u) {
+        // UndulatingDepthVS: the tree's shadow sways as it does (M211j).
+        const vec3 wind = vec3(0.707, 0.0, 0.707);
+        float sway = sin(0.05 * pc.time - dot(wind, inModel[3].xyz));
+        worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
+    }
     gl_Position = pc.lightViewProj * worldPos;
+    fragUV = inUV;
+    fragProp = inColor.g < 0.0 ? 1.0 : 0.0;
 }
 )glsl";
 
@@ -1151,6 +1163,33 @@ void main() {
 const char* shadow_frag = R"glsl(
 #version 450
 void main() {}
+)glsl";
+
+// Mesh shadows: FA's DepthClip and UndulatingDepthClip (DepthPS(clipTest)) cut
+// an alpha-tested mesh's shadow where its albedo's alpha is under a half
+// (M211j): NormalMappedAlpha, BlackenedNormalMappedAlpha, VertexNormal, the
+// swaying trees, and props the engine draws as NormalMappedAlpha.
+const char* shadow_mesh_frag = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 lightViewProj;
+    uint boneBase;
+    uint bonesPerInst;
+    uint technique;
+    float time;
+} pc;
+
+layout(set = 1, binding = 0) uniform sampler2D texAlbedo;
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) flat in float fragProp;
+
+void main() {
+    bool clipped = fragProp > 0.5 || pc.technique == 9u || pc.technique == 14u ||
+                   pc.technique == 15u || pc.technique == 17u;
+    if (clipped && texture(texAlbedo, fragUV).a < 0.5) discard;
+}
 )glsl";
 
 // --- 2D UI shaders ---
