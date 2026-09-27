@@ -73,6 +73,12 @@ public:
     /// Descriptor set for the 1x1 flat-normal fallback (GA=(128,128) = tangent-space (0,0,1)).
     VkDescriptorSet normal_fallback_descriptor() const { return normal_fallback_.descriptor_set; }
 
+    /// A cubemap (a DDS with six faces), loaded now: its cube view, or null
+    /// if it can't be read or isn't a cube.
+    VkImageView get_cube_blocking(const std::string& vfs_path);
+    /// A black 1x1 cube, for a scene with no cubemap.
+    VkImageView cube_fallback_view() const { return cube_fallback_.view; }
+
     /// Image view accessors for building multi-binding descriptor sets.
     VkImageView fallback_view() const { return fallback_.image.view; }
     VkImageView zero_fallback_view() const { return specteam_fallback_.image.view; }
@@ -92,6 +98,7 @@ private:
     void create_fallback();
     void create_specteam_fallback();
     void create_normal_fallback();
+    void create_cube_fallback();
     VkDescriptorSet allocate_and_write_descriptor(VkImageView view);
 
     const GPUTexture* finalize_load(const std::string& path,
@@ -106,6 +113,9 @@ private:
     };
     std::vector<AsyncLoad> async_loads_;
     std::unordered_set<std::string> pending_;
+
+    std::unordered_map<std::string, AllocatedImage> cubes_;
+    AllocatedImage cube_fallback_{};
 
     GPUTexture fallback_{};
     GPUTexture specteam_fallback_{};

@@ -123,6 +123,7 @@ constexpr Mode kModesBefore[] = {
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
     {"--camera-test", test_camera, false},
+    {"--material-test", test_material, false},
     {"--terrain-normal-test", test_terrain_normal, false},
     {"--decal-test", test_decal, false},
     {"--projectile-test", test_projectile, false},
@@ -279,6 +280,7 @@ void IntegrationModes::print_usage() const {
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"
+              << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"

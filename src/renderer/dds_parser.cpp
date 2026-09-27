@@ -37,6 +37,11 @@ static constexpr size_t OFF_RBITMASK  = 4 + 72 + 16; // byte 92 (ddspf.dwRBitMas
 static constexpr size_t OFF_GBITMASK  = 4 + 72 + 20; // byte 96 (ddspf.dwGBitMask)
 static constexpr size_t OFF_BBITMASK  = 4 + 72 + 24; // byte 100 (ddspf.dwBBitMask)
 static constexpr size_t OFF_ABITMASK  = 4 + 72 + 28; // byte 104 (ddspf.dwABitMask)
+static constexpr size_t OFF_CAPS2 = 4 + 108;         // byte 112 (dwCaps2)
+
+// dwCaps2: a cubemap, and all six of its faces
+static constexpr u32 DDSCAPS2_CUBEMAP = 0x200;
+static constexpr u32 DDSCAPS2_CUBEMAP_ALLFACES = 0xFC00;
 
 // Pixel format flags
 static constexpr u32 DDPF_FOURCC = 0x4;
@@ -137,50 +142,61 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
     // Treat 0 as 1 mip level
     u32 mip_count = (mip_raw > 0) ? mip_raw : 1;
 
+    // A cubemap stores its six faces one after another, each with its mips.
+    const u32 caps2 = read_u32(raw, OFF_CAPS2);
+    const bool cube = (caps2 & DDSCAPS2_CUBEMAP) != 0;
+    if (cube && (caps2 & DDSCAPS2_CUBEMAP_ALLFACES) != DDSCAPS2_CUBEMAP_ALLFACES) {
+        spdlog::debug("DDS: cubemap without all six faces (caps2 0x{:X})", caps2);
+        return std::nullopt;
+    }
+
     DDSTexture tex;
     tex.format = format;
     tex.width = width;
     tex.height = height;
     tex.mip_count = mip_count;
-    tex.mips.reserve(mip_count);
+    tex.faces = cube ? 6 : 1;
+    tex.mips.reserve(static_cast<size_t>(mip_count) * tex.faces);
 
     size_t offset = HEADER_SIZE;
-    u32 mw = width;
-    u32 mh = height;
+    for (u32 face = 0; face < tex.faces; ++face) {
+        u32 mw = width;
+        u32 mh = height;
 
-    for (u32 i = 0; i < mip_count; i++) {
-        u32 mip_size;
-        if (compressed) {
-            u32 block_w = std::max(1u, (mw + 3) / 4);
-            u32 block_h = std::max(1u, (mh + 3) / 4);
-            mip_size = block_w * block_h * bytes_per_block;
-        } else {
-            mip_size = mw * mh * bytes_per_block; // bytes_per_block = bytes per pixel
+        for (u32 i = 0; i < mip_count; i++) {
+            u32 mip_size;
+            if (compressed) {
+                u32 block_w = std::max(1u, (mw + 3) / 4);
+                u32 block_h = std::max(1u, (mh + 3) / 4);
+                mip_size = block_w * block_h * bytes_per_block;
+            } else {
+                mip_size = mw * mh * bytes_per_block; // bytes_per_block = bytes per pixel
+            }
+
+            if (offset + mip_size > file_data.size()) {
+                spdlog::debug("DDS: mip {} data truncated (need {} at offset {}, file={})", i,
+                              mip_size, offset, file_data.size());
+                // Use whatever mips we got; a cube needs every face whole.
+                if (tex.mips.empty() || cube) return std::nullopt;
+                tex.mip_count = static_cast<u32>(tex.mips.size());
+                break;
+            }
+
+            DDSMipLevel level;
+            level.data = raw + offset;
+            level.width = mw;
+            level.height = mh;
+            level.size = mip_size;
+            tex.mips.push_back(level);
+
+            offset += mip_size;
+            mw = std::max(1u, mw / 2);
+            mh = std::max(1u, mh / 2);
         }
-
-        if (offset + mip_size > file_data.size()) {
-            spdlog::debug("DDS: mip {} data truncated (need {} at offset {}, file={})",
-                           i, mip_size, offset, file_data.size());
-            // Use whatever mips we got
-            if (tex.mips.empty()) return std::nullopt;
-            tex.mip_count = static_cast<u32>(tex.mips.size());
-            break;
-        }
-
-        DDSMipLevel level;
-        level.data = raw + offset;
-        level.width = mw;
-        level.height = mh;
-        level.size = mip_size;
-        tex.mips.push_back(level);
-
-        offset += mip_size;
-        mw = std::max(1u, mw / 2);
-        mh = std::max(1u, mh / 2);
     }
 
-    spdlog::debug("DDS: {}x{} format=0x{:X} mips={}", width, height,
-                   static_cast<u32>(format), tex.mip_count);
+    spdlog::debug("DDS: {}x{} format=0x{:X} mips={}{}", width, height, static_cast<u32>(format),
+                  tex.mip_count, cube ? " cube" : "");
     return tex;
 }
 

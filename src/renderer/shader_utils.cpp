@@ -617,9 +617,13 @@ layout(set = 4, binding = 1) uniform LightUBO {
     vec4 shadowFill;    // rgb: ShadowFillColor
     vec4 specularColor;
 } lightUbo;
+// The map's environment cube (its "<default>"), which meshes reflect (M211a)
+layout(set = 4, binding = 2) uniform samplerCube environmentMap;
 
 layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec4 fragColor;  // army color (RGB) + build alpha (A)
+// Army colour (RGB) + build alpha (A). A negative red marks a wreck, a
+// negative green a prop (drawn without a team mask).
+layout(location = 1) in vec4 fragColor;
 layout(location = 2) in vec2 fragUV;
 layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
@@ -669,34 +673,41 @@ void main() {
     vec3 worldNormal = normalize(TBN * tangentNormal);
 
     // FA's ComputeLight (mesh.fx), by the map's light (M210a).
-    vec3 lightDir = lightUbo.sunDirection.xyz;
-    float NdotL = dot(worldNormal, lightDir);
+    vec3 S = lightUbo.sunDirection.xyz;
+    float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
     vec3 light = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
     light = lightUbo.sunColor.w * light + (1.0 - light) * lightUbo.shadowFill.rgb;
 
     vec4 texColor = texture(texAlbedo, fragUV);
+    // r: how much the environment is reflected, g: the highlight, b: glow,
+    // a: the team colour's mask
     vec4 specTeam = texture(texSpecTeam, fragUV);
 
-    // Team color mask from SpecTeam alpha channel. A wreck (red < 0) has
-    // none: its albedo is burnt dark and grey instead, and barely shines.
-    bool wreck = fragColor.r < 0.0;
-    float teamMask = specTeam.a;
-    vec3 blended = wreck ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, teamMask);
-    if (wreck) {
-        float lum = dot(blended, vec3(0.299, 0.587, 0.114));
-        blended = mix(vec3(lum), blended, 0.3) * 0.45;
+    vec3 lit;
+    if (fragColor.r < 0.0) {
+        // A wreck: burnt dark and grey, barely shining. (FA's WreckagePS,
+        // with its own crunch texture, is M211b's.)
+        float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+        vec3 blended = mix(vec3(lum), texColor.rgb, 0.3) * 0.45;
+        vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
+        vec3 halfDir = normalize(S + viewDir);
+        float spec = pow(max(dot(worldNormal, halfDir), 0.0), 32.0) * specTeam.r * 0.25 * shadow;
+        lit = blended * light + vec3(spec);
+    } else {
+        // FA's NormalMappedPS (mesh.fx): the Unit technique masks the
+        // team's colour in; props (NormalMappedAlpha) tint by their colour.
+        bool prop = fragColor.g < 0.0;
+        vec3 albedo = prop ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, specTeam.a);
+        // FA's viewDirection runs from the eye to the point.
+        vec3 V = normalize(fragWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
+        vec3 environment = texture(environmentMap, reflect(-V, worldNormal)).rgb;
+        float phongAmount = clamp(dot(reflect(S, worldNormal), -V), 0.0, 1.0);
+        vec3 phongAdditive = vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
+        vec3 phongMultiplicative = 2.0 * environment * specTeam.r;
+        float emissive = 2.0 * specTeam.b; // glowMultiplier
+        lit = albedo * (emissive + light + phongMultiplicative) + phongAdditive;
     }
-
-    // Specular lighting (Blinn-Phong)
-    vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float NdotH = max(dot(worldNormal, halfDir), 0.0);
-    float specIntensity = wreck ? specTeam.r * 0.25 : specTeam.r;
-    float spec = pow(NdotH, 32.0) * specIntensity * shadow;
-
-    // The specular stays the engine's until the material system (M211).
-    vec3 lit = blended * light + vec3(spec);
 
     float finalAlpha = texColor.a * fragColor.a;
     if (finalAlpha < 0.1) discard;

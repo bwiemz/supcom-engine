@@ -74,6 +74,11 @@ OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
     history_.capture(ctx_.sim);
 }
 
+void OffscreenShots::recapture() {
+    history_.capture(ctx_.sim);
+    history_.capture(ctx_.sim);
+}
+
 OffscreenShots::~OffscreenShots() {
     if (ok_) renderer_.shutdown();
 }

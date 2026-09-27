@@ -276,6 +276,11 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 g = 0.0f;
                 b = 0.0f;
             }
+            // A prop has no team mask: a negative green tells mesh.frag,
+            // which then tints its albedo by white (FA's NormalMappedAlpha).
+            else if (entity.is_prop) {
+                g = -1.0f;
+            }
             // Selection highlight: brighten team color
             if (selected_ids && entity.is_unit &&
                 selected_ids->count(entity.id)) {
