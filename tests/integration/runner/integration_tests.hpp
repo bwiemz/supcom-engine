@@ -99,6 +99,8 @@ void test_build_shaders(TestContext& ctx);
 void test_effect_meshes(TestContext& ctx);
 /// --skinning-test (M211h), in skinning_test.cpp.
 void test_skinning(TestContext& ctx);
+/// --prop-material-test (M211i), in prop_material_test.cpp.
+void test_prop_materials(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

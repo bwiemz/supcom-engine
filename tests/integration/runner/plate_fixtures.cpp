@@ -132,6 +132,57 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments, 
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
 
+void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height) {
+    std::vector<char> d(48, 0);
+    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
+    const auto append = [&](const void* p, size_t n) {
+        const char* c = static_cast<const char*>(p);
+        d.insert(d.end(), c, c + n);
+    };
+    const auto f = [&](std::initializer_list<f32> vs) {
+        for (const f32 v : vs) append(&v, 4);
+    };
+    const auto u = [&](std::initializer_list<u32> vs) {
+        for (const u32 v : vs) append(&v, 4);
+    };
+    std::memcpy(d.data(), "MODL", 4);
+    put(4, 5); // version
+    append("NAME", 4);
+    append("root", 5); // at 52
+    d.resize(64, 0);
+    append("SKEL", 4);
+    const auto bone_offset = static_cast<u32>(d.size());
+    f({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}); // rest pose: identity
+    f({0, 0, 0});                                        // position
+    f({1, 0, 0, 0});                                     // rotation (w, x, y, z)
+    u({52, 0xFFFFFFFFu, 0, 0});                          // name, no parent
+    d.resize(bone_offset + 108 + 16, 0);
+    append("VTXL", 4);
+    const auto vert_offset = static_cast<u32>(d.size());
+    for (u32 j = 0; j < 2; ++j) {
+        for (u32 i = 0; i < 2; ++i) {
+            f({-half + 2.0f * half * static_cast<f32>(i), height * static_cast<f32>(j), 0});
+            f({0, 0, -1});                                     // normal
+            f({1, 0, 0});                                      // tangent: along u
+            f({0, 1, 0});                                      // binormal: along v
+            f({static_cast<f32>(i), static_cast<f32>(1 - j)}); // uv
+            f({0, 0});                                         // second uv
+            u({0});                                            // bones
+        }
+    }
+    const auto index_offset = static_cast<u32>(d.size());
+    const std::vector<u16> indices = {0, 1, 3, 0, 3, 2, 0, 3, 1, 0, 2, 3};
+    append(indices.data(), indices.size() * sizeof(u16));
+    put(8, bone_offset);
+    put(12, 1);
+    put(16, vert_offset);
+    put(24, 4);
+    put(28, index_offset);
+    put(32, static_cast<u32>(indices.size()));
+    put(44, 1);
+    std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
+}
+
 void stand_plate(TestContext& ctx, const std::string& root, const std::string& bp,
                  const Plate& plate, f32 x, f32 z, f32 ground_y, bool prop, f32 lift) {
     std::string key = bp;

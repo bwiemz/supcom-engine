@@ -40,6 +40,10 @@ enum class MeshTechnique : u32 {
     UEFBuildCube = 12,               ///< UEFBuildCubePS: unlit, writes no depth
     AeonBuildPuddle = 13,            ///< AeonBuildPuddlePS: scrolling, glowing
     BlackenedNormalMappedAlpha = 14, ///< burnt trees: NormalMappedAlpha, greyed
+    // The props' (M211i).
+    VertexNormal = 15,                ///< lit by the vertex's normal; blended, tested over 0x23
+    NormalMappedTerrain = 16,         ///< unshadowed, no highlight
+    UndulatingNormalMappedAlpha = 17, ///< NormalMappedAlpha, swaying in FA's wind
 };
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
@@ -57,10 +61,10 @@ inline bool is_build_technique(MeshTechnique t) {
            t == MeshTechnique::CybranBuild || t == MeshTechnique::SeraphimBuild;
 }
 
-/// A technique that blends: drawn after the opaque meshes (M211f/g).
+/// A technique that blends: drawn after the opaque meshes (M211f-i).
 inline bool is_blended_technique(MeshTechnique t) {
     return is_build_technique(t) || t == MeshTechnique::AlphaFade ||
-           t == MeshTechnique::UEFBuildCube;
+           t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal;
 }
 
 struct GPUMesh {
