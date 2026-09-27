@@ -17,6 +17,9 @@ public:
     PipelineBuilder& set_cull_mode(VkCullModeFlags cull, VkFrontFace front);
     PipelineBuilder& set_depth_test(bool test, bool write);
     PipelineBuilder& set_blend(bool enable);
+    /// Which of the colour attachment's channels the pipeline writes (all,
+    /// by default). Alpha carries the frame's glow, which only some write.
+    PipelineBuilder& set_color_write_mask(VkColorComponentFlags mask);
     PipelineBuilder& set_depth_bias(float constant_factor, float slope_factor);
     PipelineBuilder& set_push_constant(uint32_t size,
                                        VkShaderStageFlags stages = VK_SHADER_STAGE_VERTEX_BIT);
@@ -43,6 +46,8 @@ private:
     bool depth_test_ = true;
     bool depth_write_ = true;
     bool blend_ = false;
+    VkColorComponentFlags write_mask_ = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     uint32_t push_constant_size_ = 0;
     VkShaderStageFlags push_constant_stages_ = VK_SHADER_STAGE_VERTEX_BIT;
     bool depth_bias_ = false;

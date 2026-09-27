@@ -43,6 +43,18 @@ extern "C" {
 
 namespace osc::renderer {
 
+namespace {
+/// Alpha carries the frame's glow (M211e): what doesn't glow writes colour only.
+constexpr VkColorComponentFlags kColorOnly =
+    VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+constexpr VkColorComponentFlags kColorAndGlow = kColorOnly | VK_COLOR_COMPONENT_A_BIT;
+/// FA's bloom tuning (faf-re CRenFrame, CBloomRenderer): ren_BloomGlowCopyScale,
+/// ren_BloomBlurKernelScale and ren_BloomBlurCount, as the game ships them.
+constexpr f32 kBloomGlowCopyScale = 2.0f;
+constexpr f32 kBloomBlurKernelScale = 1.5f;
+constexpr int kBloomBlurCount = 2;
+} // namespace
+
 // GLFW scroll callback — forward to Renderer via user pointer
 static void glfw_scroll_callback(GLFWwindow* window, double /*xoffset*/,
                                  double yoffset) {
@@ -852,19 +864,19 @@ void Renderer::create_pipelines() {
         attrs[3] = {3, 1, VK_FORMAT_R32_SFLOAT,       offsetof(CubeInstance, scale)};// scale
         attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, r)}; // color
 
-        unit_pipeline_ = PipelineBuilder()
-            .set_shaders(uv, uf)
-            .set_vertex_input(bindings.data(),
-                              static_cast<u32>(bindings.size()),
-                              attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_blend(true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 19,  // viewProj(64) + eye(12) = 76B
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .set_descriptor_set_layout(shadow_ds_layout_)   // set=0: shadow
-            .build(device_, scene_render_pass_, &unit_layout_);
+        unit_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(uv, uf)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_blend(true)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 19, // viewProj(64) + eye(12) = 76B
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(shadow_ds_layout_) // set=0: shadow
+                .set_color_write_mask(kColorOnly)             // the glow in alpha stays (M211e)
+                .build(device_, scene_render_pass_, &unit_layout_);
     }
 
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
@@ -902,23 +914,30 @@ void Renderer::create_pipelines() {
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
         // eye (12B)
         // + uint technique (4B, M211b) = 88B
-        mesh_pipeline_ = PipelineBuilder()
-                             .set_shaders(mv, mf)
-                             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()),
-                                               attrs.data(), static_cast<u32>(attrs.size()))
-                             .set_depth_test(true, true)
-                             .set_blend(true)
-                             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                             .set_push_constant(
-                                 sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 + sizeof(u32),
-                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                             .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
-                             .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
-                             .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
-                             .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
-                             .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
-                             .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
-                             .build(device_, scene_render_pass_, &mesh_layout_);
+        // Opaque meshes write their glow to alpha (M211e); fading ones blend
+        // by their alpha and write colour only. The layouts match.
+        const auto build_mesh = [&](bool fade, VkPipelineLayout* layout) {
+            return PipelineBuilder()
+                .set_shaders(mv, mf)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_blend(fade)
+                .set_color_write_mask(fade ? kColorOnly : kColorAndGlow)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
+                                       sizeof(u32),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
+                .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
+                .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
+                .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
+                .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
+                .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
+                .build(device_, scene_render_pass_, layout);
+        };
+        mesh_pipeline_ = build_mesh(false, &mesh_layout_);
+        mesh_fade_pipeline_ = build_mesh(true, &mesh_fade_layout_);
     }
 
     // --- Water pipeline (tessellated grid with wave animation) ---
@@ -932,17 +951,17 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                    // position
         attrs[1] = {1, 0, VK_FORMAT_R32_SFLOAT, sizeof(f32) * 3};            // depth
 
-        water_pipeline_ = PipelineBuilder()
-            .set_shaders(wv, wf)
-            .set_vertex_input(&binding, 1, attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, false) // test ON, write OFF
-            .set_blend(true)
-            .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(WaterRenderer::PUSH_CONSTANT_SIZE,
-                               VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT)
-            .build(device_, scene_render_pass_, &water_layout_);
+        water_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(wv, wf)
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(true, false) // test ON, write OFF
+                .set_blend(true)
+                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(WaterRenderer::PUSH_CONSTANT_SIZE,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
+                .build(device_, scene_render_pass_, &water_layout_);
     }
 
     // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
@@ -965,20 +984,20 @@ void Renderer::create_pipelines() {
         attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};              // model col2
         attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 12};             // model col3
 
-        decal_pipeline_ = PipelineBuilder()
-            .set_shaders(dv, df)
-            .set_vertex_input(bindings.data(),
-                              static_cast<u32>(bindings.size()),
-                              attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, false) // test ON, write OFF
-            .set_blend(true)
-            .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_depth_bias(-1.0f, -1.0f)
-            .set_push_constant(sizeof(f32) * 16,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .set_descriptor_set_layout(texture_ds_layout_)
-            .build(device_, scene_render_pass_, &decal_layout_);
+        decal_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(dv, df)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, false) // test ON, write OFF
+                .set_blend(true)
+                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_depth_bias(-1.0f, -1.0f)
+                .set_push_constant(sizeof(f32) * 16,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(texture_ds_layout_)
+                .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
+                .build(device_, scene_render_pass_, &decal_layout_);
     }
 
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
@@ -1284,10 +1303,14 @@ void Renderer::create_bloom_resources() {
         subpass.pColorAttachments = &color_ref;
 
         std::array<VkSubpassDependency, 2> bloom_deps{};
-        // Incoming: previous pass output visible before we start writing
+        // Incoming: previous pass output visible before we start writing, and
+        // earlier samplings of this image done first: the blur ping-pongs
+        // twice over the same two images (M211e), writing what the pass
+        // before last read.
         bloom_deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
         bloom_deps[0].dstSubpass = 0;
-        bloom_deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        bloom_deps[0].srcStageMask =
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
         bloom_deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         bloom_deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         bloom_deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
@@ -1458,12 +1481,12 @@ void Renderer::create_bloom_pipelines() {
 
     // Blur pipeline (separable Gaussian, used for both H and V passes)
     bloom_blur_pipeline_ = PipelineBuilder()
-        .set_shaders(bright_v, blur_f)
-        .set_depth_test(false, false)
-        .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-        .set_push_constant(8, VK_SHADER_STAGE_FRAGMENT_BIT)
-        .set_descriptor_set_layout(texture_ds_layout_)
-        .build(device_, bloom_render_pass_, &bloom_blur_layout_);
+                               .set_shaders(bright_v, blur_f)
+                               .set_depth_test(false, false)
+                               .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                               .set_push_constant(12, VK_SHADER_STAGE_FRAGMENT_BIT)
+                               .set_descriptor_set_layout(texture_ds_layout_)
+                               .build(device_, bloom_render_pass_, &bloom_blur_layout_);
 
     // Composite pipeline (blend scene + bloom onto swapchain)
     bloom_composite_pipeline_ = PipelineBuilder()
@@ -2392,7 +2415,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Always render scene to offscreen HDR image (scene_render_pass_).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
-    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 1.0f}}; // the sky, until the sky dome (M210b)
+    // The sky, until the sky dome (M210b); alpha 0, for it doesn't glow (M211e)
+    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 0.0f}};
     clear_values[1].depthStencil = {1.0f, 0};
 
     VkRenderPassBeginInfo rp_begin{};
@@ -2589,8 +2613,17 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                     0, nullptr);
         }
 
+        VkPipeline bound = mesh_pipeline_;
         for (auto& group : unit_renderer_.mesh_groups()) {
             if (!group.mesh || group.instance_count == 0) continue;
+
+            // Fading groups come last, with the pipeline that blends them
+            // (the layouts are compatible: the sets bound stay bound).
+            VkPipeline wanted = group.fading ? mesh_fade_pipeline_ : mesh_pipeline_;
+            if (wanted != bound && wanted) {
+                vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, wanted);
+                bound = wanted;
+            }
 
             // Bind per-group albedo texture descriptor (always bind to avoid
             // stale set=0 from prior group)
@@ -2737,70 +2770,39 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         VkRect2D bloom_sc{};
         bloom_sc.extent = {half_w, half_h};
 
-        // Bright pass — extract bright pixels from scene
-        {
-            VkRenderPassBeginInfo bright_rp{};
-            bright_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            bright_rp.renderPass = bloom_render_pass_;
-            bright_rp.framebuffer = bloom_bright_fb_;
-            bright_rp.renderArea.extent = {half_w, half_h};
-            vkCmdBeginRenderPass(cmd_buf_[fi], &bright_rp, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_bright_pipeline_);
+        // FA's CBloomRenderer::DoBloom: the glow copied out of the frame
+        // (half size), blurred twice over, then added back (M211e).
+        const auto pass = [&](VkFramebuffer fb, VkPipeline pipeline, VkPipelineLayout layout,
+                              const void* pc, u32 pc_size, VkDescriptorSet input) {
+            VkRenderPassBeginInfo rp{};
+            rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            rp.renderPass = bloom_render_pass_;
+            rp.framebuffer = fb;
+            rp.renderArea.extent = {half_w, half_h};
+            vkCmdBeginRenderPass(cmd_buf_[fi], &rp, VK_SUBPASS_CONTENTS_INLINE);
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
             vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
-
-            struct { f32 threshold; f32 intensity; } bright_pc = {bloom_threshold_, bloom_intensity_};
-            vkCmdPushConstants(cmd_buf_[fi], bloom_bright_layout_,
-                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(bright_pc), &bright_pc);
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    bloom_bright_layout_, 0, 1, &scene_ds_, 0, nullptr);
+            vkCmdPushConstants(cmd_buf_[fi], layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pc_size, pc);
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1,
+                                    &input, 0, nullptr);
             vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
             vkCmdEndRenderPass(cmd_buf_[fi]);
-        }
-
-        // Blur H pass — horizontal Gaussian blur
-        {
-            VkRenderPassBeginInfo blur_h_rp{};
-            blur_h_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            blur_h_rp.renderPass = bloom_render_pass_;
-            blur_h_rp.framebuffer = bloom_blur_h_fb_;
-            blur_h_rp.renderArea.extent = {half_w, half_h};
-            vkCmdBeginRenderPass(cmd_buf_[fi], &blur_h_rp, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_blur_pipeline_);
-            vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
-            vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
-
-            struct { f32 dx, dy; } blur_h_pc = {1.0f / static_cast<f32>(half_w), 0.0f};
-            vkCmdPushConstants(cmd_buf_[fi], bloom_blur_layout_,
-                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blur_h_pc), &blur_h_pc);
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    bloom_blur_layout_, 0, 1, &bloom_bright_ds_, 0, nullptr);
-            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
-            vkCmdEndRenderPass(cmd_buf_[fi]);
-        }
-
-        // Blur V pass — vertical Gaussian blur
-        {
-            VkRenderPassBeginInfo blur_v_rp{};
-            blur_v_rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            blur_v_rp.renderPass = bloom_render_pass_;
-            blur_v_rp.framebuffer = bloom_blur_v_fb_;
-            blur_v_rp.renderArea.extent = {half_w, half_h};
-            vkCmdBeginRenderPass(cmd_buf_[fi], &blur_v_rp, VK_SUBPASS_CONTENTS_INLINE);
-
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_blur_pipeline_);
-            vkCmdSetViewport(cmd_buf_[fi], 0, 1, &bloom_vp);
-            vkCmdSetScissor(cmd_buf_[fi], 0, 1, &bloom_sc);
-
-            struct { f32 dx, dy; } blur_v_pc = {0.0f, 1.0f / static_cast<f32>(half_h)};
-            vkCmdPushConstants(cmd_buf_[fi], bloom_blur_layout_,
-                               VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(blur_v_pc), &blur_v_pc);
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    bloom_blur_layout_, 0, 1, &bloom_blur_h_ds_, 0, nullptr);
-            vkCmdDraw(cmd_buf_[fi], 3, 1, 0, 0);
-            vkCmdEndRenderPass(cmd_buf_[fi]);
+        };
+        const struct {
+            f32 scale, add;
+        } copy_pc = {kBloomGlowCopyScale, lighting_.bloom};
+        pass(bloom_bright_fb_, bloom_bright_pipeline_, bloom_bright_layout_, &copy_pc,
+             sizeof(copy_pc), scene_ds_);
+        const struct {
+            f32 dx, dy, scale;
+        } blur_h_pc = {1.0f / static_cast<f32>(half_w), 0.0f, kBloomBlurKernelScale},
+          blur_v_pc = {0.0f, 1.0f / static_cast<f32>(half_h), kBloomBlurKernelScale};
+        for (int i = 0; i < kBloomBlurCount; ++i) {
+            pass(bloom_blur_h_fb_, bloom_blur_pipeline_, bloom_blur_layout_, &blur_h_pc,
+                 sizeof(blur_h_pc), i == 0 ? bloom_bright_ds_ : bloom_blur_v_ds_);
+            pass(bloom_blur_v_fb_, bloom_blur_pipeline_, bloom_blur_layout_, &blur_v_pc,
+                 sizeof(blur_v_pc), bloom_blur_h_ds_);
         }
     }
 
@@ -2823,7 +2825,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // Composite fullscreen triangle — blend scene (+bloom) onto swapchain
     if (bloom_composite_pipeline_) {
-        f32 strength = do_bloom ? bloom_strength_ : 0.0f;
+        f32 strength = do_bloom ? 1.0f : 0.0f;
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, bloom_composite_pipeline_);
         vkCmdPushConstants(cmd_buf_[fi], bloom_composite_layout_,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(strength), &strength);
@@ -3466,6 +3468,8 @@ void Renderer::shutdown() {
         vkDestroyPipelineLayout(device_, water_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_fade_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_fade_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);

@@ -57,6 +57,9 @@ struct MeshDrawGroup {
     VkDescriptorSet lookup_ds = VK_NULL_HANDLE;   // The mesh's lookup texture (set=5)
     u32 bone_base_offset = 0; // index into bone SSBO (in mat4 units)
     u32 bones_per_instance = 0; // 0 = no skinning, else bone count
+    /// Its instances fade (a unit under construction, the build ghost): they
+    /// blend by their alpha, drawn after the opaque groups.
+    bool fading = false;
 };
 
 /// Renders units as real SCM meshes where available, with cube fallback.

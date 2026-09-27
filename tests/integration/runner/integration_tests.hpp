@@ -91,6 +91,8 @@ void test_meshless(TestContext& ctx);
 void test_camera(TestContext& ctx);
 /// --material-test (M211a), in material_test.cpp.
 void test_material(TestContext& ctx);
+/// --bloom-test (M211e), in bloom_test.cpp.
+void test_bloom(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

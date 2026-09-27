@@ -283,6 +283,8 @@ void main() {
     float multiplier = lightUbo.sunColor.w;
     vec3 fill = lightUbo.shadowFill.rgb;
     vec3 lit;
+    // The frame's glow (M211e): TTerrain's specular, a little; XP's none.
+    float glow = 0.0;
     if (!xp) {
         // TTerrain (CalculateLighting): specular where the albedo's alpha
         // is low, added into the light.
@@ -291,6 +293,7 @@ void main() {
         vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb + spec;
         light = multiplier * light + fill * (1.0 - light);
         lit = light * color;
+        glow = 0.01 + spec * lightUbo.specularColor.w;
     } else {
         // TTerrainXP (TerrainAlbedoXP): specular from the albedo's alpha.
         vec3 r = reflect(V, worldNormal);
@@ -311,7 +314,7 @@ void main() {
     lit *= fogBright;
     // No distance fog: FA's shaders have none (M210a).
 
-    outColor = vec4(lit, 1.0);
+    outColor = vec4(lit, glow);
 }
 )glsl";
 
@@ -565,7 +568,7 @@ layout(std430, set = 1, binding = 0) readonly buffer BoneBuffer {
 } boneSSBO;
 
 layout(location = 0) out vec3 fragNormal;
-layout(location = 1) out vec4 fragColor;
+layout(location = 1) flat out vec4 fragColor; // per instance: exact, not interpolated
 layout(location = 2) out vec2 fragUV;
 layout(location = 3) out vec3 fragTangent;
 layout(location = 4) out vec3 fragBitangent;
@@ -652,7 +655,7 @@ layout(set = 5, binding = 0) uniform sampler2D texLookup;
 layout(location = 0) in vec3 fragNormal;
 // Army colour (RGB) + build alpha (A). A negative red marks a wreck, a
 // negative green a prop (drawn without a team mask).
-layout(location = 1) in vec4 fragColor;
+layout(location = 1) flat in vec4 fragColor;
 layout(location = 2) in vec2 fragUV;
 layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
@@ -808,9 +811,16 @@ void main() {
 
     // FA alpha-tests props alone (NormalMappedAlpha: the albedo's alpha over
     // 0x80); a unit's albedo alpha is a mask its technique reads (Seraphim's
-    // glow). The instance's alpha fades a unit under construction.
+    // glow).
     if (prop && texColor.a <= 128.0 / 255.0) discard;
-    outColor = vec4(lit, fragColor.a);
+    // Alpha: a fading instance's fade (a unit under construction, the build
+    // ghost), which its pipeline blends by, leaving the frame's alpha; else
+    // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
+    // plus glowMinimum, a wreck's glowMinimum, a prop's none (FA writes it
+    // no alpha, and what's beneath is at most 0.01 and terrain specular).
+    const float glowMinimum = 0.01;
+    float glow = prop ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum);
+    outColor = vec4(lit, fragColor.a < 1.0 ? fragColor.a : glow);
 }
 )glsl";
 
@@ -1104,14 +1114,16 @@ layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D sceneTex;
 
 layout(push_constant) uniform PC {
-    float threshold;
-    float intensity;
+    float glowCopyScale; // ren_BloomGlowCopyScale
+    float glowCopyAdd;   // the map's bloom
 } pc;
 
+// FA's CopyGlowingPS (frame.fx): what glows is what has alpha. MinimumGlow
+// is 0.02; the frame is read at half size, linearly, as Moho stretches it.
 void main() {
-    vec3 color = texture(sceneTex, fragUV).rgb;
-    vec3 bright = max(color - vec3(pc.threshold), vec3(0.0));
-    outColor = vec4(bright * pc.intensity, 1.0);
+    vec4 c = texture(sceneTex, fragUV);
+    float a = clamp((c.a - 0.02) * pc.glowCopyScale + pc.glowCopyAdd, 0.0, 1.0);
+    outColor = c * a;
 }
 )glsl";
 
@@ -1124,18 +1136,19 @@ layout(location = 0) out vec4 outColor;
 layout(set = 0, binding = 0) uniform sampler2D inputTex;
 
 layout(push_constant) uniform PC {
-    vec2 direction; // (1/w, 0) for horizontal, (0, 1/h) for vertical
+    vec2 direction;  // (1/w, 0) for horizontal, (0, 1/h) for vertical
+    float blurScale; // ren_BloomBlurKernelScale
 } pc;
 
+// FA's BlurHorizontalPS / BlurVerticalPS (frame.fx): seven taps a texel
+// apart, then scaled up.
 void main() {
-    const float weights[5] = float[](0.2270270270, 0.1945945946, 0.1216216216, 0.0540540541, 0.0162162162);
-    vec3 result = texture(inputTex, fragUV).rgb * weights[0];
-    for (int i = 1; i < 5; i++) {
-        vec2 offset = pc.direction * float(i);
-        result += texture(inputTex, fragUV + offset).rgb * weights[i];
-        result += texture(inputTex, fragUV - offset).rgb * weights[i];
-    }
-    outColor = vec4(result, 1.0);
+    const float weights[7] = float[](0.102734, 0.120985, 0.176033, 0.199471, 0.176033,
+                                     0.120985, 0.102734);
+    vec4 color = vec4(0.0);
+    for (int i = 0; i < 7; i++)
+        color += weights[i] * texture(inputTex, fragUV + pc.direction * float(i - 3));
+    outColor = color * pc.blurScale;
 }
 )glsl";
 
@@ -1149,7 +1162,7 @@ layout(set = 0, binding = 0) uniform sampler2D sceneTex;
 layout(set = 1, binding = 0) uniform sampler2D bloomTex;
 
 layout(push_constant) uniform PC {
-    float bloomStrength;
+    float bloomStrength; // 1 with bloom (FA's TFrameAdd adds one to one), 0 without
 } pc;
 
 void main() {

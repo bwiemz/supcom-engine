@@ -271,6 +271,8 @@ private:
     VkPipelineLayout water_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE;
+    VkPipeline mesh_fade_pipeline_ = VK_NULL_HANDLE; // fading instances (M211e)
+    VkPipelineLayout mesh_fade_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
 
@@ -412,9 +414,6 @@ private:
     bool bloom_enabled_ = true;
     bool legacy_hud_ = false;        // --legacy-hud
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
-    f32 bloom_threshold_ = 0.8f;
-    f32 bloom_intensity_ = 1.2f;
-    f32 bloom_strength_ = 0.3f;
 
     // Offscreen scene image (rendered instead of swapchain, then composited)
     AllocatedImage scene_color_image_{};

@@ -164,10 +164,10 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
         blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
         blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
-        blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                   VK_COLOR_COMPONENT_G_BIT |
-                                   VK_COLOR_COMPONENT_B_BIT |
-                                   VK_COLOR_COMPONENT_A_BIT;
+        // FA's particle blends write colour only (ColorWriteEnable 0x07):
+        // the frame's alpha is its glow (M211e).
+        blend_att.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -207,10 +207,10 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
         blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
-        blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                   VK_COLOR_COMPONENT_G_BIT |
-                                   VK_COLOR_COMPONENT_B_BIT |
-                                   VK_COLOR_COMPONENT_A_BIT;
+        // FA's particle blends write colour only (ColorWriteEnable 0x07):
+        // the frame's alpha is its glow (M211e).
+        blend_att.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
 
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
