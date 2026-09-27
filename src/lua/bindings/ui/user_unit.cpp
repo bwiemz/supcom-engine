@@ -12,6 +12,7 @@
 #include "blueprints/blueprint_store.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/weapon.hpp"
@@ -158,7 +159,7 @@ int push_bool_of(lua_State* L, bool(sim::EntityRecord::* field)) {
 // --- Identity -------------------------------------------------------------
 
 int uu_GetEntityId(lua_State* L) {
-    lua_pushnumber(L, user_unit_id(L));
+    sim::push_entity_id(L, user_unit_id(L));
     return 1;
 }
 
@@ -344,7 +345,7 @@ int uu_GetCommandQueue(lua_State* L) {
         }
         if (c.target_id > 0) {
             lua_pushstring(L, "targetId");
-            lua_pushnumber(L, c.target_id);
+            sim::push_entity_id(L, c.target_id);
             lua_rawset(L, -3);
         }
         lua_rawseti(L, -2, n++);

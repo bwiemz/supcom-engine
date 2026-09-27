@@ -26,6 +26,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
@@ -339,7 +340,7 @@ static int entity_AdjustHealth(lua_State* L) {
 
 static int entity_GetEntityId(lua_State* L) {
     auto* e = check_entity(L);
-    lua_pushnumber(L, e ? e->entity_id() : 0);
+    sim::push_entity_id(L, e ? e->entity_id() : 0);
     return 1;
 }
 

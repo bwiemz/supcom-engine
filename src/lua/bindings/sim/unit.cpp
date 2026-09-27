@@ -27,6 +27,7 @@
 #include "sim/category_expr.hpp"
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/projectile_script.hpp"
@@ -748,7 +749,7 @@ static int unit_GetCommandQueue(lua_State* L) {
         }
         if (cmd.target_id > 0) {
             lua_pushstring(L, "targetId");
-            lua_pushnumber(L, cmd.target_id);
+            sim::push_entity_id(L, cmd.target_id);
             lua_rawset(L, -3);
         }
         lua_rawseti(L, -2, idx++);
