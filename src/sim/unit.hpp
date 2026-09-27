@@ -815,6 +815,13 @@ public:
     bool is_bone_hidden(i32 idx) const { return hidden_bones_.count(idx) > 0; }
     void show_bone(i32 idx) { hidden_bones_.erase(idx); }
     void hide_bone(i32 idx) { hidden_bones_.insert(idx); }
+    /// The hidden bones, as a mask of the first 64 (the renderer's most).
+    u64 hidden_bone_mask() const {
+        u64 mask = 0;
+        for (const i32 i : hidden_bones_)
+            if (i >= 0 && i < 64) mask |= u64{1} << i;
+        return mask;
+    }
 
     // Animated bone matrices (for GPU skinning)
     const std::vector<std::array<f32, 16>>& animated_bone_matrices() const {

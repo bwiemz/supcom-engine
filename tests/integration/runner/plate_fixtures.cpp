@@ -43,8 +43,8 @@ std::string show(const Rgb& c) {
 /// The first and last columns of the run of pixels along the frame's middle
 /// row, through the middle, that differ from `sky` by more than 12 of 255
 /// ({0, -1} if the middle is sky).
-std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky) {
-    const u32 y = image.height / 2;
+std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky, int row) {
+    const u32 y = row < 0 ? image.height / 2 : static_cast<u32>(row);
     const auto plate = [&](u32 x) {
         for (int c = 0; c < 3; ++c) {
             const int v = image.pixels[(static_cast<size_t>(y) * image.width + x) * 4 + c];
@@ -60,12 +60,12 @@ std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky) {
     return {static_cast<int>(left), static_cast<int>(right)};
 }
 
-int plate_width(const ImageRGBA8& image, const Rgb& sky) {
-    const auto [left, right] = plate_span(image, sky);
+int plate_width(const ImageRGBA8& image, const Rgb& sky, int row) {
+    const auto [left, right] = plate_span(image, sky, row);
     return right - left + 1;
 }
 
-void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments) {
+void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments, bool child_bone) {
     std::vector<char> d(48, 0);
     const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
     const auto append = [&](const void* p, size_t n) {
@@ -81,15 +81,19 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments) 
     std::memcpy(d.data(), "MODL", 4);
     put(4, 5); // version
     append("NAME", 4);
-    append("root", 5); // and its terminator
-    d.resize(60, 0);
+    append("root", 5);  // and its terminator, at 52
+    append("child", 6); // at 57
+    d.resize(64, 0);
     append("SKEL", 4);
     const auto bone_offset = static_cast<u32>(d.size());
-    f({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}); // rest pose: identity
-    f({0, 0, 0});                                        // position
-    f({1, 0, 0, 0});                                     // rotation (w, x, y, z)
-    u({52, 0xFFFFFFFFu, 0, 0});                          // name, no parent
-    d.resize(188, 0);
+    const u32 bones = child_bone ? 2 : 1;
+    for (u32 b = 0; b < bones; ++b) {
+        f({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1});      // rest pose: identity
+        f({0, 0, 0});                                             // position
+        f({1, 0, 0, 0});                                          // rotation (w, x, y, z)
+        u({b == 0 ? 52u : 57u, b == 0 ? 0xFFFFFFFFu : 0u, 0, 0}); // name, parent
+    }
+    d.resize(bone_offset + 108 * bones + 16, 0);
     append("VTXL", 4);
     const auto vert_offset = static_cast<u32>(d.size());
     const u32 side = segments + 1;
@@ -103,7 +107,7 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments) 
             f({0, 0, 1});                                                   // binormal: along v
             f({u_at, v_at});                                                // uv
             f({0, 0});                                                      // second uv
-            u({0});                                                         // bones
+            u({child_bone ? 1u : 0u}); // bones: [1, 0, 0, 0] names the child first
         }
     }
     const auto index_offset = static_cast<u32>(d.size());
@@ -119,12 +123,12 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments) 
     }
     append(indices.data(), indices.size() * sizeof(u16));
     put(8, bone_offset);
-    put(12, 1); // bones the vertices use
+    put(12, bones); // bones the vertices use
     put(16, vert_offset);
     put(24, side * side);
     put(28, index_offset);
     put(32, static_cast<u32>(indices.size()));
-    put(44, 1); // bones in all
+    put(44, bones); // bones in all
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
 

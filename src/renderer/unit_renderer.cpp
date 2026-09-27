@@ -241,6 +241,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     struct InstanceBones {
         u32 id = 0;          // 0 = no bones (props, projectiles)
         u32 bone_count = 0;  // 0 = no skinning
+        u64 hidden = 0;      // bones Unit:HideBone hid (bit i, bone i)
     };
 
     // Group mesh instances by GPUMesh pointer, with bone info
@@ -361,7 +362,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             if (entity.is_unit || entity.bone_count > 0) {
                 u32 bc = entity.bone_count;
                 if (bc > MAX_BONES_PER_UNIT) bc = MAX_BONES_PER_UNIT;
-                gd.bones.push_back({entity.id, bc});
+                gd.bones.push_back({entity.id, bc, entity.hidden_bones});
             } else {
                 gd.bones.push_back({0, 0});
             }
@@ -397,6 +398,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     u32 bone_offset = 0; // in mat4 units (each mat4 = 16 floats)
     static constexpr f32 IDENTITY[16] = {
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    // A hidden bone's skinning matrix (column-major): nothing but y -1000.
+    static constexpr f32 kHiddenBone[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1000, 0, 1};
     u32 max_bone_entries = MAX_INSTANCES * MAX_BONES_PER_UNIT;
     std::vector<sim::BoneMatrix> blended; // this frame's pose, between ticks
 
@@ -447,6 +450,14 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                     // Fill remaining with identity
                     for (u32 b = bc; b < group_bones; b++) {
                         std::memcpy(bone_data + (base + b) * 16, IDENTITY, sizeof(f32) * 16);
+                    }
+                    // A hidden bone is parked as Moho's HardwareMeshBatch
+                    // parks it: no rotation or scale, far below the world
+                    // (kHiddenBoneDepth), so its geometry, and its shadow,
+                    // collapse out of sight (M211h).
+                    for (u32 b = 0; b < group_bones && b < 64; b++) {
+                        if ((gd.bones[i].hidden >> b & 1u) != 0)
+                            std::memcpy(bone_data + (base + b) * 16, kHiddenBone, sizeof(f32) * 16);
                     }
                 }
                 bone_offset += safe_count * group_bones;

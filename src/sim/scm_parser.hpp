@@ -19,8 +19,8 @@ struct SCMMesh {
         f32 px, py, pz;       // position
         f32 nx, ny, nz;       // normal
         f32 u, v;              // UV1 texture coordinates
-        u8  bone_indices[4];   // blend-weight skinning: up to 4 bone indices
-        f32 bone_weights[4];   // blend weights (equal 0.25 each for SCM)
+        u8 bone_indices[4];    // the SCM's four bone indices
+        f32 bone_weights[4];   // (1, 0, 0, 0): FA skins by the first alone (M211h)
         f32 tx, ty, tz;        // tangent: along u
         f32 bx, by, bz;        // binormal: along v
     };
