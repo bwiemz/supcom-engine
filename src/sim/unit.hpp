@@ -709,6 +709,9 @@ public:
         size_x_ = size_x;
         size_z_ = size_z;
     }
+    /// The blueprint's SizeX and SizeZ: steering's boxes (M203c).
+    f32 size_x() const { return size_x_; }
+    f32 size_z() const { return size_z_; }
     void set_average_density(f32 d) { average_density_ = d; }
     /// Size x density: a transport picks up the largest first (M206m).
     f32 load_metric() const { return size_x_ * size_y_ * size_z_ * average_density_; }
@@ -885,10 +888,10 @@ public:
 
     void fire_adjacency_callbacks(EntityRegistry& registry, lua_State* L);
 
-    // OnGiven callback system
-    void add_on_given_callback(int ref) { on_given_callbacks_.push_back(ref); }
-    const std::vector<int>& on_given_callbacks() const { return on_given_callbacks_; }
-    void clear_on_given_callbacks(lua_State* L);
+    /// Whether this unit's place has been taken by a replacement of another
+    /// army (ChangeUnitArmy, M206v): its Destroy is a hand-over, not a loss.
+    bool transferred() const { return transferred_; }
+    void set_transferred() { transferred_ = true; }
 
     // OnUnitBuilt callback system (for factory production notification)
     struct UnitBuiltCallback {
@@ -1304,8 +1307,7 @@ private:
     // Elevation override
     f32 elevation_override_ = -1.0f; // -1 = no override (sentinel)
     bool dying_ = false;             ///< killed; see begin_dying
-    // OnGiven callbacks (Lua registry refs)
-    std::vector<int> on_given_callbacks_;
+    bool transferred_ = false;       ///< replaced; see set_transferred
     // OnUnitBuilt callbacks (function + category filter)
     std::vector<UnitBuiltCallback> on_unit_built_callbacks_;
     // Build queue (factory production queue)

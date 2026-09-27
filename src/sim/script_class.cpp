@@ -135,6 +135,10 @@ void push_blueprint_script_class(lua_State* L, const std::string& bp_id, std::st
     lua_remove(L, cache);
 }
 
+void push_entity_id(lua_State* L, u32 id) {
+    lua_pushstring(L, std::to_string(static_cast<i32>(id)).c_str());
+}
+
 void push_new_script_object(lua_State* L, const char* kind) {
     const int cls = lua_gettop(L);
     if (!lua_istable(L, cls)) {

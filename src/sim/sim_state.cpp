@@ -1,4 +1,5 @@
 #include "sim/sim_state.hpp"
+#include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/collision_beam.hpp"
 #include "sim/platoon.hpp"
@@ -1347,6 +1348,9 @@ void SimState::update_entities() {
                                   armies_[i]->energy_efficiency()};
     }
 
+    // Units on paths look ahead for others they would meet (M203c).
+    steer_ground_units(*this);
+
     for (u32 id : ids) {
         auto* e = entity_registry_.find(id);
         if (!e || e->destroyed()) continue;
@@ -1946,12 +1950,39 @@ void SimState::kill_unit(Unit& unit) {
     entity_registry_.unregister_entity(id);
 }
 
+bool SimState::give_unit(Unit& unit, i32 army) {
+    // Through the script global, as a script gives one (ChangeUnitArmy: a
+    // new unit of the army takes its place, M206v). A sim without the
+    // bindings (unit tests) moves the unit itself.
+    if (L_ && unit.lua_table_ref() >= 0) {
+        const int top = lua_gettop(L_);
+        lua_pushstring(L_, "ChangeUnitArmy");
+        lua_rawget(L_, LUA_GLOBALSINDEX);
+        if (lua_isfunction(L_, -1)) {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, unit.lua_table_ref());
+            lua_pushnumber(L_, army + 1);
+            bool given = false;
+            if (lua_pcall(L_, 2, 1, 0) != 0) {
+                const char* err = lua_tostring(L_, -1);
+                spdlog::warn("ChangeUnitArmy error: {}", err ? err : "(unknown)");
+            } else {
+                given = !lua_isnil(L_, -1);
+            }
+            lua_settop(L_, top);
+            return given;
+        }
+        lua_settop(L_, top);
+    }
+    unit.set_army(army);
+    return true;
+}
+
 void SimState::dispose_defeated_army(i32 army) {
     const i32 recipient = find_share_recipient(army);
     // PartialShare transfers only structures + engineers; the rest are destroyed.
     const bool partial = share_mode_ == ShareMode::PartialShare;
     bool transferred_any = false;
-    std::vector<u32> to_kill;
+    std::vector<u32> to_give, to_kill;
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.army() != army || e.destroyed() || !e.is_unit()) return;
         auto* u = static_cast<Unit*>(&e);
@@ -1959,22 +1990,16 @@ void SimState::dispose_defeated_army(i32 army) {
         if (transfer && partial) {
             transfer = u->has_category("STRUCTURE") || u->has_category("ENGINEER");
         }
-        if (transfer) {
-            u->set_army(recipient);
-            // Keep the Lua-side Army field (1-based) in sync, mirroring capture.
-            if (u->lua_table_ref() >= 0) {
-                lua_rawgeti(L_, LUA_REGISTRYINDEX, u->lua_table_ref());
-                lua_pushstring(L_, "Army");
-                lua_pushnumber(L_, recipient + 1);
-                lua_rawset(L_, -3);
-                lua_pop(L_, 1);
-            }
-            transferred_any = true;
-        } else if (!u->is_dying()) {
-            to_kill.push_back(u->entity_id());
-        }
+        if (transfer) to_give.push_back(u->entity_id());
+        else if (!u->is_dying()) to_kill.push_back(u->entity_id());
     });
-    // Killed after the walk: a death runs scripts, which may kill others.
+    // Given and killed after the walk: a transfer makes units, a death runs
+    // scripts, which may kill others.
+    for (const u32 id : to_give) {
+        Entity* e = entity_registry_.find(id);
+        if (e && !e->destroyed() && e->is_unit() && e->army() == army)
+            transferred_any |= give_unit(static_cast<Unit&>(*e), recipient);
+    }
     for (const u32 id : to_kill) {
         Entity* e = entity_registry_.find(id);
         if (e && !e->destroyed() && e->is_unit()) kill_unit(static_cast<Unit&>(*e));
