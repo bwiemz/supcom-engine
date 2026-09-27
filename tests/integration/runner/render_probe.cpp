@@ -86,6 +86,16 @@ OffscreenShots::~OffscreenShots() {
 Pixels OffscreenShots::shoot(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
                              bool with_world) {
     if (!ok_) return {};
+    return centre_pixels(capture(terrain, x, z, distance, with_world));
+}
+
+ImageRGBA8 OffscreenShots::shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance) {
+    if (!ok_) return {};
+    return capture(terrain, x, z, distance, true);
+}
+
+ImageRGBA8 OffscreenShots::capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
+                                   bool with_world) {
     sim::WorldHistory& world = with_world ? history_ : empty_;
     renderer_.clear_scene();
     renderer_.build_scene(&terrain, ctx_.sim.blueprint_store(),
@@ -109,7 +119,7 @@ Pixels OffscreenShots::shoot(const map::Terrain& terrain, f32 x, f32 z, f32 dist
     ImageRGBA8 shot;
     renderer_.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
     draw();
-    return centre_pixels(shot);
+    return shot;
 }
 
 } // namespace osc::test

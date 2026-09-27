@@ -14427,11 +14427,18 @@ void test_blend(TestContext& ctx) {
     // Run a few ticks to get units spawned
     for (osc::u32 i = 0; i < 10; i++) ctx.sim.tick();
 
-    // Test 1: SCM vertex struct size is 64 bytes (pos12 + normal12 + uv8 + indices4 + weights16 + tangent12)
+    // Test 1: SCM vertex struct size is 76 bytes (pos12 + normal12 + uv8 + indices4 + weights16
+    // + tangent12 + binormal12)
     {
-        bool ok = sizeof(osc::sim::SCMMesh::Vertex) == 64;
-        if (ok) { pass++; spdlog::info("[PASS] Test 1: SCMMesh::Vertex size = 64 bytes"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 1: SCMMesh::Vertex size = {} (expected 64)", sizeof(osc::sim::SCMMesh::Vertex)); }
+        bool ok = sizeof(osc::sim::SCMMesh::Vertex) == 76;
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 1: SCMMesh::Vertex size = 76 bytes");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 1: SCMMesh::Vertex size = {} (expected 76)",
+                                   sizeof(osc::sim::SCMMesh::Vertex));
+        }
     }
 
     // Test 2: Parse a real SCM mesh and verify blend weight data
@@ -14526,6 +14533,61 @@ void test_blend(TestContext& ctx) {
         }
         if (ok) { pass++; spdlog::info("[PASS] Test 4: All vertex weights sum to 1.0"); }
         else { fail++; osc::test_status::fail("[FAIL] Test 4: Weight sum validation failed"); }
+    }
+
+    // Test 5: the vertex's vectors are what their names say. The SCM stores
+    // the normal, then the tangent, then the binormal (faf-re's SScmVertex);
+    // read in another order, meshes shade with a tangent for their normal.
+    // Per triangle, the first vertex's normal should lie along the face's
+    // normal, its tangent along the direction u grows, its binormal along v.
+    {
+        const std::string mesh_path = "/units/uel0001/uel0001_lod0.scm";
+        auto file_data = ctx.vfs.read_file(mesh_path);
+        auto mesh = file_data ? osc::sim::parse_scm_mesh(*file_data) : std::nullopt;
+        using V3 = std::array<float, 3>;
+        const auto sub = [](V3 a, V3 b) { return V3{a[0] - b[0], a[1] - b[1], a[2] - b[2]}; };
+        const auto dot = [](V3 a, V3 b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+        const auto unit = [&](V3 a) {
+            const float l = std::sqrt(dot(a, a));
+            return l > 1e-6f ? V3{a[0] / l, a[1] / l, a[2] / l} : V3{0, 0, 0};
+        };
+        int triangles = 0, normal_ok = 0, tangent_ok = 0, binormal_ok = 0;
+        if (mesh) {
+            const auto& vs = mesh->vertices;
+            for (size_t i = 0; i + 2 < mesh->indices.size(); i += 3) {
+                const auto& a = vs[mesh->indices[i]];
+                const auto& b = vs[mesh->indices[i + 1]];
+                const auto& c = vs[mesh->indices[i + 2]];
+                const V3 e1 = sub({b.px, b.py, b.pz}, {a.px, a.py, a.pz});
+                const V3 e2 = sub({c.px, c.py, c.pz}, {a.px, a.py, a.pz});
+                const float du1 = b.u - a.u, dv1 = b.v - a.v;
+                const float du2 = c.u - a.u, dv2 = c.v - a.v;
+                const float det = du1 * dv2 - du2 * dv1;
+                const V3 face = unit({e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                                      e1[0] * e2[1] - e1[1] * e2[0]});
+                if (std::abs(det) < 1e-9f || dot(face, face) == 0.0f) continue;
+                const V3 along_u =
+                    unit({(e1[0] * dv2 - e2[0] * dv1) / det, (e1[1] * dv2 - e2[1] * dv1) / det,
+                          (e1[2] * dv2 - e2[2] * dv1) / det});
+                const V3 along_v =
+                    unit({(e2[0] * du1 - e1[0] * du2) / det, (e2[1] * du1 - e1[1] * du2) / det,
+                          (e2[2] * du1 - e1[2] * du2) / det});
+                ++triangles;
+                if (std::abs(dot(face, unit({a.nx, a.ny, a.nz}))) > 0.7f) ++normal_ok;
+                if (std::abs(dot(along_u, unit({a.tx, a.ty, a.tz}))) > 0.7f) ++tangent_ok;
+                if (std::abs(dot(along_v, unit({a.bx, a.by, a.bz}))) > 0.7f) ++binormal_ok;
+            }
+        }
+        const bool ok = triangles > 1000 && normal_ok > triangles * 8 / 10 &&
+                        tangent_ok > triangles * 8 / 10 && binormal_ok > triangles * 8 / 10;
+        if (ok) pass++;
+        else fail++;
+        const std::string what = fmt::format(
+            "Test 5: of {} triangles of the UEF ACU, the normal lies along the face on {}, the "
+            "tangent along u on {}, the binormal along v on {}",
+            triangles, normal_ok, tangent_ok, binormal_ok);
+        if (ok) spdlog::info("[PASS] {}", what);
+        else osc::test_status::fail("[FAIL] {}", what);
     }
 
     spdlog::info("Blend-weight skinning test: {}/{} passed", pass, pass + fail);
