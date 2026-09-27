@@ -108,8 +108,9 @@ template <typename White> void write_cube(const std::filesystem::path& path, Whi
 }
 
 /// A one-bone SCM mesh: a square `half` units either side of the origin,
-/// flat and facing up, wound both ways so that either culling draws it.
-void write_plate_scm(const std::filesystem::path& path, f32 half) {
+/// flat and facing up, cut into `segments` squared cells, wound both ways so
+/// that either culling draws it.
+void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments = 1) {
     std::vector<char> d(48, 0);
     const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
     const auto append = [&](const void* p, size_t n) {
@@ -136,25 +137,38 @@ void write_plate_scm(const std::filesystem::path& path, f32 half) {
     d.resize(188, 0);
     append("VTXL", 4);
     const auto vert_offset = static_cast<u32>(d.size());
-    const f32 corners[4][2] = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
-    for (const auto& c : corners) {
-        f({c[0], 0, c[1]});                                        // position
-        f({0, 1, 0});                                              // normal
-        f({1, 0, 0});                                              // tangent: along u
-        f({0, 0, 1});                                              // binormal: along v
-        f({c[0] > 0.0f ? 1.0f : 0.0f, c[1] > 0.0f ? 1.0f : 0.0f}); // uv
-        f({0, 0});                                                 // second uv
-        u({0});                                                    // bones
+    const u32 side = segments + 1;
+    for (u32 j = 0; j < side; ++j) {
+        for (u32 i = 0; i < side; ++i) {
+            const f32 u_at = static_cast<f32>(i) / static_cast<f32>(segments);
+            const f32 v_at = static_cast<f32>(j) / static_cast<f32>(segments);
+            f({-half + 2.0f * half * u_at, 0, -half + 2.0f * half * v_at}); // position
+            f({0, 1, 0});                                                   // normal
+            f({1, 0, 0});                                                   // tangent: along u
+            f({0, 0, 1});                                                   // binormal: along v
+            f({u_at, v_at});                                                // uv
+            f({0, 0});                                                      // second uv
+            u({0});                                                         // bones
+        }
     }
     const auto index_offset = static_cast<u32>(d.size());
-    const u16 indices[] = {0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2};
-    append(indices, sizeof(indices));
+    std::vector<u16> indices;
+    for (u32 j = 0; j < segments; ++j) {
+        for (u32 i = 0; i < segments; ++i) {
+            const auto a = static_cast<u16>(j * side + i);
+            const auto b = static_cast<u16>(a + 1);
+            const auto c = static_cast<u16>(a + side + 1);
+            const auto e = static_cast<u16>(a + side);
+            indices.insert(indices.end(), {a, b, c, a, c, e, a, c, b, a, e, c});
+        }
+    }
+    append(indices.data(), indices.size() * sizeof(u16));
     put(8, bone_offset);
     put(12, 1); // bones the vertices use
     put(16, vert_offset);
-    put(24, 4);
+    put(24, side * side);
     put(28, index_offset);
-    put(32, static_cast<u32>(std::size(indices)));
+    put(32, static_cast<u32>(indices.size()));
     put(44, 1); // bones in all
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
@@ -349,6 +363,25 @@ void test_material(TestContext& ctx) {
               [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 255}; });
     write_dds(dir / "plate_specteam_team.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 255}; });
+    // For wrecks (M211d): a finely cut plate (it crumples by its vertices),
+    // grey and red albedos, and crunch noises -- uniform, below and above
+    // WreckagePS's 0.22 in green, and in stripes of the two.
+    write_plate_scm(dir / "plate_fine.scm", 4.0f, 32);
+    write_dds(dir / "plate_albedo_grey.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{128, 128, 128, 255}; });
+    write_dds(dir / "plate_albedo_red.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{255, 0, 0, 255}; });
+    write_dds(dir / "crunch_low.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{51, 51, 51, 0}; });
+    write_dds(dir / "crunch_high.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{51, 64, 51, 0}; });
+    write_dds(dir / "crunch_stripes.dds", 1, [](int, u32 column, u32) {
+        return std::array<u8, 4>{51, static_cast<u8>(column < 2 ? 51 : 64), 51, 0};
+    });
+    // A small plate, to hover over another and shade it, and a blue albedo.
+    write_plate_scm(dir / "plate_small.scm", 2.0f);
+    write_dds(dir / "plate_albedo_blue.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 0, 255, 255}; });
     // A falloff lookup, 16 wide and 20 tall: red counts the column, green the
     // row; alpha is set on the right half (the rim's), which weighs the
     // environment.
@@ -377,13 +410,14 @@ void test_material(TestContext& ctx) {
         std::string albedo = "plate_albedo.dds";
         std::string specteam = "plate_specteam.dds";
         std::string shader = "Unit";
+        std::string mesh = "plate.scm";
         std::string lookup; // its LookupName, if any
     };
     // Stand the test's plate in for blueprint `bp`'s mesh at (x, z), on the
     // ground, through a mesh blueprint of the test's own: a unit of ARMY_1's,
     // or a prop.
     const auto make_plate = [&](const std::string& bp, const Plate& plate, f32 x, f32 z,
-                                bool prop = false) {
+                                bool prop = false, f32 lift = 0.0f) {
         std::string key = bp;
         for (char& c : key)
             if (c == '/' || c == '.') c = '_';
@@ -396,7 +430,7 @@ void test_material(TestContext& ctx) {
             fmt::format("local mesh = '/osc_material_test/{0}_plate'\n"
                         "__blueprints[mesh] = {{ BlueprintId = mesh, LODs = {{ {{\n"
                         "  LODCutoff = 1000, ShaderName = '{1}',\n"
-                        "  MeshName = '/osc_material_test/plate.scm',\n"
+                        "  MeshName = '/osc_material_test/{11}',\n"
                         "  AlbedoName = '/osc_material_test/{2}',\n"
                         "  SpecularName = '/osc_material_test/{10}',\n"
                         "  NormalsName = '/osc_material_test/{3}', LookupName = {4} }} }} }}\n"
@@ -406,7 +440,7 @@ void test_material(TestContext& ctx) {
                         "bp.Display.UniformScale = 1\n"
                         "Warp({6}, Vector({7}, {8}, {9}))\n",
                         key, plate.shader, plate.albedo, plate.normals, lookup, bp, create, x,
-                        ground_y + 0.5f, z, plate.specteam);
+                        ground_y + 0.5f + lift, z, plate.specteam, plate.mesh);
         const auto made = ctx.lua_state.do_string(lua);
         if (!made) spdlog::warn("the plate: {}", made.error().message);
         ctx.sim.tick();
@@ -730,6 +764,202 @@ void test_material(TestContext& ctx) {
                             column, column * 17, listed[1], unlisted[1], white_env[0], white_env[1],
                             white_env[2], sunlit[0], sunlit[1], sunlit[2], black[0], black[1],
                             black[2]));
+    }
+
+    // The wreck tests' plates stand off the test's ground, on its level, away
+    // from everything else. A frame's middle pixel, and its middle row.
+    const auto frame_at = [&](f32 x, f32 z, f32 distance) {
+        map::ScmapEnvironment env;
+        env.terrain_shader = "TTerrain";
+        env.cubemaps.emplace_back("<default>", kBlack);
+        ground.set_lighting(white_fill(), std::move(env));
+        shots.recapture();
+        return shots.shoot_frame(ground, x, z, distance);
+    };
+    const auto middle = [](const ImageRGBA8& image) {
+        const size_t i =
+            (static_cast<size_t>(image.height / 2) * image.width + image.width / 2) * 4;
+        return i + 2 < image.pixels.size()
+                   ? std::array<int, 3>{image.pixels[i], image.pixels[i + 1], image.pixels[i + 2]}
+                   : std::array<int, 3>{-1, -1, -1};
+    };
+    const auto grey_near = [](const std::array<int, 3>& px, int v) {
+        return std::abs(px[0] - v) <= 2 && std::abs(px[1] - v) <= 2 && std::abs(px[2] - v) <= 2;
+    };
+
+    // Test 13: WreckagePS: the albedo lit without shadow (here by the fill,
+    // 1), then by the crunch: (albedo + c.r + c.a) * c.b * 2.5 where its green
+    // is under 0.22, else c.b * 2. With c = (0.2, g, 0.2, 0), g 0.2 or 0.25:
+    // white, 0.6; grey (0.5), 0.5 * 0.7 * 0.5; white over 0.22, 0.4.
+    {
+        const auto wreck = [](const char* albedo, const char* crunch) {
+            Plate p;
+            p.shader = "Wreckage";
+            p.albedo = albedo;
+            p.specteam = crunch;
+            return p;
+        };
+        make_plate("ueb3101", wreck("plate_albedo.dds", "crunch_low.dds"), 100.0f, 100.0f);
+        make_plate("ueb3201", wreck("plate_albedo_grey.dds", "crunch_low.dds"), 120.0f, 100.0f);
+        make_plate("ueb2104", wreck("plate_albedo.dds", "crunch_high.dds"), 140.0f, 100.0f);
+        camera.set_pitch(1.1f);
+        const auto white_low = middle(frame_at(100.0f, 100.0f, 30.0f));
+        const auto grey_low = middle(frame_at(120.0f, 100.0f, 30.0f));
+        const auto white_high = middle(frame_at(140.0f, 100.0f, 30.0f));
+        camera.set_pitch(default_pitch);
+        const f32 grey = 128.0f / 255.0f;
+        const int grey_expected =
+            static_cast<int>(std::lround(grey * (grey + 0.2f) * 0.2f * 2.5f * 255.0f));
+        t.check(grey_near(white_low, 153) && grey_near(grey_low, grey_expected) &&
+                    grey_near(white_high, 102),
+                fmt::format("Test 13: wrecks show {} (white, green under 0.22), {} (grey; "
+                            "{} expected), {} (white, over)",
+                            white_low[0], grey_low[0], grey_expected, white_high[0]));
+    }
+
+    // Test 14: the crunch repeats 5.15 times across a wreck's texture, and
+    // shifts by fract(0.01 * t) for t the tick its mesh instance was made. A
+    // crunch in stripes, half under 0.22 in green and half over, crosses the
+    // middle row eight or nine times over 160 pixels of an 8-unit plate
+    // (from 30 away), and two wrecks made ticks apart are out of step.
+    {
+        Plate stripes;
+        stripes.shader = "Wreckage";
+        stripes.specteam = "crunch_stripes.dds";
+        make_plate("ueb1106", stripes, 160.0f, 100.0f);
+        camera.set_pitch(1.1f);
+        const ImageRGBA8 first = frame_at(160.0f, 100.0f, 30.0f);
+        for (int i = 0; i < 5; ++i) ctx.sim.tick();
+        make_plate("ueb1201", stripes, 180.0f, 100.0f);
+        const ImageRGBA8 later = frame_at(180.0f, 100.0f, 30.0f);
+        camera.set_pitch(default_pitch);
+        const auto row = [](const ImageRGBA8& image) {
+            std::vector<int> out;
+            const u32 y = image.height / 2;
+            for (u32 x = image.width / 2 - 80; x < image.width / 2 + 80; ++x)
+                out.push_back(image.pixels[(static_cast<size_t>(y) * image.width + x) * 4]);
+            return out;
+        };
+        const std::vector<int> a = row(first);
+        const std::vector<int> b = row(later);
+        int crossings = 0;
+        int apart = 0;
+        for (size_t i = 1; i < a.size(); ++i)
+            if ((a[i - 1] < 128) != (a[i] < 128)) ++crossings;
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+            if (std::abs(a[i] - b[i]) > 20) ++apart;
+        t.check(crossings >= 6 && crossings <= 12 && apart > 20,
+                fmt::format("Test 14: the crunch crosses the middle row {} times; two wrecks "
+                            "made 6 ticks apart differ on {} of its pixels",
+                            crossings, apart));
+    }
+
+    // Test 15: a wreck crumples (WreckageVS): each vertex moves by up to
+    // 0.15 of the x of its direction from the world's origin. A finely cut
+    // red plate far along x has a ragged edge as a wreck, a straight one as a
+    // unit. The edge: in each row, the plate's rightmost pixel, against the
+    // line through them.
+    {
+        Plate unit;
+        unit.mesh = "plate_fine.scm";
+        unit.albedo = "plate_albedo_red.dds";
+        Plate wreck = unit;
+        wreck.shader = "Wreckage";
+        wreck.specteam = "crunch_low.dds";
+        make_plate("ueb2204", unit, 200.0f, 100.0f);
+        make_plate("ueb1202", wreck, 200.0f, 130.0f);
+        const auto ragged = [](const ImageRGBA8& image) {
+            // (row, the plate's rightmost column): walking right from the
+            // middle, the last red pixel. (Its left edge passes under the
+            // minimap.)
+            std::vector<std::pair<f64, f64>> edge;
+            const auto red = [&](u32 x, u32 y) {
+                const size_t i = (static_cast<size_t>(y) * image.width + x) * 4;
+                return image.pixels[i] > 100 && image.pixels[i + 1] < 30 &&
+                       image.pixels[i + 2] < 30;
+            };
+            for (u32 y = 0; y < image.height; ++y) {
+                u32 x = image.width / 2;
+                if (!red(x, y)) continue;
+                while (x + 1 < image.width && red(x + 1, y)) ++x;
+                edge.emplace_back(y, x);
+            }
+            if (edge.size() < 50) return -1.0;
+            // Leave out the corners' rows; fit the rest.
+            edge = std::vector<std::pair<f64, f64>>(edge.begin() + 5, edge.end() - 5);
+            f64 sy = 0, sx = 0, syy = 0, syx = 0;
+            for (const auto& [y, x] : edge) {
+                sy += y;
+                sx += x;
+                syy += y * y;
+                syx += y * x;
+            }
+            const auto n = static_cast<f64>(edge.size());
+            const f64 slope = (n * syx - sy * sx) / (n * syy - sy * sy);
+            const f64 base = (sx - slope * sy) / n;
+            f64 worst = 0;
+            for (const auto& [y, x] : edge)
+                worst = std::max(worst, std::abs(x - (base + slope * y)));
+            return worst;
+        };
+        camera.set_pitch(1.1f);
+        const f64 straight = ragged(frame_at(200.0f, 100.0f, 15.0f));
+        const f64 crumpled = ragged(frame_at(200.0f, 130.0f, 15.0f));
+        camera.set_pitch(default_pitch);
+        t.check(straight >= 0.0 && straight <= 1.5 && crumpled >= 3.0,
+                fmt::format("Test 15: a plate's edge strays from a line by {:.1f} pixels as a "
+                            "unit, {:.1f} as a wreck",
+                            straight, crumpled));
+    }
+
+    // Test 16: no shadow falls on a wreck ("the random crunchiness makes for
+    // bad artifacts"). A small blue plate hovers 2.5 over a wreck, and over a
+    // unit, under a sun overhead (and no fill): the camera sees under its near
+    // edge, into the shadow it casts. The unit's plate is dark there; the
+    // wreck's isn't.
+    {
+        Plate hover;
+        hover.mesh = "plate_small.scm";
+        hover.albedo = "plate_albedo_blue.dds";
+        Plate wreck;
+        wreck.shader = "Wreckage";
+        wreck.specteam = "crunch_low.dds";
+        make_plate("ueb3104", wreck, 100.0f, 130.0f);
+        make_plate("ueb4201", hover, 100.0f, 130.0f, false, 2.5f);
+        make_plate("ueb1104", Plate{}, 140.0f, 130.0f);
+        make_plate("ueb2303", hover, 140.0f, 130.0f, false, 2.5f);
+        map::ScmapLighting sun = white_fill();
+        for (f32& c : sun.shadow_fill) c = 0.0f;
+        for (f32& c : sun.sun_color) c = 1.0f;
+        sun.sun_direction[0] = 0.0f;
+        sun.sun_direction[1] = 1.0f;
+        sun.sun_direction[2] = 0.0f;
+        struct Seen {
+            size_t dark = 0; // the plate beneath, in shadow
+            size_t blue = 0; // the plate hovering
+        };
+        const auto look = [&](f32 x) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", kBlack);
+            ground.set_lighting(sun, std::move(env));
+            shots.recapture();
+            Seen seen;
+            for (const auto& px : shots.shoot(ground, x, 130.0f, 30.0f)) {
+                if (px[0] < 0.08f && px[1] < 0.08f && px[2] < 0.08f) ++seen.dark;
+                if (px[2] > 0.5f && px[0] < 0.1f && px[1] < 0.1f) ++seen.blue;
+            }
+            return seen;
+        };
+        camera.set_pitch(1.1f);
+        const Seen wreck_seen = look(100.0f);
+        const Seen unit_seen = look(140.0f);
+        camera.set_pitch(default_pitch);
+        t.check(wreck_seen.blue > 1000 && unit_seen.blue > 1000 && unit_seen.dark > 500 &&
+                    wreck_seen.dark < 50,
+                fmt::format("Test 16: under a hovering plate ({} and {} pixels), a unit's plate "
+                            "is dark on {} pixels, a wreck's on {}",
+                            unit_seen.blue, wreck_seen.blue, unit_seen.dark, wreck_seen.dark));
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

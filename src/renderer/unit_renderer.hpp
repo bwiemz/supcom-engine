@@ -37,6 +37,7 @@ struct MeshInstance {
     f32 model[16];    // column-major 4x4 model matrix
     f32 r, g, b, a;  // army color + alpha
     f32 color_lookup; // the row of the mesh's lookup texture (team_color_lookup)
+    f32 shader_time;  // FA's material.x: the tick its mesh instance was made (mod 36000)
 };
 
 /// FA's colorLookup (UserUnit::CreateMeshInstance), the row a mesh's lookup
@@ -136,6 +137,16 @@ private:
     std::vector<MeshDrawGroup> mesh_groups_;
 
     sim::GameColors game_colors_;
+
+    /// When each entity's mesh instance was made: FA makes one when an
+    /// entity appears or changes mesh, stamped with the tick (material.x).
+    struct MeshBirth {
+        std::string mesh; ///< the blueprint or override it was drawn with
+        u32 tick = 0;
+        u64 frame = 0; ///< the last update that saw it
+    };
+    std::unordered_map<u32, MeshBirth> births_;
+    u64 frame_ = 0;
 };
 
 } // namespace osc::renderer

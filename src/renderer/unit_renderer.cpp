@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cmath>
+#include <iterator>
 #include <cstring>
 #include <ostream>
 #include <string>
@@ -55,6 +56,9 @@ static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView
     }
     a = (entity.fraction_complete < 1.0f) ? 0.4f : 1.0f;
 }
+
+/// FA wraps an instance's time (HardwareMeshBatch's kMeshShaderTimeWrapSeconds).
+constexpr f32 kShaderTimeWrap = 36000.0f;
 
 f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors) {
     u32 index = 0;
@@ -242,8 +246,22 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     };
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups;
 
+    ++frame_;
+    const u32 now = view.cur() ? view.cur()->tick : 0;
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) continue;
+
+        // The entity's mesh instance, made when it appeared or changed mesh
+        // (whether or not it is in view).
+        const std::string& mesh_key =
+            entity.mesh_override.empty() ? entity.blueprint_id : entity.mesh_override;
+        MeshBirth& birth = births_[entity.id];
+        if (birth.frame == 0 || birth.mesh != mesh_key) {
+            birth.mesh = mesh_key;
+            birth.tick = now;
+        }
+        birth.frame = frame_;
+
         if (cube_count + mesh_count >= MAX_INSTANCES)
             continue;
 
@@ -297,9 +315,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             f32 sy = entity.scale_y * mesh_scale;
             f32 sz = entity.scale_z * mesh_scale;
             build_model_matrix(inst.model, pos, view.orientation(entity), sx, sy, sz);
-            // A wreck has no team colour: a negative red tells mesh.frag to
-            // draw it burnt, as the Wreckage shader does.
-            if (entity.is_wreckage || gpu->wreckage) {
+            // A wreck has no team colour: a negative red tells the mesh
+            // shaders to crumple it and draw it as FA's WreckagePS does.
+            const bool wreck = entity.is_wreckage || gpu->wreckage;
+            if (wreck) {
                 r = -1.0f;
                 g = 0.0f;
                 b = 0.0f;
@@ -309,9 +328,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             else if (entity.is_prop) {
                 g = -1.0f;
             }
-            // Selection highlight: brighten team color
-            if (selected_ids && entity.is_unit &&
-                selected_ids->count(entity.id)) {
+            // Selection highlight: brighten team color (not a wreck's, whose
+            // negative red must stand)
+            if (selected_ids && entity.is_unit && !wreck && selected_ids->count(entity.id)) {
                 r = r * 0.5f + 0.5f;
                 g = g * 0.5f + 0.5f;
                 b = b * 0.5f + 0.5f;
@@ -319,6 +338,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             inst.r = r; inst.g = g; inst.b = b; inst.a = a;
             inst.color_lookup = team_color_lookup(
                 view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
+            inst.shader_time = std::fmod(static_cast<f32>(birth.tick), kShaderTimeWrap);
 
             auto& gd = mesh_groups[gpu];
             gd.instances.push_back(inst);
@@ -354,6 +374,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     }
 
     cube_instance_count_ = cube_count;
+
+    // Entities gone since the last update take their mesh instances with them.
+    for (auto it = births_.begin(); it != births_.end();)
+        it = it->second.frame == frame_ ? std::next(it) : births_.erase(it);
 
     // Flatten mesh groups into contiguous instance buffer + bone SSBO
     u32 offset = 0;
@@ -480,6 +504,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     inst.model[12] = x; inst.model[13] = y;  inst.model[14] = z;
     inst.r = r; inst.g = g; inst.b = b; inst.a = a;
     inst.color_lookup = team_color_lookup(nullptr, game_colors_);
+    inst.shader_time = 0.0f;
 
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;

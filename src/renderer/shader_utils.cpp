@@ -552,6 +552,8 @@ layout(location = 10) in vec3 inTangent;
 layout(location = 11) in vec3 inBinormal;
 // Per-instance: the row of the mesh's lookup texture for its army (M211c)
 layout(location = 12) in float inColorLookup;
+// Per-instance: the tick its mesh instance was made (FA's material.x, M211d)
+layout(location = 13) in float inShaderTime;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -569,6 +571,7 @@ layout(location = 3) out vec3 fragTangent;
 layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec3 fragWorldPos;
 layout(location = 6) flat out float fragColorLookup;
+layout(location = 7) flat out float fragShaderTime;
 
 void main() {
     // Blend-weight skeletal skinning: skip for unskinned meshes (bonesPerInst == 0)
@@ -584,6 +587,17 @@ void main() {
     }
     vec4 skinnedPos = bone * vec4(inPosition, 1.0);
     vec4 worldPos = inModel * skinnedPos;
+    if (inColor.r < 0.0) {
+        // A wreck (WreckageVS, mesh.fx) crumples: each vertex shifts by up to
+        // 0.15, by its place in the world and the instance's.
+        vec3 nvert = normalize(worldPos.xyz);
+        float s = nvert.x * 0.15; // FA's float s = nvert * 0.15 keeps x
+        float r = length(worldPos.xyz);
+        float phi = fract(0.01 * length(inModel[3].xyz));
+        worldPos.x += sin(14.5 * r * nvert.z + phi) * s;
+        worldPos.y += cos(10.8 * r * nvert.x + phi) * s;
+        worldPos.z += sin(20.5 * r * nvert.y + phi) * s;
+    }
     gl_Position = pc.viewProj * worldPos;
     fragWorldPos = worldPos.xyz;
     // Transform TBN vectors through blended bone then model
@@ -593,6 +607,7 @@ void main() {
     fragBitangent = normalMat * inBinormal;
     fragColor = inColor;
     fragColorLookup = inColorLookup;
+    fragShaderTime = inShaderTime;
     fragUV = inUV;
 }
 )glsl";
@@ -643,6 +658,7 @@ layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec3 fragWorldPos;
 layout(location = 6) flat in float fragColorLookup; // the army's row of texLookup
+layout(location = 7) flat in float fragShaderTime;  // the tick its mesh instance was made
 
 layout(location = 0) out vec4 outColor;
 
@@ -715,14 +731,20 @@ void main() {
     bool prop = fragColor.g < 0.0;
     vec3 lit;
     if (fragColor.r < 0.0) {
-        // A wreck: burnt dark and grey, barely shining. (FA's WreckagePS,
-        // with its own crunch texture, is still to come.)
-        float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
-        vec3 blended = mix(vec3(lum), texColor.rgb, 0.3) * 0.45;
-        vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
-        vec3 halfDir = normalize(S + viewDir);
-        float spec = pow(max(dot(worldNormal, halfDir), 0.0), 32.0) * specTeam.r * 0.25 * shadow;
-        lit = blended * light + vec3(spec);
+        // WreckagePS (mesh.fx): a wreck's "specular" is a crunch noise
+        // (wreckage_noise.dds), tiled 5.15 times and offset by when its mesh
+        // instance was made; the sun lights it unshadowed ("the random
+        // crunchiness makes for bad artifacts").
+        float offset = fract(0.01 * fragShaderTime);
+        vec4 crunch = texture(texSpecTeam, (fragUV + vec2(offset, -offset)) * 5.15);
+        vec3 wreckLight = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) +
+                          lightUbo.sunAmbience.rgb;
+        wreckLight = lightUbo.sunColor.w * wreckLight + (1.0 - wreckLight) * lightUbo.shadowFill.rgb;
+        lit = texColor.rgb * wreckLight;
+        if (crunch.g < 0.22)
+            lit *= (texColor.rgb + crunch.r + crunch.a) * crunch.b * 2.5;
+        else
+            lit *= crunch.b * 2.0;
     } else {
         // FA's mesh.fx, by the mesh's technique. Props (NormalMappedAlpha)
         // tint by their colour; units mask the team's colour in.
