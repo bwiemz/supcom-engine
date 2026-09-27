@@ -61,12 +61,17 @@ public:
     /// without, the terrain alone.
     Pixels shoot(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world = true);
 
+    /// As shoot(), with the sim's entities, but the whole frame.
+    ImageRGBA8 shoot_frame(const map::Terrain& terrain, f32 x, f32 z, f32 distance);
+
     renderer::Renderer& renderer() { return renderer_; }
 
     /// Capture the sim's world again (after the test changed it).
     void recapture();
 
 private:
+    ImageRGBA8 capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world);
+
     TestContext& ctx_;
     renderer::Renderer renderer_;
     sim::WorldHistory history_;

@@ -596,7 +596,7 @@ void main() {
 const char* mesh_frag = R"glsl(
 #version 450
 
-// Full block declared for layout compatibility; only eyeX/Y/Z read in this stage
+// Full block declared for layout compatibility; boneBase/bonesPerInst unused here
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     uint boneBase;
@@ -663,6 +663,23 @@ float calcShadow(vec3 worldPos) {
     return mix(1.0, shadow, edgeFade);
 }
 
+// FA's viewDirection (mesh.fx): the point's normalised device position,
+// turned into the world by the view's rotation. Moho's view is right-handed,
+// so that depth (near 1) runs back toward the eye: V points from the point
+// to the eye along the view axis, but its sideways part is mirrored (and
+// steepened by the frustum's slope). The rows of viewProj hold the view's
+// axes: x's the right, y's the up (both negated with the device's y, which
+// runs down), w's the forward.
+vec3 faViewDirection(vec3 worldPos) {
+    vec4 clip = pc.viewProj * vec4(worldPos, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    mat4 m = pc.viewProj;
+    vec3 right = normalize(vec3(m[0][0], m[1][0], m[2][0]));
+    vec3 upDevice = normalize(vec3(m[0][1], m[1][1], m[2][1]));
+    vec3 back = -normalize(vec3(m[0][3], m[1][3], m[2][3]));
+    return normalize(ndc.x * right + ndc.y * upDevice + ndc.z * back);
+}
+
 void main() {
     // Decode normal from GA channels (FA DXT5nm encoding: X=Green, Y=Alpha)
     vec4 nmap = texture(texNormal, fragUV);
@@ -706,8 +723,7 @@ void main() {
         // tint by their colour; units mask the team's colour in.
         bool prop = fragColor.g < 0.0;
         vec3 albedo = prop ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, specTeam.a);
-        // FA's viewDirection runs from the eye to the point.
-        vec3 V = normalize(fragWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
+        vec3 V = faViewDirection(fragWorldPos);
         vec3 R = reflect(-V, worldNormal);
         float phongAmount = clamp(dot(reflect(S, worldNormal), -V), 0.0, 1.0);
         float emissive = 2.0 * specTeam.b; // glowMultiplier

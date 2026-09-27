@@ -14,6 +14,7 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
@@ -24,10 +25,12 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,6 +41,8 @@ namespace {
 
 constexpr u32 kSize = 64;
 constexpr f32 kCentre = kSize / 2.0f;
+/// The test's mirror stands south of the factory.
+constexpr f32 kPlateZ = 58.0f;
 
 /// No sun, a white fill: every surface's light is 1.
 map::ScmapLighting white_fill() {
@@ -51,11 +56,13 @@ map::ScmapLighting white_fill() {
     return l;
 }
 
-/// A 4x4 cubemap (uncompressed BGRA DDS), white on face `lit` and black on
-/// the other five.
-void write_face_cube(const std::filesystem::path& path, int lit) {
+/// A 4x4 uncompressed BGRA DDS of `faces` faces (6: a cubemap, +X -X +Y
+/// -Y +Z -Z, as D3D and Vulkan address them alike), each texel's RGBA from
+/// `texel(face, column)`.
+template <typename Texel>
+void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
     constexpr u32 kEdge = 4;
-    std::vector<char> d(128 + 6 * kEdge * kEdge * 4, 0);
+    std::vector<char> d(128 + static_cast<size_t>(faces) * kEdge * kEdge * 4, 0);
     const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
     std::memcpy(d.data(), "DDS ", 4);
     put(4, 124);
@@ -71,16 +78,78 @@ void write_face_cube(const std::filesystem::path& path, int lit) {
     put(96, 0x0000FF00);
     put(100, 0x000000FF);
     put(104, 0xFF000000);
-    put(108, 0x1000 | 0x8);   // a texture, complex
-    put(112, 0x200 | 0xFC00); // a cubemap, all six faces
-    for (int face = 0; face < 6; ++face) {
-        const char v = face == lit ? static_cast<char>(255) : 0;
+    put(108, faces == 6 ? 0x1000 | 0x8 : 0x1000); // a texture (complex, a cube's)
+    put(112, faces == 6 ? 0x200 | 0xFC00 : 0);    // a cubemap, all six faces
+    for (int face = 0; face < faces; ++face) {
         for (u32 i = 0; i < kEdge * kEdge; ++i) {
+            const std::array<u8, 4> rgba = texel(face, i % kEdge);
             const size_t at = 128 + (static_cast<size_t>(face) * kEdge * kEdge + i) * 4;
-            d[at] = d[at + 1] = d[at + 2] = v;
-            d[at + 3] = static_cast<char>(255);
+            d[at] = static_cast<char>(rgba[2]);
+            d[at + 1] = static_cast<char>(rgba[1]);
+            d[at + 2] = static_cast<char>(rgba[0]);
+            d[at + 3] = static_cast<char>(rgba[3]);
         }
     }
+    std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
+}
+
+/// A cubemap white where `white(face, column)` says, black elsewhere.
+template <typename White> void write_cube(const std::filesystem::path& path, White white) {
+    write_dds(path, 6, [&](int face, u32 column) {
+        const u8 v = white(face, column) ? 255 : 0;
+        return std::array<u8, 4>{v, v, v, 255};
+    });
+}
+
+/// A one-bone SCM mesh: a square `half` units either side of the origin,
+/// flat and facing up, wound both ways so that either culling draws it.
+void write_plate_scm(const std::filesystem::path& path, f32 half) {
+    std::vector<char> d(48, 0);
+    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
+    const auto append = [&](const void* p, size_t n) {
+        const char* c = static_cast<const char*>(p);
+        d.insert(d.end(), c, c + n);
+    };
+    const auto f = [&](std::initializer_list<f32> vs) {
+        for (const f32 v : vs) append(&v, 4);
+    };
+    const auto u = [&](std::initializer_list<u32> vs) {
+        for (const u32 v : vs) append(&v, 4);
+    };
+    std::memcpy(d.data(), "MODL", 4);
+    put(4, 5); // version
+    append("NAME", 4);
+    append("root", 5); // and its terminator
+    d.resize(60, 0);
+    append("SKEL", 4);
+    const auto bone_offset = static_cast<u32>(d.size());
+    f({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}); // rest pose: identity
+    f({0, 0, 0});                                        // position
+    f({1, 0, 0, 0});                                     // rotation (w, x, y, z)
+    u({52, 0xFFFFFFFFu, 0, 0});                          // name, no parent
+    d.resize(188, 0);
+    append("VTXL", 4);
+    const auto vert_offset = static_cast<u32>(d.size());
+    const f32 corners[4][2] = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
+    for (const auto& c : corners) {
+        f({c[0], 0, c[1]});                                        // position
+        f({1, 0, 0});                                              // tangent
+        f({0, 1, 0});                                              // normal
+        f({0, 0, 1});                                              // binormal
+        f({c[0] > 0.0f ? 1.0f : 0.0f, c[1] > 0.0f ? 1.0f : 0.0f}); // uv
+        f({0, 0});                                                 // second uv
+        u({0});                                                    // bones
+    }
+    const auto index_offset = static_cast<u32>(d.size());
+    const u16 indices[] = {0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2};
+    append(indices, sizeof(indices));
+    put(8, bone_offset);
+    put(12, 1); // bones the vertices use
+    put(16, vert_offset);
+    put(24, 4);
+    put(28, index_offset);
+    put(32, static_cast<u32>(std::size(indices)));
+    put(44, 1); // bones in all
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
 
@@ -189,7 +258,158 @@ void test_material(TestContext& ctx) {
                             changed, dr / n, dg / n, db / n));
     }
 
-    // Test 3: glow (2 * specular.b) shines in the dark. With no light, a
+    // Test 3: the highlight, (0.6, 0.8, 0.9) * (reflect(S, N) . -V)^2 *
+    // specular.g, is added whatever the light (the sun's colour here is
+    // black), and FA doesn't mask it by N . S. A sun overhead lights the
+    // factory's roofs; one under the ground, the walls facing the camera, of
+    // which it sees more.
+    {
+        map::ScmapLighting up = white_fill();
+        up.sun_direction[0] = 0.0f;
+        up.sun_direction[1] = 1.0f;
+        up.sun_direction[2] = 0.0f;
+        map::ScmapLighting down = up;
+        down.sun_direction[1] = -1.0f;
+        const Pixels a = shoot(kBlack, up);
+        const Pixels b = shoot(kBlack, down);
+        size_t lit_up = 0;
+        size_t lit_down = 0;
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+            const f32 d = std::max({a[i][0] - b[i][0], a[i][1] - b[i][1], a[i][2] - b[i][2]});
+            if (d > 0.02f) ++lit_up;
+            if (d < -0.02f) ++lit_down;
+        }
+        t.check(lit_up > 200 && lit_down > 5 * lit_up,
+                fmt::format("Test 3: a sun overhead highlights {} pixels of the factory; one "
+                            "under the ground, {}",
+                            lit_up, lit_down));
+    }
+
+    // Cubes of the test's own: white on one face only (faces +X -X +Y -Y +Z
+    // -Z), on one side of x = 0, or all over. A face's columns run along +x
+    // on +Y, -Y and +Z, along -x on -Z.
+    const auto dir = std::filesystem::temp_directory_path() / "osc_material_test";
+    std::filesystem::create_directories(dir);
+    const char* const kFaces[] = {"px", "nx", "py", "ny", "pz", "nz"};
+    for (int f = 0; f < 6; ++f)
+        write_cube(dir / fmt::format("{}.dds", kFaces[f]),
+                   [f](int face, u32 /*column*/) { return face == f; });
+    const auto x_side = [](bool positive) {
+        return [positive](int face, u32 column) {
+            if (face == 0 || face == 1) return (face == 0) == positive;
+            const bool plus_x = face == 5 ? column < 2 : column >= 2;
+            return plus_x == positive;
+        };
+    };
+    write_cube(dir / "px_half.dds", x_side(true));
+    write_cube(dir / "nx_half.dds", x_side(false));
+    write_cube(dir / "white.dds", [](int, u32) { return true; });
+    // And a mirror: a flat plate 8 units square, white, reflecting fully
+    // (SpecTeam red 1, nothing else), its normals flat.
+    write_plate_scm(dir / "plate.scm", 4.0f);
+    write_dds(dir / "plate_albedo.dds", 1,
+              [](int, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
+    write_dds(dir / "plate_specteam.dds", 1,
+              [](int, u32) { return std::array<u8, 4>{255, 0, 0, 0}; });
+    write_dds(dir / "plate_normals.dds", 1,
+              [](int, u32) { return std::array<u8, 4>{0, 128, 0, 128}; });
+    ctx.vfs.mount("/osc_material_test", std::make_unique<vfs::DirectoryMount>(dir));
+    const auto face_cube = [](const char* face) {
+        return fmt::format("/osc_material_test/{}.dds", face);
+    };
+    // How many pixels are brighter in `a` than in `b`, by their green.
+    const auto brighter_in = [](const auto& a, const auto& b) {
+        size_t n = 0;
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+            if (a[i][1] - b[i][1] > 0.05f) ++n;
+        return n;
+    };
+
+    // Test 4: FA reflects the view ray: reflect(-V, N), V pointing to the
+    // eye. The walls facing the camera, most of what it sees of the factory's
+    // metal, show the cube's ground; the roofs, its sky.
+    {
+        const Pixels below = shoot(face_cube("ny"));
+        const Pixels above = shoot(face_cube("py"));
+        const size_t lit_below = brighter_in(below, above);
+        const size_t lit_above = brighter_in(above, below);
+        t.check(lit_below > 500 && lit_above < lit_below / 4,
+                fmt::format("Test 4: a cube lit below brightens {} pixels more than one lit "
+                            "above; the other way, {}",
+                            lit_below, lit_above));
+    }
+
+    // Test 5: FA's V is the point's device position, turned into the world,
+    // so its sideways part is mirrored. A flat mirror facing up reflects
+    // with x = -V's: off to the right of the view it shows the world's left
+    // (-X), and off to the left, its right, where V straight to the eye
+    // would show the other side. The mirror is the test's plate, standing in
+    // for the UEF wall's mesh, south of the factory and out of its view; a
+    // cube white on one side of x = 0, then the other, shows which way it
+    // reflects. No light: the plate shows 2 * env alone.
+    {
+        const std::string plate_made = fmt::format(
+            "__blueprints['/osc_material_test/plate_mesh'] = {{\n"
+            "  BlueprintId = '/osc_material_test/plate_mesh',\n"
+            "  LODs = {{ {{ LODCutoff = 1000, ShaderName = 'Unit',\n"
+            "    MeshName = '/osc_material_test/plate.scm',\n"
+            "    AlbedoName = '/osc_material_test/plate_albedo.dds',\n"
+            "    SpecularName = '/osc_material_test/plate_specteam.dds',\n"
+            "    NormalsName = '/osc_material_test/plate_normals.dds' }} }},\n"
+            "}}\n"
+            "__blueprints.ueb5101.Display.MeshBlueprint = '/osc_material_test/plate_mesh'\n"
+            "__blueprints.ueb5101.Display.UniformScale = 1\n"
+            "__osc_test_plate = CreateUnitHPR('ueb5101', 'ARMY_1', {0}, 0, {1}, 0, 0, 0)\n"
+            "Warp(__osc_test_plate, Vector({0}, {2}, {1}))\n",
+            kCentre, kPlateZ, ground_y + 0.5f);
+        const auto made_plate = ctx.lua_state.do_string(plate_made);
+        if (!made_plate) spdlog::warn("the plate: {}", made_plate.error().message);
+        ctx.sim.tick();
+
+        map::ScmapLighting dark = white_fill();
+        for (f32& c : dark.shadow_fill) c = 0.0f;
+        const auto frame = [&](f32 target_x, const char* half) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", face_cube(half));
+            ground.set_lighting(dark, std::move(env));
+            shots.recapture();
+            const ImageRGBA8 image = shots.shoot_frame(ground, target_x, kPlateZ, 30.0f);
+            Pixels px;
+            for (size_t i = 0; i + 3 < image.pixels.size(); i += 4)
+                px.push_back({image.pixels[i] / 255.0f, image.pixels[i + 1] / 255.0f,
+                              image.pixels[i + 2] / 255.0f});
+            return px;
+        };
+        struct Side {
+            size_t left = 0;  // pixels the cube white on -x lights, and not the one on +x
+            size_t right = 0; // ... the other way
+        };
+        const auto side = [&](f32 target_x) {
+            const Pixels nx = frame(target_x, "nx_half");
+            const Pixels px = frame(target_x, "px_half");
+            Side out;
+            for (size_t i = 0; i < nx.size() && i < px.size(); ++i) {
+                if (nx[i][1] - px[i][1] > 0.5f) ++out.left;
+                if (px[i][1] - nx[i][1] > 0.5f) ++out.right;
+            }
+            return out;
+        };
+        renderer::Camera& camera = shots.renderer().camera();
+        const f32 pitch = camera.pitch();
+        camera.set_pitch(1.1f); // the factory, to the north, out of the view
+        const Side on_right = side(kCentre - 10.0f);
+        const Side on_left = side(kCentre + 10.0f);
+        camera.set_pitch(pitch);
+        t.check(on_right.left > 2000 && on_right.right < 20 && on_left.right > 2000 &&
+                    on_left.left < 20,
+                fmt::format("Test 5: right of the view, the mirror shows the world's left on {} "
+                            "pixels (its right on {}); left of the view, its right on {} (its "
+                            "left on {})",
+                            on_right.left, on_right.right, on_left.right, on_left.left));
+    }
+
+    // Test 6: glow (2 * specular.b) shines in the dark. With no light, a
     // black cube and no sun (whose direction FA's highlight needs), only the
     // glowing parts show: a T3 power generator's yellow core. (Counting
     // yellow pixels leaves out the overlay's grey marker.)
@@ -211,58 +431,10 @@ void test_material(TestContext& ctx) {
         for (const auto& p : px)
             if (p[0] > 0.1f && p[0] > p[2] + 0.05f) ++glowing;
         t.check(glowing > 200,
-                fmt::format("Test 3: in the dark, {} pixels of the power generator glow", glowing));
+                fmt::format("Test 6: in the dark, {} pixels of the power generator glow", glowing));
     }
 
-    // Test 4: the highlight, (0.6, 0.8, 0.9) * (reflect(S, N) . -V)^2 *
-    // specular.g, is added whatever the light: turning the sun's direction
-    // over (its colour black) moves it, and nothing else.
-    {
-        map::ScmapLighting up = white_fill();
-        up.sun_direction[0] = 0.0f;
-        up.sun_direction[1] = 1.0f;
-        up.sun_direction[2] = 0.0f;
-        map::ScmapLighting down = up;
-        down.sun_direction[1] = -1.0f;
-        const Pixels a = shoot(kBlack, up);
-        const Pixels b = shoot(kBlack, down);
-        size_t lit_up = 0;
-        for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
-            const f32 d = std::max({b[i][0] - a[i][0], b[i][1] - a[i][1], b[i][2] - a[i][2]});
-            if (d > 0.02f) ++lit_up;
-        }
-        t.check(
-            lit_up > 200,
-            fmt::format("Test 4: the highlight lights {} pixels of the factory's tops", lit_up));
-    }
-
-    // Test 5: FA reflects the direction to the eye, reflect(-V, N), not the
-    // view ray. Off the walls that face the camera -- most of what it sees of
-    // the factory -- that points up, so they show the cube's sky; the view
-    // ray's reflection would show its ground. Two cubes of the test's own,
-    // each lit on one face only: above (+Y) and below (-Y).
-    {
-        const auto dir = std::filesystem::temp_directory_path() / "osc_material_test";
-        std::filesystem::create_directories(dir);
-        write_face_cube(dir / "below.dds", 3); // faces: +X -X +Y -Y +Z -Z
-        write_face_cube(dir / "above.dds", 2);
-        ctx.vfs.mount("/osc_material_test", std::make_unique<vfs::DirectoryMount>(dir));
-        const Pixels below = shoot("/osc_material_test/below.dds");
-        const Pixels above = shoot("/osc_material_test/above.dds");
-        size_t lit_below = 0;
-        size_t lit_above = 0;
-        for (size_t i = 0; i < below.size() && i < above.size(); ++i) {
-            const f32 d = below[i][1] - above[i][1];
-            if (d > 0.05f) ++lit_below;
-            if (d < -0.05f) ++lit_above;
-        }
-        t.check(lit_above > 500 && lit_below < lit_above / 10,
-                fmt::format("Test 5: a cube lit above brightens {} pixels more than one lit "
-                            "below; the other way, {}",
-                            lit_above, lit_below));
-    }
-
-    // Test 6: each mesh draws with its blueprint's technique (M211b).
+    // Test 7: each mesh draws with its blueprint's technique (M211b).
     {
         renderer::Renderer& r = shots.renderer();
         const bool ok = r.mesh_technique("ueb0101", ctx.L) == renderer::MeshTechnique::Unit &&
@@ -270,10 +442,10 @@ void test_material(TestContext& ctx) {
                         r.mesh_technique("urb0101", ctx.L) == renderer::MeshTechnique::Insect &&
                         r.mesh_technique("xsb0101", ctx.L) == renderer::MeshTechnique::Seraphim &&
                         r.mesh_technique("uxl0021", ctx.L) == renderer::MeshTechnique::Metal;
-        t.check(ok, "Test 6: UEF, Aeon, Cybran, Seraphim and Metal meshes take their techniques");
+        t.check(ok, "Test 7: UEF, Aeon, Cybran, Seraphim and Metal meshes take their techniques");
     }
 
-    // Test 7: an Aeon mesh reflects the map's "<aeon>" cube (AeonPS), while
+    // Test 8: an Aeon mesh reflects the map's "<aeon>" cube (AeonPS), while
     // the UEF factory beside it keeps to "<default>".
     {
         const auto made_aeon =
@@ -289,7 +461,7 @@ void test_material(TestContext& ctx) {
             shots.recapture();
             return shots.shoot(ground, x, z, 30.0f);
         };
-        const std::string sky = "/osc_material_test/above.dds";
+        const std::string sky = face_cube("white");
         const auto brightened = [](const Pixels& a, const Pixels& b) {
             size_t n = 0;
             for (size_t i = 0; i < a.size() && i < b.size(); ++i)
@@ -299,7 +471,7 @@ void test_material(TestContext& ctx) {
         const size_t aeon = brightened(shoot_at(16.0f, 48.0f, sky), shoot_at(16.0f, 48.0f, kBlack));
         const size_t uef = brightened(shoot_at(32.0f, 32.0f, sky), shoot_at(32.0f, 32.0f, kBlack));
         t.check(aeon > 500 && uef < 50,
-                fmt::format("Test 7: an \"<aeon>\" cube lights {} pixels of the Aeon factory "
+                fmt::format("Test 8: an \"<aeon>\" cube lights {} pixels of the Aeon factory "
                             "and {} of the UEF one",
                             aeon, uef));
     }
