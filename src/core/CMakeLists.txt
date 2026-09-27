@@ -8,6 +8,7 @@ add_library(osc_core STATIC
     game_state.cpp
     front_end_data.cpp
     dmath.cpp
+    color.cpp
 )
 add_library(osc::core ALIAS osc_core)
 

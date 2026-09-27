@@ -1,4 +1,5 @@
 #include "lua/engine_bindings.hpp"
+#include "core/color.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/sim_bindings.hpp"
@@ -431,9 +432,15 @@ static int l_STR_xtoi(lua_State* L) {
     return 1;
 }
 
-/// EnumColorNames — return empty table.
+/// EnumColorNames() — the colour names colours may be given by, in Moho's
+/// order.
 static int l_EnumColorNames(lua_State* L) {
     lua_newtable(L);
+    int i = 1;
+    for (const std::string_view name : color_names()) {
+        lua_pushlstring(L, name.data(), name.size());
+        lua_rawseti(L, -2, i++);
+    }
     return 1;
 }
 

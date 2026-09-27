@@ -185,18 +185,12 @@ static int itemlist_SetNewFont(lua_State* L) {
 static int itemlist_SetNewColors(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_item_fg_color(parse_color_hex(lua_tostring(L, 2)));
-    if (lua_type(L, 3) == LUA_TSTRING)
-        ctrl->set_item_bg_color(parse_color_hex(lua_tostring(L, 3)));
-    if (lua_type(L, 4) == LUA_TSTRING)
-        ctrl->set_item_sel_fg_color(parse_color_hex(lua_tostring(L, 4)));
-    if (lua_type(L, 5) == LUA_TSTRING)
-        ctrl->set_item_sel_bg_color(parse_color_hex(lua_tostring(L, 5)));
-    if (lua_type(L, 6) == LUA_TSTRING)
-        ctrl->set_item_mo_fg_color(parse_color_hex(lua_tostring(L, 6)));
-    if (lua_type(L, 7) == LUA_TSTRING)
-        ctrl->set_item_mo_bg_color(parse_color_hex(lua_tostring(L, 7)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_item_fg_color(check_color(L, 2));
+    if (lua_type(L, 3) == LUA_TSTRING) ctrl->set_item_bg_color(check_color(L, 3));
+    if (lua_type(L, 4) == LUA_TSTRING) ctrl->set_item_sel_fg_color(check_color(L, 4));
+    if (lua_type(L, 5) == LUA_TSTRING) ctrl->set_item_sel_bg_color(check_color(L, 5));
+    if (lua_type(L, 6) == LUA_TSTRING) ctrl->set_item_mo_fg_color(check_color(L, 6));
+    if (lua_type(L, 7) == LUA_TSTRING) ctrl->set_item_mo_bg_color(check_color(L, 7));
     return 0;
 }
 

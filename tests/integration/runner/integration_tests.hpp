@@ -91,6 +91,9 @@ void test_meshless(TestContext& ctx);
 void test_camera(TestContext& ctx);
 /// --material-test (M211a), in material_test.cpp.
 void test_material(TestContext& ctx);
+/// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
+void test_colors(TestContext& ctx);
+void test_army_colors(TestContext& ctx);
 void test_terrain_normal(TestContext& ctx);
 void test_decal(TestContext& ctx);
 void test_projectile(TestContext& ctx);

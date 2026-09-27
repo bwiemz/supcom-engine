@@ -103,7 +103,7 @@ static int text_SetNewColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
     if (lua_type(L, 2) == LUA_TSTRING) {
-        ctrl->set_text_color(parse_color_hex(lua_tostring(L, 2)));
+        ctrl->set_text_color(check_color(L, 2));
     }
     return 0;
 }
@@ -240,8 +240,7 @@ static int edit_SetNewFont(lua_State* L) {
 static int edit_SetNewForegroundColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_foreground_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_foreground_color(check_color(L, 2));
     return 0;
 }
 
@@ -259,8 +258,7 @@ static int edit_GetForegroundColor(lua_State* L) {
 static int edit_SetNewBackgroundColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_background_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_background_color(check_color(L, 2));
     return 0;
 }
 
@@ -292,8 +290,7 @@ static int edit_IsBackgroundVisible(lua_State* L) {
 static int edit_SetNewCaretColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_caret_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_caret_color(check_color(L, 2));
     return 0;
 }
 
@@ -351,8 +348,7 @@ static int edit_SetCaretCycle(lua_State* L) {
 static int edit_SetNewHighlightForegroundColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_highlight_fg_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_highlight_fg_color(check_color(L, 2));
     return 0;
 }
 
@@ -370,8 +366,7 @@ static int edit_GetHighlightForegroundColor(lua_State* L) {
 static int edit_SetNewHighlightBackgroundColor(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    if (lua_type(L, 2) == LUA_TSTRING)
-        ctrl->set_highlight_bg_color(parse_color_hex(lua_tostring(L, 2)));
+    if (lua_type(L, 2) == LUA_TSTRING) ctrl->set_highlight_bg_color(check_color(L, 2));
     return 0;
 }
 

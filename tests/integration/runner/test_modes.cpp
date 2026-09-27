@@ -124,6 +124,8 @@ constexpr Mode kModesBefore[] = {
     {"--meshless-test", test_meshless, false},
     {"--camera-test", test_camera, false},
     {"--material-test", test_material, false},
+    {"--colors-test", test_colors, true},
+    {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
     {"--decal-test", test_decal, false},
     {"--projectile-test", test_projectile, false},
@@ -281,6 +283,8 @@ void IntegrationModes::print_usage() const {
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
+              << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
+              << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
