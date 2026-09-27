@@ -14,6 +14,7 @@
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
+#include "renderer/mesh_cache.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
@@ -259,6 +260,48 @@ void test_material(TestContext& ctx) {
                 fmt::format("Test 5: a cube lit above brightens {} pixels more than one lit "
                             "below; the other way, {}",
                             lit_above, lit_below));
+    }
+
+    // Test 6: each mesh draws with its blueprint's technique (M211b).
+    {
+        renderer::Renderer& r = shots.renderer();
+        const bool ok = r.mesh_technique("ueb0101", ctx.L) == renderer::MeshTechnique::Unit &&
+                        r.mesh_technique("uab0101", ctx.L) == renderer::MeshTechnique::Aeon &&
+                        r.mesh_technique("urb0101", ctx.L) == renderer::MeshTechnique::Insect &&
+                        r.mesh_technique("xsb0101", ctx.L) == renderer::MeshTechnique::Seraphim &&
+                        r.mesh_technique("uxl0021", ctx.L) == renderer::MeshTechnique::Metal;
+        t.check(ok, "Test 6: UEF, Aeon, Cybran, Seraphim and Metal meshes take their techniques");
+    }
+
+    // Test 7: an Aeon mesh reflects the map's "<aeon>" cube (AeonPS), while
+    // the UEF factory beside it keeps to "<default>".
+    {
+        const auto made_aeon =
+            ctx.lua_state.do_string("CreateUnitHPR('uab0101', 'ARMY_1', 16, 0, 48, 0, 0, 0)\n");
+        if (!made_aeon) spdlog::warn("CreateUnitHPR failed: {}", made_aeon.error().message);
+        ctx.sim.tick();
+        const auto shoot_at = [&](f32 x, f32 z, const std::string& aeon_cube) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", kBlack);
+            env.cubemaps.emplace_back("<aeon>", aeon_cube);
+            ground.set_lighting(white_fill(), std::move(env));
+            shots.recapture();
+            return shots.shoot(ground, x, z, 30.0f);
+        };
+        const std::string sky = "/osc_material_test/above.dds";
+        const auto brightened = [](const Pixels& a, const Pixels& b) {
+            size_t n = 0;
+            for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+                if (a[i][1] - b[i][1] > 0.05f) ++n;
+            return n;
+        };
+        const size_t aeon = brightened(shoot_at(16.0f, 48.0f, sky), shoot_at(16.0f, 48.0f, kBlack));
+        const size_t uef = brightened(shoot_at(32.0f, 32.0f, sky), shoot_at(32.0f, 32.0f, kBlack));
+        t.check(aeon > 500 && uef < 50,
+                fmt::format("Test 7: an \"<aeon>\" cube lights {} pixels of the Aeon factory "
+                            "and {} of the UEF one",
+                            aeon, uef));
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

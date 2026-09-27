@@ -306,6 +306,12 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         sampler_ci.maxAnisotropy = 8.0f;
         sampler_ci.maxLod = 16.0f;
         VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &texture_sampler_));
+        // FA's lookup textures clamp (mesh.fx anisotropicSampler, insectSampler)
+        sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_ci.anisotropyEnable = VK_FALSE;
+        VK_CHECK(vkCreateSampler(device_, &sampler_ci, nullptr, &lookup_sampler_));
     }
 
     // Shadow resources (must be created before pipelines — shadow_ds_layout_ is referenced)
@@ -662,9 +668,10 @@ void Renderer::create_shadow_resources() {
     upload_lighting();
 
     // --- Shadow descriptor set layout (binding 0: shadow sampler, binding 1: light UBO,
-    // binding 2: the environment cubemap meshes reflect, M211a) ---
+    // bindings 2-4: the environment cubes meshes reflect, "<default>", "<aeon>" and
+    // "<seraphim>", M211a/b; 5-6: FA's anisotropic and insect lookups, M211b) ---
     {
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings{};
+        std::array<VkDescriptorSetLayoutBinding, 7> bindings{};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[0].descriptorCount = 1;
@@ -675,10 +682,12 @@ void Renderer::create_shadow_resources() {
         bindings[1].descriptorCount = 1;
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_VERTEX_BIT;
 
-        bindings[2].binding = 2;
-        bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        bindings[2].descriptorCount = 1;
-        bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        for (u32 b = 2; b < 7; ++b) {
+            bindings[b].binding = b;
+            bindings[b].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bindings[b].descriptorCount = 1;
+            bindings[b].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
 
         VkDescriptorSetLayoutCreateInfo ds_ci{};
         ds_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -690,7 +699,7 @@ void Renderer::create_shadow_resources() {
     // --- Shadow descriptor pool + per-frame sets ---
     {
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
-        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * FRAMES_IN_FLIGHT};
+        pool_sizes[0] = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 * FRAMES_IN_FLIGHT};
         pool_sizes[1] = {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, FRAMES_IN_FLIGHT};
 
         VkDescriptorPoolCreateInfo pool_ci{};
@@ -883,24 +892,25 @@ void Renderer::create_pipelines() {
         attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)}; // bone_weights
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};  // tangent
 
-        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3 eye (12B) = 84B
+        // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
+        // eye (12B)
+        // + uint technique (4B, M211b) = 88B
         mesh_pipeline_ = PipelineBuilder()
-            .set_shaders(mv, mf)
-            .set_vertex_input(bindings.data(),
-                              static_cast<u32>(bindings.size()),
-                              attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_blend(true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .set_descriptor_set_layout(texture_ds_layout_)   // set=0: albedo
-            .add_descriptor_set_layout(bone_ds_layout_)       // set=1: bone SSBO
-            .add_descriptor_set_layout(texture_ds_layout_)    // set=2: specteam
-            .add_descriptor_set_layout(texture_ds_layout_)    // set=3: normal map
-            .add_descriptor_set_layout(shadow_ds_layout_)     // set=4: shadow
-            .build(device_, scene_render_pass_, &mesh_layout_);
+                             .set_shaders(mv, mf)
+                             .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()),
+                                               attrs.data(), static_cast<u32>(attrs.size()))
+                             .set_depth_test(true, true)
+                             .set_blend(true)
+                             .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                             .set_push_constant(
+                                 sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 + sizeof(u32),
+                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                             .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
+                             .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
+                             .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
+                             .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
+                             .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
+                             .build(device_, scene_render_pass_, &mesh_layout_);
     }
 
     // --- Water pipeline (tessellated grid with wave animation) ---
@@ -1596,8 +1606,9 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
     }
-    // The cube meshes reflect (M211a), once the texture cache is up.
-    bind_environment_cubemap(terrain->environment());
+    // The cubes and lookups meshes shade with (M211a/b), once the texture
+    // cache is up.
+    bind_mesh_environment(terrain->environment());
 
     // Create bone SSBO descriptor pool and per-frame sets
     if (unit_renderer_.bone_ssbo_buffer(0) && bone_ds_layout_) {
@@ -2522,7 +2533,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             u32 boneBase;
             u32 bonesPerInst;
             f32 eyeX, eyeY, eyeZ;
+            u32 technique; // MeshTechnique (M211b)
         } mesh_pc{};
+        static_assert(sizeof(MeshPushConstants) == 88, "matches mesh_vert/frag's push block");
         std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
         camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
 
@@ -2599,6 +2612,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             // Push bone offsets per group
             mesh_pc.boneBase = group.bone_base_offset;
             mesh_pc.bonesPerInst = group.bones_per_instance;
+            mesh_pc.technique = static_cast<u32>(group.mesh->technique);
             vkCmdPushConstants(cmd_buf_[fi], mesh_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                0, sizeof(mesh_pc), &mesh_pc);
@@ -3126,32 +3140,59 @@ void Renderer::poll_events(f64 dt) {
     update_camera_focus();
 }
 
-void Renderer::bind_environment_cubemap(const map::ScmapEnvironment& environment) {
-    // The map's "<default>" environment cube, as Moho's GetEnvLookup falls
-    // back to for a material that names none; Moho's own default without one.
-    std::string path = "/textures/environment/defaultenvcube.dds";
-    for (const auto& [key, file] : environment.cubemaps) {
-        if (key == "<default>" && !file.empty()) path = file;
-    }
-    VkImageView view = texture_cache_.get_cube_blocking(path);
-    if (!view) view = texture_cache_.cube_fallback_view();
-    if (!view) return;
-    spdlog::info("Environment cubemap: {}", path);
+void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
+    // Each technique reflects the map's cube named by its "environment"
+    // annotation -- "<default>", "<aeon>", "<seraphim>" -- falling back to the
+    // map's "<default>", as Moho's GetEnvLookup does; Moho's own default cube
+    // without one, and black if that fails too.
+    const auto find = [&](const char* key) -> std::string {
+        for (const auto& [name, file] : environment.cubemaps)
+            if (name == key && !file.empty()) return file;
+        return {};
+    };
+    std::string fallback = find("<default>");
+    if (fallback.empty()) fallback = "/textures/environment/defaultenvcube.dds";
+    const auto cube = [&](const char* key) {
+        std::string path = find(key);
+        if (path.empty()) path = fallback;
+        VkImageView view = texture_cache_.get_cube_blocking(path);
+        if (!view) view = texture_cache_.cube_fallback_view();
+        spdlog::info("Environment cubemap {}: {}", key, path);
+        return view;
+    };
+    const std::array<VkImageView, 3> cubes = {cube("<default>"), cube("<aeon>"),
+                                              cube("<seraphim>")};
+    // FA's fixed lookups (Moho binds them for every mesh).
+    const auto lookup = [&](const char* path) {
+        const GPUTexture* tex = texture_cache_.get_blocking(path);
+        return tex ? tex->image.view : texture_cache_.fallback_view();
+    };
+    const std::array<VkImageView, 2> lookups = {lookup("/textures/engine/anisotropiclookup.dds"),
+                                                lookup("/textures/engine/insectlookup.dds")};
+    for (VkImageView v : cubes)
+        if (!v) return;
     for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
         if (!shadow_ds_[f]) continue;
-        VkDescriptorImageInfo info{};
-        info.sampler = texture_sampler_;
-        info.imageView = view;
-        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = shadow_ds_[f];
-        write.dstBinding = 2;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.pImageInfo = &info;
-        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        std::array<VkDescriptorImageInfo, 5> infos{};
+        std::array<VkWriteDescriptorSet, 5> writes{};
+        for (u32 i = 0; i < 5; ++i) {
+            infos[i].sampler = i < 3 ? texture_sampler_ : lookup_sampler_;
+            infos[i].imageView = i < 3 ? cubes[i] : lookups[i - 3];
+            infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = shadow_ds_[f];
+            writes[i].dstBinding = 2 + i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].pImageInfo = &infos[i];
+        }
+        vkUpdateDescriptorSets(device_, static_cast<u32>(writes.size()), writes.data(), 0, nullptr);
     }
+}
+
+MeshTechnique Renderer::mesh_technique(const std::string& blueprint_id, lua_State* L) {
+    const GPUMesh* mesh = mesh_cache_.get(blueprint_id, L);
+    return mesh ? mesh->technique : MeshTechnique::Unit;
 }
 
 void Renderer::update_camera_focus() {
@@ -3366,6 +3407,7 @@ void Renderer::shutdown() {
 
     // Texture infrastructure
     if (texture_sampler_) vkDestroySampler(device_, texture_sampler_, nullptr);
+    if (lookup_sampler_) vkDestroySampler(device_, lookup_sampler_, nullptr);
     if (texture_ds_layout_)
         vkDestroyDescriptorSetLayout(device_, texture_ds_layout_, nullptr);
 

@@ -539,6 +539,7 @@ layout(push_constant) uniform PushConstants {
     uint boneBase;
     uint bonesPerInst;
     float eyeX, eyeY, eyeZ;
+    uint technique; // MeshTechnique (M211b)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -601,6 +602,7 @@ layout(push_constant) uniform PushConstants {
     uint boneBase;
     uint bonesPerInst;
     float eyeX, eyeY, eyeZ;
+    uint technique; // MeshTechnique: 0 Unit, 1 Aeon, 2 Insect, 3 Metal, 4 Seraphim (M211b)
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
@@ -617,8 +619,13 @@ layout(set = 4, binding = 1) uniform LightUBO {
     vec4 shadowFill;    // rgb: ShadowFillColor
     vec4 specularColor;
 } lightUbo;
-// The map's environment cube (its "<default>"), which meshes reflect (M211a)
-layout(set = 4, binding = 2) uniform samplerCube environmentMap;
+// The map's environment cubes meshes reflect, by their technique's key
+// (M211a/b), and FA's lookup textures
+layout(set = 4, binding = 2) uniform samplerCube environmentMap;  // "<default>"
+layout(set = 4, binding = 3) uniform samplerCube aeonEnvironment; // "<aeon>"
+layout(set = 4, binding = 4) uniform samplerCube seraphimEnvironment; // "<seraphim>"
+layout(set = 4, binding = 5) uniform sampler2D anisotropicLookup;
+layout(set = 4, binding = 6) uniform sampler2D insectLookup;
 
 layout(location = 0) in vec3 fragNormal;
 // Army colour (RGB) + build alpha (A). A negative red marks a wreck, a
@@ -687,7 +694,7 @@ void main() {
     vec3 lit;
     if (fragColor.r < 0.0) {
         // A wreck: burnt dark and grey, barely shining. (FA's WreckagePS,
-        // with its own crunch texture, is M211b's.)
+        // with its own crunch texture, is M211c's.)
         float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
         vec3 blended = mix(vec3(lum), texColor.rgb, 0.3) * 0.45;
         vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
@@ -695,18 +702,51 @@ void main() {
         float spec = pow(max(dot(worldNormal, halfDir), 0.0), 32.0) * specTeam.r * 0.25 * shadow;
         lit = blended * light + vec3(spec);
     } else {
-        // FA's NormalMappedPS (mesh.fx): the Unit technique masks the
-        // team's colour in; props (NormalMappedAlpha) tint by their colour.
+        // FA's mesh.fx, by the mesh's technique. Props (NormalMappedAlpha)
+        // tint by their colour; units mask the team's colour in.
         bool prop = fragColor.g < 0.0;
         vec3 albedo = prop ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, specTeam.a);
         // FA's viewDirection runs from the eye to the point.
         vec3 V = normalize(fragWorldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ));
-        vec3 environment = texture(environmentMap, reflect(-V, worldNormal)).rgb;
+        vec3 R = reflect(-V, worldNormal);
         float phongAmount = clamp(dot(reflect(S, worldNormal), -V), 0.0, 1.0);
-        vec3 phongAdditive = vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
-        vec3 phongMultiplicative = 2.0 * environment * specTeam.r;
         float emissive = 2.0 * specTeam.b; // glowMultiplier
-        lit = albedo * (emissive + light + phongMultiplicative) + phongAdditive;
+        if (pc.technique == 1u) {
+            // AeonPS: its own cube and highlight, and the sun at 0.6.
+            vec3 environment = texture(aeonEnvironment, R).rgb;
+            vec3 phongAdditive = vec3(0.8, 0.85, 1.10) * pow(phongAmount, 3.0) * specTeam.g;
+            vec3 aeonLight = lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow +
+                             lightUbo.sunAmbience.rgb;
+            aeonLight = 0.6 * lightUbo.sunColor.w * aeonLight +
+                        (1.0 - aeonLight) * lightUbo.shadowFill.rgb;
+            lit = albedo * (emissive + aeonLight + specTeam.r * environment) + phongAdditive;
+        } else if (pc.technique == 2u || pc.technique == 3u) {
+            // NormalMappedInsectPS (Cybran) and NormalMappedMetalPS: an
+            // anisotropic highlight from a lookup, half the environment.
+            vec3 environment = texture(environmentMap, R).rgb;
+            vec2 anisoAt = vec2(dot(reflect(S, worldNormal), -V), NdotL);
+            vec3 aniso = pc.technique == 2u ? texture(insectLookup, anisoAt).rgb
+                                            : texture(anisotropicLookup, anisoAt).rgb;
+            vec3 phongAdditive = aniso * specTeam.g + 0.5 * specTeam.r * environment;
+            vec3 meshLight = light;
+            if (pc.technique == 2u) {
+                // The insect's highlight stays off its team colour, and it
+                // takes the sun twice over.
+                phongAdditive *= 1.0 - specTeam.a;
+                meshLight = 2.0 * lightUbo.sunColor.rgb * clamp(NdotL, 0.0, 1.0) * shadow +
+                            lightUbo.sunAmbience.rgb;
+                meshLight = lightUbo.sunColor.w * meshLight +
+                            (1.0 - meshLight) * lightUbo.shadowFill.rgb;
+            }
+            lit = albedo * (emissive + meshLight) + phongAdditive;
+        } else {
+            // NormalMappedPS (the Unit technique; Seraphim's UnitFalloffPS
+            // is M211c's).
+            vec3 environment = texture(environmentMap, R).rgb;
+            vec3 phongAdditive = vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
+            vec3 phongMultiplicative = 2.0 * environment * specTeam.r;
+            lit = albedo * (emissive + light + phongMultiplicative) + phongAdditive;
+        }
     }
 
     float finalAlpha = texColor.a * fragColor.a;
