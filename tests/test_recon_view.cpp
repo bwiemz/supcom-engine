@@ -48,9 +48,28 @@ struct World {
         if (flag != VisFlag::None) snap.visibility->paint_circle(0, x, z, 12.0f, flag);
     }
 
+    /// Units' recon masks from the grid, as the sim leaves them with nothing
+    /// to counter (no cloak, stealth or water); off, a test sets its own.
+    bool derive_masks = true;
+
     /// The next tick, as `recon` sees it.
     void tick(ReconView& recon) {
         ++snap.tick;
+        if (derive_masks && snap.visibility)
+            for (auto& e : snap.entities) {
+                if (!e.is_unit) continue;
+                e.los_now = e.detected = 0;
+                u32 gx = 0;
+                u32 gz = 0;
+                snap.visibility->world_to_grid(e.position.x, e.position.z, gx, gz);
+                for (u32 a = 0; a < 3; ++a) {
+                    const VisFlag f = snap.visibility->get(gx, gz, a);
+                    if (map::has_flag(f, VisFlag::Vision)) e.los_now |= 1u << a;
+                    if (map::has_flag(f, VisFlag::Vision | VisFlag::Radar | VisFlag::Sonar |
+                                             VisFlag::Omni))
+                        e.detected |= 1u << a;
+                }
+            }
         recon.update(sim::FrameView(&snap, &snap, 1.0f));
     }
 };
@@ -201,6 +220,34 @@ TEST_CASE("ReconView: an enemy structure, once seen, is remembered as it was",
     CHECK(recon.frozen_pose(1) == nullptr);
 }
 
+TEST_CASE("ReconView: a unit is judged by the sim's recon of it, not the cells",
+          "[renderer][recon]") {
+    // The sim counts what a unit's cell can't show: a cloak defeats vision,
+    // stealth radar, the water radar or sonar (M215d). A unit in a lit cell
+    // the sim says isn't in sight isn't; one it says is detected is a blip.
+    World w;
+    w.derive_masks = false;
+    sim::EntityRecord& cloaked = w.unit(1, 1, 100, 100, true);
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.sense(100, 100, VisFlag::Vision);
+    cloaked.los_now = 0;
+    cloaked.detected = 0;
+    w.tick(recon);
+    CHECK(recon.sight(cloaked) == Sight::Hidden);
+    cloaked.detected = 1u; // omni, say, or sonar under water
+    w.tick(recon);
+    CHECK(recon.sight(cloaked) == Sight::Blip);
+    cloaked.los_now = 1u;
+    w.tick(recon);
+    CHECK(recon.sight(cloaked) == Sight::Seen);
+    // Another army's bits are not the player's.
+    cloaked.los_now = 1u << 2;
+    cloaked.detected = 1u << 2;
+    w.tick(recon);
+    CHECK(recon.sight(cloaked) == Sight::Hidden);
+}
+
 TEST_CASE("ReconView: an enemy projectile shows only in sight", "[renderer][recon]") {
     World w;
     w.add(1, 1, 100, 100).is_projectile = true;
@@ -242,16 +289,69 @@ TEST_CASE("ReconView: memory is per army, per entity, per tick", "[renderer][rec
     w.tick(recon);
     CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
 
-    // An entity gone from the world is forgotten; one with its id later is
-    // new.
+    // An entity gone from the world while its spot is in sight is
+    // forgotten; one with its id later is new.
     w.sense(100, 100, VisFlag::Vision);
     w.tick(recon);
     w.snap.entities.clear();
+    w.tick(recon);
+    CHECK(recon.ghosts().empty());
+    w.unit(1, 1, 100, 100, false);
     w.sense(100, 100, VisFlag::None);
     w.tick(recon);
-    w.unit(1, 1, 100, 100, false);
-    w.tick(recon);
     CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+}
+
+TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is seen",
+          "[renderer][recon]") {
+    World w;
+    sim::EntityRecord& pd = w.unit(7, 1, 100, 100, false);
+    pd.blueprint_id = "ueb2101";
+    pd.bone_count = 1;
+    w.snap.bones.push_back(sim::BoneMatrix{});
+    w.unit(8, 1, 200, 200, true); // a tank: mobile, never a ghost
+    ReconView recon;
+    recon.set_focus_army(0);
+    w.snap.visibility->paint_circle(0, 200, 200, 12.0f, VisFlag::Vision);
+    w.snap.visibility->paint_circle(0, 100, 100, 12.0f, VisFlag::Vision);
+    w.tick(recon);
+    w.sense(0, 0, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(7)) == Sight::Remembered);
+
+    // Both die out of sight: the structure stays, as last seen; the tank is
+    // gone.
+    w.snap.entities.clear();
+    w.tick(recon);
+    REQUIRE(recon.ghosts().size() == 1);
+    const sim::EntityRecord& ghost = recon.ghosts().front();
+    CHECK(ghost.id == 7);
+    CHECK(ghost.blueprint_id == "ueb2101");
+    CHECK(recon.maybe_dead(7));
+    CHECK_FALSE(recon.maybe_dead(8));
+    CHECK(recon.sight(ghost) == Sight::Remembered);
+    CHECK(recon.frozen_pose(7) != nullptr);
+
+    // Radar there isn't sight: still maybe dead.
+    w.sense(100, 100, VisFlag::Radar);
+    w.tick(recon);
+    CHECK(recon.ghosts().size() == 1);
+
+    // Seen, the spot is empty: forgotten.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.ghosts().empty());
+    CHECK_FALSE(recon.maybe_dead(7));
+
+    // A new focus forgets them too.
+    w.unit(9, 1, 100, 100, false);
+    w.tick(recon);
+    w.snap.entities.clear();
+    w.sense(0, 0, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.ghosts().size() == 1);
+    recon.set_focus_army(2);
+    CHECK(recon.ghosts().empty());
 }
 
 TEST_CASE("ReconView: effects show where the player's army sees", "[renderer][recon]") {

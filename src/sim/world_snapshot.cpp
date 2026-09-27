@@ -47,6 +47,23 @@ IconClass icon_class(const Unit& u) {
     return IconClass::Generic;
 }
 
+/// Each army's recon of `u` (M215d): the sim's (cloak and stealth counted),
+/// less what the unit's layer hides from a sense, as Moho's GetNewReconFor
+/// asks radar only above the water and sonar only in or under it.
+void capture_recon(const SimState& sim, const Unit& u, EntityRecord& r) {
+    const auto* recon = sim.entity_recon(u.entity_id());
+    if (!recon) return;
+    const std::string& layer = u.layer();
+    const bool under = layer == "Sub" || layer == "Seabed";
+    const bool wet = under || layer == "Water";
+    static_assert(SimState::MAX_VIS_ARMIES <= 32, "an army's recon is a bit of a u32");
+    for (u32 a = 0; a < SimState::MAX_VIS_ARMIES; ++a) {
+        const SimState::EntityVisSnapshot& f = (*recon)[a];
+        if (f.vision) r.los_now |= 1u << a;
+        if (f.vision || f.omni || (f.radar && !under) || (f.sonar && wet)) r.detected |= 1u << a;
+    }
+}
+
 void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.unit_id = u.unit_id();
     r.icon = icon_class(u);
@@ -172,7 +189,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.health = e.health();
         r.max_health = e.max_health();
         r.custom_name = e.custom_name();
-        if (e.is_unit()) capture_unit(static_cast<const Unit&>(e), r, out);
+        if (e.is_unit()) {
+            capture_unit(static_cast<const Unit&>(e), r, out);
+            capture_recon(sim, static_cast<const Unit&>(e), r);
+        }
         if (e.is_prop()) {
             const auto& pose = static_cast<const Prop&>(e).pose; // TryCopyPose
             if (!pose.empty()) {

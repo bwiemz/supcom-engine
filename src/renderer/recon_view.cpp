@@ -2,6 +2,8 @@
 
 #include "map/visibility_grid.hpp"
 
+#include <algorithm>
+
 namespace osc::renderer {
 
 void ReconView::set_focus_army(i32 army) {
@@ -12,6 +14,7 @@ void ReconView::set_focus_army(i32 army) {
 
 void ReconView::clear() {
     memory_.clear();
+    ghosts_.clear();
     updated_ = false;
     everything_ = true;
     allies_ = 0;
@@ -36,29 +39,33 @@ void ReconView::update(const sim::FrameView& view) {
         focus_ < 0 || focus_ >= static_cast<i32>(map::VisibilityGrid::MAX_ARMIES) || !grid;
     if (everything_) {
         memory_.clear();
+        ghosts_.clear();
         return;
     }
     const sim::ArmyRecord* army = cur->army(focus_);
     allies_ = army ? army->allies : 0;
 
     using map::VisFlag;
-    const VisFlag senses = VisFlag::Vision | VisFlag::Radar | VisFlag::Sonar | VisFlag::Omni;
     for (const sim::EntityRecord& e : cur->entities) {
         if (!judged(e)) continue;
         Memory& m = memory_[e.id];
         m.touched = update_count_;
-
-        u32 gx = 0;
-        u32 gz = 0;
-        grid->world_to_grid(e.position.x, e.position.z, gx, gz);
-        const VisFlag here = grid->get(gx, gz, static_cast<u32>(focus_));
-        const bool los = map::has_flag(here, VisFlag::Vision);
-        const bool detected = map::has_flag(here, senses);
+        m.ghost = false; // in the world, whatever the player's army thought
 
         if (e.is_projectile) {
-            m.sight = los ? Sight::Seen : Sight::Hidden;
+            // A projectile: the player's line of sight where it is.
+            u32 gx = 0;
+            u32 gz = 0;
+            grid->world_to_grid(e.position.x, e.position.z, gx, gz);
+            const VisFlag here = grid->get(gx, gz, static_cast<u32>(focus_));
+            m.sight = map::has_flag(here, VisFlag::Vision) ? Sight::Seen : Sight::Hidden;
             continue;
         }
+        // A unit: the sim's recon of it, cloak, stealth and layer counted
+        // (M215d).
+        const u32 bit = 1u << static_cast<u32>(focus_);
+        const bool los = (e.los_now & bit) != 0;
+        const bool detected = (e.detected & bit) != 0;
         if (los) m.seen_ever = true;
         if (e.is_mobile) {
             // A mobile unit no sense detects loses its blip, and with it
@@ -72,6 +79,7 @@ void ReconView::update(const sim::FrameView& view) {
             const auto bones = cur->bones_of(e);
             m.pose.assign(bones.begin(), bones.end());
             m.fraction = e.fraction_complete;
+            m.last = e; // as it's drawn, should it die out of sight
         } else if (m.seen_ever) {
             m.sight = Sight::Remembered;
         } else {
@@ -79,10 +87,38 @@ void ReconView::update(const sim::FrameView& view) {
         }
     }
 
-    // Entities gone from the world are forgotten (a structure destroyed out
-    // of sight is MaybeDead in Moho, and stays until the spot is seen: M215b).
-    for (auto it = memory_.begin(); it != memory_.end();)
-        it = it->second.touched == update_count_ ? std::next(it) : memory_.erase(it);
+    // Entities gone from the world are forgotten, but for a structure the
+    // player's army remembers and didn't see go: Moho's MaybeDead, drawn as
+    // last seen until its army sees the spot (M215d).
+    const auto seen_there = [&](const sim::Vector3& p) {
+        u32 gx = 0;
+        u32 gz = 0;
+        grid->world_to_grid(p.x, p.z, gx, gz);
+        return map::has_flag(grid->get(gx, gz, static_cast<u32>(focus_)), VisFlag::Vision);
+    };
+    ghosts_.clear();
+    for (auto it = memory_.begin(); it != memory_.end();) {
+        Memory& m = it->second;
+        if (m.touched != update_count_) {
+            const bool remembered = m.ghost || (m.seen_ever && m.last.id != 0);
+            if (!remembered || seen_there(m.last.position)) {
+                it = memory_.erase(it);
+                continue;
+            }
+            m.ghost = true;
+            m.sight = Sight::Remembered;
+            ghosts_.push_back(m.last);
+        }
+        ++it;
+    }
+    // In id order, as the snapshot's entities are.
+    std::sort(ghosts_.begin(), ghosts_.end(),
+              [](const sim::EntityRecord& a, const sim::EntityRecord& b) { return a.id < b.id; });
+}
+
+bool ReconView::maybe_dead(u32 id) const {
+    const auto it = memory_.find(id);
+    return it != memory_.end() && it->second.ghost;
 }
 
 Sight ReconView::sight(const sim::EntityRecord& e) const {

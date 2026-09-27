@@ -622,6 +622,23 @@ public:
     CellRect playable_cells(const InfluenceMap& map) const;
     /// Whether army `army` has ever had entity `id` in line of sight (Moho's
     /// RECON_LOSEver): kept while the entity lives.
+    /// One army's recon of a unit, as a tick's visibility update leaves it:
+    /// LOSNow (vision, which a cloak defeats), radar and sonar (which
+    /// stealth defeats), omni (which defeats both).
+    struct EntityVisSnapshot {
+        bool vision = false;
+        bool radar = false;
+        bool sonar = false;
+        bool omni = false;
+    };
+    static constexpr u32 MAX_VIS_ARMIES = 16;
+    /// Every army's recon of unit `id` as of the last tick, or null (not a
+    /// unit, or no visibility grid).
+    const std::array<EntityVisSnapshot, MAX_VIS_ARMIES>* entity_recon(u32 id) const {
+        const auto it = prev_entity_vis_.find(id);
+        return it == prev_entity_vis_.end() ? nullptr : &it->second;
+    }
+
     bool ever_in_sight(u32 id, u32 army) const {
         const auto it = los_ever_.find(id);
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
@@ -794,13 +811,6 @@ private:
     static u32 s_sim_generation_;
 
     // Per-entity per-army previous visibility for OnIntelChange detection
-    struct EntityVisSnapshot {
-        bool vision = false;
-        bool radar = false;
-        bool sonar = false;
-        bool omni = false;
-    };
-    static constexpr u32 MAX_VIS_ARMIES = 16;
     std::unordered_map<u32, std::array<EntityVisSnapshot, MAX_VIS_ARMIES>>
         prev_entity_vis_;
 
