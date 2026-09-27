@@ -148,7 +148,8 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
     std::string mesh_bp_id = resolve_mesh_bp_id(bp_id, L);
     if (mesh_bp_id.empty()) {
         if (failed_.size() < 5)
-            spdlog::info("MeshCache: no mesh blueprint for '{}' (cube fallback)", bp_id);
+            spdlog::info(
+                "MeshCache: no mesh blueprint for '{}' (a unit draws a cube, else nothing)", bp_id);
         else
             spdlog::debug("MeshCache: no mesh blueprint for '{}'", bp_id);
         return false;
@@ -188,7 +189,8 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         std::string mesh_path = resolve_mesh_path(bp_id, L);
         if (mesh_path.empty()) {
             if (failed_.size() < 5)
-                spdlog::info("MeshCache: no mesh path for '{}' (cube fallback)", bp_id);
+                spdlog::info("MeshCache: no mesh path for '{}' (a unit draws a cube, else nothing)",
+                             bp_id);
             else
                 spdlog::debug("MeshCache: no mesh path for '{}'", bp_id);
             return false;
@@ -197,7 +199,9 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         GPUMesh gpu = upload_scm_mesh(mesh_path);
         if (!gpu.vertex_buf.buffer) {
             if (failed_.size() < 5)
-                spdlog::info("MeshCache: upload failed for '{}' (cube fallback)", mesh_path);
+                spdlog::warn(
+                    "MeshCache: upload failed for '{}' (a unit draws a cube, else nothing)",
+                    mesh_path);
             else
                 spdlog::debug("MeshCache: upload failed for '{}'", mesh_path);
             return false;

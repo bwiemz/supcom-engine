@@ -121,6 +121,7 @@ constexpr Mode kModesBefore[] = {
     {"--specular-test", test_specular, false},
     {"--lighting-test", test_lighting, false},
     {"--strata-test", test_strata, false},
+    {"--meshless-test", test_meshless, false},
     {"--terrain-normal-test", test_terrain_normal, false},
     {"--decal-test", test_decal, false},
     {"--projectile-test", test_projectile, false},
@@ -273,6 +274,7 @@ void IntegrationModes::print_usage() const {
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
+              << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
