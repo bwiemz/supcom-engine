@@ -26,6 +26,7 @@ struct DDSTexture; // forward
 struct GPUTexture {
     AllocatedImage image{};
     VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+    u32 width = 0, height = 0; ///< the top mip's, in texels
 };
 
 /// Lazy-loading texture cache keyed by VFS path.

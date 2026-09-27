@@ -107,6 +107,8 @@ void test_clipped_shadows(TestContext& ctx);
 /// unit_intel_test.cpp.
 void test_unit_intel(TestContext& ctx);
 void test_effect_intel(TestContext& ctx);
+/// --strategic-icon-test (M215c), in strategic_icon_test.cpp.
+void test_strategic_icons(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

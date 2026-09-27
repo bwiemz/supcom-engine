@@ -79,10 +79,17 @@ void OffscreenShots::recapture() {
     history_.capture(ctx_.sim);
 }
 
-void OffscreenShots::redraw() {
+void OffscreenShots::redraw(const std::unordered_set<u32>* selected) {
     renderer_.render(sim::FrameView(&history_.prev(), &history_.cur(), 1.0f), history_.events(),
-                     nullptr, ctx_.L);
+                     nullptr, ctx_.L, nullptr, selected);
     renderer_.poll_events(0.016);
+}
+
+ImageRGBA8 OffscreenShots::grab(const std::unordered_set<u32>* selected) {
+    ImageRGBA8 shot;
+    renderer_.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
+    redraw(selected);
+    return shot;
 }
 
 OffscreenShots::~OffscreenShots() {

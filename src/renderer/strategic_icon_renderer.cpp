@@ -5,7 +5,10 @@
 #include "renderer/texture_cache.hpp"
 #include "sim/world_snapshot.hpp"
 
+#include <lua.h>
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 
@@ -284,152 +287,262 @@ bool StrategicIconRenderer::world_to_screen(f32 wx, f32 wy, f32 wz,
     return true;
 }
 
-void StrategicIconRenderer::emit_quad(f32 x, f32 y, f32 w, f32 h,
-                                       f32 u0, f32 v0, f32 u1, f32 v1,
-                                       f32 r, f32 g, f32 b, f32 a) {
+void StrategicIconRenderer::emit_icon(f32 x, f32 y, const std::string& path, const GPUTexture& tex,
+                                      f32 r, f32 g, f32 b) {
     if (quad_count_ >= MAX_ICON_QUADS) return;
+    // Centred at its own size (DrawStrategicIconQuad: the texture's width
+    // and height, halved to radii).
+    const f32 half_w = static_cast<f32>(tex.width >> 1);
+    const f32 half_h = static_cast<f32>(tex.height >> 1);
     UIInstance inst{};
-    inst.rect[0] = x; inst.rect[1] = y; inst.rect[2] = w; inst.rect[3] = h;
-    inst.uv[0] = u0; inst.uv[1] = v0; inst.uv[2] = u1; inst.uv[3] = v1;
-    inst.color[0] = r; inst.color[1] = g; inst.color[2] = b; inst.color[3] = a;
+    inst.rect[0] = x - half_w;
+    inst.rect[1] = y - half_h;
+    inst.rect[2] = half_w * 2.0f;
+    inst.rect[3] = half_h * 2.0f;
+    inst.uv[0] = 0.0f;
+    inst.uv[1] = 0.0f;
+    inst.uv[2] = 1.0f;
+    inst.uv[3] = 1.0f;
+    inst.color[0] = r;
+    inst.color[1] = g;
+    inst.color[2] = b;
+    inst.color[3] = -1.0f; // the UI shader's StrategicIconPS
     quads_.push_back(inst);
-    quad_count_++;
+    quad_textures_.push_back(path);
+    if (groups_.empty() || groups_.back().ds != tex.descriptor_set)
+        groups_.push_back({tex.descriptor_set, quad_count_, 0});
+    ++groups_.back().count;
+    ++quad_count_;
 }
 
-bool StrategicIconRenderer::update(const sim::FrameView& view,
-                                    const Camera& camera,
-                                    const std::array<f32, 16>& vp_matrix,
-                                    const std::unordered_set<u32>* selected_ids,
-                                    TextureCache& tex_cache,
-                                    u32 viewport_w, u32 viewport_h) {
+namespace {
+
+/// Lowercase ASCII (__blueprints keys and FA's paths are lowercase).
+std::string lowered(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+/// t[key] of the table at `idx`, pushed (nil when `idx` isn't a table).
+void push_field(lua_State* L, int idx, const char* key) {
+    if (!lua_istable(L, idx)) {
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushstring(L, key);
+    lua_rawget(L, idx < 0 && idx > LUA_REGISTRYINDEX ? idx - 1 : idx);
+}
+
+std::string string_field(lua_State* L, int idx, const char* key) {
+    push_field(L, idx, key);
+    std::string out = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    return out;
+}
+
+} // namespace
+
+const StrategicIconRenderer::IconBlueprint&
+StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
+    static const IconBlueprint kNone;
+    if (!L) return kNone; // nothing to read, and nothing to remember
+    const std::string key = lowered(id);
+    if (auto it = icon_blueprints_.find(key); it != icon_blueprints_.end()) return it->second;
+    IconBlueprint& out = icon_blueprints_[key];
+
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const int bps = lua_gettop(L);
+    push_field(L, bps, key.c_str());
+    const int bp = lua_gettop(L);
+    if (lua_istable(L, bp)) {
+        // StrategicIconName names the four textures under the icon
+        // directory (an absolute one is its own base).
+        const std::string name = lowered(string_field(L, bp, "StrategicIconName"));
+        if (!name.empty()) {
+            const std::string base = name.front() == '/' ? name : kIconDirectory + name;
+            out.rest = base + "_rest.dds";
+            out.selected = base + "_selected.dds";
+        }
+        // Moho keeps the sort priority in a byte.
+        push_field(L, bp, "StrategicIconSortPriority");
+        if (lua_isnumber(L, -1))
+            out.sort_priority = static_cast<u8>(static_cast<i64>(lua_tonumber(L, -1)) & 0xFF);
+        lua_pop(L, 1);
+        push_field(L, bp, "Air");
+        push_field(L, -1, "CanFly");
+        out.can_fly = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 2);
+        // Its mesh blueprint's IconFadeInZoom (0 when it says none).
+        push_field(L, bp, "Display");
+        const int display = lua_gettop(L);
+        const std::string mesh = lowered(string_field(L, display, "MeshBlueprint"));
+        if (!mesh.empty()) push_field(L, bps, mesh.c_str());
+        else push_field(L, display, "Mesh");
+        push_field(L, -1, "IconFadeInZoom");
+        if (lua_isnumber(L, -1)) out.fade_in_zoom = static_cast<f32>(lua_tonumber(L, -1));
+    }
+    lua_settop(L, top);
+    return out;
+}
+
+void StrategicIconRenderer::load_generic_icons(lua_State* L) {
+    if (generic_loaded_) return;
+    generic_loaded_ = true;
+    // strategicIcons.lua's own paths, should the import fail.
+    generic_structure_ = std::string(kIconDirectory) + "icon_structure_generic_rest.dds";
+    generic_land_ = std::string(kIconDirectory) + "icon_land_generic_rest.dds";
+    generic_naval_ = std::string(kIconDirectory) + "icon_ship_generic_rest.dds";
+    generic_air_ = std::string(kIconDirectory) + "icon_fighter_generic_rest.dds";
+    stunned_ = std::string(kIconDirectory) + "stunned_rest.dds";
+    if (!L) return;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/game/strategicIcons.lua");
+    if (lua_isfunction(L, -2) && lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
+        const int module = lua_gettop(L);
+        push_field(L, module, "GenericIcons");
+        const int generic = lua_gettop(L);
+        const auto take = [&](const char* key, std::string& into) {
+            const std::string path = lowered(string_field(L, generic, key));
+            if (!path.empty()) into = path;
+        };
+        take("Structure", generic_structure_);
+        take("Land", generic_land_);
+        take("Naval", generic_naval_);
+        take("Air", generic_air_);
+        push_field(L, module, "StunnedIcons");
+        const std::string stunned = lowered(string_field(L, lua_gettop(L), "StunnedRest"));
+        if (!stunned.empty()) stunned_ = stunned;
+    }
+    lua_settop(L, top);
+}
+
+void StrategicIconRenderer::preload(const std::vector<std::string>& blueprint_ids,
+                                    TextureCache& tex_cache, lua_State* L) {
+    load_generic_icons(L);
+    for (const std::string* path :
+         {&generic_structure_, &generic_land_, &generic_naval_, &generic_air_, &stunned_})
+        (void)tex_cache.get_blocking(*path);
+    for (const std::string& id : blueprint_ids) {
+        const IconBlueprint& bp = icon_blueprint(id, L);
+        if (bp.rest.empty()) continue;
+        (void)tex_cache.get_blocking(bp.rest);
+        (void)tex_cache.get_blocking(bp.selected);
+    }
+}
+
+bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& camera,
+                                   const std::array<f32, 16>& vp_matrix,
+                                   const std::unordered_set<u32>* selected_ids,
+                                   TextureCache& tex_cache, u32 viewport_w, u32 viewport_h,
+                                   lua_State* L) {
     quads_.clear();
-    quads_.reserve(MAX_ICON_QUADS);
+    quad_textures_.clear();
+    groups_.clear();
     quad_count_ = 0;
-    ring_count_ = 0;
-    white_ds_ = tex_cache.fallback_descriptor();
+    load_generic_icons(L);
 
-    f32 cam_dist = camera.distance();
-    strategic_zoom_active_ = (cam_dist >= ZOOM_THRESHOLD);
-    // Closer in, only the blips the player's intel has, which have no mesh.
-    if (!strategic_zoom_active_ && (!recon_ || recon_->sees_everything())) return false;
+    const f32 cam_dist = camera.distance();
+    strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
+    const f32 sw = static_cast<f32>(viewport_w);
+    const f32 sh = static_cast<f32>(viewport_h);
+    // An icon fades in with the camera out past its mesh's IconFadeInZoom
+    // (no further than 0.89 of the farthest zoom, as Moho caps it).
+    const f32 fade_cap = camera.max_zoom() * 0.89f;
 
-    f32 sw = static_cast<f32>(viewport_w);
-    f32 sh = static_cast<f32>(viewport_h);
-
-    // Icon size scales slightly with zoom (smaller when more zoomed out)
-    f32 icon_size = std::clamp(24.0f * (ZOOM_THRESHOLD / cam_dist), 10.0f, 32.0f);
-
-    // Eye position for distance culling
-    f32 eye_x, eye_y, eye_z;
-    camera.eye_position(eye_x, eye_y, eye_z);
-
-    // Collect visible units with screen positions (two-pass: rings first, icons second)
-    struct VisibleUnit {
-        f32 sx, sy;
-        f32 r, g, b;
-        StrategicIconType icon_type;
-        bool is_selected;
+    struct Icon {
+        f32 x = 0, y = 0;
+        const std::string* path = nullptr;
+        const GPUTexture* tex = nullptr;
+        f32 r = 1, g = 1, b = 1;
+        bool stunned = false;
     };
-    std::vector<VisibleUnit> visible;
-    visible.reserve(256);
+    // Moho's four runs, drawn in this order: ground, air, high-priority,
+    // selected.
+    std::array<std::vector<Icon>, 4> runs;
 
     for (const sim::EntityRecord& entity : view.entities()) {
-        if (!entity.is_unit) continue;
+        if (!entity.is_unit || entity.is_being_built) continue;
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
-        if (!shows_icon(sight) || (!strategic_zoom_active_ && shows_mesh(sight))) continue;
+        if (!shows_icon(sight)) continue;
 
-        auto pos = view.position(entity);
+        const IconBlueprint& bp = icon_blueprint(entity.blueprint_id, L);
+        // A blip never seen has a generic icon; anything identified, its own.
+        const bool identified = sight != Sight::Blip;
+        if (identified && bp.rest.empty()) continue;
+        // A drawn mesh keeps its icon until the camera is out past the
+        // mesh's IconFadeInZoom; a blip, having none, shows its icon at
+        // any zoom.
+        if (shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) continue;
 
-        // Distance cull (wider range for strategic view)
-        f32 dx = pos.x - eye_x;
-        f32 dz = pos.z - eye_z;
-        if (dx * dx + dz * dz > 1200.0f * 1200.0f) continue;
+        const sim::Vector3 pos = view.position(entity);
+        f32 sx = 0;
+        f32 sy = 0;
+        if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy)) continue;
+        if (sx < -32.0f || sx > sw + 32.0f || sy < -32.0f || sy > sh + 32.0f) continue;
 
-        // Project to screen
-        f32 sx, sy;
-        if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy))
-            continue;
+        const bool selected = selected_ids && selected_ids->count(entity.id) > 0;
+        const std::string* path = &bp.rest;
+        if (!identified) {
+            switch (classify_blip(entity)) {
+            case StrategicIconType::Structure: path = &generic_structure_; break;
+            case StrategicIconType::Air: path = &generic_air_; break;
+            case StrategicIconType::Naval: path = &generic_naval_; break;
+            default: path = &generic_land_; break;
+            }
+        } else if (selected) {
+            path = &bp.selected;
+        }
+        const GPUTexture* tex = tex_cache.get(*path);
+        if (!tex || tex->width == 0) continue; // loading, or not there
 
-        // Skip if off-screen
-        if (sx < -icon_size || sx > sw + icon_size ||
-            sy < -icon_size || sy > sh + icon_size)
-            continue;
-
-        // Get army color (a blip not seen since it was detected: a generic
-        // icon in GameColors' UnidentifiedColor)
-        f32 r, g, b;
-        StrategicIconType type = classify_unit(entity);
-        if (sight == Sight::Blip) {
-            const auto [ur, ug, ub] = recon_->unidentified_rgb();
-            r = ur;
-            g = ug;
-            b = ub;
-            type = classify_blip(entity);
+        Icon icon;
+        icon.x = std::floor(sx);
+        icon.y = std::floor(sy);
+        icon.path = path;
+        icon.tex = tex;
+        icon.stunned = entity.stunned;
+        if (identified) {
+            get_army_color(entity, view, icon.r, icon.g, icon.b);
         } else {
-            get_army_color(entity, view, r, g, b);
+            const auto [ur, ug, ub] = recon_->unidentified_rgb();
+            icon.r = ur;
+            icon.g = ug;
+            icon.b = ub;
         }
-
-        bool is_selected = selected_ids &&
-                           selected_ids->count(entity.id) > 0;
-
-        visible.push_back({sx, sy, r, g, b, type, is_selected});
+        const size_t run = selected                                  ? 3
+                           : bp.sort_priority < static_cast<u8>('A') ? 2
+                           : bp.can_fly                              ? 1
+                                                                     : 0;
+        runs[run].push_back(icon);
     }
 
-    // Pass 1: Selection rings (drawn with white_ds, behind icons)
-    // Limit rings to half the budget so icons always have room.
-    constexpr u32 MAX_RINGS = MAX_ICON_QUADS / 2;
-    for (auto& vu : visible) {
-        if (!vu.is_selected) continue;
-        if (quad_count_ >= MAX_RINGS) break;
-        f32 ring_size = icon_size + 4.0f;
-        f32 ring_half = ring_size * 0.5f;
-        emit_quad(vu.sx - ring_half, vu.sy - ring_half, ring_size, ring_size,
-                  0.0f, 0.0f, 1.0f, 1.0f,
-                  0.2f, 1.0f, 0.2f, 0.5f);
-    }
-    ring_count_ = quad_count_;
-
-    // Pass 2: Icon quads (drawn with atlas_ds)
-    for (auto& vu : visible) {
-        if (quad_count_ >= MAX_ICON_QUADS) break;
-
-        u32 icon_idx = static_cast<u32>(vu.icon_type);
-        f32 u0 = static_cast<f32>(icon_idx * ICON_CELL_SIZE) /
-                  static_cast<f32>(ATLAS_W);
-        f32 u1 = static_cast<f32>((icon_idx + 1) * ICON_CELL_SIZE) /
-                  static_cast<f32>(ATLAS_W);
-
-        f32 half = icon_size * 0.5f;
-        f32 r = vu.r, g = vu.g, b = vu.b;
-        if (vu.is_selected) {
-            r = r * 0.5f + 0.5f;
-            g = g * 0.5f + 0.5f;
-            b = b * 0.5f + 0.5f;
+    // The base icon tinted; the stunned badge over it at its own colour.
+    const GPUTexture* stunned = tex_cache.get(stunned_);
+    for (const auto& run : runs)
+        for (const Icon& icon : run) {
+            emit_icon(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
+            if (icon.stunned && stunned && stunned->width > 0)
+                emit_icon(icon.x, icon.y, stunned_, *stunned, 1.0f, 1.0f, 1.0f);
         }
-
-        emit_quad(vu.sx - half, vu.sy - half, icon_size, icon_size,
-                  u0, 0.0f, u1, 1.0f,
-                  r, g, b, 1.0f);
-    }
 
     // Upload to GPU
     if (!quads_.empty() && instance_mapped_[fi_]) {
-        u32 count = std::min(quad_count_, MAX_ICON_QUADS);
-        std::memcpy(instance_mapped_[fi_], quads_.data(),
-                    count * sizeof(UIInstance));
+        const u32 count = std::min(quad_count_, MAX_ICON_QUADS);
+        std::memcpy(instance_mapped_[fi_], quads_.data(), count * sizeof(UIInstance));
     }
-
     return strategic_zoom_active_;
 }
 
-void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
-                                    u32 viewport_w, u32 viewport_h) {
+void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout, u32 viewport_w,
+                                   u32 viewport_h) {
     if (quad_count_ == 0) return;
 
-    f32 vp[2] = {static_cast<f32>(viewport_w),
-                 static_cast<f32>(viewport_h)};
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0,
-                       sizeof(f32) * 2, vp);
+    f32 vp[2] = {static_cast<f32>(viewport_w), static_cast<f32>(viewport_h)};
+    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 2, vp);
 
     VkRect2D scissor{};
     scissor.extent = {viewport_w, viewport_h};
@@ -439,19 +552,13 @@ void StrategicIconRenderer::render(VkCommandBuffer cmd, VkPipelineLayout layout,
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(cmd, 0, 1, &buf, &offset);
 
-    // Draw group 1: Selection rings (instances 0..ring_count_-1) with white texture
-    if (ring_count_ > 0 && white_ds_) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                layout, 0, 1, &white_ds_, 0, nullptr);
-        vkCmdDraw(cmd, 6, ring_count_, 0, 0);
-    }
-
-    // Draw group 2: Icon quads (instances ring_count_..quad_count_-1) with atlas
-    u32 icon_count = quad_count_ - ring_count_;
-    if (icon_count > 0 && atlas_ds_) {
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                layout, 0, 1, &atlas_ds_, 0, nullptr);
-        vkCmdDraw(cmd, 6, icon_count, 0, ring_count_);
+    // A run of icons per texture, in the order they were collected.
+    for (const Group& g : groups_) {
+        if (!g.ds || g.first >= MAX_ICON_QUADS) continue;
+        const u32 count = std::min(g.count, MAX_ICON_QUADS - g.first);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &g.ds, 0,
+                                nullptr);
+        vkCmdDraw(cmd, 6, count, 0, g.first);
     }
 }
 

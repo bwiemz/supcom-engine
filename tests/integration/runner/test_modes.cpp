@@ -132,6 +132,7 @@ constexpr Mode kModesBefore[] = {
     {"--clipped-shadow-test", test_clipped_shadows, false},
     {"--unit-intel-test", test_unit_intel, false},
     {"--effect-intel-test", test_effect_intel, false},
+    {"--strategic-icon-test", test_strategic_icons, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -299,6 +300,7 @@ void IntegrationModes::print_usage() const {
               << "  --clipped-shadow-test Shadows cut by the albedo's alpha (DepthClip)\n"
               << "  --unit-intel-test  Units seen through the player's intel (fog of war)\n"
               << "  --effect-intel-test Effects, beams, shields and clicks through intel\n"
+              << "  --strategic-icon-test FA's strategic icons\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

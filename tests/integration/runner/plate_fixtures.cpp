@@ -194,8 +194,12 @@ void stand_plate(TestContext& ctx, const std::string& root, const std::string& b
     const std::string create =
         prop ? fmt::format("CreatePropHPR('{}', {}, {}, {}, 0, 0, 0)", bp, x, ground_y, z)
              : fmt::format("CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)", bp, x, z);
+    // A mesh blueprint as retail's are, with IconFadeInZoom (130, as most of
+    // retail's): without one, Moho shows its unit's strategic icon at any
+    // zoom (M215c), over what the test measures.
     const std::string lua = fmt::format("local mesh = '{12}/{0}_plate'\n"
-                                        "__blueprints[mesh] = {{ BlueprintId = mesh, LODs = {{ {{\n"
+                                        "__blueprints[mesh] = {{ BlueprintId = mesh, "
+                                        "IconFadeInZoom = 130, LODs = {{ {{\n"
                                         "  LODCutoff = 1000, ShaderName = '{1}',\n"
                                         "  MeshName = '{12}/{11}',\n"
                                         "  AlbedoName = '{12}/{2}',\n"

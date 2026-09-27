@@ -21,6 +21,8 @@ add_executable(osc_integration
     runner/prop_material_test.cpp
     runner/clipped_shadow_test.cpp
     runner/unit_intel_test.cpp
+    runner/intel_probe.cpp
+    runner/strategic_icon_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )
