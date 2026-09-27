@@ -26,6 +26,7 @@ void TextureCache::init(VkDevice device, VmaAllocator allocator,
     create_fallback();
     create_specteam_fallback();
     create_normal_fallback();
+    create_cube_fallback();
 }
 
 void TextureCache::create_fallback() {
@@ -440,7 +441,8 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     img_ci.format = dds.format;
     img_ci.extent = {dds.width, dds.height, 1};
     img_ci.mipLevels = dds.mip_count;
-    img_ci.arrayLayers = 1;
+    img_ci.arrayLayers = dds.faces;
+    if (dds.faces == 6) img_ci.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
     img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     img_ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -483,7 +485,7 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = dds.mip_count;
-    barrier.subresourceRange.layerCount = 1;
+    barrier.subresourceRange.layerCount = dds.faces;
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
@@ -491,25 +493,28 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
                          VK_PIPELINE_STAGE_TRANSFER_BIT,
                          0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-    // Copy each mip level from staging buffer
+    // Copy each face's mip levels from the staging buffer (face by face, as
+    // they were packed)
     VkDeviceSize buf_offset = 0;
-    for (u32 i = 0; i < dds.mip_count; i++) {
-        VkBufferImageCopy region{};
-        region.bufferOffset = buf_offset;
-        region.bufferRowLength = 0;   // tightly packed
-        region.bufferImageHeight = 0; // tightly packed
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = i;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {0, 0, 0};
-        region.imageExtent = {dds.mips[i].width, dds.mips[i].height, 1};
+    for (u32 face = 0; face < dds.faces; face++) {
+        for (u32 i = 0; i < dds.mip_count; i++) {
+            const DDSMipLevel& mip = dds.mips[static_cast<size_t>(face) * dds.mip_count + i];
+            VkBufferImageCopy region{};
+            region.bufferOffset = buf_offset;
+            region.bufferRowLength = 0;   // tightly packed
+            region.bufferImageHeight = 0; // tightly packed
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            region.imageSubresource.mipLevel = i;
+            region.imageSubresource.baseArrayLayer = face;
+            region.imageSubresource.layerCount = 1;
+            region.imageOffset = {0, 0, 0};
+            region.imageExtent = {mip.width, mip.height, 1};
 
-        vkCmdCopyBufferToImage(cmd, staging.buffer, result.image,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               1, &region);
+            vkCmdCopyBufferToImage(cmd, staging.buffer, result.image,
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 
-        buf_offset += dds.mips[i].size;
+            buf_offset += mip.size;
+        }
     }
 
     // Transition TRANSFER_DST -> SHADER_READ_ONLY
@@ -537,12 +542,12 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     VkImageViewCreateInfo view_ci{};
     view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_ci.image = result.image;
-    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_ci.viewType = dds.faces == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     view_ci.format = dds.format;
     view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_ci.subresourceRange.baseMipLevel = 0;
     view_ci.subresourceRange.levelCount = dds.mip_count;
-    view_ci.subresourceRange.layerCount = 1;
+    view_ci.subresourceRange.layerCount = dds.faces;
 
     if (vkCreateImageView(device_, &view_ci, nullptr, &result.view) !=
         VK_SUCCESS) {
@@ -811,6 +816,12 @@ const GPUTexture* TextureCache::finalize_load(const std::string& path,
         failed_.insert(path);
         return nullptr;
     }
+    if (dds->faces != 1) {
+        // A cube's view can't stand in a 2D sampler: get_cube_blocking().
+        spdlog::warn("TextureCache: '{}' is a cubemap, not a 2D texture", path);
+        failed_.insert(path);
+        return nullptr;
+    }
 
     auto image = upload_dds(*dds);
     if (!image.image) {
@@ -941,6 +952,41 @@ void TextureCache::evict(const std::string& key) {
     cache_.erase(it);
 }
 
+VkImageView TextureCache::get_cube_blocking(const std::string& vfs_path) {
+    if (device_ == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+    if (auto it = cubes_.find(vfs_path); it != cubes_.end()) return it->second.view;
+    if (!vfs_) return VK_NULL_HANDLE;
+    const auto file_data = vfs_->read_file(vfs_path);
+    if (!file_data) {
+        spdlog::warn("TextureCache: no cubemap '{}'", vfs_path);
+        return VK_NULL_HANDLE;
+    }
+    const auto dds = parse_dds(*file_data);
+    if (!dds || dds->faces != 6) {
+        spdlog::warn("TextureCache: '{}' is not a cubemap", vfs_path);
+        return VK_NULL_HANDLE;
+    }
+    AllocatedImage image = upload_dds(*dds);
+    if (!image.image) return VK_NULL_HANDLE;
+    spdlog::debug("TextureCache: loaded cubemap '{}' ({}x{}, {} mips)", vfs_path, dds->width,
+                  dds->height, dds->mip_count);
+    return cubes_.emplace(vfs_path, image).first->second.view;
+}
+
+void TextureCache::create_cube_fallback() {
+    // A black 1x1 cube: nothing to reflect.
+    static const u8 kBlack[4] = {0, 0, 0, 255};
+    DDSTexture dds;
+    dds.format = VK_FORMAT_R8G8B8A8_UNORM;
+    dds.width = 1;
+    dds.height = 1;
+    dds.mip_count = 1;
+    dds.faces = 6;
+    for (u32 f = 0; f < 6; ++f)
+        dds.mips.push_back({reinterpret_cast<const char*>(kBlack), 1, 1, 4});
+    cube_fallback_ = upload_dds(dds);
+}
+
 void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
     // Drain all in-flight async loads before tearing down Vulkan resources
     for (auto& al : async_loads_)
@@ -956,6 +1002,15 @@ void TextureCache::destroy(VkDevice device, VmaAllocator allocator) {
     }
     cache_.clear();
     failed_.clear();
+    for (auto& [path, cube] : cubes_) {
+        if (cube.view) vkDestroyImageView(device, cube.view, nullptr);
+        if (cube.image) vmaDestroyImage(allocator, cube.image, cube.allocation);
+    }
+    cubes_.clear();
+    if (cube_fallback_.view) vkDestroyImageView(device, cube_fallback_.view, nullptr);
+    if (cube_fallback_.image)
+        vmaDestroyImage(allocator, cube_fallback_.image, cube_fallback_.allocation);
+    cube_fallback_ = {};
 
     // Fallbacks
     if (fallback_.image.view)

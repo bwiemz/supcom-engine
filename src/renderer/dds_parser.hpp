@@ -23,6 +23,11 @@ struct DDSTexture {
     u32 width = 0;
     u32 height = 0;
     u32 mip_count = 0;
+    /// 6 for a cubemap (+X, -X, +Y, -Y, +Z, -Z, as the file stores them),
+    /// else 1.
+    u32 faces = 1;
+    /// faces * mip_count levels, face by face: face f's mip m is
+    /// mips[f * mip_count + m].
     std::vector<DDSMipLevel> mips;
 };
 

@@ -63,6 +63,9 @@ public:
 
     renderer::Renderer& renderer() { return renderer_; }
 
+    /// Capture the sim's world again (after the test changed it).
+    void recapture();
+
 private:
     TestContext& ctx_;
     renderer::Renderer renderer_;

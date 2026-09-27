@@ -388,6 +388,8 @@ private:
     std::optional<map::Heightmap> ground_;
     /// Set the camera's focus height from the ground under its target.
     void update_camera_focus();
+    /// Bind the map's environment cubemap for meshes to reflect (M211a).
+    void bind_environment_cubemap(const map::ScmapEnvironment& environment);
     f32 ground_water_ = 0.0f;
     bool ground_has_water_ = false;
     /// The scene's lighting: its map's, else SCMP_009's.
