@@ -38,6 +38,7 @@ struct MeshInstance {
     f32 r, g, b, a;  // army color + alpha
     f32 color_lookup; // the row of the mesh's lookup texture (team_color_lookup)
     f32 shader_time;  // FA's material.x: the tick its mesh instance was made (mod 36000)
+    f32 parameter;    // FA's material.y: the fraction complete (the build techniques', M211f)
 };
 
 /// FA's colorLookup (UserUnit::CreateMeshInstance), the row a mesh's lookup
@@ -55,10 +56,11 @@ struct MeshDrawGroup {
     VkDescriptorSet specteam_ds = VK_NULL_HANDLE; // SpecTeam texture descriptor (set=2)
     VkDescriptorSet normal_ds = VK_NULL_HANDLE;   // Normal map descriptor (set=3)
     VkDescriptorSet lookup_ds = VK_NULL_HANDLE;   // The mesh's lookup texture (set=5)
+    VkDescriptorSet secondary_ds = VK_NULL_HANDLE; // The mesh's secondary texture (set=6)
     u32 bone_base_offset = 0; // index into bone SSBO (in mat4 units)
     u32 bones_per_instance = 0; // 0 = no skinning, else bone count
-    /// Its instances fade (a unit under construction, the build ghost): they
-    /// blend by their alpha, drawn after the opaque groups.
+    /// Its instances blend (the build ghost's fade, a build technique's own
+    /// alpha), drawn after the opaque groups.
     bool fading = false;
 };
 
@@ -101,6 +103,10 @@ public:
     VkBuffer mesh_instance_buffer() const { return mesh_instance_buf_[fi_].buffer; }
     VkBuffer bone_ssbo_buffer(u32 fi) const { return bone_ssbo_[fi].buffer; }
     VkBuffer bone_ssbo_buffer() const { return bone_ssbo_[fi_].buffer; }
+
+    /// FA's `time` for this frame: the newest tick plus the interpolant
+    /// toward it, wrapped as instance times are (MeshRenderer::ConfigureShader).
+    f32 shader_time() const { return shader_time_; }
 
     /// Inject a single ghost mesh instance (for build preview).
     /// Call after update(). Returns true if the ghost was added.
@@ -150,6 +156,7 @@ private:
     };
     std::unordered_map<u32, MeshBirth> births_;
     u64 frame_ = 0;
+    f32 shader_time_ = 0.0f;
 };
 
 } // namespace osc::renderer

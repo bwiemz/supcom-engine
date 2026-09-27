@@ -887,14 +887,16 @@ void Renderer::create_pipelines() {
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time = 88 bytes)
+        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup + time +
+        // parameter = 92 bytes)
         bindings[1].binding = 1;
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 14 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
-        // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13)
-        std::array<VkVertexInputAttributeDescription, 14> attrs{};
+        // 15 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+        // bone_weights(9), tangent(10), binormal(11), colour lookup(12), instance time(13),
+        // parameter(14)
+        std::array<VkVertexInputAttributeDescription, 15> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -910,23 +912,26 @@ void Renderer::create_pipelines() {
                      offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
         attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
         attrs[13] = {13, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, shader_time)};
+        attrs[14] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
-        // eye (12B)
-        // + uint technique (4B, M211b) = 88B
+        // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) = 96B
         // Opaque meshes write their glow to alpha (M211e); fading ones blend
-        // by their alpha and write colour only. The layouts match.
-        const auto build_mesh = [&](bool fade, VkPipelineLayout* layout) {
+        // by their alpha and write colour only; the build overlays that
+        // write alpha blend it too, as D3D9 does (M211f). The layouts match.
+        enum class Blend { Opaque, Fade, Overlay };
+        const auto build_mesh = [&](Blend blend, VkPipelineLayout* layout) {
             return PipelineBuilder()
                 .set_shaders(mv, mf)
                 .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                                   static_cast<u32>(attrs.size()))
                 .set_depth_test(true, true)
-                .set_blend(fade)
-                .set_color_write_mask(fade ? kColorOnly : kColorAndGlow)
+                .set_blend(blend != Blend::Opaque)
+                .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+                .set_color_write_mask(blend == Blend::Fade ? kColorOnly : kColorAndGlow)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32),
+                                       sizeof(u32) * 2 + sizeof(f32),
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
                 .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
@@ -934,10 +939,12 @@ void Renderer::create_pipelines() {
                 .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
                 .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
                 .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
+                .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
                 .build(device_, scene_render_pass_, layout);
         };
-        mesh_pipeline_ = build_mesh(false, &mesh_layout_);
-        mesh_fade_pipeline_ = build_mesh(true, &mesh_fade_layout_);
+        mesh_pipeline_ = build_mesh(Blend::Opaque, &mesh_layout_);
+        mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
+        mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
     }
 
     // --- Water pipeline (tessellated grid with wave animation) ---
@@ -1092,7 +1099,7 @@ void Renderer::create_shadow_pipelines() {
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        std::array<VkVertexInputAttributeDescription, 11> attrs{};
+        std::array<VkVertexInputAttributeDescription, 12> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};
@@ -1104,21 +1111,22 @@ void Renderer::create_shadow_pipelines() {
         attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(sim::SCMMesh::Vertex, bone_indices)};
         attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)};
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};
+        attrs[11] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
-        // Push constant 72B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4)
-        shadow_mesh_pipeline_ = PipelineBuilder()
-            .set_shaders(smv, sf)
-            .set_vertex_input(bindings.data(),
-                              static_cast<u32>(bindings.size()),
-                              attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2, VK_SHADER_STAGE_VERTEX_BIT)
-            .set_descriptor_set_layout(bone_ds_layout_)   // set=0: bone SSBO
-            .set_no_color_attachment()
-            .set_depth_bias(4.0f, 1.5f)
-            .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
+        // Push constant 76B: mat4 lightVP (64) + uint boneBase (4) + uint bonesPerInst (4) +
+        // uint technique (4, M211f)
+        shadow_mesh_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(smv, sf)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 3, VK_SHADER_STAGE_VERTEX_BIT)
+                .set_descriptor_set_layout(bone_ds_layout_) // set=0: bone SSBO
+                .set_no_color_attachment()
+                .set_depth_bias(4.0f, 1.5f)
+                .build(device_, shadow_render_pass_, &shadow_mesh_layout_);
     }
 
     // --- Shadow unit cube pipeline (depth-only, instanced) ---
@@ -2359,14 +2367,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 f32 lightVP[16];
                 u32 boneBase;
                 u32 bonesPerInst;
+                u32 technique; // MeshTechnique (M211f)
             } spc{};
             std::memcpy(spc.lightVP, light_vp.data(), sizeof(f32) * 16);
 
             for (auto& group : unit_renderer_.mesh_groups()) {
                 if (!group.mesh || group.instance_count == 0) continue;
+                // AeonBuild has no depth technique: a unit Aeon are
+                // building casts no shadow (M211f).
+                if (group.mesh->technique == MeshTechnique::AeonBuild) continue;
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
+                spc.technique = static_cast<u32>(group.mesh->technique);
                 vkCmdPushConstants(cmd_buf_[fi], shadow_mesh_layout_,
                                    VK_SHADER_STAGE_VERTEX_BIT,
                                    0, sizeof(spc), &spc);
@@ -2568,10 +2581,13 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             u32 bonesPerInst;
             f32 eyeX, eyeY, eyeZ;
             u32 technique; // MeshTechnique (M211b)
+            u32 pass;      // a build technique's pass (M211f)
+            f32 time;      // FA's time (M211f)
         } mesh_pc{};
-        static_assert(sizeof(MeshPushConstants) == 88, "matches mesh_vert/frag's push block");
+        static_assert(sizeof(MeshPushConstants) == 96, "matches mesh_vert/frag's push block");
         std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
         camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
+        mesh_pc.time = unit_renderer_.shader_time();
 
         // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
         VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
@@ -2617,14 +2633,6 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         for (auto& group : unit_renderer_.mesh_groups()) {
             if (!group.mesh || group.instance_count == 0) continue;
 
-            // Fading groups come last, with the pipeline that blends them
-            // (the layouts are compatible: the sets bound stay bound).
-            VkPipeline wanted = group.fading ? mesh_fade_pipeline_ : mesh_pipeline_;
-            if (wanted != bound && wanted) {
-                vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, wanted);
-                bound = wanted;
-            }
-
             // Bind per-group albedo texture descriptor (always bind to avoid
             // stale set=0 from prior group)
             VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
@@ -2652,20 +2660,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                         0, nullptr);
             }
 
-            // The mesh's lookup texture (set=5), transparent black without one
+            // The mesh's lookup texture (set=5) and secondary (set=6),
+            // transparent black without them
             VkDescriptorSet lookup_ds = group.lookup_ds ? group.lookup_ds : specteam_fallback;
             if (lookup_ds) {
                 vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_,
                                         5, 1, &lookup_ds, 0, nullptr);
             }
-
-            // Push bone offsets per group
-            mesh_pc.boneBase = group.bone_base_offset;
-            mesh_pc.bonesPerInst = group.bones_per_instance;
-            mesh_pc.technique = static_cast<u32>(group.mesh->technique);
-            vkCmdPushConstants(cmd_buf_[fi], mesh_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(mesh_pc), &mesh_pc);
+            VkDescriptorSet secondary_ds =
+                group.secondary_ds ? group.secondary_ds : specteam_fallback;
+            if (secondary_ds) {
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_,
+                                        6, 1, &secondary_ds, 0, nullptr);
+            }
 
             VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
                                 unit_renderer_.mesh_instance_buffer()};
@@ -2676,8 +2683,34 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
             vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
                                  VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count,
-                             group.instance_count, 0, 0, 0);
+
+            // The technique's passes, one after the other, as FA draws a
+            // batch's (M211f). Fading and build groups come last, with the
+            // pipelines that blend them (the layouts are compatible: the
+            // sets bound stay bound). A build technique's base pass blends
+            // colour only (Aeon's at alpha 1: opaque); UEF's and Cybran's
+            // overlays blend alpha too, Aeon's colour only.
+            const MeshTechnique technique = group.mesh->technique;
+            std::array<VkPipeline, 2> passes = {group.fading ? mesh_fade_pipeline_ : mesh_pipeline_,
+                                                VK_NULL_HANDLE};
+            if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
+                passes[1] = mesh_overlay_pipeline_;
+            else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
+            mesh_pc.boneBase = group.bone_base_offset;
+            mesh_pc.bonesPerInst = group.bones_per_instance;
+            mesh_pc.technique = static_cast<u32>(technique);
+            for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
+                if (passes[pass] != bound) {
+                    vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
+                    bound = passes[pass];
+                }
+                mesh_pc.pass = pass;
+                vkCmdPushConstants(cmd_buf_[fi], mesh_layout_,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(mesh_pc), &mesh_pc);
+                vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count, group.instance_count, 0, 0,
+                                 0);
+            }
         }
     }
 
@@ -3470,6 +3503,8 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_fade_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_fade_layout_, nullptr);
+    vkDestroyPipeline(device_, mesh_overlay_pipeline_, nullptr);
+    vkDestroyPipelineLayout(device_, mesh_overlay_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);

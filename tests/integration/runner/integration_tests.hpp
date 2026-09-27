@@ -93,6 +93,8 @@ void test_camera(TestContext& ctx);
 void test_material(TestContext& ctx);
 /// --bloom-test (M211e), in bloom_test.cpp.
 void test_bloom(TestContext& ctx);
+/// --build-shader-test (M211f), in build_shader_test.cpp.
+void test_build_shaders(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

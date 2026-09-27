@@ -25,8 +25,10 @@
 #include <array>
 #include <cmath>
 #include <filesystem>
+#include <initializer_list>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace osc::test {
@@ -88,11 +90,14 @@ void test_bloom(TestContext& ctx) {
     write_dds(dir / "glow_full.dds", 1, flat(0, 0, 255, 0));
     write_dds(dir / "glow_fifth.dds", 1, flat(0, 0, 51, 0));
     write_dds(dir / "glow_none.dds", 1, flat(0, 0, 0, 0));
+    write_dds(dir / "secondary_dark.dds", 1, flat(10, 10, 10, 128));
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
-    const auto plate = [](const char* albedo, const char* glow) {
+    const auto plate = [](const char* albedo, const char* glow, const char* shader = "Unit") {
         Plate p;
         p.albedo = albedo;
         p.specteam = glow;
+        p.shader = shader;
+        p.secondary = "secondary_dark.dds";
         return p;
     };
     // Off the test's ground, on its level, 30 apart.
@@ -101,10 +106,16 @@ void test_bloom(TestContext& ctx) {
                 ground_y);
     stand_plate(ctx, kRoot, "ueb5101", plate("albedo_128.dds", "glow_none.dds"), 160, 100,
                 ground_y);
-    stand_plate(ctx, kRoot, "ueb3101", plate("albedo_10.dds", "glow_full.dds"), 190, 100, ground_y);
-    const auto half_built = ctx.lua_state.do_string("__osc_last_plate:SetFractionComplete(0.5)\n");
-    if (!half_built) spdlog::warn("SetFractionComplete: {}", half_built.error().message);
-    ctx.sim.tick();
+    // Half built, with the build shaders (M211f).
+    for (const auto& [bp, shader, x] : {std::tuple{"ueb3101", "SeraphimBuild", 190.0f},
+                                        std::tuple{"ueb3201", "UEFBuild", 220.0f}}) {
+        stand_plate(ctx, kRoot, bp, plate("albedo_10.dds", "glow_full.dds", shader), x, 100,
+                    ground_y);
+        const auto half_built =
+            ctx.lua_state.do_string("__osc_last_plate:SetFractionComplete(0.5)\n");
+        if (!half_built) spdlog::warn("SetFractionComplete: {}", half_built.error().message);
+        ctx.sim.tick();
+    }
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {
@@ -208,15 +219,20 @@ void test_bloom(TestContext& ctx) {
                             sky_on - sky_off, xp_on - xp_off, old_on / old_off));
     }
 
-    // Test 5: a unit under construction fades (it blends by its alpha) and,
-    // until it's built, doesn't glow: the same plate as the first, half
-    // built.
+    // Test 5: a unit under construction glows by what its build technique
+    // writes to alpha (M211f), not by its SpecTeam: the first plate's
+    // textures, half built. SeraphimBuild writes colour only: in the fill's
+    // light, no glow. UEFBuild's overlay blends alpha by its own, as D3D9
+    // blends it: at alpha a = max(2 * 0.5 * (1 - 0.5), 0.25) = 0.5 over the
+    // sky's 0, a * a = 0.25; weight (0.25 - 0.02) * 2 = 0.46, and in the dark
+    // 1 + 5.04 * 0.46 = 3.34 times (5.84 had it written a).
     {
-        const f32 fading = lift(190.0f, 0.0f, 0.0f);
-        t.check(fading > 0.95f && fading < 1.05f,
+        const f32 seraphim = lift(190.0f, 1.0f, 0.0f);
+        const f32 uef = lift(220.0f, 0.0f, 0.0f);
+        t.check(seraphim > 0.98f && seraphim < 1.02f && uef > 3.0f && uef < 3.7f,
                 fmt::format("Test 5: the bloom brightens a glowing plate under construction "
-                            "{:.3f} times",
-                            fading));
+                            "{:.3f} times drawn by SeraphimBuild, {:.2f} by UEFBuild (3.34)",
+                            seraphim, uef));
     }
 
     r.set_bloom_enabled(false);

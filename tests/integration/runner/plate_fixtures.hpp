@@ -87,7 +87,8 @@ struct Plate {
     std::string specteam = "plate_specteam.dds";
     std::string shader = "Unit";
     std::string mesh = "plate.scm";
-    std::string lookup; // its LookupName, if any
+    std::string lookup;    // its LookupName, if any
+    std::string secondary; // its SecondaryName, if any (the build shaders', M211f)
 };
 
 /// Stand a plate in for blueprint `bp`'s mesh at (x, z), `lift` over half a

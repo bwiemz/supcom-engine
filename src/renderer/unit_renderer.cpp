@@ -24,12 +24,12 @@ struct CubeVertex {
     f32 nx, ny, nz;
 };
 
-/// A mesh's lookup texture (its LOD's LookupName), or transparent black
-/// while it loads or if it names none.
-static VkDescriptorSet lookup_descriptor(const GPUMesh* mesh, TextureCache* tex_cache) {
+/// A texture a mesh names (its LOD's LookupName or SecondaryName), or
+/// transparent black while it loads or if it names none.
+static VkDescriptorSet named_descriptor(const std::string& path, TextureCache* tex_cache) {
     if (!tex_cache) return VK_NULL_HANDLE;
-    if (mesh && !mesh->lookup_path.empty()) {
-        if (auto* tex = tex_cache->get(mesh->lookup_path)) return tex->descriptor_set;
+    if (!path.empty()) {
+        if (auto* tex = tex_cache->get(path)) return tex->descriptor_set;
     }
     return tex_cache->specteam_fallback_descriptor();
 }
@@ -54,6 +54,8 @@ static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView
     } else {
         r = g = b = 1.0f; // neutral/props: white (albedo shows through for mesh)
     }
+    // A meshless unit's cube fades while it's built. A mesh doesn't: its
+    // build mesh's technique draws it (M211f).
     a = (entity.fraction_complete < 1.0f) ? 0.4f : 1.0f;
 }
 
@@ -244,12 +246,14 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
     };
-    // Opaque instances (0), then fading ones (1): those blend by their alpha
-    // with a pipeline of their own, which leaves the frame's glow alone.
+    // Opaque instances (0), then blended ones (1): a build technique's, which
+    // blend by their own alpha with pipelines of their own that leave the
+    // frame's glow alone (M211e/f).
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2];
 
     ++frame_;
     const u32 now = view.cur() ? view.cur()->tick : 0;
+    shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) continue;
 
@@ -337,12 +341,17 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 g = g * 0.5f + 0.5f;
                 b = b * 0.5f + 0.5f;
             }
-            inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+            inst.r = r;
+            inst.g = g;
+            inst.b = b;
+            inst.a = 1.0f;
             inst.color_lookup = team_color_lookup(
                 view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
             inst.shader_time = std::fmod(static_cast<f32>(birth.tick), kShaderTimeWrap);
+            // UserEntity copies the fraction complete at each sync.
+            inst.parameter = entity.fraction_complete;
 
-            auto& gd = mesh_groups[a < 1.0f ? 1 : 0][gpu];
+            auto& gd = mesh_groups[is_build_technique(gpu->technique) ? 1 : 0][gpu];
             gd.instances.push_back(inst);
 
             // Track bone data for this instance (a prop has a pose only when
@@ -477,7 +486,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 group.normal_ds = tex_cache->normal_fallback_descriptor();
             }
 
-            group.lookup_ds = lookup_descriptor(gpu, tex_cache);
+            group.lookup_ds = named_descriptor(gpu ? gpu->lookup_path : std::string(), tex_cache);
+            group.secondary_ds =
+                named_descriptor(gpu ? gpu->secondary_path : std::string(), tex_cache);
 
             mesh_groups_.push_back(group);
 
@@ -506,6 +517,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     inst.r = r; inst.g = g; inst.b = b; inst.a = a;
     inst.color_lookup = team_color_lookup(nullptr, game_colors_);
     inst.shader_time = 0.0f;
+    inst.parameter = 1.0f;
 
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;
@@ -549,7 +561,8 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
         } else if (tex_cache) {
             grp.normal_ds = tex_cache->normal_fallback_descriptor();
         }
-        grp.lookup_ds = lookup_descriptor(mesh, tex_cache);
+        grp.lookup_ds = named_descriptor(mesh->lookup_path, tex_cache);
+        grp.secondary_ds = named_descriptor(mesh->secondary_path, tex_cache);
 
         mesh_groups_.push_back(grp);
     }

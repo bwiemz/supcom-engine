@@ -50,6 +50,7 @@ add_executable(osc_tests
     test_light_view.cpp
     test_camera_ground.cpp
     test_team_color_lookup.cpp
+    test_mesh_technique.cpp
     test_dds_parser.cpp
     test_color.cpp
     test_lod.cpp

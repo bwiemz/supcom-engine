@@ -273,6 +273,10 @@ private:
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_fade_pipeline_ = VK_NULL_HANDLE; // fading instances (M211e)
     VkPipelineLayout mesh_fade_layout_ = VK_NULL_HANDLE;
+    /// The build techniques' overlays that write alpha: colour and alpha
+    /// blended by the source's alpha (M211f).
+    VkPipeline mesh_overlay_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_overlay_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
 

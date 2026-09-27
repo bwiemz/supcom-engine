@@ -142,6 +142,10 @@ MeshTechnique mesh_technique(const std::string& shader_name) {
     if (shader_name == "Insect") return MeshTechnique::Insect;
     if (shader_name == "Metal") return MeshTechnique::Metal;
     if (shader_name == "Seraphim") return MeshTechnique::Seraphim;
+    if (shader_name == "UEFBuild") return MeshTechnique::UEFBuild;
+    if (shader_name == "AeonBuild") return MeshTechnique::AeonBuild;
+    if (shader_name == "CybranBuild") return MeshTechnique::CybranBuild;
+    if (shader_name == "SeraphimBuild") return MeshTechnique::SeraphimBuild;
     return MeshTechnique::Unit;
 }
 
@@ -180,7 +184,8 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.specteam_path = resolve_specteam_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.normal_path = resolve_normal_path_for_lod(mesh_bp_id, lod_index, L);
-        gpu.lookup_path = resolve_lookup_path_for_lod(mesh_bp_id, lod_index, L);
+        gpu.lookup_path = resolve_lod_file(mesh_bp_id, lod_index, "LookupName", L);
+        gpu.secondary_path = resolve_lod_file(mesh_bp_id, lod_index, "SecondaryName", L);
         const std::string shader = read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
@@ -221,7 +226,8 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path(bp_id, L);
         gpu.specteam_path = resolve_specteam_path(bp_id, L);
         gpu.normal_path = resolve_normal_path(bp_id, L);
-        gpu.lookup_path = resolve_lookup_path_for_lod(mesh_bp_id, 1, L);
+        gpu.lookup_path = resolve_lod_file(mesh_bp_id, 1, "LookupName", L);
+        gpu.secondary_path = resolve_lod_file(mesh_bp_id, 1, "SecondaryName", L);
         const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
@@ -391,11 +397,10 @@ std::string MeshCache::resolve_specteam_path_for_lod(const std::string& mesh_bp_
     return {};
 }
 
-std::string MeshCache::resolve_lookup_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
-                                                   lua_State* L) {
-    std::string name = read_lod_string_field(mesh_bp_id, lod_index, "LookupName", L);
-    if (name.empty() && lod_index != 1)
-        name = read_lod_string_field(mesh_bp_id, 1, "LookupName", L);
+std::string MeshCache::resolve_lod_file(const std::string& mesh_bp_id, i32 lod_index,
+                                        const char* field, lua_State* L) {
+    std::string name = read_lod_string_field(mesh_bp_id, lod_index, field, L);
+    if (name.empty() && lod_index != 1) name = read_lod_string_field(mesh_bp_id, 1, field, L);
     if (!name.empty() && name[0] != '/') {
         const auto slash = mesh_bp_id.rfind('/');
         if (slash != std::string::npos) name = mesh_bp_id.substr(0, slash + 1) + name;
