@@ -277,6 +277,9 @@ private:
     /// blended by the source's alpha (M211f).
     VkPipeline mesh_overlay_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_overlay_layout_ = VK_NULL_HANDLE;
+    /// UEFBuildCube: blended, colour only, depth tested but not written (M211g).
+    VkPipeline mesh_cube_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
 

@@ -6,9 +6,64 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
+#include <cstdlib>
 #include <initializer_list>
 
 namespace osc::test {
+
+Rgb over(const Rgb& below, const Rgb& colour, f32 alpha) {
+    Rgb out{};
+    for (int c = 0; c < 3; ++c) out[c] = below[c] * (1.0f - alpha) + colour[c] * alpha;
+    return out;
+}
+
+Rgb scaled(const Rgb& colour, f32 by) {
+    return {colour[0] * by, colour[1] * by, colour[2] * by};
+}
+
+/// A frame's middle pixel, 0..1.
+Rgb middle(const ImageRGBA8& image) {
+    const size_t i = (static_cast<size_t>(image.height / 2) * image.width + image.width / 2) * 4;
+    if (i + 2 >= image.pixels.size()) return {-1, -1, -1};
+    return {image.pixels[i] / 255.0f, image.pixels[i + 1] / 255.0f, image.pixels[i + 2] / 255.0f};
+}
+
+/// Within 3.5 of 255 in each channel.
+bool near(const Rgb& a, const Rgb& b) {
+    for (int c = 0; c < 3; ++c)
+        if (std::abs(a[c] - b[c]) > 3.5f / 255.0f) return false;
+    return true;
+}
+
+std::string show(const Rgb& c) {
+    return fmt::format("({:.0f}, {:.0f}, {:.0f})", c[0] * 255.0f, c[1] * 255.0f, c[2] * 255.0f);
+}
+
+/// The first and last columns of the run of pixels along the frame's middle
+/// row, through the middle, that differ from `sky` by more than 12 of 255
+/// ({0, -1} if the middle is sky).
+std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky) {
+    const u32 y = image.height / 2;
+    const auto plate = [&](u32 x) {
+        for (int c = 0; c < 3; ++c) {
+            const int v = image.pixels[(static_cast<size_t>(y) * image.width + x) * 4 + c];
+            if (std::abs(v - static_cast<int>(std::lround(sky[c] * 255.0f))) > 12) return true;
+        }
+        return false;
+    };
+    u32 left = image.width / 2;
+    u32 right = left;
+    if (!plate(left)) return {0, -1};
+    while (left > 0 && plate(left - 1)) --left;
+    while (right + 1 < image.width && plate(right + 1)) ++right;
+    return {static_cast<int>(left), static_cast<int>(right)};
+}
+
+int plate_width(const ImageRGBA8& image, const Rgb& sky) {
+    const auto [left, right] = plate_span(image, sky);
+    return right - left + 1;
+}
 
 void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments) {
     std::vector<char> d(48, 0);

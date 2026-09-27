@@ -95,6 +95,8 @@ void test_material(TestContext& ctx);
 void test_bloom(TestContext& ctx);
 /// --build-shader-test (M211f), in build_shader_test.cpp.
 void test_build_shaders(TestContext& ctx);
+/// --effect-mesh-test (M211g), in effect_mesh_test.cpp.
+void test_effect_meshes(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

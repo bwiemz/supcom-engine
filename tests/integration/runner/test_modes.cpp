@@ -126,6 +126,7 @@ constexpr Mode kModesBefore[] = {
     {"--material-test", test_material, false},
     {"--bloom-test", test_bloom, false},
     {"--build-shader-test", test_build_shaders, false},
+    {"--effect-mesh-test", test_effect_meshes, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -287,6 +288,7 @@ void IntegrationModes::print_usage() const {
               << "  --material-test    Meshes shade as FA's NormalMappedPS (environment cube, team colour)\n"
               << "  --bloom-test       FA's bloom, from the glow in the frame's alpha\n"
               << "  --build-shader-test FA's build shaders, on units under construction\n"
+              << "  --effect-mesh-test FA's build effects' meshes, shader names, burnt trees\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

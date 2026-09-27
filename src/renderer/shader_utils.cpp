@@ -636,7 +636,9 @@ layout(push_constant) uniform PushConstants {
     uint bonesPerInst;
     float eyeX, eyeY, eyeZ;
     // MeshTechnique: 0 Unit, 1 Aeon, 2 Insect, 3 Metal, 4 Seraphim (M211b);
-    // 5 UEFBuild, 6 AeonBuild, 7 CybranBuild, 8 SeraphimBuild (M211f)
+    // 5 UEFBuild, 6 AeonBuild, 7 CybranBuild, 8 SeraphimBuild (M211f);
+    // 9 NormalMappedAlpha, 10 NormalMappedGlow, 11 AlphaFade, 12 UEFBuildCube,
+    // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g)
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -844,6 +846,44 @@ vec3 buildColor(vec4 texColor, vec4 specTeam, vec3 N, vec3 V, float shadow, out 
            fallOff.rgb * diffuse.a;
 }
 
+// The build effects' own techniques (mesh.fx, M211g), for an instance f
+// built, `age` ticks after its mesh instance was made.
+vec3 effectColor(vec3 V, float shadow, out float alpha) {
+    vec3 S = lightUbo.sunDirection.xyz;
+    float f = fragParameter;
+    float age = pc.time - fragShaderTime;
+    if (pc.technique == 11u) {
+        // AlphaFadePS(2.0, 0.145): lit by the vertex's normal (VertexNormalVS),
+        // fading out from two ticks old.
+        vec4 color = texture(texAlbedo, fragUV);
+        alpha = color.a * f * clamp(1.0 - (age - 2.0) * 0.145, 0.0, 1.0);
+        return color.rgb * computeLight(dot(S, normalize(fragNormal)), shadow, 1.0, 1.0);
+    }
+    if (pc.technique == 12u) {
+        // UEFBuildCubePS: unlit, scrolling, pulsing toward blue (unclamped
+        // above, unlike UEFBuild's) until built.
+        vec2 uv = fragUV + age * vec2(0.012, 0.062);
+        vec4 albedo = texture(texAlbedo, uv * 0.025);
+        vec4 secondary = texture(texSecondary, (uv + vec2(0.0, age * 0.062)) * 50.0);
+        vec3 current =
+            mix(albedo.rgb + secondary.rgb, vec3(0.0, 0.0, 1.0), max(fract(0.05 * pc.time), 0.35));
+        alpha = max(f, 0.5) * albedo.a;
+        return mix(current, albedo.rgb, f);
+    }
+    // AeonBuildPuddlePS: AeonBuildPS's light and terms, every read scrolling,
+    // no team colour; it glows.
+    vec2 uv = fragUV + age * vec2(-0.002, 0.0042);
+    vec3 N = computeNormal(uv);
+    vec4 albedo = texture(texAlbedo, uv);
+    vec4 specular = texture(texSpecTeam, uv);
+    vec3 environment = texture(environmentMap, reflect(-V, N)).rgb;
+    float phongAmount = clamp(dot(reflect(S, N), -V), 0.0, 1.0);
+    alpha = specular.b + 0.01; // glowMinimum
+    return albedo.rgb * (2.0 * specular.b + computeLight(dot(S, N), shadow, 1.0, 0.6) +
+                         specular.r * environment) +
+           pow(phongAmount, 8.0) * specular.g;
+}
+
 void main() {
     vec3 worldNormal = computeNormal(fragUV);
     vec3 S = lightUbo.sunDirection.xyz;
@@ -857,15 +897,24 @@ void main() {
     vec4 specTeam = texture(texSpecTeam, fragUV);
 
     bool prop = fragColor.g < 0.0;
+    // NormalMappedPS without the team's mask (props, NormalMappedAlpha,
+    // NormalMappedGlow, the burnt trees'): the albedo tinted by the
+    // instance's colour, white but a unit's. The alpha-tested ones write
+    // colour only.
+    bool unmasked = prop || pc.technique == 9u || pc.technique == 10u || pc.technique == 14u;
+    bool alphaTested = prop || pc.technique == 9u || pc.technique == 14u;
+    vec3 tint = prop ? vec3(1.0) : fragColor.rgb;
     // Alpha: the build ghost's fade, which its pipeline blends by, leaving
-    // the frame's alpha; a build technique's own (M211f); else the glow FA's
-    // techniques write there (M211e): a unit's SpecTeam blue plus
-    // glowMinimum, a wreck's glowMinimum, a prop's none (FA writes it no
-    // alpha, and what's beneath is at most 0.01 and terrain specular).
+    // the frame's alpha; a build technique's or effect's own (M211f/g); else
+    // the glow FA's techniques write there (M211e): a unit's SpecTeam blue
+    // plus glowMinimum, a wreck's glowMinimum, the colour-only techniques'
+    // none (FA writes them no alpha, and what's beneath is at most 0.01 and
+    // terrain specular).
     const float glowMinimum = 0.01;
-    float alpha = fragColor.a < 1.0
-                      ? fragColor.a
-                      : (prop ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum));
+    float alpha =
+        fragColor.a < 1.0
+            ? fragColor.a
+            : (alphaTested ? 0.0 : (fragColor.r < 0.0 ? glowMinimum : specTeam.b + glowMinimum));
     vec3 lit;
     if (fragColor.r < 0.0) {
         // WreckagePS (mesh.fx): a wreck's "specular" is a crunch noise
@@ -879,13 +928,17 @@ void main() {
             lit *= (texColor.rgb + crunch.r + crunch.a) * crunch.b * 2.5;
         else
             lit *= crunch.b * 2.0;
-    } else if (pc.technique >= 5u) {
+    } else if (pc.technique >= 5u && pc.technique <= 8u) {
         lit = buildColor(texColor, specTeam, worldNormal, faViewDirection(fragWorldPos), shadow,
                          alpha);
+    } else if (pc.technique >= 11u && pc.technique <= 13u) {
+        lit = effectColor(faViewDirection(fragWorldPos), shadow, alpha);
     } else {
-        // FA's mesh.fx, by the mesh's technique. Props (NormalMappedAlpha)
-        // tint by their colour; units mask the team's colour in.
-        vec3 albedo = prop ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, specTeam.a);
+        // FA's mesh.fx, by the mesh's technique. The unmasked tint by their
+        // colour; units mask the team's colour in. The burnt trees'
+        // (BlackenedNormalMappedPS) grey the albedo first.
+        vec3 albedo = unmasked ? texColor.rgb * tint : mix(texColor.rgb, fragColor.rgb, specTeam.a);
+        if (pc.technique == 14u) albedo = vec3(dot(texColor.rgb, vec3(0.1))) * tint;
         vec3 V = faViewDirection(fragWorldPos);
         vec3 R = reflect(-V, worldNormal);
         float phongAmount = clamp(dot(reflect(S, worldNormal), -V), 0.0, 1.0);
@@ -927,18 +980,23 @@ void main() {
             lit = texColor.rgb * seraphimLight + environment * specTeam.r * fallOff.a +
                   phongAdditive + fallOff.rgb * texColor.a;
         } else {
-            // NormalMappedPS (the Unit technique).
+            // NormalMappedPS (Unit, NormalMappedAlpha, NormalMappedGlow);
+            // BlackenedNormalMappedPS's highlight is its own.
             vec3 environment = texture(environmentMap, R).rgb;
-            vec3 phongAdditive = vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
+            vec3 phongAdditive = pc.technique == 14u
+                                     ? vec3(pow(phongAmount, 8.0) * specTeam.g)
+                                     : vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
             vec3 phongMultiplicative = 2.0 * environment * specTeam.r;
             lit = albedo * (emissive + light + phongMultiplicative) + phongAdditive;
         }
     }
 
-    // FA alpha-tests props alone (NormalMappedAlpha: the albedo's alpha over
-    // 0x80); a unit's albedo alpha is a mask its technique reads (Seraphim's
-    // glow).
-    if (prop && texColor.a <= 128.0 / 255.0) discard;
+    // FA alpha-tests the alpha-tested techniques (NormalMappedAlpha: the
+    // fraction complete times the albedo's alpha, over 0x80; AlphaFade: its
+    // alpha over 0x23); a unit's albedo alpha is a mask its technique reads
+    // (Seraphim's glow).
+    if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
+    if (pc.technique == 11u && alpha <= 35.0 / 255.0) discard;
     outColor = vec4(lit, alpha);
 }
 )glsl";

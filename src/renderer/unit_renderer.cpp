@@ -34,11 +34,13 @@ static VkDescriptorSet named_descriptor(const std::string& path, TextureCache* t
     return tex_cache->specteam_fallback_descriptor();
 }
 
-/// Resolve army color for an entity.
+/// Resolve army color for an entity: a unit's army's. Moho gives any other
+/// mesh instance white (UserEntity::CreateMeshInstance's -1; only UserUnit's
+/// takes the army's), a projectile's too (M211g).
 static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView& view,
                             f32& r, f32& g, f32& b, f32& a) {
     i32 army = entity.army;
-    const sim::ArmyRecord* brain = view.cur() ? view.cur()->army(army) : nullptr;
+    const sim::ArmyRecord* brain = entity.is_unit && view.cur() ? view.cur()->army(army) : nullptr;
     if (brain) {
         if (brain->has_color) {
             r = brain->r / 255.0f;
@@ -52,7 +54,7 @@ static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView
             r = g = b = 0.7f;
         }
     } else {
-        r = g = b = 1.0f; // neutral/props: white (albedo shows through for mesh)
+        r = g = b = 1.0f; // props, projectiles: white (the albedo shows through)
     }
     // A meshless unit's cube fades while it's built. A mesh doesn't: its
     // build mesh's technique draws it (M211f).
@@ -246,9 +248,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         std::vector<MeshInstance> instances;
         std::vector<InstanceBones> bones;
     };
-    // Opaque instances (0), then blended ones (1): a build technique's, which
-    // blend by their own alpha with pipelines of their own that leave the
-    // frame's glow alone (M211e/f).
+    // Opaque instances (0), then blended ones (1): a build technique's or a
+    // build effect's, which blend by their own alpha with pipelines of their
+    // own (M211e-g).
     std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2];
 
     ++frame_;
@@ -351,7 +353,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             // UserEntity copies the fraction complete at each sync.
             inst.parameter = entity.fraction_complete;
 
-            auto& gd = mesh_groups[is_build_technique(gpu->technique) ? 1 : 0][gpu];
+            auto& gd = mesh_groups[is_blended_technique(gpu->technique) ? 1 : 0][gpu];
             gd.instances.push_back(inst);
 
             // Track bone data for this instance (a prop has a pose only when
