@@ -364,6 +364,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     strategic_icon_renderer_.set_recon(&recon_);
     overlay_renderer_.set_recon(&recon_);
     minimap_renderer_.set_recon(&recon_);
+    particle_system_.set_recon(&recon_);
 
     // HUD renderer (economy bars)
     hud_renderer_.init(device_, allocator_);
@@ -2233,15 +2234,21 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         }
     }
 
-    // Update UI quads (walk control tree, read LazyVar positions)
-    if (ui_registry) {
-        PROFILE_ZONE("Render::ui_update");
-        f64 now = glfwGetTime();
+    // The frame's step, which the particles and overlays run on, with or
+    // without a UI (an offscreen test has none).
+    {
+        const f64 now = glfwGetTime();
         f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
         last_frame_time_ = now;
         if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
-        total_time_ += dt;
         frame_dt_ = dt;
+    }
+
+    // Update UI quads (walk control tree, read LazyVar positions)
+    if (ui_registry) {
+        PROFILE_ZONE("Render::ui_update");
+        const f32 dt = frame_dt_;
+        total_time_ += dt;
         if (dt > 0.0f && dt < 1.0f) {
             ui_renderer_.advance_animations(L, *ui_registry, dt);
             ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(dt));

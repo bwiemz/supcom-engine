@@ -5,6 +5,7 @@
 #include "renderer/frustum.hpp"
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace osc::sim {
@@ -12,6 +13,8 @@ class FrameView;
 } // namespace osc::sim
 
 namespace osc::renderer {
+
+class ReconView;
 
 /// A single live particle in the CPU simulation.
 struct Particle {
@@ -37,6 +40,7 @@ struct EmitterState {
     f32 emit_accumulator = 0;   // fractional particles to emit
     f32 origin_x = 0, origin_y = 0, origin_z = 0; // world position
     bool active = true;
+    bool visible = true; // the player's army sees its origin (M215b)
 
     std::vector<Particle> particles;
 };
@@ -58,6 +62,11 @@ struct ParticleInstance {
 /// Each frame, call update() then read instances() for GPU upload.
 class ParticleSystem {
 public:
+    /// The player's intel: an EmitIfVisible emitter emits only where the
+    /// player's army sees, and a CreateIfVisible one out of its sight is
+    /// never made, as Moho's CEfxEmitter (null: everything seen; M215b).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
+
     /// Live emitters (the render-state dump reads their origins).
     const std::vector<EmitterState>& emitters() const { return emitters_; }
 
@@ -96,6 +105,7 @@ public:
     /// Remove all emitters and particles (for scene teardown).
     void clear() {
         emitters_.clear();
+        unseen_.clear();
         instances_.clear();
         groups_.clear();
     }
@@ -111,6 +121,9 @@ private:
     std::vector<EmitterState> emitters_;
     std::vector<ParticleInstance> instances_;
     std::vector<TextureGroup> groups_;
+    const ReconView* recon_ = nullptr;
+    /// CreateIfVisible effects the player's army didn't see made: never shown.
+    std::unordered_set<u32> unseen_;
 };
 
 } // namespace osc::renderer

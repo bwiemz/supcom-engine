@@ -53,6 +53,12 @@ public:
     /// no army's) in its line of sight, as Moho shows an emitter.
     bool sees_at(const sim::FrameView& view, i32 army, f32 x, f32 z) const;
 
+    /// Whether it sees a beam from `a` to `b`: either end in its line of
+    /// sight (CEfxBeam::CanSeeCam; M215b).
+    bool sees_beam(const sim::FrameView& view, const sim::Vector3& a, const sim::Vector3& b) const {
+        return sees_at(view, -1, a.x, a.z) || sees_at(view, -1, b.x, b.z);
+    }
+
     /// A remembered structure's bone pose when last seen; null for any other
     /// entity, or one with no pose.
     const std::vector<sim::BoneMatrix>* frozen_pose(u32 id) const;

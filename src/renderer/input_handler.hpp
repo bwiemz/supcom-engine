@@ -19,6 +19,7 @@ class SimState;
 namespace osc::renderer {
 
 class Camera;
+class ReconView;
 class Renderer;
 struct BuildGhost;
 
@@ -79,6 +80,10 @@ public:
     /// sees under the cursor, not its position at the last tick. Without
     /// one (headless clicks) the live sim is used.
     void set_frame_view(const sim::FrameView& view) { view_ = view; }
+
+    /// The player's intel: a click can't target a unit it doesn't show (a
+    /// blip or a remembered structure it can; null: everything; M215b).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
 
     void set_command_mode_hooks(CommandModeHooks hooks) { mode_hooks_ = std::move(hooks); }
 
@@ -141,6 +146,9 @@ public:
 private:
     i32 player_army_ = 0;
     sim::FrameView view_;
+    const ReconView* recon_ = nullptr;
+    /// Whether the player's intel shows `e` (anything, without a view).
+    bool shown(const sim::Entity& e) const;
     std::unordered_set<u32> selected_;
     bool selection_event_ = false;
 

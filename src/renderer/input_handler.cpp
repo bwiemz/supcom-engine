@@ -1,5 +1,6 @@
 #include "renderer/input_handler.hpp"
 #include "sim/build_placement.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/renderer.hpp"
 
 #include "sim/army_brain.hpp"
@@ -256,7 +257,7 @@ std::vector<IssuedCommand> InputHandler::right_click_at(sim::SimState& sim, f32 
         f32 best = 25.0f;
         for (u32 id : registry.collect_in_radius(wx, wz, 5.0f)) {
             const sim::Entity* e = live(id);
-            if (!e || !e->is_unit() || e->army() < 0 || allied(e->army())) continue;
+            if (!e || !e->is_unit() || e->army() < 0 || allied(e->army()) || !shown(*e)) continue;
             const sim::Vector3 pos = view_.position(*e);
             const f32 d2 = (pos.x - wx) * (pos.x - wx) + (pos.z - wz) * (pos.z - wz);
             if (d2 < best) {
@@ -451,7 +452,7 @@ u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
     f32 best_dist2 = radius * radius;
     for (u32 id : sim.entity_registry().collect_in_radius(wx, wz, radius)) {
         auto* e = sim.entity_registry().find(id);
-        if (!e || e->destroyed()) continue;
+        if (!e || e->destroyed() || !shown(*e)) continue;
         if (reclaim ? !((e->is_unit() || e->is_prop()) && e->reclaimable()) : !e->is_unit())
             continue;
         const sim::Vector3 pos = view_.position(*e);
@@ -464,6 +465,12 @@ u32 InputHandler::pick_any_unit(sim::SimState& sim, f32 wx, f32 wz,
         }
     }
     return best_id;
+}
+
+bool InputHandler::shown(const sim::Entity& e) const {
+    if (!recon_) return true;
+    const sim::EntityRecord* record = view_.find(e.entity_id());
+    return !record || shows_icon(recon_->sight(*record));
 }
 
 u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,

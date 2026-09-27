@@ -51,7 +51,8 @@ struct EmitterBlueprintData {
     bool align_rotation = false;
     bool align_to_bone = false;
     bool flat = false;
-    bool emit_if_visible = true;
+    bool emit_if_visible = true;    ///< emits only while the player's army sees it
+    bool create_if_visible = false; ///< made only if the player's army sees it then
     bool catchup_emit = true;
     bool snap_to_waterline = false;
     bool only_emit_on_water = false;

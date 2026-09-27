@@ -208,6 +208,7 @@ EmitterBlueprintData EmitterBlueprintCache::parse_from_lua(lua_State* L,
     bp.flat = lua_field_bool(L, table_idx, "Flat", false);
     bp.emit_if_visible =
         lua_field_bool(L, table_idx, "EmitIfVisible", true);
+    bp.create_if_visible = lua_field_bool(L, table_idx, "CreateIfVisible", false);
     bp.catchup_emit = lua_field_bool(L, table_idx, "CatchupEmit", true);
     bp.snap_to_waterline =
         lua_field_bool(L, table_idx, "SnapToWaterline", false);

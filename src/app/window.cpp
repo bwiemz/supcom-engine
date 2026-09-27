@@ -61,6 +61,7 @@ std::optional<int> App::run_window() {
         osc::renderer::InputHandler input_handler;
         input_handler.set_player_army(0);
         renderer.set_player_army(0);
+        input_handler.set_recon(&renderer.recon()); // clicks pick what it shows
 
         // Factory queue display (M140c)
         osc::lua::FactoryQueueDisplay factory_queue;
