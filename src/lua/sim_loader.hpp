@@ -27,6 +27,13 @@ public:
                           const vfs::VirtualFileSystem& vfs,
                           sim::SimState& sim);
 
+    /// Import the sim's script classes the engine builds objects from
+    /// (Unit, Platoon). After SetupSession, as Moho's first import of them
+    /// is: modules capture game globals at file scope (FAF's SimUtils keeps
+    /// `local ArmyBrains = ArmyBrains`), and SetupSession makes those
+    /// globals anew (ArmyBrains, Scenario).
+    static void import_script_classes(LuaState& state);
+
     /// Run N simulation ticks.
     void run_ticks(sim::SimState& sim, u32 count);
 };

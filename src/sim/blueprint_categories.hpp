@@ -13,6 +13,9 @@ namespace osc::sim {
 /// FA's does not, and the engine reads the plain `Categories` list
 /// ({'NAME', ...}). Both are read and unioned, so either data set works and
 /// any derived hash-only entries are kept. Non-string entries are ignored.
+/// The blueprint's own id (its BlueprintId) is one of its categories too, as
+/// Moho registers every entity blueprint's (faf-re Sim.cpp,
+/// RegisterBlueprintCategoryMembership): scripts test `categories.uel0201`.
 /// The Lua stack is left balanced.
 void collect_blueprint_categories(lua_State* L, int bp_index,
                                   std::unordered_set<std::string>& out);

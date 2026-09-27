@@ -24,6 +24,7 @@ add_library(osc_sim STATIC
     projectile.cpp
     shield.cpp
     navigator.cpp
+    steering.cpp
     entity_registry.cpp
     thread_manager.cpp
     transport_slots.cpp

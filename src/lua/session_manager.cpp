@@ -1,5 +1,6 @@
 #include "lua/session_manager.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/platoon.hpp"
 #include "sim/prop_script.hpp"
@@ -265,6 +266,8 @@ Result<void> SessionManager::start_session(LuaState& state,
         spdlog::warn("  SetupSession() failed: {} (continuing anyway)",
                       setup_result.error().message);
     }
+
+    SimLoader::import_script_classes(state);
 
     // The map's props were made before the sim's scripts loaded; now they
     // get their script objects (trees, rocks...), before BeginSession.

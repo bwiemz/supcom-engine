@@ -15,6 +15,7 @@
 #include "renderer/terrain_preview.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/sim_callback_queue.hpp"
+#include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -1113,7 +1114,9 @@ static int l_GetRolloverInfo(lua_State* L) {
     lua_newtable(L); // result table
 
     set_str("blueprintId", unit->blueprint_id().c_str());
-    set_num("entityId", static_cast<lua_Number>(unit->entity_id()));
+    lua_pushstring(L, "entityId");
+    sim::push_entity_id(L, unit->entity_id());
+    lua_rawset(L, -3);
     set_num("health", static_cast<lua_Number>(unit->health()));
     set_num("maxHealth", static_cast<lua_Number>(unit->max_health()));
     set_num("kills", 0);
@@ -1154,7 +1157,7 @@ static int l_GetRolloverInfo(lua_State* L) {
             lua_pushstring(L, focus_unit->blueprint_id().c_str());
             lua_rawset(L, -3);
             lua_pushstring(L, "entityId");
-            lua_pushnumber(L, static_cast<lua_Number>(focus_unit->entity_id()));
+            sim::push_entity_id(L, focus_unit->entity_id());
             lua_rawset(L, -3);
             lua_rawset(L, -3); // result["focus"] = focus_sub_table
         }

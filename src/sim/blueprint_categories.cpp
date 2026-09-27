@@ -45,6 +45,12 @@ void collect_blueprint_categories(lua_State* L, int bp_index,
         }
     }
     lua_pop(L, 1);
+
+    // Its own id (Moho's RegisterBlueprintCategoryMembership): categories.uel0201.
+    lua_pushstring(L, "BlueprintId");
+    lua_gettable(L, bp_index);
+    if (lua_type(L, -1) == LUA_TSTRING) out.insert(lua_tostring(L, -1));
+    lua_pop(L, 1);
 }
 
 namespace {

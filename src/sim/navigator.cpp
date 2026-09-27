@@ -16,6 +16,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
                           const std::string& layer,
                           f32 draft, bool amphibious) {
     goal_ = pos;
+    reset_steering();
     waypoints_.clear();
     waypoint_index_ = 0;
     best_dist_ = 1e30f;
@@ -73,6 +74,7 @@ void Navigator::set_goal(const Vector3& pos, const map::Pathfinder* pathfinder,
 
 void Navigator::set_goal(const Vector3& pos) {
     goal_ = pos;
+    reset_steering();
     waypoints_.clear();
     waypoint_index_ = 0;
     best_dist_ = 1e30f;
@@ -85,6 +87,58 @@ void Navigator::abort_move() {
     status_ = Status::Idle;
     waypoints_.clear();
     waypoint_index_ = 0;
+    reset_steering();
+}
+
+void Navigator::reset_steering() {
+    collision_ = {};
+    next_check_ = 0;
+    sidestep_ = false;
+    sidestep_index_ = 0;
+    hold_ticks_ = 0;
+    held_for_ = 0;
+}
+
+void Navigator::path_ahead(const Vector3& from, f32 speed, f32 top_speed, f32 accel, int nodes,
+                           std::vector<Vector3>& out) const {
+    out.clear();
+    if (status_ != Status::Moving || waypoint_index_ >= waypoints_.size() || nodes <= 0) return;
+    constexpr f32 kTick = 0.1f;
+    Vector3 p = from;
+    f32 v = std::abs(speed);
+    size_t i = waypoint_index_;
+    out.push_back(p); // where it is: the path's current node
+    while (static_cast<int>(out.size()) < nodes && i < waypoints_.size()) {
+        v = accel > 0 ? std::min(top_speed, v + accel * kTick) : top_speed;
+        f32 left = v * kTick;
+        while (left > 0 && i < waypoints_.size()) {
+            const f32 dx = waypoints_[i].x - p.x, dz = waypoints_[i].z - p.z;
+            const f32 d = std::sqrt(dx * dx + dz * dz);
+            if (d <= left) {
+                p.x = waypoints_[i].x;
+                p.z = waypoints_[i].z;
+                left -= d;
+                ++i;
+            } else {
+                p.x += dx / d * left;
+                p.z += dz / d * left;
+                left = 0;
+            }
+        }
+        out.push_back(p);
+    }
+}
+
+void Navigator::sidestep(const Vector3& point) {
+    if (status_ != Status::Moving || waypoint_index_ > waypoints_.size()) return;
+    waypoints_.insert(waypoints_.begin() + static_cast<std::ptrdiff_t>(waypoint_index_), point);
+    sidestep_ = true;
+    sidestep_index_ = waypoint_index_;
+}
+
+void Navigator::hold(int ticks, u32 for_id) {
+    hold_ticks_ = std::max(ticks, 1);
+    held_for_ = for_id;
 }
 
 bool Navigator::update(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* terrain) {
@@ -96,6 +150,7 @@ void Navigator::arrive() {
     status_ = Status::Idle;
     waypoints_.clear();
     waypoint_index_ = 0;
+    reset_steering();
 }
 
 namespace {
@@ -134,6 +189,22 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         return true;
     }
 
+    // Stopping for a unit crossing its way (M203c): it brakes at twice its
+    // brake along its heading, then waits, still, before going on.
+    if (hold_ticks_ > 0) {
+        const f32 hard = 2.0f * (d.max_brake > 0 ? d.max_brake : d.max_accel) * unit.accel_mult();
+        speed =
+            speed > 0 ? std::max(0.0f, speed - hard * step) : std::min(0.0f, speed + hard * step);
+        if (speed == 0 && --hold_ticks_ == 0) next_check_ = 0; // looks again as it goes on
+        pos.x += osc::dmath::sin(heading) * speed * step;
+        pos.z += osc::dmath::cos(heading) * speed * step;
+        if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
+        if (sim_) pos = sim_->clamp_to_playable(pos);
+        unit.set_position(pos);
+        unit.note_drive(speed, 0, max_speed, Unit::MotionTurn::Straight);
+        return true;
+    }
+
     // Waypoints along the way are passed within reach, or once crossed: past
     // the line through them square to the path on.
     while (waypoint_index_ + 1 < waypoints_.size()) {
@@ -141,11 +212,20 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         const Vector3& next = waypoints_[waypoint_index_ + 1];
         const f32 dx = wp.x - pos.x;
         const f32 dz = wp.z - pos.z;
-        const bool reached = dx * dx + dz * dz <= WAYPOINT_TOLERANCE * WAYPOINT_TOLERANCE;
+        // A sidestep point (M203c) is only a little off the path: it is
+        // reached, not passed near.
+        const f32 tol = sidestep_ && waypoint_index_ == sidestep_index_ ? SIDESTEP_TOLERANCE
+                                                                        : WAYPOINT_TOLERANCE;
+        const bool reached = dx * dx + dz * dz <= tol * tol;
         const bool crossed =
             (pos.x - wp.x) * (next.x - wp.x) + (pos.z - wp.z) * (next.z - wp.z) > 0;
         if (!reached && !crossed) break;
         ++waypoint_index_;
+    }
+    // Past its sidestep point, it looks again as it goes on (M203c).
+    if (sidestep_ && waypoint_index_ > sidestep_index_) {
+        sidestep_ = false;
+        next_check_ = 0;
     }
     const bool final = waypoint_index_ + 1 == waypoints_.size();
     const Vector3& wp = waypoints_[waypoint_index_];
