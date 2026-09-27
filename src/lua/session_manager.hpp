@@ -39,12 +39,9 @@ GameOptionsConfig read_game_options(lua_State* L, int table_idx);
 /// and seed are the caller's.
 sim::GameSetup read_session_config(lua_State* L, int table_idx);
 
-/// FA's army colours (/lua/GameColors.lua, GameColors.ArmyColors), decoded
-/// as Moho decodes them (ARGB); empty if the script can't be read.
-std::vector<u32> game_army_colors(lua_State* L);
-
 /// Give an army's brain its slot's faction, colour and handicap. The slot's
-/// colour index names army_colors[index], as Moho reads GameColors.
+/// colour index names army_colors[index] (sim::read_game_colors), as Moho
+/// reads GameColors.
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const std::vector<u32>& army_colors);
 

@@ -10,6 +10,7 @@
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
 
+#include "blueprints/blueprint_store.hpp"
 #include "lua/lua_state.hpp"
 #include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
@@ -19,6 +20,7 @@
 #include "sim/army_brain.hpp"
 #include "sim/entity.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 
@@ -33,6 +35,7 @@
 #include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::test {
@@ -59,20 +62,20 @@ map::ScmapLighting white_fill() {
     return l;
 }
 
-/// A 4x4 uncompressed BGRA DDS of `faces` faces (6: a cubemap, +X -X +Y
-/// -Y +Z -Z, as D3D and Vulkan address them alike), each texel's RGBA from
-/// `texel(face, column, row)`.
+/// An uncompressed BGRA DDS, `width` by `height`, of `faces` faces (6: a
+/// cubemap, +X -X +Y -Y +Z -Z, as D3D and Vulkan address them alike), each
+/// texel's RGBA from `texel(face, column, row)`.
 template <typename Texel>
-void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
-    constexpr u32 kEdge = 4;
-    std::vector<char> d(128 + static_cast<size_t>(faces) * kEdge * kEdge * 4, 0);
+void write_dds(const std::filesystem::path& path, int faces, Texel texel, u32 width = 4,
+               u32 height = 4) {
+    std::vector<char> d(128 + static_cast<size_t>(faces) * width * height * 4, 0);
     const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
     std::memcpy(d.data(), "DDS ", 4);
     put(4, 124);
     put(8, 0x1 | 0x2 | 0x4 | 0x8 | 0x1000);
-    put(12, kEdge);
-    put(16, kEdge);
-    put(20, kEdge * 4);
+    put(12, height);
+    put(16, width);
+    put(20, width * 4);
     put(28, 1);
     put(76, 32);
     put(80, 0x40 | 0x1); // RGB, alpha
@@ -84,9 +87,9 @@ void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
     put(108, faces == 6 ? 0x1000 | 0x8 : 0x1000); // a texture (complex, a cube's)
     put(112, faces == 6 ? 0x200 | 0xFC00 : 0);    // a cubemap, all six faces
     for (int face = 0; face < faces; ++face) {
-        for (u32 i = 0; i < kEdge * kEdge; ++i) {
-            const std::array<u8, 4> rgba = texel(face, i % kEdge, i / kEdge);
-            const size_t at = 128 + (static_cast<size_t>(face) * kEdge * kEdge + i) * 4;
+        for (u32 i = 0; i < width * height; ++i) {
+            const std::array<u8, 4> rgba = texel(face, i % width, i / width);
+            const size_t at = 128 + (static_cast<size_t>(face) * width * height + i) * 4;
             d[at] = static_cast<char>(rgba[2]);
             d[at + 1] = static_cast<char>(rgba[1]);
             d[at + 2] = static_cast<char>(rgba[0]);
@@ -334,6 +337,28 @@ void test_material(TestContext& ctx) {
               [](int, u32, u32) { return std::array<u8, 4>{0, 128, 0, 191}; });
     write_dds(dir / "plate_normals_tilted_v.dds", 1,
               [](int, u32, u32) { return std::array<u8, 4>{0, 191, 0, 128}; });
+    // White albedos with their alpha clear, at FA's alpha reference (0x80),
+    // and just over it.
+    for (const auto& [name, alpha] :
+         {std::pair<const char*, u8>{"clear", 0}, {"at_ref", 128}, {"over_ref", 129}})
+        write_dds(dir / fmt::format("plate_albedo_{}.dds", name), 1,
+                  [alpha](int, u32, u32) { return std::array<u8, 4>{255, 255, 255, alpha}; });
+    // An opaque black albedo, and a SpecTeam that masks the team's colour in
+    // everywhere (and reflects nothing).
+    write_dds(dir / "plate_albedo_black.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 255}; });
+    write_dds(dir / "plate_specteam_team.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 0, 0, 255}; });
+    // A falloff lookup, 16 wide and 20 tall: red counts the column, green the
+    // row; alpha is set on the right half (the rim's), which weighs the
+    // environment.
+    write_dds(
+        dir / "falloff_lookup.dds", 1,
+        [](int, u32 column, u32 row) {
+            return std::array<u8, 4>{static_cast<u8>(column * 17), static_cast<u8>(row * 12), 0,
+                                     static_cast<u8>(column >= 8 ? 255 : 0)};
+        },
+        16, 20);
     ctx.vfs.mount("/osc_material_test", std::make_unique<vfs::DirectoryMount>(dir));
     const auto face_cube = [](const char* face) {
         return fmt::format("/osc_material_test/{}.dds", face);
@@ -346,23 +371,42 @@ void test_material(TestContext& ctx) {
         return n;
     };
 
-    // Stand the test's plate in for `unit`'s mesh at (x, z), on the ground,
-    // with `normals` for its normal map: a mesh blueprint of the test's own.
-    const auto make_plate = [&](const char* unit, const char* normals, f32 x, f32 z) {
+    // A plate's material: its textures (the test's own) and technique.
+    struct Plate {
+        std::string normals = "plate_normals.dds";
+        std::string albedo = "plate_albedo.dds";
+        std::string specteam = "plate_specteam.dds";
+        std::string shader = "Unit";
+        std::string lookup; // its LookupName, if any
+    };
+    // Stand the test's plate in for blueprint `bp`'s mesh at (x, z), on the
+    // ground, through a mesh blueprint of the test's own: a unit of ARMY_1's,
+    // or a prop.
+    const auto make_plate = [&](const std::string& bp, const Plate& plate, f32 x, f32 z,
+                                bool prop = false) {
+        std::string key = bp;
+        for (char& c : key)
+            if (c == '/' || c == '.') c = '_';
+        const std::string lookup =
+            plate.lookup.empty() ? "nil" : fmt::format("'/osc_material_test/{}'", plate.lookup);
+        const std::string create =
+            prop ? fmt::format("CreatePropHPR('{}', {}, {}, {}, 0, 0, 0)", bp, x, ground_y, z)
+                 : fmt::format("CreateUnitHPR('{}', 'ARMY_1', {}, 0, {}, 0, 0, 0)", bp, x, z);
         const std::string lua =
-            fmt::format("__blueprints['/osc_material_test/{0}_plate'] = {{\n"
-                        "  BlueprintId = '/osc_material_test/{0}_plate',\n"
-                        "  LODs = {{ {{ LODCutoff = 1000, ShaderName = 'Unit',\n"
-                        "    MeshName = '/osc_material_test/plate.scm',\n"
-                        "    AlbedoName = '/osc_material_test/plate_albedo.dds',\n"
-                        "    SpecularName = '/osc_material_test/plate_specteam.dds',\n"
-                        "    NormalsName = '/osc_material_test/{1}' }} }},\n"
-                        "}}\n"
-                        "__blueprints.{0}.Display.MeshBlueprint = '/osc_material_test/{0}_plate'\n"
-                        "__blueprints.{0}.Display.UniformScale = 1\n"
-                        "local plate = CreateUnitHPR('{0}', 'ARMY_1', {2}, 0, {3}, 0, 0, 0)\n"
-                        "Warp(plate, Vector({2}, {4}, {3}))\n",
-                        unit, normals, x, z, ground_y + 0.5f);
+            fmt::format("local mesh = '/osc_material_test/{0}_plate'\n"
+                        "__blueprints[mesh] = {{ BlueprintId = mesh, LODs = {{ {{\n"
+                        "  LODCutoff = 1000, ShaderName = '{1}',\n"
+                        "  MeshName = '/osc_material_test/plate.scm',\n"
+                        "  AlbedoName = '/osc_material_test/{2}',\n"
+                        "  SpecularName = '/osc_material_test/{10}',\n"
+                        "  NormalsName = '/osc_material_test/{3}', LookupName = {4} }} }} }}\n"
+                        "local bp = __blueprints['{5}']\n"
+                        "bp.Display = bp.Display or {{}}\n"
+                        "bp.Display.MeshBlueprint = mesh\n"
+                        "bp.Display.UniformScale = 1\n"
+                        "Warp({6}, Vector({7}, {8}, {9}))\n",
+                        key, plate.shader, plate.albedo, plate.normals, lookup, bp, create, x,
+                        ground_y + 0.5f, z, plate.specteam);
         const auto made = ctx.lua_state.do_string(lua);
         if (!made) spdlog::warn("the plate: {}", made.error().message);
         ctx.sim.tick();
@@ -394,7 +438,7 @@ void test_material(TestContext& ctx) {
     // cube white on one side of x = 0, then the other, shows which way it
     // reflects.
     {
-        make_plate("ueb5101", "plate_normals.dds", kCentre, kPlateZ);
+        make_plate("ueb5101", Plate{}, kCentre, kPlateZ);
 
         const auto frame = [&](f32 target_x, const char* half) {
             map::ScmapEnvironment env;
@@ -510,7 +554,9 @@ void test_material(TestContext& ctx) {
     // leans along the tangent reflects the world's right (+X) alone; leaning
     // along the binormal instead, it would reflect straight back.
     {
-        make_plate("ueb2101", "plate_normals_tilted.dds", kTiltedX, kPlateZ);
+        Plate tilted;
+        tilted.normals = "plate_normals_tilted.dds";
+        make_plate("ueb2101", tilted, kTiltedX, kPlateZ);
         const auto centre = [&](const char* half) {
             map::ScmapEnvironment env;
             env.terrain_shader = "TTerrain";
@@ -542,7 +588,9 @@ void test_material(TestContext& ctx) {
     // UVs are mirrored (and here). Leaning toward +Z, the plate reflects the
     // world's +Z side; leaning away, it would reflect the -Z side.
     {
-        make_plate("ueb2301", "plate_normals_tilted_v.dds", kTiltedX, kTiltedVZ);
+        Plate tilted;
+        tilted.normals = "plate_normals_tilted_v.dds";
+        make_plate("ueb2301", tilted, kTiltedX, kTiltedVZ);
         const auto centre = [&](const char* half) {
             map::ScmapEnvironment env;
             env.terrain_shader = "TTerrain";
@@ -567,6 +615,121 @@ void test_material(TestContext& ctx) {
                 fmt::format("Test 10: a plate leaning along its binormal reflects the world's +Z "
                             "on {} pixels (its -Z on {})",
                             plus, minus));
+    }
+
+    renderer::Camera& camera = shots.renderer().camera();
+    const f32 default_pitch = camera.pitch();
+
+    // Test 11: FA alpha-tests props alone (NormalMappedAlpha: the albedo's
+    // alpha over 0x80). A unit's albedo alpha is a mask its technique reads --
+    // Seraphim's glow, over most of a Seraphim ACU -- and cuts no holes.
+    {
+        std::vector<std::string> props; // two the map has none of, so not yet drawn
+        const std::vector<std::string> world = sim::world_blueprints(ctx.sim);
+        for (const auto* e : ctx.sim.blueprint_store()->get_all(blueprints::BlueprintType::Prop)) {
+            if (props.size() < 2 && e->id.find("/env/") != std::string::npos &&
+                std::find(world.begin(), world.end(), e->id) == world.end())
+                props.push_back(e->id);
+        }
+        Plate clear;
+        clear.albedo = "plate_albedo_clear.dds";
+        make_plate("ueb1105", clear, 8.0f, 14.0f);
+        Plate at_ref;
+        at_ref.albedo = "plate_albedo_at_ref.dds";
+        Plate over_ref;
+        over_ref.albedo = "plate_albedo_over_ref.dds";
+        if (props.size() == 2) {
+            make_plate(props[0], at_ref, 20.0f, 14.0f, /*prop=*/true);
+            make_plate(props[1], over_ref, 32.0f, 14.0f, /*prop=*/true);
+        }
+        const auto white_at = [&](f32 x, f32 z) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", kBlack);
+            ground.set_lighting(white_fill(), std::move(env));
+            shots.recapture();
+            size_t n = 0;
+            for (const auto& px : shots.shoot(ground, x, z, 30.0f))
+                if (px[0] > 0.9f && px[1] > 0.9f && px[2] > 0.9f) ++n;
+            return n;
+        };
+        camera.set_pitch(1.1f);
+        const size_t unit = white_at(8.0f, 14.0f);
+        const size_t under = white_at(20.0f, 14.0f);
+        const size_t over = white_at(32.0f, 14.0f);
+        camera.set_pitch(default_pitch);
+        t.check(props.size() == 2 && unit > 20000 && under < 100 && over > 20000,
+                fmt::format("Test 11: a unit with its albedo's alpha clear shows {} pixels; "
+                            "props at the alpha reference {}, just over it {}",
+                            unit, under, over));
+    }
+
+    // Test 12: Seraphim's UnitFalloffPS reads the mesh's lookup (its
+    // LookupName), point-sampled: across by pow(1 - N . V, 0.6), down at the
+    // army's row, (i + 0.5) / #PlayerColors for its colour's index i in
+    // ArmyColors (3 if it isn't there). With the albedo white and opaque, and
+    // no light, a plate shows the lookup's texel. The texel's alpha weighs
+    // the environment (none here, left of the rim), and the sun doesn't light
+    // it: FA leaves its shadow at 0. Nor is the albedo tinted by the team's
+    // colour, whatever the SpecTeam's mask: a black one stays black in the
+    // light.
+    {
+        Plate falloff;
+        falloff.shader = "Seraphim";
+        falloff.lookup = "falloff_lookup.dds";
+        make_plate("ueb1101", falloff, 8.0f, 30.0f);
+        Plate masked = falloff;
+        masked.albedo = "plate_albedo_black.dds";
+        masked.specteam = "plate_specteam_team.dds";
+        make_plate("ueb1102", masked, 8.0f, 42.0f);
+        const auto centre = [&](const std::string& cube, const map::ScmapLighting& lighting,
+                                f32 z = 30.0f) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", cube);
+            ground.set_lighting(lighting, std::move(env));
+            shots.recapture();
+            const ImageRGBA8 image = shots.shoot_frame(ground, 8.0f, z, 30.0f);
+            const size_t i =
+                (static_cast<size_t>(image.height / 2) * image.width + image.width / 2) * 4;
+            return i + 2 < image.pixels.size()
+                       ? std::array<int, 3>{image.pixels[i], image.pixels[i + 1],
+                                            image.pixels[i + 2]}
+                       : std::array<int, 3>{-1, -1, -1};
+        };
+        constexpr f32 kPitch = 1.1f;
+        // At the middle of the view, V is the view's axis: N . V = sin(pitch).
+        const int column =
+            std::min(15, static_cast<int>(16.0f * std::pow(1.0f - std::sin(kPitch), 0.6f)));
+        map::ScmapLighting sun = dark;
+        for (f32& c : sun.sun_color) c = 1.0f;
+        sun.sun_direction[0] = 0.0f;
+        sun.sun_direction[1] = 1.0f;
+        sun.sun_direction[2] = 0.0f;
+        camera.set_pitch(kPitch);
+        if (army) army->set_color(0x13, 0x1C, 0xD3); // ArmyColors[3], i = 2
+        const auto listed = centre(kBlack, dark);
+        const auto white_env = centre(face_cube("white"), dark);
+        const auto sunlit = centre(kBlack, sun);
+        map::ScmapLighting fill = dark;
+        for (f32& c : fill.shadow_fill) c = 1.0f;
+        const auto black = centre(kBlack, fill, 42.0f);
+        if (army) army->set_color(1, 2, 3); // no army colour: i = 3
+        const auto unlisted = centre(kBlack, dark);
+        camera.set_pitch(default_pitch);
+        const auto near = [](const std::array<int, 3>& px, int r, int g) {
+            return std::abs(px[0] - r) <= 2 && std::abs(px[1] - g) <= 2 && px[2] <= 2;
+        };
+        // Rows: (2 + 0.5) / 10 * 20 = 5, (3 + 0.5) / 10 * 20 = 7.
+        t.check(near(listed, column * 17, 5 * 12) && near(unlisted, column * 17, 7 * 12) &&
+                    white_env == listed && sunlit == listed && near(black, column * 17, 5 * 12),
+                fmt::format("Test 12: a Seraphim plate shows its lookup's column {} ({}), row "
+                            "5 for its army's colour ({}) and 7 for one not listed ({}); a "
+                            "white environment gives ({}, {}, {}), a sun ({}, {}, {}); a "
+                            "black albedo under the team's mask, lit, ({}, {}, {})",
+                            column, column * 17, listed[1], unlisted[1], white_env[0], white_env[1],
+                            white_env[2], sunlit[0], sunlit[1], sunlit[2], black[0], black[1],
+                            black[2]));
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

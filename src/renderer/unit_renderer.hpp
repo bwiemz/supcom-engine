@@ -4,17 +4,20 @@
 #include "renderer/mesh_cache.hpp"
 #include "renderer/frustum.hpp"
 #include "core/types.hpp"
+#include "sim/game_colors.hpp"
 
 #include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 struct lua_State;
 
 namespace osc::sim {
 class FrameView;
+struct ArmyRecord;
 }
 
 namespace osc::renderer {
@@ -33,7 +36,14 @@ struct CubeInstance {
 struct MeshInstance {
     f32 model[16];    // column-major 4x4 model matrix
     f32 r, g, b, a;  // army color + alpha
+    f32 color_lookup; // the row of the mesh's lookup texture (team_color_lookup)
 };
+
+/// FA's colorLookup (UserUnit::CreateMeshInstance), the row a mesh's lookup
+/// texture is read at for its army: (i + 0.5) / n. i is the army colour's
+/// index in GameColors.ArmyColors (func_GetColorIndex: 3 if it isn't there,
+/// 0 for no army), clamped below n, the count of PlayerColors (at least 1).
+f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors);
 
 /// A group of instances sharing the same GPU mesh.
 struct MeshDrawGroup {
@@ -43,6 +53,7 @@ struct MeshDrawGroup {
     VkDescriptorSet texture_ds = VK_NULL_HANDLE;  // albedo texture descriptor (set=0)
     VkDescriptorSet specteam_ds = VK_NULL_HANDLE; // SpecTeam texture descriptor (set=2)
     VkDescriptorSet normal_ds = VK_NULL_HANDLE;   // Normal map descriptor (set=3)
+    VkDescriptorSet lookup_ds = VK_NULL_HANDLE;   // The mesh's lookup texture (set=5)
     u32 bone_base_offset = 0; // index into bone SSBO (in mat4 units)
     u32 bones_per_instance = 0; // 0 = no skinning, else bone count
 };
@@ -53,6 +64,9 @@ public:
     /// Upload static cube mesh to GPU.
     void build(VkDevice device, VmaAllocator allocator,
                VkCommandPool cmd_pool, VkQueue queue);
+
+    /// The game's colour tables, which pick each army's lookup row.
+    void set_game_colors(sim::GameColors colors) { game_colors_ = std::move(colors); }
 
     /// Pre-load GPU meshes for these blueprints (sim::world_blueprints).
     void preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
@@ -120,6 +134,8 @@ private:
 
     // Per-frame draw groups (rebuilt each frame)
     std::vector<MeshDrawGroup> mesh_groups_;
+
+    sim::GameColors game_colors_;
 };
 
 } // namespace osc::renderer

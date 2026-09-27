@@ -6,6 +6,7 @@ add_library(osc_sim STATIC
     build_placement.cpp
     influence_map.cpp
     army_brain.cpp
+    game_colors.cpp
     bone_cache.cpp
     bone_data.cpp
     collision.cpp

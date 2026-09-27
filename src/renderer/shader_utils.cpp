@@ -550,6 +550,8 @@ layout(location = 8) in uvec4 inBoneIndices;
 layout(location = 9) in vec4 inBoneWeights;
 layout(location = 10) in vec3 inTangent;
 layout(location = 11) in vec3 inBinormal;
+// Per-instance: the row of the mesh's lookup texture for its army (M211c)
+layout(location = 12) in float inColorLookup;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -566,6 +568,7 @@ layout(location = 2) out vec2 fragUV;
 layout(location = 3) out vec3 fragTangent;
 layout(location = 4) out vec3 fragBitangent;
 layout(location = 5) out vec3 fragWorldPos;
+layout(location = 6) flat out float fragColorLookup;
 
 void main() {
     // Blend-weight skeletal skinning: skip for unskinned meshes (bonesPerInst == 0)
@@ -589,6 +592,7 @@ void main() {
     fragTangent = normalMat * inTangent;
     fragBitangent = normalMat * inBinormal;
     fragColor = inColor;
+    fragColorLookup = inColorLookup;
     fragUV = inUV;
 }
 )glsl";
@@ -627,6 +631,8 @@ layout(set = 4, binding = 3) uniform samplerCube aeonEnvironment; // "<aeon>"
 layout(set = 4, binding = 4) uniform samplerCube seraphimEnvironment; // "<seraphim>"
 layout(set = 4, binding = 5) uniform sampler2D anisotropicLookup;
 layout(set = 4, binding = 6) uniform sampler2D insectLookup;
+// The mesh's own lookup, its LOD's LookupName (Seraphim's falloff, M211c)
+layout(set = 5, binding = 0) uniform sampler2D texLookup;
 
 layout(location = 0) in vec3 fragNormal;
 // Army colour (RGB) + build alpha (A). A negative red marks a wreck, a
@@ -636,6 +642,7 @@ layout(location = 2) in vec2 fragUV;
 layout(location = 3) in vec3 fragTangent;
 layout(location = 4) in vec3 fragBitangent;
 layout(location = 5) in vec3 fragWorldPos;
+layout(location = 6) flat in float fragColorLookup; // the army's row of texLookup
 
 layout(location = 0) out vec4 outColor;
 
@@ -705,10 +712,11 @@ void main() {
     // a: the team colour's mask
     vec4 specTeam = texture(texSpecTeam, fragUV);
 
+    bool prop = fragColor.g < 0.0;
     vec3 lit;
     if (fragColor.r < 0.0) {
         // A wreck: burnt dark and grey, barely shining. (FA's WreckagePS,
-        // with its own crunch texture, is M211c's.)
+        // with its own crunch texture, is still to come.)
         float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
         vec3 blended = mix(vec3(lum), texColor.rgb, 0.3) * 0.45;
         vec3 viewDir = normalize(vec3(pc.eyeX, pc.eyeY, pc.eyeZ) - fragWorldPos);
@@ -718,7 +726,6 @@ void main() {
     } else {
         // FA's mesh.fx, by the mesh's technique. Props (NormalMappedAlpha)
         // tint by their colour; units mask the team's colour in.
-        bool prop = fragColor.g < 0.0;
         vec3 albedo = prop ? texColor.rgb : mix(texColor.rgb, fragColor.rgb, specTeam.a);
         vec3 V = faViewDirection(fragWorldPos);
         vec3 R = reflect(-V, worldNormal);
@@ -752,9 +759,24 @@ void main() {
                             (1.0 - meshLight) * lightUbo.shadowFill.rgb;
             }
             lit = albedo * (emissive + meshLight) + phongAdditive;
+        } else if (pc.technique == 4u) {
+            // UnitFalloffPS (Seraphim): the albedo untinted (the army's
+            // colour is the lookup's row), no sun (FA leaves its shadow at
+            // 0), and a falloff read by how squarely the surface faces the
+            // eye, point-sampled from the mesh's lookup. Its alpha weighs
+            // the environment; the albedo's alpha masks its colour in.
+            vec3 environment = texture(seraphimEnvironment, R).rgb;
+            float NdotV = pow(1.0 - clamp(dot(V, worldNormal), 0.0, 1.0), 0.6);
+            ivec2 size = textureSize(texLookup, 0);
+            ivec2 at = clamp(ivec2(vec2(NdotV, fragColorLookup) * vec2(size)), ivec2(0), size - 1);
+            vec4 fallOff = texelFetch(texLookup, at, 0);
+            vec3 phongAdditive = vec3(0.5, 0.6, 0.7) * pow(phongAmount, 9.0) * specTeam.g;
+            vec3 seraphimLight = lightUbo.sunAmbience.rgb;
+            seraphimLight = seraphimLight + (1.0 - seraphimLight) * lightUbo.shadowFill.rgb;
+            lit = texColor.rgb * seraphimLight + environment * specTeam.r * fallOff.a +
+                  phongAdditive + fallOff.rgb * texColor.a;
         } else {
-            // NormalMappedPS (the Unit technique; Seraphim's UnitFalloffPS
-            // is M211c's).
+            // NormalMappedPS (the Unit technique).
             vec3 environment = texture(environmentMap, R).rgb;
             vec3 phongAdditive = vec3(0.6, 0.8, 0.9) * pow(phongAmount, 2.0) * specTeam.g;
             vec3 phongMultiplicative = 2.0 * environment * specTeam.r;
@@ -762,9 +784,11 @@ void main() {
         }
     }
 
-    float finalAlpha = texColor.a * fragColor.a;
-    if (finalAlpha < 0.1) discard;
-    outColor = vec4(lit, finalAlpha);
+    // FA alpha-tests props alone (NormalMappedAlpha: the albedo's alpha over
+    // 0x80); a unit's albedo alpha is a mask its technique reads (Seraphim's
+    // glow). The instance's alpha fades a unit under construction.
+    if (prop && texColor.a <= 128.0 / 255.0) discard;
+    outColor = vec4(lit, fragColor.a);
 }
 )glsl";
 

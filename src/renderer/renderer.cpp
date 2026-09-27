@@ -12,6 +12,7 @@ extern "C" {
 #include "renderer/pipeline_builder.hpp"
 #include "renderer/shader_utils.hpp"
 #include "renderer/terrain_mesh.hpp"
+#include "sim/game_colors.hpp"
 #include "sim/scm_parser.hpp"
 #include "sim/world_snapshot.hpp"
 #include "map/terrain.hpp"
@@ -874,14 +875,14 @@ void Renderer::create_pipelines() {
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance data (mat4 model + vec4 color = 80 bytes)
+        // Binding 1: per-instance data (mat4 model + vec4 color + colour lookup = 84 bytes)
         bindings[1].binding = 1;
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 12 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
-        // bone_weights(9), tangent(10), binormal(11)
-        std::array<VkVertexInputAttributeDescription, 12> attrs{};
+        // 13 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+        // bone_weights(9), tangent(10), binormal(11), colour lookup(12)
+        std::array<VkVertexInputAttributeDescription, 13> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -895,6 +896,7 @@ void Renderer::create_pipelines() {
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};  // tangent
         attrs[11] = {11, 0, VK_FORMAT_R32G32B32_SFLOAT,
                      offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
+        attrs[12] = {12, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, color_lookup)};
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
         // eye (12B)
@@ -914,6 +916,7 @@ void Renderer::create_pipelines() {
                              .add_descriptor_set_layout(texture_ds_layout_) // set=2: specteam
                              .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
                              .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: shadow
+                             .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
                              .build(device_, scene_render_pass_, &mesh_layout_);
     }
 
@@ -1610,6 +1613,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
     }
+    // The colour tables that pick each army's row of a lookup (M211c)
+    if (L) unit_renderer_.set_game_colors(sim::read_game_colors(L));
     // The cubes and lookups meshes shade with (M211a/b), once the texture
     // cache is up.
     bind_mesh_environment(terrain->environment());
@@ -2611,6 +2616,13 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         mesh_layout_, 3, 1, &norm_ds,
                                         0, nullptr);
+            }
+
+            // The mesh's lookup texture (set=5), transparent black without one
+            VkDescriptorSet lookup_ds = group.lookup_ds ? group.lookup_ds : specteam_fallback;
+            if (lookup_ds) {
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_,
+                                        5, 1, &lookup_ds, 0, nullptr);
             }
 
             // Push bone offsets per group

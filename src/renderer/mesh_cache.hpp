@@ -41,6 +41,7 @@ struct GPUMesh {
     std::string texture_path;   // VFS path to albedo DDS (empty = no texture)
     std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
     std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)
+    std::string lookup_path;    // VFS path to the LOD's LookupName (Seraphim's falloff)
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
     MeshTechnique technique = MeshTechnique::Unit;
 };
@@ -117,6 +118,8 @@ private:
     std::string resolve_specteam_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
                                               lua_State* L);
     std::string resolve_normal_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
+                                            lua_State* L);
+    std::string resolve_lookup_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,
                                             lua_State* L);
 
     /// Read a string field from __blueprints[mesh_bp_id].LODs[lod_index].
