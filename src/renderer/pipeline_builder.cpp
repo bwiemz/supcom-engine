@@ -46,6 +46,11 @@ PipelineBuilder& PipelineBuilder::set_blend(bool enable) {
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_color_write_mask(VkColorComponentFlags mask) {
+    write_mask_ = mask;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::set_depth_bias(float constant_factor,
                                                   float slope_factor) {
     depth_bias_ = true;
@@ -148,10 +153,7 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
 
     // Color blend
     VkPipelineColorBlendAttachmentState blend_att{};
-    blend_att.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                               VK_COLOR_COMPONENT_G_BIT |
-                               VK_COLOR_COMPONENT_B_BIT |
-                               VK_COLOR_COMPONENT_A_BIT;
+    blend_att.colorWriteMask = write_mask_;
     if (blend_) {
         blend_att.blendEnable = VK_TRUE;
         blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;

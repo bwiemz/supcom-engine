@@ -96,5 +96,5 @@ instance's alpha (a unit under construction fades).
 
 - **`AeonCZAR`** and **`WreckagePS`** (with its crunch texture).
 - The build shaders.
-- **Glow and bloom from alpha** (M214): FA writes `specular.b + glowMinimum`
+- **Glow and bloom from alpha** (M211e): FA writes `specular.b + glowMinimum`
   to alpha, which its bloom reads.

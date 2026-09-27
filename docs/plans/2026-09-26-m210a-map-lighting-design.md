@@ -75,7 +75,7 @@ space; the swapchain is UNORM). `SunDirection` points toward the sun.
 fog states. The map's fog values go unused in game. The engine's haze was
 its own invention, so it goes.
 
-**Bloom** is left for M214. FA's is a glow pass: `frame.fx` copies what
+**Bloom** is left for M211e. FA's is a glow pass: `frame.fx` copies what
 glows out of the frame's alpha with `GlowCopyScale` and `GlowCopyAdd`,
 which the engine sets. How the map's `Bloom` value feeds them isn't in the
 shaders. The engine's bloom stays as it is, and the value is parsed for
