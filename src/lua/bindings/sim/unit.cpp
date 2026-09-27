@@ -1968,17 +1968,6 @@ static int unit_RevertElevation(lua_State* L) {
     return 0;
 }
 
-// self:AddOnGivenCallback(fn)
-static int unit_AddOnGivenCallback(lua_State* L) {
-    auto* u = check_unit(L);
-    if (!u) return 0;
-    if (!lua_isfunction(L, 2)) return 0;
-    lua_pushvalue(L, 2);
-    int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    u->add_on_given_callback(ref);
-    return 0;
-}
-
 // self:AddOnUnitBuiltCallback(fn, category)
 // Registers a callback fired when this unit finishes building another unit.
 static int unit_AddOnUnitBuiltCallback(lua_State* L) {
@@ -2468,7 +2457,6 @@ const MethodEntry unit_methods[] = {
     {"GetScriptBit",                unit_GetScriptBit},
     {"AddBuildRestriction",         unit_AddBuildRestriction},
     {"RemoveBuildRestriction",      unit_RemoveBuildRestriction},
-    {"AddOnGivenCallback",          unit_AddOnGivenCallback},
     {"AddOnUnitBuiltCallback",      unit_AddOnUnitBuiltCallback},
     {"PlayUnitSound",               unit_PlayUnitSound},
     {"PlayUnitAmbientSound",        unit_PlayUnitAmbientSound},

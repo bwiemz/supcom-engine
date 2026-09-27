@@ -102,6 +102,22 @@ On 2026-09-26, main after M206r–M206t and the aircraft fixes (#120–#123) pla
 
 With both, the Sung Island and SCMP_009 games have **no script errors** at 18,000 ticks. The AI's "Invalid location - (Large) Expansion Area" warnings remain: about 1,700 without the fix and 1,400 with it, depending on how each game goes.
 
+## Fifth run: the expansion-area warnings, and units changing hands
+
+On 2026-09-26 the fourth run's remaining warnings were traced. SCMP_009 (seed 4242) logged about 1,700 "Invalid location - Large Expansion Area N" warnings. Each probe was a patched copy of a FAF file, mounted first, that logged a `debug.traceback()` where the previous one pointed:
+
+1. At the warning, the caller was an `EngineerManager` of a base that `DeadBaseMonitor` had torn down, still assigning an engineer.
+2. At `EngineerManager:RemoveUnit` for that engineer: the engineer had been captured, and every capture logged the engine's "capture C++ fallback".
+3. At `TransferUnitsOwnership`: `ArmyBrains[toArmy]` was nil.
+
+| Count | Where FAF failed | What it was | Fixed by |
+|---|---|---|---|
+| 1,732 | "Invalid location" warnings | FAF's `SimUtils` keeps `local ArmyBrains = ArmyBrains`. The engine imported `Unit.lua`, and with it `SimUtils`, before `SetupSession`, behind a placeholder `ArmyBrains`. So every FAF transfer (capture, gift, share) found no brains and did nothing. The engine's capture fallback then changed the army of the same unit in place, and the captured engineer kept its old AI's manager thread. | the script classes imported after `SetupSession`; `ChangeUnitArmy` by replacement (M206v) |
+
+With both fixes, both 18,000-tick games had no "Invalid location" warnings and no capture fallbacks. FAF's own scripts made the transfers: 23 on SCMP_009 and 32 on Sung Island.
+
+SCMP_009 is also the first run in which an AI army was defeated. That reached a new error: `platoon.lua` `BaseManagersDistressAI` called `GetLocationCoords` on nil. FAF's `DisableAI` removes a defeated AI's managers but leaves their entries, and the ArmyPool's distress thread went on looping over them. It is likely FAF's own error. In faf-re, Moho's `SetArmyOutOfGame` only sets a flag, and `PlatoonExists` only checks that the handle is live. Nothing stops a defeated army's pool thread, so the loop meets the emptied entry, errors once and ends.
+
 ## Next
 
 - Longer and wider runs: 18,000 ticks, other maps and other seeds. The first 3,000 ticks cover the early game only: no experimentals, and little T3.

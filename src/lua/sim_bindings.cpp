@@ -1219,28 +1219,28 @@ static int l_CreateUnit(lua_State* L) {
     return create_complete_unit(L, orientation);
 }
 
-static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation) {
-    auto* sim = get_sim(L);
-    if (!sim) return luaL_error(L, "CreateUnit: no SimState");
-
-    const char* bp_id = luaL_checkstring(L, 1);
-    int army = resolve_army(L, 2, sim);
-    if (army < 0 || army >= static_cast<int>(sim->army_count())) {
-        spdlog::warn("CreateUnit: invalid army index");
-        lua_pushnil(L);
-        return 1;
+/// A complete unit of `bp_id` for `army` (0-based) at `pos` facing
+/// `orientation`, made as CreateUnit makes one: OnPreCreate, its weapons,
+/// OnCreate, then OnStopBeingBuilt, its footprint and adjacency, and the
+/// ArmyPool. When `place_of` is given the unit is made where that one
+/// stands, before its scripts run (Moho's transfer passes the old unit's
+/// transform and layer, elevation fixed): its layer, and an aircraft's
+/// height and heading. Leaves its table on the stack and returns its id; 0,
+/// with nothing pushed, when the blueprint makes none.
+static u32 spawn_complete_unit(lua_State* L, sim::SimState& sim, const char* bp_id, int army,
+                               const sim::Vector3& pos, const sim::Quaternion& orientation,
+                               const sim::Unit* place_of = nullptr) {
+    u32 id = create_unit_core(L, bp_id, army, pos.x, pos.y, pos.z, /*being_built=*/false);
+    if (id == 0) return 0;
+    if (auto* made = static_cast<sim::Unit*>(sim.entity_registry().find(id))) {
+        made->set_orientation(orientation);
+        if (place_of) {
+            made->set_position(pos);
+            made->set_layer(place_of->layer());
+            made->set_heading(place_of->heading());
+            made->set_current_altitude(place_of->current_altitude());
+        }
     }
-
-    f32 x = 0, y = 0, z = 0;
-    if (lua_gettop(L) >= 5) {
-        x = static_cast<f32>(lua_tonumber(L, 3));
-        y = static_cast<f32>(lua_tonumber(L, 4));
-        z = static_cast<f32>(lua_tonumber(L, 5));
-    }
-
-    u32 id = create_unit_core(L, bp_id, army, x, y, z, /*being_built=*/false);
-    if (id == 0) { lua_pushnil(L); return 1; }
-    if (auto* made = sim->entity_registry().find(id)) made->set_orientation(orientation);
 
     // Lua table is now on top of stack
     int tbl = lua_gettop(L);
@@ -1274,11 +1274,11 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
     }
 
     // OnStopBeingBuilt (only for pre-placed units)
-    auto* unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+    auto* unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
     if (unit_ptr && !unit_ptr->is_being_built()) {
         // A structure created complete (map-placed, scripted) blocks paths
         // like a freshly built one; released when it leaves the registry.
-        sim->occupy_footprint(*unit_ptr);
+        sim.occupy_footprint(*unit_ptr);
         lua_pushstring(L, "OnStopBeingBuilt");
         lua_gettable(L, tbl);
         if (lua_isfunction(L, -1)) {
@@ -1294,9 +1294,9 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
         }
 
         // Fire adjacency callbacks for pre-placed structures
-        unit_ptr = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+        unit_ptr = static_cast<sim::Unit*>(sim.entity_registry().find(id));
         if (unit_ptr && !unit_ptr->destroyed()) {
-            unit_ptr->fire_adjacency_callbacks(sim->entity_registry(), L);
+            unit_ptr->fire_adjacency_callbacks(sim.entity_registry(), L);
         }
     }
 
@@ -1304,9 +1304,9 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
     // In the original GPG engine, every completed unit is in ArmyPool by default;
     // AI managers (PlatoonFormManager, FactoryBuilderManager) pull from it.
     {
-        auto* u = static_cast<sim::Unit*>(sim->entity_registry().find(id));
+        auto* u = static_cast<sim::Unit*>(sim.entity_registry().find(id));
         if (u && !u->destroyed() && !u->is_being_built()) {
-            auto* brain = sim->get_army(army);
+            auto* brain = sim.get_army(army);
             if (brain) {
                 auto* pool = brain->find_platoon_by_name("ArmyPool");
                 if (pool && !pool->has_unit(id)) {
@@ -1316,7 +1316,28 @@ static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation
         }
     }
 
-    return 1; // return Lua table
+    return id; // its table on the stack
+}
+
+static int create_complete_unit(lua_State* L, const sim::Quaternion& orientation) {
+    auto* sim = get_sim(L);
+    if (!sim) return luaL_error(L, "CreateUnit: no SimState");
+
+    const char* bp_id = luaL_checkstring(L, 1);
+    int army = resolve_army(L, 2, sim);
+    if (army < 0 || army >= static_cast<int>(sim->army_count())) {
+        spdlog::warn("CreateUnit: invalid army index");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    sim::Vector3 pos{};
+    if (lua_gettop(L) >= 5) {
+        pos = {static_cast<f32>(lua_tonumber(L, 3)), static_cast<f32>(lua_tonumber(L, 4)),
+               static_cast<f32>(lua_tonumber(L, 5))};
+    }
+    if (spawn_complete_unit(L, *sim, bp_id, army, pos, orientation) == 0) lua_pushnil(L);
+    return 1; // its table (or nil)
 }
 
 /// Internal: create a unit in "being built" state.
@@ -4898,64 +4919,144 @@ static int l_IssueDive(lua_State* L) {
     return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
-// ChangeUnitArmy(unit, toArmy [, noRestrictions])
-static int l_ChangeUnitArmy(lua_State* L) {
-    // Arg 1: unit Lua table
-    if (!lua_istable(L, 1)) return 0;
-    lua_pushstring(L, "_c_object");
-    lua_rawget(L, 1);
-    if (!lua_isuserdata(L, -1)) { lua_pop(L, 1); return 0; }
-    auto* unit = static_cast<sim::Unit*>(lua_touserdata(L, -1));
-    lua_pop(L, 1);
-    if (!unit || unit->destroyed()) return 0;
+// ====================================================================
+// Units change army by replacement (M206v; Moho's Sim::TransferUnit, faf-re
+// Sim.cpp). A new unit of the new army takes the old one's place and the
+// old one is destroyed, so none of the old owner's script state (threads,
+// AI manager data, callbacks) follows the unit. Scripts carry over what
+// they keep -- veterancy, enhancements, fuel, silo ammo, shield -- by
+// applying it to the unit returned (retail's and FAF's
+// TransferUnitsOwnership).
+// ====================================================================
 
-    // Arg 2: toArmy (1-based Lua army index)
-    int to_army_lua = static_cast<int>(luaL_checknumber(L, 2));
-    int to_army_cpp = to_army_lua - 1; // 0-based for C++
+// From moho_bindings_internal.hpp, whose get_sim clashes with this file's:
+// the entity a handle names (moho_bindings.cpp), and Entity:Destroy.
+sim::Entity* check_entity(lua_State* L, int idx);
+int entity_Destroy(lua_State* L);
 
-    spdlog::info("ChangeUnitArmy: entity #{} from army {} to army {}",
-                 unit->entity_id(), unit->army(), to_army_cpp);
+/// A live unit (not destroyed, not dying) by id, or null.
+static sim::Unit* transferable_unit(sim::SimState& sim, u32 id) {
+    auto* e = sim.entity_registry().find(id);
+    if (!e || e->destroyed() || !e->is_unit()) return nullptr;
+    auto* u = static_cast<sim::Unit*>(e);
+    return u->is_dying() ? nullptr : u;
+}
 
-    // Change army on C++ side
-    unit->set_army(to_army_cpp);
+/// Move `unit_id` to `army` (0-based) as Moho's TransferUnit does, its
+/// stored and carried units with it: the new unit's id, 0 when none was
+/// made (the unit is dead, or its blueprint makes none).
+static u32 transfer_unit(lua_State* L, sim::SimState& sim, u32 unit_id, int army) {
+    auto& registry = sim.entity_registry();
+    sim::Unit* unit = transferable_unit(sim, unit_id);
+    if (!unit) return 0;
 
-    // Update Army field on Lua table
-    lua_pushstring(L, "Army");
-    lua_pushnumber(L, to_army_lua);
-    lua_rawset(L, 1);
-
-    // Update Brain field: ArmyBrains[toArmy]
-    lua_pushstring(L, "ArmyBrains");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_istable(L, -1)) {
-        lua_rawgeti(L, -1, to_army_lua);
-        if (!lua_isnil(L, -1)) {
-            lua_pushstring(L, "Brain");
-            lua_pushvalue(L, -2); // brain table
-            lua_rawset(L, 1);    // unit_table.Brain = brain
-        }
-        lua_pop(L, 1); // brain
+    // Its stored units come out of storage and change army first.
+    std::vector<u32> stored;
+    for (const u32 id : std::vector<u32>(unit->stored_ids())) {
+        unit = transferable_unit(sim, unit_id);
+        auto* s = transferable_unit(sim, id);
+        if (!unit || !s) continue;
+        unit->remove_from_storage(*s, registry, L);
+        stored.push_back(transfer_unit(L, sim, id, army));
     }
-    lua_pop(L, 1); // ArmyBrains
+    // So do the mobile units it carries, taken off in the order their
+    // slots were given, so each gets the same slot on the new transport.
+    unit = transferable_unit(sim, unit_id);
+    if (!unit) return 0;
+    std::vector<u32> carried;
+    if (const auto* slots = unit->built_transport_slots())
+        for (const auto& slot : slots->slots()) carried.push_back(slot.unit_id);
+    for (const u32 id : unit->cargo_ids())
+        if (std::find(carried.begin(), carried.end(), id) == carried.end()) carried.push_back(id);
+    std::erase_if(carried, [&](u32 id) {
+        const auto* c = transferable_unit(sim, id);
+        return !c || !c->is_mobile() || c->transport_id() != unit_id || unit->is_stored_unit(id);
+    });
+    unit->detach_cargo(carried, registry, L);
+    for (u32& id : carried) id = transfer_unit(L, sim, id, army);
 
-    // Fire on-given callbacks registered via moho AddOnGivenCallback
-    // Snapshot to guard against mutation from callbacks (push_back/clear)
-    std::vector<int> cbs_snapshot = unit->on_given_callbacks();
-    for (int ref : cbs_snapshot) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-        if (lua_isfunction(L, -1)) {
-            lua_pushvalue(L, 1); // pass unit table (now with new army)
-            if (lua_pcall(L, 1, 0, 0) != 0) {
-                spdlog::warn("OnGivenCallback error: {}", lua_tostring(L, -1));
-                lua_pop(L, 1);
-            }
-        } else {
+    // The replacement: made where the old one stands, complete.
+    unit = transferable_unit(sim, unit_id);
+    if (!unit) return 0;
+    const std::string bp = unit->blueprint_id();
+    const u32 new_id =
+        spawn_complete_unit(L, sim, bp.c_str(), army, unit->position(), unit->orientation(), unit);
+    if (new_id == 0) return 0;
+    lua_pop(L, 1);
+    unit = transferable_unit(sim, unit_id);
+    auto* fresh = transferable_unit(sim, new_id);
+    if (!fresh) return 0;
+    if (unit) {
+        if (unit->health() != fresh->health()) fresh->set_health(unit->health());
+        fresh->set_custom_name(unit->custom_name());
+    }
+
+    // Its stored and carried units come back aboard (each one's scripts
+    // run, so the new unit is looked up again every time).
+    for (const u32 id : stored) {
+        fresh = transferable_unit(sim, new_id);
+        if (auto* s = transferable_unit(sim, id);
+            s && fresh && fresh->transport_has_available_storage())
+            fresh->add_to_storage(*s, registry, L);
+    }
+    for (const u32 id : carried) {
+        fresh = transferable_unit(sim, new_id);
+        if (auto* c = transferable_unit(sim, id); c && fresh)
+            c->attach_to_transport(fresh, registry, L);
+    }
+
+    // The old one is destroyed: a hand-over, not a loss. A structure's
+    // footprint stays blocked by its replacement's own claim (the grid
+    // counts claims per cell), where Moho has to tell the old one not to
+    // lift it.
+    unit = transferable_unit(sim, unit_id);
+    if (unit && unit->lua_table_ref() >= 0) {
+        unit->set_transferred();
+        lua_pushcfunction(L, entity_Destroy);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, unit->lua_table_ref());
+        if (lua_pcall(L, 1, 0, 0) != 0) {
+            spdlog::warn("ChangeUnitArmy: destroying #{}: {}", unit_id, lua_tostring(L, -1));
             lua_pop(L, 1);
         }
     }
+    return transferable_unit(sim, new_id) ? new_id : 0;
+}
 
-    // Return the unit's Lua table (same entity, new army)
-    lua_pushvalue(L, 1);
+// ChangeUnitArmy(unit, army): Moho's cfunc_ChangeUnitArmyL. The unit (and
+// what it carries) changes army by replacement; returns the new unit, or
+// nil. A unit already of that army is an error; one carrying a commander
+// stays as it is (nil).
+static int l_ChangeUnitArmy(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return luaL_error(L, "ChangeUnitArmy(unit, army)\n  expected 2 args, but got %d",
+                          lua_gettop(L));
+    auto* sim = get_sim(L);
+    auto* e = check_entity(L, 1);
+    if (!sim || !e || !e->is_unit()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    auto* unit = static_cast<sim::Unit*>(e);
+    const int army = resolve_army(L, 2, sim);
+    if (army < 0 || army >= static_cast<int>(sim->army_count()))
+        return luaL_error(L, "Invalid army %d", static_cast<int>(lua_tonumber(L, 2)));
+    if (unit->army() == army) return luaL_error(L, "Unit already belongs to army %d", army);
+    for (const u32 id : unit->cargo_ids()) {
+        const auto* c = sim->entity_registry().find(id);
+        if (c && c->is_unit() && static_cast<const sim::Unit*>(c)->has_category("COMMAND")) {
+            lua_pushnil(L);
+            return 1;
+        }
+    }
+    const u32 old_id = unit->entity_id(); // the unit is gone after
+    const u32 new_id = transfer_unit(L, *sim, old_id, army);
+    auto* fresh = new_id ? sim->entity_registry().find(new_id) : nullptr;
+    if (fresh && fresh->lua_table_ref() >= 0) {
+        spdlog::info("ChangeUnitArmy: #{} to army {} as #{}", old_id, army, new_id);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, fresh->lua_table_ref());
+    } else {
+        lua_pushnil(L);
+    }
     return 1;
 }
 

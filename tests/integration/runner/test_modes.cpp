@@ -146,6 +146,7 @@ constexpr Mode kModesBefore[] = {
     {"--carrier-test", test_carrier, false},
     {"--right-click-test", test_right_click, false},
     {"--carrier-land-test", test_carrier_land, false},
+    {"--change-army-test", test_change_army, false},
     {"--air-turn-test", test_air_turn, false},
     {"--air-staging-test", test_air_staging, false},
     {"--factory-assist-test", test_factory_assist, false},
@@ -296,7 +297,7 @@ void IntegrationModes::print_usage() const {
               << "  --massstub4-test   Mass stub conversion IV (visibility, scale, mesh, collision, attach, shake)\n"
               << "  --spatial-test     Spatial hash grid (grid init, collect_in_radius/rect, auto-notify)\n"
               << "  --unitsound-test   Unit sound (PlayUnitSound, PlayUnitAmbientSound, StopUnitAmbientSound)\n"
-              << "  --medstub-test     Medium stubs (SetBoneEnabled, AddOnGivenCallback, AddBoundedProp)\n"
+              << "  --medstub-test     Medium stubs (SetBoneEnabled, ChangeUnitArmy, AddBoundedProp)\n"
               << "  --lowstub-test     Low-priority stubs (Destroy/BeenDestroyed, CreateBuilderArmController)\n"
               << "  --blend-test       Blend-weight skinning (multi-bone vertex parsing, weight validation)\n"
               << "  --ui-test          UI control system (Frame, Group, LazyVar, moho bindings)\n"
