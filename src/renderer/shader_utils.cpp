@@ -599,6 +599,14 @@ void main() {
     else if (pc.technique == 8u) grow = 0.25 + inParameter * 0.75;
     vec4 skinnedPos = bone * vec4(inPosition * grow, 1.0);
     vec4 worldPos = inModel * skinnedPos;
+    if (pc.technique == 17u) {
+        // UndulatingNormalMappedVS: swaying in FA's wind (mesh.fx's
+        // windDirection, which Moho never sets), by the vertex's height in
+        // its mesh, out of step by the instance's place (M211i).
+        const vec3 wind = vec3(0.707, 0.0, 0.707);
+        float sway = sin(0.05 * pc.time - dot(wind, inModel[3].xyz));
+        worldPos.xyz += 0.003 * inPosition.y * sway * sway * wind;
+    }
     if (inColor.r < 0.0) {
         // A wreck (WreckageVS, mesh.fx) crumples: each vertex shifts by up to
         // 0.15, by its place in the world and the instance's.
@@ -638,7 +646,8 @@ layout(push_constant) uniform PushConstants {
     // MeshTechnique: 0 Unit, 1 Aeon, 2 Insect, 3 Metal, 4 Seraphim (M211b);
     // 5 UEFBuild, 6 AeonBuild, 7 CybranBuild, 8 SeraphimBuild (M211f);
     // 9 NormalMappedAlpha, 10 NormalMappedGlow, 11 AlphaFade, 12 UEFBuildCube,
-    // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g)
+    // 13 AeonBuildPuddle, 14 BlackenedNormalMappedAlpha (M211g); 15 VertexNormal,
+    // 16 NormalMappedTerrain, 17 UndulatingNormalMappedAlpha (M211i)
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
@@ -901,8 +910,13 @@ void main() {
     // NormalMappedGlow, the burnt trees'): the albedo tinted by the
     // instance's colour, white but a unit's. The alpha-tested ones write
     // colour only.
-    bool unmasked = prop || pc.technique == 9u || pc.technique == 10u || pc.technique == 14u;
-    bool alphaTested = prop || pc.technique == 9u || pc.technique == 14u;
+    // The props' own techniques (M211i) set their alpha below.
+    bool vertexNormal = pc.technique == 15u;
+    bool terrainProp = pc.technique == 16u;
+    bool unmasked = prop || pc.technique == 9u || pc.technique == 10u || pc.technique == 14u ||
+                    vertexNormal || terrainProp || pc.technique == 17u;
+    bool alphaTested = (prop && !vertexNormal && !terrainProp) || pc.technique == 9u ||
+                       pc.technique == 14u || pc.technique == 17u;
     vec3 tint = prop ? vec3(1.0) : fragColor.rgb;
     // Alpha: the build ghost's fade, which its pipeline blends by, leaving
     // the frame's alpha; a build technique's or effect's own (M211f/g); else
@@ -933,6 +947,15 @@ void main() {
                          alpha);
     } else if (pc.technique >= 11u && pc.technique <= 13u) {
         lit = effectColor(faViewDirection(fragWorldPos), shadow, alpha);
+    } else if (vertexNormal || terrainProp) {
+        // VertexNormalPS: lit by the vertex's normal, shadowed, and nothing
+        // else, blended by f * albedo.a; NormalMappedTerrainPS: by the
+        // normal map, unshadowed, alpha glowMinimum (M211i).
+        vec3 albedo = texColor.rgb * tint;
+        lit = vertexNormal
+                  ? albedo * computeLight(dot(S, normalize(fragNormal)), shadow, 1.0, 1.0)
+                  : albedo * computeLight(NdotL, 1.0, 1.0, 1.0);
+        alpha = vertexNormal ? fragParameter * texColor.a : glowMinimum;
     } else {
         // FA's mesh.fx, by the mesh's technique. The unmasked tint by their
         // colour; units mask the team's colour in. The burnt trees'
@@ -991,12 +1014,12 @@ void main() {
         }
     }
 
-    // FA alpha-tests the alpha-tested techniques (NormalMappedAlpha: the
-    // fraction complete times the albedo's alpha, over 0x80; AlphaFade: its
-    // alpha over 0x23); a unit's albedo alpha is a mask its technique reads
-    // (Seraphim's glow).
+    // FA alpha-tests the alpha-tested techniques (NormalMappedAlpha and its
+    // kin: the fraction complete times the albedo's alpha, over 0x80;
+    // AlphaFade and VertexNormal: their alpha over 0x23); a unit's albedo
+    // alpha is a mask its technique reads (Seraphim's glow).
     if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
-    if (pc.technique == 11u && alpha <= 35.0 / 255.0) discard;
+    if ((pc.technique == 11u || vertexNormal) && alpha <= 35.0 / 255.0) discard;
     outColor = vec4(lit, alpha);
 }
 )glsl";

@@ -123,6 +123,10 @@ inline constexpr std::array<const char*, 53> kPlateBlueprints = {
 void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments = 1,
                      bool child_bone = false);
 
+/// A one-bone SCM wall: `half` units either side of the origin along x,
+/// from the ground up to `height`, facing along z, wound both ways (M211i).
+void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height);
+
 /// A plate's material: its textures (files under the test's mount) and
 /// technique.
 struct Plate {

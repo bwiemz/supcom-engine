@@ -128,6 +128,7 @@ constexpr Mode kModesBefore[] = {
     {"--build-shader-test", test_build_shaders, false},
     {"--effect-mesh-test", test_effect_meshes, false},
     {"--skinning-test", test_skinning, false},
+    {"--prop-material-test", test_prop_materials, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -291,6 +292,7 @@ void IntegrationModes::print_usage() const {
               << "  --build-shader-test FA's build shaders, on units under construction\n"
               << "  --effect-mesh-test FA's build effects' meshes, shader names, burnt trees\n"
               << "  --skinning-test    Rigid skinning and hidden bones\n"
+              << "  --prop-material-test The props' own techniques\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

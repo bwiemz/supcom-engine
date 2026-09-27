@@ -184,6 +184,10 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "AeonBuildPuddle") return MeshTechnique::AeonBuildPuddle;
     if (shader_name == "BlackenedNormalMappedAlpha")
         return MeshTechnique::BlackenedNormalMappedAlpha;
+    if (shader_name == "VertexNormal") return MeshTechnique::VertexNormal;
+    if (shader_name == "NormalMappedTerrain") return MeshTechnique::NormalMappedTerrain;
+    if (shader_name == "UndulatingNormalMappedAlpha")
+        return MeshTechnique::UndulatingNormalMappedAlpha;
     return MeshTechnique::Unit;
 }
 

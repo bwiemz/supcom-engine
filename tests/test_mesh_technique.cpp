@@ -23,9 +23,15 @@ TEST_CASE("mesh_technique: a LOD's ShaderName picks FA's technique", "[renderer]
     CHECK(mesh_technique("AeonBuildPuddle") == MeshTechnique::AeonBuildPuddle);
     CHECK(mesh_technique("BlackenedNormalMappedAlpha") ==
           MeshTechnique::BlackenedNormalMappedAlpha);
+    // The props' (M211i).
+    CHECK(mesh_technique("VertexNormal") == MeshTechnique::VertexNormal);
+    CHECK(mesh_technique("TMeshNoNormals") == MeshTechnique::VertexNormal);
+    CHECK(mesh_technique("NormalMappedTerrain") == MeshTechnique::NormalMappedTerrain);
+    CHECK(mesh_technique("UndulatingNormalMappedAlpha") ==
+          MeshTechnique::UndulatingNormalMappedAlpha);
     // Anything unported draws as Unit.
     CHECK(mesh_technique("") == MeshTechnique::Unit);
-    CHECK(mesh_technique("VertexNormal") == MeshTechnique::Unit);
+    CHECK(mesh_technique("Clutter") == MeshTechnique::Unit);
     CHECK(mesh_technique("uefbuild") == MeshTechnique::Unit);
 }
 
@@ -78,7 +84,10 @@ TEST_CASE("is_blended_technique: what draws after the opaque meshes", "[renderer
     CHECK(is_blended_technique(MeshTechnique::SeraphimBuild));
     CHECK(is_blended_technique(MeshTechnique::AlphaFade));
     CHECK(is_blended_technique(MeshTechnique::UEFBuildCube));
+    CHECK(is_blended_technique(MeshTechnique::VertexNormal));
     CHECK_FALSE(is_blended_technique(MeshTechnique::Unit));
+    CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedTerrain));
+    CHECK_FALSE(is_blended_technique(MeshTechnique::UndulatingNormalMappedAlpha));
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedAlpha));
     CHECK_FALSE(is_blended_technique(MeshTechnique::NormalMappedGlow));
     CHECK_FALSE(is_blended_technique(MeshTechnique::AeonBuildPuddle));
