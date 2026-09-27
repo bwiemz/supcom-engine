@@ -14,7 +14,7 @@ struct StratumInfo {
     std::string albedo_path;
     f32 albedo_scale = 10.0f;
     std::string normal_path;
-    f32 normal_scale = 10.0f;  // the normal map repeats every normal_scale world units (M212a)
+    f32 normal_scale = 10.0f; // the normal map repeats every normal_scale world units (M212a)
 };
 
 /// A map decal for rendering (static, not simulated).
