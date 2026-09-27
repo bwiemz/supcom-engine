@@ -21,6 +21,18 @@ class BlueprintStore;
 namespace osc::renderer {
 
 /// GPU-resident mesh data for a single blueprint.
+/// Which of FA's mesh.fx techniques draws a mesh (its LOD's ShaderName).
+enum class MeshTechnique : u32 {
+    Unit = 0,     ///< NormalMappedPS: UEF, props, and anything unported
+    Aeon = 1,     ///< AeonPS
+    Insect = 2,   ///< NormalMappedInsectPS: Cybran
+    Metal = 3,    ///< NormalMappedMetalPS
+    Seraphim = 4, ///< UnitFalloffPS (drawn as Unit until M211c)
+};
+
+/// The technique a ShaderName names; Unit for any other.
+MeshTechnique mesh_technique(const std::string& shader_name);
+
 struct GPUMesh {
     AllocatedBuffer vertex_buf{};
     AllocatedBuffer index_buf{};
@@ -30,6 +42,7 @@ struct GPUMesh {
     std::string specteam_path;  // VFS path to SpecTeam DDS (empty = no team color mask)
     std::string normal_path;    // VFS path to normal map DDS (empty = no normal map)
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
+    MeshTechnique technique = MeshTechnique::Unit;
 };
 
 /// A single LOD level: mesh data + camera distance cutoff.

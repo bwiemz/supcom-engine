@@ -136,6 +136,9 @@ public:
     /// Check if a GLFW key is currently pressed.
     bool is_key_pressed(int glfw_key) const;
 
+    /// The FA technique (mesh.fx) that draws a blueprint's mesh (M211b).
+    MeshTechnique mesh_technique(const std::string& blueprint_id, lua_State* L);
+
     /// Update the window title bar text.
     void set_window_title(const char* title);
 
@@ -388,8 +391,10 @@ private:
     std::optional<map::Heightmap> ground_;
     /// Set the camera's focus height from the ground under its target.
     void update_camera_focus();
-    /// Bind the map's environment cubemap for meshes to reflect (M211a).
-    void bind_environment_cubemap(const map::ScmapEnvironment& environment);
+    /// Bind the map's environment cubes and FA's lookups for meshes (M211a/b).
+    void bind_mesh_environment(const map::ScmapEnvironment& environment);
+    /// Clamped, for FA's lookup textures.
+    VkSampler lookup_sampler_ = VK_NULL_HANDLE;
     f32 ground_water_ = 0.0f;
     bool ground_has_water_ = false;
     /// The scene's lighting: its map's, else SCMP_009's.

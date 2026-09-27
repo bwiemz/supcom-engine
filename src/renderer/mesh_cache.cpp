@@ -137,6 +137,14 @@ bool is_wreckage_shader(const std::string& shader) {
 }
 } // namespace
 
+MeshTechnique mesh_technique(const std::string& shader_name) {
+    if (shader_name == "Aeon") return MeshTechnique::Aeon;
+    if (shader_name == "Insect") return MeshTechnique::Insect;
+    if (shader_name == "Metal") return MeshTechnique::Metal;
+    if (shader_name == "Seraphim") return MeshTechnique::Seraphim;
+    return MeshTechnique::Unit;
+}
+
 f32 MeshCache::blueprint_scale(const std::string& blueprint_id, lua_State* L) {
     if (auto it = scale_cache_.find(blueprint_id); it != scale_cache_.end()) return it->second;
     const f32 scale = resolve_uniform_scale(blueprint_id, L);
@@ -172,8 +180,9 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.specteam_path = resolve_specteam_path_for_lod(mesh_bp_id, lod_index, L);
         gpu.normal_path = resolve_normal_path_for_lod(mesh_bp_id, lod_index, L);
-        gpu.wreckage =
-            is_wreckage_shader(read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L));
+        const std::string shader = read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L);
+        gpu.wreckage = is_wreckage_shader(shader);
+        gpu.technique = mesh_technique(shader);
 
         f32 cutoff = read_lod_cutoff(mesh_bp_id, lod_index, L);
 
@@ -211,7 +220,9 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         gpu.texture_path = resolve_albedo_path(bp_id, L);
         gpu.specteam_path = resolve_specteam_path(bp_id, L);
         gpu.normal_path = resolve_normal_path(bp_id, L);
-        gpu.wreckage = is_wreckage_shader(read_lod_string_field(mesh_bp_id, 1, "ShaderName", L));
+        const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
+        gpu.wreckage = is_wreckage_shader(shader);
+        gpu.technique = mesh_technique(shader);
 
         LODEntry entry;
         entry.mesh = std::move(gpu);
