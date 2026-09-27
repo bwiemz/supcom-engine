@@ -47,9 +47,6 @@ layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
     float _pad0, _pad1;   // explicit padding to match vec4 alignment
-    vec4 scales0_3;
-    vec4 scales4_7;
-    vec4 scales8_pad;
     float eyeX, eyeY, eyeZ;
 } pc;
 
@@ -75,9 +72,6 @@ layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
     float _pad0, _pad1;   // explicit padding to match vec4 alignment
-    vec4 scales0_3;
-    vec4 scales4_7;
-    vec4 scales8_pad;
     float eyeX, eyeY, eyeZ;
 } pc;
 
@@ -112,6 +106,20 @@ layout(set = 0, binding = 20) uniform sampler2D fogMap;
 
 // Normal overlay from baked decal normal maps (binding 21)
 layout(set = 0, binding = 21) uniform sampler2D normalOverlay;
+
+// The upper stratum's albedo (binding 22): laid over the rest by its alpha
+layout(set = 0, binding = 22) uniform sampler2D upperAlbedo;
+
+// Each stratum's size in world units, for its albedo and its normal map
+// (FA's StratumNAlbedoTile / NormalTile: the texture repeats every `size`).
+layout(set = 0, binding = 23) uniform TerrainStrata {
+    vec4 albedoSize0_3;
+    vec4 albedoSize4_7;
+    vec4 albedoSize8_upper;   // x: stratum 8, y: the upper stratum
+    vec4 normalSize0_3;
+    vec4 normalSize4_7;
+    vec4 normalSize8;
+} strata;
 
 // Shadow map (set=1)
 layout(set = 1, binding = 0) uniform sampler2DShadow shadowMap;
@@ -166,20 +174,23 @@ void main() {
     // Blend map UV: world position normalized to [0,1] over map extents
     vec2 blendUV = fragWorldXZ / vec2(pc.mapWidth, pc.mapHeight);
 
-    // Sample blend weights (RGBA = 4 strata weights each)
+    // Sample blend weights (RGBA = 4 strata weights each). TTerrain maps
+    // (the original game's) blend four strata, from the first texture;
+    // TTerrainXP maps all eight (FA's TerrainPS, TerrainAlbedoXP).
+    bool xp = lightUbo.sunAmbience.w >= 0.5;
     vec4 b0 = texture(blendMap0, blendUV);
-    vec4 b1 = texture(blendMap1, blendUV);
+    vec4 b1 = xp ? texture(blendMap1, blendUV) : vec4(0.0);
 
-    // Per-stratum UV (reuse albedo scale for normal maps)
-    vec2 uv0 = fragWorldXZ / max(pc.scales0_3.x, 1.0);
-    vec2 uv1 = fragWorldXZ / max(pc.scales0_3.y, 1.0);
-    vec2 uv2 = fragWorldXZ / max(pc.scales0_3.z, 1.0);
-    vec2 uv3 = fragWorldXZ / max(pc.scales0_3.w, 1.0);
-    vec2 uv4 = fragWorldXZ / max(pc.scales4_7.x, 1.0);
-    vec2 uv5 = fragWorldXZ / max(pc.scales4_7.y, 1.0);
-    vec2 uv6 = fragWorldXZ / max(pc.scales4_7.z, 1.0);
-    vec2 uv7 = fragWorldXZ / max(pc.scales4_7.w, 1.0);
-    vec2 uv8 = fragWorldXZ / max(pc.scales8_pad.x, 1.0);
+    // Per-stratum UVs: the world over each texture's size
+    vec2 uv0 = fragWorldXZ / strata.albedoSize0_3.x;
+    vec2 uv1 = fragWorldXZ / strata.albedoSize0_3.y;
+    vec2 uv2 = fragWorldXZ / strata.albedoSize0_3.z;
+    vec2 uv3 = fragWorldXZ / strata.albedoSize0_3.w;
+    vec2 uv4 = fragWorldXZ / strata.albedoSize4_7.x;
+    vec2 uv5 = fragWorldXZ / strata.albedoSize4_7.y;
+    vec2 uv6 = fragWorldXZ / strata.albedoSize4_7.z;
+    vec2 uv7 = fragWorldXZ / strata.albedoSize4_7.w;
+    vec2 uv8 = fragWorldXZ / strata.albedoSize8_upper.x;
 
     // Sample each stratum albedo
     vec4 s0 = texture(stratum0, uv0);
@@ -192,31 +203,36 @@ void main() {
     vec4 s7 = texture(stratum7, uv7);
     vec4 s8 = texture(stratum8, uv8);
 
-    // Sequential alpha compositing: each stratum replaces a portion
-    // of the layer below (FA blending — NOT additive)
+    // Each stratum replaces the layers below by its mask, sharpened as FA
+    // sharpens it: saturate(mask * 2 - 1), so a mask under one half adds
+    // nothing. The upper stratum then covers the rest by its own alpha.
+    vec4 m0 = clamp(b0 * 2.0 - 1.0, 0.0, 1.0);
+    vec4 m1 = clamp(b1 * 2.0 - 1.0, 0.0, 1.0);
     vec4 albedo = s0;
-    albedo = mix(albedo, s1, b0.r);
-    albedo = mix(albedo, s2, b0.g);
-    albedo = mix(albedo, s3, b0.b);
-    albedo = mix(albedo, s4, b0.a);
-    albedo = mix(albedo, s5, b1.r);
-    albedo = mix(albedo, s6, b1.g);
-    albedo = mix(albedo, s7, b1.b);
-    albedo = mix(albedo, s8, b1.a);
+    albedo = mix(albedo, s1, m0.r);
+    albedo = mix(albedo, s2, m0.g);
+    albedo = mix(albedo, s3, m0.b);
+    albedo = mix(albedo, s4, m0.a);
+    albedo = mix(albedo, s5, m1.r);
+    albedo = mix(albedo, s6, m1.g);
+    albedo = mix(albedo, s7, m1.b);
+    albedo = mix(albedo, s8, m1.a);
+    vec4 upper = texture(upperAlbedo, fragWorldXZ / strata.albedoSize8_upper.y);
+    albedo.rgb = mix(albedo.rgb, upper.rgb, upper.a);
     vec3 color = albedo.rgb;
 
-    // Decode and blend per-stratum normal maps (same UV as albedo)
-    vec3 n0 = decodeNormal(normalMap0, uv0);
-    vec3 n1 = decodeNormal(normalMap1, uv1);
-    vec3 n2 = decodeNormal(normalMap2, uv2);
-    vec3 n3 = decodeNormal(normalMap3, uv3);
-    vec3 n4 = decodeNormal(normalMap4, uv4);
-    vec3 n5 = decodeNormal(normalMap5, uv5);
-    vec3 n6 = decodeNormal(normalMap6, uv6);
-    vec3 n7 = decodeNormal(normalMap7, uv7);
-    vec3 n8 = decodeNormal(normalMap8, uv8);
+    // Normal maps, each at its own size, blend by the raw masks
+    // (TerrainNormalsPS reads the blend texture as it is).
+    vec3 n0 = decodeNormal(normalMap0, fragWorldXZ / strata.normalSize0_3.x);
+    vec3 n1 = decodeNormal(normalMap1, fragWorldXZ / strata.normalSize0_3.y);
+    vec3 n2 = decodeNormal(normalMap2, fragWorldXZ / strata.normalSize0_3.z);
+    vec3 n3 = decodeNormal(normalMap3, fragWorldXZ / strata.normalSize0_3.w);
+    vec3 n4 = decodeNormal(normalMap4, fragWorldXZ / strata.normalSize4_7.x);
+    vec3 n5 = decodeNormal(normalMap5, fragWorldXZ / strata.normalSize4_7.y);
+    vec3 n6 = decodeNormal(normalMap6, fragWorldXZ / strata.normalSize4_7.z);
+    vec3 n7 = decodeNormal(normalMap7, fragWorldXZ / strata.normalSize4_7.w);
+    vec3 n8 = decodeNormal(normalMap8, fragWorldXZ / strata.normalSize8.x);
 
-    // Sequential alpha compositing for normals (matching albedo blend)
     vec3 blendedTangentNormal = n0;
     blendedTangentNormal = mix(blendedTangentNormal, n1, b0.r);
     blendedTangentNormal = mix(blendedTangentNormal, n2, b0.g);
@@ -267,7 +283,7 @@ void main() {
     float multiplier = lightUbo.sunColor.w;
     vec3 fill = lightUbo.shadowFill.rgb;
     vec3 lit;
-    if (lightUbo.sunAmbience.w < 0.5) {
+    if (!xp) {
         // TTerrain (CalculateLighting): specular where the albedo's alpha
         // is low, added into the light.
         vec3 R = S - 2.0 * SdotN * worldNormal;

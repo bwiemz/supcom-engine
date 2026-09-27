@@ -9,6 +9,8 @@ add_executable(osc_integration
     runner/integration_tests.cpp
     runner/audio_data_test.cpp
     runner/lighting_test.cpp
+    runner/render_probe.cpp
+    runner/strata_test.cpp
 )
 target_include_directories(osc_integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/runner)
 target_link_libraries(osc_integration PRIVATE osc::warnings osc::app)

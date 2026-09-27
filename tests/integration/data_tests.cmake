@@ -46,7 +46,7 @@ set(OSC_DATA_TESTS_GATE
     onframe-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test
     repair-test right-click-test scale-test scissor-test scrollbar-render-test shadow-test
-    shield-render-test shield-test silo-test smoke-test spatial-test
+    shield-render-test shield-test silo-test smoke-test spatial-test strata-test
     specular-test stall-test stats-test steer-test stress-test stub-test targeting-test
     teamcolor-test
     terrain-normal-test terrain-tex-test text-test threat-test

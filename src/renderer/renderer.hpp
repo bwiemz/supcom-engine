@@ -49,6 +49,7 @@ struct WorldEvents;
 
 namespace osc::map {
 class Terrain;
+struct StratumInfo;
 }
 
 namespace osc::blueprints {
@@ -283,7 +284,18 @@ private:
     VkDescriptorSet terrain_tex_ds_ = VK_NULL_HANDLE;
     f32 terrain_map_width_ = 0;
     f32 terrain_map_height_ = 0;
-    f32 terrain_strata_scales_[9] = {};
+    /// The terrain shader's TerrainStrata block (std140, binding 23): each
+    /// stratum's size, albedo (0-8, then the upper stratum) and normal (0-8).
+    struct TerrainStrataData {
+        f32 albedo_size[12]; ///< 0-8, 9: the upper stratum, 10-11: padding
+        f32 normal_size[12]; ///< 0-8, 9-11: padding
+    };
+    static_assert(sizeof(TerrainStrataData) == 96, "six vec4s, as the shader's block");
+    static constexpr u32 kTerrainStrataBinding = 23;
+    AllocatedBuffer terrain_strata_ubo_{};
+    /// Made per scene, with the terrain's descriptor set.
+    void create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata);
+    void destroy_terrain_strata_ubo();
 
     // Sub-renderers
     TerrainMesh terrain_mesh_;

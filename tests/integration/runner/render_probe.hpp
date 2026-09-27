@@ -1,0 +1,74 @@
+#pragma once
+
+// Offscreen frames for render tests that compare pixels (M210a, M212a):
+// build a scene, look at one spot, capture the middle of the frame once the
+// textures it draws have loaded.
+
+#include "core/image.hpp"
+#include "core/types.hpp"
+#include "renderer/renderer.hpp"
+#include "sim/world_snapshot.hpp"
+
+#include <array>
+#include <string>
+#include <vector>
+
+namespace osc::map {
+class Terrain;
+}
+
+namespace osc::test {
+
+struct TestContext;
+
+/// Pass/fail counts for a test mode's checks; a failure is recorded in
+/// test_status.
+struct Tally {
+    int pass = 0;
+    int fail = 0;
+    void check(bool ok, const std::string& what);
+};
+
+/// A frame's middle (35%-65% each way), rgb in [0, 1] per pixel.
+using Pixels = std::vector<std::array<f32, 3>>;
+
+Pixels centre_pixels(const ImageRGBA8& image);
+
+f32 median(std::vector<f32> values);
+
+/// The median, over the pixels bright enough to measure in `below` (0.06 in
+/// the channel), of `above`'s channel over `below`'s.
+f32 median_ratio(const Pixels& above, const Pixels& below, int channel);
+
+/// The mean absolute difference of two frames, per channel.
+f32 mean_abs_diff(const Pixels& a, const Pixels& b);
+
+/// An offscreen renderer with bloom, the fog of war and decals off, so a
+/// frame is the lit scene alone.
+class OffscreenShots {
+public:
+    explicit OffscreenShots(TestContext& ctx);
+    ~OffscreenShots();
+    OffscreenShots(const OffscreenShots&) = delete;
+    OffscreenShots& operator=(const OffscreenShots&) = delete;
+
+    /// False if there is no Vulkan device.
+    bool ok() const { return ok_; }
+
+    /// Build the scene for `terrain` (its lighting and strata as they are
+    /// now, as a map load would), look at (x, z) from `distance`, and
+    /// capture the frame's middle. `with_world` draws the sim's entities;
+    /// without, the terrain alone.
+    Pixels shoot(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world = true);
+
+    renderer::Renderer& renderer() { return renderer_; }
+
+private:
+    TestContext& ctx_;
+    renderer::Renderer renderer_;
+    sim::WorldHistory history_;
+    sim::WorldHistory empty_;
+    bool ok_ = false;
+};
+
+} // namespace osc::test

@@ -269,14 +269,17 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
         VK_CHECK(vkCreateDescriptorSetLayout(device_, &ds_ci, nullptr, &bone_ds_layout_));
     }
 
-    // Terrain texture descriptor set layout (set=0: 22 combined image samplers)
-    // bindings 0-1: blend maps, 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: normal overlay
+    // Terrain texture descriptor set layout (set=0): bindings 0-1: blend maps,
+    // 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: normal
+    // overlay, 22: the upper stratum's albedo (all combined image samplers),
+    // 23: the strata's sizes (a uniform buffer, M212a).
     {
-        std::array<VkDescriptorSetLayoutBinding, 22> terrain_bindings{};
-        for (u32 i = 0; i < 22; i++) {
+        std::array<VkDescriptorSetLayoutBinding, 24> terrain_bindings{};
+        for (u32 i = 0; i < 24; i++) {
             terrain_bindings[i].binding = i;
-            terrain_bindings[i].descriptorType =
-                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            terrain_bindings[i].descriptorType = i == kTerrainStrataBinding
+                                                     ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+                                                     : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             terrain_bindings[i].descriptorCount = 1;
             terrain_bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         }
@@ -800,18 +803,18 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                  // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};    // normal
 
-        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + 3*vec4 scales(48) + eye(12) = 140B
-        terrain_pipeline_ = PipelineBuilder()
-            .set_shaders(tv, tf)
-            .set_vertex_input(&binding, 1, attrs.data(),
-                              static_cast<u32>(attrs.size()))
-            .set_depth_test(true, true)
-            .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-            .set_push_constant(140,
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-            .set_descriptor_set_layout(terrain_tex_ds_layout_)   // set=0: terrain textures
-            .add_descriptor_set_layout(shadow_ds_layout_)           // set=1: shadow
-            .build(device_, scene_render_pass_, &terrain_layout_);
+        // Push constant: mat4 viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
+        terrain_pipeline_ =
+            PipelineBuilder()
+                .set_shaders(tv, tf)
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(true, true)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(92,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
+                .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow
+                .build(device_, scene_render_pass_, &terrain_layout_);
     }
 
     // --- Unit pipeline (instanced cubes — fallback) ---
@@ -1512,8 +1515,40 @@ void Renderer::clear_scene() {
 
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
-    std::fill(std::begin(terrain_strata_scales_),
-              std::end(terrain_strata_scales_), 0.0f);
+    destroy_terrain_strata_ubo();
+}
+
+void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata) {
+    destroy_terrain_strata_ubo();
+    // A stratum's texture repeats every `size` world units (FA's tile is the
+    // map's size over it). An unset or zero size stands at 1.
+    TerrainStrataData d{};
+    const auto size = [](f32 v) { return v > 0.0f ? v : 1.0f; };
+    for (size_t i = 0; i < 10; ++i) {
+        const bool have = i < strata.size();
+        d.albedo_size[i] = size(have ? strata[i].albedo_scale : 1.0f);
+        if (i < 9) d.normal_size[i] = size(have ? strata[i].normal_scale : 1.0f);
+    }
+
+    VkBufferCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    ci.size = sizeof(d);
+    ci.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    VmaAllocationCreateInfo alloc_ci{};
+    alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+    alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+    VmaAllocationInfo info{};
+    VK_CHECK(vmaCreateBuffer(allocator_, &ci, &alloc_ci, &terrain_strata_ubo_.buffer,
+                             &terrain_strata_ubo_.allocation, &info));
+    std::memcpy(info.pMappedData, &d, sizeof(d));
+    vmaFlushAllocation(allocator_, terrain_strata_ubo_.allocation, 0, VK_WHOLE_SIZE);
+}
+
+void Renderer::destroy_terrain_strata_ubo() {
+    if (terrain_strata_ubo_.buffer) {
+        vmaDestroyBuffer(allocator_, terrain_strata_ubo_.buffer, terrain_strata_ubo_.allocation);
+        terrain_strata_ubo_ = {};
+    }
 }
 
 void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintStore* store,
@@ -1593,14 +1628,14 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         terrain_map_width_ = static_cast<f32>(terrain->map_width());
         terrain_map_height_ = static_cast<f32>(terrain->map_height());
         auto& strata = terrain->strata();
-        // Only strata 0-8 are blended; stratum 9 (UpperStratum) has no
-        // blend map channel and is handled separately in FA.
-        for (size_t i = 0; i < 9 && i < strata.size(); i++) {
-            terrain_strata_scales_[i] = strata[i].albedo_scale;
-            spdlog::info("Terrain stratum {}: albedo='{}' normal='{}' scale={:.1f}",
-                         i, strata[i].albedo_path, strata[i].normal_path,
-                         strata[i].albedo_scale);
+        // Strata 0-8 blend by the masks; stratum 9 (the upper) lies over
+        // them by its own alpha.
+        for (size_t i = 0; i < strata.size() && i < 10; i++) {
+            spdlog::info("Terrain stratum {}: albedo='{}' ({:.1f}) normal='{}' ({:.1f})", i,
+                         strata[i].albedo_path, strata[i].albedo_scale, strata[i].normal_path,
+                         strata[i].normal_scale);
         }
+        create_terrain_strata_ubo(strata);
 
         // Collect 20 image views:
         // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
@@ -1665,15 +1700,17 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
 
         // Create descriptor pool and set
-        VkDescriptorPoolSize pool_size{};
-        pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_size.descriptorCount = 22;
+        std::array<VkDescriptorPoolSize, 2> pool_sizes{};
+        pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        pool_sizes[0].descriptorCount = 23;
+        pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        pool_sizes[1].descriptorCount = 1;
 
         VkDescriptorPoolCreateInfo pool_ci{};
         pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_ci.maxSets = 1;
-        pool_ci.poolSizeCount = 1;
-        pool_ci.pPoolSizes = &pool_size;
+        pool_ci.poolSizeCount = static_cast<u32>(pool_sizes.size());
+        pool_ci.pPoolSizes = pool_sizes.data();
         VK_CHECK(vkCreateDescriptorPool(device_, &pool_ci, nullptr,
                                 &terrain_tex_ds_pool_));
 
@@ -1701,6 +1738,37 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             writes[i].pImageInfo = &img_infos[i];
         }
         vkUpdateDescriptorSets(device_, 20, writes.data(), 0, nullptr);
+
+        // The upper stratum (binding 22); without one, a transparent texel
+        // leaves the strata below as they are.
+        {
+            const GPUTexture* upper = strata.size() > 9 && !strata[9].albedo_path.empty()
+                                          ? texture_cache_.get_blocking(strata[9].albedo_path)
+                                          : nullptr;
+            VkDescriptorImageInfo upper_info{};
+            upper_info.sampler = texture_sampler_;
+            upper_info.imageView = upper ? upper->image.view : zero_view;
+            upper_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorBufferInfo strata_info{};
+            strata_info.buffer = terrain_strata_ubo_.buffer;
+            strata_info.offset = 0;
+            strata_info.range = sizeof(TerrainStrataData);
+
+            std::array<VkWriteDescriptorSet, 2> more{};
+            more[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            more[0].dstSet = terrain_tex_ds_;
+            more[0].dstBinding = 22;
+            more[0].descriptorCount = 1;
+            more[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            more[0].pImageInfo = &upper_info;
+            more[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            more[1].dstSet = terrain_tex_ds_;
+            more[1].dstBinding = kTerrainStrataBinding;
+            more[1].descriptorCount = 1;
+            more[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            more[1].pBufferInfo = &strata_info;
+            vkUpdateDescriptorSets(device_, static_cast<u32>(more.size()), more.data(), 0, nullptr);
+        }
 
         spdlog::info("Terrain textures: {} strata loaded, blend0={}, blend1={}",
                      strata.size(),
@@ -2314,23 +2382,18 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj(64) + mapW(4) + mapH(4) + pad(8) + 3*vec4 scales(48) + eye(12) = 140B
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
-            f32 _pad0, _pad1;  // align scales to vec4 boundary (GLSL std430)
-            f32 scales0_3[4];
-            f32 scales4_7[4];
-            f32 scales8_pad[4];
+            f32 _pad0, _pad1;
             f32 eyeX, eyeY, eyeZ;
         } tpc{};
+        static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert/frag's push block");
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
-        std::memcpy(tpc.scales0_3, &terrain_strata_scales_[0], sizeof(f32) * 4);
-        std::memcpy(tpc.scales4_7, &terrain_strata_scales_[4], sizeof(f32) * 4);
-        tpc.scales8_pad[0] = terrain_strata_scales_[8];
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
         vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,
@@ -3221,6 +3284,7 @@ void Renderer::shutdown() {
     // Terrain texture pool first (references image views owned by texture_cache_)
     if (terrain_tex_ds_pool_)
         vkDestroyDescriptorPool(device_, terrain_tex_ds_pool_, nullptr);
+    destroy_terrain_strata_ubo();
     if (terrain_tex_ds_layout_)
         vkDestroyDescriptorSetLayout(device_, terrain_tex_ds_layout_, nullptr);
 

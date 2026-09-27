@@ -7,6 +7,7 @@
 // specular is still the engine's until M211) don't decide it.
 
 #include "integration_tests.hpp"
+#include "render_probe.hpp"
 
 #include "core/image.hpp"
 #include "core/test_status.hpp"
@@ -39,20 +40,6 @@ bool near(f32 a, f32 b, f32 tolerance) {
 bool near3(const f32* v, f32 x, f32 y, f32 z, f32 tolerance) {
     return near(v[0], x, tolerance) && near(v[1], y, tolerance) && near(v[2], z, tolerance);
 }
-
-struct Tally {
-    int pass = 0;
-    int fail = 0;
-    void check(bool ok, const std::string& what) {
-        if (ok) {
-            ++pass;
-            spdlog::info("[PASS] {}", what);
-        } else {
-            ++fail;
-            osc::test_status::fail("[FAIL] {}", what);
-        }
-    }
-};
 
 /// A stretch of dry, fairly flat land with no unit near it, to look at from
 /// close up: the centre of the frame is then terrain (and a few props).
@@ -89,43 +76,8 @@ std::optional<std::array<f32, 2>> find_open_land(const sim::SimState& sim) {
     return std::nullopt;
 }
 
-/// The middle of a frame, as floats in [0, 1] (rgb per pixel).
-std::vector<std::array<f32, 3>> centre_pixels(const ImageRGBA8& image) {
-    std::vector<std::array<f32, 3>> out;
-    const u32 x0 = image.width * 35 / 100;
-    const u32 x1 = image.width * 65 / 100;
-    const u32 y0 = image.height * 35 / 100;
-    const u32 y1 = image.height * 65 / 100;
-    for (u32 y = y0; y < y1; ++y) {
-        for (u32 x = x0; x < x1; ++x) {
-            const size_t i = (static_cast<size_t>(y) * image.width + x) * 4;
-            out.push_back({image.pixels[i] / 255.0f, image.pixels[i + 1] / 255.0f,
-                           image.pixels[i + 2] / 255.0f});
-        }
-    }
-    return out;
-}
-
-f32 median(std::vector<f32> v) {
-    if (v.empty()) return 0.0f;
-    const auto mid = v.begin() + static_cast<std::ptrdiff_t>(v.size() / 2);
-    std::nth_element(v.begin(), mid, v.end());
-    return *mid;
-}
-
-/// The median, over the pixels bright enough to measure in `below`, of
-/// `above`'s channel over `below`'s.
-f32 median_ratio(const std::vector<std::array<f32, 3>>& above,
-                 const std::vector<std::array<f32, 3>>& below, int channel) {
-    std::vector<f32> ratios;
-    for (size_t i = 0; i < above.size() && i < below.size(); ++i) {
-        if (below[i][channel] >= 0.2f) ratios.push_back(above[i][channel] / below[i][channel]);
-    }
-    return median(ratios);
-}
-
 /// The median red-over-blue of a frame's measurable pixels.
-f32 median_redness(const std::vector<std::array<f32, 3>>& pixels) {
+f32 median_redness(const Pixels& pixels) {
     std::vector<f32> ratios;
     for (const auto& p : pixels) {
         if (p[2] >= 0.1f) ratios.push_back(p[0] / p[2]);
@@ -239,47 +191,19 @@ void test_lighting(TestContext& ctx) {
     }
     spdlog::info("Looking at ({:.0f}, {:.0f})", (*spot)[0], (*spot)[1]);
 
-    renderer::Renderer renderer;
-    if (!renderer.init(800, 600, "Lighting Test", /*offscreen=*/true)) {
+    OffscreenShots shots(ctx);
+    if (!shots.ok()) {
         t.check(false, "Tests 3-10: renderer init (no Vulkan?)");
         spdlog::info("Lighting test: {}/{} passed", t.pass, t.pass + t.fail);
         return;
     }
-    renderer.set_bloom_enabled(false);
-    renderer.set_fog_enabled(false); // the fog of war: all visible
-    renderer.set_decals_enabled(false);
-    renderer.set_fixed_frame_dt(1.0f / 60.0f);
-    sim::WorldHistory history;
-    history.capture(ctx.sim);
-    history.capture(ctx.sim);
 
-    // Build the scene under `lighting` (as a map load does) and capture the
-    // third frame's middle.
+    // The view under `lighting` (and the map's own environment unless one
+    // is given), from close up.
     const auto shoot = [&](const map::ScmapLighting& lighting,
                            const map::ScmapEnvironment& env = map::ScmapEnvironment{}) {
         terrain->set_lighting(lighting, env.terrain_shader.empty() ? original_env : env);
-        renderer.clear_scene();
-        renderer.build_scene(terrain, ctx.sim.blueprint_store(), sim::world_blueprints(ctx.sim),
-                             &ctx.vfs, ctx.L);
-        renderer.camera().set_input_enabled(false);
-        renderer.camera().set_target((*spot)[0], (*spot)[1]);
-        renderer.camera().set_distance(60.0f);
-        // Draw until every texture the view asks for has loaded (they load
-        // as they are first drawn), then capture one more frame.
-        const auto draw = [&] {
-            renderer.render(sim::FrameView(&history.prev(), &history.cur(), 1.0f), history.events(),
-                            nullptr, ctx.L);
-            renderer.poll_events(0.016);
-        };
-        int settled = 0;
-        for (int f = 0; f < 600 && settled < 3; ++f) {
-            draw();
-            settled = renderer.texture_cache().loading() == 0 ? settled + 1 : 0;
-        }
-        ImageRGBA8 shot;
-        renderer.request_capture([&](ImageRGBA8 image) { shot = std::move(image); });
-        draw();
-        return centre_pixels(shot);
+        return shots.shoot(*terrain, (*spot)[0], (*spot)[1], 60.0f);
     };
 
     const auto evergreen_px = shoot(original);
@@ -392,7 +316,6 @@ void test_lighting(TestContext& ctx) {
     t.check(renderer::Renderer::validation_error_count() == 0,
             fmt::format("Test 10: {} Vulkan validation errors",
                         renderer::Renderer::validation_error_count()));
-    renderer.shutdown();
 
     spdlog::info("Lighting test: {}/{} passed", t.pass, t.pass + t.fail);
 }
