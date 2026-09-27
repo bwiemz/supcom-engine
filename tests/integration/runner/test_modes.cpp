@@ -134,6 +134,7 @@ constexpr Mode kModesBefore[] = {
     {"--effect-intel-test", test_effect_intel, false},
     {"--strategic-icon-test", test_strategic_icons, false},
     {"--counter-intel-test", test_counter_intel, false},
+    {"--beam-render-test", test_beam_render, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -303,6 +304,7 @@ void IntegrationModes::print_usage() const {
               << "  --effect-intel-test Effects, beams, shields and clicks through intel\n"
               << "  --strategic-icon-test FA's strategic icons\n"
               << "  --counter-intel-test Cloak, stealth, the water, and maybe-dead structures\n"
+              << "  --beam-render-test FA's beams: strips, colours, UV scroll, blends, LOD\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

@@ -111,6 +111,8 @@ void test_effect_intel(TestContext& ctx);
 void test_strategic_icons(TestContext& ctx);
 /// --counter-intel-test (M215d), in counter_intel_test.cpp.
 void test_counter_intel(TestContext& ctx);
+/// --beam-render-test (M214a), in beam_render_test.cpp.
+void test_beam_render(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

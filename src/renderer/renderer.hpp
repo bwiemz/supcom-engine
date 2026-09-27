@@ -22,6 +22,8 @@
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/particle_renderer.hpp"
+#include "renderer/beam_blueprint.hpp"
+#include "renderer/beam_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
@@ -153,6 +155,8 @@ public:
     const ReconView& recon() const { return recon_; }
     /// The effects' emitters and particles (tests read them).
     const ParticleSystem& particle_system() const { return particle_system_; }
+    /// The beams drawn last frame (tests read them; M214a).
+    const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -425,6 +429,8 @@ private:
     ParticleSystem particle_system_;
     ParticleRenderer particle_renderer_;
     EmitterBlueprintCache emitter_bp_cache_;
+    BeamRenderer beam_renderer_;
+    BeamBlueprintCache beam_bp_cache_;
 
     // Bloom post-processing
     bool bloom_enabled_ = true;

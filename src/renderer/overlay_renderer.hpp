@@ -17,6 +17,7 @@ struct WorldEvents;
 
 namespace osc::renderer {
 
+class BeamRenderer;
 class Camera;
 class ReconView;
 class TextureCache;
@@ -74,12 +75,16 @@ public:
     /// player's army sees (null: everything seen; M215a).
     void set_recon(const ReconView* recon) { recon_ = recon; }
 
+    /// FA's beams: a beam they draw needs no placeholder here (M214a).
+    void set_beams(const BeamRenderer* beams) { beams_ = beams; }
+
     static constexpr u32 MAX_OVERLAY_QUADS = 8192;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
     std::unordered_set<std::string> intel_ring_types_ = kAllIntelRingTypes;
     const ReconView* recon_ = nullptr;
+    const BeamRenderer* beams_ = nullptr;
     /// Project world position to screen pixel coordinates.
     /// Returns false if behind camera.
     static bool world_to_screen(f32 wx, f32 wy, f32 wz, const std::array<f32, 16>& vp, f32 sw,

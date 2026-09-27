@@ -352,6 +352,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Particle renderer (emitter-driven billboard particles — scene render pass)
     particle_renderer_.init(device_, allocator_, scene_render_pass_,
                             texture_ds_layout_, texture_sampler_);
+    // FA's beams, in the scene pass too (M214a)
+    beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -365,6 +367,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     overlay_renderer_.set_recon(&recon_);
     minimap_renderer_.set_recon(&recon_);
     particle_system_.set_recon(&recon_);
+    overlay_renderer_.set_beams(&beam_renderer_);
 
     // HUD renderer (economy bars)
     hud_renderer_.init(device_, allocator_);
@@ -1583,6 +1586,7 @@ void Renderer::clear_scene() {
     }
     particle_system_.clear();
     emitter_bp_cache_.clear();
+    beam_bp_cache_.clear();
     strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
 
     terrain_map_width_ = 0;
@@ -1629,6 +1633,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                            const std::vector<std::string>& preload,
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
     emitter_bp_cache_.set_vfs(vfs);
+    beam_bp_cache_.set_vfs(vfs);
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
@@ -2283,6 +2288,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         else fog_renderer_.stage_clear(); // an observer's: all visible
     }
 
+    // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
+    beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
+                          unit_renderer_.shader_time(), fi);
+
     // Update game overlays (health bars, selection circles, command lines, game over)
     {
         PROFILE_ZONE("Render::overlay_update");
@@ -2840,6 +2849,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                   vp.data(), cam_right, cam_up, fi);
     }
 
+    // 5c. FA's beams (M214a)
+    beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+
     // ==================== COMPOSITE + BLOOM ====================
     // Scene always renders to offscreen HDR. End scene pass, optionally run
     // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
@@ -3067,6 +3079,19 @@ void Renderer::dump_frame(std::ostream& out) const {
     section("minimap-hud", ui_quads(minimap_renderer_.quads()));
     section("hud", quads(hud_renderer_.quads()));
     section("selection-info", quads(selection_info_renderer_.quads()));
+    {
+        std::vector<std::string> beams;
+        for (const auto& b : beam_renderer_.drawn())
+            beams.push_back(fmt::format(
+                "{} {} | {:.3f} {:.3f} {:.3f} -> {:.3f} {:.3f} {:.3f} | {:.4f} | {:.3f} {:.3f} "
+                "{:.3f} "
+                "{:.3f} -> {:.3f} {:.3f} {:.3f} {:.3f} | {} | {:.4f} {:.4f} {:.4f}",
+                b.effect_id, b.blueprint, b.start.x, b.start.y, b.start.z, b.end.x, b.end.y,
+                b.end.z, b.thickness, b.start_color[0], b.start_color[1], b.start_color[2],
+                b.start_color[3], b.end_color[0], b.end_color[1], b.end_color[2], b.end_color[3],
+                b.blendmode, b.u_offset, b.v_start, b.v_end));
+        section("beams", std::move(beams));
+    }
     std::vector<std::string> emitters;
     for (const auto& e : particle_system_.emitters()) {
         emitters.push_back(fmt::format("{} {} {:.4f} {:.4f} {:.4f}", e.effect_id,
@@ -3505,6 +3530,7 @@ void Renderer::shutdown() {
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
     particle_renderer_.destroy(device_, allocator_);
+    beam_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);

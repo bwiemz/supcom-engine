@@ -1,6 +1,8 @@
 #include "sim/world_snapshot.hpp"
 
 #include "sim/army_brain.hpp"
+#include "sim/entity_registry.hpp"
+#include "sim/ieffect.hpp"
 #include "sim/prop.hpp"
 #include "sim/shield.hpp"
 #include "sim/sim_state.hpp"
@@ -45,6 +47,58 @@ IconClass icon_class(const Unit& u) {
     if (u.has_category(kNaval)) return IconClass::Naval;
     if (u.has_category(kLand)) return IconClass::Land;
     return IconClass::Generic;
+}
+
+/// Where a beam meets bone `bone` of `e` (M214a): a unit's bone as posed; a
+/// collision beam's start (bone 0) or far end (bone 1, what SetBeamFx ties
+/// a beam's end to); else where the entity is.
+Vector3 beam_point(const Entity& e, i32 bone) {
+    if (e.is_collision_beam()) return bone == 1 ? e.beam_endpoint() : e.position();
+    if (e.is_unit() && bone >= 0) return static_cast<const Unit&>(e).bone_world_position(bone);
+    return e.position();
+}
+
+/// The way bone `bone` of `e` faces (its +Z): a unit's bone as posed, else
+/// the entity's own facing.
+Vector3 beam_axis(const Entity& e, i32 bone) {
+    if (e.is_unit()) return static_cast<const Unit&>(e).bone_world_forward(bone);
+    const Quaternion& q = e.orientation();
+    return {2.0f * (q.x * q.z + q.w * q.y), 2.0f * (q.y * q.z - q.w * q.x),
+            1.0f - 2.0f * (q.x * q.x + q.y * q.y)};
+}
+
+/// A beam effect's reach at capture (M214a).
+void capture_beam(const SimState& sim, const IEffect& fx, EffectRecord& r) {
+    const EntityRegistry& reg = sim.entity_registry();
+    const Entity* from = fx.entity_id() ? reg.find(fx.entity_id()) : nullptr;
+    if (!from || from->destroyed()) return;
+    switch (fx.type()) {
+    case EffectType::BEAM_ENTITY_TO_ENTITY: {
+        const Entity* to = fx.target_entity_id() ? reg.find(fx.target_entity_id()) : nullptr;
+        if (!to || to->destroyed()) return;
+        r.beam = EffectRecord::BeamReach::Ends;
+        r.beam_start = beam_point(*from, fx.bone_index());
+        r.beam_end = beam_point(*to, fx.target_bone_index());
+        return;
+    }
+    case EffectType::BEAM_EMITTER:
+        // On a collision beam (a weapon's), from its start to its far end,
+        // while it fires.
+        if (from->is_collision_beam()) {
+            if (!from->beam_enabled()) return;
+            r.beam = EffectRecord::BeamReach::Ends;
+            r.beam_start = beam_point(*from, 0);
+            r.beam_end = beam_point(*from, 1);
+            return;
+        }
+        [[fallthrough]];
+    case EffectType::ATTACHED_EMITTER:
+        r.beam = EffectRecord::BeamReach::Along;
+        r.beam_start = beam_point(*from, fx.bone_index());
+        r.beam_dir = beam_axis(*from, fx.bone_index());
+        return;
+    default: return;
+    }
 }
 
 /// Each army's recon of `u` (M215d): the sim's (cloak and stealth counted),
@@ -232,6 +286,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.light_size = fx->light_size();
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
+        capture_beam(sim, *fx, r);
     }
 
     for (size_t i = 0; i < sim.army_count(); ++i) {

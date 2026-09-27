@@ -144,11 +144,12 @@ void run_lua(TestContext& ctx, const std::string& code) {
 
 /// Make a `bp` of `army`'s on the ground at `at`, as Lua global `global`;
 /// its entity id.
-u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army, Spot at) {
+u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army, Spot at,
+               f32 lift) {
     run_lua(ctx, fmt::format("{0} = CreateUnitHPR('{1}', '{2}', {3}, {4}, {5}, 0, 0, 0)\n"
                              "__osc_intel_id = tonumber({0}:GetEntityId())\n",
                              global, bp, army, at.x,
-                             ctx.sim.terrain()->get_terrain_height(at.x, at.z), at.z));
+                             ctx.sim.terrain()->get_terrain_height(at.x, at.z) + lift, at.z));
     lua_pushstring(ctx.L, "__osc_intel_id");
     lua_rawget(ctx.L, LUA_GLOBALSINDEX);
     const u32 id = lua_isnumber(ctx.L, -1) ? static_cast<u32>(lua_tonumber(ctx.L, -1)) : 0;

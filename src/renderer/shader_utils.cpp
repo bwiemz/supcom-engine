@@ -1263,6 +1263,46 @@ void main() {
 )glsl";
 
 // ---------------------------------------------------------------------------
+// Beam strips (M214a): particle.fx's BeamVS/BeamPS, the strip built on the CPU
+// ---------------------------------------------------------------------------
+
+const char* beam_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+} pc;
+
+layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec2 inUV;
+layout(location = 2) in vec4 inColor;
+
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) out vec4 fragColor;
+
+void main() {
+    gl_Position = pc.viewProj * vec4(inPos, 1.0);
+    fragUV = inUV;
+    fragColor = inColor;
+}
+)glsl";
+
+const char* beam_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texBeam; // wraps
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec4 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = texture(texBeam, fragUV) * fragColor;
+}
+)glsl";
+
+// ---------------------------------------------------------------------------
 // Particle billboard shaders
 // ---------------------------------------------------------------------------
 
