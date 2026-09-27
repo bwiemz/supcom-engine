@@ -40,6 +40,24 @@ The rest of the formula is textbook with that `V`:
 The engine rebuilds FA's `V` per pixel from `viewProj`: the rows hold the
 view's axes (right, up, and back, negated where the device's y runs down).
 
+## The normal
+
+`N` is FA's `ComputeNormal`: the normal map's green runs along the
+vertex's binormal, its alpha along the tangent (DXT5nm's y and x), and z
+along the normal:
+
+```
+N = normalize(g * binormal + a * tangent + z * normal)
+```
+
+An SCM vertex stores the normal, then the tangent, then the binormal
+(faf-re's `SScmVertex`). The files agree: over 22,348 triangles of 40
+retail meshes, the second vector lies along the face's normal on 91%, the
+third along the direction u grows on 96%, the fourth along v on 93%. The
+engine's parser had read the first two the other way round since before
+M211a, so every mesh shaded with its tangent for its normal. It now reads
+all three; the vertex carries the binormal (76 bytes).
+
 ## The environment cube
 
 Moho binds, for each material, the map's environment cube named by the
@@ -70,17 +88,21 @@ DXT1, six faces.
 
 - **Unit** (`[dds]`): a cube parses as six faces, face by face, each with
   its mips; a 2D DDS is one face; a partial or cut-short cube is refused.
+- **`--blend-test`**: of the UEF ACU's 3,382 triangles, the parsed normal
+  lies along the face on 3,380, the tangent along u on 3,380, the
+  binormal along v on 3,369.
 - **`--material-test`** (gate): a UEF T1 land factory on flat ground of
   the test's own, under a white fill and no sun (so its light is 1).
-  1. The map's cube brightens it (10,086 pixels) against the black cube,
+  1. The map's cube brightens it (9,239 pixels) against the black cube,
      and darkens nothing.
   2. A red army and a green army differ only where the team mask is set
-     (1,716 pixels, redder and greener, blue unchanged), which is under
+     (1,707 pixels, redder and greener, blue unchanged), which is under
      half the factory.
-  3. The highlight: a sun overhead lights the roofs (495 pixels); one
-     under the ground lights the walls facing the camera (11,281).
-  4. A cube lit below lights the factory more than one lit above (2,151
-     pixels, against 51): the walls reflect the ground.
+  3. The highlight: a sun overhead lights the roofs (8,579 pixels); one
+     under the ground still lights the walls facing the camera (3,669),
+     as FA doesn't mask the highlight by `N · S`.
+  4. A cube lit above lights the factory more than one lit below (1,440
+     pixels, against 760): the roofs reflect the sky.
   5. FA's `V` is mirrored sideways. The test's own mirror (a flat plate,
      white, SpecTeam red 1, drawn as the UEF wall's mesh) reflects the
      world's left when it stands right of the view, and its right when it
@@ -88,3 +110,8 @@ DXT1, six faces.
      to the eye would reflect the other side.
   6. With no light, a black cube and no sun, only glow shows: a T3 power
      generator's core (762 pixels).
+  9. A plate whose normal map leans by its alpha reflects the world's +X,
+     along its tangent (34,448 pixels; none the other way).
+  10. One leaning by its green reflects the world's +Z, along the
+      binormal it stores, not `cross(N, T)`, which is turned over there
+      (34,448 pixels; none the other way).

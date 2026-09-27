@@ -278,7 +278,9 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
     }
 
     // --- Vertices (68 bytes each) ---
-    // Layout: 3f pos, 3f tangent, 3f normal, 3f binormal, 2f uv1, 2f uv2, 4B bone
+    // Layout: 3f pos, 3f normal, 3f tangent, 3f binormal, 2f uv1, 2f uv2, 4B bone
+    // (faf-re's SScmVertex; the files agree: the second vector is the faces'
+    // normal, the third runs along u and the fourth along v).
     static constexpr size_t VERT_SIZE = 68;
     if (vert_offset + static_cast<size_t>(vert_count) * VERT_SIZE > file_data.size()) {
         spdlog::debug("SCM mesh: vertex data truncated");
@@ -295,16 +297,16 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
         v.px = reader.read_f32();
         v.py = reader.read_f32();
         v.pz = reader.read_f32();
-        // Tangent (3 floats) — for normal mapping TBN matrix
-        v.tx = reader.read_f32();
-        v.ty = reader.read_f32();
-        v.tz = reader.read_f32();
-        // Normal (3 floats)
+        // Normal, tangent, binormal (3 floats each)
         v.nx = reader.read_f32();
         v.ny = reader.read_f32();
         v.nz = reader.read_f32();
-        // Skip binormal (3 floats = 12 bytes)
-        reader.skip(12);
+        v.tx = reader.read_f32();
+        v.ty = reader.read_f32();
+        v.tz = reader.read_f32();
+        v.bx = reader.read_f32();
+        v.by = reader.read_f32();
+        v.bz = reader.read_f32();
         // UV1 (2 floats)
         v.u = reader.read_f32();
         v.v = reader.read_f32();

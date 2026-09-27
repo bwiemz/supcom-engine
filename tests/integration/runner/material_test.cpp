@@ -41,8 +41,11 @@ namespace {
 
 constexpr u32 kSize = 64;
 constexpr f32 kCentre = kSize / 2.0f;
-/// The test's mirror stands south of the factory.
+/// The test's mirrors stand south of the factory, the tilted ones to the
+/// east.
 constexpr f32 kPlateZ = 58.0f;
+constexpr f32 kTiltedX = 52.0f;
+constexpr f32 kTiltedVZ = 42.0f;
 
 /// No sun, a white fill: every surface's light is 1.
 map::ScmapLighting white_fill() {
@@ -58,7 +61,7 @@ map::ScmapLighting white_fill() {
 
 /// A 4x4 uncompressed BGRA DDS of `faces` faces (6: a cubemap, +X -X +Y
 /// -Y +Z -Z, as D3D and Vulkan address them alike), each texel's RGBA from
-/// `texel(face, column)`.
+/// `texel(face, column, row)`.
 template <typename Texel>
 void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
     constexpr u32 kEdge = 4;
@@ -82,7 +85,7 @@ void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
     put(112, faces == 6 ? 0x200 | 0xFC00 : 0);    // a cubemap, all six faces
     for (int face = 0; face < faces; ++face) {
         for (u32 i = 0; i < kEdge * kEdge; ++i) {
-            const std::array<u8, 4> rgba = texel(face, i % kEdge);
+            const std::array<u8, 4> rgba = texel(face, i % kEdge, i / kEdge);
             const size_t at = 128 + (static_cast<size_t>(face) * kEdge * kEdge + i) * 4;
             d[at] = static_cast<char>(rgba[2]);
             d[at + 1] = static_cast<char>(rgba[1]);
@@ -93,10 +96,10 @@ void write_dds(const std::filesystem::path& path, int faces, Texel texel) {
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
 
-/// A cubemap white where `white(face, column)` says, black elsewhere.
+/// A cubemap white where `white(face, column, row)` says, black elsewhere.
 template <typename White> void write_cube(const std::filesystem::path& path, White white) {
-    write_dds(path, 6, [&](int face, u32 column) {
-        const u8 v = white(face, column) ? 255 : 0;
+    write_dds(path, 6, [&](int face, u32 column, u32 row) {
+        const u8 v = white(face, column, row) ? 255 : 0;
         return std::array<u8, 4>{v, v, v, 255};
     });
 }
@@ -133,9 +136,9 @@ void write_plate_scm(const std::filesystem::path& path, f32 half) {
     const f32 corners[4][2] = {{-half, -half}, {half, -half}, {half, half}, {-half, half}};
     for (const auto& c : corners) {
         f({c[0], 0, c[1]});                                        // position
-        f({1, 0, 0});                                              // tangent
         f({0, 1, 0});                                              // normal
-        f({0, 0, 1});                                              // binormal
+        f({1, 0, 0});                                              // tangent: along u
+        f({0, 0, 1});                                              // binormal: along v
         f({c[0] > 0.0f ? 1.0f : 0.0f, c[1] > 0.0f ? 1.0f : 0.0f}); // uv
         f({0, 0});                                                 // second uv
         u({0});                                                    // bones
@@ -260,9 +263,9 @@ void test_material(TestContext& ctx) {
 
     // Test 3: the highlight, (0.6, 0.8, 0.9) * (reflect(S, N) . -V)^2 *
     // specular.g, is added whatever the light (the sun's colour here is
-    // black), and FA doesn't mask it by N . S. A sun overhead lights the
-    // factory's roofs; one under the ground, the walls facing the camera, of
-    // which it sees more.
+    // black). A sun overhead lights the factory's roofs, most of what the
+    // camera sees; FA doesn't mask the highlight by N . S, so one under the
+    // ground still lights the walls facing the camera.
     {
         map::ScmapLighting up = white_fill();
         up.sun_direction[0] = 0.0f;
@@ -279,7 +282,7 @@ void test_material(TestContext& ctx) {
             if (d > 0.02f) ++lit_up;
             if (d < -0.02f) ++lit_down;
         }
-        t.check(lit_up > 200 && lit_down > 5 * lit_up,
+        t.check(lit_down > 200 && lit_up > lit_down * 3 / 2,
                 fmt::format("Test 3: a sun overhead highlights {} pixels of the factory; one "
                             "under the ground, {}",
                             lit_up, lit_down));
@@ -293,26 +296,44 @@ void test_material(TestContext& ctx) {
     const char* const kFaces[] = {"px", "nx", "py", "ny", "pz", "nz"};
     for (int f = 0; f < 6; ++f)
         write_cube(dir / fmt::format("{}.dds", kFaces[f]),
-                   [f](int face, u32 /*column*/) { return face == f; });
+                   [f](int face, u32 /*column*/, u32 /*row*/) { return face == f; });
     const auto x_side = [](bool positive) {
-        return [positive](int face, u32 column) {
+        return [positive](int face, u32 column, u32 /*row*/) {
             if (face == 0 || face == 1) return (face == 0) == positive;
             const bool plus_x = face == 5 ? column < 2 : column >= 2;
             return plus_x == positive;
         };
     };
+    const auto z_side = [](bool positive) {
+        return [positive](int face, u32 column, u32 row) {
+            bool plus_z = face == 4;
+            if (face == 0) plus_z = column < 2; // +X's columns run along -z
+            if (face == 1) plus_z = column >= 2;
+            if (face == 2) plus_z = row >= 2; // +Y's rows run along +z
+            if (face == 3) plus_z = row < 2;
+            return plus_z == positive;
+        };
+    };
     write_cube(dir / "px_half.dds", x_side(true));
     write_cube(dir / "nx_half.dds", x_side(false));
-    write_cube(dir / "white.dds", [](int, u32) { return true; });
+    write_cube(dir / "pz_half.dds", z_side(true));
+    write_cube(dir / "nz_half.dds", z_side(false));
+    write_cube(dir / "white.dds", [](int, u32, u32) { return true; });
     // And a mirror: a flat plate 8 units square, white, reflecting fully
     // (SpecTeam red 1, nothing else), its normals flat.
     write_plate_scm(dir / "plate.scm", 4.0f);
     write_dds(dir / "plate_albedo.dds", 1,
-              [](int, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
+              [](int, u32, u32) { return std::array<u8, 4>{255, 255, 255, 255}; });
     write_dds(dir / "plate_specteam.dds", 1,
-              [](int, u32) { return std::array<u8, 4>{255, 0, 0, 0}; });
+              [](int, u32, u32) { return std::array<u8, 4>{255, 0, 0, 0}; });
     write_dds(dir / "plate_normals.dds", 1,
-              [](int, u32) { return std::array<u8, 4>{0, 128, 0, 128}; });
+              [](int, u32, u32) { return std::array<u8, 4>{0, 128, 0, 128}; });
+    // Normal maps tilted 30 degrees along the tangent (by their alpha: FA
+    // reads DXT5nm's x there) and along the binormal (by their green, y).
+    write_dds(dir / "plate_normals_tilted.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 128, 0, 191}; });
+    write_dds(dir / "plate_normals_tilted_v.dds", 1,
+              [](int, u32, u32) { return std::array<u8, 4>{0, 191, 0, 128}; });
     ctx.vfs.mount("/osc_material_test", std::make_unique<vfs::DirectoryMount>(dir));
     const auto face_cube = [](const char* face) {
         return fmt::format("/osc_material_test/{}.dds", face);
@@ -325,18 +346,43 @@ void test_material(TestContext& ctx) {
         return n;
     };
 
+    // Stand the test's plate in for `unit`'s mesh at (x, z), on the ground,
+    // with `normals` for its normal map: a mesh blueprint of the test's own.
+    const auto make_plate = [&](const char* unit, const char* normals, f32 x, f32 z) {
+        const std::string lua =
+            fmt::format("__blueprints['/osc_material_test/{0}_plate'] = {{\n"
+                        "  BlueprintId = '/osc_material_test/{0}_plate',\n"
+                        "  LODs = {{ {{ LODCutoff = 1000, ShaderName = 'Unit',\n"
+                        "    MeshName = '/osc_material_test/plate.scm',\n"
+                        "    AlbedoName = '/osc_material_test/plate_albedo.dds',\n"
+                        "    SpecularName = '/osc_material_test/plate_specteam.dds',\n"
+                        "    NormalsName = '/osc_material_test/{1}' }} }},\n"
+                        "}}\n"
+                        "__blueprints.{0}.Display.MeshBlueprint = '/osc_material_test/{0}_plate'\n"
+                        "__blueprints.{0}.Display.UniformScale = 1\n"
+                        "local plate = CreateUnitHPR('{0}', 'ARMY_1', {2}, 0, {3}, 0, 0, 0)\n"
+                        "Warp(plate, Vector({2}, {4}, {3}))\n",
+                        unit, normals, x, z, ground_y + 0.5f);
+        const auto made = ctx.lua_state.do_string(lua);
+        if (!made) spdlog::warn("the plate: {}", made.error().message);
+        ctx.sim.tick();
+    };
+    // No light: a plate shows 2 * env alone.
+    map::ScmapLighting dark = white_fill();
+    for (f32& c : dark.shadow_fill) c = 0.0f;
+
     // Test 4: FA reflects the view ray: reflect(-V, N), V pointing to the
-    // eye. The walls facing the camera, most of what it sees of the factory's
-    // metal, show the cube's ground; the roofs, its sky.
+    // eye. The roofs, most of what the camera sees, show the cube's sky; the
+    // walls facing it, its ground.
     {
         const Pixels below = shoot(face_cube("ny"));
         const Pixels above = shoot(face_cube("py"));
         const size_t lit_below = brighter_in(below, above);
         const size_t lit_above = brighter_in(above, below);
-        t.check(lit_below > 500 && lit_above < lit_below / 4,
-                fmt::format("Test 4: a cube lit below brightens {} pixels more than one lit "
-                            "above; the other way, {}",
-                            lit_below, lit_above));
+        t.check(lit_below > 200 && lit_above > lit_below * 3 / 2,
+                fmt::format("Test 4: a cube lit above brightens {} pixels more than one lit "
+                            "below; the other way, {}",
+                            lit_above, lit_below));
     }
 
     // Test 5: FA's V is the point's device position, turned into the world,
@@ -346,28 +392,10 @@ void test_material(TestContext& ctx) {
     // would show the other side. The mirror is the test's plate, standing in
     // for the UEF wall's mesh, south of the factory and out of its view; a
     // cube white on one side of x = 0, then the other, shows which way it
-    // reflects. No light: the plate shows 2 * env alone.
+    // reflects.
     {
-        const std::string plate_made = fmt::format(
-            "__blueprints['/osc_material_test/plate_mesh'] = {{\n"
-            "  BlueprintId = '/osc_material_test/plate_mesh',\n"
-            "  LODs = {{ {{ LODCutoff = 1000, ShaderName = 'Unit',\n"
-            "    MeshName = '/osc_material_test/plate.scm',\n"
-            "    AlbedoName = '/osc_material_test/plate_albedo.dds',\n"
-            "    SpecularName = '/osc_material_test/plate_specteam.dds',\n"
-            "    NormalsName = '/osc_material_test/plate_normals.dds' }} }},\n"
-            "}}\n"
-            "__blueprints.ueb5101.Display.MeshBlueprint = '/osc_material_test/plate_mesh'\n"
-            "__blueprints.ueb5101.Display.UniformScale = 1\n"
-            "__osc_test_plate = CreateUnitHPR('ueb5101', 'ARMY_1', {0}, 0, {1}, 0, 0, 0)\n"
-            "Warp(__osc_test_plate, Vector({0}, {2}, {1}))\n",
-            kCentre, kPlateZ, ground_y + 0.5f);
-        const auto made_plate = ctx.lua_state.do_string(plate_made);
-        if (!made_plate) spdlog::warn("the plate: {}", made_plate.error().message);
-        ctx.sim.tick();
+        make_plate("ueb5101", "plate_normals.dds", kCentre, kPlateZ);
 
-        map::ScmapLighting dark = white_fill();
-        for (f32& c : dark.shadow_fill) c = 0.0f;
         const auto frame = [&](f32 target_x, const char* half) {
             map::ScmapEnvironment env;
             env.terrain_shader = "TTerrain";
@@ -474,6 +502,71 @@ void test_material(TestContext& ctx) {
                 fmt::format("Test 8: an \"<aeon>\" cube lights {} pixels of the Aeon factory "
                             "and {} of the UEF one",
                             aeon, uef));
+    }
+
+    // Test 9: FA's normal basis: a normal map's alpha tilts the normal along
+    // the mesh's tangent (here +X, along u), its green along the binormal. In
+    // the middle of the view, where V has no sideways part, a plate whose map
+    // leans along the tangent reflects the world's right (+X) alone; leaning
+    // along the binormal instead, it would reflect straight back.
+    {
+        make_plate("ueb2101", "plate_normals_tilted.dds", kTiltedX, kPlateZ);
+        const auto centre = [&](const char* half) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", face_cube(half));
+            ground.set_lighting(dark, std::move(env));
+            shots.recapture();
+            return shots.shoot(ground, kTiltedX, kPlateZ, 30.0f);
+        };
+        renderer::Camera& camera = shots.renderer().camera();
+        const f32 pitch = camera.pitch();
+        camera.set_pitch(1.1f);
+        const Pixels nx = centre("nx_half");
+        const Pixels px = centre("px_half");
+        camera.set_pitch(pitch);
+        size_t right = 0;
+        size_t left = 0;
+        for (size_t i = 0; i < nx.size() && i < px.size(); ++i) {
+            if (px[i][1] - nx[i][1] > 0.5f) ++right;
+            if (nx[i][1] - px[i][1] > 0.5f) ++left;
+        }
+        t.check(right > 20000 && left < 20,
+                fmt::format("Test 9: a plate leaning along its tangent reflects the world's "
+                            "right on {} pixels (its left on {})",
+                            right, left));
+    }
+
+    // Test 10: and the green tilts it along the binormal the mesh stores
+    // (here +Z, along v), not cross(N, T), which turns over where a mesh's
+    // UVs are mirrored (and here). Leaning toward +Z, the plate reflects the
+    // world's +Z side; leaning away, it would reflect the -Z side.
+    {
+        make_plate("ueb2301", "plate_normals_tilted_v.dds", kTiltedX, kTiltedVZ);
+        const auto centre = [&](const char* half) {
+            map::ScmapEnvironment env;
+            env.terrain_shader = "TTerrain";
+            env.cubemaps.emplace_back("<default>", face_cube(half));
+            ground.set_lighting(dark, std::move(env));
+            shots.recapture();
+            return shots.shoot(ground, kTiltedX, kTiltedVZ, 30.0f);
+        };
+        renderer::Camera& camera = shots.renderer().camera();
+        const f32 pitch = camera.pitch();
+        camera.set_pitch(1.1f);
+        const Pixels nz = centre("nz_half");
+        const Pixels pz = centre("pz_half");
+        camera.set_pitch(pitch);
+        size_t plus = 0;
+        size_t minus = 0;
+        for (size_t i = 0; i < nz.size() && i < pz.size(); ++i) {
+            if (pz[i][1] - nz[i][1] > 0.5f) ++plus;
+            if (nz[i][1] - pz[i][1] > 0.5f) ++minus;
+        }
+        t.check(plus > 20000 && minus < 20,
+                fmt::format("Test 10: a plate leaning along its binormal reflects the world's +Z "
+                            "on {} pixels (its -Z on {})",
+                            plus, minus));
     }
 
     spdlog::info("Material test: {}/{} passed", t.pass, t.pass + t.fail);

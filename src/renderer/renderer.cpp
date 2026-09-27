@@ -869,7 +869,8 @@ void Renderer::create_pipelines() {
     // --- Mesh pipeline (real SCM meshes, GPU skinning, per-instance model matrix + texture) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_indices + bone_weights + tangent = 64 bytes)
+        // Binding 0: per-vertex mesh data (pos + normal + UV + bone_indices + bone_weights +
+        // tangent + binormal = 76 bytes)
         bindings[0].binding = 0;
         bindings[0].stride = static_cast<u32>(sizeof(sim::SCMMesh::Vertex));
         bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
@@ -878,8 +879,9 @@ void Renderer::create_pipelines() {
         bindings[1].stride = sizeof(MeshInstance);
         bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
 
-        // 11 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8), bone_weights(9), tangent(10)
-        std::array<VkVertexInputAttributeDescription, 11> attrs{};
+        // 12 attributes: pos(0), normal(1), uv(2), model col0-3(3-6), color(7), bone_indices(8),
+        // bone_weights(9), tangent(10), binormal(11)
+        std::array<VkVertexInputAttributeDescription, 12> attrs{};
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3};                // normal
         attrs[2] = {2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 6};                   // UV
@@ -891,6 +893,8 @@ void Renderer::create_pipelines() {
         attrs[8] = {8, 0, VK_FORMAT_R8G8B8A8_UINT, offsetof(sim::SCMMesh::Vertex, bone_indices)};    // bone_indices
         attrs[9] = {9, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(sim::SCMMesh::Vertex, bone_weights)}; // bone_weights
         attrs[10] = {10, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(sim::SCMMesh::Vertex, tx)};  // tangent
+        attrs[11] = {11, 0, VK_FORMAT_R32G32B32_SFLOAT,
+                     offsetof(sim::SCMMesh::Vertex, bx)}; // binormal
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
         // eye (12B)

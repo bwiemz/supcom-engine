@@ -53,7 +53,7 @@ Moho binds the two lookups for every mesh (faf-re `Mesh.cpp`).
 7. UEF, Aeon, Cybran, Seraphim and Metal blueprints resolve to their
    techniques.
 8. With a white `<aeon>` cube and a black `<default>`, an Aeon land
-   factory brightens (5,301 pixels) and the UEF factory beside it doesn't
+   factory brightens (5,329 pixels) and the UEF factory beside it doesn't
    (0).
 
 Insect's and Metal's lookups read fixed game textures, which the test

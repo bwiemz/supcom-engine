@@ -549,6 +549,7 @@ layout(location = 2) in vec2 inUV;
 layout(location = 8) in uvec4 inBoneIndices;
 layout(location = 9) in vec4 inBoneWeights;
 layout(location = 10) in vec3 inTangent;
+layout(location = 11) in vec3 inBinormal;
 
 // Per-instance (binding 1) — mat4 uses locations 3-6 (4 vec4 columns)
 layout(location = 3) in mat4 inModel;
@@ -586,7 +587,7 @@ void main() {
     mat3 normalMat = mat3(inModel) * mat3(bone);
     fragNormal = normalMat * inNormal;
     fragTangent = normalMat * inTangent;
-    fragBitangent = cross(fragNormal, fragTangent);
+    fragBitangent = normalMat * inBinormal;
     fragColor = inColor;
     fragUV = inUV;
 }
@@ -681,20 +682,16 @@ vec3 faViewDirection(vec3 worldPos) {
 }
 
 void main() {
-    // Decode normal from GA channels (FA DXT5nm encoding: X=Green, Y=Alpha)
+    // FA's ComputeNormal (mesh.fx): the map's green runs along the binormal,
+    // its alpha along the tangent (DXT5nm's y and x), and z is what's left.
     vec4 nmap = texture(texNormal, fragUV);
     vec3 tangentNormal;
     tangentNormal.x = nmap.g * 2.0 - 1.0;
     tangentNormal.y = nmap.a * 2.0 - 1.0;
     tangentNormal.z = sqrt(max(0.0, 1.0 - tangentNormal.x*tangentNormal.x
                                          - tangentNormal.y*tangentNormal.y));
-
-    // TBN matrix: transform tangent-space normal to world space
-    vec3 N = normalize(fragNormal);
-    vec3 T = normalize(fragTangent);
-    vec3 B = normalize(fragBitangent);
-    mat3 TBN = mat3(T, B, N);
-    vec3 worldNormal = normalize(TBN * tangentNormal);
+    mat3 basis = mat3(fragBitangent, fragTangent, fragNormal);
+    vec3 worldNormal = normalize(basis * tangentNormal);
 
     // FA's ComputeLight (mesh.fx), by the map's light (M210a).
     vec3 S = lightUbo.sunDirection.xyz;
