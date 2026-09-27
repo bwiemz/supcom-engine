@@ -85,6 +85,8 @@ void test_specular(TestContext& ctx);
 void test_lighting(TestContext& ctx);
 /// --strata-test (M212a), in strata_test.cpp.
 void test_strata(TestContext& ctx);
+/// --meshless-test, in meshless_test.cpp.
+void test_meshless(TestContext& ctx);
 void test_terrain_normal(TestContext& ctx);
 void test_decal(TestContext& ctx);
 void test_projectile(TestContext& ctx);

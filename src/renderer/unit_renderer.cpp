@@ -299,19 +299,21 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             }
 
             mesh_count++;
-        } else {
+        } else if (entity.is_unit) {
+            // FA draws nothing for an entity without a mesh: projectiles that
+            // only carry effects (NullShell, the ACU's warp-in) and markers.
+            // A unit without one is a gap worth seeing, so it stands in as a
+            // cube in its army's colour.
             if (cube_count >= MAX_INSTANCES) continue;
             auto& inst = cube_instances[cube_count];
             inst.x = pos.x;
             inst.y = pos.y;
             inst.z = pos.z;
             inst.scale = 2.0f;
-            // Use muted green for props (trees/rocks) to avoid white cube sea
-            if (entity.is_prop) {
-                inst.r = 0.28f; inst.g = 0.42f; inst.b = 0.18f; inst.a = a;
-            } else {
-                inst.r = r; inst.g = g; inst.b = b; inst.a = a;
-            }
+            inst.r = r;
+            inst.g = g;
+            inst.b = b;
+            inst.a = a;
             cube_count++;
         }
     }
