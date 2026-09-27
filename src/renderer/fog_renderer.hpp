@@ -22,6 +22,9 @@ public:
     /// Fill staging buffer from visibility grid (CPU side).
     void stage(const osc::map::VisibilityGrid& grid, u32 army);
 
+    /// Fill staging buffer as all visible (an observer's view).
+    void stage_clear();
+
     /// Record barriers + copy into an existing command buffer (GPU side).
     void record_upload(VkCommandBuffer cmd);
 

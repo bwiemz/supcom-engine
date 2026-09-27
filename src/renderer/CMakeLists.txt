@@ -22,6 +22,7 @@ add_library(osc_renderer STATIC
     hud_renderer.cpp
     selection_info_renderer.cpp
     fog_renderer.cpp
+    recon_view.cpp
     emitter_blueprint.cpp
     particle_system.cpp
     particle_renderer.cpp

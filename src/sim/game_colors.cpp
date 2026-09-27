@@ -53,6 +53,14 @@ GameColors read_game_colors(lua_State* L) {
                 lua_gettable(L, -2);
                 out.player_colors = decode_list(L);
                 lua_pop(L, 1);
+                lua_pushstring(L, "UnidentifiedColor");
+                lua_gettable(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) {
+                    if (const auto color =
+                            decode_color(std::string_view(lua_tostring(L, -1), lua_strlen(L, -1))))
+                        out.unidentified_color = *color;
+                }
+                lua_pop(L, 1);
             }
         } else {
             spdlog::warn("GameColors: {}",

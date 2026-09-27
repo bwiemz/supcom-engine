@@ -359,6 +359,12 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Strategic icon renderer
     strategic_icon_renderer_.init(device_, allocator_);
 
+    // What the player's intel shows, for everything that draws units (M215a)
+    unit_renderer_.set_recon(&recon_);
+    strategic_icon_renderer_.set_recon(&recon_);
+    overlay_renderer_.set_recon(&recon_);
+    minimap_renderer_.set_recon(&recon_);
+
     // HUD renderer (economy bars)
     hud_renderer_.init(device_, allocator_);
 
@@ -1541,6 +1547,7 @@ void Renderer::destroy_decal_buffers() {
 void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
+    recon_.clear();                  // a new world: nothing seen of it yet
 
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
@@ -1653,8 +1660,13 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
     }
-    // The colour tables that pick each army's row of a lookup (M211c)
-    if (L) unit_renderer_.set_game_colors(sim::read_game_colors(L));
+    // The colour tables that pick each army's row of a lookup (M211c), and
+    // an unidentified blip's colour (M215a)
+    if (L) {
+        sim::GameColors colors = sim::read_game_colors(L);
+        recon_.set_unidentified_color(colors.unidentified_color);
+        unit_renderer_.set_game_colors(std::move(colors));
+    }
     // The cubes and lookups meshes shade with (M211a/b), once the texture
     // cache is up.
     bind_mesh_environment(terrain->environment());
@@ -2195,6 +2207,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     auto vp = camera_.view_proj(aspect);
     Frustum frustum(vp);
 
+    // What the player's army sees this tick (everything, with the fog off)
+    recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
+    recon_.update(view);
+
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {
         PROFILE_ZONE("Render::unit_update");
@@ -2252,7 +2268,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // Stage fog of war data from visibility grid (CPU side)
     if (fog_enabled_ && fog_renderer_.initialized() && view.cur() && view.cur()->visibility) {
-        fog_renderer_.stage(*view.cur()->visibility, player_army_);
+        if (player_army_ >= 0 && player_army_ < static_cast<i32>(map::VisibilityGrid::MAX_ARMIES))
+            fog_renderer_.stage(*view.cur()->visibility, static_cast<u32>(player_army_));
+        else fog_renderer_.stage_clear(); // an observer's: all visible
     }
 
     // Update game overlays (health bars, selection circles, command lines, game over)

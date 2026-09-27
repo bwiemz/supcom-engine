@@ -69,6 +69,15 @@ public:
     /// Capture the sim's world again (after the test changed it).
     void recapture();
 
+    /// Draw the captured world again in the scene the last shot built, as a
+    /// game's next frame does: what the renderer carries from frame to
+    /// frame (the player's intel) carries on.
+    void redraw();
+
+    /// The events the next frame shows (the sim's are cleared as its tick
+    /// ends, before recapture() can take them; a test adds its own).
+    sim::WorldEvents& events() { return history_.events(); }
+
 private:
     ImageRGBA8 capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance, bool with_world);
 

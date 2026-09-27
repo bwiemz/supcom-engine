@@ -79,6 +79,12 @@ void OffscreenShots::recapture() {
     history_.capture(ctx_.sim);
 }
 
+void OffscreenShots::redraw() {
+    renderer_.render(sim::FrameView(&history_.prev(), &history_.cur(), 1.0f), history_.events(),
+                     nullptr, ctx_.L);
+    renderer_.poll_events(0.016);
+}
+
 OffscreenShots::~OffscreenShots() {
     if (ok_) renderer_.shutdown();
 }

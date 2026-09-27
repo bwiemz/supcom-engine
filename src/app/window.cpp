@@ -11,6 +11,7 @@
 #include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/sim_sync.hpp"
 #include "lua/smoke_test.hpp"
 #include "platform/paths.hpp"
 #include "renderer/input_handler.hpp"
@@ -649,6 +650,14 @@ std::optional<int> App::run_window() {
                 tests->frame_view(engine, frame);
             }
 
+            // The player's army is the UI's focus army (SetFocusArmy; -1 an
+            // observer): what it selects, and what its intel shows (M215a).
+            if (sim_state) {
+                const osc::i32 focus = osc::lua::focus_army(ui_lua_state.raw());
+                renderer.set_player_army(focus);
+                input_handler.set_player_army(focus);
+            }
+
             // Player input: selection + commands
             if (sim_state) {
                 current_command_mode = read_command_mode(ui_lua_state.raw());
@@ -875,8 +884,13 @@ std::optional<int> App::run_window() {
                         // transport (HostGame/JoinGame), build the lockstep
                         // session over it now that the game's sim exists.
                         // No-op in single-player.
-                        if (sim_state && !active_playback) {
-                            osc::lua::mp_attach_session(*sim_state);
+                        if (sim_state && !active_playback &&
+                            osc::lua::mp_attach_session(*sim_state)) {
+                            // Each peer plays its own source's army, and
+                            // sees the world through its intel (M215a).
+                            osc::lua::set_focus_army(
+                                sim_lua_state ? sim_lua_state->raw() : nullptr, uiL,
+                                static_cast<int>(osc::lua::mp_net_state().local_source));
                         }
 
                         // Re-install instrument harness on new sim VM (M166)

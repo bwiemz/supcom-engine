@@ -72,6 +72,7 @@ struct EntityRecord {
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;
     bool is_being_built = false;
+    bool is_mobile = false;     ///< Unit::is_mobile: its blueprint's motion type (M215a)
     u32 build_target_id = 0;    ///< building when non-zero
     u32 reclaim_target_id = 0;
     u32 repair_target_id = 0;
@@ -141,6 +142,7 @@ struct ArmyRecord {
     u8 r = 0, g = 0, b = 0;
     ResourceRecord mass, energy;
     f64 mass_efficiency = 1, energy_efficiency = 1;
+    u32 allies = 0; ///< bit j: allied with army j (its intel shares; M215a)
 };
 
 /// The world as the renderer draws it, captured once per sim tick.

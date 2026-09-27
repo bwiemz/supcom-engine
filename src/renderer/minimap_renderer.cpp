@@ -1,6 +1,7 @@
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "map/terrain.hpp"
 #include "map/heightmap.hpp"
@@ -227,6 +228,8 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
     // --- Unit dots ---
     for (const sim::EntityRecord& entity : view.entities()) {
         if (!entity.is_unit) continue;
+        const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
+        if (!shows_icon(sight)) continue;
 
         auto pos = view.position(entity);
         // Map world position to minimap pixel position
@@ -238,7 +241,14 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
         f32 dot_y = ay + nz * ah;
 
         f32 r, g, b;
-        get_army_color_simple(entity, view, r, g, b);
+        if (sight == Sight::Blip) {
+            const auto [ur, ug, ub] = recon_->unidentified_rgb();
+            r = ur;
+            g = ug;
+            b = ub;
+        } else {
+            get_army_color_simple(entity, view, r, g, b);
+        }
 
         constexpr f32 DOT_SIZE = 3.0f;
         emit_quad(dot_x - DOT_SIZE * 0.5f, dot_y - DOT_SIZE * 0.5f,

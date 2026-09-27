@@ -16,6 +16,7 @@ struct EntityRecord;
 namespace osc::renderer {
 
 class Camera;
+class ReconView;
 class TextureCache;
 
 /// Icon types derived from unit categories.
@@ -38,6 +39,10 @@ public:
 
     /// Build the procedural icon atlas texture (called once after TextureCache ready).
     void build_atlas(TextureCache& tex_cache);
+
+    /// The player's intel: its blips show as icons at any zoom, and what it
+    /// doesn't see not at all (null: everything seen; M215a).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
 
     /// Update icon quads from the world as `view` draws it. Returns true if
     /// strategic zoom is active.
@@ -68,6 +73,10 @@ public:
 
     /// Classify a unit into an icon type based on its categories.
     static StrategicIconType classify_unit(const sim::EntityRecord& unit);
+
+    /// A never-seen blip's icon: a structure's, or by what it moves on (air,
+    /// naval, else land), as Moho's generic blip icons.
+    static StrategicIconType classify_blip(const sim::EntityRecord& unit);
 
     /// Atlas layout constants (public for reuse by SelectionInfoRenderer).
     static constexpr u32 ICON_CELL_SIZE = 32;
@@ -100,7 +109,7 @@ private:
     VkDescriptorSet white_ds_ = VK_NULL_HANDLE;
     u32 ring_count_ = 0;  // selection rings emitted first (use white_ds_)
     bool strategic_zoom_active_ = false;
-
+    const ReconView* recon_ = nullptr;
 };
 
 } // namespace osc::renderer

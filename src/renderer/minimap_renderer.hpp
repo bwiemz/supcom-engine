@@ -19,6 +19,7 @@ class FrameView;
 namespace osc::renderer {
 
 class Camera;
+class ReconView;
 class TextureCache;
 
 /// Screen rect of the drawn map, in pixels.
@@ -88,6 +89,11 @@ public:
     void destroy(VkDevice device, VmaAllocator allocator);
 
     void set_frame_index(u32 fi) { fi_ = fi; }
+
+    /// The player's intel: a dot for each unit it shows, a never-seen blip's
+    /// in UnidentifiedColor (null: everything seen; M215a).
+    void set_recon(const ReconView* recon) { recon_ = recon; }
+
     /// This frame's quads from update() (the legacy HUD's minimap).
     const std::vector<UIQuad>& quads() const { return quads_; }
 
@@ -118,6 +124,7 @@ private:
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
     u32 fi_ = 0;
+    const ReconView* recon_ = nullptr;
 
     std::vector<UIQuad> quads_;
     u32 quad_count_ = 0; // quads uploaded for render()
