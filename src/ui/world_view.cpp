@@ -46,35 +46,8 @@ bool WorldView::get_mouse_world_pos(f32 sx, f32 sy,
     f32 w = static_cast<f32>(viewport_w_);
     f32 h = static_cast<f32>(viewport_h_);
 
-    // First pass: intersect with y=0 ground plane (or water elevation)
-    f32 ground_y = 0.0f;
-    if (terrain_) {
-        ground_y = terrain_->water_elevation();
-    }
-
-    f32 flat_x = 0, flat_z = 0;
-    if (!camera_->screen_to_world(sx, sy, w, h, ground_y, flat_x, flat_z)) {
-        return false;
-    }
-
-    // Refine with terrain height if available (iterative refinement)
-    if (terrain_) {
-        for (int i = 0; i < 3; ++i) {
-            f32 th = terrain_->get_terrain_height(flat_x, flat_z);
-            if (!camera_->screen_to_world(sx, sy, w, h, th, flat_x, flat_z)) {
-                break;
-            }
-        }
-        wx = flat_x;
-        wy = terrain_->get_terrain_height(flat_x, flat_z);
-        wz = flat_z;
-    } else {
-        wx = flat_x;
-        wy = ground_y;
-        wz = flat_z;
-    }
-
-    return true;
+    // Where the cursor's ray meets the ground (or the water over it).
+    return camera_->pick_ground(sx, sy, w, h, terrain_, wx, wy, wz);
 }
 
 void WorldView::zoom_scale(f32 /*x*/, f32 /*y*/, f32 /*rotation*/, f32 delta) {

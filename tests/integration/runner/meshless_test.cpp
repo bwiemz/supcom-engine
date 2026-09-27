@@ -114,9 +114,7 @@ void test_meshless(TestContext& ctx) {
         t.check(false, "Tests 2-3: renderer init (no Vulkan?)");
         return;
     }
-    // From 80: the camera orbits a point at height 0, not on the ground (SCMP_009's
-    // start is at 18.7), so from closer the ACU's spot falls out of view.
-    (void)shots.shoot(*ctx.sim.terrain(), ax, az, 80.0f);
+    (void)shots.shoot(*ctx.sim.terrain(), ax, az, 30.0f);
     size_t meshes = 0;
     const auto cubes = cubes_drawn(shots.renderer(), meshes);
 

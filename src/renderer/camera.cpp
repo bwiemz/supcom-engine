@@ -1,9 +1,12 @@
 #include "renderer/camera.hpp"
 
+#include "map/terrain.hpp"
+
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 namespace osc::renderer {
 
@@ -129,14 +132,12 @@ std::array<f32, 16> Camera::view_proj(f32 aspect) const {
         tz += std::cos(phase * 2.3f) * shake_intensity_;
     }
 
-    // Eye position from spherical coordinates
+    // Eye position from spherical coordinates about the focus
     f32 eye_x = tx + distance_ * std::sin(yaw_) * std::cos(pitch_);
-    f32 eye_y = distance_ * std::sin(pitch_);
+    f32 eye_y = target_y_ + distance_ * std::sin(pitch_);
     f32 eye_z = tz + distance_ * std::cos(yaw_) * std::cos(pitch_);
 
-    auto view = math::look_at(eye_x, eye_y, eye_z,
-                              tx, 0.0f, tz,
-                              0.0f, 1.0f, 0.0f);
+    auto view = math::look_at(eye_x, eye_y, eye_z, tx, target_y_, tz, 0.0f, 1.0f, 0.0f);
     auto proj = math::perspective(0.785f, aspect, 1.0f, 5000.0f); // 45 deg FOV
 
     return math::mat4_mul(proj, view);
@@ -145,8 +146,14 @@ std::array<f32, 16> Camera::view_proj(f32 aspect) const {
 void Camera::eye_position(f32& x, f32& y, f32& z) const {
     // Use raw target (no shake) for eye position used by culling/specular
     x = target_x_ + distance_ * std::sin(yaw_) * std::cos(pitch_);
-    y = distance_ * std::sin(pitch_);
+    y = target_y_ + distance_ * std::sin(pitch_);
     z = target_z_ + distance_ * std::cos(yaw_) * std::cos(pitch_);
+}
+
+std::array<f32, 16> Camera::view() const {
+    f32 ex, ey, ez;
+    eye_position(ex, ey, ez);
+    return math::look_at(ex, ey, ez, target_x_, target_y_, target_z_, 0.0f, 1.0f, 0.0f);
 }
 
 // --- Matrix math ---
@@ -222,8 +229,8 @@ std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
     return r;
 }
 
-std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_z,
-                                    f32 half) {
+std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_y,
+                                    f32 target_z, f32 half) {
     const f32* s = sun_direction;
     const f32 len = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     const f32 dx = len > 1e-6f ? s[0] / len : 0.0f;
@@ -232,11 +239,11 @@ std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f3
 
     const f32 far_off = half * 2.0f;
     const f32 ex = target_x + dx * far_off;
-    const f32 ey = dy * far_off;
+    const f32 ey = target_y + dy * far_off;
     const f32 ez = target_z + dz * far_off;
 
     const bool overhead = std::abs(dy) > 0.99f;
-    auto view = look_at(ex, ey, ez, target_x, 0.0f, target_z, 0.0f, overhead ? 0.0f : 1.0f,
+    auto view = look_at(ex, ey, ez, target_x, target_y, target_z, 0.0f, overhead ? 0.0f : 1.0f,
                         overhead ? 1.0f : 0.0f);
     auto proj = ortho(-half, half, -half, half, 0.1f, far_off * 2.0f);
     return mat4_mul(proj, view);
@@ -244,10 +251,8 @@ std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f3
 
 } // namespace math
 
-bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
-                              f32 window_w, f32 window_h,
-                              f32 ground_y,
-                              f32& out_x, f32& out_z) const {
+bool Camera::screen_ray(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h, f32 origin[3],
+                        f32 dir[3]) const {
     // Convert screen pixel to NDC [-1, 1]. Screen y runs down, and our
     // perspective flips Y for Vulkan (view-space up lands at the top of the
     // screen), so a point up the screen lies along +up: the ray takes -ndc_y.
@@ -259,19 +264,12 @@ bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
 
     f32 aspect = window_w / window_h;
 
-    // Reconstruct view and projection separately
-    f32 ex, ey, ez;
-    eye_position(ex, ey, ez);
-
-    auto view = math::look_at(ex, ey, ez,
-                               target_x_, 0.0f, target_z_,
-                               0.0f, 1.0f, 0.0f);
-    // We need to invert VP to go from NDC to world.
-    // Instead, construct ray directly from camera parameters:
-    // Extract right/up/forward from view matrix (column-major, transposed rotation)
-    f32 rx = view[0], ry = view[4], rz = view[8];   // right
-    f32 ux = view[1], uy = view[5], uz = view[9];   // up
-    f32 fx = -view[2], fy = -view[6], fz = -view[10]; // forward (negated -Z)
+    eye_position(origin[0], origin[1], origin[2]);
+    const auto v = view();
+    // Right/up/forward from the view matrix (column-major, transposed rotation)
+    f32 rx = v[0], ry = v[4], rz = v[8];     // right
+    f32 ux = v[1], uy = v[5], uz = v[9];     // up
+    f32 fx = -v[2], fy = -v[6], fz = -v[10]; // forward (negated -Z)
 
     // Half-angles from perspective
     f32 fov = 0.785f; // 45 deg
@@ -282,18 +280,55 @@ bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
     f32 dy = fy + ndc_x * aspect * tan_half * ry + ndc_y * tan_half * uy;
     f32 dz = fz + ndc_x * aspect * tan_half * rz + ndc_y * tan_half * uz;
 
-    // Normalize direction
     f32 len = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (len < 1e-6f) return false;
-    dx /= len; dy /= len; dz /= len;
+    dir[0] = dx / len;
+    dir[1] = dy / len;
+    dir[2] = dz / len;
+    return true;
+}
 
+bool Camera::screen_to_world(f32 screen_x, f32 screen_y,
+                              f32 window_w, f32 window_h,
+                              f32 ground_y,
+                              f32& out_x, f32& out_z) const {
+    f32 o[3], d[3];
+    if (!screen_ray(screen_x, screen_y, window_w, window_h, o, d)) return false;
     // Intersect ray (eye + t*dir) with y = ground_y plane
-    if (std::abs(dy) < 1e-6f) return false; // ray parallel to ground
-    f32 t = (ground_y - ey) / dy;
+    if (std::abs(d[1]) < 1e-6f) return false; // ray parallel to ground
+    f32 t = (ground_y - o[1]) / d[1];
     if (t < 0) return false; // intersection behind camera
 
-    out_x = ex + t * dx;
-    out_z = ez + t * dz;
+    out_x = o[0] + t * d[0];
+    out_z = o[2] + t * d[2];
+    return true;
+}
+
+bool Camera::pick_ground(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h,
+                         const map::Terrain* terrain, f32& out_x, f32& out_y, f32& out_z) const {
+    f32 o[3], d[3];
+    if (!screen_ray(screen_x, screen_y, window_w, window_h, o, d)) return false;
+    std::optional<f32> t;
+    if (terrain) {
+        // Well past any map's far corner from any eye.
+        constexpr f32 kReach = 20000.0f;
+        t = terrain->heightmap().intersect(o[0], o[1], o[2], d[0], d[1], d[2], 0.0f, kReach);
+        // The water's surface, where the ray meets it before the ground.
+        if (terrain->has_water() && d[1] < -1e-6f) {
+            const f32 tw = (terrain->water_elevation() - o[1]) / d[1];
+            if (tw >= 0.0f && (!t || tw < *t)) t = tw;
+        }
+    }
+    if (!t) {
+        // Off the map (or no terrain): the level of the camera's focus.
+        if (std::abs(d[1]) < 1e-6f) return false;
+        const f32 tp = (target_y_ - o[1]) / d[1];
+        if (tp < 0.0f) return false;
+        t = tp;
+    }
+    out_x = o[0] + *t * d[0];
+    out_y = o[1] + *t * d[1];
+    out_z = o[2] + *t * d[2];
     return true;
 }
 

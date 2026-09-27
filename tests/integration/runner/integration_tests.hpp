@@ -87,6 +87,8 @@ void test_lighting(TestContext& ctx);
 void test_strata(TestContext& ctx);
 /// --meshless-test, in meshless_test.cpp.
 void test_meshless(TestContext& ctx);
+/// --camera-test (M217a), in camera_test.cpp.
+void test_camera(TestContext& ctx);
 void test_terrain_normal(TestContext& ctx);
 void test_decal(TestContext& ctx);
 void test_projectile(TestContext& ctx);

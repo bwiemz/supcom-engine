@@ -762,8 +762,8 @@ std::array<f32, 16> Renderer::compute_light_vp() const {
     // Looking down the map's sun, as every lit shader lights by it (M210a),
     // over a box centred on the camera's target, proportional to zoom.
     const f32 half = std::clamp(camera_.distance() * 0.8f, 50.0f, 800.0f);
-    return math::light_view_proj(lighting_.sun_direction, camera_.target_x(), camera_.target_z(),
-                                 half);
+    return math::light_view_proj(lighting_.sun_direction, camera_.target_x(), camera_.target_y(),
+                                 camera_.target_z(), half);
 }
 
 void Renderer::create_pipelines() {
@@ -1516,6 +1516,8 @@ void Renderer::clear_scene() {
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
     destroy_terrain_strata_ubo();
+    ground_.reset();
+    camera_.set_target_y(0.0f);
 }
 
 void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata) {
@@ -1559,6 +1561,12 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
     }
+
+    // The ground the camera's focus sits on: a copy, as the sim's terrain
+    // is replaced on a reload.
+    ground_ = terrain->heightmap();
+    ground_water_ = terrain->water_elevation();
+    ground_has_water_ = terrain->has_water();
 
     terrain_mesh_.build(*terrain, device_, allocator_, cmd_pool_,
                         graphics_queue_);
@@ -2017,6 +2025,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       const BuildGhost* ghost, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
+    // Scripts may have moved the camera since the last poll.
+    update_camera_focus();
     // FA's own game interface replaces the C++ HUD placeholders.
     {
         bool world_ui = false;
@@ -2661,11 +2671,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     if (particle_renderer_.draw_count() > 0) {
         // Extract camera right and up vectors from the view matrix
         // View matrix row 0 = right, row 1 = up (transposed from columns)
-        f32 eye_x, eye_y, eye_z;
-        camera_.eye_position(eye_x, eye_y, eye_z);
-        auto view = math::look_at(eye_x, eye_y, eye_z,
-                            camera_.target_x(), 0.0f, camera_.target_z(),
-                            0.0f, 1.0f, 0.0f);
+        auto view = camera_.view();
         // Column-major layout: row 0 = right, row 1 = up
         // Row i elements are at indices [i], [i+4], [i+8] in column-major
         f32 cam_right[3] = {view[0], view[4], view[8]};
@@ -3108,6 +3114,17 @@ void Renderer::poll_events(f64 dt) {
     b_key_was_pressed_ = b_pressed;
 
     camera_.update(window_, dt);
+    // Before input picks this frame: a pan has moved the target.
+    update_camera_focus();
+}
+
+void Renderer::update_camera_focus() {
+    // The camera's focus sits on the ground under its target (the water's
+    // surface over it), as Moho's camera keeps it.
+    if (!ground_) return;
+    f32 y = ground_->get_height(camera_.target_x(), camera_.target_z());
+    if (ground_has_water_) y = std::max(y, ground_water_);
+    camera_.set_target_y(y);
 }
 
 // --- Vulkan validation messages ---
