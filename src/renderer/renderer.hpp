@@ -151,6 +151,8 @@ public:
     i32 player_army() const { return player_army_; }
     /// What the player's army sees of the world as of the last frame (M215a).
     const ReconView& recon() const { return recon_; }
+    /// The effects' emitters and particles (tests read them).
+    const ParticleSystem& particle_system() const { return particle_system_; }
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }

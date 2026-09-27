@@ -272,13 +272,22 @@ TEST_CASE("ReconView: effects show where the player's army sees", "[renderer][re
     w.sense(200, 200, VisFlag::Radar);
     w.tick(recon);
     CHECK_FALSE(recon.sees_at(view, 2, 200, 200));
+    // A beam, where either end is in sight.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    CHECK(recon.sees_beam(view, {100, 0, 100}, {200, 0, 200}));
+    CHECK(recon.sees_beam(view, {200, 0, 200}, {100, 0, 100}));
+    CHECK_FALSE(recon.sees_beam(view, {200, 0, 200}, {220, 0, 200}));
     // An observer sees all.
     recon.set_focus_army(-1);
     w.tick(recon);
     CHECK(recon.sees_at(view, 2, 200, 200));
+    CHECK(recon.sees_beam(view, {200, 0, 200}, {220, 0, 200}));
 }
 
-TEST_CASE("ReconView: shields and beams are left to M215b", "[renderer][recon]") {
+// Shields and beams aren't judged as units are: the overlay places them and
+// asks sees_at where they are (M215b).
+TEST_CASE("ReconView: shields and beams aren't judged by sight", "[renderer][recon]") {
     World w;
     w.add(1, 1, 100, 100).is_shield = true;
     w.add(2, 1, 100, 100).is_collision_beam = true;

@@ -1,5 +1,6 @@
 #include "renderer/particle_system.hpp"
 #include "renderer/frustum.hpp"
+#include "renderer/recon_view.hpp"
 
 #include "sim/ieffect.hpp"
 #include "sim/world_snapshot.hpp"
@@ -30,6 +31,10 @@ void ParticleSystem::sync_effects(const sim::FrameView& view,
     std::unordered_set<u32> tracked_ids;
     tracked_ids.reserve(emitters_.size());
 
+    // Whether the player's army sees a point: Moho's LOSNow there, whoever
+    // made the effect.
+    const auto seen_at = [&](f32 x, f32 z) { return !recon_ || recon_->sees_at(view, -1, x, z); };
+
     // Mark emitters whose effect was destroyed + update positions (single pass)
     for (auto& es : emitters_) {
         auto it = effect_map.find(es.effect_id);
@@ -46,9 +51,14 @@ void ParticleSystem::sync_effects(const sim::FrameView& view,
                     es.origin_z = pos.z + fx->offset_z;
                 }
             }
+            es.visible = seen_at(es.origin_x, es.origin_z);
         }
         tracked_ids.insert(es.effect_id);
     }
+
+    // Effects gone from the world are forgotten.
+    for (auto it = unseen_.begin(); it != unseen_.end();)
+        it = effect_map.count(*it) != 0 ? std::next(it) : unseen_.erase(it);
 
     // Remove inactive emitters with no live particles
     emitters_.erase(
@@ -67,7 +77,7 @@ void ParticleSystem::sync_effects(const sim::FrameView& view,
             continue;
         }
 
-        if (tracked_ids.count(id)) continue;
+        if (tracked_ids.count(id) || unseen_.count(id)) continue;
 
         const auto* bp = bp_cache.get(fx->blueprint_path, L);
         if (!bp) continue;
@@ -78,6 +88,21 @@ void ParticleSystem::sync_effects(const sim::FrameView& view,
         es.origin_x = fx->offset_x;
         es.origin_y = fx->offset_y;
         es.origin_z = fx->offset_z;
+        if (fx->entity_id > 0) {
+            if (const auto* ent = view.find(fx->entity_id)) {
+                const sim::Vector3 pos = view.position(*ent);
+                es.origin_x += pos.x;
+                es.origin_y += pos.y;
+                es.origin_z += pos.z;
+            }
+        }
+        es.visible = seen_at(es.origin_x, es.origin_z);
+        // A CreateIfVisible effect the player's army doesn't see made is
+        // gone for it (CEfxEmitter::ProcessLifetime destroys it).
+        if (bp->create_if_visible && !es.visible) {
+            unseen_.insert(id);
+            continue;
+        }
         emitters_.push_back(std::move(es));
     }
 }
@@ -214,7 +239,10 @@ void ParticleSystem::update(f32 dt_seconds) {
                 emitting = false;
             }
 
-            if (emitting) emit_particles(es, dt, running_total);
+            // Out of the player's sight an EmitIfVisible emitter emits
+            // nothing, while its life runs on (CEfxEmitter::IsVisible).
+            if (emitting && (!es.blueprint || !es.blueprint->emit_if_visible || es.visible))
+                emit_particles(es, dt, running_total);
         }
 
         step_particles(es, dt);

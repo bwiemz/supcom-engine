@@ -184,7 +184,10 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         if (e.is_shield()) {
             const auto& s = static_cast<const Shield&>(e);
             r.shield_owner_id = s.owner_id;
-            r.shield_on = s.is_on;
+            // Retail's shield is up while it has its mesh (shield.lua's
+            // CreateShieldMesh and RemoveShield); its TurnOn is a script
+            // state, never the engine's (M215b).
+            r.shield_on = s.is_on || !e.mesh_override().empty();
             r.shield_size = s.size;
         }
     });

@@ -18,7 +18,7 @@ void ReconView::clear() {
 }
 
 bool ReconView::judged(const sim::EntityRecord& e) const {
-    if (!e.is_unit && !e.is_projectile) return false; // shields, beams: M215b
+    if (!e.is_unit && !e.is_projectile) return false; // shields, beams: by sees_at
     if (e.army < 0 || e.army == focus_) return false;
     return e.army >= 32 || (allies_ >> e.army & 1u) == 0;
 }

@@ -107,7 +107,7 @@ struct EntityRecord {
 
     // Shields
     u32 shield_owner_id = 0;
-    bool shield_on = false;
+    bool shield_on = false; ///< up: turned on, or wearing its mesh (retail)
     f32 shield_size = 0;
 
     bool is_building() const { return build_target_id != 0; }

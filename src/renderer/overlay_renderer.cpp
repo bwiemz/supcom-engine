@@ -637,6 +637,9 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
 
             auto src_pos = view.position(entity);
             auto dst_pos = view.beam_end(entity);
+            // A beam shows where the player's army sees either end
+            // (CEfxBeam::CanSeeCam; M215b).
+            if (recon_ && !recon_->sees_beam(view, src_pos, dst_pos)) continue;
 
             f32 dx = src_pos.x - eye_x;
             f32 dz = src_pos.z - eye_z;
@@ -685,6 +688,9 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             if (!owner) continue;
 
             auto pos = view.position(*owner);
+            // Another army's shield shows through the player's intel
+            // (shield.lua's SetVizToEnemies('Intel')): where it sees (M215b).
+            if (recon_ && !recon_->sees_at(view, entity.army, pos.x, pos.z)) continue;
 
             // Frustum cull
             if (frustum && !frustum->is_sphere_visible(pos.x, pos.y, pos.z, 20.0f)) continue;
@@ -805,6 +811,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 if (!target) continue;
 
                 auto tp = view.position(*target);
+                if (recon_ && !recon_->sees_beam(view, {wx, wy, wz}, tp)) continue;
                 f32 sx0, sy0, sx1, sy1;
                 if (!world_to_screen(wx, wy, wz, vp_matrix, sw, sh, sx0, sy0))
                     continue;
@@ -849,6 +856,10 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                         fwd_z = 1.0f - 2.0f * (q.x * q.x + q.y * q.y);
                     }
                 }
+                if (recon_ && !recon_->sees_beam(view, {wx, wy, wz},
+                                                 {wx + fwd_x * beam_len, wy + fwd_y * beam_len,
+                                                  wz + fwd_z * beam_len}))
+                    continue;
                 if (!world_to_screen(wx + fwd_x * beam_len,
                                       wy + fwd_y * beam_len,
                                       wz + fwd_z * beam_len,
@@ -873,6 +884,10 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 }
                 continue;
             }
+
+            // An emitter, or a light, shows where the player's army sees it
+            // (CEfxEmitter::CanSeeCam; M215b).
+            if (recon_ && !recon_->sees_at(view, -1, wx, wz)) continue;
 
             // Project position for particle effects
             f32 sx_fx, sy_fx;

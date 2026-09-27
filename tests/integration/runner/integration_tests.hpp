@@ -103,8 +103,10 @@ void test_skinning(TestContext& ctx);
 void test_prop_materials(TestContext& ctx);
 /// --clipped-shadow-test (M211j), in clipped_shadow_test.cpp.
 void test_clipped_shadows(TestContext& ctx);
-/// --unit-intel-test (M215a), in unit_intel_test.cpp.
+/// --unit-intel-test (M215a) and --effect-intel-test (M215b), in
+/// unit_intel_test.cpp.
 void test_unit_intel(TestContext& ctx);
+void test_effect_intel(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);
