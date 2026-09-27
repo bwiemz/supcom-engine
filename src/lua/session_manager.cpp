@@ -1,9 +1,9 @@
 #include "lua/session_manager.hpp"
 
-#include "core/color.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/game_colors.hpp"
 #include "sim/platoon.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
@@ -122,41 +122,6 @@ void push_game_option(lua_State* L, int table_idx, const std::string& key,
 }
 
 } // anonymous namespace
-
-/// FA's army colours (/lua/GameColors.lua, GameColors.ArmyColors), decoded
-/// as Moho decodes them (ARGB); empty if the script can't be read.
-std::vector<u32> game_army_colors(lua_State* L) {
-    std::vector<u32> colors;
-    const int top = lua_gettop(L);
-    lua_pushstring(L, "import");
-    lua_rawget(L, LUA_GLOBALSINDEX);
-    if (lua_isfunction(L, -1)) {
-        lua_pushstring(L, "/lua/GameColors.lua");
-        if (lua_pcall(L, 1, 1, 0) == 0 && lua_istable(L, -1)) {
-            lua_pushstring(L, "GameColors");
-            lua_gettable(L, -2);
-            if (lua_istable(L, -1)) {
-                lua_pushstring(L, "ArmyColors");
-                lua_gettable(L, -2);
-                if (lua_istable(L, -1)) {
-                    for (int i = 1;; ++i) {
-                        lua_rawgeti(L, -1, i);
-                        if (lua_type(L, -1) != LUA_TSTRING) break;
-                        const auto color =
-                            decode_color(std::string_view(lua_tostring(L, -1), lua_strlen(L, -1)));
-                        colors.push_back(color.value_or(0xFFFFFFFFu));
-                        lua_pop(L, 1);
-                    }
-                }
-            }
-        } else {
-            spdlog::warn("GameColors: {}",
-                         lua_isstring(L, -1) ? lua_tostring(L, -1) : "not loaded");
-        }
-    }
-    lua_settop(L, top);
-    return colors;
-}
 
 void apply_config_to_brain(const ArmySlotConfig* cfg, sim::ArmyBrain* brain,
                            const std::vector<u32>& army_colors) {
@@ -347,7 +312,7 @@ Result<void> SessionManager::start_session(LuaState& state,
     spdlog::info("  Creating army brains ({} of {} armies)...",
                  army_limit, meta.armies.size());
     i32 brains_created = 0;
-    const std::vector<u32> army_colors = game_army_colors(L);
+    const std::vector<u32> army_colors = sim::read_game_colors(L).army_colors;
     for (size_t i = 0; i < army_limit; i++) {
         auto result = create_army_brain(L, sim, static_cast<i32>(i),
                                          meta.armies[i], meta.armies[i]);

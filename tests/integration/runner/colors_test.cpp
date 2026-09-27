@@ -12,6 +12,7 @@
 
 #include "lua/lua_state.hpp"
 #include "lua/session_manager.hpp"
+#include "sim/game_colors.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
@@ -105,13 +106,17 @@ void test_army_colors(TestContext& ctx) {
     spdlog::info("=== ARMY COLORS TEST: armies take FA's GameColors ===");
     Tally t;
 
-    // Test 1: GameColors.ArmyColors, decoded: ten, named ones included.
-    const std::vector<u32> colors = lua::game_army_colors(ctx.L);
+    // Test 1: GameColors.ArmyColors, decoded: ten, named ones included; and
+    // as many PlayerColors, the rows of a Seraphim mesh's lookup.
+    const sim::GameColors game_colors = sim::read_game_colors(ctx.L);
+    const std::vector<u32>& colors = game_colors.army_colors;
     t.check(colors.size() == 10 && colors[0] == 0xFFE80A0Au && colors[1] == 0xFF006400u &&
-                colors[3] == 0xFFDAA520u && colors[9] == 0xFF8A2BE2u,
-            fmt::format("Test 1: GameColors has {} army colours ({:08x}, {:08x}, ...)",
+                colors[3] == 0xFFDAA520u && colors[9] == 0xFF8A2BE2u &&
+                game_colors.player_colors.size() == 10,
+            fmt::format("Test 1: GameColors has {} army colours ({:08x}, {:08x}, ...) and {} "
+                        "player colours",
                         colors.size(), colors.empty() ? 0u : colors[0],
-                        colors.size() > 1 ? colors[1] : 0u));
+                        colors.size() > 1 ? colors[1] : 0u, game_colors.player_colors.size()));
 
     // Test 2: a slot's colour index names ArmyColors[index + 1] (Moho's
     // ResolveArmyColorByIndex): index 1 is DarkGreen.

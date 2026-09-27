@@ -23,6 +23,16 @@ struct CubeVertex {
     f32 nx, ny, nz;
 };
 
+/// A mesh's lookup texture (its LOD's LookupName), or transparent black
+/// while it loads or if it names none.
+static VkDescriptorSet lookup_descriptor(const GPUMesh* mesh, TextureCache* tex_cache) {
+    if (!tex_cache) return VK_NULL_HANDLE;
+    if (mesh && !mesh->lookup_path.empty()) {
+        if (auto* tex = tex_cache->get(mesh->lookup_path)) return tex->descriptor_set;
+    }
+    return tex_cache->specteam_fallback_descriptor();
+}
+
 /// Resolve army color for an entity.
 static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView& view,
                             f32& r, f32& g, f32& b, f32& a) {
@@ -44,6 +54,24 @@ static void get_army_color(const sim::EntityRecord& entity, const sim::FrameView
         r = g = b = 1.0f; // neutral/props: white (albedo shows through for mesh)
     }
     a = (entity.fraction_complete < 1.0f) ? 0.4f : 1.0f;
+}
+
+f32 team_color_lookup(const sim::ArmyRecord* army, const sim::GameColors& colors) {
+    u32 index = 0;
+    if (army) {
+        index = 3;
+        // Moho compares packed colours; an army's is opaque.
+        const u32 argb = 0xFF000000u | (u32{army->r} << 16) | (u32{army->g} << 8) | army->b;
+        for (u32 i = 0; army->has_color && i < colors.army_colors.size(); ++i) {
+            if (colors.army_colors[i] == argb) {
+                index = i;
+                break;
+            }
+        }
+    }
+    const u32 count = std::max<u32>(1, static_cast<u32>(colors.player_colors.size()));
+    index = std::min(index, count - 1);
+    return (static_cast<f32>(index) + 0.5f) / static_cast<f32>(count);
 }
 
 /// Build column-major 4x4 model matrix from position + quaternion + non-uniform scale.
@@ -289,6 +317,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 b = b * 0.5f + 0.5f;
             }
             inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+            inst.color_lookup = team_color_lookup(
+                view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
 
             auto& gd = mesh_groups[gpu];
             gd.instances.push_back(inst);
@@ -422,6 +452,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             group.normal_ds = tex_cache->normal_fallback_descriptor();
         }
 
+        group.lookup_ds = lookup_descriptor(gpu, tex_cache);
+
         mesh_groups_.push_back(group);
 
         offset += count;
@@ -447,6 +479,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     inst.model[0] = s;  inst.model[5] = s;  inst.model[10] = s;  inst.model[15] = 1.0f;
     inst.model[12] = x; inst.model[13] = y;  inst.model[14] = z;
     inst.r = r; inst.g = g; inst.b = b; inst.a = a;
+    inst.color_lookup = team_color_lookup(nullptr, game_colors_);
 
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;
@@ -489,6 +522,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
         } else if (tex_cache) {
             grp.normal_ds = tex_cache->normal_fallback_descriptor();
         }
+        grp.lookup_ds = lookup_descriptor(mesh, tex_cache);
 
         mesh_groups_.push_back(grp);
     }
