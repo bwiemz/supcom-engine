@@ -397,7 +397,7 @@ std::optional<int> App::run_window() {
                 osc::f32 ex = 0, ey = 0, ez = 0;
                 cam.eye_position(ex, ey, ez);
                 const osc::f32 fx = cam.target_x() - ex;
-                const osc::f32 fy = -ey;
+                const osc::f32 fy = cam.target_y() - ey;
                 const osc::f32 fz = cam.target_z() - ez;
                 const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
                 sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});

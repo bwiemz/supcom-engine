@@ -6,6 +6,10 @@
 
 struct GLFWwindow;
 
+namespace osc::map {
+class Terrain;
+}
+
 namespace osc::renderer {
 
 /// RTS-style orbit camera with WASD pan, scroll zoom, middle-mouse orbit.
@@ -23,12 +27,18 @@ public:
 
     f32 target_x() const { return target_x_; }
     f32 target_z() const { return target_z_; }
+    /// The focus's height: the ground under the target, as Moho's camera
+    /// keeps it (the renderer sets it each frame).
+    f32 target_y() const { return target_y_; }
     f32 distance() const { return distance_; }
 
     /// Compute camera eye position from spherical coordinates.
     void eye_position(f32& out_x, f32& out_y, f32& out_z) const;
+    /// The view matrix (column-major): from the eye to the focus.
+    std::array<f32, 16> view() const;
     void set_distance(f32 d) { distance_ = d; }
     void set_target(f32 x, f32 z) { target_x_ = x; target_z_ = z; }
+    void set_target_y(f32 y) { target_y_ = y; }
 
     /// Zoom limits (camera distance). The far limit scales with the map and
     /// with the UI's SetMaxZoomMult, as Moho's does.
@@ -44,12 +54,23 @@ public:
     /// When false, update() ignores keyboard and mouse (scripted captures).
     void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
 
+    /// The ray from the eye through a screen pixel: `dir` has unit length.
+    bool screen_ray(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h, f32 origin[3],
+                    f32 dir[3]) const;
+
     /// Unproject screen pixel to world XZ plane (y = ground_y).
     /// Returns true if intersection found, writes world x/z.
     bool screen_to_world(f32 screen_x, f32 screen_y,
                          f32 window_w, f32 window_h,
                          f32 ground_y,
                          f32& out_x, f32& out_z) const;
+
+    /// Where the pixel's ray first meets the ground: the terrain (Moho's
+    /// heightfield intersection), or the water's surface where the ray meets
+    /// that first. Off the map, or without a terrain, it meets the level of
+    /// the camera's focus.
+    bool pick_ground(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h,
+                     const map::Terrain* terrain, f32& out_x, f32& out_y, f32& out_z) const;
 
     f32 yaw() const { return yaw_; }
     f32 pitch() const { return pitch_; }
@@ -63,8 +84,10 @@ private:
     void decay_shake();
 
     bool input_enabled_ = true;
-    // Look-at target on XZ ground plane
+    // Look-at target on the ground: x/z where the player put it, y the
+    // ground's height there
     f32 target_x_ = 0;
+    f32 target_y_ = 0;
     f32 target_z_ = 0;
 
     // Spherical coords relative to target
@@ -104,12 +127,12 @@ std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
                              const std::array<f32, 16>& b);
 
 /// The shadow map's view-projection: looking down `sun_direction` (toward
-/// the sun, any length) at the ground point (target_x, 0, target_z), an
+/// the sun, any length) at the ground point (target_x, target_y, target_z), an
 /// orthographic box `half` wide each way. Up is +Y, or +Z for a sun
 /// (nearly) overhead, where +Y is the view direction itself and the view
 /// would collapse to a point.
-std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_z,
-                                    f32 half);
+std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_y,
+                                    f32 target_z, f32 half);
 
 } // namespace math
 

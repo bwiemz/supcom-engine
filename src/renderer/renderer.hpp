@@ -1,5 +1,6 @@
 #pragma once
 
+#include "map/heightmap.hpp"
 #include "map/scmap_parser.hpp"
 
 #include "renderer/camera.hpp"
@@ -29,6 +30,7 @@
 #include <array>
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <iosfwd>
 #include <string>
 #include <unordered_map>
@@ -382,6 +384,12 @@ private:
         f32 shadow_fill[4];   ///< rgb
         f32 specular[4];      ///< SpecularColor
     };
+    /// The scene's ground, for the camera's focus (M217a).
+    std::optional<map::Heightmap> ground_;
+    /// Set the camera's focus height from the ground under its target.
+    void update_camera_focus();
+    f32 ground_water_ = 0.0f;
+    bool ground_has_water_ = false;
     /// The scene's lighting: its map's, else SCMP_009's.
     map::ScmapLighting lighting_{};
     bool terrain_xp_ = false;

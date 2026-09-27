@@ -85,13 +85,8 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             drag_end_y_ = my;
 
             // Update world-space drag rect
-            const auto& cam = renderer.camera();
-            f32 w = static_cast<f32>(renderer.width());
-            f32 h = static_cast<f32>(renderer.height());
-            cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0,
-                                drag_world_x0_, drag_world_z0_);
-            cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0,
-                                drag_world_x1_, drag_world_z1_);
+            world_at(renderer, sim, drag_start_x_, drag_start_y_, drag_world_x0_, drag_world_z0_);
+            world_at(renderer, sim, drag_end_x_, drag_end_y_, drag_world_x1_, drag_world_z1_);
         }
     }
 
@@ -111,9 +106,7 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
             f32 wx, wz;
             const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
                                renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-            if (renderer.camera().screen_to_world(
-                    mx, my, static_cast<f32>(renderer.width()),
-                    static_cast<f32>(renderer.height()), 0, wx, wz)) {
+            if (world_at(renderer, sim, mx, my, wx, wz)) {
                 if (auto issued = click_in_command_mode(sim, mode, wx, wz, shift);
                     issued && mode_hooks_.issued)
                     mode_hooks_.issued(*issued);
@@ -161,16 +154,21 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     rmb_was_pressed_ = rmb;
 }
 
+bool InputHandler::world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
+                            f32& wx, f32& wz) {
+    // Where the cursor's ray meets the ground, or the water over it (M217a):
+    // clicks had met the plane y = 0, short of the cursor on high ground.
+    f32 wy = 0.0f;
+    return renderer.camera().pick_ground(mx, my, static_cast<f32>(renderer.width()),
+                                         static_cast<f32>(renderer.height()), sim.terrain(), wx, wy,
+                                         wz);
+}
+
 void InputHandler::handle_left_click(Renderer& renderer,
                                      sim::SimState& sim,
                                      f32 mx, f32 my) {
-    const auto& cam = renderer.camera();
-    f32 w = static_cast<f32>(renderer.width());
-    f32 h = static_cast<f32>(renderer.height());
-
     f32 wx, wz;
-    if (!cam.screen_to_world(mx, my, w, h, 0, wx, wz))
-        return;
+    if (!world_at(renderer, sim, mx, my, wx, wz)) return;
 
     // Check if Shift is held (additive selection)
     bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
@@ -195,15 +193,9 @@ void InputHandler::handle_left_click(Renderer& renderer,
 
 void InputHandler::handle_drag_select(Renderer& renderer,
                                       sim::SimState& sim) {
-    const auto& cam = renderer.camera();
-    f32 w = static_cast<f32>(renderer.width());
-    f32 h = static_cast<f32>(renderer.height());
-
     f32 wx0, wz0, wx1, wz1;
-    if (!cam.screen_to_world(drag_start_x_, drag_start_y_, w, h, 0, wx0, wz0))
-        return;
-    if (!cam.screen_to_world(drag_end_x_, drag_end_y_, w, h, 0, wx1, wz1))
-        return;
+    if (!world_at(renderer, sim, drag_start_x_, drag_start_y_, wx0, wz0)) return;
+    if (!world_at(renderer, sim, drag_end_x_, drag_end_y_, wx1, wz1)) return;
 
     // Normalize rect
     if (wx0 > wx1) std::swap(wx0, wx1);
@@ -233,13 +225,8 @@ void InputHandler::handle_right_click(Renderer& renderer,
                                       f32 mx, f32 my) {
     if (selected_.empty()) return;
 
-    const auto& cam = renderer.camera();
-    f32 w = static_cast<f32>(renderer.width());
-    f32 h = static_cast<f32>(renderer.height());
-
     f32 wx, wz;
-    if (!cam.screen_to_world(mx, my, w, h, 0, wx, wz))
-        return;
+    if (!world_at(renderer, sim, mx, my, wx, wz)) return;
 
     // Check if Shift is held (queue commands without clearing)
     const bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
@@ -575,10 +562,7 @@ std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,
     f64 mx = 0, my = 0;
     renderer.mouse_position(mx, my);
     f32 wx = 0, wz = 0;
-    if (!renderer.camera().screen_to_world(static_cast<f32>(mx), static_cast<f32>(my),
-                                           static_cast<f32>(renderer.width()),
-                                           static_cast<f32>(renderer.height()), 0.0f, wx,
-                                           wz))
+    if (!world_at(renderer, sim, static_cast<f32>(mx), static_cast<f32>(my), wx, wz))
         return std::nullopt;
 
     const f32 size_x = sim.build_ghost_foot_x();

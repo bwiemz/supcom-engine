@@ -477,8 +477,9 @@ static int camera_GetFocusPosition(lua_State* L) {
     auto* r = get_renderer(L);
     f32 x = r ? r->camera().target_x() : 512.0f;
     f32 z = r ? r->camera().target_z() : 512.0f;
+    // On the ground, or the water's surface over it, as the camera keeps it.
     f32 y = 0.0f;
-    if (auto* sim = get_sim(L); sim && sim->terrain()) y = sim->terrain()->get_terrain_height(x, z);
+    if (auto* sim = get_sim(L); sim && sim->terrain()) y = sim->terrain()->get_surface_height(x, z);
     lua_newtable(L);
     lua_pushnumber(L, x);
     lua_rawseti(L, -2, 1);

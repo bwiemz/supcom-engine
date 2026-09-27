@@ -263,7 +263,7 @@ In order of how much they change what the player feels:
 | M214 | Effects | Emitter ramps and textures, bone-attached emitters, geometric beams and trails, FA explosion emitters, shield impact effects. |
 | M215 | Fog of war and icons | Hide entities without intel; blips; FA strategic icon textures. |
 | M216 | Media | XGS categories, volumes and RPC curves; sound variations; ADX movie audio; time-based movie playback. |
-| M217 | Input | UI-capture-aware world input, terrain raycast picking, FA `commandmode.lua`. Remove the hardcoded keys. HiDPI and Wayland scaling, fullscreen and resolution options. |
+| M217 | Input | UI-capture-aware world input, terrain raycast picking, FA `commandmode.lua`. Remove the hardcoded keys. HiDPI and Wayland scaling, fullscreen and resolution options. **M217a ✅** The camera looks at the ground, and clicks land on it. Design: `docs/plans/2026-09-27-m217a-ground-camera-design.md`.<br>• The camera's focus sits on the ground under its target (the water's surface over it), as Moho's `CameraImpl` keeps it. It had orbited a point at height 0, which put the eye in the grass from close up on SCMP_009.<br>• Every click and drag meets the ground through `Camera::pick_ground` (Moho's heightfield intersection, then the water). Clicks had met the plane y = 0, some 15 short of the cursor on SCMP_009's start.<br>• `--camera-test` (gate). |
 
 ### Phase G — Multiplayer and ecosystem (M218–M222)
 

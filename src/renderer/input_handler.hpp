@@ -133,6 +133,11 @@ public:
 
     static constexpr u32 NUM_GROUPS = 10; // 0-9
 
+    /// Where the cursor at (mx, my) points on the ground: the terrain, or
+    /// the water over it (M217a). Every click and drag resolves through it.
+    static bool world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
+                         f32& wx, f32& wz);
+
 private:
     i32 player_army_ = 0;
     sim::FrameView view_;
@@ -177,6 +182,7 @@ private:
 
     /// Find the nearest player-owned unit to a world XZ point within radius.
     u32 pick_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;
+
     /// The live unit of any army nearest (wx, wz) within `radius`, or 0.
     /// With `reclaim`, the nearest thing a Reclaim order takes: a unit or a
     /// prop (tree, rock, wreck) that is reclaimable.

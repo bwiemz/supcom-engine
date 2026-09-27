@@ -1,10 +1,10 @@
 // --lighting-test (M210a): the map's lighting reaches the lit shaders.
 //
 // The map data (SCMP_009's and SCMP_010's lighting and environment) is
-// checked, then an offscreen renderer draws the same stretch of flat land
-// under different lighting. Each comparison is per pixel, between two frames
-// of the same view, and takes the median so the few props in view (whose
-// specular is still the engine's until M211) don't decide it.
+// checked, then an offscreen renderer draws flat ground of the test's own
+// under each lighting. (A map's own land has slopes, trees and their
+// shadows, which a close view of it can't avoid.) Each comparison is per
+// pixel, between two frames of the same view, and takes the median.
 
 #include "integration_tests.hpp"
 #include "render_probe.hpp"
@@ -39,41 +39,6 @@ bool near(f32 a, f32 b, f32 tolerance) {
 
 bool near3(const f32* v, f32 x, f32 y, f32 z, f32 tolerance) {
     return near(v[0], x, tolerance) && near(v[1], y, tolerance) && near(v[2], z, tolerance);
-}
-
-/// A stretch of dry, fairly flat land with no unit near it, to look at from
-/// close up: the centre of the frame is then terrain (and a few props).
-std::optional<std::array<f32, 2>> find_open_land(const sim::SimState& sim) {
-    const map::Terrain& t = *sim.terrain();
-    const f32 w = static_cast<f32>(t.map_width());
-    const f32 h = static_cast<f32>(t.map_height());
-    constexpr f32 kHalf = 48.0f;
-    std::vector<std::array<f32, 2>> units;
-    sim.entity_registry().for_each_unit([&](const sim::Entity& e) {
-        if (!e.destroyed()) units.push_back({e.position().x, e.position().z});
-    });
-    for (int iz = 4; iz * 16.0f < h - 64.0f; ++iz) {
-        for (int ix = 4; ix * 16.0f < w - 64.0f; ++ix) {
-            const f32 cx = ix * 16.0f;
-            const f32 cz = iz * 16.0f;
-            f32 lo = 1e9f;
-            f32 hi = -1e9f;
-            for (int sz = -4; sz <= 4; ++sz) {
-                for (int sx = -4; sx <= 4; ++sx) {
-                    const f32 y = t.get_terrain_height(cx + sx * kHalf / 4, cz + sz * kHalf / 4);
-                    lo = std::min(lo, y);
-                    hi = std::max(hi, y);
-                }
-            }
-            if (t.has_water() && lo < t.water_elevation() + 1.0f) continue;
-            if (hi - lo > 16.0f) continue;
-            const bool clear = std::none_of(units.begin(), units.end(), [&](const auto& u) {
-                return std::abs(u[0] - cx) < 64.0f && std::abs(u[1] - cz) < 64.0f;
-            });
-            if (clear) return std::array<f32, 2>{cx, cz};
-        }
-    }
-    return std::nullopt;
 }
 
 /// The median red-over-blue of a frame's measurable pixels.
@@ -182,14 +147,26 @@ void test_lighting(TestContext& ctx) {
                                 tropical.shadow_fill[1], tropical.shadow_fill[2]));
     }
 
-    // The rendering: one view of open land, drawn under each lighting.
-    const auto spot = find_open_land(ctx.sim);
-    if (!spot) {
-        t.check(false, "Tests 3-10: open land to look at");
-        spdlog::info("Lighting test: {}/{} passed", t.pass, t.pass + t.fail);
-        return;
+    // The rendering: flat ground of the test's own -- one stratum, no normal
+    // map, no props or units -- so a frame's middle is the lit albedo alone,
+    // with the normal straight up.
+    constexpr u32 kSize = 64;
+    constexpr f32 kCentre = kSize / 2.0f;
+    constexpr f32 kDistance = 30.0f;
+    map::Terrain ground(
+        map::Heightmap(kSize, kSize, 1.0f / 128.0f,
+                       std::vector<u16>(static_cast<size_t>(kSize + 1) * (kSize + 1), 0)),
+        0.0f, false);
+    {
+        std::vector<map::StratumInfo> strata(10);
+        for (auto& st : strata) {
+            st.albedo_scale = 4.0f;
+            st.normal_scale = 4.0f;
+        }
+        // Grey gravel, opaque (DXT1): alpha 1 for the glint in Test 9.
+        strata[0].albedo_path = "/env/evergreen2/layers/eg_gravel005_albedo.dds";
+        ground.set_strata(std::move(strata), {}, {});
     }
-    spdlog::info("Looking at ({:.0f}, {:.0f})", (*spot)[0], (*spot)[1]);
 
     OffscreenShots shots(ctx);
     if (!shots.ok()) {
@@ -198,12 +175,12 @@ void test_lighting(TestContext& ctx) {
         return;
     }
 
-    // The view under `lighting` (and the map's own environment unless one
-    // is given), from close up.
+    // The ground under `lighting` (and SCMP_009's environment unless one is
+    // given), from close up.
     const auto shoot = [&](const map::ScmapLighting& lighting,
                            const map::ScmapEnvironment& env = map::ScmapEnvironment{}) {
-        terrain->set_lighting(lighting, env.terrain_shader.empty() ? original_env : env);
-        return shots.shoot(*terrain, (*spot)[0], (*spot)[1], 60.0f);
+        ground.set_lighting(lighting, env.terrain_shader.empty() ? original_env : env);
+        return shots.shoot(ground, kCentre, kCentre, kDistance, /*with_world=*/false);
     };
 
     const auto evergreen_px = shoot(original);
@@ -220,14 +197,14 @@ void test_lighting(TestContext& ctx) {
     map::ScmapLighting glint = original;
     {
         renderer::Camera cam; // placed as shoot() places the renderer's
-        cam.init(static_cast<f32>(terrain->map_width()), static_cast<f32>(terrain->map_height()));
-        cam.set_target((*spot)[0], (*spot)[1]);
-        cam.set_distance(60.0f);
+        cam.init(static_cast<f32>(kSize), static_cast<f32>(kSize));
+        cam.set_target(kCentre, kCentre);
+        cam.set_distance(kDistance);
         f32 ex = 0, ey = 0, ez = 0;
         cam.eye_position(ex, ey, ez);
-        const f32 vx = (*spot)[0] - ex;
-        const f32 vy = terrain->get_terrain_height((*spot)[0], (*spot)[1]) - ey;
-        const f32 vz = (*spot)[1] - ez;
+        const f32 vx = kCentre - ex;
+        const f32 vy = -ey; // the ground is at height 0
+        const f32 vz = kCentre - ez;
         const f32 len = std::sqrt(vx * vx + vy * vy + vz * vz);
         glint.sun_direction[0] = vx / len;
         glint.sun_direction[1] = -vy / len;
@@ -238,7 +215,6 @@ void test_lighting(TestContext& ctx) {
     xp_env.terrain_shader = "TTerrainXP";
     const auto glint_px = shoot(glint);
     const auto glint_xp_px = shoot(glint, xp_env);
-    terrain->set_lighting(original, original_env);
 
     if (evergreen_px.empty() || tinted_fill_px.empty() || lower_sun_px.empty()) {
         t.check(false, "Tests 3-8: frames captured");
@@ -251,8 +227,8 @@ void test_lighting(TestContext& ctx) {
             const auto want = flat_ground_light(lighting);
             std::array<f32, 3> got{};
             for (int c = 0; c < 3; ++c) got[c] = median_ratio(*px, white_fill_px, c);
-            t.check(near(got[0], want[0], 0.05f) && near(got[1], want[1], 0.05f) &&
-                        near(got[2], want[2], 0.05f),
+            t.check(near(got[0], want[0], 0.02f) && near(got[1], want[1], 0.02f) &&
+                        near(got[2], want[2], 0.02f),
                     fmt::format("Test {}: flat ground under {}'s light takes ({:.3f}, {:.3f}, "
                                 "{:.3f}); FA's formula gives ({:.3f}, {:.3f}, {:.3f})",
                                 std::string(name) == "SCMP_009" ? 3 : 4, name, got[0], got[1],
@@ -290,7 +266,7 @@ void test_lighting(TestContext& ctx) {
         // N.S of it, so a sun 0.8 high lights it 0.8 as much as one overhead
         // (the terrain's normal maps, decoded as FA does, stand up from it).
         const f32 d = median_ratio(lower_sun_px, sun_px, 1);
-        t.check(near(d, 0.8f, 0.06f),
+        t.check(near(d, 0.8f, 0.02f),
                 fmt::format("Test 8: a sun 0.8 high lights flat ground {:.3f} as much as "
                             "one overhead",
                             d));
