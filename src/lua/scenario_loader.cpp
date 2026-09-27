@@ -221,6 +221,11 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     auto terrain = std::make_unique<map::Terrain>(
         std::move(heightmap), water_elev, scmap.has_water);
     terrain->set_terrain_types(std::move(scmap.terrain_types));
+    terrain->set_lighting(scmap.lighting, std::move(scmap.environment));
+    spdlog::info("  Lighting: {} sun ({:.2f}, {:.2f}, {:.2f}) x{:.2f}",
+                 terrain->environment().terrain_shader, scmap.lighting.sun_direction[0],
+                 scmap.lighting.sun_direction[1], scmap.lighting.sun_direction[2],
+                 scmap.lighting.multiplier);
 
     // Pass stratum texture data for rendering
     if (!scmap.strata.empty()) {

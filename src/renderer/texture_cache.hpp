@@ -5,6 +5,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cstddef>
 #include <future>
 #include <memory>
 #include <optional>
@@ -54,6 +55,9 @@ public:
     /// Process completed async texture loads (up to max_per_frame).
     /// Call once per frame from the render loop.
     void flush_uploads(u32 max_per_frame = 4);
+
+    /// Textures requested but not yet loaded.
+    std::size_t loading() const { return pending_.size(); }
 
     /// Upload raw RGBA pixels as a cached texture.
     /// Key is used for caching. Pixels must be width*height*4 bytes.

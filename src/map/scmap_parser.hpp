@@ -4,6 +4,7 @@
 #include "core/types.hpp"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::map {
@@ -38,6 +39,51 @@ struct ScmapDecal {
     u32 remove_tick = 0;
 };
 
+/// A map's lighting (M210a): the 23 floats after its environment cubemaps,
+/// as FA's shaders read them (terrain.fx CalculateLighting, mesh.fx
+/// ComputeLight). The defaults are SCMP_009's, for a scene without a map.
+struct ScmapLighting {
+    f32 multiplier = 1.54f;                          ///< LightingMultiplier
+    f32 sun_direction[3] = {0.616f, 0.559f, 0.555f}; ///< toward the sun, unit length
+    f32 sun_ambience[3] = {0.0f, 0.0f, 0.0f};
+    f32 sun_color[3] = {1.38f, 1.29f, 1.14f};
+    f32 shadow_fill[3] = {0.54f, 0.54f, 0.70f};  ///< ShadowFillColor
+    f32 specular[4] = {0.31f, 0.0f, 0.0f, 0.0f}; ///< SpecularColor
+    f32 bloom = 0.036f;
+    f32 fog_color[3] = {0.37f, 0.49f, 0.45f}; ///< unused in game (no FA shader fogs)
+    f32 fog_start = 0.0f;
+    f32 fog_end = 740.0f;
+};
+
+/// What a map draws with besides its terrain textures (M210a).
+struct ScmapEnvironment {
+    std::string terrain_shader; ///< "TTerrain" (the original maps) or "TTerrainXP"
+    std::string background;     ///< background texture
+    std::string sky_cubemap;
+    /// Environment cubemaps by name ("<default>", "<aeon>", "<seraphim>").
+    std::vector<std::pair<std::string, std::string>> cubemaps;
+};
+
+/// A map's water (for M213): the 20 floats and two textures after its
+/// elevations.
+struct ScmapWater {
+    f32 surface_color[3] = {0.0f, 0.7f, 1.5f};
+    f32 color_lerp[2] = {0.064f, 0.119f};
+    f32 refraction_scale = 0.375f;
+    f32 fresnel_bias = 0.15f;
+    f32 fresnel_power = 1.5f;
+    f32 unit_reflection = 0.5f;
+    f32 sky_reflection = 1.5f;
+    f32 sun_shininess = 50.0f;
+    f32 sun_strength = 10.0f;
+    f32 sun_direction[3] = {0.09954818f, -0.9626309f, 0.2518569f};
+    f32 sun_color[3] = {0.8f, 0.7f, 0.5f};
+    f32 sun_reflection = 5.0f;
+    f32 sun_glow = 0.1f;
+    std::string cubemap;
+    std::string ramp;
+};
+
 /// Data extracted from a .scmap file.
 struct ScmapData {
     u32 map_width = 0;
@@ -48,6 +94,9 @@ struct ScmapData {
     f32 water_elevation = 0.0f;
     f32 water_deep_elevation = 0.0f;
     f32 water_abyss_elevation = 0.0f;
+    ScmapWater water; ///< meaningful when has_water
+    ScmapLighting lighting;
+    ScmapEnvironment environment;
     i32 version_minor = 0;
     std::vector<ScmapProp> props;   // map props from .scmap binary
     std::vector<ScmapDecal> decals; // terrain decals from .scmap binary

@@ -263,15 +263,17 @@ std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
     }
 
     // Flag byte + shader/env strings + cubemap count
-    write_u8(0);            // unknown flag byte
-    write_cstring("");      // terrain shader
-    write_cstring("");      // background texture
-    write_cstring("");      // sky cubemap
-    write_i32(0);           // env cubemap count (none)
+    write_u8(0);                        // unknown flag byte
+    write_cstring("TTerrainXP");        // terrain shader
+    write_cstring("/textures/bg.dds");  // background texture
+    write_cstring("/textures/sky.dds"); // sky cubemap
+    write_i32(1);                       // env cubemaps
+    write_cstring("<default>");
+    write_cstring("/textures/envcube.dds");
 
-    // 23 lighting floats
+    // 23 lighting floats, each distinct: 1.0, 1.1, ... 3.2
     for (int i = 0; i < 23; i++) {
-        write_f32(0.0f);
+        write_f32(1.0f + 0.1f * static_cast<f32>(i));
     }
 
     // Water
@@ -324,6 +326,38 @@ TEST_CASE("SCMAP parser extracts water data", "[map]") {
     auto& data = result.value();
     CHECK(data.has_water == true);
     CHECK_THAT(data.water_elevation, WithinAbs(25.0, 0.01));
+}
+
+TEST_CASE("SCMAP parser reads the map's lighting and environment (M210a)", "[map]") {
+    std::vector<u16> heights(9, 100);
+    auto result = parse_scmap(build_test_scmap(2, 2, 1.0f, heights, true, 25.0f));
+    REQUIRE(result.ok());
+    const auto& d = result.value();
+    CHECK(d.environment.terrain_shader == "TTerrainXP");
+    CHECK(d.environment.background == "/textures/bg.dds");
+    CHECK(d.environment.sky_cubemap == "/textures/sky.dds");
+    REQUIRE(d.environment.cubemaps.size() == 1);
+    CHECK(d.environment.cubemaps[0].first == "<default>");
+    CHECK(d.environment.cubemaps[0].second == "/textures/envcube.dds");
+    // The 23 floats in order: multiplier, sun direction, ambience, sun
+    // colour, shadow fill, specular (4), bloom, fog colour, start, end.
+    const auto& l = d.lighting;
+    const auto at = [](int i) { return 1.0 + 0.1 * i; };
+    CHECK_THAT(l.multiplier, WithinAbs(at(0), 1e-5));
+    CHECK_THAT(l.sun_direction[0], WithinAbs(at(1), 1e-5));
+    CHECK_THAT(l.sun_direction[2], WithinAbs(at(3), 1e-5));
+    CHECK_THAT(l.sun_ambience[0], WithinAbs(at(4), 1e-5));
+    CHECK_THAT(l.sun_color[0], WithinAbs(at(7), 1e-5));
+    CHECK_THAT(l.shadow_fill[2], WithinAbs(at(12), 1e-5));
+    CHECK_THAT(l.specular[0], WithinAbs(at(13), 1e-5));
+    CHECK_THAT(l.specular[3], WithinAbs(at(16), 1e-5));
+    CHECK_THAT(l.bloom, WithinAbs(at(17), 1e-5));
+    CHECK_THAT(l.fog_color[0], WithinAbs(at(18), 1e-5));
+    CHECK_THAT(l.fog_start, WithinAbs(at(21), 1e-5));
+    CHECK_THAT(l.fog_end, WithinAbs(at(22), 1e-5));
+    // What follows still parses: the water after the block.
+    CHECK(d.has_water);
+    CHECK_THAT(d.water_elevation, WithinAbs(25.0, 0.01));
 }
 
 TEST_CASE("SCMAP parser rejects invalid magic", "[map]") {

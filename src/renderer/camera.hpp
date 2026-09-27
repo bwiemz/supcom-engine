@@ -103,6 +103,14 @@ std::array<f32, 16> ortho(f32 left, f32 right, f32 bottom, f32 top, f32 near, f3
 std::array<f32, 16> mat4_mul(const std::array<f32, 16>& a,
                              const std::array<f32, 16>& b);
 
+/// The shadow map's view-projection: looking down `sun_direction` (toward
+/// the sun, any length) at the ground point (target_x, 0, target_z), an
+/// orthographic box `half` wide each way. Up is +Y, or +Z for a sun
+/// (nearly) overhead, where +Y is the view direction itself and the view
+/// would collapse to a point.
+std::array<f32, 16> light_view_proj(const f32 sun_direction[3], f32 target_x, f32 target_z,
+                                    f32 half);
+
 } // namespace math
 
 } // namespace osc::renderer

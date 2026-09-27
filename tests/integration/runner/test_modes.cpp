@@ -119,6 +119,7 @@ constexpr Mode kModesBefore[] = {
     {"--prop-test", test_prop, false},
     {"--scale-test", test_scale, false},
     {"--specular-test", test_specular, false},
+    {"--lighting-test", test_lighting, false},
     {"--terrain-normal-test", test_terrain_normal, false},
     {"--decal-test", test_decal, false},
     {"--projectile-test", test_projectile, false},
@@ -271,6 +272,7 @@ void IntegrationModes::print_usage() const {
               << "  --prop-test        Map prop rendering (SCMAP parsing, prop meshes, orientation)\n"
               << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
+              << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"
               << "  --projectile-test  Projectile rendering (blueprint_id, velocity-align, mesh lookup)\n"
               << "  --weapon-test      Weapons fire through their scripts (states, salvos, reload)\n"
@@ -318,7 +320,7 @@ void IntegrationModes::print_usage() const {
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
               << "  --border-render-test Border 9-patch rendering (6-texture ninepatch)\n"
               << "  --edit-render-test Edit control visuals (background, text, caret)\n"
-              << "  --terrain-normal-test Terrain normal maps (per-stratum DXT5nm, TBN, blending)\n"
+              << "  --terrain-normal-test Terrain normal maps (per-stratum RGB normals, TBN, blending)\n"
               << "  --terrain-tex-test Terrain textures (stratum blending, blend maps, UV scaling)\n"
               << "  --emitter-test     IEffect/emitter system (Create*Emitter, beams, decals, chaining)\n"
               << "  --collision-test   CollisionBeam entity (__init, Enable/Disable, SetBeamFx, GetLauncher)\n"

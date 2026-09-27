@@ -271,9 +271,10 @@ void TextureCache::create_specteam_fallback() {
 }
 
 void TextureCache::create_normal_fallback() {
-    // 1x1 flat-normal pixel — FA DXT5nm encoding: X=Green, Y=Alpha
-    // Flat normal (0,0,1) in tangent space → G=128 (x≈0), A=128 (y≈0), z=sqrt(1)=1
-    u8 flat_normal[] = {0, 128, 0, 128};  // RGBA: R=unused, G=128, B=unused, A=128
+    // 1x1 flat-normal pixel, (0,0,1) in tangent space in both of FA's
+    // encodings: RGB (terrain strata: x=R, y=G, z=B) and DXT5nm (meshes:
+    // x=G, y=A, z derived).
+    u8 flat_normal[] = {128, 128, 255, 128};
 
     VkBufferCreateInfo staging_ci{};
     staging_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
