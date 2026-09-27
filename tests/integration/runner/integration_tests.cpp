@@ -14451,11 +14451,9 @@ void test_blend(TestContext& ctx) {
             auto mesh = osc::sim::parse_scm_mesh(*file_data);
             if (mesh && !mesh->vertices.empty()) {
                 auto& v = mesh->vertices[0];
-                // All weights should be 0.25 (equal blend)
-                bool weights_ok = (v.bone_weights[0] == 0.25f &&
-                                   v.bone_weights[1] == 0.25f &&
-                                   v.bone_weights[2] == 0.25f &&
-                                   v.bone_weights[3] == 0.25f);
+                // Rigid, as FA skins: the first bone alone (M211h)
+                bool weights_ok = (v.bone_weights[0] == 1.0f && v.bone_weights[1] == 0.0f &&
+                                   v.bone_weights[2] == 0.0f && v.bone_weights[3] == 0.0f);
                 // bone_indices[0] should be valid (same as old bone_index)
                 bool indices_ok = true; // indices are u8, always valid
                 ok = weights_ok && indices_ok;

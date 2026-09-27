@@ -319,13 +319,14 @@ std::optional<SCMMesh> parse_scm_mesh(const std::vector<char>& file_data) {
         u8 max_bone = bone_count > 0 ? static_cast<u8>(bone_count - 1) : 0;
         for (int bi = 0; bi < 4; bi++)
             if (v.bone_indices[bi] > max_bone) v.bone_indices[bi] = max_bone;
-        // Equal-weight blending: 0.25 per slot (SCM v5 has no explicit weights).
-        // When multiple slots reference the same bone, the shader naturally
-        // accumulates the correct total weight (e.g. [3,3,3,3] → 1.0×bone[3]).
-        v.bone_weights[0] = 0.25f;
-        v.bone_weights[1] = 0.25f;
-        v.bone_weights[2] = 0.25f;
-        v.bone_weights[3] = 0.25f;
+        // Rigid: FA's vertex shaders skin by the first bone alone
+        // (ComputeWorldMatrix(anim.y + boneIndex[0], ...)). Half of retail's
+        // vertices name a bone and three zeros, [b, 0, 0, 0]; a quarter each
+        // moved them three quarters with the root (M211h).
+        v.bone_weights[0] = 1.0f;
+        v.bone_weights[1] = 0.0f;
+        v.bone_weights[2] = 0.0f;
+        v.bone_weights[3] = 0.0f;
     }
 
     // --- Indices (6 bytes per triangle = 3 × u16) ---

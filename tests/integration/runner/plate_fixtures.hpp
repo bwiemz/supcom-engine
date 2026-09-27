@@ -93,12 +93,12 @@ bool near(const Rgb& a, const Rgb& b);
 /// "(r, g, b)", 0..255.
 std::string show(const Rgb& c);
 
-/// The first and last columns of the run of pixels along the frame's middle
-/// row, through the middle, that differ from `sky` by more than 12 of 255
-/// ({0, -1} if the middle is sky).
-std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky);
+/// The first and last columns of the run of pixels along a row (the frame's
+/// middle one unless given), through the frame's middle column, that differ
+/// from `sky` by more than 12 of 255 ({0, -1} if that pixel is sky).
+std::pair<int, int> plate_span(const ImageRGBA8& image, const Rgb& sky, int row = -1);
 
-int plate_width(const ImageRGBA8& image, const Rgb& sky);
+int plate_width(const ImageRGBA8& image, const Rgb& sky, int row = -1);
 
 /// Retail structures a test's plates stand in for, one each (a plate's mesh
 /// blueprint replaces its blueprint's): plain ones, whose scripts leave the
@@ -117,8 +117,11 @@ inline constexpr std::array<const char*, 53> kPlateBlueprints = {
 
 /// A one-bone SCM mesh: a square `half` units either side of the origin,
 /// flat and facing up, cut into `segments` squared cells, wound both ways so
-/// that either culling draws it.
-void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments = 1);
+/// that either culling draws it. With `child_bone`, a second bone (1,
+/// "child", under the root, at rest where it is), which every vertex names
+/// first: [1, 0, 0, 0], as half of retail's vertices name theirs (M211h).
+void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments = 1,
+                     bool child_bone = false);
 
 /// A plate's material: its textures (files under the test's mount) and
 /// technique.

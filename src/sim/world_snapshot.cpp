@@ -86,6 +86,7 @@ void capture_unit(const Unit& u, EntityRecord& r, WorldSnapshot& out) {
     r.nuke_silo_builds = u.silo_build_count(true);
     r.tactical_silo_builds = u.silo_build_count(false);
 
+    r.hidden_bones = u.hidden_bone_mask();
     const auto& pose = u.animated_bone_matrices();
     if (!pose.empty()) {
         r.bone_offset = static_cast<u32>(out.bones.size());

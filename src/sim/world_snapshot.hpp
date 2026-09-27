@@ -47,6 +47,7 @@ struct EntityRecord {
     u32 snap_serial = 0;  ///< changes when the entity teleports (see Entity::note_snap)
     u32 bone_offset = 0;  ///< into WorldSnapshot::bones
     u32 bone_count = 0;   ///< 0 = no animated pose
+    u64 hidden_bones = 0; ///< a unit's hidden bones (Unit:HideBone), bit i bone i, i < 64
 
     // Kind
     bool is_unit = false;
