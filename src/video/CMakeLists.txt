@@ -1,5 +1,6 @@
 add_library(osc_video STATIC
     video_decoder.cpp
+    movie_player.cpp
 )
 
 target_include_directories(osc_video PUBLIC

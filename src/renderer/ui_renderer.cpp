@@ -524,6 +524,21 @@ void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
                 }
                 has_visual = true;
             }
+        } else if (ctrl->control_type() == ui::UIControl::ControlType::Movie) {
+            // Moho's CMauiMovie::DoRender: the movie's frame over the
+            // control, in its alpha, while it plays.
+            VkDescriptorSet ds =
+                movies_ && ctrl->movie_playing() ? movies_->descriptor(ctrl) : VK_NULL_HANDLE;
+            if (ds) {
+                entry.texture_ds = ds;
+                entry.inst.color[0] = entry.inst.color[1] = entry.inst.color[2] = 1.0f;
+                entry.inst.color[3] = ctrl->alpha();
+                entry.inst.uv[0] = 0.0f;
+                entry.inst.uv[1] = 0.0f;
+                entry.inst.uv[2] = 1.0f;
+                entry.inst.uv[3] = 1.0f;
+                has_visual = true;
+            }
         } else if (ctrl->has_solid_color()) {
             // Solid color — use white fallback texture
             entry.texture_ds = tex_cache.fallback_descriptor();

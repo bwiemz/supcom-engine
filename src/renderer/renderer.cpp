@@ -358,6 +358,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // UI renderer instance buffer
     ui_renderer_.init(device_, allocator_);
+    movie_textures_.init(device_, allocator_, &texture_cache_);
+    ui_renderer_.set_movie_textures(&movie_textures_);
 
     // Overlay renderer (health bars, selection, command lines)
     overlay_renderer_.init(device_, allocator_);
@@ -2349,6 +2351,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                         out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
             };
         }
+        movie_textures_.prepare(*ui_registry, fi);
         ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
                             window_width_, window_height_,
                             static_cast<f32>(ui_dispatch_.mouse_x()),
@@ -2425,6 +2428,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     if (fog_renderer_.initialized()) {
         fog_renderer_.record_upload(cmd_buf_[fi]);
     }
+    // The movies' new frames, likewise.
+    movie_textures_.record(cmd_buf_[fi]);
 
     // ==================== SHADOW PASS ====================
     if (shadow_render_pass_ && shadow_framebuffer_ && light_ubo_mapped_[fi]) {
@@ -3319,6 +3324,29 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     // (flush_uploads uses its own one-shot command buffers with vkQueueWaitIdle)
     texture_cache_.flush_uploads(4);
 
+    // The frame's step, as render() takes it (fixed for scripted runs and
+    // captures).
+    {
+        const f64 now = glfwGetTime();
+        f32 dt = (last_frame_time_ > 0.0) ? static_cast<f32>(now - last_frame_time_) : 0.0f;
+        last_frame_time_ = now;
+        if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
+        frame_dt_ = dt;
+    }
+
+    // The UI, before the command buffer: its frame callbacks (the movies
+    // play on there), its events, then its quads, with the movies' new
+    // frames staged for the copy below.
+    if (ui_registry && L) {
+        if (frame_dt_ > 0.0f && frame_dt_ < 1.0f)
+            ui_dispatch_.update_controls(L, *ui_registry, static_cast<f64>(frame_dt_));
+        ui_dispatch_.dispatch_events(L, *ui_registry);
+        movie_textures_.prepare(*ui_registry, fi);
+        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_, window_width_,
+                            window_height_, static_cast<f32>(ui_dispatch_.mouse_x()),
+                            static_cast<f32>(ui_dispatch_.mouse_y()));
+    }
+
     // Begin command buffer
     vkResetCommandBuffer(cmd_buf_[fi], 0);
     VkCommandBufferBeginInfo begin_info{};
@@ -3326,19 +3354,8 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
 
-    // Advance playing movie controls and upload new frames
-    if (ui_registry) {
-        for (auto& ctrl_ptr : ui_registry->all()) {
-            if (!ctrl_ptr || ctrl_ptr->destroyed()) continue;
-            // Decode next frame for playing movies
-            if (ctrl_ptr->movie_playing() && ctrl_ptr->video_decoder()) {
-                auto* dec = ctrl_ptr->video_decoder();
-                if (dec->is_open() && dec->decode_next_frame()) {
-                    ctrl_ptr->set_video_needs_upload(true);
-                }
-            }
-        }
-    }
+    // The movies' new frames (before the render pass).
+    movie_textures_.record(cmd_buf_[fi]);
 
     // Begin swapchain render pass (NOT scene_render_pass_)
     // render_pass_ has 2 attachments: color + depth
@@ -3367,24 +3384,9 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     scissor.extent = {window_width_, window_height_};
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
-    // Process UI input events and OnFrame callbacks
-    if (ui_registry && L) {
-        ui_dispatch_.update_controls(L, *ui_registry, 1.0 / 60.0);
-        ui_dispatch_.dispatch_events(L, *ui_registry);
-    }
-
-    // Update + render UI
-    if (ui_registry && L) {
-        ui_renderer_.update(L, *ui_registry, texture_cache_, font_cache_,
-                           window_width_, window_height_,
-                           static_cast<f32>(ui_dispatch_.mouse_x()),
-                           static_cast<f32>(ui_dispatch_.mouse_y()));
-        if (ui_pipeline_ && ui_renderer_.quad_count() > 0) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              ui_pipeline_);
-            ui_renderer_.render(cmd_buf_[fi], ui_layout_,
-                               window_width_, window_height_);
-        }
+    if (ui_registry && L && ui_pipeline_ && ui_renderer_.quad_count() > 0) {
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, ui_pipeline_);
+        ui_renderer_.render(cmd_buf_[fi], ui_layout_, window_width_, window_height_);
     }
 
     vkCmdEndRenderPass(cmd_buf_[fi]);
@@ -3457,10 +3459,6 @@ bool Renderer::is_mouse_pressed(int glfw_button) const {
 void Renderer::poll_events(f64 dt) {
     if (!window_) return;
     glfwPollEvents();
-
-    // Check for ESC to close
-    if (glfwGetKey(window_, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        glfwSetWindowShouldClose(window_, GLFW_TRUE);
 
     // Toggle bloom with B key
     bool b_pressed = glfwGetKey(window_, GLFW_KEY_B) == GLFW_PRESS;
@@ -3722,6 +3720,7 @@ void Renderer::shutdown() {
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
     fog_renderer_.destroy(device_, allocator_);
+    movie_textures_.destroy();
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
     particle_renderer_.destroy(device_, allocator_);

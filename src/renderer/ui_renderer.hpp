@@ -3,6 +3,7 @@
 #include "renderer/vk_types.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
+#include "renderer/movie_textures.hpp"
 #include "core/types.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/ui_layout.hpp"
@@ -72,6 +73,9 @@ public:
     /// Advance playing bitmap animations by delta_time seconds.
     void advance_animations(lua_State* L, const ui::UIControlRegistry& registry,
                             f32 delta_time);
+
+    /// Where Movie controls find their frames' textures.
+    void set_movie_textures(const MovieTextures* movies) { movies_ = movies; }
 
     /// Issue draw calls for all UI quads. Caller must bind the UI pipeline first.
     void render(VkCommandBuffer cmd, VkPipelineLayout layout,
@@ -146,6 +150,7 @@ private:
     };
     std::vector<QuadEntry> quads_;
     const WorldViewPainter* minimap_painter_ = nullptr; // during update()
+    const MovieTextures* movies_ = nullptr;
     std::vector<UIQuad> painted_; // scratch for world view content
     std::vector<ui::WorldOccluder> world_views_; // this frame's main world views
     std::vector<UIDrawGroup> groups_;

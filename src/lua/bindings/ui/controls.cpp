@@ -9,7 +9,7 @@
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
-#include "video/video_decoder.hpp"
+#include "video/movie_player.hpp"
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/order_helpers.hpp"
@@ -944,92 +944,86 @@ const MethodEntry ui_cursor_methods[] = {
 // clang-format on
 
 // ====================================================================
-// M75: Movie (stub — video playback not implemented)
+// Movie (M216a): Moho's CMauiMovie. The movie plays on its own clock
+// (video::MoviePlayer); UIDispatch runs its Frame, the renderer draws it.
 // ====================================================================
 
+/// InternalSet(self, filename) -> ok: CMauiMovie::LoadFile. Replaces the
+/// movie and publishes its size to MovieWidth/MovieHeight. On failure the
+/// movie is gone and the control no longer plays.
 static int movie_InternalSet(lua_State* L) {
     auto* ctrl = check_control(L);
     if (!ctrl) return 0;
-    const char* path = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : nullptr;
-    if (!path) { lua_pushboolean(L, 0); return 1; }
+    const char* path = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
     ctrl->set_movie_filename(path);
+    ctrl->set_movie_player(nullptr);
 
-    // Get VFS via LuaState helper
     auto* vfs = lua::LuaState::get_vfs(L);
-    if (vfs) {
-        // Try .mpg version first (pre-converted), then original path
-        std::string mpg_path(path);
-        auto dot = mpg_path.rfind('.');
-        if (dot != std::string::npos)
-            mpg_path = mpg_path.substr(0, dot) + ".mpg";
-
-        auto data = vfs->read_file(mpg_path);
-        if (!data) data = vfs->read_file(path);
-
-        if (data) {
-            auto dec = std::make_unique<osc::video::VideoDecoder>();
-            if (dec->open_file(reinterpret_cast<const osc::u8*>(data->data()), data->size())) {
-                spdlog::info("MovieControl: opened '{}' ({}x{})",
-                             path, dec->width(), dec->height());
-                ctrl->set_video_decoder(std::move(dec));
-                ctrl->set_movie_loaded(true);
-            } else {
-                spdlog::warn("MovieControl: failed to decode '{}'", path);
-            }
-        } else {
-            spdlog::warn("MovieControl: file not found '{}'", path);
-        }
+    auto file = vfs ? vfs->read_file(path) : std::nullopt;
+    auto movie = std::make_unique<osc::video::MoviePlayer>();
+    if (!file || !movie->open(std::move(*file))) {
+        spdlog::warn("Error opening movie {}", path);
+        ctrl->set_movie_playing(false);
+        lua_pushboolean(L, 0);
+        return 1;
     }
-    lua_pushboolean(L, ctrl->movie_loaded() ? 1 : 0);
+    set_lazyvar_value(L, 1, "MovieWidth", static_cast<f32>(movie->width()));
+    set_lazyvar_value(L, 1, "MovieHeight", static_cast<f32>(movie->height()));
+    ctrl->set_movie_player(std::move(movie));
+    lua_pushboolean(L, 1);
     return 1;
 }
 
 static int movie_IsLoaded(lua_State* L) {
     auto* ctrl = check_control(L);
-    lua_pushboolean(L, ctrl ? ctrl->movie_loaded() : 0);
+    lua_pushboolean(L, ctrl && ctrl->movie_player() && ctrl->movie_player()->loaded() ? 1 : 0);
     return 1;
 }
 
+/// Play(): playing, and wanting frame updates; without a movie the next
+/// frame finishes it (Moho sets playing only when it has one).
 static int movie_Play(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) {
+    if (!ctrl) return 0;
+    ctrl->set_movie_playing(false);
+    ctrl->set_needs_frame_update(true);
+    if (auto* movie = ctrl->movie_player()) {
+        movie->play();
         ctrl->set_movie_playing(true);
-        if (ctrl->video_decoder() && ctrl->video_decoder()->is_open()) {
-            ctrl->video_decoder()->decode_next_frame();
-            ctrl->set_video_needs_upload(true);
-        }
+        ctrl->set_movie_stopped(false);
     }
     return 0;
 }
 
+/// Stop(): the movie pauses; the next frame runs OnStopped.
 static int movie_Stop(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) ctrl->set_movie_playing(false);
+    if (ctrl && ctrl->movie_player()) {
+        ctrl->set_movie_stopped(true);
+        ctrl->movie_player()->pause();
+    }
     return 0;
 }
 
 static int movie_Loop(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl) {
-        bool loop = lua_toboolean(L, 2) != 0;
-        ctrl->set_movie_looping(loop);
-        if (ctrl->video_decoder())
-            ctrl->video_decoder()->set_loop(loop);
-    }
+    if (ctrl) ctrl->set_movie_looping(lua_toboolean(L, 2) != 0);
     return 0;
 }
 
+/// GetFrameRate() / GetNumFrames(): the movie's (0 without one, where
+/// Moho would fault).
 static int movie_GetFrameRate(lua_State* L) {
     auto* ctrl = check_control(L);
-    if (ctrl && ctrl->video_decoder() && ctrl->video_decoder()->is_open())
-        lua_pushnumber(L, ctrl->video_decoder()->framerate());
-    else
-        lua_pushnumber(L, 30.0);
+    const auto* movie = ctrl ? ctrl->movie_player() : nullptr;
+    lua_pushnumber(L, movie ? movie->frame_rate() : 0.0);
     return 1;
 }
 
 static int movie_GetNumFrames(lua_State* L) {
-    lua_pushnumber(L, 0); // stub: no frames
+    auto* ctrl = check_control(L);
+    const auto* movie = ctrl ? ctrl->movie_player() : nullptr;
+    lua_pushnumber(L, movie ? movie->frame_count() : 0);
     return 1;
 }
 

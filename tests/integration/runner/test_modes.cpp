@@ -5,6 +5,7 @@
 #include "test_modes.hpp"
 #include "app/support.hpp"
 #include "audio_data_test.hpp"
+#include "movie_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
 #include "core/log.hpp"
@@ -228,7 +229,7 @@ constexpr const char* kOwnModes[] = {
     "--gameui-test",    "--victory-test",      "--audio-data-test", "--lobby-flow-test",
     "--dualstate-test", "--construction-test", "--phase2-test",     "--phase3-test",
     "--phase4-test",    "--phase5-test",       "--smoke-test",      "--draw-test",
-    "--stress-test",    "--full-smoke-test",
+    "--stress-test",    "--full-smoke-test",   "--movie-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -359,6 +360,7 @@ void IntegrationModes::print_usage() const {
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
+              << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
               << "  --scissor-test     Scissor/clip rectangles (parent-child clipping)\n"
@@ -403,6 +405,7 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     request.ai_army_2 =
         has("--ai-test") || has("--platoon-test") || has("--threat-test") || has("--combat-test");
     request.world_ui = has("--gameui-test") || has("--victory-test");
+    request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
     if (interp_) osc::test_status::set_count_lua_failures(true);
@@ -508,6 +511,14 @@ std::optional<int> IntegrationModes::before_init(const lua::InitConfig& config) 
 }
 
 std::optional<int> IntegrationModes::front_end(Engine& e) {
+    if (has("--movie-test")) {
+        if (!e.map_path.empty()) {
+            spdlog::error("--movie-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        osc::test::run_movie_test(e);
+        return finish_test_run("movie-test");
+    }
     const auto& map_path = e.map_path;
     auto& ui_lua_state = e.ui_lua_state;
     auto& ui_registry = e.ui_registry;

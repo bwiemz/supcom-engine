@@ -8,6 +8,7 @@
 #include "renderer/terrain_mesh.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
+#include "renderer/movie_textures.hpp"
 #include "renderer/ui_renderer.hpp"
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/minimap_renderer.hpp"
@@ -98,7 +99,10 @@ public:
     /// Tear down scene-specific GPU resources for map reload.
     void clear_scene();
     /// The UI's controls are being replaced with a new UI state's.
-    void forget_ui_controls() { ui_dispatch_.forget_controls(); }
+    void forget_ui_controls() {
+        ui_dispatch_.forget_controls();
+        movie_textures_.forget();
+    }
 
     /// Render one frame from the world as `view` draws it, between the
     /// sim's last two ticks. It shows (and takes) the death flashes and
@@ -333,6 +337,7 @@ private:
     WaterRenderer water_renderer_;
     FogRenderer fog_renderer_;
     UIRenderer ui_renderer_;
+    MovieTextures movie_textures_; ///< Movie controls' frames (M216a)
     OverlayRenderer overlay_renderer_;
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)

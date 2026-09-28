@@ -90,6 +90,8 @@ struct TestRequest {
     bool ai_army_2 = false;
     /// Headless, but with FA's game interface built.
     bool world_ui = false;
+    /// The front end starts with FA's splash screens, as a player's does.
+    bool splash = false;
 };
 
 /// The test modes an integration runner adds to the run. The hooks sit

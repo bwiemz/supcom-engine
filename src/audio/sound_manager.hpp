@@ -73,13 +73,23 @@ public:
     SoundHandle play_loop(const std::string& bank, const std::string& cue,
                           const sim::Vector3* pos = nullptr);
 
+    /// Prepare a 2D cue without starting it (XACT's preload-only play,
+    /// retail's PlaySound(sound, true)): it takes its place against the
+    /// cue's limits and waits, silent, until start(). A stop ends it.
+    SoundHandle prepare(const std::string& bank, const std::string& cue);
+    /// Start a prepared sound (StartSound); anything else is left alone.
+    void start(SoundHandle handle);
+    /// Whether the sound is prepared and not yet started.
+    bool is_prepared(SoundHandle handle) const;
+
     /// Stop a sound. Not immediate: fade out (the cue's or its category's
     /// fade) or run the sound's release curve; with neither, stop now.
     void stop(SoundHandle handle, bool immediate = true);
     /// Stop everything, at once.
     void stop_all();
 
-    /// Whether the sound is still playing (a fading or releasing sound is).
+    /// Whether the sound is still playing (a fading or releasing sound is;
+    /// a prepared one is not yet).
     bool is_playing(SoundHandle handle) const;
     /// Call `fn` once when the sound ends (at once if it already has).
     void on_finished(SoundHandle handle, std::function<void()> fn);
@@ -135,6 +145,12 @@ private:
     /// Decoded-ready (WAV-wrapped) data of a wave, cached.
     std::shared_ptr<const WaveData> wave_data(const XwbParser& bank, u32 index);
     void start_event(CueInstance& inst, size_t track, const xact::PlayEvent& ev);
+    /// A new instance of the cue, admitted against its limits but not
+    /// begun (nullptr: unknown, culled or over its limits).
+    CueInstance* create(const std::string& bank, const std::string& cue, const sim::Vector3* pos,
+                        std::string_view lod_cutoff);
+    /// Begin an instance: its events scheduled from now, those at 0 started.
+    void begin(CueInstance& inst);
     void end_instance(CueInstance& inst);
     bool admit(const xact::SoundBank& sb, const xact::Cue& cue, const xact::Sound& sound);
     int category_of(const CueInstance& inst) const;

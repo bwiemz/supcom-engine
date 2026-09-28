@@ -2,7 +2,7 @@
 
 #include "core/types.hpp"
 
-#include "video/video_decoder.hpp"
+#include "video/movie_player.hpp"
 
 #include <memory>
 #include <string>
@@ -74,7 +74,7 @@ public:
     // --- Type flags ---
     virtual bool is_frame() const { return false; }
 
-    enum class ControlType : u8 { Generic, Edit, ItemList, Scrollbar };
+    enum class ControlType : u8 { Generic, Edit, ItemList, Scrollbar, Movie };
     ControlType control_type() const { return control_type_; }
     void set_control_type(ControlType t) { control_type_ = t; }
 
@@ -278,21 +278,22 @@ public:
     bool cursor_visible() const { return cursor_visible_; }
     void set_cursor_visible(bool v) { cursor_visible_ = v; }
 
-    // --- Movie state ---
+    // --- Movie state (Moho's CMauiMovie) ---
+    /// The file last given to InternalSet.
     const std::string& movie_filename() const { return movie_filename_; }
     void set_movie_filename(const std::string& f) { movie_filename_ = f; }
-    bool movie_loaded() const { return movie_loaded_; }
-    void set_movie_loaded(bool l) { movie_loaded_ = l; }
+    /// Its movie, or null (none set, or it failed to open).
+    video::MoviePlayer* movie_player() { return movie_player_.get(); }
+    const video::MoviePlayer* movie_player() const { return movie_player_.get(); }
+    void set_movie_player(std::unique_ptr<video::MoviePlayer> m);
+    /// Play was called, and the movie has not finished.
     bool movie_playing() const { return movie_playing_; }
     void set_movie_playing(bool p) { movie_playing_ = p; }
     bool movie_looping() const { return movie_looping_; }
     void set_movie_looping(bool l) { movie_looping_ = l; }
-
-    // Video decoder backend (owned via unique_ptr)
-    video::VideoDecoder* video_decoder() { return video_decoder_.get(); }
-    void set_video_decoder(std::unique_ptr<video::VideoDecoder> dec) { video_decoder_ = std::move(dec); }
-    bool video_needs_upload() const { return video_needs_upload_; }
-    void set_video_needs_upload(bool v) { video_needs_upload_ = v; }
+    /// Stop was called (and Play not since).
+    bool movie_stopped() const { return movie_stopped_; }
+    void set_movie_stopped(bool s) { movie_stopped_ = s; }
 
     // --- WorldMesh state ---
     bool world_mesh_hidden() const { return world_mesh_hidden_; }
@@ -407,11 +408,10 @@ private:
 
     // Movie state
     std::string movie_filename_;
-    bool movie_loaded_ = false;
+    std::unique_ptr<video::MoviePlayer> movie_player_;
     bool movie_playing_ = false;
     bool movie_looping_ = false;
-    std::unique_ptr<video::VideoDecoder> video_decoder_;
-    bool video_needs_upload_ = false;
+    bool movie_stopped_ = false;
 
     // WorldMesh state
     bool world_mesh_hidden_ = false;

@@ -15837,15 +15837,15 @@ void test_controls(TestContext& ctx) {
 
     // --- Test 11: Movie Loop + IsLoaded + GetFrameRate + GetNumFrames ---
     {
-        auto r = ctx.lua_state.do_string(
-            "local m = {}\n"
-            "setmetatable(m, {__index = moho.movie_methods})\n"
-            "InternalCreateMovie(m, test_frame)\n"
-            "m:Loop(true)\n"
-            "local loaded = m:IsLoaded()\n"
-            "local fps = m:GetFrameRate()\n"
-            "local nf = m:GetNumFrames()\n"
-            "return fps == 30 and nf == 0\n");
+        auto r =
+            ctx.lua_state.do_string("local m = {}\n"
+                                    "setmetatable(m, {__index = moho.movie_methods})\n"
+                                    "InternalCreateMovie(m, test_frame)\n"
+                                    "m:Loop(true)\n"
+                                    "local loaded = m:IsLoaded()\n"
+                                    "local fps = m:GetFrameRate()\n"
+                                    "local nf = m:GetNumFrames()\n"
+                                    "return fps == 0 and nf == 0 -- no movie set: none to read\n");
         bool ok = r && lua_isboolean(L, -1) && lua_toboolean(L, -1);
         lua_settop(L, 0);
         if (ok) { pass++; spdlog::info("[PASS] Test 11: Movie Loop/IsLoaded/GetFrameRate/GetNumFrames"); }

@@ -65,6 +65,13 @@ public:
     const GPUTexture* upload_rgba(const std::string& key,
                                    const u8* pixels, u32 width, u32 height);
 
+    /// A descriptor set drawing `view` (shader-readable) with the cache's
+    /// sampler, for a texture made elsewhere (a movie's). It stays in the
+    /// cache's pool until the cache is destroyed.
+    VkDescriptorSet make_descriptor(VkImageView view) {
+        return allocate_and_write_descriptor(view);
+    }
+
     /// Descriptor set for the 1x1 white fallback texture.
     VkDescriptorSet fallback_descriptor() const { return fallback_.descriptor_set; }
 

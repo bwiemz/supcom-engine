@@ -13,6 +13,7 @@ add_library(osc_renderer STATIC
     pipeline_builder.cpp
     vk_utils.cpp
     ui_renderer.cpp
+    movie_textures.cpp
     font_cache.cpp
     input_handler.cpp
     overlay_renderer.cpp
