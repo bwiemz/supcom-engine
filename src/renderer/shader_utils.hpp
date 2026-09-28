@@ -21,6 +21,14 @@ extern const char* unit_frag;
 extern const char* water_vert;
 extern const char* water_frag;
 extern const char* water_mask_frag; // TWaterLayAlphaMask: alpha 0 over open water (M213a)
+/// The sky (sky.fx; M210b): the dome (DomeVS), its Atmosphere and Cirrus,
+/// and the decals' billboards (DecalVS) with their albedo and glow passes.
+const char* sky_dome_vert();
+const char* sky_atmosphere_frag();
+const char* sky_cirrus_frag();
+const char* sky_decal_vert();
+extern const char* sky_decal_albedo_frag;
+const char* sky_decal_glow_frag();
 extern const char* mesh_vert;
 extern const char* mesh_frag;
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)

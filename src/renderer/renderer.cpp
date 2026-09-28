@@ -393,6 +393,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    // FA's sky (M210b)
+    sky_renderer_.init(device_, allocator_, scene_render_pass_);
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, scene_render_pass_);
     water_renderer_.set_refraction(refraction_image_.view);
@@ -1693,6 +1695,7 @@ void Renderer::clear_scene() {
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.clear();
+    sky_renderer_.clear();
     fog_renderer_.destroy(device_, allocator_);
 
     if (bone_ds_pool_) {
@@ -1871,6 +1874,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // FA's water: its quad, water map, Fresnel table and textures (M213a),
     // before the terrain, which is tinted under it by the water map.
     water_renderer_.build(*terrain, texture_cache_);
+    // The map's sky dome (M210b)
+    sky_renderer_.build(*terrain, texture_cache_);
 
     // The map's normal maps (M212e), whose tile size the strata's block holds.
     const TerrainNormalMaps normal_maps = terrain_normal_maps(*terrain);
@@ -2364,6 +2369,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // FA's water: this frame's camera and time (M213a)
     water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
+    // The sky: its time is the tick and the interpolant, unwrapped (M210b)
+    sky_renderer_.update(camera_, vp, view.cur() ? view.cur()->tick : 0, view.alpha(), fi);
 
     // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
@@ -2654,8 +2661,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Always render scene to offscreen HDR image (scene_render_pass_).
     // Composite pass copies scene to swapchain, adding bloom when enabled.
     std::array<VkClearValue, 2> clear_values{};
-    // The sky, until the sky dome (M210b); alpha 0, for it doesn't glow (M211e)
-    clear_values[0].color = {{0.55f, 0.62f, 0.72f, 0.0f}};
+    // Black, and no glow, as Moho clears the head; the sky dome draws over it
+    clear_values[0].color = {{clear_color_[0], clear_color_[1], clear_color_[2], clear_color_[3]}};
     clear_values[1].depthStencil = {1.0f, 0};
 
     // Split around the water on a map with it (M213a), and before the
@@ -2683,6 +2690,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     VkRect2D scissor{};
     scissor.extent = {window_width_, window_height_};
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
+
+    // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b)
+    sky_renderer_.record(cmd_buf_[fi], fi);
 
     // 1. Draw terrain
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
@@ -3910,6 +3920,7 @@ void Renderer::shutdown() {
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
     water_renderer_.destroy(device_, allocator_);
+    sky_renderer_.destroy(device_, allocator_);
     fog_renderer_.destroy(device_, allocator_);
     movie_textures_.destroy();
     ui_renderer_.destroy(device_, allocator_);
