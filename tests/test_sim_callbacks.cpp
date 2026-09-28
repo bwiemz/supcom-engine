@@ -21,6 +21,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -300,6 +301,32 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
     bad[bad.size() - 6] = 9; // the tag, before the string's length and byte
     osc::sim::ByteReader rb(bad);
     CHECK_FALSE(osc::sim::read_command(rb, back));
+}
+
+TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][replay]") {
+    std::vector<osc::u8> bytes;
+    {
+        CallbackSim rec;
+        const osc::u32 unit = rec.spawn();
+        rec.sim.set_recording(true);
+        rec.sim.tick();
+        rec.sim.submit_callback(toggle(unit));
+        rec.sim.tick();
+        bytes = rec.sim.recorded_replay().serialize();
+    }
+    // The callback is the last command, its "no value" byte the file's last:
+    // v7 wrote neither
+    REQUIRE(bytes.back() == 0);
+    bytes.pop_back();
+    const osc::u32 v7 = 7;
+    std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
+    Replay back;
+    REQUIRE(Replay::deserialize(bytes, back));
+    CHECK(back.version == 7);
+    REQUIRE(back.commands.size() == 1);
+    REQUIRE(back.commands[0].callback);
+    CHECK(back.commands[0].callback->func_name == "ToggleThing");
+    CHECK_FALSE(back.commands[0].callback->value);
 }
 
 TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lockstep]") {

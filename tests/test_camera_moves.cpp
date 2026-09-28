@@ -181,6 +181,15 @@ TEST_CASE("On the game clock a move runs on game time (M217g)", "[camera][moves]
     cam.set_clocks(9.0, 2.5);
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.zoom(), WithinAbs(zoom0 + (40.0f - zoom0) * 0.5f, 1e-3));
+    // A spin's rates run on it too: a quarter turn a second, half a game
+    // second in a sixtieth of the system's
+    cam.set_clocks(9.0, 3.5);
+    cam.frame(1.0 / 60.0);
+    const f32 heading0 = cam.heading();
+    cam.spin_rates(0.25f, 0.0f);
+    cam.set_clocks(9.0 + 1.0 / 60.0, 4.0);
+    cam.frame(1.0 / 60.0);
+    CHECK_THAT(cam.heading() - heading0, WithinAbs(0.25 * 0.5 * 2.0 * kPi, 1e-4));
 }
 
 TEST_CASE("TargetBox frames a box's centre at its wider side (M217g)", "[camera][moves]") {
@@ -192,9 +201,16 @@ TEST_CASE("TargetBox frames a box's centre at its wider side (M217g)", "[camera]
     CHECK_THAT(cam.zoom(), WithinAbs(80.0, 1e-4));
     CHECK_THAT(cam.target_x(), WithinAbs(100.0, 1e-3));
     CHECK_THAT(cam.target_z(), WithinAbs(115.0, 1e-3));
-    // Over seconds, a box move that ends a place, its pitch the zoom's
+    // Over seconds, a box move that ends a place, its pitch the zoom's all
+    // the way (as a still camera's at that zoom)
     cam.target_box({100.0f, kGround, 100.0f}, {130.0f, kGround, 110.0f}, 1.0f);
     CHECK(cam.moving());
+    cam.set_clocks(0.5, 0.0);
+    cam.frame(0.0);
+    Camera still = camera_over(ground);
+    still.set_zoom(cam.zoom());
+    CHECK(cam.zoom() < 79.0f);
+    CHECK_THAT(cam.pitch(), WithinAbs(still.pitch(), 1e-5));
     cam.set_clocks(1.0, 0.0);
     cam.frame(0.0);
     CHECK_FALSE(cam.moving());
@@ -232,6 +248,15 @@ TEST_CASE("A tracked entity is followed, and let go when gone (M217g)", "[camera
     CHECK(cam.target_type() == CameraTarget::Entity);
     cam.frame(1.0 / 60.0);
     CHECK_THAT(cam.target_x(), WithinAbs(150.0, 1e-3));
+    // With the next gone too, on to the one after it, not past it
+    world[7].pos = {90.0f, kGround, 90.0f};
+    world[9].pos = {170.0f, kGround, 60.0f};
+    world[10].pos = {60.0f, kGround, 170.0f};
+    cam.target_entities({7, 12, 9, 10}, true, 50.0f, 0.0f); // 12: never there
+    world.erase(7);
+    for (int i = 0; i < 3; ++i) cam.frame(1.0 / 60.0);
+    CHECK(cam.target_type() == CameraTarget::Entity);
+    CHECK_THAT(cam.target_x(), WithinAbs(170.0, 1e-3));
     // Untracked, it goes there once
     Camera once = camera_over(ground);
     once.set_entity_lookup([&](u32 id, CameraEntityPose& out) {
@@ -290,4 +315,16 @@ TEST_CASE("RevertRotation makes the target a place, unless it follows one (M217g
     cam.spin(10.0f, 0.0f);
     cam.revert_rotation();
     CHECK(cam.target_type() == CameraTarget::Location);
+    // Following an entity, it keeps following
+    CameraEntityPose pose;
+    pose.pos = {120.0f, kGround, 120.0f};
+    cam.set_entity_lookup([&](u32, CameraEntityPose& out) {
+        out = pose;
+        return true;
+    });
+    cam.target_entities({3}, true, 60.0f, 0.0f);
+    cam.spin(10.0f, 0.0f);
+    REQUIRE(cam.rotated());
+    cam.revert_rotation();
+    CHECK(cam.target_type() == CameraTarget::Entity);
 }
