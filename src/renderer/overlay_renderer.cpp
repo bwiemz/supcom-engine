@@ -1,5 +1,6 @@
 #include "renderer/overlay_renderer.hpp"
 #include "renderer/beam_renderer.hpp"
+#include "renderer/trail_renderer.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
@@ -788,6 +789,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 continue;
             // And beams the beam renderer draws as FA does (M214a).
             if (beams_ && beams_->drew_effect(fx_ptr->id)) continue;
+            // And trails the trail renderer draws (M214b).
+            if (trails_ && trails_->draws_effect(fx_ptr->id)) continue;
 
             // Resolve effect world position from parent entity + offset
             f32 wx = fx_ptr->offset_x;

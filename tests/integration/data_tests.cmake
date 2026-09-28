@@ -50,7 +50,7 @@ set(OSC_DATA_TESTS_GATE
     shield-render-test shield-test silo-test smoke-test spatial-test strata-test
     specular-test stall-test stats-test steer-test strategic-icon-test stress-test stub-test targeting-test
     teamcolor-test
-    terrain-normal-test terrain-tex-test text-test threat-test
+    terrain-normal-test terrain-tex-test text-test threat-test trail-render-test
     tiled-render-test toggle-test transport-drop-test transport-pickup-test transport-silo-test transport-slots-test transport-test ui-test
     uiboot-test uirender-test unit-intel-test unitsound-test upgrade-test vet-adj-render-test
     vet-test vfx-render-test victory-test weapon-test wreck-test

@@ -101,6 +101,24 @@ void capture_beam(const SimState& sim, const IEffect& fx, EffectRecord& r) {
     }
 }
 
+/// A trail's point at capture (M214b): its offset (OffsetEmitter, the
+/// POSITION_* params) in its bone's frame, as Moho's
+/// CEfxEmitter::InterpolatePosition places it; an entity that isn't a unit
+/// has only its own frame.
+void capture_anchor(const SimState& sim, const IEffect& fx, EffectRecord& r) {
+    if (fx.type() != EffectType::TRAIL_EMITTER || !fx.entity_id()) return;
+    const Entity* e = sim.entity_registry().find(fx.entity_id());
+    if (!e || e->destroyed()) return;
+    const Vector3 local{fx.offset_x(), fx.offset_y(), fx.offset_z()};
+    r.anchored = true;
+    if (e->is_unit()) {
+        r.anchor = static_cast<const Unit&>(*e).bone_world_point(fx.bone_index(), local);
+        return;
+    }
+    const Vector3 turned = quat_rotate(e->orientation(), local);
+    r.anchor = {e->position().x + turned.x, e->position().y + turned.y, e->position().z + turned.z};
+}
+
 /// Each army's recon of `u` (M215d): the sim's (cloak and stealth counted),
 /// less what the unit's layer hides from a sense, as Moho's GetNewReconFor
 /// asks radar only above the water and sonar only in or under it.
@@ -287,6 +305,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
         capture_beam(sim, *fx, r);
+        capture_anchor(sim, *fx, r);
     }
 
     for (size_t i = 0; i < sim.army_count(); ++i) {

@@ -25,6 +25,7 @@ add_executable(osc_integration
     runner/strategic_icon_test.cpp
     runner/counter_intel_test.cpp
     runner/beam_render_test.cpp
+    runner/trail_render_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )

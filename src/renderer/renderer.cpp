@@ -354,6 +354,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
                             texture_ds_layout_, texture_sampler_);
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    // FA's trails, likewise (M214b)
+    trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -368,6 +370,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     minimap_renderer_.set_recon(&recon_);
     particle_system_.set_recon(&recon_);
     overlay_renderer_.set_beams(&beam_renderer_);
+    overlay_renderer_.set_trails(&trail_renderer_);
 
     // HUD renderer (economy bars)
     hud_renderer_.init(device_, allocator_);
@@ -1587,6 +1590,9 @@ void Renderer::clear_scene() {
     particle_system_.clear();
     emitter_bp_cache_.clear();
     beam_bp_cache_.clear();
+    // The trails' segments point into their blueprint cache (M214b).
+    trail_renderer_.clear();
+    trail_bp_cache_.clear();
     strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
 
     terrain_map_width_ = 0;
@@ -1634,6 +1640,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                            vfs::VirtualFileSystem* vfs, lua_State* L) {
     emitter_bp_cache_.set_vfs(vfs);
     beam_bp_cache_.set_vfs(vfs);
+    trail_bp_cache_.set_vfs(vfs);
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
@@ -2291,6 +2298,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // FA's beams, before the overlay, which leaves the ones drawn to them (M214a)
     beam_renderer_.update(view, camera_, beam_bp_cache_, texture_cache_, L, &recon_,
                           unit_renderer_.shader_time(), fi);
+    // And its trails, which likewise leave their dots to them (M214b)
+    trail_renderer_.update(view, camera_, &frustum, trail_bp_cache_, texture_cache_, L, &recon_,
+                           fi);
 
     // Update game overlays (health bars, selection circles, command lines, game over)
     {
@@ -2810,6 +2820,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
+    // 4b. FA's trails under the water, a negative SortOrder's (M214b)
+    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
+
     // 5. Draw water (tessellated grid with wave animation, depth coloring)
     if (water_renderer_.has_water() && water_pipeline_) {
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -2851,6 +2864,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // 5c. FA's beams (M214a)
     beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
+
+    // 5d. And the other trails (M214b)
+    trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
 
     // ==================== COMPOSITE + BLOOM ====================
     // Scene always renders to offscreen HDR. End scene pass, optionally run
@@ -3091,6 +3107,17 @@ void Renderer::dump_frame(std::ostream& out) const {
                 b.start_color[3], b.end_color[0], b.end_color[1], b.end_color[2], b.end_color[3],
                 b.blendmode, b.u_offset, b.v_start, b.v_end));
         section("beams", std::move(beams));
+    }
+    {
+        std::vector<std::string> trails;
+        for (const auto& t : trail_renderer_.drawn())
+            trails.push_back(fmt::format(
+                "{} {} | {:.3f} {:.3f} {:.3f} -> {:.3f} {:.3f} {:.3f} | t {:.4f} {:.4f} | u {:.4f} "
+                "{:.4f} | {:.4f} | {} | {}",
+                t.effect_id, t.blueprint, t.start.x, t.start.y, t.start.z, t.end.x, t.end.y,
+                t.end.z, t.t_start, t.t_end, t.u_start, t.u_end, t.size, t.blendmode,
+                t.under_water ? "under" : "over"));
+        section("trails", std::move(trails));
     }
     std::vector<std::string> emitters;
     for (const auto& e : particle_system_.emitters()) {
@@ -3531,6 +3558,7 @@ void Renderer::shutdown() {
     overlay_renderer_.destroy(device_, allocator_);
     particle_renderer_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
+    trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
     strategic_icon_renderer_.destroy(device_, allocator_);
     hud_renderer_.destroy(device_, allocator_);

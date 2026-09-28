@@ -25,6 +25,9 @@ add_library(osc_renderer STATIC
     recon_view.cpp
     beam_blueprint.cpp
     beam_renderer.cpp
+    effect_blueprint_file.cpp
+    trail_blueprint.cpp
+    trail_renderer.cpp
     emitter_blueprint.cpp
     particle_system.cpp
     particle_renderer.cpp

@@ -141,6 +141,11 @@ struct EffectRecord {
     enum class BeamReach : u8 { None, Ends, Along };
     BeamReach beam = BeamReach::None;
     Vector3 beam_start, beam_end, beam_dir;
+    /// A trail's point this tick (M214b), found at capture: its entity's
+    /// bone with the effect's offset in the bone's frame. Unset while it
+    /// has no entity.
+    bool anchored = false;
+    Vector3 anchor;
 };
 
 struct ResourceRecord {
