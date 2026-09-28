@@ -122,6 +122,7 @@ constexpr Mode kModesBefore[] = {
     {"--scale-test", test_scale, false},
     {"--specular-test", test_specular, false},
     {"--lighting-test", test_lighting, false},
+    {"--map-parse-test", test_map_parse, false},
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
     {"--camera-test", test_camera, false},
@@ -301,6 +302,7 @@ void IntegrationModes::print_usage() const {
               << "  --scale-test       Prop scale & distance culling (per-prop scale, MAX_INSTANCES)\n"
               << "  --specular-test    Specular lighting (Blinn-Phong, SpecTeam texture, eye position)\n"
               << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
+              << "  --map-parse-test   Every map's .scmap read to its last byte\n"
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"

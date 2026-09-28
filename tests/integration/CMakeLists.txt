@@ -8,6 +8,7 @@ add_executable(osc_integration
     runner/lan_modes.cpp
     runner/integration_tests.cpp
     runner/audio_data_test.cpp
+    runner/map_parse_test.cpp
     runner/movie_test.cpp
     runner/keymap_test.cpp
     runner/lighting_test.cpp

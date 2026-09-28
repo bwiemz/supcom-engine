@@ -97,6 +97,26 @@ struct ScmapWaterMasks {
     std::vector<u8> foam, flatness, depth_bias;
 };
 
+/// One of the water's wave generators (M213c; Moho's WaveGenerator): it
+/// emits a flat, animated, ramp-coloured particle every `interval` seconds
+/// while in view. faf-re calls the frame count mRampValueScale and the strip
+/// count mTextureSelectionRange; the particle takes 1/x of them where an
+/// emitter's takes 1/FrameCount and 1/StripCount.
+struct ScmapWaveGenerator {
+    std::string texture;
+    std::string ramp;
+    f32 position[3] = {0.0f, 0.0f, 0.0f};
+    f32 angle = 0.0f;                      ///< radians, the quad's turn
+    f32 direction[3] = {0.0f, 0.0f, 0.0f}; ///< its drift, a tick
+    f32 lifetime[2] = {0.0f, 0.0f};        ///< ticks, min and max
+    f32 interval[2] = {0.0f, 0.0f};        ///< seconds between emissions, min and max
+    f32 begin_size = 0.0f;
+    f32 end_size = 0.0f;
+    f32 frame_count = 1.0f;           ///< frames across its texture
+    f32 frame_rate[2] = {1.0f, 0.0f}; ///< min and max
+    f32 strip_count = 1.0f;           ///< strips down its texture
+};
+
 /// Data extracted from a .scmap file.
 struct ScmapData {
     u32 map_width = 0;
@@ -109,6 +129,11 @@ struct ScmapData {
     f32 water_abyss_elevation = 0.0f;
     ScmapWater water; ///< meaningful when has_water
     ScmapWaterMasks water_masks;
+    std::vector<ScmapWaveGenerator> waves; ///< the shoreline's (M213c)
+    /// Every section read, the props last, to the file's final byte. A map
+    /// read short loads without what follows where it stopped (strata,
+    /// decals, normal maps, terrain types, props).
+    bool read_whole = false;
     ScmapLighting lighting;
     ScmapEnvironment environment;
     i32 version_minor = 0;
