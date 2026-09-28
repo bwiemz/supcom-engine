@@ -120,10 +120,6 @@ std::optional<int> App::run_window() {
                                               },
                                               [&] { cancel_command_mode(ui_lua_state.raw()); }});
         auto prev_time = std::chrono::high_resolution_clock::now();
-        bool p_was_pressed = false;
-        bool plus_was_pressed = false;
-        bool minus_was_pressed = false;
-        bool esc_was_pressed = false;
         double title_update_timer = 0.0;
         double fps_accum = 0.0;
         int fps_frames = 0;
@@ -421,47 +417,8 @@ std::optional<int> App::run_window() {
                 fps_frames = 0;
             }
 
-            // Pause toggle (P key, edge-triggered)
-            bool p_pressed = renderer.is_key_pressed(GLFW_KEY_P);
-            if (p_pressed && !p_was_pressed) {
-                game_state_mgr.set_paused(!game_state_mgr.paused(), ui_lua_state.raw());
-                spdlog::info("Sim {}", game_state_mgr.paused() ? "PAUSED" : "RESUMED");
-            }
-            p_was_pressed = p_pressed;
-
-            // Speed control (+/- keys, edge-triggered)
-            bool plus_pressed =
-                renderer.is_key_pressed(GLFW_KEY_EQUAL) || renderer.is_key_pressed(GLFW_KEY_KP_ADD);
-            if (plus_pressed && !plus_was_pressed) {
-                game_state_mgr.set_speed(std::min(game_state_mgr.speed() * 2.0, 10.0));
-                spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
-            }
-            plus_was_pressed = plus_pressed;
-
-            bool minus_pressed = renderer.is_key_pressed(GLFW_KEY_MINUS) ||
-                                 renderer.is_key_pressed(GLFW_KEY_KP_SUBTRACT);
-            if (minus_pressed && !minus_was_pressed) {
-                game_state_mgr.set_speed(std::max(game_state_mgr.speed() * 0.5, 0.125));
-                spdlog::info("Sim speed: {:.1f}x", game_state_mgr.speed());
-            }
-            minus_was_pressed = minus_pressed;
-
-            // ESC key — call escape handler (M146c)
-            bool esc_pressed = renderer.is_key_pressed(GLFW_KEY_ESCAPE);
-            if (esc_pressed && !esc_was_pressed) {
-                lua_State* uiL = ui_lua_state.raw();
-                lua_pushstring(uiL, "__osc_escape_handler");
-                lua_rawget(uiL, LUA_REGISTRYINDEX);
-                if (lua_isfunction(uiL, -1)) {
-                    if (lua_pcall(uiL, 0, 0, 0) != 0) {
-                        spdlog::warn("ESC handler error: {}", lua_tostring(uiL, -1));
-                        lua_pop(uiL, 1);
-                    }
-                } else {
-                    lua_pop(uiL, 1);
-                }
-            }
-            esc_was_pressed = esc_pressed;
+            // Pause, game speed and Escape come from retail's key map
+            // (Pause, NumPlus/NumMinus/NumStar, Esc): see UIDispatch.
 
             note_game_over_if_ended(sim_state.get(), game_state_mgr, ui_lua_state.raw());
 
@@ -643,6 +600,8 @@ std::optional<int> App::run_window() {
                 first_update_fired = true;
             }
 
+            // The arrow keys pan only while no control has the keyboard.
+            renderer.camera().set_keys_enabled(ui_registry.keyboard_focus() == nullptr);
             renderer.poll_events(dt);
 
             // Resume UI coroutines

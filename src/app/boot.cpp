@@ -410,8 +410,6 @@ std::optional<int> App::init_ui_state() {
             });
             lua_rawset(uL, LUA_GLOBALSINDEX);
         };
-        set_stub("ConExecute");         // console commands
-        set_stub("ConExecuteSave");     // console commands
         set_bool_fn("DebugFacilitiesEnabled", false);
         set_stub("ExitApplication");              // exit
         set_stub("PrefetchSession");              // loading optimization
@@ -582,6 +580,9 @@ void App::publish_session_objects() {
         lua_pushstring(uL, "__osc_keymap_registry");
         lua_pushlightuserdata(uL, &keymap_registry);
         lua_rawset(uL, LUA_REGISTRYINDEX);
+        lua_pushstring(uL, "__osc_console");
+        lua_pushlightuserdata(uL, &console);
+        lua_rawset(uL, LUA_REGISTRYINDEX);
     }
 
     // FrontEndData — cross-state key-value store (M147c)
@@ -613,11 +614,12 @@ void App::reset_ui_state() {
     lua_State* old = ui_lua_state.raw();
     spdlog::info("UI state: a fresh one for the next front end or game");
     // What the old state's scripts built goes while the state still runs:
-    // the controls' OnDestroy, then the beat functions and key maps.
+    // the controls' OnDestroy, then the beat functions.
     if (auto r = ui_lua_state.do_string("moho.control_methods.Destroy(GetFrame(0))"); !r)
         spdlog::warn("UI state: tearing down the controls: {}", r.error().message);
     beat_registry.clear(old);
-    keymap_registry.clear(old);
+    // The key map outlives the state, as Moho's does: its actions are
+    // console commands, not the state's functions.
     ui_registry = ui::UIControlRegistry{};
 
     ui_lua_state = lua::LuaState(); // closes the old state
@@ -692,6 +694,11 @@ std::optional<int> App::start() {
     }
 
     publish_session_objects();
+    // Moho's IN_InitKeyHandler: retail's key names and default mappings,
+    // once; the key map outlives each UI state.
+    osc::lua::register_console_commands(console);
+    osc::lua::register_session_console_commands(console);
+    osc::lua::load_key_mappings(ui_lua_state.raw(), keymap_registry);
     // SetupUI already ran during the UI state's boot above; the initial
     // transitions pass nullptr so it does not run a second time.
     if (!opt.map_path.empty()) {

@@ -3561,14 +3561,6 @@ void Renderer::poll_events(f64 dt) {
     if (!window_) return;
     glfwPollEvents();
 
-    // Toggle bloom with B key
-    bool b_pressed = glfwGetKey(window_, GLFW_KEY_B) == GLFW_PRESS;
-    if (b_pressed && !b_key_was_pressed_) {
-        bloom_enabled_ = !bloom_enabled_;
-        spdlog::info("Bloom {}", bloom_enabled_ ? "enabled" : "disabled");
-    }
-    b_key_was_pressed_ = b_pressed;
-
     camera_.update(window_, dt);
     // Before input picks this frame: a pan has moved the target.
     update_camera_focus();

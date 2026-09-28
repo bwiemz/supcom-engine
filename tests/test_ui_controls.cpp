@@ -4,15 +4,19 @@
 #include "lua/moho_bindings.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/console.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_dispatch.hpp"
+#include "ui/world_view.hpp"
 
 #include <GLFW/glfw3.h>
 
+#include <memory>
 #include <string>
 
 extern "C" {
 #include <lua.h>
+#include <lauxlib.h>
 }
 
 TEST_CASE("Control:Destroy is safe from its own OnDestroy", "[ui][lua]") {
@@ -170,6 +174,7 @@ struct InputFixture {
     osc::sim::SimState sim{lua.raw(), nullptr};
     osc::ui::UIControlRegistry registry;
     osc::ui::KeyMapRegistry keymap;
+    osc::ui::Console console;
     osc::ui::UIDispatch dispatch;
 
     InputFixture() {
@@ -179,10 +184,19 @@ struct InputFixture {
         lua_pushstring(L, "__osc_keymap_registry");
         lua_pushlightuserdata(L, &keymap);
         lua_rawset(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, "__osc_console");
+        lua_pushlightuserdata(L, &console);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        osc::lua::register_console_commands(console);
+        // Q's name, as keyNames.lua gives it (by virtual-key code).
+        REQUIRE(lua.do_string("__names = { ['51'] = 'Q' }").ok());
+        lua_getglobal(L, "__names");
+        keymap.set_key_names(L, -1);
+        lua_pop(L, 1);
         auto result = lua.do_string(R"(
             handled = {}
             hotkeys = 0
-            IN_AddKeyMapTable({ Q = function() hotkeys = hotkeys + 1 end })
+            IN_AddKeyMapTable({ Q = { action = 'UI_Lua hotkeys = hotkeys + 1' } })
             function box(name, parent, l, t, r, b, depth)
                 local c = {}
                 setmetatable(c, { __index = moho.control_methods })
@@ -215,7 +229,6 @@ struct InputFixture {
         INFO((result.ok() ? std::string() : result.error().message));
         REQUIRE(result.ok());
     }
-    ~InputFixture() { keymap.clear(lua.raw()); }
     InputFixture(const InputFixture&) = delete;
     InputFixture& operator=(const InputFixture&) = delete;
 
@@ -326,6 +339,12 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.check("whos('KeyDown') == 'other' and hotkeys == 0"));
+    // Even a key it ignores goes no further: the key map never sees it.
+    f.run("other.eats = false handled = {}");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('KeyDown') == 'other' and hotkeys == 0"));
+    f.run("other.eats = true");
     f.registry.set_keyboard_focus(nullptr);
 
     // Captures stack; removal takes the last entry of that control.
@@ -348,4 +367,54 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 1 and whos('ButtonPress') == 'other'"));
+
+    // A held key's auto-repeat acts only for a binding that asks (keyRepeat).
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 1"));
+    f.run("IN_AddKeyMapTable({ Q = { action = 'UI_Lua hotkeys = hotkeys + 10', keyRepeat = true } "
+          "})");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 11"));
+}
+
+TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
+          "[ui][lua][input]") {
+    InputFixture f;
+    lua_State* L = f.lua.raw();
+    // A world view over the screen, made as UIWorldView.__init makes one.
+    {
+        auto view = std::make_unique<osc::ui::WorldView>();
+        osc::ui::WorldView* wv = view.get();
+        f.registry.add(std::move(view));
+        f.run("world = {} __root_frame_table = GetFrame(0)");
+        lua_getglobal(L, "world");
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, wv);
+        lua_rawset(L, -3);
+        wv->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+        wv->set_parent(control_of(L, "__root_frame_table"));
+    }
+    f.run(R"(
+        rawset(world, 'Left', 0) rawset(world, 'Top', 0)
+        rawset(world, 'Right', 400) rawset(world, 'Bottom', 300)
+        rawset(world, 'Width', 400) rawset(world, 'Height', 300)
+        rawset(world, 'Depth', 1)
+        panel = box('panel', GetFrame(0), 0, 0, 100, 100, 5)
+    )");
+    const auto ui_has = [&](double x, double y) {
+        return f.dispatch.ui_has_mouse(L, f.registry, x, y);
+    };
+    CHECK(ui_has(50, 50));         // the panel
+    CHECK_FALSE(ui_has(200, 200)); // the world view
+    // A capture takes the mouse from the world...
+    f.run("AddInputCapture(panel)");
+    CHECK(ui_has(200, 200));
+    // ...unless the world view is under it in the capture.
+    f.run("RemoveInputCapture(panel) AddInputCapture(GetFrame(0))");
+    CHECK_FALSE(ui_has(200, 200));
+    CHECK(ui_has(50, 50));
+    f.run("RemoveInputCapture(GetFrame(0))");
+    CHECK_FALSE(ui_has(200, 200));
 }

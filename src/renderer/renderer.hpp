@@ -409,7 +409,6 @@ private:
     ReconView recon_;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
-    bool b_key_was_pressed_ = false;
 
     // The map's decals, projected and lit (M212b): each draws the terrain's
     // own triangles under it, a range of decal_indices_ over the terrain's

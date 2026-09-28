@@ -1,4 +1,7 @@
 #include "core/game_state.hpp"
+
+#include <algorithm>
+#include <cmath>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -28,7 +31,7 @@ bool GameStateManager::transition_to(GameState new_state, lua_State* ui_L) {
     if (new_state == GameState::GAME) {
         paused_ = false;
         game_over_ = false;
-        speed_ = 1.0;
+        set_sim_rate(0); // a new session starts at normal speed
     }
     return true;
 }
@@ -59,10 +62,9 @@ void GameStateManager::set_paused(bool p, lua_State* ui_L) {
     }
 }
 
-void GameStateManager::set_speed(f64 s) {
-    if (s < 0.0) s = 0.0;
-    if (s > 10.0) s = 10.0;
-    speed_ = s;
+void GameStateManager::set_sim_rate(i32 rate) {
+    sim_rate_ = std::clamp(rate, kMinSimRate, kMaxSimRate);
+    speed_ = std::pow(10.0, sim_rate_ * 0.1);
 }
 
 void GameStateManager::call_setup_ui(lua_State* ui_L) {

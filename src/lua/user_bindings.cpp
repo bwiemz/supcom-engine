@@ -11,14 +11,17 @@
 #include "map/scmap_parser.hpp"
 #include "map/terrain.hpp"
 #include "renderer/input_handler.hpp"
+#include "renderer/frustum.hpp"
 #include "renderer/renderer.hpp"
 #include "renderer/terrain_preview.hpp"
 #include "sim/entity_registry.hpp"
+#include "sim/category_expr.hpp"
 #include "sim/sim_callback_queue.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "ui/console.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -26,6 +29,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
+#include <optional>
+#include <cctype>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -1220,6 +1226,250 @@ void register_user_bindings(LuaState& state) {
                           {"GetHeading", camera_GetHeading},
                           {"GetPitch", camera_GetPitch},
                       });
+}
+
+// ── The console's session commands (M217d) ──────────────────────────────────
+
+namespace {
+
+bool iequal(std::string_view a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) ==
+                      std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+/// Push `module`'s field `fn` (import(module)[fn]); false, with the stack as
+/// it was, if the module or its function is missing.
+bool push_module_function(lua_State* L, const char* module, const char* fn) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, module);
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("Error running '{}:{}': the module didn't load", module, fn);
+        lua_settop(L, top);
+        return false;
+    }
+    lua_pushstring(L, fn);
+    lua_gettable(L, -2);
+    lua_remove(L, -2); // the module
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return false;
+    }
+    return true;
+}
+
+/// Where the cursor points in the world (GetMouseWorldPos's answer); false
+/// with no world view.
+bool cursor_world_pos(lua_State* L, sim::Vector3& out) {
+    lua_pushstring(L, "__osc_world_view");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* wv = static_cast<ui::WorldView*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!wv || !wv->camera()) return false;
+    f32 mx = 0, my = 0;
+    if (auto* r = get_renderer(L)) {
+        f64 dx = 0, dy = 0;
+        r->mouse_position(dx, dy);
+        mx = static_cast<f32>(dx);
+        my = static_cast<f32>(dy);
+        wv->set_viewport(r->width(), r->height());
+    }
+    return wv->get_mouse_world_pos(mx, my, out.x, out.y, out.z);
+}
+
+/// CON_StartCommandMode: `StartCommandMode mode name` starts the command
+/// mode (commandmode.lua's StartCommandMode(mode, {name = name})) if a
+/// selected unit has the command cap `name`; the same mode again ends it.
+void start_command_mode(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    if (!sim) {
+        spdlog::info("No session");
+        return;
+    }
+    if (args.size() < 3) return;
+    const std::string& mode = args[1];
+    const std::string& name = args[2];
+
+    // The active mode: GetCommandMode() -> {mode, payload}.
+    const int top = lua_gettop(L);
+    std::string active_mode, active_name;
+    if (push_module_function(L, "/lua/ui/game/commandmode.lua", "GetCommandMode")) {
+        if (lua_pcall(L, 0, 1, 0) == 0 && lua_istable(L, -1)) {
+            lua_rawgeti(L, -1, 1);
+            if (lua_type(L, -1) == LUA_TSTRING) active_mode = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            lua_rawgeti(L, -1, 2);
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "name");
+                lua_gettable(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING) active_name = lua_tostring(L, -1);
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_settop(L, top);
+    }
+    if (iequal(active_mode, mode) && iequal(active_name, name) && !active_mode.empty()) {
+        if (push_module_function(L, "/lua/ui/game/commandmode.lua", "EndCommandMode") &&
+            lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("Error running '/lua/ui/game/commandmode.lua:EndCommandMode': {}",
+                         lua_tostring(L, -1));
+        }
+        lua_settop(L, top);
+        return;
+    }
+
+    // A selected unit with the cap.
+    auto* ih = get_input_handler(L);
+    bool capable = false;
+    if (ih) {
+        for (u32 id : ih->selected()) {
+            auto* e = sim->entity_registry().find(id);
+            if (e && e->is_unit() && !e->destroyed() &&
+                static_cast<const sim::Unit*>(e)->has_command_cap(name)) {
+                capable = true;
+                break;
+            }
+        }
+    }
+    if (!capable) return;
+    if (push_module_function(L, "/lua/ui/game/commandmode.lua", "StartCommandMode")) {
+        lua_pushstring(L, mode.c_str());
+        lua_newtable(L);
+        lua_pushstring(L, "name");
+        lua_pushstring(L, name.c_str());
+        lua_rawset(L, -3);
+        if (lua_pcall(L, 2, 0, 0) != 0)
+            spdlog::warn("Error running '/lua/ui/game/commandmode.lua:StartCommandMode': {}",
+                         lua_tostring(L, -1));
+    }
+    lua_settop(L, top);
+}
+
+/// UI_SelectByCategory [+add] [+nearest] [+idle] [+inview] [+goto]
+/// [+excludeengineers] expression (Moho's SelectUnitsByCategory): the focus
+/// army's selectable units in the category expression ("A B, C": spaces
+/// intersect, commas unite), filtered, as the selection.
+void select_by_category(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        spdlog::info("No session");
+        return;
+    }
+    if (args.size() < 2) {
+        spdlog::info("UI_SelectByCategory [+add] [+nearest] [+idle] [+goto] categoryExpression");
+        return;
+    }
+    bool add = false, in_view = false, nearest = false, idle = false, go_to = false,
+         exclude_engineers = false;
+    std::string expression;
+    for (size_t i = 1; i < args.size(); ++i) {
+        const std::string& token = args[i];
+        if (!token.empty() && token[0] == '+') {
+            if (iequal(token, "+add")) add = true;
+            else if (iequal(token, "+nearest")) nearest = true;
+            else if (iequal(token, "+idle")) idle = true;
+            else if (iequal(token, "+inview")) in_view = true;
+            else if (iequal(token, "+goto")) go_to = true;
+            else if (iequal(token, "+excludeengineers")) exclude_engineers = true;
+            else spdlog::info("Unknown modifier {}", token);
+            continue;
+        }
+        if (!expression.empty()) expression += ' ';
+        expression += token;
+    }
+    const sim::CategoryExpr category = sim::parse_category_list(expression);
+    auto* r = get_renderer(L);
+    std::optional<renderer::Frustum> view;
+    if (in_view && r) {
+        view.emplace(r->camera().view_proj(static_cast<f32>(r->width()) /
+                                           static_cast<f32>(std::max(1u, r->height()))));
+    }
+    sim::Vector3 cursor{};
+    const bool have_cursor = nearest && cursor_world_pos(L, cursor);
+
+    std::unordered_set<u32> result;
+    if (add) result = ih->selected();
+    const sim::Unit* nearest_unit = nullptr;
+    f32 nearest_distance = std::numeric_limits<f32>::infinity();
+    sim->entity_registry().for_each_unit([&](sim::Entity& e) {
+        const auto& u = static_cast<const sim::Unit&>(e);
+        if (u.destroyed() || u.unselectable() || u.army() != ih->player_army()) return;
+        const auto& p = u.position();
+        if (view && !view->is_sphere_visible(p.x, p.y, p.z, 0.0f)) return;
+        if (idle && (u.busy() || !u.command_queue().empty())) return;
+        if (!category.matches(u.categories())) return;
+        if (exclude_engineers &&
+            (u.categories().count("ENGINEER") != 0 || u.categories().count("COMMAND") != 0))
+            return;
+        if (nearest) {
+            const f32 dx = p.x - cursor.x, dy = p.y - cursor.y, dz = p.z - cursor.z;
+            const f32 d = have_cursor ? std::sqrt(dx * dx + dy * dy + dz * dz) : 0.0f;
+            if (d < nearest_distance) {
+                nearest_distance = d;
+                nearest_unit = &u;
+            }
+        } else if (!u.has_unit_state("BeingUpgraded")) {
+            result.insert(u.entity_id());
+        }
+    });
+    if (nearest_unit) result.insert(nearest_unit->entity_id());
+
+    // +goto: the camera goes to what was selected -- the unit, or the box
+    // around them all.
+    if (go_to && r && !result.empty()) {
+        f32 x0 = std::numeric_limits<f32>::infinity(), z0 = x0;
+        f32 x1 = -x0, z1 = -x0;
+        for (u32 id : result) {
+            if (auto* e = sim->entity_registry().find(id)) {
+                x0 = std::min(x0, e->position().x);
+                z0 = std::min(z0, e->position().z);
+                x1 = std::max(x1, e->position().x);
+                z1 = std::max(z1, e->position().z);
+            }
+        }
+        if (x0 <= x1) r->camera().set_target((x0 + x1) * 0.5f, (z0 + z1) * 0.5f);
+    }
+    ih->set_selected(result);
+}
+
+/// CON_IssueCommand: `IssueCommand Stop|Dive|SiloBuildTactical|
+/// SiloBuildNuke` to the selection (Stop clears the queues and announces the
+/// selection again).
+void issue_command(lua_State* L, const std::vector<std::string>& args) {
+    auto* sim = get_sim(L);
+    auto* ih = get_input_handler(L);
+    if (!sim || !ih) {
+        spdlog::info("No session");
+        return;
+    }
+    if (args.size() < 2) return;
+    const std::vector<u32> ids(ih->selected().begin(), ih->selected().end());
+    const std::string& order = args[1];
+    if (iequal(order, "Stop")) {
+        issue_targetless_order(L, ids, "Stop", 0, true);
+        ih->set_selected(ih->selected());
+    } else if (iequal(order, "Dive")) {
+        issue_targetless_order(L, ids, "Dive", 0, true);
+    } else if (iequal(order, "SiloBuildTactical")) {
+        issue_targetless_order(L, ids, "BuildSiloTactical", 0, false);
+    } else if (iequal(order, "SiloBuildNuke")) {
+        issue_targetless_order(L, ids, "BuildSiloNuke", 0, false);
+    } else if (iequal(order, "Pause")) {
+        spdlog::info("IssueCommand Pause: the engine has no pause order yet");
+    }
+}
+
+} // namespace
+
+void register_session_console_commands(ui::Console& console) {
+    console.add("StartCommandMode", start_command_mode);
+    console.add("UI_SelectByCategory", select_by_category);
+    console.add("IssueCommand", issue_command);
 }
 
 } // namespace osc::lua

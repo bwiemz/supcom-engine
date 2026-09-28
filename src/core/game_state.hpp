@@ -31,8 +31,14 @@ public:
     bool transition_to(GameState new_state, lua_State* ui_L);
     bool paused() const { return paused_; }
     void set_paused(bool p, lua_State* ui_L);
+    /// Moho's sim rate: the game speed as an integer, -10 to +50 (0 is
+    /// normal). The sim runs at 10^(rate / 10) times normal.
+    i32 sim_rate() const { return sim_rate_; }
+    void set_sim_rate(i32 rate);
+    static constexpr i32 kMinSimRate = -10;
+    static constexpr i32 kMaxSimRate = 50;
+    /// The sim's speed, from the rate.
     f64 speed() const { return speed_; }
-    void set_speed(f64 s);
     bool game_over() const { return game_over_; }
     void set_game_over(bool v) {
         game_over_ = v;
@@ -48,6 +54,7 @@ private:
     bool paused_ = false;
     bool game_over_ = false;
     bool sim_stopped_ = false;
+    i32 sim_rate_ = 0;
     f64 speed_ = 1.0;
     static void call_setup_ui(lua_State* ui_L);
 };

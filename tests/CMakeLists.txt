@@ -39,6 +39,7 @@ add_executable(osc_tests
     test_ui_controls.cpp
     test_key_codes.cpp
     test_movie_player.cpp
+    test_console_keymap.cpp
     test_overlay_filters.cpp
     test_font_cache.cpp
     test_minimap_area.cpp

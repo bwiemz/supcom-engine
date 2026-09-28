@@ -12,8 +12,10 @@ class WorldHistory;
 }
 
 namespace osc::ui {
+class Console;
+class KeyMapRegistry;
 class UIControlRegistry;
-}
+} // namespace osc::ui
 
 namespace osc::lua {
 
@@ -32,6 +34,16 @@ void register_moho_bindings(LuaState& state, sim::SimState& sim);
 /// and store the UIControlRegistry pointer in Lua registry.
 /// Must be called after register_moho_bindings.
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry);
+
+/// The engine's console commands (Moho's): UI_Lua, the selection sets, the
+/// skin, layout and panel toggles, and the sim rate (WLD_GameSpeed,
+/// WLD_IncreaseSimRate, WLD_DecreaseSimRate, WLD_ResetSimRate). Key map
+/// actions and ConExecute run through them.
+void register_console_commands(ui::Console& console);
+
+/// Moho's IN_InitKeyHandler, in the UI state `L`: the key names from
+/// keyNames.lua, and keymapper.lua's GetKeyMappings() into the key map.
+void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map);
 
 /// Register the LAN multiplayer UI globals (LanHost/LanJoin/LanNetStatus).
 /// Called by register_ui_bindings; also usable standalone (e.g. --lan-ui-test).

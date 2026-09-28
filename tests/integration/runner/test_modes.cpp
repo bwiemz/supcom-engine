@@ -5,6 +5,7 @@
 #include "test_modes.hpp"
 #include "app/support.hpp"
 #include "audio_data_test.hpp"
+#include "keymap_test.hpp"
 #include "movie_test.hpp"
 #include "integration_tests.hpp"
 #include "core/game_state.hpp"
@@ -230,10 +231,11 @@ constexpr Mode kModesAfter[] = {
 
 /// Modes with code of their own (below), and the windowed ones.
 constexpr const char* kOwnModes[] = {
-    "--gameui-test",    "--victory-test",      "--audio-data-test", "--lobby-flow-test",
-    "--dualstate-test", "--construction-test", "--phase2-test",     "--phase3-test",
-    "--phase4-test",    "--phase5-test",       "--smoke-test",      "--draw-test",
-    "--stress-test",    "--full-smoke-test",   "--movie-test",
+    "--gameui-test",          "--victory-test",      "--audio-data-test", "--lobby-flow-test",
+    "--dualstate-test",       "--construction-test", "--phase2-test",     "--phase3-test",
+    "--phase4-test",          "--phase5-test",       "--smoke-test",      "--draw-test",
+    "--stress-test",          "--full-smoke-test",   "--movie-test",      "--keymap-test",
+    "--session-command-test", "--keyboard-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -363,6 +365,9 @@ void IntegrationModes::print_usage() const {
               << "  --controls-test    Border/Dragger/Cursor/Movie/Histogram/WorldMesh controls\n"
               << "  --uiboot-test      UI bootstrap (GetFrame, WorldView, WldUIProvider, lobby/discovery)\n"
               << "  --gameui-test      Retail in-game UI (StartGameUI, CreateGameInterface, gamemain.CreateUI)\n"
+              << "  --keymap-test      Retail's key map: names, default mappings, actions through the console\n"
+              << "  --session-command-test  The console's session commands (select by category, command modes)\n"
+              << "  --keyboard-test    Retail's keys own the keyboard; the world respects the capture\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
@@ -412,7 +417,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     request.windowed = interp_ || !render_dump_path_.empty();
     request.ai_army_2 =
         has("--ai-test") || has("--platoon-test") || has("--threat-test") || has("--combat-test");
-    request.world_ui = has("--gameui-test") || has("--victory-test");
+    request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
+                       has("--session-command-test") || has("--keyboard-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -1023,13 +1029,17 @@ void IntegrationModes::headless(Engine& e) {
     auto& game_state_mgr = e.game_state_mgr;
     const bool gameui_test = has("--gameui-test");
     const bool victory_test = has("--victory-test");
+    const bool keymap_test = has("--keymap-test");
+    const bool session_command_test = has("--session-command-test");
+    const bool keyboard_test = has("--keyboard-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
     const bool phase3_test = has("--phase3-test");
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
-    if ((gameui_test || victory_test) && !map_path.empty()) {
+    if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test) &&
+        !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
         osc::renderer::InputHandler headless_input;
@@ -1078,6 +1088,10 @@ void IntegrationModes::headless(Engine& e) {
             return static_cast<bool>(r);
         };
         if (gameui_test) osc::test::test_gameui(ui_test_ctx, pump, play, click, sim_lua);
+        if (keymap_test) osc::test::test_keymap(ui_test_ctx, ui_registry, game_state_mgr, pump);
+        if (session_command_test)
+            osc::test::test_session_commands(ui_test_ctx, ui_registry, pump, play, sim_lua);
+        if (keyboard_test) osc::test::test_keyboard(ui_test_ctx, ui_registry, pump, play, sim_lua);
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }

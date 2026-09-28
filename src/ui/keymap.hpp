@@ -1,36 +1,58 @@
 #pragma once
 
+#include "core/types.hpp"
+
+#include <array>
 #include <string>
-#include <vector>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 
 struct lua_State;
 
 namespace osc::ui {
 
-struct KeyBinding {
-    std::string key_name;      // e.g., "A", "Shift-G", "Ctrl-1"
-    int action_ref = -2;       // Lua registry ref to the action function (LUA_NOREF = -2)
-    std::string action_name;   // Debug: action name string
-};
-
-struct KeyMapTable {
-    int table_ref = -2;  // Lua registry ref — keeps the table alive; freed on removal/clear
-    const void* table_ptr = nullptr;  // Lua pointer identity (for removal matching)
-    std::vector<KeyBinding> bindings;
-};
-
-/// Stack of key map tables. Later-added tables take priority (searched last-to-first).
+/// Moho's CUIKeyHandler: the key names (by Windows virtual-key code, from
+/// keyNames.lua), and one map from a key chord to its action, a console
+/// command. A chord is the key's virtual-key code with modifier bits.
 class KeyMapRegistry {
 public:
+    static constexpr u32 kShift = 0x80000000u;
+    static constexpr u32 kCtrl = 0x40000000u;
+    static constexpr u32 kAlt = 0x20000000u;
+
+    /// Names start as "Unknown%02X", as Moho's do.
+    KeyMapRegistry();
+
+    /// Name keys from keyNames.lua's `keyNames` at `table_idx`: hex code
+    /// strings to names (CUIKeyHandler::SetKeyNameTable).
+    void set_key_names(lua_State* L, int table_idx);
+    const std::string& key_name(u32 code) const { return names_[code & 0xFF]; }
+
+    /// IN_ParseKeyModifiers: `Ctrl-Shift-A` to a chord. The last token is the
+    /// key, the rest modifiers, all case-insensitive; an unknown key is -1
+    /// (a chord no key makes), an empty spec 0.
+    i32 parse(std::string_view spec) const;
+
+    /// IN_AddKeyMapTable: each `key = {action = "...", keyRepeat = bool}`
+    /// sets its chord's action (a later table overwrites an earlier one).
     void add(lua_State* L, int table_idx);
-    void remove_by_ref(lua_State* L, int table_idx);
-    int find_action(const std::string& key_name) const;
-    bool dispatch(lua_State* L, const std::string& key_name);
-    void clear(lua_State* L);
-    static std::string glfw_to_key_name(int glfw_key, int mods);
+    /// IN_RemoveKeyMapTable: the table's chords are unbound.
+    void remove(lua_State* L, int table_idx);
+    void clear();
+
+    /// The chord a key press makes (its virtual-key code and modifiers).
+    static u32 chord(i32 glfw_key, i32 glfw_mods);
+    /// A chord's action, or null if it has none.
+    const std::string* action(u32 chord) const;
+    /// Whether a chord acts on the key's auto-repeat too (keyRepeat).
+    bool repeats(u32 chord) const { return repeats_.count(chord) != 0; }
+    size_t size() const { return actions_.size(); }
 
 private:
-    std::vector<KeyMapTable> tables_;
+    std::array<std::string, 256> names_;
+    std::unordered_map<u32, std::string> actions_;
+    std::unordered_set<u32> repeats_;
 };
 
 } // namespace osc::ui

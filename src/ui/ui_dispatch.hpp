@@ -76,6 +76,13 @@ public:
     f64 mouse_x() const { return mouse_x_; }
     f64 mouse_y() const { return mouse_y_; }
 
+    /// Whether the UI, not the world, has the mouse at (x, y): a control
+    /// other than the root frame or a world view is under it. Under an input
+    /// capture (a modal dialog, retail's opening lock) the mouse is the
+    /// capture's unless a world view in it is under the point, as Moho hit-
+    /// tests under the capture and never past it.
+    bool ui_has_mouse(lua_State* L, UIControlRegistry& registry, f64 x, f64 y);
+
     /// Find the topmost control at (x, y) via front-to-back tree walk.
     /// If \p skip is non-null, controls in that set are treated as invisible.
     UIControl* hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
@@ -87,6 +94,11 @@ private:
     /// Call the control's method `name` (found through its class) with
     /// `arg` if given; false if it has none.
     bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr);
+    /// A key going down with no control focused and no capture: the key
+    /// map's action, run through the console (CUIKeyHandler::OnKeyDown).
+    void handle_key(lua_State* L, const UIEvent& ev);
+    /// UI_ActivateChat: chat.lua's ActivateChat(modifiers), in a game.
+    void activate_chat(lua_State* L, const UIEvent& ev);
     /// A Movie control's frame (Moho's CMauiMovie::Frame): OnFrame, then
     /// OnStopped, its movie's clock and frame, or OnFinished at its end.
     void movie_frame(lua_State* L, UIControl* ctrl, f64 dt);
