@@ -16,6 +16,7 @@
 
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
+#include "renderer/beam_renderer.hpp"
 #include "renderer/input_handler.hpp"
 #include "renderer/minimap_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -512,22 +513,37 @@ void test_effect_intel(TestContext& ctx) {
     scry.pop_back();
 
     // Test 5: a beam between two of ARMY_2's in the fog doesn't draw; one
-    // with an end in sight does.
-    const auto beams = [&](const Frame& fr) {
+    // with an end in sight does: as FA draws it (a BeamBlueprint's, M214a)
+    // and as the overlay's placeholder (a blueprint it can't read).
+    const auto placeholders = [&](const Frame& fr) {
         return std::count_if(fr.overlay.begin(), fr.overlay.end(),
                              [](const Quad& q) { return same_colour(q, 0.8f, 0.9f, 1.0f); });
     };
+    const auto fa_beams = [&] {
+        return std::count_if(r.beam_renderer().drawn().begin(), r.beam_renderer().drawn().end(),
+                             [](const renderer::BeamRenderer::Drawn& b) {
+                                 return b.blueprint == "/effects/emitters/build_beam_01_emit.bp";
+                             });
+    };
     run_lua(ctx, "CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
-                 "'/effects/emitters/build_beam_01_emit.bp')\n");
+                 "'/effects/emitters/build_beam_01_emit.bp')\n"
+                 "CreateBeamEntityToEntity(__osc_fx_fog, -1, __osc_fx_fog2, -1, 2, "
+                 "'/effects/emitters/no_such_beam.bp')\n");
     f = next();
-    const auto fog_beams = beams(f);
+    const auto fog_beams = fa_beams();
+    const auto fog_placeholders = placeholders(f);
     run_lua(ctx, "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
-                 "'/effects/emitters/build_beam_01_emit.bp')\n");
+                 "'/effects/emitters/build_beam_01_emit.bp')\n"
+                 "CreateBeamEntityToEntity(__osc_fx_seen, -1, __osc_fx_fog, -1, 2, "
+                 "'/effects/emitters/no_such_beam.bp')\n");
     f = next();
-    const auto half_seen_beams = beams(f);
-    t.check(fog_beams == 0 && half_seen_beams == 1,
-            fmt::format("Test 5: a beam draws with an end in sight ({} drawn), not in the fog ({})",
-                        half_seen_beams, fog_beams));
+    const auto half_seen_beams = fa_beams();
+    const auto half_seen_placeholders = placeholders(f);
+    t.check(fog_beams == 0 && half_seen_beams == 1 && fog_placeholders == 0 &&
+                half_seen_placeholders == 1,
+            fmt::format("Test 5: a beam draws with an end in sight ({} drawn, {} placeholders), "
+                        "not in the fog ({}, {})",
+                        half_seen_beams, half_seen_placeholders, fog_beams, fog_placeholders));
 
     // Test 6: a light, and a beam fixed to a
     // unit, show where the player's army sees them.

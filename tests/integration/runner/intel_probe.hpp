@@ -70,9 +70,10 @@ const char* name(renderer::Sight s);
 /// Run `code` in the sim state, logging a failure.
 void run_lua(TestContext& ctx, const std::string& code);
 
-/// Make a `bp` of `army`'s on the ground at `at`, as Lua global `global`;
-/// its entity id.
-u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army, Spot at);
+/// Make a `bp` of `army`'s on the ground at `at` (or `lift` above it), as
+/// Lua global `global`; its entity id.
+u32 spawn_unit(TestContext& ctx, const char* global, const char* bp, const char* army, Spot at,
+               f32 lift = 0.0f);
 
 /// Where `p` is on `r`'s screen, as its icons and overlays project it.
 std::optional<std::array<f32, 2>> screen_of(renderer::Renderer& r, const sim::Vector3& p);

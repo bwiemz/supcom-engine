@@ -1,4 +1,5 @@
 #include "renderer/overlay_renderer.hpp"
+#include "renderer/beam_renderer.hpp"
 #include "renderer/camera.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
@@ -634,6 +635,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     if (cam_dist < 600.0f) {
         for (const sim::EntityRecord& entity : view.entities()) {
             if (!entity.is_collision_beam || !entity.beam_enabled) continue;
+            if (beams_ && beams_->drew_on_entity(entity.id)) continue; // drawn as FA's
 
             auto src_pos = view.position(entity);
             auto dst_pos = view.beam_end(entity);
@@ -784,6 +786,8 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
             // Skip decals/splats (handled by decal renderer)
             if (type == sim::EffectType::DECAL || type == sim::EffectType::SPLAT)
                 continue;
+            // And beams the beam renderer draws as FA does (M214a).
+            if (beams_ && beams_->drew_effect(fx_ptr->id)) continue;
 
             // Resolve effect world position from parent entity + offset
             f32 wx = fx_ptr->offset_x;

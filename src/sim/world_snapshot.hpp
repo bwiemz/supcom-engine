@@ -134,6 +134,13 @@ struct EffectRecord {
     f32 light_size = 0;
     f32 thickness = 0; ///< the THICKNESS param
     f32 length = 0;    ///< the LENGTH param
+    /// A beam's reach (M214a), found at capture: none; from `beam_start` to
+    /// `beam_end`; or from `beam_start` along `beam_dir` (a bone's +Z) for
+    /// the blueprint's Length. Attached emitters carry the latter too: a
+    /// beam blueprint's (CreateBeamEmitterOnEntity) is drawn as a beam.
+    enum class BeamReach : u8 { None, Ends, Along };
+    BeamReach beam = BeamReach::None;
+    Vector3 beam_start, beam_end, beam_dir;
 };
 
 struct ResourceRecord {
