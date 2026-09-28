@@ -106,7 +106,14 @@ int l_GetSpecialFileInfo(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
+    // libc++ has no clock_cast, but its file_clock::to_sys is the same exact
+    // conversion; MSVC's file_clock has only to_utc.
+#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
     const auto sys = std::chrono::clock_cast<std::chrono::system_clock>(when);
+#else
+    const auto sys = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+        fs::file_time_type::clock::to_sys(when));
+#endif
     const std::time_t t = std::chrono::system_clock::to_time_t(sys);
     std::tm local{};
 #ifdef _WIN32
