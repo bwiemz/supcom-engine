@@ -235,7 +235,7 @@ void test_particle_render(TestContext& ctx) {
     };
     const auto look_at = [&](f32 x, f32 z, f32 dist) {
         r.camera().set_target(x, z);
-        r.camera().set_distance(dist);
+        r.camera().set_eye_distance(dist);
     };
 
     // Test 1: 3 a tick, each living 4 ticks, born at its tick's start and

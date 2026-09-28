@@ -493,7 +493,7 @@ void test_effect_intel(TestContext& ctx) {
     // The emitters emit only within their LODCutoff (100) of the camera
     // (M214c): look from 80, between the two units.
     r.camera().set_target(sx + 20, sz);
-    r.camera().set_distance(80.0f);
+    r.camera().set_eye_distance(80.0f);
     Frame f = next(3);
     const bool made = has_effect(seen_id, steady) && has_effect(fog_id, steady) &&
                       has_effect(seen_id, create) && has_effect(fog_id, create);
@@ -525,7 +525,7 @@ void test_effect_intel(TestContext& ctx) {
                         emitter_of(fog_id, create) ? "made" : "not made"));
     scry.pop_back();
     r.camera().set_target(sx, sz + 20);
-    r.camera().set_distance(150.0f);
+    r.camera().set_eye_distance(150.0f);
 
     // Test 5: a beam between two of ARMY_2's in the fog doesn't draw; one
     // with an end in sight does: as FA draws it (a BeamBlueprint's, M214a)

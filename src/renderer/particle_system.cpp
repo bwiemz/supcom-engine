@@ -314,7 +314,7 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
     camera.eye_position(ex, ey, ez);
     const Vector3 eye{ex, ey, ez};
     const Vector3 forward =
-        normalized(sub({camera.target_x(), camera.target_y(), camera.target_z()}, eye));
+        normalized(sub({camera.focus_x(), camera.focus_y(), camera.focus_z()}, eye));
     // The view's right and up in the world (InverseViewMatrix rows 0, 1).
     const auto v = camera.view();
     const Vector3 right{v[0], v[4], v[8]};

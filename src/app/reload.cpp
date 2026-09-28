@@ -222,13 +222,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         renderer->build_scene(sim_state->terrain(), ui_store,
                               osc::sim::world_blueprints(*sim_state), &vfs, uiL);
 
-    // 15. Reset camera to map center (spherical coords: target + distance)
-    if (renderer && sim_state->terrain()) {
-        osc::f32 cx = sim_state->terrain()->map_width() * 0.5f;
-        osc::f32 cz = sim_state->terrain()->map_height() * 0.5f;
-        renderer->camera().set_target(cx, cz);
-        renderer->camera().set_distance(300.0f);
-    }
+    // 15. The camera's reset came with the scene (CameraReset: the whole map)
 
     // 16. Update UI state registry pointers
     lua_pushstring(uiL, "__osc_scenario_path");

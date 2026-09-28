@@ -48,6 +48,8 @@ f32 mean_abs_diff(const Pixels& a, const Pixels& b);
 /// frame is the lit scene alone.
 class OffscreenShots {
 public:
+    /// The tests' pitch unless one sets another (radians, held).
+    static constexpr f32 kPitch = 0.87f;
     explicit OffscreenShots(TestContext& ctx);
     ~OffscreenShots();
     OffscreenShots(const OffscreenShots&) = delete;

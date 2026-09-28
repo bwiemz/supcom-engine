@@ -198,8 +198,9 @@ void test_lighting(TestContext& ctx) {
     {
         renderer::Camera cam; // placed as shoot() places the renderer's
         cam.init(static_cast<f32>(kSize), static_cast<f32>(kSize));
+        cam.set_pitch(OffscreenShots::kPitch); // the shots' held pitch
         cam.set_target(kCentre, kCentre);
-        cam.set_distance(kDistance);
+        cam.set_eye_distance(kDistance);
         f32 ex = 0, ey = 0, ez = 0;
         cam.eye_position(ex, ey, ez);
         const f32 vx = kCentre - ex;

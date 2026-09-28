@@ -277,7 +277,7 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
 
     for (int i = 0; i < 4; i++) {
         if (!camera.screen_to_world(screen_corners[i][0], screen_corners[i][1], sw, sh,
-                                    camera.target_y(), corners_x[i], corners_z[i])) {
+                                    camera.focus_y(), corners_x[i], corners_z[i])) {
             all_valid = false;
             break;
         }

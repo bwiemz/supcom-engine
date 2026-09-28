@@ -51,6 +51,7 @@ add_executable(osc_tests
     test_frustum.cpp
     test_light_view.cpp
     test_camera_ground.cpp
+    test_camera_basis.cpp
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
     test_recon_view.cpp

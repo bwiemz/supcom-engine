@@ -48,10 +48,10 @@ void test_camera(TestContext& ctx) {
     const renderer::Camera& cam = r.camera();
 
     // Test 1: the focus sits on the ground at the target.
-    t.check(std::abs(cam.target_y() - ground) < 0.01f,
+    t.check(std::abs(cam.focus_y() - ground) < 0.01f,
             fmt::format("Test 1: the camera's focus is at height {:.2f}; the ground there is "
                         "{:.2f}",
-                        cam.target_y(), ground));
+                        cam.focus_y(), ground));
 
     // Test 2: the pixel where a point of the ground is drawn picks it back,
     // off the screen's middle.
@@ -115,9 +115,9 @@ void test_camera(TestContext& ctx) {
             // drawn -- input picks right after the poll.
             shots.renderer().camera().set_target(wx, wz);
             shots.renderer().poll_events(0.016);
-            const f32 polled = shots.renderer().camera().target_y();
+            const f32 polled = shots.renderer().camera().focus_y();
             (void)shots.shoot(*terrain, wx, wz, 60.0f);
-            const f32 y = shots.renderer().camera().target_y();
+            const f32 y = shots.renderer().camera().focus_y();
             t.check(std::abs(y - water) < 0.01f,
                     fmt::format("Test 4: over the sea at ({:.0f}, {:.0f}), the focus is at "
                                 "{:.2f}; the surface at {:.2f}",
@@ -129,6 +129,126 @@ void test_camera(TestContext& ctx) {
         } else {
             t.check(false, "Test 4: open water on the map");
         }
+    }
+
+    // Moho's camera (M217f), driven as the world view drives it: not free,
+    // its turn not held, from a reset
+    renderer::Camera& live = r.camera();
+    const f32 sw = static_cast<f32>(r.width());
+    const f32 sh = static_cast<f32>(r.height());
+    // As the scene was built: the farthest zoom took the window's shape
+    const f32 built_max_zoom = live.max_zoom();
+    live.set_free(false);
+    live.set_input_enabled(true);
+    live.set_mouse_enabled(true);
+    live.set_viewport(sw, sh);
+    live.reset();
+    constexpr f32 kDeg = renderer::Camera::kPi / 180.0f;
+    const f32 mw = static_cast<f32>(terrain->map_width());
+    const f32 mh = static_cast<f32>(terrain->map_height());
+    const f32 max_zoom = std::max(mw * 1.4f, mh * 1.4f * sw / sh);
+    const auto zoom_pitch = [&](f32 zoom) {
+        const f32 f = (std::log(zoom) - std::log(5.0f)) / (std::log(max_zoom) - std::log(5.0f));
+        return (40.0f + f * 49.9f) * kDeg;
+    };
+
+    // Test 6: the reset: the whole map from above, its middle on the ground
+    {
+        const f32 ground_mid = terrain->get_surface_height(mw * 0.5f, mh * 0.5f);
+        const bool ok = std::abs(built_max_zoom - max_zoom) < 0.01f &&
+                        std::abs(live.zoom() - max_zoom) < 0.01f &&
+                        std::abs(live.pitch() - 89.9f * kDeg) < 1e-4f &&
+                        std::abs(live.heading() - renderer::Camera::kPi) < 1e-5f &&
+                        std::abs(live.target_x() - mw * 0.5f) < 0.01f &&
+                        std::abs(live.focus_y() - ground_mid) < 0.05f;
+        t.check(ok, fmt::format("Test 6: reset, the zoom is {:.1f} ({:.1f}, the map's across at "
+                                "1.4 and the window's shape; {:.1f} as the scene was built), "
+                                "the pitch {:.2f} degrees, the focus at {:.2f} ({:.2f})",
+                                live.zoom(), max_zoom, built_max_zoom, live.pitch() / kDeg,
+                                live.focus_y(), ground_mid));
+    }
+
+    // Test 7: forty notches of the wheel ask a quarter of the zoom; it glides
+    // there, tilting the view down to the zoom's pitch as it comes
+    {
+        live.set_pivot(sw * 0.5f, sh * 0.5f);
+        live.zoom(40.0f);
+        const f32 want = max_zoom * 0.25f;
+        f32 prev_zoom = live.zoom();
+        f32 prev_pitch = live.pitch();
+        bool gliding = true;
+        int frames = 0;
+        for (; frames < 600 && std::abs(live.zoom() - want) > 0.01f; ++frames) {
+            live.frame(1.0 / 60.0);
+            gliding = gliding && live.zoom() < prev_zoom && live.pitch() < prev_pitch;
+            prev_zoom = live.zoom();
+            prev_pitch = live.pitch();
+        }
+        t.check(gliding && frames > 5 && std::abs(live.zoom() - want) <= 0.01f &&
+                    std::abs(live.pitch() - zoom_pitch(want)) < 1e-4f,
+                fmt::format("Test 7: the zoom glides to {:.1f} in {} frames, the pitch down to "
+                            "{:.2f} degrees ({:.2f})",
+                            live.zoom(), frames, live.pitch() / kDeg, zoom_pitch(want) / kDeg));
+    }
+
+    // Test 8: a middle-drag carries the ground at the focus with the cursor:
+    // 40 pixels right, it is drawn 40 pixels right
+    {
+        live.set_zoom(300.0f);
+        live.set_target(mw * 0.5f, mh * 0.5f);
+        live.frame(0.0);
+        const f32 fx = live.focus_x();
+        const f32 fy = live.focus_y();
+        const f32 fz = live.focus_z();
+        renderer::CameraInput in;
+        in.mouse_x = sw * 0.5f;
+        in.mouse_y = sh * 0.5f;
+        live.apply(in, 0.0);
+        in.middle = true;
+        live.apply(in, 0.0);
+        in.mouse_x += 40.0f;
+        live.apply(in, 0.0);
+        in.middle = false;
+        live.apply(in, 0.0);
+        const auto m = live.view_proj(sw / sh);
+        const f32 cx = m[0] * fx + m[4] * fy + m[8] * fz + m[12];
+        const f32 cy = m[1] * fx + m[5] * fy + m[9] * fz + m[13];
+        const f32 cw = m[3] * fx + m[7] * fy + m[11] * fz + m[15];
+        const f32 px = (cx / cw * 0.5f + 0.5f) * sw;
+        const f32 py = (cy / cw * 0.5f + 0.5f) * sh;
+        t.check(std::abs(px - (sw * 0.5f + 40.0f)) < 1.0f && std::abs(py - sh * 0.5f) < 1.0f,
+                fmt::format("Test 8: dragged 40 pixels right, the ground at the focus is drawn "
+                            "at ({:.1f}, {:.1f}), from ({:.0f}, {:.0f})",
+                            px, py, sw * 0.5f, sh * 0.5f));
+    }
+
+    // Test 9: near the ground, Space and the mouse tilt the view up to the
+    // horizon (the top of the frame looks above it); let go, it turns back
+    {
+        live.set_zoom(60.0f);
+        live.frame(0.0);
+        renderer::CameraInput in;
+        in.space = true;
+        in.mouse_x = sw * 0.5f;
+        in.mouse_y = sh * 0.5f;
+        live.apply(in, 0.0);
+        in.mouse_y -= 2.0f * sw; // far up the screen: to the floor of 0.1
+        live.apply(in, 0.0);
+        f32 o[3];
+        f32 d[3];
+        const bool ray = live.screen_ray(sw * 0.5f, 0.0f, sw, sh, o, d);
+        const bool tilted = live.rotated() && std::abs(live.pitch() - 0.1f) < 1e-5f && ray &&
+                            d[1] > 0.0f;
+        in.space = false;
+        int frames = 0;
+        for (; frames < 120 && live.rotated(); ++frames) live.apply(in, 1.0 / 60.0);
+        t.check(tilted && !live.rotated() &&
+                    std::abs(live.pitch() - zoom_pitch(live.zoom())) < 1e-4f &&
+                    std::abs(live.heading() - renderer::Camera::kPi) < 1e-5f,
+                fmt::format("Test 9: spun to a pitch of 0.1 (the frame's top looking {} the "
+                            "horizon), let go it turned back in {} frames to {:.2f} degrees",
+                            ray && d[1] > 0.0f ? "above" : "below", frames,
+                            live.pitch() / kDeg));
     }
 
     spdlog::info("Camera test: {}/{} passed", t.pass, t.pass + t.fail);

@@ -260,8 +260,8 @@ void test_beam_render(TestContext& ctx) {
             f32 ex = 0, ey = 0, ez = 0;
             r.camera().eye_position(ex, ey, ez);
             const sim::Vector3 mid = along_ab(0.3f);
-            const sim::Vector3 fwd{r.camera().target_x() - ex, r.camera().target_y() - ey,
-                                   r.camera().target_z() - ez};
+            const sim::Vector3 fwd{r.camera().focus_x() - ex, r.camera().focus_y() - ey,
+                                   r.camera().focus_z() - ez};
             const sim::Vector3 pa = pos(a);
             const sim::Vector3 pb = pos(b);
             const sim::Vector3 axis{pa.x - pb.x, pa.y - pb.y, pa.z - pb.z};

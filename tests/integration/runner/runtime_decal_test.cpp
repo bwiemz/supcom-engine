@@ -255,8 +255,9 @@ void test_runtime_decal(TestContext& ctx) {
         {
             renderer::Camera cam; // placed as shoot places the renderer's
             cam.init(static_cast<f32>(kSize), static_cast<f32>(kSize));
+            cam.set_pitch(OffscreenShots::kPitch); // the shots' held pitch
             cam.set_target(32.0f, 32.0f);
-            cam.set_distance(kDistance);
+            cam.set_eye_distance(kDistance);
             f32 ex = 0;
             f32 ey = 0;
             f32 ez = 0;
@@ -376,7 +377,7 @@ void test_runtime_decal(TestContext& ctx) {
         const auto metric_at = [&](f32 x, f32 z) {
             const f32 depth = -(v[2] * (x - ex) + v[6] * (0.0f - ey) + v[10] * (z - ez));
             const f32 aspect = static_cast<f32>(bare.width) / static_cast<f32>(bare.height);
-            return 2.0f * std::tan(renderer::Camera::kFovY * 0.5f) * aspect * depth;
+            return 2.0f * cam.tan_half_fov_y(aspect) * aspect * depth;
         };
         const f32 corner = metric_at(28, 28);
         const f32 middle = metric_at(32, 32);
