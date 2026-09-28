@@ -87,6 +87,10 @@ public:
 
     u32 quad_count() const { return quad_count_; }
     bool is_strategic_zoom() const { return strategic_zoom_active_; }
+    /// ui_AlwaysRenderStrategicIcons (M217i): icons at every zoom, over the
+    /// meshes, past no IconFadeInZoom.
+    void set_always(bool on) { always_ = on; }
+    bool always() const { return always_; }
     VkDescriptorSet atlas_descriptor() const { return atlas_ds_; }
 
     /// Camera distance past which meshes give way to icons altogether.
@@ -154,6 +158,7 @@ private:
 
     VkDescriptorSet atlas_ds_ = VK_NULL_HANDLE;
     bool strategic_zoom_active_ = false;
+    bool always_ = false;
     const ReconView* recon_ = nullptr;
 };
 

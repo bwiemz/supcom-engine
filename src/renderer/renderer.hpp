@@ -6,6 +6,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
+#include "renderer/terrain_time.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/movie_textures.hpp"
@@ -23,6 +24,7 @@
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
+#include "renderer/wave_system.hpp"
 #include "renderer/particle_renderer.hpp"
 #include "renderer/decal_math.hpp"
 #include "renderer/runtime_decal_renderer.hpp"
@@ -171,6 +173,11 @@ public:
         const auto i = static_cast<size_t>(technique);
         return i < mesh_draws_.size() ? mesh_draws_[i] : 0;
     }
+    /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
+    /// M212f).
+    f32 terrain_time() const { return terrain_time_.value(); }
+    /// The shoreline's wave generators (tests read them; M213c).
+    const WaveSystem& wave_system() const { return wave_system_; }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
@@ -184,6 +191,28 @@ public:
     void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
     bool decals_enabled() const { return decals_enabled_; }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
+    /// ui_AlwaysRenderStrategicIcons (M217i).
+    void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
+    bool icons_always() const { return strategic_icon_renderer_.always(); }
+    /// The strategic icons drawn last frame (tests read them).
+    const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
+    /// The video options the renderer keeps but doesn't draw by yet (M217i):
+    /// ren_Skydome (the sky dome's own), graphics_Fidelity, shadow_Fidelity,
+    /// ren_MipSkipLevels, SC_CameraScaleLOD, SC_AntiAliasingSamples.
+    struct VideoOptions {
+        bool skydome = true;
+        int graphics_fidelity = 2;
+        int shadow_fidelity = 3;
+        int mip_skip_levels = 0;
+        f32 camera_scale_lod = 1.0f;
+        int antialiasing = 0;
+    };
+    VideoOptions& video_options() { return video_options_; }
+    const VideoOptions& video_options() const { return video_options_; }
+    /// SC_ToggleCursorClip (M217i): the cursor held inside a window (not full
+    /// screen), or let go.
+    void set_cursor_clip(bool on);
+    bool cursor_clipped() const { return cursor_clipped_; }
     bool bloom_enabled() const { return bloom_enabled_; }
     /// What the scene clears to: Moho's black, with no glow (M210b). The sky
     /// dome draws over it; a test's own scenery may set another backdrop.
@@ -209,6 +238,42 @@ public:
 
     /// Get current mouse position in screen pixels.
     void mouse_position(f64& x, f64& y) const;
+
+    // ── The window (M217h) ──
+    /// Full screen on the primary display at a mode (FA's primary_adapter
+    /// "w,h,fps"), or a decorated window at a size, placed there (else where
+    /// it is), maximized or not ("windowed").
+    void set_fullscreen(u32 width, u32 height, u32 rate);
+    void set_windowed(u32 width, u32 height, std::optional<std::array<i32, 2>> position,
+                      bool maximized);
+    bool fullscreen() const;
+    /// The primary display's modes (width, height, refresh), as it lists them.
+    std::vector<std::array<u32, 3>> display_modes() const;
+    /// The window's place and size while windowed (Moho's Windows.Main.*);
+    /// nothing while full screen or without a window.
+    struct WindowGeometry {
+        i32 x = 0, y = 0;
+        u32 width = 0, height = 0;
+        bool maximized = false;
+    };
+    std::optional<WindowGeometry> windowed_geometry() const;
+    /// vsync: FIFO; off, MAILBOX (IMMEDIATE where there's none). The
+    /// swapchain is rebuilt before the next frame.
+    void set_vsync(bool on);
+    bool vsync() const { return vsync_; }
+    VkPresentModeKHR present_mode() const { return present_mode_; }
+    /// The framebuffer's size changed (the window resized): the swapchain is
+    /// rebuilt before the next frame.
+    void on_framebuffer_resized() { swapchain_stale_ = true; }
+    /// Whether the next frame rebuilds the swapchain (tests read it).
+    bool swapchain_stale() const { return swapchain_stale_; }
+    /// Whether the swapchain's size changed since the last call (the UI's
+    /// root frame follows it).
+    bool take_resized() {
+        const bool r = resized_;
+        resized_ = false;
+        return r;
+    }
 
     /// Check if a mouse button is currently pressed.
     bool is_mouse_pressed(int glfw_button) const;
@@ -271,6 +336,10 @@ private:
     VkDeviceSize scene_capture_buf_size_ = 0;
     f32 fixed_frame_dt_ = 0.0f;
     bool capture_supported_ = false;
+    bool vsync_ = true;
+    VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
+    bool swapchain_stale_ = false; ///< rebuild before the next frame
+    bool resized_ = false;         ///< the swapchain's size changed
     AllocatedBuffer capture_buf_{};
     VkDeviceSize capture_buf_size_ = 0;
 
@@ -410,6 +479,8 @@ private:
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
+    VideoOptions video_options_;
+    bool cursor_clipped_ = false;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;
     ProfileOverlay profile_overlay_;
@@ -417,6 +488,9 @@ private:
     f64 last_frame_time_ = 0.0;
     f32 total_time_ = 0.0f;
     f32 frame_dt_ = 0.0f;
+    /// The waves' system clock: the frames' steps summed, so a test's fixed
+    /// step runs it as it runs the particles (M213c).
+    f64 wave_clock_ = 0.0;
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
     FontCache font_cache_;
@@ -520,11 +594,15 @@ private:
     /// The scene's lighting: its map's, else SCMP_009's.
     map::ScmapLighting lighting_{};
     bool terrain_xp_ = false;
+    bool terrain_glow_ = false; ///< TTerrainGlow (M212f)
+    TerrainTime terrain_time_;  ///< the terrain shader's Time (M212f)
     /// Write the lighting into every frame's UBO.
     void upload_lighting();
 
     // Particle system
     ParticleSystem particle_system_;
+    WaveSystem wave_system_;
+    std::vector<WaveParticle> waves_emitted_; ///< this frame's, for the particles
     ParticleRenderer particle_renderer_;
     RuntimeDecalRenderer runtime_decals_; // scripts' decals and splats (M212c)
     EmitterBlueprintCache emitter_bp_cache_;

@@ -38,6 +38,7 @@ add_library(osc_renderer STATIC
     trail_renderer.cpp
     emitter_blueprint.cpp
     particle_system.cpp
+    wave_system.cpp
     particle_renderer.cpp
     profile_overlay.cpp
 )

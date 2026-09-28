@@ -41,4 +41,27 @@ private:
     std::map<std::string, Handler, NoCase> commands_;
 };
 
+/// Moho's console variables (TConVar, M217i): the value a command's
+/// `args` (the variable's name first) make of `value`.
+/// - bool: no argument toggles; on/true, off/false, tog, `= n`, or a bare
+///   number (not 0 is on); `show` only shows it.
+/// - int: `= += -= *= /= %= &= |= ^=` and a value, on/true (1),
+///   off/false (0), tog, or a bare value; no argument only shows it.
+/// - float: as int, without `%= &= |= ^=`, on/off and tog.
+/// Values parse as atoi/atof (junk is 0); a division by 0 leaves the value.
+/// `shown` says the command only showed the value.
+bool convar_bool(const std::vector<std::string>& args, bool value, bool& shown);
+int convar_int(const std::vector<std::string>& args, int value, bool& shown);
+float convar_float(const std::vector<std::string>& args, float value, bool& shown);
+
+/// A console variable on `console`, read through `get` and written through
+/// `set` in the UI state the command runs in, with Moho's syntax and
+/// messages ("toggled X is now on", "int X == 3", "float X == 0.0500").
+void add_bool_var(Console& console, const std::string& name, std::function<bool(lua_State*)> get,
+                  std::function<void(lua_State*, bool)> set);
+void add_int_var(Console& console, const std::string& name, std::function<int(lua_State*)> get,
+                 std::function<void(lua_State*, int)> set);
+void add_float_var(Console& console, const std::string& name, std::function<float(lua_State*)> get,
+                   std::function<void(lua_State*, float)> set);
+
 } // namespace osc::ui

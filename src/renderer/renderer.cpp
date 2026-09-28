@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "core/cursor.hpp"
 #include "core/ui_registry_keys.hpp"
 
 extern "C" {
@@ -83,7 +84,7 @@ void Renderer::on_scroll(f64 y_offset) {
     if (!window_ || !camera_.accepts_mouse()) return;
     f64 mx = 0;
     f64 my = 0;
-    glfwGetCursorPos(window_, &mx, &my);
+    mouse_position(mx, my);
     camera_.set_pivot(static_cast<f32>(mx), static_cast<f32>(my));
     camera_.zoom(static_cast<f32>(y_offset));
 }
@@ -125,6 +126,12 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
+    // A resize rebuilds the swapchain before the next frame (M217h): Wayland
+    // and some drivers never report the old one out of date
+    glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->on_framebuffer_resized();
+    });
     ui_dispatch_.install_callbacks(window_);
 
     // Vulkan instance (vk-bootstrap). Validation: on in debug builds, off in
@@ -441,10 +448,11 @@ bool Renderer::create_swapchain(u32 width, u32 height) {
         (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
 
     vkb::SwapchainBuilder builder(physical_device_, device_, surface_);
-    builder
-        .set_desired_format({VK_FORMAT_B8G8R8A8_UNORM,
-                             VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-        .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+    builder.set_desired_format({VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+        .set_desired_present_mode(vsync_ ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR)
+        .add_fallback_present_mode(vsync_ ? VK_PRESENT_MODE_FIFO_KHR
+                                          : VK_PRESENT_MODE_IMMEDIATE_KHR)
+        .add_fallback_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(width, height)
         .set_old_swapchain(swapchain_);
     if (capture_supported_) {
@@ -464,8 +472,11 @@ bool Renderer::create_swapchain(u32 width, u32 height) {
     swapchain_images_ = vkb_sc.get_images().value();
     swapchain_image_views_ = vkb_sc.get_image_views().value();
 
+    if (window_width_ != vkb_sc.extent.width || window_height_ != vkb_sc.extent.height)
+        resized_ = true;
     window_width_ = vkb_sc.extent.width;
     window_height_ = vkb_sc.extent.height;
+    present_mode_ = vkb_sc.present_mode;
 
     // One render-finished semaphore per image (the device is idle here: first
     // creation, or recreate_swapchain() after vkDeviceWaitIdle).
@@ -834,7 +845,8 @@ void Renderer::upload_lighting() {
         d.shadow_fill[i] = l.shadow_fill[i];
     }
     d.sun_color[3] = l.multiplier;
-    d.sun_ambience[3] = terrain_xp_ ? 1.0f : 0.0f;
+    // The terrain technique: 0 TTerrain, 1 TTerrainXP, 2 TTerrainGlow
+    d.sun_ambience[3] = terrain_xp_ ? 1.0f : (terrain_glow_ ? 2.0f : 0.0f);
     for (int i = 0; i < 4; ++i) d.specular[i] = l.specular[i];
     for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
         if (!light_ubo_mapped_[f]) continue;
@@ -1766,7 +1778,10 @@ void Renderer::clear_scene() {
                                 "__osc_minimap_terrain", "__water_map", "__water_fresnel"})
             texture_cache_.evict(key);
     }
+    // The waves' particles point into the wave system's blueprints (M213c):
+    // the particles go first.
     particle_system_.clear();
+    wave_system_.clear();
     runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
@@ -1844,6 +1859,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // The map's light (M210a).
     lighting_ = terrain->lighting();
     terrain_xp_ = terrain->environment().terrain_shader == "TTerrainXP";
+    terrain_glow_ = terrain->environment().terrain_shader == "TTerrainGlow";
+    terrain_time_.reset();
     upload_lighting();
 
     unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
@@ -1916,6 +1933,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // FA's water: its quad, water map, Fresnel table and textures (M213a),
     // before the terrain, which is tinted under it by the water map.
     water_renderer_.build(*terrain, texture_cache_);
+    // The shoreline's wave generators, out of step from the start (M213c)
+    wave_system_.load(terrain->waves(), wave_clock_);
     // The map's sky dome (M210b)
     sky_renderer_.build(*terrain, texture_cache_);
 
@@ -2264,6 +2283,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
     }
 
+    // A resized window or a vsync change: a new swapchain first (M217h)
+    if (swapchain_stale_) recreate_swapchain();
+
     // Acquire swapchain image
     u32 image_index = 0;
     VkResult acq_result = vkAcquireNextImageKHR(
@@ -2354,6 +2376,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         last_frame_time_ = now;
         if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
         frame_dt_ = dt;
+        wave_clock_ += static_cast<f64>(dt);
     }
 
     // Update UI quads (walk control tree, read LazyVar positions)
@@ -2417,6 +2440,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
         PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
         particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
         particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
@@ -2432,6 +2461,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         runtime_decals_.update(
             view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_, terrain_mesh_, camera_.view(),
             {ex, ey, ez}, camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi);
+    }
+
+    // The terrain's Time (M212f): set when the terrain would re-tessellate,
+    // so TTerrainGlow's lava stands still under a still camera, as in FA.
+    if (const sim::WorldSnapshot* cur = view.cur()) {
+        const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
+                           (static_cast<u64>(runtime_decals_.splat_count()) << 32);
+        terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
     }
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
@@ -2738,18 +2775,20 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
+        // pad(8) + eye(12) = 92B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
-            f32 _pad0, _pad1;
+            f32 terrainTime, _pad1;
             f32 eyeX, eyeY, eyeZ;
         } tpc{};
         static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert/frag's push block");
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
+        tpc.terrainTime = terrain_time_.value();
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
         vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,
@@ -3378,6 +3417,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 
+    if (swapchain_stale_) recreate_swapchain(); // M217h
     u32 image_index = 0;
     VkResult acq_result = vkAcquireNextImageKHR(
         device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
@@ -3627,8 +3667,97 @@ void Renderer::set_window_title(const char* title) {
 }
 
 void Renderer::mouse_position(f64& x, f64& y) const {
-    if (window_) glfwGetCursorPos(window_, &x, &y);
-    else { x = 0; y = 0; }
+    x = 0;
+    y = 0;
+    if (!window_) return;
+    // In framebuffer pixels (M217h): the viewport's and the UI's units
+    glfwGetCursorPos(window_, &x, &y);
+    int ww = 0;
+    int wh = 0;
+    int fw = 0;
+    int fh = 0;
+    glfwGetWindowSize(window_, &ww, &wh);
+    glfwGetFramebufferSize(window_, &fw, &fh);
+    const auto p = core::to_framebuffer(x, y, ww, wh, fw, fh);
+    x = p[0];
+    y = p[1];
+}
+
+void Renderer::set_fullscreen(u32 width, u32 height, u32 rate) {
+    if (!window_) return;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (!monitor) return;
+    glfwSetWindowMonitor(window_, monitor, 0, 0, static_cast<int>(width), static_cast<int>(height),
+                         rate > 0 ? static_cast<int>(rate) : GLFW_DONT_CARE);
+}
+
+void Renderer::set_windowed(u32 width, u32 height, std::optional<std::array<i32, 2>> position,
+                            bool maximized) {
+    if (!window_) return;
+    int x = 0;
+    int y = 0;
+    if (position) {
+        x = (*position)[0];
+        y = (*position)[1];
+    } else if (glfwGetWindowMonitor(window_)) {
+        // Out of full screen with no place: the middle of the display
+        if (const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor())) {
+            x = std::max(0, (mode->width - static_cast<int>(width)) / 2);
+            y = std::max(0, (mode->height - static_cast<int>(height)) / 2);
+        }
+    } else {
+        glfwGetWindowPos(window_, &x, &y);
+    }
+    if (glfwGetWindowAttrib(window_, GLFW_MAXIMIZED)) glfwRestoreWindow(window_);
+    glfwSetWindowMonitor(window_, nullptr, x, y, static_cast<int>(width), static_cast<int>(height),
+                         GLFW_DONT_CARE);
+    glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
+    if (maximized) glfwMaximizeWindow(window_);
+}
+
+bool Renderer::fullscreen() const {
+    return window_ && glfwGetWindowMonitor(window_) != nullptr;
+}
+
+std::vector<std::array<u32, 3>> Renderer::display_modes() const {
+    std::vector<std::array<u32, 3>> out;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (!monitor) return out;
+    int count = 0;
+    const GLFWvidmode* modes = glfwGetVideoModes(monitor, &count);
+    for (int i = 0; modes && i < count; ++i) {
+        out.push_back({static_cast<u32>(modes[i].width), static_cast<u32>(modes[i].height),
+                       static_cast<u32>(modes[i].refreshRate)});
+    }
+    return out;
+}
+
+std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
+    if (!window_ || glfwGetWindowMonitor(window_)) return std::nullopt;
+    WindowGeometry g;
+    int w = 0;
+    int h = 0;
+    glfwGetWindowPos(window_, &g.x, &g.y);
+    glfwGetWindowSize(window_, &w, &h);
+    g.width = static_cast<u32>(std::max(w, 0));
+    g.height = static_cast<u32>(std::max(h, 0));
+    g.maximized = glfwGetWindowAttrib(window_, GLFW_MAXIMIZED) != 0;
+    return g;
+}
+
+void Renderer::set_cursor_clip(bool on) {
+    // Moho clips only a windowed head (ClipCursor to its rect): GLFW's
+    // captured cursor
+    cursor_clipped_ = on && window_ && !fullscreen();
+    if (window_)
+        glfwSetInputMode(window_, GLFW_CURSOR,
+                         cursor_clipped_ ? GLFW_CURSOR_CAPTURED : GLFW_CURSOR_NORMAL);
+}
+
+void Renderer::set_vsync(bool on) {
+    if (vsync_ == on) return;
+    vsync_ = on;
+    swapchain_stale_ = true;
 }
 
 bool Renderer::is_mouse_pressed(int glfw_button) const {
@@ -3913,6 +4042,7 @@ void Renderer::deliver_scene_capture() {
 }
 
 void Renderer::recreate_swapchain() {
+    swapchain_stale_ = false;
     // Handle minimize
     int w = 0, h = 0;
     glfwGetFramebufferSize(window_, &w, &h);

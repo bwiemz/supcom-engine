@@ -1,4 +1,5 @@
 #include "renderer/camera.hpp"
+#include "core/cursor.hpp"
 
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
@@ -127,7 +128,7 @@ void Camera::reset() {
 }
 
 void Camera::zoom(f32 notches) {
-    near_zoom_ = std::clamp(std::exp2(-kZoomAmount * notches) * near_zoom_, kNearZoom, max_zoom());
+    near_zoom_ = std::clamp(std::exp2(-zoom_amount_ * notches) * near_zoom_, kNearZoom, max_zoom());
 }
 
 void Camera::set_target(f32 x, f32 z) {
@@ -644,8 +645,18 @@ void Camera::update(GLFWwindow* window, f64 dt) {
     f64 mx = 0;
     f64 my = 0;
     glfwGetCursorPos(window, &mx, &my);
-    in.mouse_x = static_cast<f32>(mx);
-    in.mouse_y = static_cast<f32>(my);
+    {
+        // The pointer in framebuffer pixels, the viewport's units (M217h)
+        int ww = 0;
+        int wh = 0;
+        int fw = 0;
+        int fh = 0;
+        glfwGetWindowSize(window, &ww, &wh);
+        glfwGetFramebufferSize(window, &fw, &fh);
+        const auto p = core::to_framebuffer(mx, my, ww, wh, fw, fh);
+        in.mouse_x = static_cast<f32>(p[0]);
+        in.mouse_y = static_cast<f32>(p[1]);
+    }
     // The edges only while the pointer is over the window: a focused window
     // whose cursor is elsewhere reports a stale position
     if (glfwGetWindowAttrib(window, GLFW_FOCUSED) && glfwGetWindowAttrib(window, GLFW_HOVERED)) {
@@ -665,8 +676,9 @@ void Camera::apply(const CameraInput& in, f64 dt) {
         frame(dt);
         return;
     }
-    const f32 pan_speed = kKeyboardPanSpeed * (in.control ? kKeyboardPanAccelerate : 1.0f);
-    const f32 rotate_speed = kKeyboardRotateSpeed * (in.control ? kKeyboardRotateAccelerate : 1.0f);
+    const f32 pan_speed = keyboard_pan_speed_ * (in.control ? keyboard_pan_accelerate_ : 1.0f);
+    const f32 rotate_speed =
+        keyboard_rotate_speed_ * (in.control ? keyboard_rotate_accelerate_ : 1.0f);
     const f32 dx = in.mouse_x - last_mouse_x_;
     const f32 dy = in.mouse_y - last_mouse_y_;
 
@@ -694,14 +706,20 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     // The screen's edges and the arrow keys pan, a fixed step a frame
     f32 px = 0.0f;
     f32 py = 0.0f;
-    if (in.at_left) px = pan_speed;
-    if (in.at_top) py = pan_speed;
-    if (in.at_right) px -= pan_speed;
-    if (in.at_bottom) py -= pan_speed;
-    if (in.up) py += pan_speed;
-    if (in.down) py -= pan_speed;
-    if (in.left) px += pan_speed;
-    if (in.right) px -= pan_speed;
+    // (each as its option allows: ui_ScreenEdgeScrollView,
+    // ui_ArrowKeysScrollView)
+    if (edge_scroll_) {
+        if (in.at_left) px = pan_speed;
+        if (in.at_top) py = pan_speed;
+        if (in.at_right) px -= pan_speed;
+        if (in.at_bottom) py -= pan_speed;
+    }
+    if (arrow_scroll_) {
+        if (in.up) py += pan_speed;
+        if (in.down) py -= pan_speed;
+        if (in.left) px += pan_speed;
+        if (in.right) px -= pan_speed;
+    }
     if (!in.alt && (px != 0.0f || py != 0.0f)) pan(px, py);
 
     // The middle button drags the ground (CameraDragger), from over the

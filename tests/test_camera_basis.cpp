@@ -418,3 +418,52 @@ TEST_CASE("After a pan onto higher ground, the focus is on it (M217f)", "[camera
     CHECK_THAT(cam.focus_y(), WithinAbs(20.0, 1e-3));
     CHECK(cam.focus_x() > 128.0f);
 }
+
+TEST_CASE("The options' variables set the camera's speeds and switches (M217i)", "[camera]") {
+    const map::Heightmap ground = flat();
+    Camera cam = camera_over(ground);
+    // cam_ZoomAmount: a wheel notch's zoom (FA's default option: 0.4)
+    const f32 start = cam.zoom();
+    cam.set_zoom_amount(0.4f);
+    cam.zoom(1.0f);
+    CHECK_THAT(cam.requested_zoom(), WithinRel(start * std::exp2(-0.4f), 1e-5f));
+
+    cam.set_zoom(64.0f);
+    cam.set_target(128.0f, 128.0f);
+    cam.apply({}, 0.0);
+    const f32 px = 64.0f / kW;
+    // ui_KeyboardPanSpeed and its Ctrl multiplier
+    cam.set_keyboard_pan_speed(50.0f);
+    cam.set_keyboard_pan_accelerate(3.0f);
+    CameraInput in;
+    in.left = true;
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(128.0 - 50.0 * px, 1e-3));
+    in.control = true;
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(128.0 - 200.0 * px, 1e-3));
+    // ui_ArrowKeysScrollView off: the arrows don't pan; the edges still do
+    cam.set_arrow_scroll(false);
+    const f32 x = cam.target_x();
+    cam.apply(in, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(x, 1e-5));
+    CameraInput edge;
+    edge.at_right = true;
+    cam.apply(edge, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(x + 50.0 * px, 1e-3));
+    // ui_ScreenEdgeScrollView off: nor the edges
+    cam.set_edge_scroll(false);
+    const f32 x2 = cam.target_x();
+    cam.apply(edge, 0.0);
+    CHECK_THAT(cam.target_x(), WithinAbs(x2, 1e-5));
+
+    // ui_KeyboardRotateSpeed and its Ctrl multiplier
+    Camera turn = camera_over(ground);
+    turn.set_keyboard_rotate_speed(20.0f);
+    turn.set_keyboard_rotate_accelerate(4.0f);
+    CameraInput ins;
+    ins.insert = true;
+    ins.control = true;
+    turn.apply(ins, 0.0);
+    CHECK_THAT(turn.heading(), WithinAbs(Camera::kPi - 80.0f * 360.0f / kW * kDeg, 1e-4));
+}

@@ -32,7 +32,7 @@ set(OSC_DATA_TESTS_GATE
     army-colors-test audio-test
     beam-render-test beam-test beam-weapon-test bitmap-test blend-test bone-test border-render-test build-test
     camera-test
-    camera-moves-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test collision-test combat-test
+    camera-moves-test window-test options-test canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test collision-test combat-test
     construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
     death-test decalsplat-test defence-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
@@ -42,7 +42,7 @@ set(OSC_DATA_TESTS_GATE
     full-smoke-test
     input-test intel-overlay-test intel-test interp-test itemlist-render-test
     jammer-test keyboard-test keymap-test
-    layercap-test lighting-test los-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
+    layercap-test lighting-test los-test map-parse-test wave-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
     onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test

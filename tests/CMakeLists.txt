@@ -34,6 +34,8 @@ add_executable(osc_tests
     test_anim_blend.cpp
     test_emitter_blueprint.cpp
     test_particle_system.cpp
+    test_terrain_time.cpp
+    test_wave_system.cpp
     test_ui_layout.cpp
     test_world_view.cpp
     test_ui_controls.cpp
@@ -53,6 +55,8 @@ add_executable(osc_tests
     test_camera_ground.cpp
     test_camera_basis.cpp
     test_camera_moves.cpp
+    test_window_mode.cpp
+    test_console_vars.cpp
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
     test_recon_view.cpp
@@ -112,6 +116,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::sim
     osc::renderer
     osc::video
+    osc::app # the window's modes (test_window_mode)
     glfw # key codes (test_key_codes)
 )
 

@@ -11,6 +11,8 @@ add_library(osc_app STATIC
     session.cpp
     ui_globals.cpp
     window.cpp
+    window_commands.cpp
+    window_mode.cpp
 )
 add_library(osc::app ALIAS osc_app)
 

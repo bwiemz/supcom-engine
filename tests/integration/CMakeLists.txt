@@ -8,9 +8,14 @@ add_executable(osc_integration
     runner/lan_modes.cpp
     runner/integration_tests.cpp
     runner/audio_data_test.cpp
+    runner/map_parse_test.cpp
+    runner/terrain_glow_test.cpp
+    runner/wave_test.cpp
     runner/movie_test.cpp
     runner/keymap_test.cpp
     runner/camera_moves_test.cpp
+    runner/window_test.cpp
+    runner/options_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
     runner/strata_test.cpp
@@ -109,6 +114,13 @@ endfunction()
 foreach(mode IN LISTS OSC_DATA_TESTS_GATE)
     osc_add_data_test(${mode} gate)
 endforeach()
+# M212f: the one TTerrainGlow map, Varga Pass
+add_test(NAME data.terrain-glow-test
+         COMMAND osc_integration --map /maps/SCMP_023/SCMP_023_scenario.lua --terrain-glow-test)
+set_tests_properties(data.terrain-glow-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
 foreach(mode IN LISTS OSC_DATA_TESTS_RETAIL_GAP)
     osc_add_data_test(${mode} retail-gap)
 endforeach()

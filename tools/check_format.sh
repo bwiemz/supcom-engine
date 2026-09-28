@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Formatting ratchet: lines changed since <base> must follow .clang-format.
+# Formatting ratchet: lines changed since the branch left <base> (their merge
+# base) must follow .clang-format.
 # Untouched code is never reformatted wholesale, and a moved file only where
 # it changed (tools/check_format.py).
 #
