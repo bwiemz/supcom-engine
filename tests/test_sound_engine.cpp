@@ -164,6 +164,44 @@ TEST_CASE("Sound engine: stop_all ends every sound", "[audio][engine]") {
     CHECK(sm.active_count() == 0);
 }
 
+TEST_CASE("Sound engine: a prepared sound waits, silent, until started", "[audio][engine]") {
+    // Retail's movies prepare their sound (PlaySound(sound, true)) and
+    // start it with the movie (StartSound).
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    int finished = 0;
+    const auto h = sm.prepare("Test", "Click");
+    REQUIRE(h != INVALID_SOUND);
+    sm.on_finished(h, [&] { ++finished; });
+    CHECK(sm.is_prepared(h));
+    CHECK_FALSE(sm.is_playing(h));
+    CHECK_FALSE(sm.is_cue_playing("Test", "Click"));
+    sm.update(1.0f); // time passes; it waits
+    CHECK(sm.is_prepared(h));
+    CHECK(finished == 0);
+
+    sm.start(h);
+    CHECK(sm.is_playing(h));
+    CHECK_FALSE(sm.is_prepared(h));
+    CHECK(sm.is_cue_playing("Test", "Click"));
+    sm.update(0.05f);
+    CHECK(sm.is_playing(h));
+    sm.update(0.06f); // 0.11 s from its start: past the 0.1 s wave
+    CHECK_FALSE(sm.is_playing(h));
+    CHECK(finished == 1);
+    sm.start(h); // over: nothing to start
+    CHECK_FALSE(sm.is_playing(h));
+
+    // A stop ends a prepared sound at once, though the cue fades (300 ms).
+    const auto shot = sm.prepare("Test", "Shot");
+    REQUIRE(shot != INVALID_SOUND);
+    sm.stop(shot, /*immediate=*/false);
+    CHECK_FALSE(sm.is_prepared(shot));
+    CHECK_FALSE(sm.is_playing(shot));
+    sm.update(0.0f);
+    CHECK(sm.active_count() == 0);
+}
+
 TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {
     SoundManager sm(fs::temp_directory_path() / "osc_no_such_sounds_dir", false);
     CHECK_FALSE(sm.has_data());

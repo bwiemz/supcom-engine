@@ -525,6 +525,10 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
     for (auto* ctrl : snapshot) {
         if (!ctrl || ctrl->destroyed() || ctrl->lua_table_ref() < 0) continue;
         if (!ctrl->needs_frame_update()) continue;
+        if (ctrl->control_type() == UIControl::ControlType::Movie) {
+            movie_frame(L, ctrl, dt);
+            continue;
+        }
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
         lua_pushstring(L, "OnFrame");
@@ -543,6 +547,62 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
         }
         lua_pop(L, 1); // control table
     }
+}
+
+bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg) {
+    if (ctrl->destroyed() || ctrl->lua_table_ref() < 0) return false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+    lua_pushstring(L, name);
+    lua_gettable(L, -2); // through the class, as Moho's RunScript looks
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushvalue(L, -2); // self
+    int args = 1;
+    if (arg) {
+        lua_pushnumber(L, *arg);
+        ++args;
+    }
+    if (lua_pcall(L, args, 0, 0) != 0) {
+        report_ui_callback_error(fmt::format("{} error for control #{}: {}", name,
+                                             ctrl->control_id(), lua_tostring(L, -1)));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1); // control table
+    return true;
+}
+
+void UIDispatch::movie_frame(lua_State* L, UIControl* ctrl, f64 dt) {
+    // Moho's CMauiMovie::Frame. A control not playing (its movie ended, or
+    // Play found none) finishes.
+    if (!ctrl->movie_playing()) {
+        ctrl->set_needs_frame_update(false);
+        run_script(L, ctrl, "OnFinished");
+        return;
+    }
+    run_script(L, ctrl, "OnFrame", &dt);
+    if (ctrl->destroyed()) return;
+    if (ctrl->movie_stopped()) {
+        ctrl->set_needs_frame_update(false);
+        run_script(L, ctrl, "OnStopped");
+        return;
+    }
+    video::MoviePlayer* movie = ctrl->movie_player();
+    if (!movie) return;
+    // Sofdec's clock runs on its own; here it moves with the frames.
+    movie->advance(dt);
+    if (movie->finished()) {
+        if (ctrl->movie_looping()) {
+            movie->restart();
+        } else {
+            ctrl->set_movie_playing(false);
+            ctrl->set_needs_frame_update(false);
+            run_script(L, ctrl, "OnFinished");
+        }
+        return;
+    }
+    movie->update_frame();
 }
 
 } // namespace osc::ui

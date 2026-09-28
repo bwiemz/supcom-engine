@@ -1,13 +1,17 @@
 #include "ui/ui_control.hpp"
-#include "video/video_decoder.hpp"
+#include "video/movie_player.hpp"
 
 #include <algorithm>
 #include <iterator>
 
 namespace osc::ui {
 
-// Destructor defined here so unique_ptr<VideoDecoder> sees complete type
+// Destructor defined here so unique_ptr<MoviePlayer> sees complete type
 UIControl::~UIControl() = default;
+
+void UIControl::set_movie_player(std::unique_ptr<video::MoviePlayer> m) {
+    movie_player_ = std::move(m);
+}
 
 // --- UIControl ---
 

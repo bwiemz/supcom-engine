@@ -8,6 +8,7 @@
 #include "video/video_decoder.hpp"
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
+#include "lua/lan_dialog_ui.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_bindings.hpp"
@@ -577,7 +578,7 @@ void update_text_advance(ui::UIControl* ctrl) {
 
 /// Helper: call LazyVar:Set(value) on self[name].
 /// Uses lua_gettable (not lua_rawget) to find Set through metatables.
-static void set_lazyvar_value(lua_State* L, int self_idx, const char* name, f32 value) {
+void set_lazyvar_value(lua_State* L, int self_idx, const char* name, f32 value) {
     if (self_idx < 0) self_idx = lua_gettop(L) + self_idx + 1;
     int top = lua_gettop(L);
     lua_pushstring(L, name);
@@ -1196,6 +1197,7 @@ static int l_InternalCreateMovie(lua_State* L) {
     create_lazyvar(L, 1, "MovieWidth");
     create_lazyvar(L, 1, "MovieHeight");
 
+    ctrl->set_control_type(ui::UIControl::ControlType::Movie);
     // Movie controls are non-interactive backgrounds — disable hit test
     // so they don't intercept mouse events from interactive controls above.
     ctrl->set_hit_test_disabled(true);
@@ -1412,6 +1414,34 @@ static int l_SetCursor(lua_State* L) {
     lua_pushstring(L, "__osc_active_cursor");
     lua_pushvalue(L, 1);
     lua_rawset(L, LUA_REGISTRYINDEX);
+    return 0;
+}
+
+/// Run `code` in the UI state, warning (as Moho does) if it errors.
+static void run_ui_chunk(lua_State* L, const char* code, const char* what) {
+    if (luaL_loadbuffer(L, code, std::strlen(code), what) != 0 || lua_pcall(L, 0, 0, 0) != 0) {
+        spdlog::warn("Error running {}: {}", what, lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
+/// EngineStartFrontEndUI(): Moho's UI_StartFrontEnd, in this Lua state (the
+/// splash screen leaves through it). The input capture and the dragger let
+/// go and the root frame is emptied, as Moho's new frames start, then
+/// uimain.lua's StartFrontEndUI shows the main menu, with the engine's LAN
+/// dialog on it.
+static int l_EngineStartFrontEndUI(lua_State* L) {
+    if (auto* reg = get_ui_registry(L)) reg->clear_input_capture();
+    lua_pushstring(L, "__osc_active_dragger");
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+    // The LAN dialog, built on the root frame, goes with it.
+    run_ui_chunk(
+        L, "moho.control_methods.Destroy(GetFrame(0)) rawset(_G, '__osc_lan_dialog_built', nil)",
+        "the root frame's reset");
+    run_ui_chunk(L, "import('/lua/ui/uimain.lua').StartFrontEndUI()",
+                 "'/lua/ui/uimain.lua:StartFrontEndUI'");
+    run_ui_chunk(L, kLanDialogLua, "the LAN dialog");
     return 0;
 }
 
@@ -3417,8 +3447,15 @@ static void push_sound_handle(lua_State* L, osc::audio::SoundHandle h) {
     else lua_pushnumber(L, static_cast<lua_Number>(h));
 }
 
-/// PlaySound(sound) -> handle, or nil when nothing plays (unknown cue, or
-/// over its instance limits). UI sounds are 2D.
+/// A UI sound, or with `prepare_only` one prepared and waiting for
+/// StartSound (Moho's ScriptPlaySound, preloadOnly). UI sounds are 2D.
+static osc::audio::SoundHandle play_ui_sound(osc::audio::SoundManager& mgr, const std::string& bank,
+                                             const std::string& cue, bool prepare_only) {
+    return prepare_only ? mgr.prepare(bank, cue) : mgr.play(bank, cue, nullptr);
+}
+
+/// PlaySound(sound [, prepareOnly]) -> handle, or nil when nothing plays
+/// (unknown cue, or over its instance limits).
 static int l_PlaySound(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     std::string bank, cue;
@@ -3426,8 +3463,24 @@ static int l_PlaySound(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    push_sound_handle(L, mgr->play(bank, cue, nullptr));
+    push_sound_handle(L, play_ui_sound(*mgr, bank, cue, lua_toboolean(L, 2) != 0));
     return 1;
+}
+
+/// SoundIsPrepared(handle) -> whether it has finished preparing. The
+/// engine reads a cue's waves as it prepares it, so always (and for nil,
+/// as Moho's is for no cue).
+static int l_SoundIsPrepared(lua_State* L) {
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// StartSound(handle): start a prepared sound.
+static int l_StartSound(lua_State* L) {
+    auto* mgr = get_sound_mgr(L);
+    if (mgr && lua_type(L, 1) == LUA_TNUMBER)
+        mgr->start(static_cast<osc::audio::SoundHandle>(lua_tonumber(L, 1)));
+    return 0;
 }
 
 /// StopSound(handle [, immediate]): fade out (the cue's fade or release
@@ -3440,8 +3493,9 @@ static int l_StopSound(lua_State* L) {
     return 0;
 }
 
-/// PlayVoice(sound [, duck]) -> handle. With `duck`, the rest of the mix
-/// dips while it speaks (the Duck variable, read by FA's RPC curves).
+/// PlayVoice(sound [, duck [, prepareOnly]]) -> handle. With `duck`, the
+/// rest of the mix dips while it speaks (the Duck variable, read by FA's
+/// RPC curves) -- from the start, prepared or not, as Moho's does.
 static int l_PlayVoice(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
     std::string bank, cue;
@@ -3449,7 +3503,7 @@ static int l_PlayVoice(lua_State* L) {
         lua_pushnil(L);
         return 1;
     }
-    const auto h = mgr->play(bank, cue, nullptr);
+    const auto h = play_ui_sound(*mgr, bank, cue, lua_toboolean(L, 3) != 0);
     if (h != osc::audio::INVALID_SOUND && lua_toboolean(L, 2)) {
         static int ducking = 0; // voices ducking now (one sound engine per process)
         if (ducking++ == 0) mgr->set_global_variable("Duck", 1.0f);
@@ -4048,6 +4102,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
     state.register_function("GetCursor", l_GetCursor);
+    state.register_function("EngineStartFrontEndUI", l_EngineStartFrontEndUI);
     state.register_function("AddInputCapture", l_AddInputCapture);
     state.register_function("RemoveInputCapture", l_RemoveInputCapture);
     state.register_function("AnyInputCapture", l_AnyInputCapture);
@@ -4232,6 +4287,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("PlaySound", l_PlaySound);
     state.register_function("StopSound", l_StopSound);
     state.register_function("PlayVoice", l_PlayVoice);
+    state.register_function("SoundIsPrepared", l_SoundIsPrepared);
+    state.register_function("StartSound", l_StartSound);
     state.register_function("PauseSound", l_PauseSound);
     state.register_function("PauseVoice", l_PauseVoice);
     state.register_function("EnableWorldSounds", l_EnableWorldSounds);

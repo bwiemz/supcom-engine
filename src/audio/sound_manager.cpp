@@ -95,6 +95,9 @@ struct SoundManager::CueInstance {
     std::vector<TrackState> tracks;
     std::vector<std::function<void()>> on_finished;
     bool ended = false;
+    /// Prepared, not started (XACT's preload-only play): silent and
+    /// waiting, until start() begins it.
+    bool prepared = false;
 };
 
 // ---- WAV header synthesis ----
@@ -432,14 +435,15 @@ bool SoundManager::admit(const xact::SoundBank& /*sb*/, const xact::Cue& cue,
     return true;
 }
 
-SoundHandle SoundManager::play(const std::string& bank, const std::string& cue,
-                               const sim::Vector3* pos, std::string_view lod_cutoff) {
-    if (!registry_) return INVALID_SOUND;
+SoundManager::CueInstance* SoundManager::create(const std::string& bank, const std::string& cue,
+                                                const sim::Vector3* pos,
+                                                std::string_view lod_cutoff) {
+    if (!registry_) return nullptr;
     const xact::SoundBank* sb = registry_->sound_bank(bank);
     const xact::Cue* cue_def = sb ? sb->find_cue(cue) : nullptr;
     if (!cue_def) {
         spdlog::debug("Cue not found: {}/{}", bank, cue);
-        return INVALID_SOUND;
+        return nullptr;
     }
     const xact::Sound& sound = sb->sounds[cue_def->sound];
 
@@ -457,39 +461,66 @@ SoundHandle SoundManager::play(const std::string& bank, const std::string& cue,
         if (const auto* gs = registry_->global_settings()) {
             const int v = gs->find_variable(lod_cutoff);
             const f32 cutoff = v >= 0 ? globals_[static_cast<size_t>(v)] : -1.0f;
-            if (cutoff >= 0 && distance(*inst) > cutoff) return INVALID_SOUND;
+            if (cutoff >= 0 && distance(*inst) > cutoff) return nullptr;
         }
     }
-    if (!admit(*sb, *cue_def, sound)) return INVALID_SOUND;
+    if (!admit(*sb, *cue_def, sound)) return nullptr;
 
     const auto* gs = registry_->global_settings();
     u16 fade_in_ms = cue_def->fade_in_ms;
     if (fade_in_ms == 0 && gs && sound.category < gs->categories.size())
         fade_in_ms = gs->categories[sound.category].fade_in_ms;
     inst->fade_in = fade_in_ms / 1000.0;
-
     inst->tracks.resize(sound.tracks.size());
-    for (size_t t = 0; t < sound.tracks.size(); ++t) {
-        for (const auto& ev : sound.tracks[t].plays) {
-            f64 at = clock_ + ev.time_ms / 1000.0;
-            if (ev.random_offset_ms > 0)
-                at += std::uniform_int_distribution<u32>(0, ev.random_offset_ms)(rng_) / 1000.0;
-            inst->tracks[t].fire_at.push_back(at);
-        }
-    }
+
     const SoundHandle handle = next_handle_++;
     if (next_handle_ == INVALID_SOUND) next_handle_ = 1;
     inst->handle = handle;
     CueInstance& ref = *inst;
     instances_.emplace(handle, std::move(inst));
-    // Events at time 0 start now, so a one-shot is audible this frame.
-    for (size_t t = 0; t < ref.tracks.size(); ++t) {
-        auto& ts = ref.tracks[t];
-        while (ts.next < ts.fire_at.size() && ts.fire_at[ts.next] <= clock_)
-            start_event(ref, t, sound.tracks[t].plays[ts.next++]);
+    return &ref;
+}
+
+void SoundManager::begin(CueInstance& inst) {
+    inst.prepared = false;
+    inst.started = clock_;
+    const xact::Sound& sound = *inst.sound;
+    for (size_t t = 0; t < sound.tracks.size(); ++t) {
+        for (const auto& ev : sound.tracks[t].plays) {
+            f64 at = clock_ + ev.time_ms / 1000.0;
+            if (ev.random_offset_ms > 0)
+                at += std::uniform_int_distribution<u32>(0, ev.random_offset_ms)(rng_) / 1000.0;
+            inst.tracks[t].fire_at.push_back(at);
+        }
     }
-    apply(ref);
-    return handle;
+    // Events at time 0 start now, so a one-shot is audible this frame.
+    for (size_t t = 0; t < inst.tracks.size(); ++t) {
+        auto& ts = inst.tracks[t];
+        while (ts.next < ts.fire_at.size() && ts.fire_at[ts.next] <= clock_)
+            start_event(inst, t, sound.tracks[t].plays[ts.next++]);
+    }
+    apply(inst);
+}
+
+SoundHandle SoundManager::play(const std::string& bank, const std::string& cue,
+                               const sim::Vector3* pos, std::string_view lod_cutoff) {
+    CueInstance* inst = create(bank, cue, pos, lod_cutoff);
+    if (!inst) return INVALID_SOUND;
+    begin(*inst);
+    return inst->handle;
+}
+
+SoundHandle SoundManager::prepare(const std::string& bank, const std::string& cue) {
+    CueInstance* inst = create(bank, cue, nullptr, {});
+    if (!inst) return INVALID_SOUND;
+    inst->prepared = true;
+    return inst->handle;
+}
+
+void SoundManager::start(SoundHandle handle) {
+    auto it = instances_.find(handle);
+    if (it == instances_.end() || it->second->ended || !it->second->prepared) return;
+    begin(*it->second);
 }
 
 SoundHandle SoundManager::play_loop(const std::string& bank, const std::string& cue,
@@ -579,7 +610,7 @@ void SoundManager::stop(SoundHandle handle, bool immediate) {
     if (it == instances_.end()) return;
     CueInstance& inst = *it->second;
     if (inst.ended) return;
-    if (!immediate && inst.state == CueInstance::State::Playing) {
+    if (!immediate && !inst.prepared && inst.state == CueInstance::State::Playing) {
         // A release curve (on ReleaseTime) fades the sound itself; else the
         // cue's or its category's fade-out.
         f64 release = 0;
@@ -627,7 +658,12 @@ void SoundManager::stop_all() {
 
 bool SoundManager::is_playing(SoundHandle handle) const {
     auto it = instances_.find(handle);
-    return it != instances_.end() && !it->second->ended;
+    return it != instances_.end() && !it->second->ended && !it->second->prepared;
+}
+
+bool SoundManager::is_prepared(SoundHandle handle) const {
+    auto it = instances_.find(handle);
+    return it != instances_.end() && !it->second->ended && it->second->prepared;
 }
 
 void SoundManager::on_finished(SoundHandle handle, std::function<void()> fn) {
@@ -702,7 +738,9 @@ f32 SoundManager::current_gain(SoundHandle handle) const {
 
 bool SoundManager::is_cue_playing(std::string_view bank, std::string_view cue) const {
     for (const auto& [h, inst] : instances_)
-        if (!inst->ended && iequals(inst->bank_name, bank) && inst->cue->name == cue) return true;
+        if (!inst->ended && !inst->prepared && iequals(inst->bank_name, bank) &&
+            inst->cue->name == cue)
+            return true;
     return false;
 }
 
@@ -710,7 +748,7 @@ void SoundManager::update(f32 dt) {
     clock_ += std::max(0.0f, dt);
     for (auto& [h, ptr] : instances_) {
         CueInstance& inst = *ptr;
-        if (inst.ended) continue;
+        if (inst.ended || inst.prepared) continue;
         bool pending = false;
         for (size_t t = 0; t < inst.tracks.size(); ++t) {
             auto& ts = inst.tracks[t];

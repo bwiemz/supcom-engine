@@ -5,7 +5,6 @@
 #include "core/profiler.hpp"
 #include "lua/binding_coverage.hpp"
 #include "lua/engine_bindings.hpp"
-#include "lua/lan_dialog_ui.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/session_manager.hpp"
@@ -504,23 +503,19 @@ std::optional<int> App::boot_ui() {
     if (!opt.map_path.empty()) {
         osc::core::call_setup_ui(ui_lua_state.raw());
     } else {
-        // No map: bootstrap front-end menu UI
-        // 2. Call SetupUI() (creates cursor, sets skin)
+        // No map: the front end, after SetupUI (the cursor, the skin). A
+        // player's starts as Moho's does, with FA's splash screens
+        // (uimain.lua's StartSplashScreen, which leaves through
+        // EngineStartFrontEndUI). Tests, captures and scripted runs go
+        // straight to the main menu, unless a test asks for the splash.
         osc::core::call_setup_ui(ui_lua_state.raw());
-        // 3. Call import('/lua/ui/menus/main.lua').CreateUI()
-        {
-            auto r = ui_lua_state.do_string("import('/lua/ui/menus/main.lua').CreateUI()");
-            if (r) {
-                spdlog::info("Front-end menu CreateUI() succeeded");
-            } else {
-                spdlog::warn("Front-end CreateUI error: {}", r.error().message);
-            }
-            // Add the LAN Game button + IP/Host/Join dialog to the front end.
-            {
-                auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua);
-                if (!lr) spdlog::warn("LAN dialog UI error: {}", lr.error().message);
-            }
-        }
+        const bool splash = request.splash || (opt.interactive && !opt.scripted_window &&
+                                               !parse_flag(argc, argv, "--auto-skirmish"));
+        if (auto r =
+                ui_lua_state.do_string(splash ? "import('/lua/ui/uimain.lua').StartSplashScreen()"
+                                              : "EngineStartFrontEndUI()");
+            !r)
+            spdlog::warn("Front end: {}", r.error().message);
         // Auto-trigger Skirmish: bypass lobby UI, directly launch with sessionConfig
         if (parse_flag(argc, argv, "--auto-skirmish")) {
             ui_lua_state.do_string(R"(

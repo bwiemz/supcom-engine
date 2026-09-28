@@ -7,7 +7,6 @@
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
 #include "lua/factory_queue.hpp"
-#include "lua/lan_dialog_ui.hpp"
 #include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
@@ -978,12 +977,11 @@ std::optional<int> App::run_window() {
                     uiL = ui_lua_state.raw();
                     publish_window_objects();
 
-                    // Transition to FRONT_END (SetupUI) and show the main menu
+                    // Transition to FRONT_END (SetupUI) and show the main menu, as
+                    // Moho's UI_StartFrontEnd does (with the LAN dialog).
                     game_state_mgr.transition_to(osc::GameState::FRONT_END, uiL);
-                    if (auto shown =
-                            ui_lua_state.do_string("import('/lua/ui/menus/main.lua').CreateUI()");
-                        !shown)
-                        spdlog::warn("Front-end CreateUI error: {}", shown.error().message);
+                    if (auto shown = ui_lua_state.do_string("EngineStartFrontEndUI()"); !shown)
+                        spdlog::warn("Front end: {}", shown.error().message);
 
                     if (!notice.empty()) {
                         lua_pushstring(uiL, "__osc_notice");
@@ -994,10 +992,6 @@ std::optional<int> App::run_window() {
                             "__osc_notice, '<LOC _Ok>')");
                         if (!shown) spdlog::warn("Front-end notice: {}", shown.error().message);
                     }
-
-                    // The LAN dialog on the fresh front end.
-                    if (auto lr = ui_lua_state.do_string(osc::lua::kLanDialogLua); !lr)
-                        spdlog::warn("LAN dialog UI (relobby) error: {}", lr.error().message);
 
                     spdlog::info("=== Returned to lobby ===");
                 } else {

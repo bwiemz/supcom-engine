@@ -22,6 +22,7 @@ void VideoDecoder::close() {
         plm_destroy(plm_);
         plm_ = nullptr;
     }
+    frame_ = nullptr;
     mpeg_data_.clear();
     rgba_buf_.clear();
     width_ = height_ = 0;
@@ -31,10 +32,13 @@ void VideoDecoder::close() {
 bool VideoDecoder::open(const u8* data, size_t size) {
     close();
     if (!data || size == 0) return false;
+    mpeg_data_.assign(reinterpret_cast<const char*>(data),
+                      reinterpret_cast<const char*>(data) + size);
+    return open_held();
+}
 
-    mpeg_data_.assign(data, data + size);
-    plm_ = plm_create_with_memory(mpeg_data_.data(),
-                                   static_cast<int>(mpeg_data_.size()), 0);
+bool VideoDecoder::open_held() {
+    plm_ = plm_create_with_memory(reinterpret_cast<u8*>(mpeg_data_.data()), mpeg_data_.size(), 0);
     if (!plm_) {
         spdlog::warn("VideoDecoder: pl_mpeg failed to open stream");
         mpeg_data_.clear();
@@ -52,55 +56,44 @@ bool VideoDecoder::open(const u8* data, size_t size) {
         return false;
     }
 
-    rgba_buf_.resize(width_ * height_ * 4, 0);
+    // Opaque: pl_mpeg's conversion leaves the alpha bytes as they are.
+    rgba_buf_.assign(static_cast<size_t>(width_) * height_ * 4, 255);
     spdlog::info("VideoDecoder: opened {}x{} @ {:.1f} fps", width_, height_, framerate_);
     return true;
 }
 
-bool VideoDecoder::open_file(const u8* file_data, size_t file_size) {
-    if (!file_data || file_size < 4) return false;
-
-    // Check for MPEG-1 sequence header (0x000001B3)
-    if (file_size >= 4 &&
-        file_data[0] == 0x00 && file_data[1] == 0x00 &&
-        file_data[2] == 0x01 && file_data[3] == 0xB3) {
-        return open(file_data, file_size);
-    }
-
-    // Try SFD demux
-    auto mpeg = demux_sfd(file_data, file_size);
-    if (!mpeg.empty()) {
-        return open(mpeg.data(), mpeg.size());
-    }
-
-    // Last resort: try as raw MPEG-1 anyway
-    return open(file_data, file_size);
+bool VideoDecoder::open_file(std::vector<char> file) {
+    close();
+    if (file.size() < 4) return false;
+    // A CRI container (CRID / SFD magic) holds the video in packets of its
+    // own; anything else is MPEG-1 that pl_mpeg reads itself.
+    auto mpeg = demux_sfd(reinterpret_cast<const u8*>(file.data()), file.size());
+    if (!mpeg.empty()) return open(mpeg.data(), mpeg.size());
+    mpeg_data_ = std::move(file);
+    return open_held();
 }
 
-bool VideoDecoder::decode_next_frame() {
+bool VideoDecoder::decode_next_frame(bool convert) {
     if (!plm_) return false;
-
-    plm_frame_t* frame = plm_decode_video(plm_);
-    if (!frame) {
-        if (loop_) {
-            plm_rewind(plm_);
-            frame = plm_decode_video(plm_);
-        }
-        if (!frame) return false;
-    }
-
-    plm_frame_to_rgba(frame, rgba_buf_.data(),
-                      static_cast<int>(width_) * 4);
+    frame_ = plm_decode_video(plm_);
+    if (!frame_) return false;
+    if (convert) convert_frame();
     return true;
 }
 
-void VideoDecoder::set_loop(bool loop) {
-    loop_ = loop;
-    if (plm_) plm_set_loop(plm_, loop ? 1 : 0);
+void VideoDecoder::convert_frame() {
+    if (!frame_) return;
+    plm_frame_to_rgba(static_cast<plm_frame_t*>(frame_), rgba_buf_.data(),
+                      static_cast<int>(width_) * 4);
+}
+
+f64 VideoDecoder::duration() const {
+    return plm_ ? plm_get_duration(plm_) : 0.0;
 }
 
 void VideoDecoder::rewind() {
     if (plm_) plm_rewind(plm_);
+    frame_ = nullptr;
 }
 
 // --- SFD Demuxer ---

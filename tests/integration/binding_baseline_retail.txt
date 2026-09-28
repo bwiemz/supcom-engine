@@ -14,7 +14,6 @@ G ClearQueueGrid
 G ConTextMatches
 G ERROR
 G EjectSessionClient
-G EngineStartFrontEndUI
 G ExecLuaInSim
 G FlushIntelInRect
 G GenerateArmyStart
@@ -34,8 +33,6 @@ G SetAllianceOneWay
 G SetQueueGrid
 G SetQueueState
 G SetUIControlsAlpha
-G SoundIsPrepared
-G StartSound
 G ValidateIPAddress
 G _c_CreateDecal
 G _c_CreatePathDebugger
