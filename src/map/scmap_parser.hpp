@@ -82,6 +82,19 @@ struct ScmapWater {
     f32 sun_glow = 0.1f;
     std::string cubemap;
     std::string ramp;
+    /// The four wave normal layers (M213a): how often each repeats a unit,
+    /// how far it moves a tick, and its texture.
+    f32 normal_repeat[4] = {0.0009f, 0.009f, 0.05f, 0.5f};
+    f32 normal_movement[4][2] = {
+        {0.5f, -0.95f}, {0.05f, -0.095f}, {0.01f, 0.03f}, {0.0005f, 0.0009f}};
+    std::string normal_texture[4];
+};
+
+/// A map's water masks (M213a), half its size: foam (0 where unset),
+/// flatness (255) and depth bias (127), one byte a texel.
+struct ScmapWaterMasks {
+    u32 width = 0, height = 0;
+    std::vector<u8> foam, flatness, depth_bias;
 };
 
 /// Data extracted from a .scmap file.
@@ -95,6 +108,7 @@ struct ScmapData {
     f32 water_deep_elevation = 0.0f;
     f32 water_abyss_elevation = 0.0f;
     ScmapWater water; ///< meaningful when has_water
+    ScmapWaterMasks water_masks;
     ScmapLighting lighting;
     ScmapEnvironment environment;
     i32 version_minor = 0;

@@ -19,6 +19,7 @@ extern const char* unit_vert;
 extern const char* unit_frag;
 extern const char* water_vert;
 extern const char* water_frag;
+extern const char* water_mask_frag; // TWaterLayAlphaMask: alpha 0 over open water (M213a)
 extern const char* mesh_vert;
 extern const char* mesh_frag;
 extern const char* decal_vert;

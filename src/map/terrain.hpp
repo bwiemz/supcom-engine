@@ -82,6 +82,17 @@ public:
     const ScmapLighting& lighting() const { return lighting_; }
     const ScmapEnvironment& environment() const { return environment_; }
 
+    /// The map's water (M213a): its parameters, masks, and the elevation of
+    /// its abyss (the depth the water map measures down to).
+    void set_water(ScmapWater water, ScmapWaterMasks masks, f32 abyss_elevation) {
+        water_ = std::move(water);
+        water_masks_ = std::move(masks);
+        water_abyss_elevation_ = abyss_elevation;
+    }
+    const ScmapWater& water() const { return water_; }
+    const ScmapWaterMasks& water_masks() const { return water_masks_; }
+    f32 water_abyss_elevation() const { return water_abyss_elevation_; }
+
     /// The map's terrain types, one TypeCode per map cell, row by row.
     void set_terrain_types(std::vector<u8> types);
     /// The terrain type at a world position: its TypeCode in
@@ -101,6 +112,9 @@ private:
     std::vector<u8> terrain_types_;
     ScmapLighting lighting_;
     ScmapEnvironment environment_;
+    ScmapWater water_;
+    ScmapWaterMasks water_masks_;
+    f32 water_abyss_elevation_ = 0.0f;
 };
 
 } // namespace osc::map

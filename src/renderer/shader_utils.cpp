@@ -109,6 +109,10 @@ layout(set = 0, binding = 21) uniform sampler2D normalOverlay;
 
 // The upper stratum's albedo (binding 22): laid over the rest by its alpha
 layout(set = 0, binding = 22) uniform sampler2D upperAlbedo;
+// Under the water (terrain.fx's ApplyWaterColor, M213a): the map's water
+// ramp, read by the water map's depth (its G).
+layout(set = 0, binding = 24) uniform sampler2D waterRamp;
+layout(set = 0, binding = 25) uniform sampler2D waterMap;
 
 // Each stratum's size in world units, for its albedo and its normal map
 // (FA's StratumNAlbedoTile / NormalTile: the texture repeats every `size`).
@@ -303,6 +307,11 @@ void main() {
         lit = light * (color + spec);
     }
 
+    // Under the water, lerped to the water ramp by depth (both techniques).
+    float waterDepth = texture(waterMap, blendUV).g;
+    vec4 waterTint = texture(waterRamp, vec2(waterDepth, 0.5));
+    lit = mix(lit, waterTint.rgb, waterTint.a);
+
     // Fog of war: CPU-blurred texture, smooth transitions
     // FA shows unexplored at ~45% brightness with mild desaturation
     float fogVal = texture(fogMap, blendUV).r;
@@ -407,130 +416,145 @@ void main() {
 }
 )glsl";
 
+// FA's water (M213a): water2.fx's WaterVS, HighFidelityPS and
+// TWaterLayAlphaMask, over one quad that covers the map.
 const char* water_vert = R"glsl(
 #version 450
 
-layout(push_constant) uniform PushConstants {
+layout(set = 0, binding = 0) uniform Water {
     mat4 viewProj;
-    float time;
-    float eyeX, eyeY, eyeZ;
-    float waterElev;
-} pc;
+    vec4 viewPos;    // xyz the eye, w the water's elevation
+    vec4 params;     // time, refraction scale, unit reflection, sky reflection
+    vec4 waterColor; // rgb, a sun shininess
+    vec4 lerpRange;
+    vec4 repeatRate;
+    vec4 move01;
+    vec4 move23;
+    vec4 sunDir;
+    vec4 sunColor;
+} u;
 
-layout(location = 0) in vec3 inPosition;
-layout(location = 1) in float inDepth;
+layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec2 inUV;
 
-layout(location = 0) out float fragDepth;
-layout(location = 1) out vec3 fragWorldPos;
-layout(location = 2) out vec3 fragNormal;
+layout(location = 0) out vec2 fragUV;
+layout(location = 1) out vec2 fragLayer0;
+layout(location = 2) out vec2 fragLayer1;
+layout(location = 3) out vec2 fragLayer2;
+layout(location = 4) out vec2 fragLayer3;
+layout(location = 5) out vec3 fragViewVec;
+layout(location = 6) out vec4 fragScreenPos;
 
 void main() {
-    vec3 pos = inPosition;
-    fragDepth = inDepth;
-
-    // Wave displacement (3 overlapping sine waves)
-    float t = pc.time;
-    float wave1 = sin(pos.x * 0.08 + t * 1.2) * cos(pos.z * 0.06 + t * 0.9) * 0.15;
-    float wave2 = sin(pos.x * 0.15 + pos.z * 0.12 + t * 1.8) * 0.08;
-    float wave3 = sin(pos.z * 0.20 - t * 0.7) * cos(pos.x * 0.10 + t * 1.1) * 0.06;
-    float wave = wave1 + wave2 + wave3;
-
-    // Reduce waves near shore (shallow water)
-    float shoreAtten = clamp(inDepth * 0.5, 0.0, 1.0);
-    pos.y += wave * shoreAtten;
-
-    // Approximate normal from wave derivatives
-    float dx1 = cos(pos.x * 0.08 + t * 1.2) * 0.08 * cos(pos.z * 0.06 + t * 0.9) * 0.15;
-    float dx2 = cos(pos.x * 0.15 + pos.z * 0.12 + t * 1.8) * 0.15 * 0.08;
-    float dz1 = -sin(pos.x * 0.08 + t * 1.2) * sin(pos.z * 0.06 + t * 0.9) * 0.06 * 0.15;
-    float dz3 = cos(pos.z * 0.20 - t * 0.7) * 0.20 * cos(pos.x * 0.10 + t * 1.1) * 0.06;
-    float dydx = (dx1 + dx2) * shoreAtten;
-    float dydz = (dz1 + dz3) * shoreAtten;
-    fragNormal = normalize(vec3(-dydx, 1.0, -dydz));
-
-    fragWorldPos = pos;
-    gl_Position = pc.viewProj * vec4(pos, 1.0);
+    vec3 pos = vec3(inPos.x, u.viewPos.w, inPos.z);
+    gl_Position = u.viewProj * vec4(pos, 1.0);
+    fragUV = inUV;
+    fragScreenPos = gl_Position;
+    // Four wave layers, each scrolling at its own rate (in ticks).
+    float t = u.params.x;
+    fragLayer0 = (pos.xz + u.move01.xy * t) * u.repeatRate.x;
+    fragLayer1 = (pos.xz + u.move01.zw * t) * u.repeatRate.y;
+    fragLayer2 = (pos.xz + u.move23.xy * t) * u.repeatRate.z;
+    fragLayer3 = (pos.xz + u.move23.zw * t) * u.repeatRate.w;
+    fragViewVec = pos - u.viewPos.xyz;
 }
 )glsl";
 
 const char* water_frag = R"glsl(
 #version 450
 
-layout(push_constant) uniform PushConstants {
+layout(set = 0, binding = 0) uniform Water {
     mat4 viewProj;
-    float time;
-    float eyeX, eyeY, eyeZ;
-    float waterElev;
-} pc;
+    vec4 viewPos;
+    vec4 params;
+    vec4 waterColor;
+    vec4 lerpRange;
+    vec4 repeatRate;
+    vec4 move01;
+    vec4 move23;
+    vec4 sunDir;
+    vec4 sunColor;
+} u;
+layout(set = 0, binding = 1) uniform samplerCube skyMap;
+layout(set = 0, binding = 2) uniform sampler2D normalMap0;
+layout(set = 0, binding = 3) uniform sampler2D normalMap1;
+layout(set = 0, binding = 4) uniform sampler2D normalMap2;
+layout(set = 0, binding = 5) uniform sampler2D normalMap3;
+layout(set = 0, binding = 6) uniform sampler2D refractionMap;
+layout(set = 0, binding = 7) uniform sampler2D reflectionMap;
+layout(set = 0, binding = 8) uniform sampler2D fresnelLookup;
+layout(set = 0, binding = 9) uniform sampler2D waterMap; // R flatness, G depth, B land, A foam
 
-layout(location = 0) in float fragDepth;
-layout(location = 1) in vec3 fragWorldPos;
-layout(location = 2) in vec3 fragNormal;
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec2 fragLayer0;
+layout(location = 2) in vec2 fragLayer1;
+layout(location = 3) in vec2 fragLayer2;
+layout(location = 4) in vec2 fragLayer3;
+layout(location = 5) in vec3 fragViewVec;
+layout(location = 6) in vec4 fragScreenPos;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    // Depth-based color: FA-style teal shallow to dark blue deep
-    float d = clamp(fragDepth / 12.0, 0.0, 1.0);
-    vec3 shallowColor = vec3(0.12, 0.38, 0.42);
-    vec3 midColor     = vec3(0.06, 0.22, 0.38);
-    vec3 deepColor    = vec3(0.02, 0.08, 0.22);
-    // Two-stage depth gradient for richer transitions
-    vec3 waterColor = d < 0.4
-        ? mix(shallowColor, midColor, d / 0.4)
-        : mix(midColor, deepColor, (d - 0.4) / 0.6);
+    vec4 waterTexture = texture(waterMap, fragUV);
+    float waterDepth = waterTexture.g;
+    vec3 viewVector = normalize(fragViewVec);
 
-    // Sun direction (same as terrain/mesh shaders)
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
-    vec3 N = normalize(fragNormal);
+    // The frame behind, at this pixel.
+    float oneOverW = 1.0 / fragScreenPos.w;
+    vec2 screenPos = fragScreenPos.xy * oneOverW * 0.5 + 0.5;
+    vec4 background = texture(refractionMap, screenPos);
+    float mask = clamp(background.a * 255.0, 0.0, 1.0);
+    // Not water (its alpha test): drawn over by nothing.
+    if (1.0 - mask == 0.0) discard;
 
-    // Diffuse shading on water surface
-    float NdotL = max(dot(N, lightDir), 0.0);
-    waterColor *= 0.75 + 0.25 * NdotL;
+    // The surface's normal: four layers summed, flattened by the map.
+    vec4 sum = texture(normalMap0, fragLayer0) + texture(normalMap1, fragLayer1) +
+               texture(normalMap2, fragLayer2) + texture(normalMap3, fragLayer3);
+    float waveCrest = clamp(sum.a - 1.0, 0.0, 1.0);
+    vec3 N = normalize((2.0 * sum.xyz - 4.0).xzy);
+    N = mix(vec3(0.0, 1.0, 0.0), N, waterTexture.r);
 
-    // View-dependent effects
-    vec3 eyePos = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
-    vec3 viewDir = normalize(eyePos - fragWorldPos);
-    vec3 halfDir = normalize(lightDir + viewDir);
-    float NdotH = max(dot(N, halfDir), 0.0);
-    float NdotV = max(dot(viewDir, N), 0.0);
+    vec3 R = reflect(viewVector, N);
+    vec4 skyReflection = texture(skyMap, R);
 
-    // Sun specular: tight highlight + broader sun streak
-    float specTight = pow(NdotH, 128.0) * 1.2;
-    float specBroad = pow(NdotH, 16.0) * 0.15;
-    float spec = specTight + specBroad;
+    // Refraction: the frame, displaced by the normal; where the displaced
+    // pixel isn't water, the one behind.
+    vec2 refractionPos = screenPos - u.params.y * N.xz * oneOverW;
+    vec4 refracted = texture(refractionMap, refractionPos);
+    refracted.rgb = mix(refracted, background, clamp(refracted.a * 255.0, 0.0, 1.0)).rgb;
+    vec4 reflected = texture(reflectionMap, refractionPos);
 
-    // Fresnel: Schlick approximation — more reflective at grazing angles
-    float fresnel = 0.02 + 0.40 * pow(1.0 - NdotV, 4.0);
+    float NdotL = clamp(dot(-viewVector, N), 0.0, 1.0);
+    float fresnel = texture(fresnelLookup, vec2(waterDepth, NdotL)).r;
+    vec3 sunReflection = pow(clamp(dot(-R, u.sunDir.xyz), 0.0, 1.0), u.waterColor.a) * u.sunColor.rgb;
 
-    // Sky reflection color (tinted blue, stronger at grazing angles)
-    vec3 skyReflect = vec3(0.35, 0.45, 0.58) * fresnel;
-    waterColor = mix(waterColor, skyReflect, fresnel);
-    waterColor += vec3(1.0, 0.95, 0.85) * spec;
+    reflected = mix(skyReflection, reflected, clamp(u.params.z * reflected.a, 0.0, 1.0));
+    float waterLerp = clamp(waterDepth, u.lerpRange.x, u.lerpRange.y);
+    refracted.rgb = mix(refracted.rgb, u.waterColor.rgb, waterLerp);
+    float skyReflectionAmount = u.params.w * clamp(waterDepth * 10.0, 0.0, 1.0);
+    refracted = mix(refracted, reflected, clamp(skyReflectionAmount * fresnel, 0.0, 1.0));
+    refracted.rgb += sunReflection * fresnel;
+    // Wave crests, where the map lets foam show.
+    refracted.rgb = mix(refracted.rgb, vec3(1.0), (1.0 - waterTexture.a) * waveCrest);
+    outColor = vec4(refracted.rgb, 1.0 - mask);
+}
+)glsl";
 
-    // Animated caustic-like pattern on shallow water (subtle)
-    float caustic1 = sin(fragWorldPos.x * 0.5 + pc.time * 0.8)
-                   * cos(fragWorldPos.z * 0.6 - pc.time * 0.5);
-    float caustic2 = sin(fragWorldPos.x * 0.3 - pc.time * 0.6)
-                   * cos(fragWorldPos.z * 0.4 + pc.time * 0.7);
-    float caustic = (caustic1 + caustic2) * 0.5;
-    float causticMask = (1.0 - d) * 0.08; // only visible in shallow water
-    waterColor += vec3(caustic * causticMask);
+const char* water_mask_frag = R"glsl(
+#version 450
 
-    // Shore foam: white band where depth is very shallow
-    float foam = smoothstep(0.8, 0.0, fragDepth) * 0.35;
-    // Animated foam sparkle
-    float sparkle = sin(fragWorldPos.x * 2.0 + pc.time * 3.0)
-                  * cos(fragWorldPos.z * 2.5 + pc.time * 2.0);
-    foam *= 0.7 + 0.3 * sparkle;
-    waterColor += vec3(foam);
+layout(set = 0, binding = 10) uniform sampler2D waterMask; // the water map, point-sampled
 
-    // Alpha: more opaque in deep water, semi-transparent at shore
-    float alpha = mix(0.50, 0.88, d);
+layout(location = 0) in vec2 fragUV;
 
-    // No distance fog: FA's shaders have none (M210a). The water's own
-    // lighting is M213's.
-    outColor = vec4(clamp(waterColor, 0.0, 1.0), alpha);
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    // WaterLayAlphaMaskPS with its alpha test: alpha 0 where the water map
+    // has no land.
+    if (texture(waterMask, fragUV).b != 0.0) discard;
+    outColor = vec4(0.0);
 }
 )glsl";
 

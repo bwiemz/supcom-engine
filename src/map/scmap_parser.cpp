@@ -141,15 +141,16 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
         w.cubemap = r.read_cstring();
         w.ramp = r.read_cstring();
 
-        // 4 wave normal frequencies
+        // 4 wave normal repeat rates
         if (!r.has_remaining(16)) return false;
-        r.skip(16);
+        for (f32& v : w.normal_repeat) v = r.read_f32();
 
-        // 4 wave textures: each has scaleX(f32), scaleY(f32), path(cstring)
+        // 4 wave textures: each its movement (x, y) and path
         for (int i = 0; i < 4; i++) {
             if (!r.has_remaining(8)) return false;
-            r.skip(8); // scaleX + scaleY
-            r.read_cstring(); // wave texture path
+            w.normal_movement[i][0] = r.read_f32();
+            w.normal_movement[i][1] = r.read_f32();
+            w.normal_texture[i] = r.read_cstring();
         }
 
         // --- Wave generators ---
@@ -329,7 +330,15 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
                             static_cast<size_t>(map_height / 2);
     size_t total_water_maps = water_map_size * 3; // foam + flatness + depth bias
     if (!r.has_remaining(total_water_maps)) return false;
-    r.skip(total_water_maps);
+    {
+        ScmapWaterMasks& m = result.water_masks;
+        m.width = map_width / 2;
+        m.height = map_height / 2;
+        for (std::vector<u8>* mask : {&m.foam, &m.flatness, &m.depth_bias}) {
+            const std::vector<char> bytes = r.read_bytes(water_map_size);
+            mask->assign(bytes.begin(), bytes.end());
+        }
+    }
 
     // --- Terrain type data: map_width × map_height bytes ---
     size_t terrain_type_size = static_cast<size_t>(map_width) *

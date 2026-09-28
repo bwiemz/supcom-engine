@@ -161,6 +161,8 @@ public:
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
     const TrailRenderer& trail_renderer() const { return trail_renderer_; }
+    /// The map's water (tests read its water map and Fresnel table; M213a).
+    const WaterRenderer& water_renderer() const { return water_renderer_; }
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -283,8 +285,6 @@ private:
     VkPipelineLayout terrain_layout_ = VK_NULL_HANDLE;
     VkPipeline unit_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout unit_layout_ = VK_NULL_HANDLE;
-    VkPipeline water_pipeline_ = VK_NULL_HANDLE;
-    VkPipelineLayout water_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_layout_ = VK_NULL_HANDLE;
     VkPipeline mesh_fade_pipeline_ = VK_NULL_HANDLE; // fading instances (M211e)
@@ -446,6 +446,11 @@ private:
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
 
     // Offscreen scene image (rendered instead of swapchain, then composited)
+    /// The frame before the water, which the water refracts (M213a).
+    AllocatedImage refraction_image_{};
+    /// The scene's two passes around the water on a map with it (M213a).
+    VkRenderPass scene_first_pass_ = VK_NULL_HANDLE;
+    VkRenderPass scene_second_pass_ = VK_NULL_HANDLE;
     AllocatedImage scene_color_image_{};
     VkRenderPass scene_render_pass_ = VK_NULL_HANDLE;
     VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
@@ -476,6 +481,9 @@ private:
     VkDescriptorSet bloom_blur_v_ds_ = VK_NULL_HANDLE;  // samples bloom_blur_v_image_
 
     void create_bloom_resources();
+    /// Copy the frame drawn so far for the water to refract, between the
+    /// scene's two passes (M213a).
+    void copy_refraction(VkCommandBuffer cmd);
     void create_bloom_pipelines();
     void destroy_bloom_resources();
 

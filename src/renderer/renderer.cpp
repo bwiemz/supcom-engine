@@ -287,8 +287,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // overlay, 22: the upper stratum's albedo (all combined image samplers),
     // 23: the strata's sizes (a uniform buffer, M212a).
     {
-        std::array<VkDescriptorSetLayoutBinding, 24> terrain_bindings{};
-        for (u32 i = 0; i < 24; i++) {
+        // 24 and 25: the water ramp and the water map (M213a).
+        std::array<VkDescriptorSetLayoutBinding, 26> terrain_bindings{};
+        for (u32 i = 0; i < 26; i++) {
             terrain_bindings[i].binding = i;
             terrain_bindings[i].descriptorType = i == kTerrainStrataBinding
                                                      ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
@@ -355,6 +356,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
     trail_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    // FA's water (M213a)
+    water_renderer_.init(device_, allocator_, scene_render_pass_);
+    water_renderer_.set_refraction(refraction_image_.view);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -813,21 +817,19 @@ void Renderer::create_pipelines() {
     auto tf = compile_glsl(device_, shaders::terrain_frag, "terrain.frag", false);
     auto uv = compile_glsl(device_, shaders::unit_vert, "unit.vert", true);
     auto uf = compile_glsl(device_, shaders::unit_frag, "unit.frag", false);
-    auto wv = compile_glsl(device_, shaders::water_vert, "water.vert", true);
-    auto wf = compile_glsl(device_, shaders::water_frag, "water.frag", false);
     auto mv = compile_glsl(device_, shaders::mesh_vert, "mesh.vert", true);
     auto mf = compile_glsl(device_, shaders::mesh_frag, "mesh.frag", false);
     auto dv = compile_glsl(device_, shaders::decal_vert, "decal.vert", true);
     auto df = compile_glsl(device_, shaders::decal_frag, "decal.frag", false);
 
     // Abort if any shader failed to compile
-    if (!tv || !tf || !uv || !uf || !wv || !wf || !mv || !mf || !dv || !df) {
+    if (!tv || !tf || !uv || !uf || !mv || !mf || !dv || !df) {
         spdlog::error("One or more shaders failed to compile");
         auto safe_destroy = [&](VkShaderModule m) {
             if (m) vkDestroyShaderModule(device_, m, nullptr);
         };
         safe_destroy(tv); safe_destroy(tf); safe_destroy(uv);
-        safe_destroy(uf); safe_destroy(wv); safe_destroy(wf);
+        safe_destroy(uf);
         safe_destroy(mv); safe_destroy(mf);
         safe_destroy(dv); safe_destroy(df);
         return;
@@ -963,30 +965,6 @@ void Renderer::create_pipelines() {
         mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     }
 
-    // --- Water pipeline (tessellated grid with wave animation) ---
-    {
-        VkVertexInputBindingDescription binding{};
-        binding.binding = 0;
-        binding.stride = sizeof(f32) * 4; // position(3) + depth(1)
-        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-        std::array<VkVertexInputAttributeDescription, 2> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                    // position
-        attrs[1] = {1, 0, VK_FORMAT_R32_SFLOAT, sizeof(f32) * 3};            // depth
-
-        water_pipeline_ =
-            PipelineBuilder()
-                .set_shaders(wv, wf)
-                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
-                .set_depth_test(true, false) // test ON, write OFF
-                .set_blend(true)
-                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_push_constant(WaterRenderer::PUSH_CONSTANT_SIZE,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
-                .build(device_, scene_render_pass_, &water_layout_);
-    }
-
     // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
     {
         std::array<VkVertexInputBindingDescription, 2> bindings{};
@@ -1056,8 +1034,6 @@ void Renderer::create_pipelines() {
     vkDestroyShaderModule(device_, tf, nullptr);
     vkDestroyShaderModule(device_, uv, nullptr);
     vkDestroyShaderModule(device_, uf, nullptr);
-    vkDestroyShaderModule(device_, wv, nullptr);
-    vkDestroyShaderModule(device_, wf, nullptr);
     vkDestroyShaderModule(device_, mv, nullptr);
     vkDestroyShaderModule(device_, mf, nullptr);
     vkDestroyShaderModule(device_, dv, nullptr);
@@ -1207,7 +1183,9 @@ void Renderer::create_bloom_resources() {
         img_ci.arrayLayers = 1;
         img_ci.samples = VK_SAMPLE_COUNT_1_BIT;
         img_ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        // Copyable both ways: the water refracts a copy of the frame (M213a).
+        img_ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
         VmaAllocationCreateInfo alloc_ci{};
         alloc_ci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
@@ -1227,6 +1205,8 @@ void Renderer::create_bloom_resources() {
     // scene_render_pass_ so format compatibility is guaranteed. HDR allows
     // overbright values for proper bloom extraction.
     create_hdr_image(scene_color_image_, w, h);
+    // The frame as it is before the water, which the water refracts (M213a).
+    create_hdr_image(refraction_image_, w, h);
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
     create_hdr_image(bloom_blur_v_image_, half_w, half_h);
@@ -1299,6 +1279,28 @@ void Renderer::create_bloom_resources() {
         rp_ci.pDependencies = deps.data();
 
         VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_render_pass_));
+
+        // On a map with water the scene is drawn in two passes around it
+        // (M213a): the first keeps its colour and depth as attachments; the
+        // second goes on from where it was. Only their loads, stores and
+        // layouts differ (their dependencies must not, for them to stay
+        // compatible), so the scene's pipelines draw in both; the copy
+        // between them has barriers of its own (copy_refraction).
+        {
+            std::array<VkAttachmentDescription, 2> first = attachments;
+            first[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            first[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            rp_ci.pAttachments = first.data();
+            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_first_pass_));
+
+            std::array<VkAttachmentDescription, 2> second = attachments;
+            second[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            second[0].initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            second[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            second[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            rp_ci.pAttachments = second.data();
+            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_second_pass_));
+        }
     }
 
     // Scene framebuffer (full resolution, scene_render_pass_)
@@ -1425,6 +1427,7 @@ void Renderer::create_bloom_resources() {
         write_ds(bloom_blur_v_ds_, bloom_blur_v_image_.view);
     }
 
+    water_renderer_.set_refraction(refraction_image_.view);
     spdlog::info("Bloom resources created ({}x{}, half {}x{})", w, h, half_w, half_h);
 }
 
@@ -1452,6 +1455,10 @@ void Renderer::destroy_bloom_resources() {
     // Render passes
     if (bloom_render_pass_) vkDestroyRenderPass(device_, bloom_render_pass_, nullptr);
     if (scene_render_pass_) vkDestroyRenderPass(device_, scene_render_pass_, nullptr);
+    if (scene_first_pass_) vkDestroyRenderPass(device_, scene_first_pass_, nullptr);
+    if (scene_second_pass_) vkDestroyRenderPass(device_, scene_second_pass_, nullptr);
+    scene_first_pass_ = VK_NULL_HANDLE;
+    scene_second_pass_ = VK_NULL_HANDLE;
 
     // Images
     auto destroy_img = [&](AllocatedImage& img) {
@@ -1460,6 +1467,7 @@ void Renderer::destroy_bloom_resources() {
         img = {};
     };
     destroy_img(scene_color_image_);
+    destroy_img(refraction_image_);
     destroy_img(bloom_bright_image_);
     destroy_img(bloom_blur_h_image_);
     destroy_img(bloom_blur_v_image_);
@@ -1558,7 +1566,7 @@ void Renderer::clear_scene() {
 
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
-    water_renderer_.destroy(device_, allocator_);
+    water_renderer_.clear();
     fog_renderer_.destroy(device_, allocator_);
 
     if (bone_ds_pool_) {
@@ -1584,7 +1592,7 @@ void Renderer::clear_scene() {
     minimap_renderer_.forget_terrain();
     if (caches_initialized_) {
         for (const char* key : {"__terrain_blend0", "__terrain_blend1", "__normal_overlay__",
-                                "__osc_minimap_terrain"})
+                                "__osc_minimap_terrain", "__water_map", "__water_fresnel"})
             texture_cache_.evict(key);
     }
     particle_system_.clear();
@@ -1726,6 +1734,10 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
     }
 
+    // FA's water: its quad, water map, Fresnel table and textures (M213a),
+    // before the terrain, which is tinted under it by the water map.
+    water_renderer_.build(*terrain, texture_cache_);
+
     // Load terrain stratum textures and create terrain descriptor set
     // Requires texture_cache_ to be initialized (needs VFS for albedo textures)
     if (terrain_tex_ds_layout_ && !terrain->strata().empty() &&
@@ -1808,7 +1820,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         // Create descriptor pool and set
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
         pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_sizes[0].descriptorCount = 23;
+        pool_sizes[0].descriptorCount = 25;
         pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         pool_sizes[1].descriptorCount = 1;
 
@@ -1860,7 +1872,26 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             strata_info.offset = 0;
             strata_info.range = sizeof(TerrainStrataData);
 
-            std::array<VkWriteDescriptorSet, 2> more{};
+            // Under the water, the map's water ramp by the water map's depth
+            // (ApplyWaterColor; M213a); a map without water has neither.
+            const bool wet = water_renderer_.has_water();
+            VkDescriptorImageInfo ramp_info{};
+            ramp_info.sampler = water_renderer_.clamp_sampler();
+            ramp_info.imageView = wet ? water_renderer_.ramp_view() : zero_view;
+            ramp_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            VkDescriptorImageInfo depth_info = ramp_info;
+            depth_info.imageView = wet ? water_renderer_.water_map_view() : zero_view;
+
+            std::array<VkWriteDescriptorSet, 4> more{};
+            more[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            more[2].dstSet = terrain_tex_ds_;
+            more[2].dstBinding = 24;
+            more[2].descriptorCount = 1;
+            more[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            more[2].pImageInfo = &ramp_info;
+            more[3] = more[2];
+            more[3].dstBinding = 25;
+            more[3].pImageInfo = &depth_info;
             more[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             more[0].dstSet = terrain_tex_ds_;
             more[0].dstBinding = 22;
@@ -1882,10 +1913,6 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                      blend1 ? "OK" : "fallback");
     }
 
-    if (terrain->has_water()) {
-        water_renderer_.build(*terrain, device_, allocator_, cmd_pool_,
-                              graphics_queue_);
-    }
 
     // Init fog of war texture (same grid dimensions as visibility grid)
     {
@@ -2313,6 +2340,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                  frame_dt_, &frustum);
     }
 
+    // FA's water: this frame's camera and time (M213a)
+    water_renderer_.update(camera_, vp, unit_renderer_.shader_time(), fi);
+
     // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
         PROFILE_ZONE("Render::particle_update");
@@ -2499,7 +2529,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rp_begin.renderPass = scene_render_pass_;
+    // Split around the water on a map with it (M213a).
+    rp_begin.renderPass = water_renderer_.has_water() ? scene_first_pass_ : scene_render_pass_;
     rp_begin.framebuffer = scene_framebuffer_;
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
@@ -2822,28 +2853,20 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
     trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
 
-    // 5. Draw water (tessellated grid with wave animation, depth coloring)
-    if (water_renderer_.has_water() && water_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          water_pipeline_);
-
-        WaterRenderer::WaterPushConstants wpc{};
-        std::memcpy(wpc.view_proj, vp.data(), sizeof(f32) * 16);
-        wpc.time = total_time_;
-        camera_.eye_position(wpc.eye_x, wpc.eye_y, wpc.eye_z);
-        wpc.water_elevation = water_renderer_.water_elevation();
-
-        vkCmdPushConstants(cmd_buf_[fi], water_layout_,
-                           VK_SHADER_STAGE_VERTEX_BIT |
-                               VK_SHADER_STAGE_FRAGMENT_BIT,
-                           0, WaterRenderer::PUSH_CONSTANT_SIZE, &wpc);
-
-        VkBuffer vbufs[] = {water_renderer_.vertex_buffer()};
-        VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, vbufs, offsets);
-        vkCmdBindIndexBuffer(cmd_buf_[fi], water_renderer_.index_buffer(), 0,
-                             VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd_buf_[fi], water_renderer_.index_count(), 1, 0, 0, 0);
+    // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
+    // over open water), a copy of the frame so far, then the surface, which
+    // refracts the copy, in a second pass that goes on from the first.
+    if (water_renderer_.has_water()) {
+        water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
+        vkCmdEndRenderPass(cmd_buf_[fi]);
+        copy_refraction(cmd_buf_[fi]);
+        VkRenderPassBeginInfo again{};
+        again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        again.renderPass = scene_second_pass_;
+        again.framebuffer = scene_framebuffer_;
+        again.renderArea.extent = {window_width_, window_height_};
+        vkCmdBeginRenderPass(cmd_buf_[fi], &again, VK_SUBPASS_CONTENTS_INLINE);
+        water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
     }
 
     // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
@@ -3111,6 +3134,68 @@ void Renderer::dump_frame(std::ostream& out) const {
                                        e.seen ? "seen" : "unseen"));
     }
     section("emitters", std::move(emitters));
+}
+
+void Renderer::copy_refraction(VkCommandBuffer cmd) {
+    // The frame, drawn, to be read; the copy's previous contents (read by
+    // the last frame's water) discarded.
+    VkImageMemoryBarrier to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = scene_color_image_.image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
+    VkImageMemoryBarrier to_dst{};
+    to_dst.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_dst.srcAccessMask = 0;
+    to_dst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_dst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    to_dst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    to_dst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_dst.image = refraction_image_.image;
+    to_dst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &to_dst);
+
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = {window_width_, window_height_, 1};
+    vkCmdCopyImage(cmd, scene_color_image_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   refraction_image_.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    // The copy for the water to read; the frame back to be drawn on.
+    std::array<VkImageMemoryBarrier, 2> after{};
+    after[0] = to_dst;
+    after[0].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    after[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    after[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    after[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    after[1] = to_dst;
+    after[1].image = scene_color_image_.image;
+    after[1].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    after[1].dstAccessMask =
+        VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    after[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    after[1].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    // And the first pass's depth, which the second goes on testing.
+    VkMemoryBarrier depth{};
+    depth.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    depth.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depth.dstAccessMask =
+        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(
+        cmd, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        0, 1, &depth, 0, nullptr, static_cast<u32>(after.size()), after.data());
 }
 
 void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) {
@@ -3597,10 +3682,6 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, terrain_layout_, nullptr);
     vkDestroyPipeline(device_, unit_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, unit_layout_, nullptr);
-    if (water_pipeline_)
-        vkDestroyPipeline(device_, water_pipeline_, nullptr);
-    if (water_layout_)
-        vkDestroyPipelineLayout(device_, water_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_fade_pipeline_, nullptr);
