@@ -6,6 +6,7 @@
 #include "renderer/camera.hpp"
 #include "renderer/mesh_cache.hpp"
 #include "renderer/terrain_mesh.hpp"
+#include "renderer/terrain_time.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/font_cache.hpp"
 #include "renderer/movie_textures.hpp"
@@ -162,6 +163,9 @@ public:
     const ReconView& recon() const { return recon_; }
     /// The effects' emitters and particles (tests read them).
     const ParticleSystem& particle_system() const { return particle_system_; }
+    /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
+    /// M212f).
+    f32 terrain_time() const { return terrain_time_.value(); }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
@@ -495,6 +499,8 @@ private:
     /// The scene's lighting: its map's, else SCMP_009's.
     map::ScmapLighting lighting_{};
     bool terrain_xp_ = false;
+    bool terrain_glow_ = false; ///< TTerrainGlow (M212f)
+    TerrainTime terrain_time_;  ///< the terrain shader's Time (M212f)
     /// Write the lighting into every frame's UBO.
     void upload_lighting();
 
