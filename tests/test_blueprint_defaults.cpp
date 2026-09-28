@@ -43,6 +43,30 @@ TEST_CASE("A unit blueprint's omitted collision offsets read as 0", "[blueprints
     )"));
 }
 
+TEST_CASE("A unit blueprint's omitted threat levels and regeneration read as 0", "[blueprints]") {
+    BlueprintWorld w;
+    CHECK(w.check(R"(
+        -- The UEF T1 transport's Defense: health and armour, no threat levels,
+        -- which the AI's GetThreatOfUnits adds unguarded
+        local bare = {BlueprintId = 'bare', Defense = {MaxHealth = 600, Health = 600}}
+        RegisterUnitBlueprint(bare)
+        local d = bare.Defense
+        assert(d.AirThreatLevel == 0 and d.SurfaceThreatLevel == 0 and d.SubThreatLevel == 0 and
+               d.EconomyThreatLevel == 0, 'threat levels not defaulted')
+        assert(d.RegenRate == 0, 'regeneration not defaulted')
+        assert(d.MaxHealth == 600, 'health lost')
+        -- Without a Defense at all
+        local none = {BlueprintId = 'none'}
+        RegisterUnitBlueprint(none)
+        assert(none.Defense.SurfaceThreatLevel == 0, 'no Defense: not defaulted')
+        -- A .bp's own values stay
+        local set = {BlueprintId = 'set', Defense = {SurfaceThreatLevel = 3, RegenRate = 2}}
+        RegisterUnitBlueprint(set)
+        assert(set.Defense.SurfaceThreatLevel == 3 and set.Defense.RegenRate == 2, 'own lost')
+        assert(set.Defense.AirThreatLevel == 0, 'air')
+    )"));
+}
+
 TEST_CASE("A weapon's omitted RateOfFire reads as 1, its other numbers as 0", "[blueprints]") {
     BlueprintWorld w;
     CHECK(w.check(R"(
