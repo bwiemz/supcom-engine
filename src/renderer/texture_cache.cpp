@@ -657,6 +657,8 @@ const GPUTexture* TextureCache::get_raw(const std::string& key,
     auto gpu = std::make_unique<GPUTexture>();
     gpu->image = image;
     gpu->descriptor_set = ds;
+    gpu->width = dds->width;
+    gpu->height = dds->height;
 
     spdlog::debug("TextureCache: loaded raw '{}' ({}x{}, {} mips)",
                    key, dds->width, dds->height, dds->mip_count);
@@ -802,6 +804,8 @@ const GPUTexture* TextureCache::upload_rgba(const std::string& key,
     auto gpu = std::make_unique<GPUTexture>();
     gpu->image = image;
     gpu->descriptor_set = ds;
+    gpu->width = width;
+    gpu->height = height;
 
     auto* result = gpu.get();
     cache_[key] = std::move(gpu);
@@ -841,6 +845,8 @@ const GPUTexture* TextureCache::finalize_load(const std::string& path,
     auto gpu = std::make_unique<GPUTexture>();
     gpu->image = image;
     gpu->descriptor_set = ds;
+    gpu->width = dds->width;
+    gpu->height = dds->height;
 
     spdlog::debug("TextureCache: loaded '{}' ({}x{}, {} mips)",
                    path, dds->width, dds->height, dds->mip_count);

@@ -1583,6 +1583,7 @@ void Renderer::clear_scene() {
     }
     particle_system_.clear();
     emitter_bp_cache_.clear();
+    strategic_icon_renderer_.forget_blueprints(); // likewise the icons' (M215c)
 
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
@@ -1660,6 +1661,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
             caches_initialized_ = true;
         }
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
+        // Their strategic icons, as Moho loads a blueprint's with it (M215c).
+        strategic_icon_renderer_.preload(preload, texture_cache_, L);
     }
     // The colour tables that pick each army's row of a lookup (M211c), and
     // an unidentified blip's colour (M215a)
@@ -2307,9 +2310,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                   window_width_, window_height_);
 
     // Update strategic icons (zoom-dependent 2D icons replacing 3D meshes)
-    strategic_icon_renderer_.update(view, camera_, vp, selected_ids,
-                                     texture_cache_,
-                                     window_width_, window_height_);
+    strategic_icon_renderer_.update(view, camera_, vp, selected_ids, texture_cache_, window_width_,
+                                    window_height_, L);
 
     if (legacy_hud_active_) {
         // Update economy HUD
@@ -3050,7 +3052,17 @@ void Renderer::dump_frame(std::ostream& out) const {
     out << "[units]\n";
     unit_renderer_.dump(out);
     section("overlay", quads(overlay_renderer_.quads()));
-    section("icons", quads(strategic_icon_renderer_.quads()));
+    {
+        // Each icon with its texture, in draw order: the order is Moho's
+        // (ground, air, high-priority, selected; a badge over its icon), and
+        // the entities' own, so as steady as any sorted section (M215c).
+        const auto& qs = strategic_icon_renderer_.quads();
+        const auto& textures = strategic_icon_renderer_.quad_textures();
+        out << "[icons] " << qs.size() << '\n';
+        for (size_t i = 0; i < qs.size(); ++i)
+            out << (i < textures.size() ? textures[i] : std::string("?")) << " | "
+                << quad_line(qs[i]) << '\n';
+    }
     section("minimap-window", ui_quads(painted_minimap_));
     section("minimap-hud", ui_quads(minimap_renderer_.quads()));
     section("hud", quads(hud_renderer_.quads()));
