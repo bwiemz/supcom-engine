@@ -452,6 +452,71 @@ void main() {
 }
 )glsl";
 
+// Glowing decals (M212d): terrain.fx's DecalsPSGlow, added into the frame's
+// alpha, what glows (TDecalsGlow: One/One, alpha only): the albedo's alpha,
+// times a quarter of the mask's red, faded.
+const char* kDecalGlowFragMain = R"glsl(
+layout(set = 2, binding = 0) uniform sampler2D decalAlbedo; // DecalAlbedoSampler: clamps
+layout(set = 4, binding = 0) uniform sampler2D decalMask;   // DecalMaskSampler: clamps
+
+layout(location = 3) in vec2 fragDecalUV;
+
+layout(location = 0) out vec4 outColor;
+
+vec4 clamped(sampler2D tex, vec2 uv) {
+    vec2 edge = 0.5 / vec2(textureSize(tex, 0));
+    return texture(tex, clamp(uv, edge, 1.0 - edge));
+}
+
+void main() {
+    float glow = clamped(decalAlbedo, fragDecalUV).a;
+    float mask = clamped(decalMask, fragDecalUV).r * 0.25;
+    outColor = vec4(glow * mask * pc.mapAlpha.z);
+}
+)glsl";
+
+// Glow-mask decals (M212d): terrain.fx's DecalsGlowMaskPS, TDecalGlowMask. Lit
+// as DecalsPS without shadows, kept only where the albedo's alpha times the
+// mask's (faded) is at least 0.9, and there the frame's glow set to 0.01: it
+// masks what the terrain below would have glowed. No blending.
+const char* kDecalGlowMaskFragMain = R"glsl(
+layout(set = 2, binding = 0) uniform sampler2D decalAlbedo; // DecalAlbedoSampler: clamps
+layout(set = 3, binding = 0) uniform sampler2D decalSpec;   // DecalSpecSampler: clamps
+layout(set = 4, binding = 0) uniform sampler2D decalMask;   // DecalMaskSampler: clamps
+
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
+layout(location = 3) in vec2 fragDecalUV;
+
+layout(location = 0) out vec4 outColor;
+
+vec4 clamped(sampler2D tex, vec2 uv) {
+    vec2 edge = 0.5 / vec2(textureSize(tex, 0));
+    return texture(tex, clamp(uv, edge, 1.0 - edge));
+}
+
+void main() {
+    vec4 albedo = clamped(decalAlbedo, fragDecalUV);
+    float a = clamp(albedo.a * clamped(decalMask, fragDecalUV).r * pc.mapAlpha.z, 0.0, 1.0);
+    if (a < 0.9) discard; // clip(a - 0.90)
+    vec2 mapSize = pc.mapAlpha.xy;
+    vec2 blendUV = fragWorldXZ / mapSize;
+    vec4 b0;
+    vec4 b1;
+    terrainMasks(blendUV, b0, b1);
+    vec3 worldNormal = terrainNormal(fragWorldXZ, fragNormal, b0, b1, mapSize);
+    vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
+    float spec;
+    // DecalsGlowMaskPS(false): CalculateLighting without shadows.
+    vec3 lit = lightTTerrain(albedo.rgb, clamped(decalSpec, fragDecalUV).r, worldNormal, worldPos,
+                             pc.eye.xyz, 1.0, spec);
+    lit = applyWaterColor(lit, blendUV);
+    lit = applyFogOfWar(lit, blendUV);
+    outColor = vec4(lit, 0.01);
+}
+)glsl";
+
 // Runtime splats (M212c): terrain.fx's SplatsPS. CalculateLighting with no
 // specular, by the terrain's normal; alpha the albedo's times the splat's
 // (its LOD fade and removal fade). No mask.
@@ -489,6 +554,17 @@ void main() {
 )glsl";
 
 } // namespace
+
+const char* decal_glow_frag() {
+    static const std::string source = std::string(kDecalPush) + kDecalGlowFragMain;
+    return source.c_str();
+}
+
+const char* decal_glow_mask_frag() {
+    static const std::string source =
+        std::string(kDecalPush) + kTerrainSurface + kDecalGlowMaskFragMain;
+    return source.c_str();
+}
 
 const char* splat_frag() {
     static const std::string source = std::string(kDecalPush) + kTerrainSurface + kSplatFragMain;

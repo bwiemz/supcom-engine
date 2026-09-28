@@ -31,6 +31,7 @@ extern "C" {
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <ostream>
 #include <unordered_map>
 
@@ -997,13 +998,13 @@ void Renderer::create_pipelines() {
         attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
         attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
 
-        // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B
-        decal_pipeline_ =
-            PipelineBuilder()
-                .set_shaders(dv, df)
+        // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B.
+        // Every decal technique's pipeline takes these sets and this block.
+        const auto decal_builder = [&](VkShaderModule frag) {
+            PipelineBuilder b;
+            b.set_shaders(dv, frag)
                 .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
                 .set_depth_test(true, false)
-                .set_blend(true)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 32,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -1011,9 +1012,33 @@ void Renderer::create_pipelines() {
                 .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow and light
                 .add_descriptor_set_layout(texture_ds_layout_)     // set=2: albedo
                 .add_descriptor_set_layout(texture_ds_layout_)     // set=3: specular
-                .add_descriptor_set_layout(texture_ds_layout_)     // set=4: the mask
-                .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
-                .build(device_, scene_render_pass_, &decal_layout_);
+                .add_descriptor_set_layout(texture_ds_layout_);    // set=4: the mask
+            return b;
+        };
+        decal_pipeline_ = decal_builder(df)
+                              .set_blend(true)
+                              .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
+                              .build(device_, scene_render_pass_, &decal_layout_);
+        // The glowing decals (M212d; TDecalsGlow): One/One into alpha alone,
+        // the frame's glow. The glow masks (TDecalGlowMask): no blending,
+        // colour and glow both written.
+        VkShaderModule glow =
+            compile_glsl(device_, shaders::decal_glow_frag(), "decal_glow.frag", false);
+        VkShaderModule glow_mask =
+            compile_glsl(device_, shaders::decal_glow_mask_frag(), "decal_glow_mask.frag", false);
+        if (glow)
+            decal_glow_pipeline_ = decal_builder(glow)
+                                       .set_blend(true)
+                                       .set_alpha_blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE)
+                                       .set_color_write_mask(VK_COLOR_COMPONENT_A_BIT)
+                                       .build(device_, scene_render_pass_, &decal_glow_layout_);
+        if (glow_mask)
+            decal_glow_mask_pipeline_ =
+                decal_builder(glow_mask)
+                    .set_color_write_mask(kColorAndGlow)
+                    .build(device_, scene_render_pass_, &decal_glow_mask_layout_);
+        if (glow) vkDestroyShaderModule(device_, glow, nullptr);
+        if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
     }
 
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
@@ -2073,12 +2098,13 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     if (!terrain->decals().empty() && decal_pipeline_) {
         std::vector<u32> indices;
         for (const map::DecalInfo& d : terrain->decals()) {
-            if (!map::lit_decal(d.type)) continue; // M212c: water, glow and the glow mask
+            const std::optional<DecalTechnique> technique = decal_technique(d.type);
+            if (!technique) continue; // the water decals (normals bake apart)
             if (d.scale_x == 0.0f || d.scale_y == 0.0f || d.scale_z == 0.0f) continue;
             StoredDecal sd;
             sd.albedo_path = d.texture_path;
             sd.spec_path = d.texture2_path;
-            sd.xp = d.type == map::DecalType::AlbedoXP;
+            sd.technique = *technique;
             decal_texture_matrix(d, sd.u, sd.v);
             f32 min_x = 0, min_z = 0, max_x = 0, max_z = 0;
             decal_bounds(d, min_x, min_z, max_x, max_z);
@@ -2621,12 +2647,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     }
 
     // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
-    // Albedo pass, then AlbedoXP (DrawDecalPass), each the map's (M212b) and
-    // then the scripts' (M212c), faded by their LOD (GetLODAlpha); then the
-    // splats (DrawSplatComposite).
-    const bool runtime_decals = !runtime_decals_.decal_draws().empty();
-    if (decals_enabled_ && (!stored_decals_.empty() || runtime_decals) && decal_pipeline_ &&
-        terrain_ && terrain_tex_ds_ && shadow_ds_[fi] && decal_mask_ds_) {
+    // glow masks, the Albedo and the AlbedoXP passes (DrawDecalPass), the
+    // splats (DrawSplatComposite), then the glowing decals
+    // (DrawGlowingDecals). Each pass the map's decals (M212b) and then the
+    // scripts' (M212c), faded by their LOD (GetLODAlpha).
+    {
         const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
         f32 eye_x = 0;
         f32 eye_y = 0;
@@ -2634,13 +2659,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         camera_.eye_position(eye_x, eye_y, eye_z);
         const std::array<f32, 3> eye = {eye_x, eye_y, eye_z};
         const std::array<f32, 16> view_matrix = camera_.view();
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, decal_pipeline_);
-        const std::array<VkDescriptorSet, 2> shared = {terrain_tex_ds_, shadow_ds_[fi]};
-        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
-                                static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
-        VkBuffer vertices = terrain_mesh_.vertex_buffer();
-        const VkDeviceSize no_offset = 0;
-        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
+        const bool drawable = decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi];
+        const bool runtime_decals = !runtime_decals_.decal_draws().empty();
         struct DecalPC {
             f32 view_proj[16];
             f32 u[4];
@@ -2650,8 +2670,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         } pc{};
         static_assert(sizeof(DecalPC) == 128, "matches decal_lit's push block");
         std::memcpy(pc.view_proj, vp.data(), sizeof(pc.view_proj));
-        pc.map_alpha[0] = static_cast<f32>(terrain_->map_width());
-        pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
+        if (terrain_) {
+            pc.map_alpha[0] = static_cast<f32>(terrain_->map_width());
+            pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
+        }
         pc.eye[0] = eye_x;
         pc.eye[1] = eye_y;
         pc.eye[2] = eye_z;
@@ -2676,11 +2698,23 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                sizeof(pc), &pc);
             vkCmdDrawIndexed(cmd_buf_[fi], count, 1, first, 0, 0);
         };
-        for (const bool xp : {false, true}) {
+        // One technique's pass over the terrain's vertices. Its pipelines
+        // share decal_layout_'s sets and push block.
+        const auto draw_pass = [&](DecalTechnique technique, VkPipeline pipeline) {
+            if (!drawable || !pipeline || !decal_mask_ds_) return;
+            if (stored_decals_.empty() && !runtime_decals) return;
+            const bool xp = technique == DecalTechnique::AlbedoXP;
+            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            const std::array<VkDescriptorSet, 2> shared = {terrain_tex_ds_, shadow_ds_[fi]};
+            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
+                                    static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
+            VkBuffer vertices = terrain_mesh_.vertex_buffer();
+            const VkDeviceSize no_offset = 0;
+            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
             if (decal_indices_.buffer) {
                 vkCmdBindIndexBuffer(cmd_buf_[fi], decal_indices_.buffer, 0, VK_INDEX_TYPE_UINT32);
                 for (const StoredDecal& sd : stored_decals_) {
-                    if (sd.xp != xp) continue;
+                    if (sd.technique != technique) continue;
                     const f32 ground = terrain_->get_terrain_height(sd.mid_x, sd.mid_z);
                     if (!frustum.is_sphere_visible(sd.mid_x, ground, sd.mid_z, sd.radius + 64.0f))
                         continue;
@@ -2696,20 +2730,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                 vkCmdBindIndexBuffer(cmd_buf_[fi], runtime_decals_.index_buffer(fi), 0,
                                      VK_INDEX_TYPE_UINT32);
                 for (const auto& d : runtime_decals_.decal_draws())
-                    if (d.xp == xp)
+                    if (d.technique == technique)
                         draw_decal(d.decal->info.texture_path, d.decal->info.texture2_path, d.u,
                                    d.v, d.alpha, xp, d.first_index, d.index_count);
             }
-        }
-    }
-    if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
-        f32 eye_x = 0;
-        f32 eye_y = 0;
-        f32 eye_z = 0;
-        camera_.eye_position(eye_x, eye_y, eye_z);
-        runtime_decals_.draw_splats(
-            cmd_buf_[fi], fi, vp, {eye_x, eye_y, eye_z}, static_cast<f32>(terrain_->map_width()),
-            static_cast<f32>(terrain_->map_height()), terrain_tex_ds_, shadow_ds_[fi]);
+        };
+        draw_pass(DecalTechnique::GlowMask, decal_glow_mask_pipeline_);
+        draw_pass(DecalTechnique::Albedo, decal_pipeline_);
+        draw_pass(DecalTechnique::AlbedoXP, decal_pipeline_);
+        if (drawable)
+            runtime_decals_.draw_splats(
+                cmd_buf_[fi], fi, vp, eye, static_cast<f32>(terrain_->map_width()),
+                static_cast<f32>(terrain_->map_height()), terrain_tex_ds_, shadow_ds_[fi]);
+        draw_pass(DecalTechnique::Glow, decal_glow_pipeline_);
     }
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,
@@ -2788,6 +2821,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Scene always renders to offscreen HDR. End scene pass, optionally run
     // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
     vkCmdEndRenderPass(cmd_buf_[fi]);
+    const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
 
     if (do_bloom) {
         u32 half_w = std::max(window_width_ / 2, 1u);
@@ -2956,6 +2990,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     present.pImageIndices = &image_index;
     VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
     if (capturing) deliver_capture();
+    if (scene_capturing) deliver_scene_capture();
 
     if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
         pres_result == VK_SUBOPTIMAL_KHR) {
@@ -3632,6 +3667,96 @@ void Renderer::deliver_capture() {
     callback(std::move(image));
 }
 
+bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
+    if (!pending_scene_capture_ || !scene_color_image_.image) return false;
+    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 8;
+    if (scene_capture_buf_size_ != size) {
+        if (scene_capture_buf_.buffer)
+            vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
+        scene_capture_buf_ = {};
+        scene_capture_buf_size_ = 0;
+        VkBufferCreateInfo buf_ci{};
+        buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buf_ci.size = size;
+        buf_ci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+        if (vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci, &scene_capture_buf_.buffer,
+                            &scene_capture_buf_.allocation, nullptr) != VK_SUCCESS) {
+            spdlog::error("Scene capture: failed to create readback buffer");
+            pending_scene_capture_ = nullptr;
+            return false;
+        }
+        scene_capture_buf_size_ = size;
+    }
+    // The finished scene (SHADER_READ_ONLY, as the bloom and the composite
+    // read it) copied out, and back for them.
+    VkImageMemoryBarrier to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = scene_color_image_.image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {window_width_, window_height_, 1};
+    vkCmdCopyImageToBuffer(cmd, scene_color_image_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           scene_capture_buf_.buffer, 1, &region);
+    VkImageMemoryBarrier back = to_src;
+    back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    back.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    back.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &back);
+    return true;
+}
+
+void Renderer::deliver_scene_capture() {
+    // A test path: stalling the queue keeps it simple.
+    vkQueueWaitIdle(graphics_queue_);
+    SceneImage image;
+    image.width = window_width_;
+    image.height = window_height_;
+    const size_t count = static_cast<size_t>(window_width_) * window_height_ * 4;
+    image.rgba.resize(count);
+    void* mapped = nullptr;
+    if (vmaMapMemory(allocator_, scene_capture_buf_.allocation, &mapped) != VK_SUCCESS) {
+        spdlog::error("Scene capture: failed to map readback buffer");
+        pending_scene_capture_ = nullptr;
+        return;
+    }
+    vmaInvalidateAllocation(allocator_, scene_capture_buf_.allocation, 0, VK_WHOLE_SIZE);
+    // R16G16B16A16_SFLOAT: each half widened to a float.
+    const auto* halves = static_cast<const u16*>(mapped);
+    for (size_t i = 0; i < count; ++i) {
+        const u32 h = halves[i];
+        const u32 exponent = (h >> 10) & 0x1Fu;
+        const u32 mantissa = h & 0x3FFu;
+        f32 value = 0.0f;
+        if (exponent == 0) {
+            value = std::ldexp(static_cast<f32>(mantissa), -24); // subnormal
+        } else if (exponent == 31) {
+            value = mantissa != 0 ? std::numeric_limits<f32>::quiet_NaN()
+                                  : std::numeric_limits<f32>::infinity();
+        } else {
+            value =
+                std::ldexp(static_cast<f32>(mantissa | 0x400u), static_cast<int>(exponent) - 25);
+        }
+        image.rgba[i] = (h & 0x8000u) != 0 ? -value : value;
+    }
+    vmaUnmapMemory(allocator_, scene_capture_buf_.allocation);
+    auto callback = std::move(pending_scene_capture_);
+    pending_scene_capture_ = nullptr;
+    callback(std::move(image));
+}
+
 void Renderer::recreate_swapchain() {
     // Handle minimize
     int w = 0, h = 0;
@@ -3764,6 +3889,10 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
+    for (VkPipeline pipeline : {decal_glow_pipeline_, decal_glow_mask_pipeline_})
+        if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+    for (VkPipelineLayout layout : {decal_glow_layout_, decal_glow_mask_layout_})
+        if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
     if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
 
@@ -3796,6 +3925,10 @@ void Renderer::shutdown() {
     // Swapchain
     vkDestroySwapchainKHR(device_, swapchain_, nullptr);
 
+    if (scene_capture_buf_.buffer) {
+        vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
+        scene_capture_buf_ = {};
+    }
     if (capture_buf_.buffer) {
         vmaDestroyBuffer(allocator_, capture_buf_.buffer, capture_buf_.allocation);
         capture_buf_ = {};

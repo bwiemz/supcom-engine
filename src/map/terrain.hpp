@@ -37,11 +37,6 @@ inline bool normal_decal(DecalType t) {
     return t == DecalType::Normals || t == DecalType::AlphaNormals;
 }
 
-/// A type drawn lit over the terrain (TDecals, TDecalsXP; M212b).
-inline bool lit_decal(DecalType t) {
-    return t == DecalType::Albedo || t == DecalType::AlbedoXP;
-}
-
 /// A map decal for rendering (static, not simulated). It is placed by its
 /// corner: its footprint runs from its position along its x and z axes.
 struct DecalInfo {

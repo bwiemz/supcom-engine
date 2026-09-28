@@ -84,6 +84,16 @@ f32 decal_lod_alpha(f32 cutoff, f32 near_cutoff, f32 distance) {
     return 1.0f - (std::clamp(distance, begin, cutoff) - begin) / (cutoff - begin);
 }
 
+std::optional<DecalTechnique> decal_technique(map::DecalType type) {
+    switch (type) {
+    case map::DecalType::GlowMask: return DecalTechnique::GlowMask;
+    case map::DecalType::Albedo: return DecalTechnique::Albedo;
+    case map::DecalType::AlbedoXP: return DecalTechnique::AlbedoXP;
+    case map::DecalType::Glow: return DecalTechnique::Glow;
+    default: return std::nullopt;
+    }
+}
+
 std::array<f32, 2> decal_corner(const map::DecalInfo& d, f32 lx, f32 lz) {
     const f32 c = std::cos(d.rotation_y);
     const f32 s = std::sin(d.rotation_y);

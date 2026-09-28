@@ -315,16 +315,16 @@ void test_decal_render(TestContext& ctx) {
                             near_end, far_end));
     }
 
-    // Test 7: the types it doesn't light (M212c) draw nothing: a Glow Mask
-    // decal leaves the ground as it was.
+    // Test 7: the types drawn apart from the terrain's colour draw nothing
+    // here: a Water Mask decal leaves the ground as it was.
     {
         const ImageRGBA8 bare = frame(*ground, {}, fill, 32, 32);
         const ImageRGBA8 img = frame(
-            *ground, {decal(DecalType::GlowMask, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0)},
+            *ground, {decal(DecalType::WaterMask, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0)},
             fill, 32, 32);
         const f32 moved = apart(pixel_at(r, img, {32, 0, 32}), pixel_at(r, bare, {32, 0, 32}));
         t.check(moved < 0.01f,
-                fmt::format("Test 7: a Glow Mask decal moves the ground {:.3f}", moved));
+                fmt::format("Test 7: a Water Mask decal moves the ground {:.3f}", moved));
     }
 
     // Test 8: under the water, tinted as the ground is (ApplyWaterColor).
@@ -342,6 +342,72 @@ void test_decal_render(TestContext& ctx) {
                 fmt::format("Test 8: under 10 of water, a red decal shows ({:.2f} {:.2f} {:.2f}), "
                             "the ground ({:.2f} {:.2f} {:.2f})",
                             a[0], a[1], a[2], b[0], b[1], b[2]));
+    }
+
+    // The scene (its colour, and its glow in alpha) as the frame after
+    // `frame` draws it, at world point p.
+    const auto scene_frame = [&](map::Terrain& g, std::vector<map::DecalInfo> decals) {
+        (void)frame(g, std::move(decals), fill, 32, 32);
+        renderer::Renderer::SceneImage scene;
+        r.request_scene_capture(
+            [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
+        (void)shots.grab();
+        return scene;
+    };
+    const auto scene_at = [&](const renderer::Renderer::SceneImage& img, const sim::Vector3& p) {
+        const auto s = screen_of(r, p);
+        if (!s || img.width == 0) return std::array<f32, 4>{};
+        const u32 x = static_cast<u32>(std::clamp((*s)[0], 0.0f, static_cast<f32>(img.width - 1)));
+        const u32 y = static_cast<u32>(std::clamp((*s)[1], 0.0f, static_cast<f32>(img.height - 1)));
+        const f32* q = &img.rgba[(static_cast<size_t>(y) * img.width + x) * 4];
+        return std::array<f32, 4>{q[0], q[1], q[2], q[3]};
+    };
+
+    // Test 9: a Glow decal (M212d; TDecalsGlow) adds its albedo's alpha times
+    // a quarter of the mask to the frame's glow, One/One into alpha alone,
+    // and leaves the colour as it was.
+    {
+        const sim::Vector3 mid{32, 0, 32};
+        const auto bare = scene_frame(*ground, {});
+        const auto glow = scene_frame(
+            *ground, {decal(DecalType::Glow, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0)});
+        const auto a = scene_at(bare, mid);
+        const auto b = scene_at(glow, mid);
+        const f32 added = b[3] - a[3];
+        const f32 moved =
+            std::max({std::abs(b[0] - a[0]), std::abs(b[1] - a[1]), std::abs(b[2] - a[2])});
+        t.check(std::abs(added - 0.25f) < 0.005f && moved < 0.002f,
+                fmt::format("Test 9: a Glow decal adds {:.3f} glow (0.25 wanted), moves the "
+                            "colour {:.4f}",
+                            added, moved));
+    }
+
+    // Test 10: a Glow Mask decal (TDecalGlowMask) draws, lit, where its
+    // alpha is at least 0.9, and sets the glow there to 0.01; at half alpha
+    // it draws nothing. It draws before the glowing decals: one over it
+    // still adds its 0.25.
+    {
+        const sim::Vector3 mid{32, 0, 32};
+        const auto bare = scene_frame(*ground, {});
+        const auto masked = scene_frame(
+            *ground, {decal(DecalType::GlowMask, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0)});
+        const auto half = scene_frame(*ground, {decal(DecalType::GlowMask, "red_half.dds",
+                                                      "spec_none.dds", 28, 28, 8, 8, 0)});
+        const auto both = scene_frame(
+            *ground, {decal(DecalType::Glow, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0),
+                      decal(DecalType::GlowMask, "red.dds", "spec_none.dds", 28, 28, 8, 8, 0)});
+        const auto m = scene_at(masked, mid);
+        const auto h = scene_at(half, mid);
+        const auto g = scene_at(bare, mid);
+        const auto o = scene_at(both, mid);
+        const f32 half_moved = std::max({std::abs(h[0] - g[0]), std::abs(h[1] - g[1]),
+                                         std::abs(h[2] - g[2]), std::abs(h[3] - g[3])});
+        t.check(m[0] > 0.9f && m[1] < 0.05f && std::abs(m[3] - 0.01f) < 0.002f &&
+                    half_moved < 0.002f && std::abs(o[3] - 0.26f) < 0.005f,
+                fmt::format("Test 10: a Glow Mask decal draws ({:.2f} {:.2f} {:.2f}) with glow "
+                            "{:.3f}; at half alpha it moves the scene {:.4f}; a Glow decal "
+                            "over it leaves glow {:.3f}",
+                            m[0], m[1], m[2], m[3], half_moved, o[3]));
     }
 
     spdlog::info("Decal test: {}/{} passed", t.pass, t.pass + t.fail);

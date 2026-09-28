@@ -154,7 +154,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         if (alpha < 1.0f / 255.0f) continue;
         DecalDraw draw;
         draw.decal = &d;
-        draw.xp = d.info.type == map::DecalType::AlbedoXP;
+        draw.technique = *decal_technique(d.info.type);
         std::memcpy(draw.u, g.u, sizeof(draw.u));
         std::memcpy(draw.v, g.v, sizeof(draw.v));
         draw.alpha = alpha;
@@ -171,8 +171,8 @@ void RuntimeDecalRenderer::gather(const TerrainMesh& mesh, TextureCache& texture
     indices_.clear();
     for (const RuntimeDecals::Decal& d : decals_.decals()) {
         Gathered& g = gathered_.emplace_back();
-        // Only the lit types draw here (the rest: M212d).
-        if (!map::lit_decal(d.info.type)) continue;
+        // Those drawn over the terrain's colour (normals and water apart).
+        if (!decal_technique(d.info.type)) continue;
         if (d.info.scale_x == 0.0f || d.info.scale_z == 0.0f) continue;
         decal_texture_matrix(d.info, g.u, g.v);
         f32 min_x = 0;
