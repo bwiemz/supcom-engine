@@ -54,7 +54,7 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
         ScheduledCommand c;
         if (read_command(r, c, /*with_callback=*/out.version >= 3,
                          /*with_formation=*/out.version >= 5, /*with_unload=*/out.version >= 6,
-                         /*with_factory=*/out.version >= 7))
+                         /*with_factory=*/out.version >= 7, /*with_value=*/out.version >= 8))
             out.commands.push_back(std::move(c));
     }
     if (!r.ok()) {

@@ -798,7 +798,7 @@ static int l_AddSelectUnits(lua_State* L) {
     return 0;
 }
 
-// SimCallback({Func="name", Args={...}}, addUnitSelection)
+// SimCallback({Func="name", Args={...} or a value}, addUnitSelection)
 // Serializes the Lua table into a C++ SimCallbackEntry and queues it.
 static int l_SimCallback(lua_State* L) {
     auto* queue = get_callback_queue(L);
@@ -839,8 +839,14 @@ static int l_SimCallback(lua_State* L) {
             }
             lua_pop(L, 1); // pop value, keep key for next iteration
         }
+    } else if (lua_type(L, -1) == LUA_TSTRING) {
+        entry.value = std::string(lua_tostring(L, -1));
+    } else if (lua_type(L, -1) == LUA_TNUMBER) {
+        entry.value = static_cast<f64>(lua_tonumber(L, -1));
+    } else if (lua_type(L, -1) == LUA_TBOOLEAN) {
+        entry.value = lua_toboolean(L, -1) != 0;
     }
-    lua_pop(L, 1); // pop Args table (or nil)
+    lua_pop(L, 1); // pop Args (a table, a value, or nil)
 
     // Check addUnitSelection (arg 2)
     if (lua_toboolean(L, 2)) {
