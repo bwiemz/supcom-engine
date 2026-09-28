@@ -41,10 +41,11 @@ osc::i64 now_ms() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-/// Poll every side until `done` holds, or two seconds pass (loopback is
+/// Poll every side until `done` holds, or `within_ms` pass (loopback is
 /// quick, but a loaded machine schedules late).
-bool pump(const std::vector<Side*>& sides, const std::function<bool()>& done) {
-    const osc::i64 deadline = now_ms() + 2000;
+bool pump(const std::vector<Side*>& sides, const std::function<bool()>& done,
+          osc::i64 within_ms = 2000) {
+    const osc::i64 deadline = now_ms() + within_ms;
     while (now_ms() < deadline) {
         for (Side* s : sides) {
             auto events = s->net.poll(now_ms());
@@ -187,14 +188,18 @@ TEST_CASE("Joining nowhere fails; pings measure the host (M218a)", "[lobby]") {
     Side nowhere("Nowhere");
     REQUIRE_FALSE(nowhere.net.join("not an address", 1));
 
-    // A port nothing listens on any more: the connection fails, HostLeft
+    // A port nothing listens on any more: the connection fails, HostLeft.
+    // Winsock sends the SYN again after a refusal and reports it only when
+    // those tries are refused too, over two seconds on loopback; the join
+    // timeout bounds it either way.
     auto dead = std::make_unique<LobbyNet>("Dead", 8);
     REQUIRE(dead->host(0, 1));
     const osc::u16 dead_port = dead->port();
     dead.reset();
     Side lost("Lost");
     REQUIRE(lost.net.join("127.0.0.1", dead_port));
-    REQUIRE(pump({&lost}, [&] { return lost.last(Kind::ConnectionFailed) != nullptr; }));
+    const auto failed = [&] { return lost.last(Kind::ConnectionFailed) != nullptr; };
+    REQUIRE(pump({&lost}, failed, LobbyNet::kJoinTimeoutMs + 2000));
     CHECK(lost.last(Kind::ConnectionFailed)->reason == "HostLeft");
 
     // A joined player hears from the host at least once a second, and the
