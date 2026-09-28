@@ -87,6 +87,11 @@ private:
     /// Call the control's method `name` (found through its class) with
     /// `arg` if given; false if it has none.
     bool run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg = nullptr);
+    /// A key going down with no control focused and no capture: the key
+    /// map's action, run through the console (CUIKeyHandler::OnKeyDown).
+    void handle_key(lua_State* L, const UIEvent& ev);
+    /// UI_ActivateChat: chat.lua's ActivateChat(modifiers), in a game.
+    void activate_chat(lua_State* L, const UIEvent& ev);
     /// A Movie control's frame (Moho's CMauiMovie::Frame): OnFrame, then
     /// OnStopped, its movie's clock and frame, or OnFinished at its end.
     void movie_frame(lua_State* L, UIControl* ctrl, f64 dt);

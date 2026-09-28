@@ -1,5 +1,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/ui_control.hpp"
+#include "core/game_state.hpp"
+#include "ui/console.hpp"
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_layout.hpp"
@@ -390,35 +392,15 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
         if (!has_dragger) lua_pop(L, 1); // pop nil
 
-        // Keyboard events go to the keyboard focus control first; with no
-        // focus, to the top input capture, and then no further (Moho).
+        // Keys (Moho): the focused control has them, and they go no further;
+        // with no focus, the top input capture; with neither, the key map,
+        // for a key going down (CUIKeyHandler sits below the controls).
         if (ev.type == UIEventType::KEY_DOWN ||
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
-            auto* focus = registry.keyboard_focus();
-            bool consumed = false;
-            if (focus) {
-                consumed = fire_handle_event(L, focus, ev);
-            } else if (auto* capture = registry.input_capture()) {
-                fire_handle_event(L, capture, ev);
-                consumed = true;
-            }
-
-            // If fresh KEY_DOWN not consumed by UI, try key map registry (hotkeys)
-            // Skip repeats (held keys) — hotkeys should only fire on initial press
-            if (!consumed && ev.type == UIEventType::KEY_DOWN && !ev.is_repeat) {
-                lua_pushstring(L, "__osc_keymap_registry");
-                lua_rawget(L, LUA_REGISTRYINDEX);
-                auto* km = static_cast<KeyMapRegistry*>(lua_touserdata(L, -1));
-                lua_pop(L, 1);
-                if (km) {
-                    std::string key_name = KeyMapRegistry::glfw_to_key_name(
-                        ev.key_code, ev.modifiers);
-                    if (!key_name.empty()) {
-                        km->dispatch(L, key_name);
-                    }
-                }
-            }
+            if (auto* focus = registry.keyboard_focus()) fire_handle_event(L, focus, ev);
+            else if (auto* capture = registry.input_capture()) fire_handle_event(L, capture, ev);
+            else if (ev.type == UIEventType::KEY_DOWN) handle_key(L, ev);
             continue;
         }
 
@@ -547,6 +529,62 @@ void UIDispatch::update_controls(lua_State* L, UIControlRegistry& registry,
         }
         lua_pop(L, 1); // control table
     }
+}
+
+void UIDispatch::handle_key(lua_State* L, const UIEvent& ev) {
+    // Moho's CUIKeyHandler::OnKeyDown.
+    lua_pushstring(L, "__osc_keymap_registry");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* km = static_cast<const KeyMapRegistry*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!km) return;
+    const u32 chord = KeyMapRegistry::chord(ev.key_code, ev.modifiers);
+    // An auto-repeat acts only for a chord that asks for it (keyRepeat).
+    if (ev.is_repeat && !km->repeats(chord)) return;
+    if (const std::string* action = km->action(chord)) {
+        lua_pushstring(L, "__osc_console");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        auto* console = static_cast<Console*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+        if (console) console->execute(L, *action);
+        return;
+    }
+    // An unbound Enter opens the chat, in a game (UI_ActivateChat).
+    if (moho_key_code(ev.key_code) == 13) activate_chat(L, ev);
+}
+
+void UIDispatch::activate_chat(lua_State* L, const UIEvent& ev) {
+    lua_pushstring(L, "__osc_game_state_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    const auto* mgr = static_cast<const GameStateManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!mgr || mgr->current() != GameState::GAME) return;
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, "/lua/ui/game/chat.lua");
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        report_ui_callback_error(
+            fmt::format("Error running '/lua/ui/game/chat.lua:ActivateChat': {}",
+                        lua_isstring(L, -1) ? lua_tostring(L, -1) : "no module"));
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, "ActivateChat");
+    lua_gettable(L, -2);
+    lua_newtable(L);
+    for (const auto& [bit, name] :
+         {std::pair{GLFW_MOD_SHIFT, "Shift"}, std::pair{GLFW_MOD_CONTROL, "Ctrl"},
+          std::pair{GLFW_MOD_ALT, "Alt"}}) {
+        if (!(ev.modifiers & bit)) continue;
+        lua_pushstring(L, name);
+        lua_pushboolean(L, 1);
+        lua_rawset(L, -3);
+    }
+    if (lua_pcall(L, 1, 0, 0) != 0)
+        report_ui_callback_error(fmt::format(
+            "Error running '/lua/ui/game/chat.lua:ActivateChat': {}", lua_tostring(L, -1)));
+    lua_settop(L, top);
 }
 
 bool UIDispatch::run_script(lua_State* L, UIControl* ctrl, const char* name, const f64* arg) {

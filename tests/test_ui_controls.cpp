@@ -4,6 +4,7 @@
 #include "lua/moho_bindings.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/console.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_dispatch.hpp"
 
@@ -170,6 +171,7 @@ struct InputFixture {
     osc::sim::SimState sim{lua.raw(), nullptr};
     osc::ui::UIControlRegistry registry;
     osc::ui::KeyMapRegistry keymap;
+    osc::ui::Console console;
     osc::ui::UIDispatch dispatch;
 
     InputFixture() {
@@ -179,10 +181,19 @@ struct InputFixture {
         lua_pushstring(L, "__osc_keymap_registry");
         lua_pushlightuserdata(L, &keymap);
         lua_rawset(L, LUA_REGISTRYINDEX);
+        lua_pushstring(L, "__osc_console");
+        lua_pushlightuserdata(L, &console);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        osc::lua::register_console_commands(console);
+        // Q's name, as keyNames.lua gives it (by virtual-key code).
+        REQUIRE(lua.do_string("__names = { ['51'] = 'Q' }").ok());
+        lua_getglobal(L, "__names");
+        keymap.set_key_names(L, -1);
+        lua_pop(L, 1);
         auto result = lua.do_string(R"(
             handled = {}
             hotkeys = 0
-            IN_AddKeyMapTable({ Q = function() hotkeys = hotkeys + 1 end })
+            IN_AddKeyMapTable({ Q = { action = 'UI_Lua hotkeys = hotkeys + 1' } })
             function box(name, parent, l, t, r, b, depth)
                 local c = {}
                 setmetatable(c, { __index = moho.control_methods })
@@ -215,7 +226,6 @@ struct InputFixture {
         INFO((result.ok() ? std::string() : result.error().message));
         REQUIRE(result.ok());
     }
-    ~InputFixture() { keymap.clear(lua.raw()); }
     InputFixture(const InputFixture&) = delete;
     InputFixture& operator=(const InputFixture&) = delete;
 
@@ -326,6 +336,12 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.check("whos('KeyDown') == 'other' and hotkeys == 0"));
+    // Even a key it ignores goes no further: the key map never sees it.
+    f.run("other.eats = false handled = {}");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('KeyDown') == 'other' and hotkeys == 0"));
+    f.run("other.eats = true");
     f.registry.set_keyboard_focus(nullptr);
 
     // Captures stack; removal takes the last entry of that control.
@@ -348,4 +364,14 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 1 and whos('ButtonPress') == 'other'"));
+
+    // A held key's auto-repeat acts only for a binding that asks (keyRepeat).
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 1"));
+    f.run("IN_AddKeyMapTable({ Q = { action = 'UI_Lua hotkeys = hotkeys + 10', keyRepeat = true } "
+          "})");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 11"));
 }
