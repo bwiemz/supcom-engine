@@ -1,4 +1,5 @@
 #include "lua/engine_bindings.hpp"
+#include "sim/thread_manager.hpp"
 #include "core/color.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
@@ -348,9 +349,6 @@ static int l_Vector3(lua_State* L) {
 // Thread stubs
 static int l_ForkThread(lua_State* L) { lua_pushnil(L); return 1; }
 static int l_KillThread(lua_State*) { return 0; }
-static int l_CurrentThread(lua_State* L) { lua_pushnil(L); return 1; }
-static int l_SuspendCurrentThread(lua_State*) { return 0; }
-static int l_ResumeThread(lua_State*) { return 0; }
 // WaitFor is now implemented in sim_bindings.cpp with real yield/resume
 
 // Misc stubs
@@ -514,9 +512,9 @@ void register_blueprint_bindings(LuaState& state) {
     // Thread stubs
     state.register_function("ForkThread", l_ForkThread);
     state.register_function("KillThread", l_KillThread);
-    state.register_function("CurrentThread", l_CurrentThread);
-    state.register_function("SuspendCurrentThread", l_SuspendCurrentThread);
-    state.register_function("ResumeThread", l_ResumeThread);
+    state.register_function("CurrentThread", sim::ThreadManager::lua_current_thread);
+    state.register_function("SuspendCurrentThread", sim::ThreadManager::lua_suspend_current_thread);
+    state.register_function("ResumeThread", sim::ThreadManager::lua_resume_thread);
     // WaitFor moved to sim_bindings.cpp (real implementation)
 
     // String utilities

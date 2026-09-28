@@ -187,6 +187,17 @@ void defeat_dropped_army(SimState& sim, const SimCallbackEntry& cb) {
     sim.defeat_army(static_cast<i32>(*army));
 }
 
+void push_arg(lua_State* L, const SimCallbackArg& arg) {
+    std::visit(
+        [&](const auto& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, std::string>) lua_pushstring(L, v.c_str());
+            else if constexpr (std::is_same_v<T, f64>) lua_pushnumber(L, v);
+            else lua_pushboolean(L, v ? 1 : 0);
+        },
+        arg);
+}
+
 /// FA's /lua/SimCallbacks.lua DoCallback(func name, args, units).
 void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!push_callbacks_module(L)) return;
@@ -195,18 +206,15 @@ void do_callback(SimState& sim, lua_State* L, const SimCallbackEntry& cb) {
     if (!lua_isfunction(L, -1)) return;
 
     lua_pushstring(L, cb.func_name.c_str());
-    lua_newtable(L);
-    for (const auto& [key, val] : cb.args) {
-        lua_pushstring(L, key.c_str());
-        std::visit(
-            [&](const auto& v) {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, std::string>) lua_pushstring(L, v.c_str());
-                else if constexpr (std::is_same_v<T, f64>) lua_pushnumber(L, v);
-                else lua_pushboolean(L, v ? 1 : 0);
-            },
-            val);
-        lua_rawset(L, -3);
+    if (cb.value) {
+        push_arg(L, *cb.value);
+    } else {
+        lua_newtable(L);
+        for (const auto& [key, val] : cb.args) {
+            lua_pushstring(L, key.c_str());
+            push_arg(L, val);
+            lua_rawset(L, -3);
+        }
     }
     if (!cb.unit_ids.empty()) {
         lua_newtable(L);

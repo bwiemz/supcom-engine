@@ -10,6 +10,7 @@ add_executable(osc_integration
     runner/audio_data_test.cpp
     runner/movie_test.cpp
     runner/keymap_test.cpp
+    runner/camera_moves_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
     runner/strata_test.cpp

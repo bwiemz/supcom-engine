@@ -168,3 +168,73 @@ TEST_CASE("A thread's handle lives as long as the thread, even in a weak table",
     REQUIRE(state.do_string("gone = bag[1] == nil"));
     CHECK(global_true(L, "gone")); // and now its handle can go
 }
+
+TEST_CASE("SuspendCurrentThread sleeps until ResumeThread, as SingleEvent waits", "[threads]") {
+    // SimCamera's WaitFor: OnEvent(ResumeThread, CurrentThread()), then
+    // SuspendCurrentThread(); the UI's callback sets the event later.
+    osc::lua::LuaState state;
+    lua_State* L = state.raw();
+    osc::sim::ThreadManager tm(L);
+    tm.register_in_registry(L);
+    lua_register(L, "Sleep", sleep_ticks);
+    lua_register(L, "CurrentThread", osc::sim::ThreadManager::lua_current_thread);
+    lua_register(L, "SuspendCurrentThread", osc::sim::ThreadManager::lua_suspend_current_thread);
+    lua_register(L, "ResumeThread", osc::sim::ThreadManager::lua_resume_thread);
+    REQUIRE(state.do_string(R"(
+        resumed = 0
+        outside = CurrentThread()
+        function waiter()
+            me = CurrentThread()
+            SuspendCurrentThread()
+            resumed = resumed + 1
+        end
+        function sleeper() Sleep(1000) sleeper_resumed = true end
+    )"));
+    CHECK_FALSE(global_true(L, "outside")); // no thread: nil
+
+    lua_settop(L, 0);
+    lua_pushstring(L, "waiter");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    tm.fork_thread(L);
+    lua_pushstring(L, "handle");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_settop(L, 0);
+    for (osc::u32 tick = 1; tick <= 50; ++tick) tm.resume_all(tick);
+    REQUIRE(state.do_string("same = me == handle"));
+    CHECK(global_true(L, "same")); // CurrentThread is ForkThread's handle
+    CHECK(state.do_string("assert(resumed == 0)"));
+    CHECK(tm.active_count() == 1);
+
+    REQUIRE(state.do_string("ResumeThread(me)"));
+    tm.resume_all(51);
+    CHECK(state.do_string("assert(resumed == 1)"));
+    CHECK(tm.active_count() == 0);
+
+    // A thread asleep on WaitTicks isn't suspended: ResumeThread leaves it
+    lua_settop(L, 0);
+    lua_pushstring(L, "sleeper");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    tm.fork_thread(L);
+    lua_pushstring(L, "sleeping");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_GLOBALSINDEX);
+    lua_settop(L, 0);
+    tm.resume_all(52);
+    REQUIRE(state.do_string("ResumeThread(sleeping)"));
+    tm.resume_all(53);
+    CHECK_FALSE(global_true(L, "sleeper_resumed"));
+    // Nor does a stale handle (another thread's serial) wake a suspended one
+    lua_settop(L, 0);
+    lua_pushstring(L, "waiter");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    tm.fork_thread(L);
+    lua_settop(L, 0);
+    tm.resume_all(54);
+    REQUIRE(state.do_string("ResumeThread({_c_ref = me._c_ref, _c_serial = me._c_serial + 99})"));
+    tm.resume_all(55);
+    CHECK(state.do_string("assert(resumed == 1)"));
+    REQUIRE(state.do_string("ResumeThread(me)"));
+    tm.resume_all(56);
+    CHECK(state.do_string("assert(resumed == 2)"));
+}

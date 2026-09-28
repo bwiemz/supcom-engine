@@ -112,6 +112,16 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     window_width_ = width;
     window_height_ = height;
     camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
+    // The camera's targets are the world's entities as they are drawn
+    camera_.set_entity_lookup([this](u32 id, CameraEntityPose& out) {
+        const sim::EntityRecord* e = camera_view_.find(id);
+        if (!e) return false;
+        const sim::Vector3 p = camera_view_.position(*e);
+        const sim::Quaternion q = camera_view_.orientation(*e);
+        out.pos = {p.x, p.y, p.z};
+        out.orient = {q.x, q.y, q.z, q.w};
+        return true;
+    });
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
@@ -1729,6 +1739,7 @@ void Renderer::clear_scene() {
     destroy_terrain_strata_ubo();
     camera_.set_ground(nullptr, false, 0.0f);
     ground_.reset();
+    camera_view_ = sim::FrameView{}; // the old world's entities are gone
 }
 
 void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata,
@@ -2162,8 +2173,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
     // The view's aspect, which the camera's farthest zoom and projection
-    // take (its moves and basis run in poll_events)
+    // take (its moves and basis run in poll_events); the world it follows
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    camera_view_ = view;
+    camera_game_time_ =
+        view.cur() ? (static_cast<f64>(view.cur()->tick) + view.alpha()) * 0.1 : 0.0;
     // FA's own game interface replaces the C++ HUD placeholders.
     {
         bool world_ui = false;
@@ -3574,6 +3588,8 @@ void Renderer::poll_events(f64 dt) {
     // The world view's camera, before input picks this frame: its moves,
     // then its basis (a pan has moved the target)
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    // Its clocks: the system's, and the game's
+    camera_.set_clocks(glfwGetTime(), camera_game_time_);
     camera_.update(window_, dt);
 }
 
