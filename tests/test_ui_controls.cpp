@@ -7,13 +7,16 @@
 #include "ui/console.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_dispatch.hpp"
+#include "ui/world_view.hpp"
 
 #include <GLFW/glfw3.h>
 
+#include <memory>
 #include <string>
 
 extern "C" {
 #include <lua.h>
+#include <lauxlib.h>
 }
 
 TEST_CASE("Control:Destroy is safe from its own OnDestroy", "[ui][lua]") {
@@ -374,4 +377,44 @@ TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua]
     f.dispatch.on_key(GLFW_KEY_Q, GLFW_REPEAT, 0);
     f.deliver();
     CHECK(f.check("hotkeys == 11"));
+}
+
+TEST_CASE("The world has the mouse only where no UI, and no capture, holds it",
+          "[ui][lua][input]") {
+    InputFixture f;
+    lua_State* L = f.lua.raw();
+    // A world view over the screen, made as UIWorldView.__init makes one.
+    {
+        auto view = std::make_unique<osc::ui::WorldView>();
+        osc::ui::WorldView* wv = view.get();
+        f.registry.add(std::move(view));
+        f.run("world = {} __root_frame_table = GetFrame(0)");
+        lua_getglobal(L, "world");
+        lua_pushstring(L, "_c_object");
+        lua_pushlightuserdata(L, wv);
+        lua_rawset(L, -3);
+        wv->set_lua_table_ref(luaL_ref(L, LUA_REGISTRYINDEX));
+        wv->set_parent(control_of(L, "__root_frame_table"));
+    }
+    f.run(R"(
+        rawset(world, 'Left', 0) rawset(world, 'Top', 0)
+        rawset(world, 'Right', 400) rawset(world, 'Bottom', 300)
+        rawset(world, 'Width', 400) rawset(world, 'Height', 300)
+        rawset(world, 'Depth', 1)
+        panel = box('panel', GetFrame(0), 0, 0, 100, 100, 5)
+    )");
+    const auto ui_has = [&](double x, double y) {
+        return f.dispatch.ui_has_mouse(L, f.registry, x, y);
+    };
+    CHECK(ui_has(50, 50));         // the panel
+    CHECK_FALSE(ui_has(200, 200)); // the world view
+    // A capture takes the mouse from the world...
+    f.run("AddInputCapture(panel)");
+    CHECK(ui_has(200, 200));
+    // ...unless the world view is under it in the capture.
+    f.run("RemoveInputCapture(panel) AddInputCapture(GetFrame(0))");
+    CHECK_FALSE(ui_has(200, 200));
+    CHECK(ui_has(50, 50));
+    f.run("RemoveInputCapture(GetFrame(0))");
+    CHECK_FALSE(ui_has(200, 200));
 }

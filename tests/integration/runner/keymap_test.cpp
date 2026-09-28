@@ -273,4 +273,61 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
     spdlog::info("Session command test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
+void test_keyboard(TestContext& ctx, ui::UIControlRegistry& registry,
+                   const std::function<void(int)>& pump_frames,
+                   const std::function<void(int)>& play,
+                   const std::function<bool(const char*)>& sim_lua) {
+    spdlog::info("=== Keyboard test (M217e) ===");
+    Tally t;
+    lua_State* L = ctx.L;
+    ui::UIDispatch dispatch;
+    const auto run = [&](const std::string& code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] keyboard-test Lua: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto count = [&](const char* expr) {
+        if (!run(std::string("__keyboard_value = ") + expr)) return -1;
+        lua_getglobal(L, "__keyboard_value");
+        const int v = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : -1;
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto press = [&](int key, int mods = 0) {
+        dispatch.on_key(key, GLFW_PRESS, mods);
+        dispatch.on_key(key, GLFW_RELEASE, mods);
+        dispatch.dispatch_events(L, registry);
+        pump_frames(1);
+    };
+    int frames = 0;
+    while (registry.input_capture() && frames < 600) {
+        pump_frames(1);
+        ++frames;
+    }
+
+    // Retail's control groups: Ctrl-1 keeps the selection as group 1, and 1
+    // brings it back (selection.lua, through UI_MakeSelectionSet and
+    // UI_ApplySelectionSet).
+    sim_lua(R"(
+        local acu = GetArmyBrain('ARMY_1'):GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        CreateUnitHPR('uel0105', 'ARMY_1', p[1] + 6, p[2], p[3], 0, 0, 0)
+        CreateUnitHPR('uel0105', 'ARMY_1', p[1] - 6, p[2], p[3], 0, 0, 0)
+    )");
+    play(1);
+    run("ConExecute('UI_SelectByCategory ENGINEER TECH1')");
+    const int picked = count("table.getn(GetSelectedUnits())");
+    press(GLFW_KEY_1, GLFW_MOD_CONTROL);
+    run("SelectUnits({})");
+    const int cleared = count("table.getn(GetSelectedUnits())");
+    press(GLFW_KEY_1);
+    const int recalled = count("table.getn(GetSelectedUnits())");
+    t.check(picked == 2 && cleared == 0 && recalled == 2,
+            fmt::format("Test 1: Ctrl-1 keeps the selection as retail's group 1, and 1 brings it "
+                        "back ({} selected, {} after clearing, {} recalled)",
+                        picked, cleared, recalled));
+
+    spdlog::info("Keyboard test: {}/{} passed", t.pass, t.pass + t.fail);
+}
+
 } // namespace osc::test

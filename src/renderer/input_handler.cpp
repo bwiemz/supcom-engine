@@ -28,9 +28,6 @@ void InputHandler::update(Renderer& renderer, sim::SimState& sim,
     f32 mx = static_cast<f32>(mx_d);
     f32 my = static_cast<f32>(my_d);
 
-    // Process control groups and camera bookmarks (number keys)
-    handle_groups_and_bookmarks(renderer, sim);
-
     const bool lmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_LEFT);
     const bool rmb_raw = renderer.is_mouse_pressed(GLFW_MOUSE_BUTTON_RIGHT);
 
@@ -496,70 +493,6 @@ u32 InputHandler::pick_unit(sim::SimState& sim, f32 wx, f32 wz,
     }
 
     return best_id;
-}
-
-void InputHandler::handle_groups_and_bookmarks(Renderer& renderer,
-                                                sim::SimState& sim) {
-    bool ctrl = renderer.is_key_pressed(GLFW_KEY_LEFT_CONTROL) ||
-                renderer.is_key_pressed(GLFW_KEY_RIGHT_CONTROL);
-    bool shift = renderer.is_key_pressed(GLFW_KEY_LEFT_SHIFT) ||
-                 renderer.is_key_pressed(GLFW_KEY_RIGHT_SHIFT);
-
-    // GLFW_KEY_0 through GLFW_KEY_9
-    static constexpr int KEY_MAP[NUM_GROUPS] = {
-        GLFW_KEY_0, GLFW_KEY_1, GLFW_KEY_2, GLFW_KEY_3, GLFW_KEY_4,
-        GLFW_KEY_5, GLFW_KEY_6, GLFW_KEY_7, GLFW_KEY_8, GLFW_KEY_9
-    };
-
-    for (u32 i = 0; i < NUM_GROUPS; i++) {
-        bool pressed = renderer.is_key_pressed(KEY_MAP[i]);
-
-        // Edge-triggered (only on press, not hold)
-        if (pressed && !number_was_pressed_[i]) {
-            if (ctrl && shift) {
-                // Ctrl+Shift+N: save camera bookmark
-                camera_bookmarks_[i] = {
-                    renderer.camera().target_x(),
-                    renderer.camera().target_z(),
-                    true
-                };
-                spdlog::debug("Camera bookmark {} saved at ({:.0f},{:.0f})",
-                              i, camera_bookmarks_[i].x, camera_bookmarks_[i].z);
-            } else if (ctrl) {
-                // Ctrl+N: assign control group from current selection
-                control_groups_[i] = selected_;
-                spdlog::debug("Control group {} assigned: {} units",
-                              i, control_groups_[i].size());
-            } else if (shift) {
-                // Shift+N: recall camera bookmark
-                if (camera_bookmarks_[i].valid) {
-                    auto& cam = renderer.camera();
-                    cam.set_target(camera_bookmarks_[i].x,
-                                   camera_bookmarks_[i].z);
-                    spdlog::debug("Camera bookmark {} recalled", i);
-                }
-            } else {
-                // N: recall control group (select those units)
-                if (!control_groups_[i].empty()) {
-                    // Select live units from group (don't mutate stored group)
-                    const auto& group = control_groups_[i];
-                    std::unordered_set<u32> live;
-                    for (u32 uid : group) {
-                        auto* e = sim.entity_registry().find(uid);
-                        if (e && !e->destroyed())
-                            live.insert(uid);
-                    }
-
-                    selected_ = live;
-                    selection_event_ = true;
-                    spdlog::debug("Control group {} recalled: {} units",
-                                  i, selected_.size());
-                }
-            }
-        }
-
-        number_was_pressed_[i] = pressed;
-    }
 }
 
 std::optional<BuildGhost> InputHandler::build_ghost(const Renderer& renderer,

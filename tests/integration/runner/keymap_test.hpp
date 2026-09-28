@@ -30,4 +30,12 @@ void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
                            const std::function<void(int)>& play,
                            const std::function<bool(const char*)>& sim_lua);
 
+/// --keyboard-test (M217e), in a game with FA's interface: retail's keys own
+/// the keyboard -- its control groups (Ctrl-1 sets, 1 recalls) where the
+/// engine had its own.
+void test_keyboard(TestContext& ctx, ui::UIControlRegistry& registry,
+                   const std::function<void(int)>& pump_frames,
+                   const std::function<void(int)>& play,
+                   const std::function<bool(const char*)>& sim_lua);
+
 } // namespace osc::test
