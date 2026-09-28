@@ -58,6 +58,7 @@ add_executable(osc_tests
     test_runtime_decals.cpp
     test_terrain_normal_maps.cpp
     test_dds_parser.cpp
+    test_sky_dome.cpp
     test_color.cpp
     test_lod.cpp
     test_death_anim.cpp
