@@ -1713,14 +1713,16 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // Initialize mesh cache, texture cache, and preload meshes
     if (vfs && store) {
         if (!caches_initialized_) {
-            mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
-                             vfs, store);
             texture_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                                 texture_ds_layout_, texture_sampler_, vfs);
             font_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_,
                              texture_ds_layout_, texture_sampler_, vfs);
             caches_initialized_ = true;
         }
+        // Every scene's, not only the first's: a front end's caches
+        // (init_ui_caches) have no mesh cache, and every game launched from
+        // one drew its units as cubes. The meshes it has loaded stay.
+        mesh_cache_.init(device_, allocator_, cmd_pool_, graphics_queue_, vfs, store);
         unit_renderer_.preload_meshes(preload, mesh_cache_, L);
         // Their strategic icons, as Moho loads a blueprint's with it (M215c).
         strategic_icon_renderer_.preload(preload, texture_cache_, L);
@@ -3421,6 +3423,12 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     }
 
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
+}
+
+u32 Renderer::mesh_instance_count() const {
+    u32 n = 0;
+    for (const MeshDrawGroup& g : unit_renderer_.mesh_groups()) n += g.instance_count;
+    return n;
 }
 
 void Renderer::init_ui_caches(vfs::VirtualFileSystem* vfs) {

@@ -171,6 +171,10 @@ public:
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     bool bloom_enabled() const { return bloom_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
+    /// The unit meshes the last frame drew, and the cubes drawn for those
+    /// with none.
+    u32 mesh_instance_count() const;
+    u32 cube_instance_count() const { return unit_renderer_.cube_instance_count(); }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
 
     /// --legacy-hud: keep drawing the engine's C++ HUD placeholders (economy

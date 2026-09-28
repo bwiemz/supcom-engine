@@ -73,14 +73,18 @@ u64 new_game_seed(const std::string& seed_arg, bool reproducible);
 
 /// Replace the game with a new one of `launch_scenario` (or `replay`): a
 /// fresh sim Lua state and sim, its scenario, its boot and its session, and
-/// the renderer's scene. The pointers may be null (headless). False on a
+/// the renderer's scene. The pointers may be null (headless). The renderer
+/// reads blueprints through `ui_store`, whose tables are `ui_lua_state`'s,
+/// the state it is given each frame: the sim's store's refs name tables in
+/// the sim's state, and the renderer must not touch that one. False on a
 /// critical failure.
 bool execute_reload_sequence(std::unique_ptr<lua::LuaState>& sim_lua_state,
                              std::unique_ptr<sim::SimState>& sim_state, lua::LuaState& ui_lua_state,
                              vfs::VirtualFileSystem& vfs, blueprints::BlueprintStore& store,
                              lua::InitLoader& loader, const lua::InitConfig& config,
                              lua::ScenarioMetadata& scenario_meta, GameStateManager& game_state_mgr,
-                             renderer::Renderer* renderer, renderer::InputHandler* input_handler,
+                             renderer::Renderer* renderer, blueprints::BlueprintStore* ui_store,
+                             renderer::InputHandler* input_handler,
                              std::unordered_set<u32>* prev_selection, WorldInterp* world_interp,
                              u64 seed, double& sim_accumulator, const std::string& launch_scenario,
                              const sim::Replay* replay = nullptr);
