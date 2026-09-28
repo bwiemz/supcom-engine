@@ -11,6 +11,9 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX // else <windows.h> defines min and max macros, breaking std::min
+#endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #else
