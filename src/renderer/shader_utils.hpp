@@ -31,6 +31,10 @@ extern const char* sky_decal_albedo_frag;
 const char* sky_decal_glow_frag();
 extern const char* mesh_vert;
 extern const char* mesh_frag;
+/// The shields' techniques (M211k; shield_shaders.cpp), with the mesh
+/// pipelines' input, push block and sets.
+const char* shield_vert();
+const char* shield_frag();
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)
 /// The map's decals, lit as the terrain is (DecalsPS, DecalAlbedoXP; M212b).
 const char* decal_lit_frag();

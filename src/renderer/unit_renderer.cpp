@@ -263,7 +263,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     // One entity's mesh instance (or cube): the world's, then the player's
     // remembered structures gone from it unseen (MaybeDead; M215d).
     const auto draw = [&](const sim::EntityRecord& entity) {
-        if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) return;
+        // Any other entity draws once it has a mesh (M211k): a shield, its
+        // depth fill and its impacts, script entities given one by SetMesh.
+        const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
+        if (script_mesh && entity.mesh_override.empty()) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view).
@@ -284,6 +287,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         if (cube_count + mesh_count >= MAX_INSTANCES) return;
 
         const sim::Vector3 pos = view.position(entity);
+        // Another army's shield or script entity shows where the player's
+        // army sees (shield.lua's SetVizToEnemies('Intel'), a script
+        // entity's default; UserEntity::UpdateVisibility's CanSeePoint).
+        if (script_mesh && recon_ && !recon_->sees_at(view, entity.army, pos.x, pos.z)) return;
 
         // Frustum cull all entities (units, props, projectiles)
         if (frustum) {
@@ -292,6 +299,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 bound_radius = std::max(entity.footprint_size_x * 1.5f, 5.0f);
             } else if (entity.is_prop) {
                 bound_radius = std::max(entity.scale_x * 2.0f, 2.0f);
+            } else if (script_mesh) {
+                // Its draw scale times its mesh, a shield's sphere of
+                // radius 0.5; a unit's worth more for any other mesh
+                bound_radius = std::max({entity.scale_x, entity.scale_y, entity.scale_z}) + 5.0f;
             }
             if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, bound_radius)) {
                 return;
@@ -319,9 +330,13 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         f32 mesh_scale = 0.0f;
         if (!entity.mesh_override.empty()) {
             gpu = mesh_cache.get_lod(entity.mesh_override, cam_dist, L);
-            if (gpu) mesh_scale = mesh_cache.blueprint_scale(entity.blueprint_id, L);
+            // A shield or script entity has no blueprint: its draw scale
+            // alone (M211k)
+            if (gpu)
+                mesh_scale =
+                    script_mesh ? 1.0f : mesh_cache.blueprint_scale(entity.blueprint_id, L);
         }
-        if (!gpu && !entity.blueprint_id.empty()) {
+        if (!gpu && !script_mesh && !entity.blueprint_id.empty()) {
             gpu = mesh_cache.get_lod(entity.blueprint_id, cam_dist, L);
             if (gpu) mesh_scale = gpu->uniform_scale;
         }
@@ -360,11 +375,16 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             inst.color_lookup = team_color_lookup(
                 view.cur() ? view.cur()->army(entity.army) : nullptr, game_colors_);
             inst.shader_time = std::fmod(static_cast<f32>(birth.tick), kShaderTimeWrap);
-            // UserEntity copies the fraction complete at each sync (a
-            // remembered structure's, when it was last seen).
-            inst.parameter = remembered
-                                 ? recon_->frozen_fraction(entity.id, entity.fraction_complete)
-                                 : entity.fraction_complete;
+            // The technique's parameter, which UserEntity copies at each
+            // sync: the fraction complete (a remembered structure's, when
+            // it was last seen), or a shield's health (M211k).
+            if (mesh_parameter(gpu->technique) == MeshParameter::FractionHealth)
+                inst.parameter =
+                    entity.max_health > 0.0f ? entity.health / entity.max_health : 1.0f;
+            else
+                inst.parameter = remembered
+                                     ? recon_->frozen_fraction(entity.id, entity.fraction_complete)
+                                     : entity.fraction_complete;
 
             // Only a unit is reflected: Moho clears the flag for every other
             // entity's mesh instance, and a wreck is a prop; a remembered
@@ -536,6 +556,14 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
 
                 offset += count;
             }
+    // Moho draws its mesh batches by their blueprint's SortOrder, smallest
+    // first (MeshBatchKeyLess; M211k): a shield's impacts (500), its fill
+    // (999), then the shield (1000). Stable: the opaque groups still come
+    // before the blended ones, whose SortOrder is the same.
+    std::stable_sort(mesh_groups_.begin(), mesh_groups_.end(),
+                     [](const MeshDrawGroup& a, const MeshDrawGroup& b) {
+                         return a.mesh->sort_order < b.mesh->sort_order;
+                     });
 }
 
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,

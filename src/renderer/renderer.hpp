@@ -163,6 +163,14 @@ public:
     const ReconView& recon() const { return recon_; }
     /// The effects' emitters and particles (tests read them).
     const ParticleSystem& particle_system() const { return particle_system_; }
+    /// The meshes this frame draws, in their groups (M211k's tests).
+    const UnitRenderer& unit_renderer() const { return unit_renderer_; }
+    /// The last frame's mesh draw calls with `technique`, each pass one
+    /// (M211k's tests: Cybran's shield draws twice).
+    u32 mesh_draws(MeshTechnique technique) const {
+        const auto i = static_cast<size_t>(technique);
+        return i < mesh_draws_.size() ? mesh_draws_[i] : 0;
+    }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
@@ -333,6 +341,14 @@ private:
     /// UEFBuildCube: blended, colour only, depth tested but not written (M211g).
     VkPipeline mesh_cube_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
+    /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
+    /// Aeon), blended unculled (UEF, Cybran's impact), added colour
+    /// (Seraphim), added colour and glow (the impact), and the fill's depth.
+    static constexpr u32 kShieldStates = 5;
+    std::array<VkPipeline, kShieldStates> shield_pipelines_{};
+    std::array<VkPipelineLayout, kShieldStates> shield_layouts_{};
+    /// This frame's mesh draw calls by technique (mesh_draws).
+    std::array<u32, 32> mesh_draws_{};
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
     // The glowing and glow-mask decals' (M212d): decal_layout_'s sets and push
@@ -576,7 +592,10 @@ private:
     void copy_and_continue(VkCommandBuffer cmd, VkRenderPass next);
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
-    enum class MeshPass { All, BeforeWater, AfterWater, Reflection };
+    /// Moho's mesh stages: before the water (All on a map without one),
+    /// after it, into its reflection, and after the effects above it, the
+    /// shields' (M211k).
+    enum class MeshPass { All, BeforeWater, AfterWater, Reflection, AfterEffects };
     /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
     /// (for the reflection, already mirrored).
     void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);
