@@ -65,9 +65,6 @@ public:
         ai_army_indices_ = indices;
     }
 
-    /// Limit the number of non-civilian armies created (0 = no limit).
-    void set_max_armies(int n) { max_armies_ = n; }
-
     /// Set AI personality key for AI armies (e.g., "adaptive", "rush", "turtle",
     /// "tech", "adaptivecheat").  Default: "adaptive".
     void set_ai_personality(const std::string& p) { ai_personality_ = p; }
@@ -121,7 +118,8 @@ public:
     void spawn_prebuilt_units(lua_State* L, sim::SimState& sim);
 
 private:
-    void setup_army_info(lua_State* L, const ScenarioMetadata& meta);
+    /// ScenarioInfo.ArmySetup, one entry per army of the game, by name.
+    void setup_army_info(lua_State* L, const std::vector<std::string>& armies);
     Result<void> call_setup_session(lua_State* L);
     void extract_start_positions(lua_State* L, sim::SimState& sim);
     Result<void> create_army_brain(lua_State* L, sim::SimState& sim,
@@ -133,7 +131,6 @@ private:
     std::vector<int> ai_army_indices_;
     std::vector<ArmySlotConfig> army_slot_configs_;
     GameOptionsConfig game_options_;
-    int max_armies_ = 0; // 0 = no limit
     std::string ai_personality_ = "adaptive";
     double cheat_mult_ = 2.0;
     double build_mult_ = 2.0;

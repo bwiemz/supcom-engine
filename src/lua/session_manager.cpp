@@ -11,8 +11,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <map>
 #include <string_view>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
@@ -150,25 +154,38 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
     if (lua_istable(L, -1)) setup.options = read_game_options(L, lua_gettop(L));
     lua_settop(L, top);
 
-    // PlayerOptions: {[1] = {Human = true, ...}, [2] = {Human = false,
-    // AIPersonality = 'adaptive', ...}}; the filled slots are the armies
-    // that play, in the scenario's order.
+    // PlayerOptions: {[slot] = {Human = true, ...}, [slot] = {Human =
+    // false, AIPersonality = 'adaptive', ...}}. The slots taken, in order,
+    // are the armies, each its slot's army of the scenario (Moho's
+    // LaunchGame: players in slots 1 and 5 play armies 0 and 1, ARMY_1 and
+    // ARMY_5). Random spawn leaves gaps, which luaL_getn would stop at.
     lua_pushstring(L, "PlayerOptions");
     lua_rawget(L, table_idx);
     if (lua_istable(L, -1)) {
         const int options = lua_gettop(L);
-        const int n = luaL_getn(L, options);
-        setup.slots.resize(static_cast<size_t>(std::max(n, 0)));
-        for (int slot = 1; slot <= n; ++slot) {
-            lua_rawgeti(L, options, slot);
-            if (!lua_istable(L, -1)) {
-                lua_pop(L, 1);
-                continue;
-            }
+        std::vector<double> taken;
+        lua_pushnil(L);
+        while (lua_next(L, options) != 0) {
+            if (lua_type(L, -2) == LUA_TNUMBER && lua_istable(L, -1))
+                taken.push_back(lua_tonumber(L, -2));
+            lua_pop(L, 1);
+        }
+        std::sort(taken.begin(), taken.end());
+        setup.slots.resize(taken.size());
+        for (size_t army = 0; army < taken.size(); ++army) {
+            lua_pushnumber(L, taken[army]);
+            lua_rawget(L, options);
             const int entry = lua_gettop(L);
+            // (A key that is no slot, 0 or 2.5 say: none, the first army
+            // free; its team and start spot default to its place)
+            const bool whole =
+                taken[army] >= 1 && taken[army] <= 1024 && taken[army] == std::floor(taken[army]);
+            const int slot = whole ? static_cast<int>(taken[army]) : 0;
+            const int place = whole ? slot : static_cast<int>(army) + 1;
             ++setup.army_count;
-            auto& cfg = setup.slots[static_cast<size_t>(slot - 1)];
+            auto& cfg = setup.slots[army];
             cfg.configured = true;
+            cfg.slot = slot;
             auto read_int = [&](const char* key, int def) {
                 lua_pushstring(L, key);
                 lua_rawget(L, entry);
@@ -181,7 +198,7 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
             cfg.human = lua_toboolean(L, -1) != 0;
             lua_pop(L, 1);
             if (!cfg.human) {
-                setup.ai_armies.push_back(slot - 1);
+                setup.ai_armies.push_back(static_cast<int>(army));
                 lua_pushstring(L, "AIPersonality");
                 lua_rawget(L, entry);
                 if (lua_type(L, -1) == LUA_TSTRING) {
@@ -191,8 +208,8 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
                 lua_pop(L, 1);
             }
             cfg.faction = read_int("Faction", 1); // 1 UEF, 2 Aeon, 3 Cybran, 4 Seraphim
-            cfg.team = read_int("Team", slot);
-            cfg.start_spot = read_int("StartSpot", slot);
+            cfg.team = read_int("Team", place);
+            cfg.start_spot = read_int("StartSpot", place);
             cfg.player_color = read_int("PlayerColor", -1);
             cfg.army_color = read_int("ArmyColor", -1);
             cfg.handicap = read_int("Handicap", 0);
@@ -210,7 +227,6 @@ void SessionManager::configure(const sim::GameSetup& setup) {
         set_ai_armies(setup.ai_armies);
         set_ai_personality(setup.ai_personality);
     }
-    if (setup.army_count > 0) set_max_armies(setup.army_count);
     // After the options, which may carry their own multipliers.
     if (setup.cheat_mult != 1.0) set_cheat_mult(setup.cheat_mult);
     if (setup.build_mult != 1.0) set_build_mult(setup.build_mult);
@@ -265,8 +281,15 @@ Result<void> SessionManager::start_session(LuaState& state,
     spdlog::info("Starting session...");
     lua_State* L = state.raw();
 
+    // The game's armies: the sim's, as the launch named them (a lobby's
+    // slots taken, or the scenario's first); the scenario's without any
+    std::vector<std::string> armies;
+    for (size_t i = 0; i < sim.army_count(); ++i)
+        if (const auto* brain = sim.army_at(i)) armies.push_back(brain->name());
+    if (armies.empty()) armies = meta.armies;
+
     // Step 1: Populate ScenarioInfo.ArmySetup for Lua code
-    setup_army_info(L, meta);
+    setup_army_info(L, armies);
     apply_game_options_to_sim(game_options_, sim);
 
     // Step 2: Call SetupSession() — loads save + script files
@@ -304,21 +327,15 @@ Result<void> SessionManager::start_session(LuaState& state,
     extract_start_positions(L, sim);
 
     // Step 4: Create army brains
-    // Determine how many armies to create (max_armies_ limits non-civilian count)
-    size_t army_limit = meta.armies.size();
-    if (max_armies_ > 0) {
-        army_limit = std::min(meta.armies.size(), static_cast<size_t>(max_armies_));
-    }
+    const size_t army_limit = armies.size();
     spdlog::info("  Creating army brains ({} of {} armies)...",
                  army_limit, meta.armies.size());
     i32 brains_created = 0;
     const std::vector<u32> army_colors = sim::read_game_colors(L).army_colors;
     for (size_t i = 0; i < army_limit; i++) {
-        auto result = create_army_brain(L, sim, static_cast<i32>(i),
-                                         meta.armies[i], meta.armies[i]);
+        auto result = create_army_brain(L, sim, static_cast<i32>(i), armies[i], armies[i]);
         if (!result) {
-            spdlog::warn("  Failed to create brain for {}: {}",
-                          meta.armies[i], result.error().message);
+            spdlog::warn("  Failed to create brain for {}: {}", armies[i], result.error().message);
         } else {
             auto* brain = sim.get_army(static_cast<i32>(i));
             apply_config_to_brain(slot_config_for_army(static_cast<int>(i)), brain, army_colors);
@@ -339,7 +356,7 @@ Result<void> SessionManager::start_session(LuaState& state,
         }
     }
 
-    if (brains_created == 0 && !meta.armies.empty()) {
+    if (brains_created == 0 && !armies.empty()) {
         return Error("All army brain creations failed");
     }
 
@@ -387,8 +404,8 @@ Result<void> SessionManager::start_session(LuaState& state,
         else if (faction == 4) acu_bp = "xsl0001"; // Seraphim
 
         const auto& pos = brain->start_position();
-        spdlog::info("  Army {} has no units — spawning ACU {} at ({:.0f}, {:.0f})",
-                     meta.armies[i], acu_bp, pos.x, pos.z);
+        spdlog::info("  Army {} has no units — spawning ACU {} at ({:.0f}, {:.0f})", armies[i],
+                     acu_bp, pos.x, pos.z);
 
         // Call CreateUnit(bp, army_1based, x, y, z) via Lua stack
         lua_getglobal(L, "CreateUnit");
@@ -428,8 +445,7 @@ Result<void> SessionManager::start_session(LuaState& state,
     return {};
 }
 
-void SessionManager::setup_army_info(lua_State* L,
-                                      const ScenarioMetadata& meta) {
+void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string>& armies) {
     // Push ScenarioInfo onto stack
     lua_getglobal(L, "ScenarioInfo");
     if (!lua_istable(L, -1)) {
@@ -509,12 +525,8 @@ void SessionManager::setup_army_info(lua_State* L,
     lua_newtable(L);
     int setup_idx = lua_gettop(L);
 
-    size_t setup_limit = meta.armies.size();
-    if (max_armies_ > 0) {
-        setup_limit = std::min(meta.armies.size(), static_cast<size_t>(max_armies_));
-    }
-    for (size_t i = 0; i < setup_limit; i++) {
-        const auto& army_name = meta.armies[i];
+    for (size_t i = 0; i < armies.size(); i++) {
+        const auto& army_name = armies[i];
         lua_pushstring(L, army_name.c_str());
         lua_newtable(L);
 
@@ -622,57 +634,31 @@ void SessionManager::extract_start_positions(lua_State* L,
     if (!lua_istable(L, -1)) { lua_pop(L, 4); return; }
     int markers_idx = lua_gettop(L);
 
-    std::vector<sim::Vector3> marker_positions(sim.army_count() + 1);
-    std::vector<bool> marker_seen(sim.army_count() + 1, false);
+    // Each army starts at the marker bearing its name, as Moho places it
+    // (a lobby's player in slot 5 plays ARMY_5, from ARMY_5's marker)
+    std::map<std::string, sim::Vector3> markers;
 
-    // Iterate markers looking for army start positions
     lua_pushnil(L);
     while (lua_next(L, markers_idx) != 0) {
         // key at -2, value at -1
         // lua_type, not lua_isstring: tostring on a numeric key converts it
         // in place and breaks lua_next.
         if (lua_type(L, -2) == LUA_TSTRING && lua_istable(L, -1)) {
-            const char* marker_name = lua_tostring(L, -2);
-            int marker_idx = lua_gettop(L);
-
-            // Check if this is an army marker (name starts with "ARMY_")
-            std::string name_str(marker_name);
-            if (name_str.find("ARMY_") == 0) {
-                // Read position = {x, y, z}
-                lua_pushstring(L, "position");
-                lua_gettable(L, marker_idx);
-                if (lua_istable(L, -1)) {
-                    int pos_idx = lua_gettop(L);
-                    lua_pushnumber(L, 1);
+            const std::string name = lua_tostring(L, -2);
+            lua_pushstring(L, "position");
+            lua_gettable(L, -2);
+            if (lua_istable(L, -1)) {
+                const int pos_idx = lua_gettop(L);
+                f32 xyz[3] = {};
+                for (int k = 0; k < 3; ++k) {
+                    lua_pushnumber(L, k + 1);
                     lua_gettable(L, pos_idx);
-                    f32 x = static_cast<f32>(lua_tonumber(L, -1));
+                    xyz[k] = static_cast<f32>(lua_tonumber(L, -1));
                     lua_pop(L, 1);
-
-                    lua_pushnumber(L, 2);
-                    lua_gettable(L, pos_idx);
-                    f32 y = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 1);
-
-                    lua_pushnumber(L, 3);
-                    lua_gettable(L, pos_idx);
-                    f32 z = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 1);
-
-                    int marker_num = 0;
-                    try {
-                        marker_num = std::stoi(name_str.substr(5));
-                    } catch (...) {
-                        marker_num = 0;
-                    }
-                    if (marker_num > 0 &&
-                        marker_num < static_cast<int>(marker_positions.size())) {
-                        marker_positions[static_cast<size_t>(marker_num)] =
-                            {x, y, z};
-                        marker_seen[static_cast<size_t>(marker_num)] = true;
-                    }
                 }
-                lua_pop(L, 1); // pop position table
+                markers[name] = {xyz[0], xyz[1], xyz[2]};
             }
+            lua_pop(L, 1); // pop position table
         }
         lua_pop(L, 1); // pop value, keep key for next iteration
     }
@@ -680,18 +666,11 @@ void SessionManager::extract_start_positions(lua_State* L,
     for (size_t i = 0; i < sim.army_count(); ++i) {
         auto* brain = sim.army_at(i);
         if (!brain) continue;
-        const auto* cfg = slot_config_for_army(static_cast<int>(i));
-        int marker_num = cfg && cfg->start_spot > 0
-            ? cfg->start_spot
-            : static_cast<int>(i) + 1;
-        if (marker_num > 0 &&
-            marker_num < static_cast<int>(marker_seen.size()) &&
-            marker_seen[static_cast<size_t>(marker_num)]) {
-            const auto& pos = marker_positions[static_cast<size_t>(marker_num)];
-            brain->set_start_position(pos);
-            spdlog::debug("  {} start pos from ARMY_{}: ({:.0f}, {:.1f}, {:.0f})",
-                          brain->name(), marker_num, pos.x, pos.y, pos.z);
-        }
+        const auto marker = markers.find(brain->name());
+        if (marker == markers.end()) continue;
+        brain->set_start_position(marker->second);
+        spdlog::debug("  {} starts at ({:.0f}, {:.1f}, {:.0f})", brain->name(), marker->second.x,
+                      marker->second.y, marker->second.z);
     }
 
     lua_pop(L, 4); // markers, chain, masterchain, Scenario

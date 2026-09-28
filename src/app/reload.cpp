@@ -127,13 +127,9 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
                       new_meta_result.error().message);
     } else {
         scenario_meta = new_meta_result.value();
-        const size_t army_limit =
-            setup.army_count > 0
-                ? std::min(static_cast<size_t>(setup.army_count), scenario_meta.armies.size())
-                : scenario_meta.armies.size();
-        for (size_t i = 0; i < army_limit; ++i) {
-            sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
-        }
+        // The setup's armies: a lobby's slots taken, each its slot's army
+        for (const std::string& name : osc::sim::session_army_names(setup, scenario_meta.armies))
+            sim_state->add_army(name, name);
     }
     if (sim_state->army_count() == 0) {
         sim_state->add_army("ARMY_1", "Player");
