@@ -1,5 +1,6 @@
 #define VMA_IMPLEMENTATION
 #include "renderer/renderer.hpp"
+#include "core/cursor.hpp"
 #include "core/ui_registry_keys.hpp"
 
 extern "C" {
@@ -83,7 +84,7 @@ void Renderer::on_scroll(f64 y_offset) {
     if (!window_ || !camera_.accepts_mouse()) return;
     f64 mx = 0;
     f64 my = 0;
-    glfwGetCursorPos(window_, &mx, &my);
+    mouse_position(mx, my);
     camera_.set_pivot(static_cast<f32>(mx), static_cast<f32>(my));
     camera_.zoom(static_cast<f32>(y_offset));
 }
@@ -125,6 +126,12 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
+    // A resize rebuilds the swapchain before the next frame (M217h): Wayland
+    // and some drivers never report the old one out of date
+    glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int, int) {
+        if (auto* r = static_cast<Renderer*>(glfwGetWindowUserPointer(w)))
+            r->on_framebuffer_resized();
+    });
     ui_dispatch_.install_callbacks(window_);
 
     // Vulkan instance (vk-bootstrap). Validation: on in debug builds, off in
@@ -441,10 +448,11 @@ bool Renderer::create_swapchain(u32 width, u32 height) {
         (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
 
     vkb::SwapchainBuilder builder(physical_device_, device_, surface_);
-    builder
-        .set_desired_format({VK_FORMAT_B8G8R8A8_UNORM,
-                             VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-        .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+    builder.set_desired_format({VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+        .set_desired_present_mode(vsync_ ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_MAILBOX_KHR)
+        .add_fallback_present_mode(vsync_ ? VK_PRESENT_MODE_FIFO_KHR
+                                          : VK_PRESENT_MODE_IMMEDIATE_KHR)
+        .add_fallback_present_mode(VK_PRESENT_MODE_FIFO_KHR)
         .set_desired_extent(width, height)
         .set_old_swapchain(swapchain_);
     if (capture_supported_) {
@@ -464,8 +472,11 @@ bool Renderer::create_swapchain(u32 width, u32 height) {
     swapchain_images_ = vkb_sc.get_images().value();
     swapchain_image_views_ = vkb_sc.get_image_views().value();
 
+    if (window_width_ != vkb_sc.extent.width || window_height_ != vkb_sc.extent.height)
+        resized_ = true;
     window_width_ = vkb_sc.extent.width;
     window_height_ = vkb_sc.extent.height;
+    present_mode_ = vkb_sc.present_mode;
 
     // One render-finished semaphore per image (the device is idle here: first
     // creation, or recreate_swapchain() after vkDeviceWaitIdle).
@@ -2227,6 +2238,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
     }
 
+    // A resized window or a vsync change: a new swapchain first (M217h)
+    if (swapchain_stale_) recreate_swapchain();
+
     // Acquire swapchain image
     u32 image_index = 0;
     VkResult acq_result = vkAcquireNextImageKHR(
@@ -3336,6 +3350,7 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     u32 fi = frame_index_ % FRAMES_IN_FLIGHT;
     vkWaitForFences(device_, 1, &render_fence_[fi], VK_TRUE, UINT64_MAX);
 
+    if (swapchain_stale_) recreate_swapchain(); // M217h
     u32 image_index = 0;
     VkResult acq_result = vkAcquireNextImageKHR(
         device_, swapchain_, UINT64_MAX, present_semaphore_[fi],
@@ -3585,8 +3600,88 @@ void Renderer::set_window_title(const char* title) {
 }
 
 void Renderer::mouse_position(f64& x, f64& y) const {
-    if (window_) glfwGetCursorPos(window_, &x, &y);
-    else { x = 0; y = 0; }
+    x = 0;
+    y = 0;
+    if (!window_) return;
+    // In framebuffer pixels (M217h): the viewport's and the UI's units
+    glfwGetCursorPos(window_, &x, &y);
+    int ww = 0;
+    int wh = 0;
+    int fw = 0;
+    int fh = 0;
+    glfwGetWindowSize(window_, &ww, &wh);
+    glfwGetFramebufferSize(window_, &fw, &fh);
+    const auto p = core::to_framebuffer(x, y, ww, wh, fw, fh);
+    x = p[0];
+    y = p[1];
+}
+
+void Renderer::set_fullscreen(u32 width, u32 height, u32 rate) {
+    if (!window_) return;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (!monitor) return;
+    glfwSetWindowMonitor(window_, monitor, 0, 0, static_cast<int>(width), static_cast<int>(height),
+                         rate > 0 ? static_cast<int>(rate) : GLFW_DONT_CARE);
+}
+
+void Renderer::set_windowed(u32 width, u32 height, std::optional<std::array<i32, 2>> position,
+                            bool maximized) {
+    if (!window_) return;
+    int x = 0;
+    int y = 0;
+    if (position) {
+        x = (*position)[0];
+        y = (*position)[1];
+    } else if (glfwGetWindowMonitor(window_)) {
+        // Out of full screen with no place: the middle of the display
+        if (const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor())) {
+            x = std::max(0, (mode->width - static_cast<int>(width)) / 2);
+            y = std::max(0, (mode->height - static_cast<int>(height)) / 2);
+        }
+    } else {
+        glfwGetWindowPos(window_, &x, &y);
+    }
+    if (glfwGetWindowAttrib(window_, GLFW_MAXIMIZED)) glfwRestoreWindow(window_);
+    glfwSetWindowMonitor(window_, nullptr, x, y, static_cast<int>(width), static_cast<int>(height),
+                         GLFW_DONT_CARE);
+    glfwSetWindowAttrib(window_, GLFW_DECORATED, GLFW_TRUE);
+    if (maximized) glfwMaximizeWindow(window_);
+}
+
+bool Renderer::fullscreen() const {
+    return window_ && glfwGetWindowMonitor(window_) != nullptr;
+}
+
+std::vector<std::array<u32, 3>> Renderer::display_modes() const {
+    std::vector<std::array<u32, 3>> out;
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    if (!monitor) return out;
+    int count = 0;
+    const GLFWvidmode* modes = glfwGetVideoModes(monitor, &count);
+    for (int i = 0; modes && i < count; ++i) {
+        out.push_back({static_cast<u32>(modes[i].width), static_cast<u32>(modes[i].height),
+                       static_cast<u32>(modes[i].refreshRate)});
+    }
+    return out;
+}
+
+std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
+    if (!window_ || glfwGetWindowMonitor(window_)) return std::nullopt;
+    WindowGeometry g;
+    int w = 0;
+    int h = 0;
+    glfwGetWindowPos(window_, &g.x, &g.y);
+    glfwGetWindowSize(window_, &w, &h);
+    g.width = static_cast<u32>(std::max(w, 0));
+    g.height = static_cast<u32>(std::max(h, 0));
+    g.maximized = glfwGetWindowAttrib(window_, GLFW_MAXIMIZED) != 0;
+    return g;
+}
+
+void Renderer::set_vsync(bool on) {
+    if (vsync_ == on) return;
+    vsync_ = on;
+    swapchain_stale_ = true;
 }
 
 bool Renderer::is_mouse_pressed(int glfw_button) const {
@@ -3871,6 +3966,7 @@ void Renderer::deliver_scene_capture() {
 }
 
 void Renderer::recreate_swapchain() {
+    swapchain_stale_ = false;
     // Handle minimize
     int w = 0, h = 0;
     glfwGetFramebufferSize(window_, &w, &h);

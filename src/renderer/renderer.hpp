@@ -205,6 +205,42 @@ public:
     /// Get current mouse position in screen pixels.
     void mouse_position(f64& x, f64& y) const;
 
+    // ── The window (M217h) ──
+    /// Full screen on the primary display at a mode (FA's primary_adapter
+    /// "w,h,fps"), or a decorated window at a size, placed there (else where
+    /// it is), maximized or not ("windowed").
+    void set_fullscreen(u32 width, u32 height, u32 rate);
+    void set_windowed(u32 width, u32 height, std::optional<std::array<i32, 2>> position,
+                      bool maximized);
+    bool fullscreen() const;
+    /// The primary display's modes (width, height, refresh), as it lists them.
+    std::vector<std::array<u32, 3>> display_modes() const;
+    /// The window's place and size while windowed (Moho's Windows.Main.*);
+    /// nothing while full screen or without a window.
+    struct WindowGeometry {
+        i32 x = 0, y = 0;
+        u32 width = 0, height = 0;
+        bool maximized = false;
+    };
+    std::optional<WindowGeometry> windowed_geometry() const;
+    /// vsync: FIFO; off, MAILBOX (IMMEDIATE where there's none). The
+    /// swapchain is rebuilt before the next frame.
+    void set_vsync(bool on);
+    bool vsync() const { return vsync_; }
+    VkPresentModeKHR present_mode() const { return present_mode_; }
+    /// The framebuffer's size changed (the window resized): the swapchain is
+    /// rebuilt before the next frame.
+    void on_framebuffer_resized() { swapchain_stale_ = true; }
+    /// Whether the next frame rebuilds the swapchain (tests read it).
+    bool swapchain_stale() const { return swapchain_stale_; }
+    /// Whether the swapchain's size changed since the last call (the UI's
+    /// root frame follows it).
+    bool take_resized() {
+        const bool r = resized_;
+        resized_ = false;
+        return r;
+    }
+
     /// Check if a mouse button is currently pressed.
     bool is_mouse_pressed(int glfw_button) const;
 
@@ -266,6 +302,10 @@ private:
     VkDeviceSize scene_capture_buf_size_ = 0;
     f32 fixed_frame_dt_ = 0.0f;
     bool capture_supported_ = false;
+    bool vsync_ = true;
+    VkPresentModeKHR present_mode_ = VK_PRESENT_MODE_FIFO_KHR;
+    bool swapchain_stale_ = false; ///< rebuild before the next frame
+    bool resized_ = false;         ///< the swapchain's size changed
     AllocatedBuffer capture_buf_{};
     VkDeviceSize capture_buf_size_ = 0;
 
