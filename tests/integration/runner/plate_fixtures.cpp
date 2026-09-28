@@ -132,7 +132,7 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments, 
     std::ofstream(path, std::ios::binary).write(d.data(), static_cast<std::streamsize>(d.size()));
 }
 
-void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height) {
+void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height, f32 facing_z) {
     std::vector<char> d(48, 0);
     const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
     const auto append = [&](const void* p, size_t n) {
@@ -162,7 +162,7 @@ void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height) {
     for (u32 j = 0; j < 2; ++j) {
         for (u32 i = 0; i < 2; ++i) {
             f({-half + 2.0f * half * static_cast<f32>(i), height * static_cast<f32>(j), 0});
-            f({0, 0, -1});                                     // normal
+            f({0, 0, facing_z});                               // normal
             f({1, 0, 0});                                      // tangent: along u
             f({0, 1, 0});                                      // binormal: along v
             f({static_cast<f32>(i), static_cast<f32>(1 - j)}); // uv

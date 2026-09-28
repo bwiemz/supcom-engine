@@ -34,6 +34,8 @@ public:
 
     /// The copy of the frame the water refracts (set again after a resize).
     void set_refraction(VkImageView view);
+    /// The units' reflection it reflects (M213b; set again after a resize).
+    void set_reflection(VkImageView view);
 
     /// This frame's parameters: the camera, and FA's time (ticks, with the
     /// frame's interpolant).

@@ -53,6 +53,18 @@ constexpr VkColorComponentFlags kColorAndGlow = kColorOnly | VK_COLOR_COMPONENT_
 constexpr f32 kBloomGlowCopyScale = 2.0f;
 constexpr f32 kBloomBlurKernelScale = 1.5f;
 constexpr int kBloomBlurCount = 2;
+/// `view_proj` (column-major) seen through the water's plane y = e, as
+/// Moho mirrors its view for the reflection (M213b): the world's (x, 2e - y,
+/// z). Its columns: y's negated, and 2e of y's added to the translation.
+std::array<f32, 16> mirrored_view_proj(const std::array<f32, 16>& vp, f32 e) {
+    std::array<f32, 16> m = vp;
+    for (size_t r = 0; r < 4; ++r) {
+        m[4 + r] = -vp[4 + r];
+        m[12 + r] = vp[12 + r] + 2.0f * e * vp[4 + r];
+    }
+    return m;
+}
+
 } // namespace
 
 // GLFW scroll callback — forward to Renderer via user pointer
@@ -359,6 +371,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // FA's water (M213a)
     water_renderer_.init(device_, allocator_, scene_render_pass_);
     water_renderer_.set_refraction(refraction_image_.view);
+    water_renderer_.set_reflection(reflection_image_.view);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -930,7 +943,8 @@ void Renderer::create_pipelines() {
         attrs[14] = {14, 1, VK_FORMAT_R32_SFLOAT, offsetof(MeshInstance, parameter)};
 
         // Push constant: mat4 viewProj (64B) + uint boneBase (4B) + uint bonesPerInst (4B) + vec3
-        // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) = 96B
+        // eye (12B) + uint technique (4B, M211b) + uint pass + float time (8B, M211f) + uint
+        // mirrored + float surface (8B, M213b) = 104B
         // Opaque meshes write their glow to alpha (M211e); fading ones blend
         // by their alpha and write colour only; the build overlays that
         // write alpha blend it too, as D3D9 does (M211f); UEF's build cube
@@ -948,7 +962,7 @@ void Renderer::create_pipelines() {
                 .set_color_write_mask(colour_only ? kColorOnly : kColorAndGlow)
                 .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
                 .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
-                                       sizeof(u32) * 2 + sizeof(f32),
+                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32),
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
                 .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
                 .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
@@ -1207,6 +1221,8 @@ void Renderer::create_bloom_resources() {
     create_hdr_image(scene_color_image_, w, h);
     // The frame as it is before the water, which the water refracts (M213a).
     create_hdr_image(refraction_image_, w, h);
+    // The units reflected in the water (M213b).
+    create_hdr_image(reflection_image_, w, h);
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
     create_hdr_image(bloom_blur_v_image_, half_w, half_h);
@@ -1315,6 +1331,12 @@ void Renderer::create_bloom_resources() {
         fb_ci.height = h;
         fb_ci.layers = 1;
         VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &scene_framebuffer_));
+
+        // The reflection's (M213b): drawn with the scene's pass, whose
+        // pipelines draw it, on the scene's depth, which the scene clears
+        // again after.
+        views[0] = reflection_image_.view;
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &reflection_framebuffer_));
     }
 
     // Bloom render pass (single color, no depth)
@@ -1428,6 +1450,7 @@ void Renderer::create_bloom_resources() {
     }
 
     water_renderer_.set_refraction(refraction_image_.view);
+    water_renderer_.set_reflection(reflection_image_.view);
     spdlog::info("Bloom resources created ({}x{}, half {}x{})", w, h, half_w, half_h);
 }
 
@@ -1451,6 +1474,8 @@ void Renderer::destroy_bloom_resources() {
     if (bloom_blur_h_fb_) vkDestroyFramebuffer(device_, bloom_blur_h_fb_, nullptr);
     if (bloom_blur_v_fb_) vkDestroyFramebuffer(device_, bloom_blur_v_fb_, nullptr);
     if (scene_framebuffer_) vkDestroyFramebuffer(device_, scene_framebuffer_, nullptr);
+    if (reflection_framebuffer_) vkDestroyFramebuffer(device_, reflection_framebuffer_, nullptr);
+    reflection_framebuffer_ = VK_NULL_HANDLE;
 
     // Render passes
     if (bloom_render_pass_) vkDestroyRenderPass(device_, bloom_render_pass_, nullptr);
@@ -1468,6 +1493,7 @@ void Renderer::destroy_bloom_resources() {
     };
     destroy_img(scene_color_image_);
     destroy_img(refraction_image_);
+    destroy_img(reflection_image_);
     destroy_img(bloom_bright_image_);
     destroy_img(bloom_blur_h_image_);
     destroy_img(bloom_blur_v_image_);
@@ -2515,6 +2541,39 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdEndRenderPass(cmd_buf_[fi]);
     }
 
+    // ==================== REFLECTION ====================
+    // Moho's RenderReflections (M213b): the units, mirrored in the water's
+    // plane, into a target of their own cleared to transparent black, which
+    // the water's surface reads. The scene's pass and pipelines draw it; the
+    // scene clears the depth it shares again. The pass's incoming dependency
+    // (colour output) also waits for the last frame's water to have sampled
+    // the target: a source stage takes in the stages before it, and a write
+    // after a read needs no more than that.
+    if (water_renderer_.has_water() && reflection_framebuffer_) {
+        PROFILE_ZONE("Render::reflection");
+        std::array<VkClearValue, 2> cleared{};
+        cleared[1].depthStencil = {1.0f, 0};
+        VkRenderPassBeginInfo mirror{};
+        mirror.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        mirror.renderPass = scene_render_pass_;
+        mirror.framebuffer = reflection_framebuffer_;
+        mirror.renderArea.extent = {window_width_, window_height_};
+        mirror.clearValueCount = static_cast<u32>(cleared.size());
+        mirror.pClearValues = cleared.data();
+        vkCmdBeginRenderPass(cmd_buf_[fi], &mirror, VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport mirror_vp{};
+        mirror_vp.width = static_cast<f32>(window_width_);
+        mirror_vp.height = static_cast<f32>(window_height_);
+        mirror_vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &mirror_vp);
+        VkRect2D mirror_scissor{};
+        mirror_scissor.extent = {window_width_, window_height_};
+        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &mirror_scissor);
+        draw_meshes(cmd_buf_[fi], fi, mirrored_view_proj(vp, water_renderer_.water_elevation()),
+                    MeshPass::Reflection);
+        vkCmdEndRenderPass(cmd_buf_[fi]);
+    }
+
     // ==================== MAIN PASS ====================
     PROFILE_ZONE("Render::main_pass");
 
@@ -2663,156 +2722,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         }
     }
 
-    // 3. Draw mesh units (real SCM models with GPU skinning)
-    //    Skip when strategic zoom replaces 3D units with 2D icons.
-    if (!strategic_icon_renderer_.is_strategic_zoom() &&
-        !unit_renderer_.mesh_groups().empty() && mesh_pipeline_) {
-        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                          mesh_pipeline_);
-
-        // Push viewProj as first 64 bytes (bone offsets per-group below)
-        struct MeshPushConstants {
-            f32 viewProj[16];
-            u32 boneBase;
-            u32 bonesPerInst;
-            f32 eyeX, eyeY, eyeZ;
-            u32 technique; // MeshTechnique (M211b)
-            u32 pass;      // a build technique's pass (M211f)
-            f32 time;      // FA's time (M211f)
-        } mesh_pc{};
-        static_assert(sizeof(MeshPushConstants) == 96, "matches mesh_vert/frag's push block");
-        std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
-        camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
-        mesh_pc.time = unit_renderer_.shader_time();
-
-        // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
-        VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
-        if (fallback_ds) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 0, 1, &fallback_ds,
-                                    0, nullptr);
-        }
-
-        // Bind bone SSBO at set=1 (once for all groups)
-        if (bone_ds_[fi]) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 1, 1, &bone_ds_[fi],
-                                    0, nullptr);
-        }
-
-        // Bind specteam fallback at set=2 (alpha=0 = no team color)
-        VkDescriptorSet specteam_fallback =
-            texture_cache_.specteam_fallback_descriptor();
-        if (specteam_fallback) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 2, 1, &specteam_fallback,
-                                    0, nullptr);
-        }
-
-        // Bind normal map fallback at set=3 (flat normal = no perturbation)
-        VkDescriptorSet normal_fallback =
-            texture_cache_.normal_fallback_descriptor();
-        if (normal_fallback) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 3, 1, &normal_fallback,
-                                    0, nullptr);
-        }
-
-        // Bind shadow descriptor set at set=4
-        if (shadow_ds_[fi]) {
-            vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    mesh_layout_, 4, 1, &shadow_ds_[fi],
-                                    0, nullptr);
-        }
-
-        VkPipeline bound = mesh_pipeline_;
-        for (auto& group : unit_renderer_.mesh_groups()) {
-            if (!group.mesh || group.instance_count == 0) continue;
-
-            // Bind per-group albedo texture descriptor (always bind to avoid
-            // stale set=0 from prior group)
-            VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
-            if (albedo_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        mesh_layout_, 0, 1, &albedo_ds,
-                                        0, nullptr);
-            }
-
-            // Bind per-group specteam texture descriptor (always bind to avoid
-            // stale set=2 from prior group)
-            VkDescriptorSet spec_ds = group.specteam_ds ? group.specteam_ds : specteam_fallback;
-            if (spec_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        mesh_layout_, 2, 1, &spec_ds,
-                                        0, nullptr);
-            }
-
-            // Bind per-group normal map descriptor (always bind to avoid
-            // stale set=3 from prior group)
-            VkDescriptorSet norm_ds = group.normal_ds ? group.normal_ds : normal_fallback;
-            if (norm_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        mesh_layout_, 3, 1, &norm_ds,
-                                        0, nullptr);
-            }
-
-            // The mesh's lookup texture (set=5) and secondary (set=6),
-            // transparent black without them
-            VkDescriptorSet lookup_ds = group.lookup_ds ? group.lookup_ds : specteam_fallback;
-            if (lookup_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_,
-                                        5, 1, &lookup_ds, 0, nullptr);
-            }
-            VkDescriptorSet secondary_ds =
-                group.secondary_ds ? group.secondary_ds : specteam_fallback;
-            if (secondary_ds) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_,
-                                        6, 1, &secondary_ds, 0, nullptr);
-            }
-
-            VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer,
-                                unit_renderer_.mesh_instance_buffer()};
-            VkDeviceSize buf_offsets[] = {
-                0,
-                static_cast<VkDeviceSize>(group.instance_offset) *
-                    sizeof(MeshInstance)};
-            vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
-            vkCmdBindIndexBuffer(cmd_buf_[fi], group.mesh->index_buf.buffer, 0,
-                                 VK_INDEX_TYPE_UINT32);
-
-            // The technique's passes, one after the other, as FA draws a
-            // batch's (M211f). Fading and build groups come last, with the
-            // pipelines that blend them (the layouts are compatible: the
-            // sets bound stay bound). A build technique's base pass blends
-            // colour only (Aeon's at alpha 1: opaque); UEF's and Cybran's
-            // overlays blend alpha too, Aeon's colour only.
-            const MeshTechnique technique = group.mesh->technique;
-            std::array<VkPipeline, 2> passes = {group.fading ? mesh_fade_pipeline_ : mesh_pipeline_,
-                                                VK_NULL_HANDLE};
-            if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
-                passes[1] = mesh_overlay_pipeline_;
-            else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
-            // The build effects' (M211g): AlphaFade blends colour and alpha,
-            // UEF's cube colour only and writes no depth.
-            else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
-            else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
-            mesh_pc.boneBase = group.bone_base_offset;
-            mesh_pc.bonesPerInst = group.bones_per_instance;
-            mesh_pc.technique = static_cast<u32>(technique);
-            for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
-                if (passes[pass] != bound) {
-                    vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
-                    bound = passes[pass];
-                }
-                mesh_pc.pass = pass;
-                vkCmdPushConstants(cmd_buf_[fi], mesh_layout_,
-                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                                   sizeof(mesh_pc), &mesh_pc);
-                vkCmdDrawIndexed(cmd_buf_[fi], group.mesh->index_count, group.instance_count, 0, 0,
-                                 0);
-            }
-        }
-    }
+    // 3. The meshes (real SCM models with GPU skinning): on a map with water,
+    // those Moho draws before it (M213b)
+    draw_meshes(cmd_buf_[fi], fi, vp,
+                water_renderer_.has_water() ? MeshPass::BeforeWater : MeshPass::All);
 
     // 4. Draw cube fallback units (skip when strategic zoom active)
     if (!strategic_icon_renderer_.is_strategic_zoom() &&
@@ -2867,6 +2780,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         again.renderArea.extent = {window_width_, window_height_};
         vkCmdBeginRenderPass(cmd_buf_[fi], &again, VK_SUBPASS_CONTENTS_INLINE);
         water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
+        // The meshes Moho draws after the water (M213b), which writes no
+        // depth: over it, unrefracted.
+        draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterWater);
     }
 
     // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
@@ -3134,6 +3050,157 @@ void Renderer::dump_frame(std::ostream& out) const {
                                        e.seen ? "seen" : "unseen"));
     }
     section("emitters", std::move(emitters));
+}
+
+void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp,
+                           MeshPass stage) {
+    // None when strategic zoom replaces 3D units with 2D icons.
+    if (strategic_icon_renderer_.is_strategic_zoom() || unit_renderer_.mesh_groups().empty() ||
+        !mesh_pipeline_)
+        return;
+    const bool mirrored = stage == MeshPass::Reflection;
+    const f32 surface = water_renderer_.water_elevation();
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipeline_);
+
+    // Push viewProj as first 64 bytes (bone offsets per-group below)
+    struct MeshPushConstants {
+        f32 viewProj[16];
+        u32 boneBase;
+        u32 bonesPerInst;
+        f32 eyeX, eyeY, eyeZ;
+        u32 technique; // MeshTechnique (M211b)
+        u32 pass;      // a build technique's pass (M211f)
+        f32 time;      // FA's time (M211f)
+        u32 mirrored;  // drawn into the water's reflection (M213b)
+        f32 surface;   // the water's elevation (M213b)
+    } mesh_pc{};
+    static_assert(sizeof(MeshPushConstants) == 104, "matches mesh_vert/frag's push block");
+    std::memcpy(mesh_pc.viewProj, vp.data(), sizeof(f32) * 16);
+    camera_.eye_position(mesh_pc.eyeX, mesh_pc.eyeY, mesh_pc.eyeZ);
+    // (The reflection is seen from the eye mirrored in the water: mesh_frag
+    // takes FA's view direction from viewProj, which is mirrored.)
+    mesh_pc.mirrored = mirrored ? 1u : 0u;
+    mesh_pc.surface = surface;
+    mesh_pc.time = unit_renderer_.shader_time();
+
+    // Bind fallback (1x1 white) as baseline — ensures set=0 is always valid
+    VkDescriptorSet fallback_ds = texture_cache_.fallback_descriptor();
+    if (fallback_ds) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
+                                &fallback_ds, 0, nullptr);
+    }
+
+    // Bind bone SSBO at set=1 (once for all groups)
+    if (bone_ds_[fi]) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 1, 1,
+                                &bone_ds_[fi], 0, nullptr);
+    }
+
+    // Bind specteam fallback at set=2 (alpha=0 = no team color)
+    VkDescriptorSet specteam_fallback = texture_cache_.specteam_fallback_descriptor();
+    if (specteam_fallback) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
+                                &specteam_fallback, 0, nullptr);
+    }
+
+    // Bind normal map fallback at set=3 (flat normal = no perturbation)
+    VkDescriptorSet normal_fallback = texture_cache_.normal_fallback_descriptor();
+    if (normal_fallback) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
+                                &normal_fallback, 0, nullptr);
+    }
+
+    // Bind shadow descriptor set at set=4
+    if (shadow_ds_[fi]) {
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 4, 1,
+                                &shadow_ds_[fi], 0, nullptr);
+    }
+
+    VkPipeline bound = mesh_pipeline_;
+    for (auto& group : unit_renderer_.mesh_groups()) {
+        if (!group.mesh || group.instance_count == 0) continue;
+        // Moho's buckets (M213b): a technique's render stage puts it
+        // before the water or after it; only units are reflected.
+        const bool after_water = is_post_water_technique(group.mesh->technique);
+        if ((stage == MeshPass::BeforeWater && after_water) ||
+            (stage == MeshPass::AfterWater && !after_water) ||
+            (stage == MeshPass::Reflection && !group.reflected))
+            continue;
+
+        // Bind per-group albedo texture descriptor (always bind to avoid
+        // stale set=0 from prior group)
+        VkDescriptorSet albedo_ds = group.texture_ds ? group.texture_ds : fallback_ds;
+        if (albedo_ds) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 0, 1,
+                                    &albedo_ds, 0, nullptr);
+        }
+
+        // Bind per-group specteam texture descriptor (always bind to avoid
+        // stale set=2 from prior group)
+        VkDescriptorSet spec_ds = group.specteam_ds ? group.specteam_ds : specteam_fallback;
+        if (spec_ds) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 2, 1,
+                                    &spec_ds, 0, nullptr);
+        }
+
+        // Bind per-group normal map descriptor (always bind to avoid
+        // stale set=3 from prior group)
+        VkDescriptorSet norm_ds = group.normal_ds ? group.normal_ds : normal_fallback;
+        if (norm_ds) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 3, 1,
+                                    &norm_ds, 0, nullptr);
+        }
+
+        // The mesh's lookup texture (set=5) and secondary (set=6),
+        // transparent black without them
+        VkDescriptorSet lookup_ds = group.lookup_ds ? group.lookup_ds : specteam_fallback;
+        if (lookup_ds) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 5, 1,
+                                    &lookup_ds, 0, nullptr);
+        }
+        VkDescriptorSet secondary_ds = group.secondary_ds ? group.secondary_ds : specteam_fallback;
+        if (secondary_ds) {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_layout_, 6, 1,
+                                    &secondary_ds, 0, nullptr);
+        }
+
+        VkBuffer vbufs[] = {group.mesh->vertex_buf.buffer, unit_renderer_.mesh_instance_buffer()};
+        VkDeviceSize buf_offsets[] = {0, static_cast<VkDeviceSize>(group.instance_offset) *
+                                             sizeof(MeshInstance)};
+        vkCmdBindVertexBuffers(cmd, 0, 2, vbufs, buf_offsets);
+        vkCmdBindIndexBuffer(cmd, group.mesh->index_buf.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        // The technique's passes, one after the other, as FA draws a
+        // batch's (M211f). Fading and build groups come last, with the
+        // pipelines that blend them (the layouts are compatible: the
+        // sets bound stay bound). A build technique's base pass blends
+        // colour only (Aeon's at alpha 1: opaque); UEF's and Cybran's
+        // overlays blend alpha too, Aeon's colour only.
+        const MeshTechnique technique = group.mesh->technique;
+        std::array<VkPipeline, 2> passes = {group.fading ? mesh_fade_pipeline_ : mesh_pipeline_,
+                                            VK_NULL_HANDLE};
+        if (technique == MeshTechnique::UEFBuild || technique == MeshTechnique::CybranBuild)
+            passes[1] = mesh_overlay_pipeline_;
+        else if (technique == MeshTechnique::AeonBuild) passes[1] = mesh_fade_pipeline_;
+        // The build effects' (M211g): AlphaFade blends colour and alpha,
+        // UEF's cube colour only and writes no depth.
+        else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
+        else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
+        mesh_pc.boneBase = group.bone_base_offset;
+        mesh_pc.bonesPerInst = group.bones_per_instance;
+        mesh_pc.technique = static_cast<u32>(technique);
+        for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
+            if (passes[pass] != bound) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
+                bound = passes[pass];
+            }
+            mesh_pc.pass = pass;
+            vkCmdPushConstants(cmd, mesh_layout_,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                               sizeof(mesh_pc), &mesh_pc);
+            vkCmdDrawIndexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+        }
+    }
 }
 
 void Renderer::copy_refraction(VkCommandBuffer cmd) {
