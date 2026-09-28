@@ -97,6 +97,9 @@ add_executable(osc_tests
     test_team_share_overflow.cpp
     test_lockstep.cpp
     test_tcp_transport.cpp
+    test_lobby_net.cpp
+    test_lobby_wire.cpp
+    test_net_lobby.cpp
     test_command_routing.cpp
     test_sim_rand.cpp
     test_mux_transport.cpp

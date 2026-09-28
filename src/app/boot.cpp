@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "core/profiler.hpp"
+#include "lua/net_lobby.hpp"
 #include "lua/binding_coverage.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/moho_bindings.hpp"
@@ -622,6 +623,7 @@ void App::reset_ui_state() {
     // console commands, not the state's functions.
     ui_registry = ui::UIControlRegistry{};
 
+    lua::close_net_lobbies(old);    // their sockets close, and their refs go before the state
     ui_lua_state = lua::LuaState(); // closes the old state
     ui_store.rebind(ui_lua_state.raw());
     ui_thread_manager.rebind(ui_lua_state.raw());
