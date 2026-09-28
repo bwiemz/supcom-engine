@@ -230,8 +230,18 @@ void SimState::follow_attachments() {
         if (e.parent_entity_id() == 0 || e.destroyed()) return;
         const Entity* parent = entity_registry_.find(e.parent_entity_id());
         if (!parent || parent->destroyed()) return;
-        const Vector3& p = parent->position();
-        const Quaternion& q = parent->orientation();
+        // Moho's CalculateAttachedTransform (M211k): the parent bone's world
+        // transform (a unit's bone -1 is its centre; another entity's, its
+        // own), then the child's parent offset in that bone's frame. The
+        // child's own bone is taken as its origin, which is exact for the
+        // shields and script entities that have no blueprint.
+        const BonePose bone =
+            parent->is_unit()
+                ? static_cast<const Unit*>(parent)->bone_world_transform(e.parent_bone())
+                : BonePose{parent->position(), parent->orientation()};
+        const BonePose at = pose_compose(bone, {e.parent_offset(), Quaternion{}});
+        const Vector3& p = at.position;
+        const Quaternion& q = at.rotation;
         const Vector3& c = e.position();
         const Quaternion& o = e.orientation();
         const bool snap = e.followed_parent_snap() != parent->snap_serial();

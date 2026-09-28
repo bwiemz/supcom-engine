@@ -747,7 +747,8 @@ static u32 create_unit_core(lua_State* L, const char* bp_id, int army,
                 lua_pop(L, 1); // pop Transport (or nil)
 
                 // SizeY: a carried unit with no AttachPoint bone hangs by its
-                // centre; size and density: a transport loads the largest first.
+                // centre, and what's attached to bone -1 sits there (M211k);
+                // size and density: a transport loads the largest first.
                 const auto number = [&](const char* name, f32 fallback) {
                     lua_pushstring(L, name);
                     lua_rawget(L, -2);

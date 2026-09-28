@@ -2599,6 +2599,13 @@ Quaternion Unit::bone_world_rotation(i32 bone) const {
     return quat_multiply(orientation(), bone_pose(bone).rotation);
 }
 
+BonePose Unit::bone_world_transform(i32 bone) const {
+    const BoneData* bd = bone_data();
+    if (bd && bd->is_valid(bone)) return {bone_world_position(bone), bone_world_rotation(bone)};
+    const Vector3 up = quat_rotate(orientation(), Vector3{0.0f, size_y_ * 0.5f, 0.0f});
+    return {{position().x + up.x, position().y + up.y, position().z + up.z}, orientation()};
+}
+
 Vector3 Unit::bone_world_point(i32 bone, const Vector3& local) const {
     Vector3 model = local;
     const BoneData* bd = bone_data();
