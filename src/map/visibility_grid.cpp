@@ -93,6 +93,27 @@ bool VisibilityGrid::has_vision(f32 wx, f32 wz, u32 army) const {
     return has_flag(get(gx, gz, army), VisFlag::Vision);
 }
 
+bool VisibilityGrid::any_vision(f32 min_x, f32 min_z, f32 max_x, f32 max_z, u32 army) const {
+    if (army >= MAX_ARMIES) return false;
+    // The rectangle's cells: from the one under its (floored) least corner
+    // to the one under its (ceiled) greatest, exclusive, within the grid.
+    const auto cell = [](f32 w) {
+        return static_cast<i64>(std::floor(w / static_cast<f32>(CELL_SIZE)));
+    };
+    const auto cell_end = [](f32 w) {
+        return static_cast<i64>(std::ceil(std::ceil(w) / static_cast<f32>(CELL_SIZE)));
+    };
+    const i64 x0 = std::max<i64>(0, cell(std::floor(min_x)));
+    const i64 z0 = std::max<i64>(0, cell(std::floor(min_z)));
+    const i64 x1 = std::min<i64>(grid_width_, cell_end(max_x));
+    const i64 z1 = std::min<i64>(grid_height_, cell_end(max_z));
+    for (i64 z = z0; z < z1; ++z)
+        for (i64 x = x0; x < x1; ++x)
+            if (has_flag(get(static_cast<u32>(x), static_cast<u32>(z), army), VisFlag::Vision))
+                return true;
+    return false;
+}
+
 bool VisibilityGrid::has_radar(f32 wx, f32 wz, u32 army) const {
     u32 gx, gz;
     world_to_grid(wx, wz, gx, gz);

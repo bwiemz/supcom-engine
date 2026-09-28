@@ -23,6 +23,9 @@ add_library(osc_renderer STATIC
     selection_info_renderer.cpp
     fog_renderer.cpp
     recon_view.cpp
+    decal_math.cpp
+    runtime_decals.cpp
+    runtime_decal_renderer.cpp
     beam_blueprint.cpp
     beam_renderer.cpp
     effect_blueprint_file.cpp

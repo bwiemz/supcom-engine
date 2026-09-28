@@ -565,6 +565,9 @@ public:
     u32 next_command_id() { return ++next_command_id_; }
 
     // VFX / IEffect registry
+    /// Which armies see a decal or splat as it is made (M212c; Moho's
+    /// CDecalBuffer::CreateHandle), a bit per army.
+    u32 decal_sight(const DecalSpec& spec) const;
     IEffectRegistry& effect_registry() { return effect_registry_; }
     const IEffectRegistry& effect_registry() const { return effect_registry_; }
 
@@ -670,6 +673,9 @@ private:
     /// other. A push never takes a unit where its layer can't go.
     void separate_ground_units();
     void update_visibility();
+    /// This tick's look at the decals (CDecalBuffer::CleanupTick): one army
+    /// in turn may come to see those it didn't.
+    void update_decal_sight();
     /// Influence maps (M207b): the army whose turn it is (tick % army
     /// count) reports what its intel sees to its map, after the visibility
     /// pass, as Moho's recon tick does.

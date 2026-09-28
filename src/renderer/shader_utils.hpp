@@ -26,6 +26,9 @@ extern const char* mesh_frag;
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)
 /// The map's decals, lit as the terrain is (DecalsPS, DecalAlbedoXP; M212b).
 const char* decal_lit_frag();
+extern const char* splat_vert; // runtime splats: a quad on the terrain (SplatsVS; M212c)
+/// Runtime splats, lit as the terrain is with no specular (SplatsPS; M212c).
+const char* splat_frag();
 extern const char* shadow_vert;       // terrain shadow (lightVP * position)
 extern const char* shadow_mesh_vert;  // mesh shadow (blend-weight skinning + lightVP)
 extern const char* shadow_unit_vert;  // cube shadow (instanced + lightVP)
