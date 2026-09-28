@@ -101,7 +101,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     `Hosting` comes at the next pump, after the scripts' setup, and a
     callback may destroy its own lobby. A UI state's lobbies close with it.
   - "None" keeps the loopback.
-- **M218b (this PR):**
+- **M218b (#187):**
   - the discovery service (UDP broadcast on 15000);
   - the Steam-build stubs retail's gameselect calls
     (`InternalStartSteamDiscoveryService`, `IsSignedInToSteam`,
@@ -109,10 +109,33 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - `ValidateIPAddress`.
 
   Retail's Multiplayer → LAN screen then lists, hosts and joins games.
-- **M218c:** `LaunchGame` into a lockstep game over the lobby's
-  connections, one source per owner, seeded by `hostedTime`. A two-process
-  test plays retail's lobby to a game. `LanHost`/`LanJoin` and their dialog
-  then go.
+- **M218c (this PR):**
+  - `LaunchGame` checks the config as Moho's does (the scenario read as
+    retail's `MapUtil.LoadScenario` reads it; "NoConfig", "StartSpots").
+  - Command sources are numbered as Moho numbers them: 0, 1, ... per
+    owner, the humans by slot and then the observers (so
+    `SessionGetLocalCommandSource` and the source names keep their
+    meaning). A human's army is Moho's: the slots taken, in order (players
+    in slots 1 and 5 play armies 0 and 1). An observer's source plays none.
+  - `LobbyNet` carries the lockstep's frames in a `Game` message the host
+    relays, apart from the scripts' data; `LobbyGameTransport` hands the
+    lobby's connections to the `LockstepSession`. The host takes no more
+    joins.
+  - `GameLaunched` comes last, since retail's destroys the lobby.
+  - A lobby is known by its UI state (its registry), not the thread that
+    calls it: retail calls `LaunchGame` from its countdown thread and
+    `GetPeer` from its keepalive thread.
+- **M218d:** the in-game multiplayer UI (`GetSessionClients`,
+  `SessionIsMultiplayer`, chat to players, pause by source, connectivity);
+  `LanHost`/`LanJoin` and their dialog go.
+
+Two fixes the launch found go separately, since single-player has them
+too:
+- random spawn (FA's default) leaves the slots sparse (players in 1 and 5,
+  say). Moho packs them, each army named for its slot. The session reads
+  `PlayerOptions` with `luaL_getn`, so it loses armies;
+- `GetArmiesTable`'s `faction` was the sim's 1-based index, where the UI
+  indexes `factions.lua` with `faction + 1`.
 
 ## Tests (M218a)
 - **Unit (`test_lobby_net`, over the loopback):**
@@ -155,3 +178,25 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
 - **`--lan-screen-test` (gate):** retail's `gameselect.lua` LAN screen,
   opened from the front end, finds and lists a game hosted in the same
   process, with no script error.
+
+## Tests (M218c)
+- **Unit (`test_lobby_net`):**
+  - game frames reach every other player, a client's through the host, in
+    order, and aren't the scripts' data;
+  - once the game starts the host takes no more joins;
+  - three sims play in lockstep over the lobby's connections, one client's
+    order reaching the other through the host.
+- **Unit (`test_net_lobby`):**
+  - LaunchFailed: no scenario, "NoConfig", "StartSpots", and a player
+    neither playing nor watching;
+  - three players launch (the host, a player, an observer): the sources
+    by slot then observers, their armies, the seed and the launch request.
+    A game with gaps (slots 2, 5 and 7, its table iterating 7, 5, 2)
+    packs its armies in slot order;
+    The methods are called from a coroutine, as retail's threads call them;
+  - `GameLaunched` destroys the lobby, and the connections carry the game.
+- **`data.lan_game` (gate):** two processes play retail's `lobby.lua` to a
+  game (host, join, ready, Launch and the countdown), then 150 ticks in
+  lockstep with no desync. Each plays its own slot's army, both armies are
+  human, and there's no script error. It fixes spawn and faction (UEF)
+  until the two fixes above land.

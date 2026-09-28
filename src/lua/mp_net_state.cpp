@@ -23,8 +23,15 @@ void MpNetState::reset() {
     lobby.reset();
     session.reset();
     mux.reset();
+    lobby_transport.reset();
+    source_armies.clear();
     host_tcp = nullptr;
     transport_ready = false;
+}
+
+osc::i32 MpNetState::army_of(osc::u32 source) const {
+    if (source_armies.empty()) return static_cast<osc::i32>(source);
+    return source < source_armies.size() ? source_armies[source] : -1;
 }
 
 MpNetState& mp_net_state() {
@@ -83,16 +90,36 @@ void mp_pump() {
 
 LanLobby* mp_lobby() { return mp_net_state().lobby.get(); }
 
+void mp_begin_lobby_game(std::unique_ptr<osc::sim::INetTransport> transport, bool host,
+                         osc::u32 local_source, std::vector<osc::i32> armies, osc::u64 seed) {
+    auto& s = mp_net_state();
+    s.reset(); // a LAN transport set up before (LanHost/LanJoin) goes
+    s.role = host ? MpNetState::Role::Host : MpNetState::Role::Join;
+    s.local_source = local_source;
+    s.all_sources.clear();
+    for (osc::u32 source = 0; source < armies.size(); ++source) s.all_sources.push_back(source);
+    s.source_armies = std::move(armies);
+    s.seed = seed;
+    s.lobby_transport = std::move(transport);
+    s.transport_ready = true;
+    spdlog::info("[mp] a lobby's game: {} command sources, this player's {} (army {}), seed "
+                 "{:#018x}",
+                 s.all_sources.size(), local_source, s.local_army(), seed);
+}
+
 bool mp_attach_session(osc::sim::SimState& sim) {
     auto& s = mp_net_state();
-    if (!s.transport_ready || !s.mux) return false;
-    s.session = std::make_unique<osc::sim::LockstepSession>(
-        sim, s.mux->game_channel(), s.local_source, s.all_sources);
-    // Source s plays army s (as a dropped peer's defeat and GetFocusArmy
-    // take it): each peer's orders move only its own army's units.
-    for (const osc::u32 source : s.all_sources)
-        sim.set_source_army(source, static_cast<osc::i32>(source));
-    sim.set_source_army(s.local_source, static_cast<osc::i32>(s.local_source));
+    osc::sim::INetTransport* transport = s.lobby_transport ? s.lobby_transport.get()
+                                         : s.mux           ? &s.mux->game_channel()
+                                                           : nullptr;
+    if (!s.transport_ready || !transport) return false;
+    s.session =
+        std::make_unique<osc::sim::LockstepSession>(sim, *transport, s.local_source, s.all_sources);
+    // Each source plays its army (as a dropped peer's defeat and GetFocusArmy
+    // take it): each peer's orders move only its own army's units, and an
+    // observer's none.
+    for (const osc::u32 source : s.all_sources) sim.set_source_army(source, s.army_of(source));
+    sim.set_source_army(s.local_source, s.local_army());
     auto* session = s.session.get();
     // Route local human orders through the session (broadcast + schedule).
     sim.set_local_command_sink(
@@ -114,8 +141,10 @@ bool mp_attach_session(osc::sim::SimState& sim) {
 void mp_teardown() {
     auto& s = mp_net_state();
     s.lobby.reset();     // holds a reference into the mux
-    s.session.reset();   // holds a reference into the mux
+    s.session.reset();   // holds a reference into the mux (or the lobby's transport)
     s.mux.reset();       // owns the transport
+    s.lobby_transport.reset();
+    s.source_armies.clear();
     s.host_tcp = nullptr;
     s.transport_ready = false;
     s.role = MpNetState::Role::None;
