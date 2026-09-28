@@ -1415,6 +1415,40 @@ static int l_SetCursor(lua_State* L) {
     return 0;
 }
 
+/// AddInputCapture(control): the control takes the input first -- the
+/// mouse hit-tests under it, and it has the keys no control has focus for.
+static int l_AddInputCapture(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    auto* ctrl = check_control(L, 1);
+    if (reg && ctrl && !ctrl->destroyed()) reg->push_input_capture(ctrl);
+    return 0;
+}
+
+/// RemoveInputCapture(control): drop its last entry on the capture stack.
+static int l_RemoveInputCapture(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    auto* ctrl = check_control(L, 1);
+    if (reg && ctrl) reg->remove_input_capture(ctrl);
+    return 0;
+}
+
+/// AnyInputCapture() -> whether a live control is on the capture stack.
+static int l_AnyInputCapture(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    lua_pushboolean(L, reg && reg->input_capture() ? 1 : 0);
+    return 1;
+}
+
+/// GetInputCapture() -> the top capture control, or nil.
+static int l_GetInputCapture(lua_State* L) {
+    auto* reg = get_ui_registry(L);
+    auto* ctrl = reg ? reg->input_capture() : nullptr;
+    if (ctrl && ctrl->lua_table_ref() >= 0)
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ctrl->lua_table_ref());
+    else lua_pushnil(L);
+    return 1;
+}
+
 static int l_GetCursor(lua_State* L) {
     lua_pushstring(L, "__osc_active_cursor");
     lua_rawget(L, LUA_REGISTRYINDEX);
@@ -4014,6 +4048,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetNumRootFrames", l_GetNumRootFrames);
     state.register_function("SetCursor", l_SetCursor);
     state.register_function("GetCursor", l_GetCursor);
+    state.register_function("AddInputCapture", l_AddInputCapture);
+    state.register_function("RemoveInputCapture", l_RemoveInputCapture);
+    state.register_function("AnyInputCapture", l_AnyInputCapture);
+    state.register_function("GetInputCapture", l_GetInputCapture);
 
     // LAN multiplayer globals (LanHost/LanJoin/LanNetStatus)
     register_lan_ui_bindings(state);

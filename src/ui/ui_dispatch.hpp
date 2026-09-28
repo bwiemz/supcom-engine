@@ -35,7 +35,15 @@ struct UIEvent {
     f64 wheel_delta = 0;
     u32 char_code = 0;    // Unicode codepoint for CHAR events
     bool is_repeat = false; // GLFW_REPEAT (held key) vs fresh press
+    /// A mouse event's buttons held once it happened (kMouseLeft...):
+    /// a press holds its button, a release no longer does. A key event
+    /// has none.
+    u8 buttons = 0;
 };
+
+constexpr u8 kMouseLeft = 1;
+constexpr u8 kMouseMiddle = 2;
+constexpr u8 kMouseRight = 4;
 
 /// Manages GLFW input → UI event dispatch.
 /// Install callbacks, buffer events, dispatch to Lua HandleEvent.
@@ -80,6 +88,7 @@ private:
     std::vector<UIEvent> pending_events_;
     f64 mouse_x_ = 0;
     f64 mouse_y_ = 0;
+    u8 buttons_down_ = 0; ///< kMouseLeft... held now
     UIControl* hover_control_ = nullptr;
 };
 

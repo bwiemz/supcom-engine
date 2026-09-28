@@ -1,11 +1,14 @@
 #include "ui/ui_dispatch.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_layout.hpp"
 #include "core/test_status.hpp"
 
 #include <GLFW/glfw3.h>
 #include <spdlog/spdlog.h>
+
+#include <utility>
 
 extern "C" {
 #include <lua.h>
@@ -63,6 +66,16 @@ void UIDispatch::on_key(i32 key, i32 action, i32 mods) {
 }
 
 void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods) {
+    u8 bit = 0;
+    switch (button) {
+    case GLFW_MOUSE_BUTTON_LEFT: bit = kMouseLeft; break;
+    case GLFW_MOUSE_BUTTON_MIDDLE: bit = kMouseMiddle; break;
+    case GLFW_MOUSE_BUTTON_RIGHT: bit = kMouseRight; break;
+    default: break;
+    }
+    if (action == GLFW_RELEASE) buttons_down_ &= static_cast<u8>(~bit);
+    else buttons_down_ |= bit;
+
     UIEvent e;
     e.type = (action == GLFW_RELEASE) ? UIEventType::BUTTON_RELEASE
                                        : UIEventType::BUTTON_PRESS;
@@ -70,6 +83,7 @@ void UIDispatch::on_mouse_button(i32 button, i32 action, i32 mods) {
     e.mouse_x = mouse_x_;
     e.mouse_y = mouse_y_;
     e.modifiers = mods;
+    e.buttons = buttons_down_;
     pending_events_.push_back(e);
 }
 
@@ -80,6 +94,7 @@ void UIDispatch::on_cursor_pos(f64 x, f64 y) {
     e.type = UIEventType::MOUSE_MOTION;
     e.mouse_x = x;
     e.mouse_y = y;
+    e.buttons = buttons_down_;
     pending_events_.push_back(e);
 }
 
@@ -89,6 +104,7 @@ void UIDispatch::on_scroll(f64 y_offset) {
     e.mouse_x = mouse_x_;
     e.mouse_y = mouse_y_;
     e.wheel_delta = y_offset;
+    e.buttons = buttons_down_;
     pending_events_.push_back(e);
 }
 
@@ -101,8 +117,24 @@ void UIDispatch::on_char(u32 codepoint) {
     pending_events_.push_back(e);
 }
 
-/// Push a Lua event table for the given UIEvent.
-/// FA convention: {Type='ButtonPress', KeyCode=N, MouseX=N, MouseY=N, Modifiers={...}}
+/// A key event's, as Moho's are.
+static bool is_key_event(const UIEvent& ev) {
+    return ev.type == UIEventType::KEY_DOWN || ev.type == UIEventType::KEY_UP;
+}
+
+/// The event's KeyCode, as Moho gives it (see key_codes.hpp): a key's wx
+/// code, a button's wx number, a character's code, else 0.
+static i32 moho_event_key_code(const UIEvent& ev) {
+    if (is_key_event(ev)) return moho_key_code(ev.key_code);
+    if (ev.type == UIEventType::BUTTON_PRESS || ev.type == UIEventType::BUTTON_RELEASE)
+        return moho_mouse_button(ev.key_code);
+    if (ev.type == UIEventType::CHAR) return static_cast<i32>(ev.char_code);
+    return 0;
+}
+
+/// Push a Lua event table for the given UIEvent, as Moho builds it:
+/// {Type='ButtonPress', KeyCode=N, RawKeyCode=N, MouseX=N, MouseY=N,
+/// Modifiers={Shift, Ctrl, Alt, Left, Middle, Right}}.
 static void push_event_table(lua_State* L, const UIEvent& ev) {
     lua_newtable(L);
 
@@ -124,7 +156,11 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     lua_rawset(L, -3);
 
     lua_pushstring(L, "KeyCode");
-    lua_pushnumber(L, ev.key_code);
+    lua_pushnumber(L, moho_event_key_code(ev));
+    lua_rawset(L, -3);
+
+    lua_pushstring(L, "RawKeyCode");
+    lua_pushnumber(L, is_key_event(ev) ? windows_key_code(ev.key_code) : 0);
     lua_rawset(L, -3);
 
     lua_pushstring(L, "MouseX");
@@ -162,6 +198,16 @@ static void push_event_table(lua_State* L, const UIEvent& ev) {
     }
     if (ev.modifiers & GLFW_MOD_ALT) {
         lua_pushstring(L, "Alt");
+        lua_pushboolean(L, 1);
+        lua_rawset(L, -3);
+    }
+    // The buttons held (a mouse event's only: Moho builds those modifiers
+    // from the mouse's state).
+    for (const auto& [bit, name] :
+         {std::pair{kMouseLeft, "Left"}, std::pair{kMouseMiddle, "Middle"},
+          std::pair{kMouseRight, "Right"}}) {
+        if (!(ev.buttons & bit)) continue;
+        lua_pushstring(L, name);
         lua_pushboolean(L, 1);
         lua_rawset(L, -3);
     }
@@ -344,13 +390,19 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
         }
         if (!has_dragger) lua_pop(L, 1); // pop nil
 
-        // Keyboard events go to keyboard focus control first
+        // Keyboard events go to the keyboard focus control first; with no
+        // focus, to the top input capture, and then no further (Moho).
         if (ev.type == UIEventType::KEY_DOWN ||
             ev.type == UIEventType::KEY_UP ||
             ev.type == UIEventType::CHAR) {
             auto* focus = registry.keyboard_focus();
             bool consumed = false;
-            if (focus) consumed = fire_handle_event(L, focus, ev);
+            if (focus) {
+                consumed = fire_handle_event(L, focus, ev);
+            } else if (auto* capture = registry.input_capture()) {
+                fire_handle_event(L, capture, ev);
+                consumed = true;
+            }
 
             // If fresh KEY_DOWN not consumed by UI, try key map registry (hotkeys)
             // Skip repeats (held keys) — hotkeys should only fire on initial press
@@ -370,9 +422,13 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
             continue;
         }
 
-        // Mouse events: hit-test the control tree
-        UIControl* target = root ? hit_test(L, root, ev.mouse_x, ev.mouse_y)
-                                 : nullptr;
+        // Mouse events: hit-test the control tree -- under the top input
+        // capture, if any, whose own control takes a point over none of
+        // its children (Moho).
+        UIControl* const capture = registry.input_capture();
+        UIControl* const hit_root = capture ? capture : root;
+        UIControl* target = hit_root ? hit_test(L, hit_root, ev.mouse_x, ev.mouse_y) : nullptr;
+        if (!target) target = capture;
 
         // Mouse enter/exit tracking — fire HandleEvent with MouseEnter/MouseExit
         // FA's Button.HandleEvent expects {Type='MouseEnter'} and {Type='MouseExit'}
@@ -441,8 +497,8 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 (ev.type == UIEventType::BUTTON_PRESS ||
                  ev.type == UIEventType::BUTTON_RELEASE)) {
                 skip_set.insert(target);
-                target = root ? hit_test(L, root, ev.mouse_x, ev.mouse_y,
-                                         &skip_set) : nullptr;
+                target =
+                    hit_root ? hit_test(L, hit_root, ev.mouse_x, ev.mouse_y, &skip_set) : nullptr;
             } else {
                 break;
             }

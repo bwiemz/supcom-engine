@@ -413,9 +413,6 @@ std::optional<int> App::init_ui_state() {
         };
         set_stub("ConExecute");         // console commands
         set_stub("ConExecuteSave");     // console commands
-        set_stub("AddInputCapture");    // input system
-        set_stub("RemoveInputCapture"); // input system
-        set_bool_fn("AnyInputCapture", false);
         set_bool_fn("DebugFacilitiesEnabled", false);
         set_stub("ExitApplication");              // exit
         set_stub("PrefetchSession");              // loading optimization
@@ -438,8 +435,6 @@ std::optional<int> App::init_ui_state() {
         set_stub("SetOverlayFilters");
         set_nil_fn("GetActiveBuildTemplate");
         set_nil_fn("GetHighlightCommand");
-        set_nil_fn("GetInputCapture");
-        set_stub("RemoveInputCapture");
         set_stub("RestartSession");
         set_nil_fn("GetAntiAliasingOptions");
         set_nil_fn("GetResolution");
