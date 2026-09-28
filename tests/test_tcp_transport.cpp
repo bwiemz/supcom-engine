@@ -35,14 +35,26 @@ struct LuaGuard {
     ~LuaGuard() { lua_close(L); }
 };
 
-// Poll receive() a bounded number of times until it yields something (localhost
-// delivery is effectively immediate, so this rarely spins).
+// Poll receive() a bounded number of times until it yields something, waiting
+// a millisecond between empty polls (loopback may deliver late under load).
 std::vector<std::vector<osc::u8>> recv_soon(TcpTransport& t, int tries = 200) {
     for (int i = 0; i < tries; ++i) {
         auto msgs = t.receive();
         if (!msgs.empty()) return msgs;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     return {};
+}
+
+// Poll poll_connections() until the host has the expected peers: connect()
+// can return before the connection reaches the listener's accept queue.
+int accepted_soon(TcpTransport& host, int expected, int tries = 200) {
+    for (int i = 0; i < tries; ++i) {
+        int n = host.poll_connections();
+        if (n >= expected) return n;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return host.poll_connections();
 }
 
 osc::u32 spawn_mover(SimState& sim, osc::f32 speed) {
@@ -116,7 +128,7 @@ TEST_CASE("TCP host relays a message between clients", "[tcp]") {
     auto b = TcpTransport::join("127.0.0.1", port);
     REQUIRE(a->ok());
     REQUIRE(b->ok());
-    REQUIRE(host->poll_connections() == 2);
+    REQUIRE(accepted_soon(*host, 2) == 2);
 
     std::vector<osc::u8> payload{1, 2, 3, 4, 5};
     a->broadcast(payload);
@@ -135,7 +147,7 @@ TEST_CASE("TCP host broadcast reaches every client", "[tcp]") {
     REQUIRE(host->ok());
     auto a = TcpTransport::join("127.0.0.1", host->port());
     auto b = TcpTransport::join("127.0.0.1", host->port());
-    REQUIRE(host->poll_connections() == 2);
+    REQUIRE(accepted_soon(*host, 2) == 2);
 
     std::vector<osc::u8> payload{9, 8, 7};
     host->broadcast(payload);
@@ -148,7 +160,7 @@ TEST_CASE("Lockstep runs over real TCP sockets", "[tcp][lockstep]") {
     REQUIRE(host_t->ok());
     auto client_t = TcpTransport::join("127.0.0.1", host_t->port());
     REQUIRE(client_t->ok());
-    REQUIRE(host_t->poll_connections() == 1);
+    REQUIRE(accepted_soon(*host_t, 1) == 1);
 
     LuaGuard gh, gc;
     SimState h(gh.L, nullptr);
@@ -164,12 +176,14 @@ TEST_CASE("Lockstep runs over real TCP sockets", "[tcp][lockstep]") {
         if (round == 0) sh.submit_local({idh}, move_to(500.0f, 0.0f), true);
         sh.send_frame();
         sc.send_frame();
-        // Pump until each side has consumed the other's frame for this round.
+        // Pump until each side has consumed the other's frame for this round,
+        // waiting rather than spinning after the first few turns.
         for (int i = 0; i < 200 && (h.tick_count() <= static_cast<osc::u32>(round) ||
                                     c.tick_count() <= static_cast<osc::u32>(round));
              ++i) {
             sh.receive_and_advance();
             sc.receive_and_advance();
+            if (i >= 4) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         REQUIRE(h.tick_count() == c.tick_count());
     }
@@ -188,7 +202,7 @@ TEST_CASE("TCP host survives sending to a vanished peer and drops it", "[tcp]") 
     REQUIRE(host->ok());
     auto client = TcpTransport::join("127.0.0.1", host->port());
     REQUIRE(client->ok());
-    REQUIRE(host->poll_connections() == 1);
+    REQUIRE(accepted_soon(*host, 1) == 1);
 
     client.reset(); // peer disappears without a goodbye (crash, cable pull)
 
