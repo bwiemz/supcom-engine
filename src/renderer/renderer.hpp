@@ -167,8 +167,10 @@ public:
     const ParticleSystem& particle_system() const { return particle_system_; }
     /// The meshes this frame draws, in their groups (M211k's tests).
     const UnitRenderer& unit_renderer() const { return unit_renderer_; }
-    /// The last frame's mesh draw calls with `technique`, each pass one
-    /// (M211k's tests: Cybran's shield draws twice).
+    /// The last frame's mesh draw calls in the view (the water's reflection
+    /// not counted) drawn as `technique`, each pass one: Cybran's shield
+    /// draws twice (M211k); a personal shield's unit counts as its base
+    /// technique, its shell as its own (M211l).
     u32 mesh_draws(MeshTechnique technique) const {
         const auto i = static_cast<size_t>(technique);
         return i < mesh_draws_.size() ? mesh_draws_[i] : 0;
@@ -413,8 +415,9 @@ private:
     VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
     /// The shields' pipelines (M211k), one per ShieldState: blended (Cybran,
     /// Aeon), blended unculled (UEF, Cybran's impact), added colour
-    /// (Seraphim), added colour and glow (the impact), and the fill's depth.
-    static constexpr u32 kShieldStates = 5;
+    /// (Seraphim), added colour and glow (the impact), the fill's depth, and
+    /// the personal shields' shells, blended with depth written (M211l).
+    static constexpr u32 kShieldStates = 6;
     std::array<VkPipeline, kShieldStates> shield_pipelines_{};
     std::array<VkPipelineLayout, kShieldStates> shield_layouts_{};
     /// This frame's mesh draw calls by technique (mesh_draws).

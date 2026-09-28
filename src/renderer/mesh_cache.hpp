@@ -52,6 +52,9 @@ enum class MeshTechnique : u32 {
     ShieldFill = 22,         ///< ShieldFillPS: depth alone, hiding the far side
     ShieldImpact = 23,       ///< ShieldImpactPS: a hit's patch, added
     CybranShieldImpact = 24, ///< CybranShieldImpactPS: a hit's patch, blended
+    // The personal shields' (M211l): the unit, then an electric shell.
+    PhaseShield = 25,            ///< the Unit technique, then PhaseShieldPS
+    SeraphimPersonalShield = 26, ///< the Seraphim technique, then SeraphimPhaseShieldPS
 };
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
@@ -81,6 +84,21 @@ inline bool is_shield_technique(MeshTechnique t) {
            static_cast<u32>(t) <= static_cast<u32>(MeshTechnique::CybranShieldImpact);
 }
 
+/// A personal shield's technique (M211l): the unit drawn by its base
+/// technique, then a translucent shell pushed out along its normals.
+inline bool is_personal_shield_technique(MeshTechnique t) {
+    return t == MeshTechnique::PhaseShield || t == MeshTechnique::SeraphimPersonalShield;
+}
+
+/// The technique a mesh's first pass, and its shadow, draw as: a personal
+/// shield's P0 is the Unit technique's NormalMappedPS (PhaseShield) or the
+/// Seraphim's UnitFalloffPS; any other technique is its own.
+inline MeshTechnique base_technique(MeshTechnique t) {
+    if (t == MeshTechnique::PhaseShield) return MeshTechnique::Unit;
+    if (t == MeshTechnique::SeraphimPersonalShield) return MeshTechnique::Seraphim;
+    return t;
+}
+
 /// A technique mesh.fx gives the POSTWATER render stage: Moho draws it after
 /// the water (M213b), which writes no depth, so it shows over the surface.
 /// The others the engine ports are PREWATER. (The shields are POSTWATER
@@ -99,8 +117,9 @@ inline bool is_post_effect_technique(MeshTechnique t) {
 
 /// The mesh.fx states the shields' passes draw with (M211k): blended
 /// (SrcAlpha, InvSrcAlpha, RGBA), the same unculled, added colour (SrcAlpha,
-/// One, RGB), added colour and glow (RGBA), and the fill's depth alone.
-enum class ShieldState : u8 { Blend, BlendUnculled, AddRGB, AddRGBA, Fill };
+/// One, RGB), added colour and glow (RGBA), the fill's depth alone, and a
+/// personal shield's shell, blended with its depth written (M211l).
+enum class ShieldState : u8 { Blend, BlendUnculled, AddRGB, AddRGBA, Fill, BlendDepthWrite };
 
 /// A shield technique's passes: the state they draw with, and how many
 /// (ShieldCybran's second is pushed out along the normal).

@@ -1063,7 +1063,8 @@ void Renderer::create_pipelines() {
                 .set_shaders(sv, sf)
                 .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
                                   static_cast<u32>(attrs.size()))
-                .set_depth_test(true, state == ShieldState::Fill)
+                .set_depth_test(true,
+                                state == ShieldState::Fill || state == ShieldState::BlendDepthWrite)
                 .set_blend(state != ShieldState::Fill)
                 .set_color_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
                 .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
@@ -2587,7 +2588,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
-                spc.technique = static_cast<u32>(group.mesh->technique);
+                spc.technique = static_cast<u32>(base_technique(group.mesh->technique));
                 vkCmdPushConstants(cmd_buf_[fi], shadow_mesh_layout_,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(spc), &spc);
@@ -3320,21 +3321,28 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             passes[0] = shield_pipelines_[static_cast<u32>(shield.state)];
             if (shield.count > 1) passes[1] = passes[0];
         }
+        // A personal shield's (M211l): the unit as its base technique, then
+        // the electric shell, blended, its depth written (mesh.fx's P1
+        // leaves the depth state at D3D's default).
+        else if (is_personal_shield_technique(technique))
+            passes[1] = shield_pipelines_[static_cast<u32>(ShieldState::BlendDepthWrite)];
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
-        mesh_pc.technique = static_cast<u32>(technique);
         for (u32 pass = 0; pass < passes.size() && passes[pass]; ++pass) {
             if (passes[pass] != bound) {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, passes[pass]);
                 bound = passes[pass];
             }
+            // The first pass draws as the base technique (a personal
+            // shield's unit), the rest as the technique's own
+            mesh_pc.technique = static_cast<u32>(pass == 0 ? base_technique(technique) : technique);
             mesh_pc.pass = pass;
             vkCmdPushConstants(cmd, mesh_layout_,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(mesh_pc), &mesh_pc);
             vkCmdDrawIndexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
-            if (static_cast<size_t>(technique) < mesh_draws_.size())
-                ++mesh_draws_[static_cast<size_t>(technique)];
+            if (stage != MeshPass::Reflection && mesh_pc.technique < mesh_draws_.size())
+                ++mesh_draws_[mesh_pc.technique];
         }
     }
 }
