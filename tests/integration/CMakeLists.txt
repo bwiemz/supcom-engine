@@ -14,6 +14,7 @@ add_executable(osc_integration
     runner/keymap_test.cpp
     runner/camera_moves_test.cpp
     runner/window_test.cpp
+    runner/options_test.cpp
     runner/lighting_test.cpp
     runner/render_probe.cpp
     runner/strata_test.cpp

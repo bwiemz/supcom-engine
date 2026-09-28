@@ -179,6 +179,28 @@ public:
     void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
     bool decals_enabled() const { return decals_enabled_; }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
+    /// ui_AlwaysRenderStrategicIcons (M217i).
+    void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
+    bool icons_always() const { return strategic_icon_renderer_.always(); }
+    /// The strategic icons drawn last frame (tests read them).
+    const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
+    /// The video options the renderer keeps but doesn't draw by yet (M217i):
+    /// ren_Skydome (the sky dome's own), graphics_Fidelity, shadow_Fidelity,
+    /// ren_MipSkipLevels, SC_CameraScaleLOD, SC_AntiAliasingSamples.
+    struct VideoOptions {
+        bool skydome = true;
+        int graphics_fidelity = 2;
+        int shadow_fidelity = 3;
+        int mip_skip_levels = 0;
+        f32 camera_scale_lod = 1.0f;
+        int antialiasing = 0;
+    };
+    VideoOptions& video_options() { return video_options_; }
+    const VideoOptions& video_options() const { return video_options_; }
+    /// SC_ToggleCursorClip (M217i): the cursor held inside a window (not full
+    /// screen), or let go.
+    void set_cursor_clip(bool on);
+    bool cursor_clipped() const { return cursor_clipped_; }
     bool bloom_enabled() const { return bloom_enabled_; }
     /// What the scene clears to: Moho's black, with no glow (M210b). The sky
     /// dome draws over it; a test's own scenery may set another backdrop.
@@ -437,6 +459,8 @@ private:
     MinimapRenderer minimap_renderer_;
     std::vector<UIQuad> painted_minimap_; // FA minimap window's quads this frame (dump)
     StrategicIconRenderer strategic_icon_renderer_;
+    VideoOptions video_options_;
+    bool cursor_clipped_ = false;
     HudRenderer hud_renderer_;
     SelectionInfoRenderer selection_info_renderer_;
     ProfileOverlay profile_overlay_;

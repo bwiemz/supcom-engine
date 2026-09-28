@@ -7,6 +7,7 @@
 #include "audio_data_test.hpp"
 #include "camera_moves_test.hpp"
 #include "window_test.hpp"
+#include "options_test.hpp"
 #include "keymap_test.hpp"
 #include "movie_test.hpp"
 #include "integration_tests.hpp"
@@ -240,6 +241,7 @@ constexpr const char* kOwnModes[] = {
     "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
+    "--options-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -376,6 +378,7 @@ void IntegrationModes::print_usage() const {
               << "  --keyboard-test    Retail's keys own the keyboard; the world respects the capture\n"
               << "  --camera-moves-test The camera's timed moves, WaitFor(camera), tracking, SimCamera\n"
               << "  --window-test      The window's side of FA's video options (M217h)\n"
+              << "  --options-test     FA's options through the console's variables (M217i)\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
@@ -427,7 +430,7 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
         has("--ai-test") || has("--platoon-test") || has("--threat-test") || has("--combat-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
-                       has("--camera-moves-test") || has("--window-test");
+                       has("--camera-moves-test") || has("--window-test") || has("--options-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -1043,6 +1046,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool keyboard_test = has("--keyboard-test");
     const bool camera_moves_test = has("--camera-moves-test");
     const bool window_test = has("--window-test");
+    const bool options_test = has("--options-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
@@ -1050,7 +1054,7 @@ void IntegrationModes::headless(Engine& e) {
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
     if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test ||
-         camera_moves_test || window_test) &&
+         camera_moves_test || window_test || options_test) &&
         !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
@@ -1107,6 +1111,7 @@ void IntegrationModes::headless(Engine& e) {
         if (camera_moves_test)
             osc::test::test_camera_moves(ui_test_ctx, test_ctx, pump, play, sim_lua);
         if (window_test) osc::test::test_window(ui_test_ctx, test_ctx, pump);
+        if (options_test) osc::test::test_options(ui_test_ctx, test_ctx, pump);
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }

@@ -62,6 +62,7 @@ std::optional<int> App::run_window() {
             root_height = mode.size.height;
         }
         register_window_commands(console, prefs, adapter_overridden);
+        register_option_commands(console);
         std::vector<Resolution> display_modes;
         for (const auto& m : renderer.display_modes()) display_modes.push_back({m[0], m[1], m[2]});
 
@@ -114,6 +115,9 @@ std::optional<int> App::run_window() {
             publish_adapter_options(uL, display_modes, adapter_overridden);
         };
         publish_window_objects();
+        // The saved options, as Moho applies them once the window is up
+        // (OPTIONS_Apply, M217i). Captures and checks keep the engine's own.
+        if (!offscreen_capture) apply_options(ui_lua_state.raw());
 
         // Store scenario path for SessionGetScenarioInfo (M145c2)
         if (!opt.map_path.empty()) {

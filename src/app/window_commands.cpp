@@ -7,6 +7,7 @@
 
 #include "core/preferences.hpp"
 #include "renderer/renderer.hpp"
+#include "renderer/camera.hpp"
 #include "ui/console.hpp"
 
 #include <spdlog/spdlog.h>
@@ -19,6 +20,7 @@ extern "C" {
 #include <array>
 #include <cctype>
 #include <climits>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -203,6 +205,119 @@ void register_window_commands(ui::Console& console, core::Preferences& prefs, bo
         if (args.size() != 2) return;
         if (renderer::Renderer* r = renderer_of(L)) r->set_vsync(vsync_option(prefs));
     });
+}
+
+void register_option_commands(ui::Console& console) {
+    using renderer::Camera;
+    using renderer::Renderer;
+    // A float on the camera
+    const auto camera_float = [&console](const char* name, f32 fallback, f32 (Camera::*get)() const,
+                                         void (Camera::*set)(f32)) {
+        ui::add_float_var(
+            console, name,
+            [fallback, get](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return r ? (r->camera().*get)() : fallback;
+            },
+            [set](lua_State* L, f32 v) {
+                if (Renderer* r = renderer_of(L)) (r->camera().*set)(v);
+            });
+    };
+    camera_float("cam_ZoomAmount", Camera::kZoomAmount, &Camera::zoom_amount,
+                 &Camera::set_zoom_amount);
+    camera_float("ui_KeyboardPanSpeed", Camera::kKeyboardPanSpeed, &Camera::keyboard_pan_speed,
+                 &Camera::set_keyboard_pan_speed);
+    camera_float("ui_KeyboardPanAccelerateMultiplier", Camera::kKeyboardPanAccelerate,
+                 &Camera::keyboard_pan_accelerate, &Camera::set_keyboard_pan_accelerate);
+    camera_float("ui_KeyboardRotateSpeed", Camera::kKeyboardRotateSpeed,
+                 &Camera::keyboard_rotate_speed, &Camera::set_keyboard_rotate_speed);
+    camera_float("ui_KeyboardRotateAccelerateMultiplier", Camera::kKeyboardRotateAccelerate,
+                 &Camera::keyboard_rotate_accelerate, &Camera::set_keyboard_rotate_accelerate);
+    const auto camera_bool = [&console](const char* name, bool (Camera::*get)() const,
+                                        void (Camera::*set)(bool)) {
+        ui::add_bool_var(
+            console, name,
+            [get](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return r ? (r->camera().*get)() : true;
+            },
+            [set](lua_State* L, bool v) {
+                if (Renderer* r = renderer_of(L)) (r->camera().*set)(v);
+            });
+    };
+    camera_bool("ui_ScreenEdgeScrollView", &Camera::edge_scroll, &Camera::set_edge_scroll);
+    camera_bool("ui_ArrowKeysScrollView", &Camera::arrow_scroll, &Camera::set_arrow_scroll);
+
+    ui::add_bool_var(
+        console, "ui_AlwaysRenderStrategicIcons",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return r && r->icons_always();
+        },
+        [](lua_State* L, bool v) {
+            if (Renderer* r = renderer_of(L)) r->set_icons_always(v);
+        });
+    ui::add_bool_var(
+        console, "ren_bloom",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return !r || r->bloom_enabled();
+        },
+        [](lua_State* L, bool v) {
+            if (Renderer* r = renderer_of(L)) r->set_bloom_enabled(v);
+        });
+    ui::add_bool_var(
+        console, "ren_Skydome",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return !r || r->video_options().skydome;
+        },
+        [](lua_State* L, bool v) {
+            if (Renderer* r = renderer_of(L)) r->video_options().skydome = v;
+        });
+    // The ints the renderer keeps
+    const auto video_int = [&console](const char* name, int Renderer::VideoOptions::* field) {
+        ui::add_int_var(
+            console, name,
+            [field](lua_State* L) {
+                Renderer* r = renderer_of(L);
+                return r ? r->video_options().*field : Renderer::VideoOptions{}.*field;
+            },
+            [field](lua_State* L, int v) {
+                if (Renderer* r = renderer_of(L)) r->video_options().*field = v;
+            });
+    };
+    video_int("graphics_Fidelity", &Renderer::VideoOptions::graphics_fidelity);
+    video_int("shadow_Fidelity", &Renderer::VideoOptions::shadow_fidelity);
+    video_int("ren_MipSkipLevels", &Renderer::VideoOptions::mip_skip_levels);
+    ui::add_float_var(
+        console, "SC_CameraScaleLOD",
+        [](lua_State* L) {
+            Renderer* r = renderer_of(L);
+            return r ? r->video_options().camera_scale_lod : 1.0f;
+        },
+        [](lua_State* L, f32 v) {
+            if (Renderer* r = renderer_of(L)) r->video_options().camera_scale_lod = v;
+        });
+
+    using Args = std::vector<std::string>;
+    // SC_AntiAliasingSamples <packed>: kept (no multisampling yet)
+    console.add("SC_AntiAliasingSamples", [](lua_State* L, const Args& args) {
+        if (args.size() != 2) return;
+        if (Renderer* r = renderer_of(L))
+            r->video_options().antialiasing =
+                static_cast<int>(std::strtol(args[1].c_str(), nullptr, 10));
+    });
+    // SC_ToggleCursorClip [0]: "0" lets the cursor go; anything else (or
+    // nothing) holds it in a window
+    console.add("SC_ToggleCursorClip", [](lua_State* L, const Args& args) {
+        if (args.size() > 2) return;
+        if (Renderer* r = renderer_of(L)) r->set_cursor_clip(!(args.size() == 2 && args[1] == "0"));
+    });
+}
+
+void apply_options(lua_State* uL) {
+    run(uL, "import('/lua/options/optionsLogic.lua').Apply(true)", "applying the options");
 }
 
 } // namespace osc::app

@@ -478,7 +478,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         // A drawn mesh keeps its icon until the camera is out past the
         // mesh's IconFadeInZoom; a blip, having none, shows its icon at
         // any zoom.
-        if (shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
+        if (!always_ && shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
 
         const sim::Vector3 pos = view.position(entity);
         f32 sx = 0;

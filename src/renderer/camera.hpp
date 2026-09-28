@@ -211,6 +211,25 @@ public:
 
     /// When false, update() ignores keyboard and mouse (scripted captures).
     void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
+
+    // The options' console variables (M217i), the k* above their defaults:
+    // cam_ZoomAmount, ui_KeyboardPanSpeed, ui_KeyboardPanAccelerateMultiplier,
+    // ui_KeyboardRotateSpeed, ui_KeyboardRotateAccelerateMultiplier,
+    // ui_ScreenEdgeScrollView, ui_ArrowKeysScrollView.
+    f32 zoom_amount() const { return zoom_amount_; }
+    void set_zoom_amount(f32 v) { zoom_amount_ = v; }
+    f32 keyboard_pan_speed() const { return keyboard_pan_speed_; }
+    void set_keyboard_pan_speed(f32 v) { keyboard_pan_speed_ = v; }
+    f32 keyboard_pan_accelerate() const { return keyboard_pan_accelerate_; }
+    void set_keyboard_pan_accelerate(f32 v) { keyboard_pan_accelerate_ = v; }
+    f32 keyboard_rotate_speed() const { return keyboard_rotate_speed_; }
+    void set_keyboard_rotate_speed(f32 v) { keyboard_rotate_speed_ = v; }
+    f32 keyboard_rotate_accelerate() const { return keyboard_rotate_accelerate_; }
+    void set_keyboard_rotate_accelerate(f32 v) { keyboard_rotate_accelerate_ = v; }
+    bool edge_scroll() const { return edge_scroll_; }
+    void set_edge_scroll(bool on) { edge_scroll_ = on; }
+    bool arrow_scroll() const { return arrow_scroll_; }
+    void set_arrow_scroll(bool on) { arrow_scroll_ = on; }
     /// When false, the keys don't pan or spin: a UI control has the keyboard
     /// (Moho's MAUI_KeyIsDown is false while one has focus).
     void set_keys_enabled(bool enabled) { keys_enabled_ = enabled; }
@@ -282,6 +301,13 @@ private:
     bool input_enabled_ = true;
     bool keys_enabled_ = true;
     bool mouse_enabled_ = true;
+    f32 zoom_amount_ = kZoomAmount;
+    f32 keyboard_pan_speed_ = kKeyboardPanSpeed;
+    f32 keyboard_pan_accelerate_ = kKeyboardPanAccelerate;
+    f32 keyboard_rotate_speed_ = kKeyboardRotateSpeed;
+    f32 keyboard_rotate_accelerate_ = kKeyboardRotateAccelerate;
+    bool edge_scroll_ = true;
+    bool arrow_scroll_ = true;
 
     // CameraImpl's lanes
     std::array<f32, 3> target_{512.0f, 0.0f, 512.0f}; ///< mTargetLocation
