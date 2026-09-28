@@ -253,8 +253,9 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     };
     // Opaque instances (0), then blended ones (1): a build technique's or a
     // build effect's, which blend by their own alpha with pipelines of their
-    // own (M211e-g).
-    std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2];
+    // own (M211e-g). Each apart for what isn't reflected (0) and what is (1):
+    // units, which the water reflects (M213b).
+    std::unordered_map<const GPUMesh*, GroupData> mesh_groups[2][2];
 
     ++frame_;
     const u32 now = view.cur() ? view.cur()->tick : 0;
@@ -365,7 +366,12 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                                  ? recon_->frozen_fraction(entity.id, entity.fraction_complete)
                                  : entity.fraction_complete;
 
-            auto& gd = mesh_groups[is_blended_technique(gpu->technique) ? 1 : 0][gpu];
+            // Only a unit is reflected: Moho clears the flag for every other
+            // entity's mesh instance, and a wreck is a prop; a remembered
+            // structure is its recon blip's.
+            const bool reflected = entity.is_unit && !entity.is_wreckage && !remembered;
+            auto& gd =
+                mesh_groups[is_blended_technique(gpu->technique) ? 1 : 0][reflected ? 1 : 0][gpu];
             gd.instances.push_back(inst);
 
             // Track bone data for this instance (a prop has a pose only when
@@ -420,111 +426,116 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
 
     mesh_groups_.clear();
     for (int fading = 0; fading < 2; ++fading)
-        for (auto& [gpu, gd] : mesh_groups[fading]) {
-            u32 count = static_cast<u32>(gd.instances.size());
-            if (offset + count > MAX_INSTANCES) {
-                count = MAX_INSTANCES - offset;
-            }
-            std::memcpy(mesh_instances + offset, gd.instances.data(), count * sizeof(MeshInstance));
+        for (int reflected = 0; reflected < 2; ++reflected)
+            for (auto& [gpu, gd] : mesh_groups[fading][reflected]) {
+                u32 count = static_cast<u32>(gd.instances.size());
+                if (offset + count > MAX_INSTANCES) {
+                    count = MAX_INSTANCES - offset;
+                }
+                std::memcpy(mesh_instances + offset, gd.instances.data(),
+                            count * sizeof(MeshInstance));
 
-            MeshDrawGroup group;
-            group.mesh = gpu;
-            group.instance_offset = offset;
-            group.instance_count = count;
-            group.fading = fading == 1;
+                MeshDrawGroup group;
+                group.mesh = gpu;
+                group.instance_offset = offset;
+                group.instance_count = count;
+                group.fading = fading == 1;
+                group.reflected = reflected == 1;
 
-            // Determine bones_per_instance: use max across the group
-            // (all instances in a group share the same blueprint/mesh)
-            u32 group_bones = 0;
-            for (u32 i = 0; i < count; i++) {
-                if (gd.bones[i].bone_count > group_bones) group_bones = gd.bones[i].bone_count;
-            }
+                // Determine bones_per_instance: use max across the group
+                // (all instances in a group share the same blueprint/mesh)
+                u32 group_bones = 0;
+                for (u32 i = 0; i < count; i++) {
+                    if (gd.bones[i].bone_count > group_bones) group_bones = gd.bones[i].bone_count;
+                }
 
-            // Write bone matrices to SSBO
-            group.bone_base_offset = bone_offset;
-            group.bones_per_instance = group_bones;
+                // Write bone matrices to SSBO
+                group.bone_base_offset = bone_offset;
+                group.bones_per_instance = group_bones;
 
-            if (bone_data && group_bones > 0 && bone_offset < max_bone_entries) {
-                u32 max_for_bones = (max_bone_entries - bone_offset) / group_bones;
-                u32 safe_count = std::min(count, max_for_bones);
-                for (u32 i = 0; i < safe_count; i++) {
-                    u32 base = bone_offset + i * group_bones;
+                if (bone_data && group_bones > 0 && bone_offset < max_bone_entries) {
+                    u32 max_for_bones = (max_bone_entries - bone_offset) / group_bones;
+                    u32 safe_count = std::min(count, max_for_bones);
+                    for (u32 i = 0; i < safe_count; i++) {
+                        u32 base = bone_offset + i * group_bones;
 
-                    u32 bc = 0;
-                    const std::vector<sim::BoneMatrix>* pose = gd.bones[i].frozen;
-                    if (!pose && gd.bones[i].id && view.bones(gd.bones[i].id, blended))
-                        pose = &blended;
-                    if (pose) {
-                        const auto& mats = *pose;
-                        bc = static_cast<u32>(mats.size());
-                        if (bc > group_bones) bc = group_bones;
+                        u32 bc = 0;
+                        const std::vector<sim::BoneMatrix>* pose = gd.bones[i].frozen;
+                        if (!pose && gd.bones[i].id && view.bones(gd.bones[i].id, blended))
+                            pose = &blended;
+                        if (pose) {
+                            const auto& mats = *pose;
+                            bc = static_cast<u32>(mats.size());
+                            if (bc > group_bones) bc = group_bones;
 
-                        // Copy actual bone matrices
-                        for (u32 b = 0; b < bc; b++) {
-                            std::memcpy(bone_data + (base + b) * 16, mats[b].data(),
-                                        sizeof(f32) * 16);
+                            // Copy actual bone matrices
+                            for (u32 b = 0; b < bc; b++) {
+                                std::memcpy(bone_data + (base + b) * 16, mats[b].data(),
+                                            sizeof(f32) * 16);
+                            }
+                        }
+                        // Fill remaining with identity
+                        for (u32 b = bc; b < group_bones; b++) {
+                            std::memcpy(bone_data + (base + b) * 16, IDENTITY, sizeof(f32) * 16);
+                        }
+                        // A hidden bone is parked as Moho's HardwareMeshBatch
+                        // parks it: no rotation or scale, far below the world
+                        // (kHiddenBoneDepth), so its geometry, and its shadow,
+                        // collapse out of sight (M211h).
+                        for (u32 b = 0; b < group_bones && b < 64; b++) {
+                            if ((gd.bones[i].hidden >> b & 1u) != 0)
+                                std::memcpy(bone_data + (base + b) * 16, kHiddenBone,
+                                            sizeof(f32) * 16);
                         }
                     }
-                    // Fill remaining with identity
-                    for (u32 b = bc; b < group_bones; b++) {
-                        std::memcpy(bone_data + (base + b) * 16, IDENTITY, sizeof(f32) * 16);
-                    }
-                    // A hidden bone is parked as Moho's HardwareMeshBatch
-                    // parks it: no rotation or scale, far below the world
-                    // (kHiddenBoneDepth), so its geometry, and its shadow,
-                    // collapse out of sight (M211h).
-                    for (u32 b = 0; b < group_bones && b < 64; b++) {
-                        if ((gd.bones[i].hidden >> b & 1u) != 0)
-                            std::memcpy(bone_data + (base + b) * 16, kHiddenBone, sizeof(f32) * 16);
-                    }
+                    bone_offset += safe_count * group_bones;
                 }
-                bone_offset += safe_count * group_bones;
-            }
 
-            // Resolve texture descriptors for this group
-            if (tex_cache && gpu && !gpu->texture_path.empty()) {
-                auto* tex = tex_cache->get(gpu->texture_path);
-                if (tex) {
-                    group.texture_ds = tex->descriptor_set;
-                } else {
+                // Resolve texture descriptors for this group
+                if (tex_cache && gpu && !gpu->texture_path.empty()) {
+                    auto* tex = tex_cache->get(gpu->texture_path);
+                    if (tex) {
+                        group.texture_ds = tex->descriptor_set;
+                    } else {
+                        group.texture_ds = tex_cache->fallback_descriptor();
+                    }
+                } else if (tex_cache) {
                     group.texture_ds = tex_cache->fallback_descriptor();
                 }
-            } else if (tex_cache) {
-                group.texture_ds = tex_cache->fallback_descriptor();
-            }
 
-            // Resolve SpecTeam texture (team color mask)
-            if (tex_cache && gpu && !gpu->specteam_path.empty()) {
-                auto* spec = tex_cache->get(gpu->specteam_path);
-                if (spec) {
-                    group.specteam_ds = spec->descriptor_set;
-                } else {
+                // Resolve SpecTeam texture (team color mask)
+                if (tex_cache && gpu && !gpu->specteam_path.empty()) {
+                    auto* spec = tex_cache->get(gpu->specteam_path);
+                    if (spec) {
+                        group.specteam_ds = spec->descriptor_set;
+                    } else {
+                        group.specteam_ds = tex_cache->specteam_fallback_descriptor();
+                    }
+                } else if (tex_cache) {
                     group.specteam_ds = tex_cache->specteam_fallback_descriptor();
                 }
-            } else if (tex_cache) {
-                group.specteam_ds = tex_cache->specteam_fallback_descriptor();
-            }
 
-            // Resolve normal map texture
-            if (tex_cache && gpu && !gpu->normal_path.empty()) {
-                auto* norm = tex_cache->get(gpu->normal_path);
-                if (norm) {
-                    group.normal_ds = norm->descriptor_set;
-                } else {
+                // Resolve normal map texture
+                if (tex_cache && gpu && !gpu->normal_path.empty()) {
+                    auto* norm = tex_cache->get(gpu->normal_path);
+                    if (norm) {
+                        group.normal_ds = norm->descriptor_set;
+                    } else {
+                        group.normal_ds = tex_cache->normal_fallback_descriptor();
+                    }
+                } else if (tex_cache) {
                     group.normal_ds = tex_cache->normal_fallback_descriptor();
                 }
-            } else if (tex_cache) {
-                group.normal_ds = tex_cache->normal_fallback_descriptor();
+
+                group.lookup_ds =
+                    named_descriptor(gpu ? gpu->lookup_path : std::string(), tex_cache);
+                group.secondary_ds =
+                    named_descriptor(gpu ? gpu->secondary_path : std::string(), tex_cache);
+
+                mesh_groups_.push_back(group);
+
+                offset += count;
             }
-
-            group.lookup_ds = named_descriptor(gpu ? gpu->lookup_path : std::string(), tex_cache);
-            group.secondary_ds =
-                named_descriptor(gpu ? gpu->secondary_path : std::string(), tex_cache);
-
-            mesh_groups_.push_back(group);
-
-            offset += count;
-        }
 }
 
 bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
@@ -553,7 +564,7 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     // Find existing group for this mesh or create new one
     MeshDrawGroup* target = nullptr;
     for (auto& grp : mesh_groups_) {
-        if (grp.mesh == mesh && grp.fading == (a < 1.0f) &&
+        if (grp.mesh == mesh && grp.fading == (a < 1.0f) && grp.reflected &&
             grp.instance_offset + grp.instance_count == total) {
             target = &grp;
             break;
@@ -565,6 +576,9 @@ bool UnitRenderer::inject_ghost(const GPUMesh* mesh, f32 x, f32 y, f32 z,
     } else {
         MeshDrawGroup grp;
         grp.mesh = mesh;
+        // The ghost is a UI world mesh, made reflected like any mesh
+        // instance no entity made (M213b).
+        grp.reflected = true;
         grp.instance_offset = total;
         grp.instance_count = 1;
         grp.fading = a < 1.0f;

@@ -67,6 +67,14 @@ inline bool is_blended_technique(MeshTechnique t) {
            t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal;
 }
 
+/// A technique mesh.fx gives the POSTWATER render stage: Moho draws it after
+/// the water (M213b), which writes no depth, so it shows over the surface.
+/// The others the engine ports are PREWATER.
+inline bool is_post_water_technique(MeshTechnique t) {
+    return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
+           t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha;
+}
+
 struct GPUMesh {
     AllocatedBuffer vertex_buf{};
     AllocatedBuffer index_buf{};

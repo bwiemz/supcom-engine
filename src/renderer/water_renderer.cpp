@@ -310,8 +310,8 @@ void WaterRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
     ramp_view_ = ramp ? ramp->image.view : textures.zero_fallback_view();
     cube_ = w.cubemap.empty() ? VK_NULL_HANDLE : textures.get_cube_blocking(w.cubemap);
     if (!cube_) cube_ = textures.cube_fallback_view();
-    // No units' reflections yet (M213b): transparent, so the sky shows.
-    reflection_view_ = textures.zero_fallback_view();
+    // Until the renderer gives it its targets: transparent, so the sky shows.
+    if (!reflection_view_) reflection_view_ = textures.zero_fallback_view();
     if (!refraction_view_) refraction_view_ = textures.zero_fallback_view();
 
     // The shader's parameters (RenderWaterSurface).
@@ -339,6 +339,11 @@ void WaterRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
 
 void WaterRenderer::set_refraction(VkImageView view) {
     refraction_view_ = view;
+    if (has_water_) write_sets();
+}
+
+void WaterRenderer::set_reflection(VkImageView view) {
+    reflection_view_ = view;
     if (has_water_) write_sets();
 }
 
@@ -434,7 +439,7 @@ void WaterRenderer::clear() {
     fresnel_.clear();
     water_map_w_ = water_map_h_ = 0;
     normals_.fill(VK_NULL_HANDLE);
-    cube_ = water_map_view_ = fresnel_view_ = reflection_view_ = ramp_view_ = VK_NULL_HANDLE;
+    cube_ = water_map_view_ = fresnel_view_ = ramp_view_ = VK_NULL_HANDLE;
 }
 
 void WaterRenderer::destroy(VkDevice device, VmaAllocator allocator) {

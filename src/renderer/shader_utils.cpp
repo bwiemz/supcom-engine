@@ -569,6 +569,8 @@ layout(push_constant) uniform PushConstants {
     uint technique; // MeshTechnique (M211b)
     uint pass;      // a build technique's pass: 0, or 1 for its overlay (M211f)
     float time;     // FA's time: the newest tick plus the interpolant (M211f)
+    uint mirrored;  // drawn into the water's reflection (M213b)
+    float surface;  // the water's elevation (M213b)
 } pc;
 
 // Per-vertex (binding 0): position + normal + UV + bone_indices + bone_weights + tangent
@@ -675,6 +677,8 @@ layout(push_constant) uniform PushConstants {
     uint technique;
     uint pass;  // a build technique's pass: 0, or 1 for its overlay
     float time; // FA's time: the newest tick plus the interpolant, wrapped
+    uint mirrored; // drawn into the water's reflection (M213b)
+    float surface; // the water's elevation (M213b)
 } pc;
 
 layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
@@ -717,7 +721,15 @@ layout(location = 8) flat in float fragParameter;   // the fraction complete
 
 layout(location = 0) out vec4 outColor;
 
+// The sun, negated in the water's reflection, as Moho's ConfigureShader
+// sets it when mirrored (M213b).
+vec3 sunDirection() {
+    return pc.mirrored != 0u ? -lightUbo.sunDirection.xyz : lightUbo.sunDirection.xyz;
+}
+
 float calcShadow(vec3 worldPos) {
+    // The reflection is drawn with no shadow bound (M213b).
+    if (pc.mirrored != 0u) return 1.0;
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
     vec3 pc2 = lc.xyz / lc.w;
     vec2 uv = pc2.xy * 0.5 + 0.5;
@@ -790,7 +802,7 @@ vec4 fallOffAt(float across) {
 // by. The overlays' texture coordinates are FA's vertex shaders' (scaled
 // and shifted per vertex, so the same at each pixel).
 vec3 buildColor(vec4 texColor, vec4 specTeam, vec3 N, vec3 V, float shadow, out float alpha) {
-    vec3 S = lightUbo.sunDirection.xyz;
+    vec3 S = sunDirection();
     float NdotL = dot(N, S);
     float f = fragParameter;
     float age = pc.time - fragShaderTime;
@@ -883,7 +895,7 @@ vec3 buildColor(vec4 texColor, vec4 specTeam, vec3 N, vec3 V, float shadow, out 
 // The build effects' own techniques (mesh.fx, M211g), for an instance f
 // built, `age` ticks after its mesh instance was made.
 vec3 effectColor(vec3 V, float shadow, out float alpha) {
-    vec3 S = lightUbo.sunDirection.xyz;
+    vec3 S = sunDirection();
     float f = fragParameter;
     float age = pc.time - fragShaderTime;
     if (pc.technique == 11u) {
@@ -920,7 +932,7 @@ vec3 effectColor(vec3 V, float shadow, out float alpha) {
 
 void main() {
     vec3 worldNormal = computeNormal(fragUV);
-    vec3 S = lightUbo.sunDirection.xyz;
+    vec3 S = sunDirection();
     float NdotL = dot(worldNormal, S);
     float shadow = calcShadow(fragWorldPos);
     vec3 light = computeLight(NdotL, shadow, 1.0, 1.0);
@@ -1045,6 +1057,12 @@ void main() {
     // alpha is a mask its technique reads (Seraphim's glow).
     if (alphaTested && fragParameter * texColor.a <= 128.0 / 255.0) discard;
     if ((pc.technique == 11u || vertexNormal) && alpha <= 35.0 / 255.0) discard;
+    // The reflection (mesh.fx when mirrored, M213b): nothing under the
+    // water, at half alpha.
+    if (pc.mirrored != 0u) {
+        if (fragWorldPos.y < pc.surface) discard;
+        alpha = 0.5;
+    }
     outColor = vec4(lit, alpha);
 }
 )glsl";

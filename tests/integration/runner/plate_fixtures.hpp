@@ -125,7 +125,8 @@ void write_plate_scm(const std::filesystem::path& path, f32 half, u32 segments =
 
 /// A one-bone SCM wall: `half` units either side of the origin along x,
 /// from the ground up to `height`, facing along z, wound both ways (M211i).
-void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height);
+/// Its normal, which lights both faces, is (0, 0, `facing_z`).
+void write_wall_scm(const std::filesystem::path& path, f32 half, f32 height, f32 facing_z = -1.0f);
 
 /// A plate's material: its textures (files under the test's mount) and
 /// technique.

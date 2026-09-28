@@ -448,6 +448,10 @@ private:
     // Offscreen scene image (rendered instead of swapchain, then composited)
     /// The frame before the water, which the water refracts (M213a).
     AllocatedImage refraction_image_{};
+    /// The units reflected in the water, drawn mirrored before the scene
+    /// (M213b), and its framebuffer, which shares the scene's depth.
+    AllocatedImage reflection_image_{};
+    VkFramebuffer reflection_framebuffer_ = VK_NULL_HANDLE;
     /// The scene's two passes around the water on a map with it (M213a).
     VkRenderPass scene_first_pass_ = VK_NULL_HANDLE;
     VkRenderPass scene_second_pass_ = VK_NULL_HANDLE;
@@ -484,6 +488,12 @@ private:
     /// Copy the frame drawn so far for the water to refract, between the
     /// scene's two passes (M213a).
     void copy_refraction(VkCommandBuffer cmd);
+    /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
+    /// before and after the water, or the units in its reflection.
+    enum class MeshPass { All, BeforeWater, AfterWater, Reflection };
+    /// The mesh instances' draws, with the scene's pipelines, seen by `vp`
+    /// (for the reflection, already mirrored).
+    void draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16>& vp, MeshPass stage);
     void create_bloom_pipelines();
     void destroy_bloom_resources();
 

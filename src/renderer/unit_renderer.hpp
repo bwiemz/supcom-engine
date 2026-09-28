@@ -63,6 +63,9 @@ struct MeshDrawGroup {
     /// Its instances blend (the build ghost's fade, a build technique's own
     /// alpha), drawn after the opaque groups.
     bool fading = false;
+    /// Its instances are units, which the water reflects (M213b): Moho makes
+    /// a unit's mesh instance reflected, and clears any other entity's.
+    bool reflected = false;
 };
 
 /// Renders units as real SCM meshes where available, with cube fallback.

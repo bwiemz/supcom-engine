@@ -28,6 +28,7 @@ add_executable(osc_integration
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp
     runner/water_render_test.cpp
+    runner/water_reflection_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )
