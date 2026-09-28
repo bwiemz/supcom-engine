@@ -88,7 +88,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   and `establishedPeers` says so.
 
 ### Slices
-- **M218a (this PR):**
+- **M218a (#186):**
   - `sim::LobbyNet`: the lobby's network, Lua-free. Join and welcome,
     refusal, uids and names, data addressed or to all, relayed, eject,
     departures, ping and quiet, a non-blocking join with a 10 s limit. Its
@@ -101,7 +101,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     `Hosting` comes at the next pump, after the scripts' setup, and a
     callback may destroy its own lobby. A UI state's lobbies close with it.
   - "None" keeps the loopback.
-- **M218b:**
+- **M218b (this PR):**
   - the discovery service (UDP broadcast on 15000);
   - the Steam-build stubs retail's gameselect calls
     (`InternalStartSteamDiscoveryService`, `IsSignedInToSteam`,
@@ -134,3 +134,24 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - eject, departures, and a failed join;
   - LaunchGame failing (until M218c);
   - "None" still loops back.
+
+## Tests (M218b)
+- **Unit (`test_lan_discovery`, loopback, a made-up clock):**
+  - a responder answers the broadcast: the game is found at index 0, then
+    updated in place when asked again two seconds on;
+  - no asking before two seconds;
+  - two lobbies list in order, and both go after five silent seconds, each
+    at index 0 as the list closes up;
+  - Reset goes last first;
+  - a second responder can't take the port;
+  - an empty answer is still a game;
+  - an empty datagram ahead of a request, or of an answer, hides neither.
+- **Unit (`test_net_lobby`):**
+  - a hosted lobby is found through the scripts' discovery object, its
+    config carrying the scripts' description and `Address`, `Hostname` and
+    `Protocol`;
+  - Reset calls RemoveGame;
+  - the Steam stubs; `ValidateIPAddress`.
+- **`--lan-screen-test` (gate):** retail's `gameselect.lua` LAN screen,
+  opened from the front end, finds and lists a game hosted in the same
+  process, with no script error.
