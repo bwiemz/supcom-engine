@@ -2,12 +2,14 @@
 // removed: its structure footprint on the pathfinding grid, and its Lua
 // table's _c_object pointer back to the (about to be freed) C++ object.
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "map/heightmap.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/terrain.hpp"
 #include "sim/army_brain.hpp"
+#include "sim/bone_data.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/projectile.hpp"
@@ -258,4 +260,63 @@ TEST_CASE("attached entities take their parent's pose, in any order", "[sim][att
     sim.follow_attachments();
     CHECK(d->position().x == 2.0f);
     CHECK(e->position().x == 1.0f);
+}
+
+TEST_CASE("An attached entity sits at its parent bone, then its offset (M211k)", "[sim][attach]") {
+    // Moho's CalculateAttachedTransform: the parent bone's world transform
+    // (a unit's bone -1 is its centre, half its height up), then the parent
+    // offset in that bone's frame, as a shield sits on its generator.
+    LuaGuard g;
+    SimState sim(g.L, nullptr);
+    const osc::sim::Quaternion quarter{0.0f, 0.70710678f, 0.0f, 0.70710678f}; // +x turns to -z
+    auto owned = std::make_unique<Unit>();
+    Unit* unit = owned.get();
+    unit->set_position({10.0f, 0.0f, 20.0f});
+    unit->set_orientation(quarter);
+    unit->set_size_y(4.0f);
+    sim.entity_registry().register_entity(std::move(owned));
+    auto child_owned = std::make_unique<osc::sim::Shield>();
+    osc::sim::Shield* shield = child_owned.get();
+    sim.entity_registry().register_entity(std::move(child_owned));
+
+    // Bone -1: the centre (0, 2, 0) up, then (1, -1, 0) turned to (0, -1, -1)
+    shield->set_parent(unit->entity_id(), -1);
+    shield->set_parent_offset({1.0f, -1.0f, 0.0f});
+    sim.follow_attachments();
+    CHECK(shield->position().x == Catch::Approx(10.0f).margin(1e-4));
+    CHECK(shield->position().y == Catch::Approx(1.0f).margin(1e-4));
+    CHECK(shield->position().z == Catch::Approx(19.0f).margin(1e-4));
+    CHECK(shield->orientation().y == Catch::Approx(quarter.y));
+
+    // A bone: its place in the world (model units times the scale), and the
+    // offset along its turn
+    osc::sim::BoneData bones;
+    bones.model_scale = 2.0f;
+    osc::sim::BoneInfo muzzle;
+    muzzle.world_position = {0.0f, 3.0f, 1.0f};
+    muzzle.world_rotation = quarter;
+    bones.bones.push_back(muzzle);
+    unit->set_bone_data(&bones);
+    shield->set_parent(unit->entity_id(), 0);
+    shield->set_parent_offset({1.0f, 0.0f, 0.0f});
+    sim.follow_attachments();
+    // (0, 6, 2) turned: (2, 6, 0); the offset turned twice: (-1, 0, 0)
+    CHECK(shield->position().x == Catch::Approx(11.0f).margin(1e-4));
+    CHECK(shield->position().y == Catch::Approx(6.0f).margin(1e-4));
+    CHECK(shield->position().z == Catch::Approx(20.0f).margin(1e-4));
+    unit->set_bone_data(nullptr);
+
+    // Another entity's bone -1 is its own place (no half height), turned as
+    // it is: the shield took the bone's turn, a quarter on a quarter, so
+    // (0, 0, 2) is (0, 0, -2)
+    shield->clear_parent();
+    auto script_owned = std::make_unique<osc::sim::Shield>();
+    osc::sim::Shield* script = script_owned.get();
+    sim.entity_registry().register_entity(std::move(script_owned));
+    script->set_parent(shield->entity_id(), -1);
+    script->set_parent_offset({0.0f, 0.0f, 2.0f});
+    sim.follow_attachments();
+    CHECK(script->position().x == Catch::Approx(11.0f).margin(1e-4));
+    CHECK(script->position().y == Catch::Approx(6.0f).margin(1e-4));
+    CHECK(script->position().z == Catch::Approx(18.0f).margin(1e-4));
 }

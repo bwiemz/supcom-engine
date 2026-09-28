@@ -583,33 +583,24 @@ void test_effect_intel(TestContext& ctx) {
                         "fog ({}, {})",
                         seen_lights, seen_attached, fog_lights, fog_attached));
 
-    // Test 7: ARMY_2's shield draws where the player's army sees it.
+    // Test 7: ARMY_2's shield draws where the player's army sees it: its
+    // mesh (M211k; shield.lua's SetVizToEnemies('Intel')).
     const sim::EntityRecord* gen = seen.cur().find(shield_id);
     const bool shield_up =
         std::any_of(seen.cur().entities.begin(), seen.cur().entities.end(), [&](const auto& e) {
             return e.is_shield && e.shield_owner_id == shield_id && e.shield_on;
         });
-    // The ring's colour: the army's, or the overlay's blue without one.
-    const sim::ArmyRecord* army2 = seen.cur().army(1);
-    const bool coloured = army2 && army2->has_color;
-    const f32 ring_r = coloured ? army2->r / 255.0f : 0.5f;
-    const f32 ring_g = coloured ? army2->g / 255.0f : 0.5f;
-    const f32 ring_b = coloured ? army2->b / 255.0f : 0.8f;
-    const auto rings = [&](const Frame& fr) {
-        return static_cast<long>(
-            std::count_if(fr.overlay.begin(), fr.overlay.end(), [&](const Quad& q) {
-                return same_colour(q, ring_r, ring_g, ring_b) && q.w > 4.0f;
-            }));
+    const auto shields = [&](const Frame& fr) {
+        return meshes_near(fr, "shield01_albedo", shield_at.x, 8.0f);
     };
-    const long fog_rings = rings(f);
+    const int fog_shields = shields(f);
     scry.push_back(shield_at);
     f = next();
-    const long seen_rings = rings(f);
+    const int seen_shields = shields(f);
     scry.pop_back();
-    t.check(gen && shield_up && fog_rings == 0 && seen_rings >= 8,
-            fmt::format("Test 7: the shield draws in sight ({} segments), not in the fog ({}); "
-                        "shield {}",
-                        seen_rings, fog_rings, shield_up ? "up" : "down"));
+    t.check(gen && shield_up && fog_shields == 0 && seen_shields == 1,
+            fmt::format("Test 7: the shield draws in sight ({}), not in the fog ({}); shield {}",
+                        seen_shields, fog_shields, shield_up ? "up" : "down"));
 
     // Test 8: a click can't pick the engineer in the fog; on radar, a blip,
     // it can.

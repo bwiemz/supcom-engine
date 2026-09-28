@@ -39,7 +39,7 @@ struct MeshInstance {
     f32 r, g, b, a;  // army color + alpha
     f32 color_lookup; // the row of the mesh's lookup texture (team_color_lookup)
     f32 shader_time;  // FA's material.x: the tick its mesh instance was made (mod 36000)
-    f32 parameter;    // FA's material.y: the fraction complete (the build techniques', M211f)
+    f32 parameter; // FA's material.y: the fraction complete (M211f), or a shield's health (M211k)
 };
 
 /// FA's colorLookup (UserUnit::CreateMeshInstance), the row a mesh's lookup
@@ -109,6 +109,11 @@ public:
         return mesh_groups_;
     }
     VkBuffer mesh_instance_buffer() const { return mesh_instance_buf_[fi_].buffer; }
+    /// This frame's mesh instances, which the groups' offsets index (the
+    /// tests read a shield's transform and parameter; M211k).
+    const MeshInstance* mesh_instances() const {
+        return static_cast<const MeshInstance*>(mesh_instance_mapped_[fi_]);
+    }
     VkBuffer bone_ssbo_buffer(u32 fi) const { return bone_ssbo_[fi].buffer; }
     VkBuffer bone_ssbo_buffer() const { return bone_ssbo_[fi_].buffer; }
 

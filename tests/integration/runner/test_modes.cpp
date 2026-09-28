@@ -400,7 +400,7 @@ void IntegrationModes::print_usage() const {
               << "  --cmd-test         Issue commands + economy events (Nuke/Tactical/Teleport/Ferry/Sacrifice)\n"
               << "  --deposit-test     Resource deposits + manipulator stub conversions\n"
               << "  --beam-test        Beam rendering (construction/reclaim/repair/capture/collision)\n"
-              << "  --shield-render-test Shield bubble rendering (projected circles)\n"
+              << "  --shield-render-test FA's shields: meshes, fill, impacts, each faction's\n"
               << "  --vet-adj-render-test Veterancy indicators + adjacency lines\n"
               << "  --intel-overlay-test Intel range overlay (radar/sonar/omni circles)\n"
               << "  --enhance-wreck-test Enhancement mesh switching + wreckage visual\n"

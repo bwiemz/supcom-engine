@@ -21,6 +21,9 @@ public:
     /// replaces it). D3D9 without a separate alpha blend, as FA draws,
     /// blends alpha by the colour's factors.
     PipelineBuilder& set_alpha_blend(VkBlendFactor src, VkBlendFactor dst);
+    /// How a blending pipeline blends colour (by default SrcAlpha,
+    /// InvSrcAlpha): One for FA's additive states (M211k).
+    PipelineBuilder& set_color_blend(VkBlendFactor src, VkBlendFactor dst);
     /// Which of the colour attachment's channels the pipeline writes (all,
     /// by default). Alpha carries the frame's glow, which only some write.
     PipelineBuilder& set_color_write_mask(VkColorComponentFlags mask);
@@ -52,6 +55,8 @@ private:
     bool blend_ = false;
     VkBlendFactor src_alpha_ = VK_BLEND_FACTOR_ONE;
     VkBlendFactor dst_alpha_ = VK_BLEND_FACTOR_ZERO;
+    VkBlendFactor src_color_ = VK_BLEND_FACTOR_SRC_ALPHA;
+    VkBlendFactor dst_color_ = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     VkColorComponentFlags write_mask_ = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     uint32_t push_constant_size_ = 0;

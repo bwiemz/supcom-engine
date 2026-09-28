@@ -855,10 +855,18 @@ static sim::Entity* check_entity_arg(lua_State* L, int idx) {
     return check_entity(L, idx);
 }
 
+/// The parent bone an attachment names: bone -1 (any negative) is the
+/// parent itself, a unit's centre (Moho's GetBoneWorldTransform(-1); M211k),
+/// not its root bone as resolve_bone_index takes it.
+static i32 attach_bone_index(const sim::Entity* parent, lua_State* L, int arg) {
+    if (lua_type(L, arg) == LUA_TNUMBER && lua_tonumber(L, arg) < 0) return -1;
+    return resolve_bone_index(parent, L, arg);
+}
+
 static int entity_AttachTo(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
     auto* parent = check_entity_arg(L, 2); if (!parent) return 0;
-    i32 bone = resolve_bone_index(parent, L, 3);
+    i32 bone = attach_bone_index(parent, L, 3);
     // Detach from current parent first
     if (self->parent_entity_id()) {
         auto* sim = get_sim(L);
@@ -876,7 +884,7 @@ static int entity_AttachBoneTo(lua_State* L) {
     auto* self = check_entity(L); if (!self) return 0;
     i32 self_bone = resolve_bone_index(self, L, 2);
     auto* parent = check_entity_arg(L, 3); if (!parent) return 0;
-    i32 parent_bone = resolve_bone_index(parent, L, 4);
+    i32 parent_bone = attach_bone_index(parent, L, 4);
     // Detach from current parent first
     if (self->parent_entity_id()) {
         auto* sim = get_sim(L);
@@ -894,7 +902,7 @@ static int entity_AttachBoneToEntityBone(lua_State* L) {
     // self:AttachBoneToEntityBone(targetEntity, sourceBone, offsetBone, reparent)
     auto* self = check_entity(L); if (!self) return 0;
     auto* target = check_entity_arg(L, 2); if (!target) return 0;
-    i32 self_bone = resolve_bone_index(self, L, 3);
+    i32 self_bone = attach_bone_index(self, L, 3);
     // Detach target from current parent
     if (target->parent_entity_id()) {
         auto* sim = get_sim(L);

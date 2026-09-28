@@ -65,6 +65,12 @@ PipelineBuilder& PipelineBuilder::set_alpha_blend(VkBlendFactor src, VkBlendFact
     return *this;
 }
 
+PipelineBuilder& PipelineBuilder::set_color_blend(VkBlendFactor src, VkBlendFactor dst) {
+    src_color_ = src;
+    dst_color_ = dst;
+    return *this;
+}
+
 PipelineBuilder& PipelineBuilder::set_push_constant(
     uint32_t size, VkShaderStageFlags stages) {
     push_constant_size_ = size;
@@ -162,8 +168,8 @@ VkPipeline PipelineBuilder::build(VkDevice device, VkRenderPass render_pass,
     blend_att.colorWriteMask = write_mask_;
     if (blend_) {
         blend_att.blendEnable = VK_TRUE;
-        blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_att.srcColorBlendFactor = src_color_;
+        blend_att.dstColorBlendFactor = dst_color_;
         blend_att.colorBlendOp = VK_BLEND_OP_ADD;
         blend_att.srcAlphaBlendFactor = src_alpha_;
         blend_att.dstAlphaBlendFactor = dst_alpha_;

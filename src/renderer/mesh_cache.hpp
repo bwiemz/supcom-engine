@@ -44,6 +44,14 @@ enum class MeshTechnique : u32 {
     VertexNormal = 15,                ///< lit by the vertex's normal; blended, tested over 0x23
     NormalMappedTerrain = 16,         ///< unshadowed, no highlight
     UndulatingNormalMappedAlpha = 17, ///< NormalMappedAlpha, swaying in FA's wind
+    // The shields' (M211k), drawn by the shield shaders.
+    ShieldUEF = 18,          ///< ShieldPS: four scrolled layers, unculled
+    ShieldCybran = 19,       ///< ShieldCybranPS, twice: then pushed out along the normal
+    ShieldAeon = 20,         ///< ShieldAeonPS: normal-mapped, reflecting the environment
+    ShieldSeraphim = 21,     ///< ShieldSeraphimPS: added, fading to the dome's top
+    ShieldFill = 22,         ///< ShieldFillPS: depth alone, hiding the far side
+    ShieldImpact = 23,       ///< ShieldImpactPS: a hit's patch, added
+    CybranShieldImpact = 24, ///< CybranShieldImpactPS: a hit's patch, blended
 };
 
 /// Moho's ShaderDictionary (ResolveShaderAnnotationName): a legacy
@@ -67,12 +75,74 @@ inline bool is_blended_technique(MeshTechnique t) {
            t == MeshTechnique::UEFBuildCube || t == MeshTechnique::VertexNormal;
 }
 
+/// A shield's technique (M211k), which the shield shaders draw.
+inline bool is_shield_technique(MeshTechnique t) {
+    return static_cast<u32>(t) >= static_cast<u32>(MeshTechnique::ShieldUEF) &&
+           static_cast<u32>(t) <= static_cast<u32>(MeshTechnique::CybranShieldImpact);
+}
+
 /// A technique mesh.fx gives the POSTWATER render stage: Moho draws it after
 /// the water (M213b), which writes no depth, so it shows over the surface.
-/// The others the engine ports are PREWATER.
+/// The others the engine ports are PREWATER. (The shields are POSTWATER
+/// too, but drawn later still: is_post_effect_technique.)
 inline bool is_post_water_technique(MeshTechnique t) {
     return t == MeshTechnique::AlphaFade || t == MeshTechnique::BlackenedNormalMappedAlpha ||
            t == MeshTechnique::VertexNormal || t == MeshTechnique::UndulatingNormalMappedAlpha;
+}
+
+/// A technique of the POSTWATER + POSTEFFECT stage, the last meshes Moho
+/// draws: after the water and the beams, particles and trails above it
+/// (WRenViewport::Render's RenderMeshes(0x28)). The shields' (M211k).
+inline bool is_post_effect_technique(MeshTechnique t) {
+    return is_shield_technique(t);
+}
+
+/// The mesh.fx states the shields' passes draw with (M211k): blended
+/// (SrcAlpha, InvSrcAlpha, RGBA), the same unculled, added colour (SrcAlpha,
+/// One, RGB), added colour and glow (RGBA), and the fill's depth alone.
+enum class ShieldState : u8 { Blend, BlendUnculled, AddRGB, AddRGBA, Fill };
+
+/// A shield technique's passes: the state they draw with, and how many
+/// (ShieldCybran's second is pushed out along the normal).
+struct ShieldPasses {
+    ShieldState state = ShieldState::Blend;
+    u32 count = 1;
+};
+
+/// mesh.fx's table: UEF's and Cybran's impact cull nothing; Seraphim's
+/// shield adds colour, the impact colour and glow; Cybran's draws twice.
+inline ShieldPasses shield_passes(MeshTechnique t) {
+    switch (t) {
+    case MeshTechnique::ShieldUEF:
+    case MeshTechnique::CybranShieldImpact: return {ShieldState::BlendUnculled, 1};
+    case MeshTechnique::ShieldCybran: return {ShieldState::Blend, 2};
+    case MeshTechnique::ShieldSeraphim: return {ShieldState::AddRGB, 1};
+    case MeshTechnique::ShieldImpact: return {ShieldState::AddRGBA, 1};
+    case MeshTechnique::ShieldFill: return {ShieldState::Fill, 1};
+    default: return {ShieldState::Blend, 1}; // ShieldAeon's
+    }
+}
+
+/// A technique with a depth stage (STAGE_DEPTH), which casts a shadow. Not
+/// AeonBuild or AlphaFade: a unit Aeon are building, and UEF's build
+/// slices, cast none (M211f/g); nor do shields (M211k).
+inline bool has_depth_stage(MeshTechnique t) {
+    return t != MeshTechnique::AeonBuild && t != MeshTechnique::AlphaFade &&
+           !is_shield_technique(t);
+}
+
+/// What a technique reads as its instance's material.y (its `parameter`
+/// annotation; HardwareMeshBatch::FillBatch).
+enum class MeshParameter : u8 {
+    FractionComplete, ///< how far built (the unit techniques, the build shaders)
+    FractionHealth,   ///< health over max health (the shields, M211k)
+};
+
+inline MeshParameter mesh_parameter(MeshTechnique t) {
+    return is_shield_technique(t) && t != MeshTechnique::ShieldImpact &&
+                   t != MeshTechnique::CybranShieldImpact
+               ? MeshParameter::FractionHealth
+               : MeshParameter::FractionComplete;
 }
 
 struct GPUMesh {
@@ -87,6 +157,9 @@ struct GPUMesh {
     std::string secondary_path; // VFS path to the LOD's SecondaryName (the build shaders')
     bool wreckage = false;      // drawn with the Wreckage shader: a unit's wreck mesh
     MeshTechnique technique = MeshTechnique::Unit;
+    /// The mesh blueprint's SortOrder: Moho draws meshes by it, smallest
+    /// first (MeshBatchKeyLess; M211k).
+    f32 sort_order = 0.0f;
 };
 
 /// A single LOD level: mesh data + camera distance cutoff.
@@ -149,6 +222,8 @@ private:
 
     /// Read LODCutoff from __blueprints[mesh_bp_id].LODs[lod_index].
     f32 read_lod_cutoff(const std::string& mesh_bp_id, i32 lod_index, lua_State* L);
+    /// A number at a mesh blueprint's top (its SortOrder), 0 without one.
+    f32 read_mesh_number(const std::string& mesh_bp_id, const char* field, lua_State* L);
 
     /// Read MeshName from __blueprints[mesh_bp_id].LODs[lod_index].
     std::string resolve_mesh_path_for_lod(const std::string& mesh_bp_id, i32 lod_index,

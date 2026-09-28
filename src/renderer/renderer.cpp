@@ -1045,6 +1045,48 @@ void Renderer::create_pipelines() {
         mesh_fade_pipeline_ = build_mesh(Blend::Fade, &mesh_fade_layout_);
         mesh_overlay_pipeline_ = build_mesh(Blend::Overlay, &mesh_overlay_layout_);
         mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
+
+        // The shields' (M211k): their own shaders, the mesh's input, push
+        // block and sets, and mesh.fx's states. Each depth-tests; only the
+        // fill writes depth (and nothing else). Blending RGBA blends the
+        // glow in alpha by the colour's factors, as D3D9 does.
+        VkShaderModule sv = compile_glsl(device_, shaders::shield_vert(), "shield.vert", true);
+        VkShaderModule sf = compile_glsl(device_, shaders::shield_frag(), "shield.frag", false);
+        const auto build_shield = [&](ShieldState state, VkPipelineLayout* layout) {
+            const bool added = state == ShieldState::AddRGB || state == ShieldState::AddRGBA;
+            const VkBlendFactor dst =
+                added ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            VkColorComponentFlags mask = kColorAndGlow;
+            if (state == ShieldState::AddRGB) mask = kColorOnly;
+            else if (state == ShieldState::Fill) mask = 0;
+            return PipelineBuilder()
+                .set_shaders(sv, sf)
+                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
+                                  static_cast<u32>(attrs.size()))
+                .set_depth_test(true, state == ShieldState::Fill)
+                .set_blend(state != ShieldState::Fill)
+                .set_color_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
+                .set_alpha_blend(VK_BLEND_FACTOR_SRC_ALPHA, dst)
+                .set_color_write_mask(mask)
+                .set_cull_mode(state == ShieldState::BlendUnculled ? VK_CULL_MODE_NONE
+                                                                   : VK_CULL_MODE_BACK_BIT,
+                               VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 16 + sizeof(u32) * 2 + sizeof(f32) * 3 +
+                                       sizeof(u32) * 2 + sizeof(f32) + sizeof(u32) + sizeof(f32),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                .set_descriptor_set_layout(texture_ds_layout_) // set=0: albedo
+                .add_descriptor_set_layout(bone_ds_layout_)    // set=1: bone SSBO
+                .add_descriptor_set_layout(texture_ds_layout_) // set=2: specular
+                .add_descriptor_set_layout(texture_ds_layout_) // set=3: normal map
+                .add_descriptor_set_layout(shadow_ds_layout_)  // set=4: light, environment
+                .add_descriptor_set_layout(texture_ds_layout_) // set=5: lookup
+                .add_descriptor_set_layout(texture_ds_layout_) // set=6: secondary
+                .build(device_, scene_render_pass_, layout);
+        };
+        for (u32 i = 0; i < kShieldStates; ++i)
+            shield_pipelines_[i] = build_shield(static_cast<ShieldState>(i), &shield_layouts_[i]);
+        vkDestroyShaderModule(device_, sv, nullptr);
+        vkDestroyShaderModule(device_, sf, nullptr);
     }
 
     // --- The map's decals (M212b): the terrain's vertices, lit as the
@@ -2460,6 +2502,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd_buf_[fi], &begin_info);
+    mesh_draws_.fill(0); // this frame's, for tests (M211k)
 
     // Upload fog of war texture (barriers + copy, before any render pass)
     if (fog_renderer_.initialized()) {
@@ -2539,12 +2582,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
             for (auto& group : unit_renderer_.mesh_groups()) {
                 if (!group.mesh || group.instance_count == 0) continue;
-                // AeonBuild and AlphaFade have no depth stage: a unit Aeon
-                // are building, and UEF's build slices, cast no shadow
-                // (M211f/g).
-                if (group.mesh->technique == MeshTechnique::AeonBuild ||
-                    group.mesh->technique == MeshTechnique::AlphaFade)
-                    continue;
+                // Only a technique with a depth stage casts a shadow.
+                if (!has_depth_stage(group.mesh->technique)) continue;
 
                 spc.boneBase = group.bone_base_offset;
                 spc.bonesPerInst = group.bones_per_instance;
@@ -2860,6 +2899,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
     particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
     trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
+    // The last of the meshes, after the effects above the water: the
+    // shields, their fills and their impacts (M211k; RenderMeshes(0x28)).
+    draw_meshes(cmd_buf_[fi], fi, vp, MeshPass::AfterEffects);
 
     // 5c. FA's refracting particles (M214d), as WRenViewport's
     // RenderRefractingEffects draws them: last, over a copy of the finished
@@ -3201,9 +3243,12 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
     for (auto& group : unit_renderer_.mesh_groups()) {
         if (!group.mesh || group.instance_count == 0) continue;
         // Moho's buckets (M213b): a technique's render stage puts it
-        // before the water or after it; only units are reflected.
+        // before the water or after it, or after the effects too (the
+        // shields', M211k); only units are reflected.
+        const bool after_effects = is_post_effect_technique(group.mesh->technique);
         const bool after_water = is_post_water_technique(group.mesh->technique);
-        if ((stage == MeshPass::BeforeWater && after_water) ||
+        if ((stage == MeshPass::AfterEffects) != after_effects ||
+            (stage == MeshPass::BeforeWater && after_water) ||
             (stage == MeshPass::AfterWater && !after_water) ||
             (stage == MeshPass::Reflection && !group.reflected))
             continue;
@@ -3267,6 +3312,13 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
         // UEF's cube colour only and writes no depth.
         else if (technique == MeshTechnique::AlphaFade) passes[0] = mesh_overlay_pipeline_;
         else if (technique == MeshTechnique::UEFBuildCube) passes[0] = mesh_cube_pipeline_;
+        // The shields' (M211k), by mesh.fx's states; Cybran's draws twice,
+        // the second time pushed out along its normal.
+        else if (is_shield_technique(technique)) {
+            const ShieldPasses shield = shield_passes(technique);
+            passes[0] = shield_pipelines_[static_cast<u32>(shield.state)];
+            if (shield.count > 1) passes[1] = passes[0];
+        }
         mesh_pc.boneBase = group.bone_base_offset;
         mesh_pc.bonesPerInst = group.bones_per_instance;
         mesh_pc.technique = static_cast<u32>(technique);
@@ -3280,6 +3332,8 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                sizeof(mesh_pc), &mesh_pc);
             vkCmdDrawIndexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
+            if (static_cast<size_t>(technique) < mesh_draws_.size())
+                ++mesh_draws_[static_cast<size_t>(technique)];
         }
     }
 }
@@ -4120,6 +4174,10 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_overlay_layout_, nullptr);
     vkDestroyPipeline(device_, mesh_cube_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
+    for (u32 i = 0; i < kShieldStates; ++i) {
+        vkDestroyPipeline(device_, shield_pipelines_[i], nullptr);
+        vkDestroyPipelineLayout(device_, shield_layouts_[i], nullptr);
+    }
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
     for (VkPipeline pipeline : {decal_glow_pipeline_, decal_glow_mask_pipeline_,

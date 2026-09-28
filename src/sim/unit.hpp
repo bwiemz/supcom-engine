@@ -703,7 +703,8 @@ public:
     void set_transport_capacity(i32 c) { transport_capacity_ = c; }
     void set_transport_layout(const TransportLayout& layout) { transport_layout_ = layout; }
     /// The blueprint's SizeY: a carried unit with no AttachPoint bone hangs
-    /// by its centre, half of it up.
+    /// by its centre, half of it up, where entities attached to its bone -1
+    /// sit (bone_world_transform).
     void set_size_y(f32 size_y) { size_y_ = size_y; }
     void set_size_xz(f32 size_x, f32 size_z) {
         size_x_ = size_x;
@@ -859,6 +860,11 @@ public:
     /// A bone's rotation in the world as the sim poses it (the unit's own if
     /// the bone doesn't exist).
     Quaternion bone_world_rotation(i32 bone) const;
+    /// Where an entity attached to a bone of ours sits before its parent
+    /// offset (Moho's Unit::GetBoneWorldTransform, M211k): the bone's world
+    /// place and turn as the sim poses it; for bone -1, or one we haven't,
+    /// our centre, half our height up.
+    BonePose bone_world_transform(i32 bone) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     void release_manipulators(lua_State* L);

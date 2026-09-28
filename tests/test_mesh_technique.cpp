@@ -93,3 +93,72 @@ TEST_CASE("is_blended_technique: what draws after the opaque meshes", "[renderer
     CHECK_FALSE(is_blended_technique(MeshTechnique::AeonBuildPuddle));
     CHECK_FALSE(is_blended_technique(MeshTechnique::BlackenedNormalMappedAlpha));
 }
+
+TEST_CASE("The shields' techniques: their names, stage and parameter (M211k)", "[renderer][mesh]") {
+    // The shield, fill and impact meshes' ShaderNames (effects.scd)
+    CHECK(mesh_technique("ShieldUEF") == MeshTechnique::ShieldUEF);
+    CHECK(mesh_technique("ShieldCybran") == MeshTechnique::ShieldCybran);
+    CHECK(mesh_technique("ShieldAeon") == MeshTechnique::ShieldAeon);
+    CHECK(mesh_technique("ShieldSeraphim") == MeshTechnique::ShieldSeraphim);
+    CHECK(mesh_technique("ShieldFill") == MeshTechnique::ShieldFill);
+    CHECK(mesh_technique("TMeshZFill") == MeshTechnique::ShieldFill); // the legacy name
+    CHECK(mesh_technique("ShieldImpact") == MeshTechnique::ShieldImpact);
+    CHECK(mesh_technique("CybranShieldImpact") == MeshTechnique::CybranShieldImpact);
+    // The personal shields' are M211l's
+    CHECK(mesh_technique("PhaseShield") == MeshTechnique::Unit);
+
+    // All seven draw after the effects (POSTWATER + POSTEFFECT), and only
+    // they: not among the post-water meshes drawn before the effects
+    for (const MeshTechnique t :
+         {MeshTechnique::ShieldUEF, MeshTechnique::ShieldCybran, MeshTechnique::ShieldAeon,
+          MeshTechnique::ShieldSeraphim, MeshTechnique::ShieldFill, MeshTechnique::ShieldImpact,
+          MeshTechnique::CybranShieldImpact}) {
+        CHECK(is_shield_technique(t));
+        CHECK(is_post_effect_technique(t));
+        CHECK_FALSE(has_depth_stage(t)); // no shadow
+        CHECK_FALSE(is_post_water_technique(t));
+        CHECK_FALSE(is_blended_technique(t));
+    }
+    for (const MeshTechnique t :
+         {MeshTechnique::Unit, MeshTechnique::Seraphim, MeshTechnique::UEFBuild,
+          MeshTechnique::AlphaFade, MeshTechnique::VertexNormal,
+          MeshTechnique::UndulatingNormalMappedAlpha}) {
+        CHECK_FALSE(is_shield_technique(t));
+        CHECK_FALSE(is_post_effect_technique(t));
+    }
+    // What else casts no shadow: a unit Aeon are building, UEF's build slices
+    CHECK_FALSE(has_depth_stage(MeshTechnique::AeonBuild));
+    CHECK_FALSE(has_depth_stage(MeshTechnique::AlphaFade));
+    CHECK(has_depth_stage(MeshTechnique::Unit));
+    CHECK(has_depth_stage(MeshTechnique::UEFBuild));
+
+    // PARAM_FRACTIONHEALTH for the shields and the fill; the impacts' is
+    // unused, the rest take the fraction complete
+    CHECK(mesh_parameter(MeshTechnique::ShieldUEF) == MeshParameter::FractionHealth);
+    CHECK(mesh_parameter(MeshTechnique::ShieldCybran) == MeshParameter::FractionHealth);
+    CHECK(mesh_parameter(MeshTechnique::ShieldAeon) == MeshParameter::FractionHealth);
+    CHECK(mesh_parameter(MeshTechnique::ShieldSeraphim) == MeshParameter::FractionHealth);
+    CHECK(mesh_parameter(MeshTechnique::ShieldFill) == MeshParameter::FractionHealth);
+    CHECK(mesh_parameter(MeshTechnique::ShieldImpact) == MeshParameter::FractionComplete);
+    CHECK(mesh_parameter(MeshTechnique::CybranShieldImpact) == MeshParameter::FractionComplete);
+    CHECK(mesh_parameter(MeshTechnique::UEFBuild) == MeshParameter::FractionComplete);
+    CHECK(mesh_parameter(MeshTechnique::Unit) == MeshParameter::FractionComplete);
+}
+
+TEST_CASE("The shields' passes: mesh.fx's states (M211k)", "[renderer][mesh]") {
+    const auto is = [](MeshTechnique t, ShieldState state, osc::u32 count) {
+        const ShieldPasses p = shield_passes(t);
+        return p.state == state && p.count == count;
+    };
+    // Rasterizer_Cull_None: UEF's shield and Cybran's impact
+    CHECK(is(MeshTechnique::ShieldUEF, ShieldState::BlendUnculled, 1));
+    CHECK(is(MeshTechnique::CybranShieldImpact, ShieldState::BlendUnculled, 1));
+    // Cybran's P0 and P1 (ShieldPositionNormalOffsetVS), both blended
+    CHECK(is(MeshTechnique::ShieldCybran, ShieldState::Blend, 2));
+    CHECK(is(MeshTechnique::ShieldAeon, ShieldState::Blend, 1));
+    // AlphaBlend_SrcAlpha_One_Write_RGB, and _RGBA for the impact
+    CHECK(is(MeshTechnique::ShieldSeraphim, ShieldState::AddRGB, 1));
+    CHECK(is(MeshTechnique::ShieldImpact, ShieldState::AddRGBA, 1));
+    // AlphaBlend_Disable_Write_None with the depth written
+    CHECK(is(MeshTechnique::ShieldFill, ShieldState::Fill, 1));
+}

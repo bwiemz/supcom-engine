@@ -188,6 +188,13 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "NormalMappedTerrain") return MeshTechnique::NormalMappedTerrain;
     if (shader_name == "UndulatingNormalMappedAlpha")
         return MeshTechnique::UndulatingNormalMappedAlpha;
+    if (shader_name == "ShieldUEF") return MeshTechnique::ShieldUEF;
+    if (shader_name == "ShieldCybran") return MeshTechnique::ShieldCybran;
+    if (shader_name == "ShieldAeon") return MeshTechnique::ShieldAeon;
+    if (shader_name == "ShieldSeraphim") return MeshTechnique::ShieldSeraphim;
+    if (shader_name == "ShieldFill") return MeshTechnique::ShieldFill;
+    if (shader_name == "ShieldImpact") return MeshTechnique::ShieldImpact;
+    if (shader_name == "CybranShieldImpact") return MeshTechnique::CybranShieldImpact;
     return MeshTechnique::Unit;
 }
 
@@ -210,6 +217,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
     }
 
     f32 scale = resolve_uniform_scale(bp_id, L);
+    const f32 sort_order = read_mesh_number(mesh_bp_id, "SortOrder", L);
     LODSet lod_set;
 
     // Try LODs[1] through LODs[4] from the mesh blueprint
@@ -231,6 +239,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, lod_index, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        gpu.sort_order = sort_order;
 
         f32 cutoff = read_lod_cutoff(mesh_bp_id, lod_index, L);
 
@@ -273,6 +282,7 @@ bool MeshCache::load_lod_set(const std::string& bp_id, lua_State* L) {
         const std::string shader = read_lod_string_field(mesh_bp_id, 1, "ShaderName", L);
         gpu.wreckage = is_wreckage_shader(shader);
         gpu.technique = mesh_technique(shader);
+        gpu.sort_order = sort_order;
 
         LODEntry entry;
         entry.mesh = std::move(gpu);
@@ -335,6 +345,27 @@ std::string MeshCache::read_lod_string_field(const std::string& mesh_bp_id,
     lua_pop(L, 5); // field + lod_table + lods + mbp + bps
 
     return result;
+}
+
+f32 MeshCache::read_mesh_number(const std::string& mesh_bp_id, const char* field, lua_State* L) {
+    if (!L) return 0.0f;
+    lua_pushstring(L, "__blueprints");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return 0.0f;
+    }
+    lua_pushstring(L, mesh_bp_id.c_str());
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 2);
+        return 0.0f;
+    }
+    lua_pushstring(L, field);
+    lua_rawget(L, -2);
+    const f32 value = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : 0.0f;
+    lua_pop(L, 3); // value, the mesh blueprint, __blueprints
+    return value;
 }
 
 f32 MeshCache::read_lod_cutoff(const std::string& mesh_bp_id, i32 lod_index,
