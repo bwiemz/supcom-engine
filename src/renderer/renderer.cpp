@@ -845,7 +845,8 @@ void Renderer::upload_lighting() {
         d.shadow_fill[i] = l.shadow_fill[i];
     }
     d.sun_color[3] = l.multiplier;
-    d.sun_ambience[3] = terrain_xp_ ? 1.0f : 0.0f;
+    // The terrain technique: 0 TTerrain, 1 TTerrainXP, 2 TTerrainGlow
+    d.sun_ambience[3] = terrain_xp_ ? 1.0f : (terrain_glow_ ? 2.0f : 0.0f);
     for (int i = 0; i < 4; ++i) d.specular[i] = l.specular[i];
     for (u32 f = 0; f < FRAMES_IN_FLIGHT; ++f) {
         if (!light_ubo_mapped_[f]) continue;
@@ -1816,6 +1817,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // The map's light (M210a).
     lighting_ = terrain->lighting();
     terrain_xp_ = terrain->environment().terrain_shader == "TTerrainXP";
+    terrain_glow_ = terrain->environment().terrain_shader == "TTerrainGlow";
+    terrain_time_.reset();
     upload_lighting();
 
     unit_renderer_.build(device_, allocator_, cmd_pool_, graphics_queue_);
@@ -2418,6 +2421,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
             {ex, ey, ez}, camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi);
     }
 
+    // The terrain's Time (M212f): set when the terrain would re-tessellate,
+    // so TTerrainGlow's lava stands still under a still camera, as in FA.
+    if (const sim::WorldSnapshot* cur = view.cur()) {
+        const u64 decals = static_cast<u64>(runtime_decals_.decal_draws().size()) |
+                           (static_cast<u64>(runtime_decals_.splat_count()) << 32);
+        terrain_time_.update(camera_.view(), decals, static_cast<f32>(cur->tick) + view.alpha());
+    }
+
     // Update minimap (terrain bg, unit dots, camera frustum box)
     if (legacy_hud_active_)
         minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
@@ -2725,18 +2736,20 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
                           terrain_pipeline_);
 
-        // Push constants: viewProj(64) + mapW(4) + mapH(4) + pad(8) + eye(12) = 92B
+        // Push constants: viewProj(64) + mapW(4) + mapH(4) + Time and a
+        // pad(8) + eye(12) = 92B
         struct TerrainPC {
             f32 viewProj[16];
             f32 mapWidth;
             f32 mapHeight;
-            f32 _pad0, _pad1;
+            f32 terrainTime, _pad1;
             f32 eyeX, eyeY, eyeZ;
         } tpc{};
         static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert/frag's push block");
         std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
         tpc.mapWidth = terrain_map_width_;
         tpc.mapHeight = terrain_map_height_;
+        tpc.terrainTime = terrain_time_.value();
         camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
 
         vkCmdPushConstants(cmd_buf_[fi], terrain_layout_,

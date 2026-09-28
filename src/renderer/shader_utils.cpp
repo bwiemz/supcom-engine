@@ -48,7 +48,7 @@ const char* terrain_vert = R"glsl(
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
-    float _pad0, _pad1;   // explicit padding to match vec4 alignment
+    float terrainTime, _pad1; // TTerrainGlow's Time (M212f); padding to vec4
     float eyeX, eyeY, eyeZ;
 } pc;
 
@@ -175,7 +175,12 @@ vec3 decodeNormal(sampler2D nmap, vec2 uv) {
 // TTerrain maps (the original game's) blend four strata, from the first
 // blend texture; TTerrainXP maps all eight (FA's TerrainPS, TerrainAlbedoXP).
 bool terrainXP() {
-    return lightUbo.sunAmbience.w >= 0.5;
+    return lightUbo.sunAmbience.w >= 0.5 && lightUbo.sunAmbience.w < 1.5;
+}
+
+// TTerrainGlow (M212f): TTerrain whose stratum 1 scrolls and glows.
+bool terrainGlow() {
+    return lightUbo.sunAmbience.w >= 1.5;
 }
 
 // The strata's blend weights at `blendUV` (RGBA = 4 strata each).
@@ -272,7 +277,7 @@ const char* kTerrainPush = R"glsl(#version 450
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     float mapWidth, mapHeight;
-    float _pad0, _pad1;   // explicit padding to match vec4 alignment
+    float terrainTime, _pad1; // TTerrainGlow's Time (M212f); padding to vec4
     float eyeX, eyeY, eyeZ;
 } pc;
 )glsl";
@@ -307,7 +312,20 @@ void main() {
     // Sample each stratum albedo
     vec4 s0 = texture(stratum0, uv0);
     vec4 s1 = texture(stratum1, uv1);
-    vec4 s2 = texture(stratum2, uv2);
+    // TTerrainGlow: FA's stratum 1 scrolls by 0.01 (sin, cos) of Time / 8
+    // (TerrainGlowVS); its alpha at the offset swapped is the glow, and its
+    // own alpha goes (TerrainGlowPS). FA numbers the strata above its lower
+    // albedo from 0, the engine from 1: FA's stratum 1 (mask.y) is s2 here,
+    // masked by m0.g (Varga Pass's lav_lava02).
+    bool glowing = terrainGlow();
+    vec2 offset = glowing ? vec2(sin(pc.terrainTime * 0.125), cos(pc.terrainTime * 0.125)) * 0.01
+                          : vec2(0.0);
+    vec4 s2 = texture(stratum2, uv2 + offset);
+    float lava = 0.0;
+    if (glowing) {
+        lava = texture(stratum2, uv2 + offset.yx).a;
+        s2.a = 0.0;
+    }
     vec4 s3 = texture(stratum3, uv3);
     vec4 s4 = texture(stratum4, uv4);
     vec4 s5 = texture(stratum5, uv5);
@@ -348,7 +366,8 @@ void main() {
         // is low, added into the light.
         float spec;
         lit = lightTTerrain(color, 1.0 - albedo.a, worldNormal, worldPos, eye, shadow, spec);
-        glow = 0.01 + spec * lightUbo.specularColor.w;
+        // TTerrainGlow writes its stratum's glow by its mask instead
+        glow = glowing ? lava * m0.g + 0.01 : 0.01 + spec * lightUbo.specularColor.w;
     } else {
         // TTerrainXP (TerrainAlbedoXP): specular from the albedo's alpha.
         lit = lightXP(color, albedo.a, worldNormal, worldPos, eye, shadow);
