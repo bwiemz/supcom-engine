@@ -1413,6 +1413,7 @@ layout(location = 4) in vec2 inRamp; // age / lifetime, ramp selection
 
 layout(location = 0) out vec2 fragUV;
 layout(location = 1) out vec2 fragRamp;
+layout(location = 2) out vec2 fragScreen; // WorldVS's mTex2: where the vertex is on screen
 
 void main() {
     // 6 vertices per quad (2 triangles), corners at (+-1, +-1).
@@ -1423,6 +1424,9 @@ void main() {
     // WorldVS: (corner + 1) / 2, in the frame and strip it shows.
     fragUV = vec2((corner.x + 1.0) * 0.5 * inUV.y + inUV.x, (corner.y + 1.0) * 0.5 * inUV.w + inUV.z);
     fragRamp = inRamp;
+    // Found at the vertex, as WorldVS does, and interpolated across the quad
+    // (for the refracting ones, M214d).
+    fragScreen = 0.5 * gl_Position.xy / gl_Position.w + 0.5;
 }
 )glsl";
 
@@ -1446,6 +1450,34 @@ void main() {
     vec2 rampUV = clamp(fragRamp, rampHalf, 1.0 - rampHalf);
     // WorldPS: the texture times its ramp.
     outColor = texture(texParticle, uv) * texture(texRamp, rampUV);
+}
+)glsl";
+
+// FA's refracting particles (M214d): particle.fx's WorldRefractPS, the frame
+// drawn before them, displaced by their texture's red and green, blended by
+// its alpha times their ramp's.
+const char* particle_refract_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texParticle; // ParticleSampler0: U wraps, V clamps
+layout(set = 1, binding = 0) uniform sampler2D texRamp;     // ParticleSampler1: clamps
+layout(set = 2, binding = 0) uniform sampler2D background;  // BackgroundSampler: the frame, copied
+
+layout(location = 0) in vec2 fragUV;
+layout(location = 1) in vec2 fragRamp;
+layout(location = 2) in vec2 fragScreen;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec2 texHalf = 0.5 / vec2(textureSize(texParticle, 0));
+    vec2 uv = vec2(fragUV.x, clamp(fragUV.y, texHalf.y, 1.0 - texHalf.y));
+    vec2 rampHalf = 0.5 / vec2(textureSize(texRamp, 0));
+    vec2 rampUV = clamp(fragRamp, rampHalf, 1.0 - rampHalf);
+    vec4 texel = texture(texParticle, uv);
+    vec2 offset = 0.005 * (2.0 * texel.rg - 1.0);
+    outColor = vec4(texture(background, fragScreen + offset).rgb,
+                    texel.a * texture(texRamp, rampUV).a);
 }
 )glsl";
 

@@ -29,6 +29,7 @@ constexpr std::array<Blend, 5> kBlends = {{
 
 void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
                             VkDescriptorSetLayout texture_ds_layout) {
+    device_ = device;
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo buf_ci{};
         buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -56,13 +57,44 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
     layout_ci.pushConstantRangeCount = 1;
     layout_ci.pPushConstantRanges = &push;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout_);
+    // The refracting ones' (M214d): set 2 the frame behind them.
+    const std::array<VkDescriptorSetLayout, 3> refract_sets = {texture_ds_layout, texture_ds_layout,
+                                                               texture_ds_layout};
+    layout_ci.setLayoutCount = static_cast<u32>(refract_sets.size());
+    layout_ci.pSetLayouts = refract_sets.data();
+    vkCreatePipelineLayout(device, &layout_ci, nullptr, &refract_layout_);
+
+    // BackgroundSampler: linear, clamped.
+    VkSamplerCreateInfo sampler_ci{};
+    sampler_ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_ci.magFilter = VK_FILTER_LINEAR;
+    sampler_ci.minFilter = VK_FILTER_LINEAR;
+    sampler_ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    vkCreateSampler(device, &sampler_ci, nullptr, &background_sampler_);
+    const VkDescriptorPoolSize pool_size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
+    VkDescriptorPoolCreateInfo pool_ci{};
+    pool_ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_ci.maxSets = 1;
+    pool_ci.poolSizeCount = 1;
+    pool_ci.pPoolSizes = &pool_size;
+    vkCreateDescriptorPool(device, &pool_ci, nullptr, &background_pool_);
+    VkDescriptorSetAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc.descriptorPool = background_pool_;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &texture_ds_layout;
+    vkAllocateDescriptorSets(device, &alloc, &background_set_);
 
     VkShaderModule vert = compile_glsl(device, shaders::particle_vert, "particle_vert", true);
     VkShaderModule frag = compile_glsl(device, shaders::particle_frag, "particle_frag", false);
-    if (!vert || !frag) {
+    VkShaderModule refract =
+        compile_glsl(device, shaders::particle_refract_frag, "particle_refract_frag", false);
+    if (!vert || !frag || !refract) {
         spdlog::error("ParticleRenderer: shader compilation failed");
-        if (vert) vkDestroyShaderModule(device, vert, nullptr);
-        if (frag) vkDestroyShaderModule(device, frag, nullptr);
+        for (VkShaderModule m : {vert, frag, refract})
+            if (m) vkDestroyShaderModule(device, m, nullptr);
         return;
     }
 
@@ -111,21 +143,21 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_FALSE;
     depth.depthCompareOp = VK_COMPARE_OP_LESS;
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vert;
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = frag;
-    stages[1].pName = "main";
-
-    for (size_t i = 0; i < kBlends.size(); ++i) {
+    // A TRamp technique's pipeline: `frag` blended src/dst, colour only.
+    const auto make = [&](VkShaderModule fragment, VkPipelineLayout layout, const Blend& b) {
+        std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        stages[0].module = vert;
+        stages[0].pName = "main";
+        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        stages[1].module = fragment;
+        stages[1].pName = "main";
         VkPipelineColorBlendAttachmentState att{};
         att.blendEnable = VK_TRUE;
-        att.srcColorBlendFactor = kBlends[i].src;
-        att.dstColorBlendFactor = kBlends[i].dst;
+        att.srcColorBlendFactor = b.src;
+        att.dstColorBlendFactor = b.dst;
         att.colorBlendOp = VK_BLEND_OP_ADD;
         att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
         att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
@@ -150,14 +182,19 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPas
         ci.pDepthStencilState = &depth;
         ci.pColorBlendState = &blend;
         ci.pDynamicState = &dyn;
-        ci.layout = layout_;
+        ci.layout = layout;
         ci.renderPass = render_pass;
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipelines_[i]) !=
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipeline) !=
             VK_SUCCESS)
-            spdlog::error("ParticleRenderer: pipeline {} creation failed", i);
-    }
-    vkDestroyShaderModule(device, vert, nullptr);
-    vkDestroyShaderModule(device, frag, nullptr);
+            spdlog::error("ParticleRenderer: pipeline creation failed");
+        return pipeline;
+    };
+    for (size_t i = 0; i < kBlends.size(); ++i) pipelines_[i] = make(frag, layout_, kBlends[i]);
+    // TRamp_REFRACT and its kin: AlphaBlend_SrcAlpha_InvSrcAlpha_Write_RGB.
+    refract_pipeline_ = make(refract, refract_layout_,
+                             {VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA});
+    for (VkShaderModule m : {vert, frag, refract}) vkDestroyShaderModule(device, m, nullptr);
 }
 
 void ParticleRenderer::update(const ParticleSystem& particles, TextureCache& tex_cache, u32 fi) {
@@ -201,7 +238,7 @@ void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_
     vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi].buffer, &offset);
     i32 bound = -1;
     for (const Group& g : groups_) {
-        if (g.under_water != under_water) continue;
+        if (g.under_water != under_water || g.blendmode == kBlendRefract) continue;
         const auto blend = static_cast<size_t>(g.blendmode);
         if (blend >= pipelines_.size() || !pipelines_[blend]) continue;
         if (g.blendmode != bound) {
@@ -217,7 +254,65 @@ void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_
     }
 }
 
+void ParticleRenderer::set_background(VkImageView view) {
+    if (!background_set_ || !view) return;
+    VkDescriptorImageInfo info{};
+    info.sampler = background_sampler_;
+    info.imageView = view;
+    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = background_set_;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &info;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    background_ready_ = true;
+}
+
+bool ParticleRenderer::refracting() const {
+    return background_ready_ && refract_pipeline_ &&
+           std::any_of(groups_.begin(), groups_.end(),
+                       [](const Group& g) { return g.blendmode == kBlendRefract; });
+}
+
+void ParticleRenderer::render_refracting(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
+                                         const f32* view_proj, u32 fi) const {
+    if (!refracting() || !instance_buf_[fi].buffer) return;
+    VkViewport viewport{};
+    viewport.width = static_cast<f32>(viewport_w);
+    viewport.height = static_cast<f32>(viewport_h);
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.extent = {viewport_w, viewport_h};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi].buffer, &offset);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_pipeline_);
+    vkCmdPushConstants(cmd, refract_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                       view_proj);
+    for (const Group& g : groups_) {
+        if (g.blendmode != kBlendRefract) continue;
+        const std::array<VkDescriptorSet, 3> sets = {g.texture, g.ramp, background_set_};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, refract_layout_, 0,
+                                static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
+        vkCmdDraw(cmd, 6, g.count, 0, g.offset);
+    }
+}
+
 void ParticleRenderer::destroy(VkDevice device, VmaAllocator allocator) {
+    if (refract_pipeline_) vkDestroyPipeline(device, refract_pipeline_, nullptr);
+    refract_pipeline_ = VK_NULL_HANDLE;
+    if (refract_layout_) vkDestroyPipelineLayout(device, refract_layout_, nullptr);
+    refract_layout_ = VK_NULL_HANDLE;
+    if (background_pool_) vkDestroyDescriptorPool(device, background_pool_, nullptr);
+    background_pool_ = VK_NULL_HANDLE;
+    background_set_ = VK_NULL_HANDLE;
+    background_ready_ = false;
+    if (background_sampler_) vkDestroySampler(device, background_sampler_, nullptr);
+    background_sampler_ = VK_NULL_HANDLE;
     for (VkPipeline& p : pipelines_) {
         if (p) vkDestroyPipeline(device, p, nullptr);
         p = VK_NULL_HANDLE;

@@ -86,6 +86,10 @@ enum EmitterCurveId : u8 {
 
 /// An `EmitterBlueprint { ... }` (M214c), with Moho's defaults
 /// (REmitterBlueprint) for what it leaves out.
+/// particle.fx's REFRACT blend (M214d): drawn apart, last, over a copy of
+/// the frame.
+constexpr i32 kBlendRefract = 5;
+
 struct EmitterBlueprintData {
     std::string blueprint_id; ///< its VFS path
     f32 lifetime = 0.0f;      ///< ticks it emits (negative: until its effect ends)

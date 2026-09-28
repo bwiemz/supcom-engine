@@ -372,6 +372,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     water_renderer_.init(device_, allocator_, scene_render_pass_);
     water_renderer_.set_refraction(refraction_image_.view);
     water_renderer_.set_reflection(reflection_image_.view);
+    // The refracting particles bend the same copy, made again for them.
+    particle_renderer_.set_background(refraction_image_.view);
 
     // Minimap renderer
     minimap_renderer_.init(device_, allocator_);
@@ -1316,6 +1318,13 @@ void Renderer::create_bloom_resources() {
             second[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             rp_ci.pAttachments = second.data();
             VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_second_pass_));
+
+            // The middle one (M214d): goes on, and ends as the first.
+            std::array<VkAttachmentDescription, 2> middle = second;
+            middle[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            middle[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            rp_ci.pAttachments = middle.data();
+            VK_CHECK(vkCreateRenderPass(device_, &rp_ci, nullptr, &scene_middle_pass_));
         }
     }
 
@@ -1451,6 +1460,8 @@ void Renderer::create_bloom_resources() {
 
     water_renderer_.set_refraction(refraction_image_.view);
     water_renderer_.set_reflection(reflection_image_.view);
+    // The refracting particles bend the same copy, made again for them.
+    particle_renderer_.set_background(refraction_image_.view);
     spdlog::info("Bloom resources created ({}x{}, half {}x{})", w, h, half_w, half_h);
 }
 
@@ -1482,8 +1493,10 @@ void Renderer::destroy_bloom_resources() {
     if (scene_render_pass_) vkDestroyRenderPass(device_, scene_render_pass_, nullptr);
     if (scene_first_pass_) vkDestroyRenderPass(device_, scene_first_pass_, nullptr);
     if (scene_second_pass_) vkDestroyRenderPass(device_, scene_second_pass_, nullptr);
+    if (scene_middle_pass_) vkDestroyRenderPass(device_, scene_middle_pass_, nullptr);
     scene_first_pass_ = VK_NULL_HANDLE;
     scene_second_pass_ = VK_NULL_HANDLE;
+    scene_middle_pass_ = VK_NULL_HANDLE;
 
     // Images
     auto destroy_img = [&](AllocatedImage& img) {
@@ -2586,10 +2599,14 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     clear_values[0].color = {{0.55f, 0.62f, 0.72f, 0.0f}};
     clear_values[1].depthStencil = {1.0f, 0};
 
+    // Split around the water on a map with it (M213a), and before the
+    // refracting particles on a frame with them (M214d), each for a copy of
+    // the frame.
+    const bool refracting = particle_renderer_.refracting();
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    // Split around the water on a map with it (M213a).
-    rp_begin.renderPass = water_renderer_.has_water() ? scene_first_pass_ : scene_render_pass_;
+    rp_begin.renderPass =
+        water_renderer_.has_water() || refracting ? scene_first_pass_ : scene_render_pass_;
     rp_begin.framebuffer = scene_framebuffer_;
     rp_begin.renderArea.extent = {window_width_, window_height_};
     rp_begin.clearValueCount = static_cast<u32>(clear_values.size());
@@ -2768,17 +2785,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // 5. FA's water (M213a), as CWorldView draws it: its alpha mask (alpha 0
     // over open water), a copy of the frame so far, then the surface, which
-    // refracts the copy, in a second pass that goes on from the first.
+    // refracts the copy, in a pass that goes on from the first (and, with
+    // refracting particles to come, ends as it does).
     if (water_renderer_.has_water()) {
         water_renderer_.render_mask(cmd_buf_[fi], window_width_, window_height_, fi);
-        vkCmdEndRenderPass(cmd_buf_[fi]);
-        copy_refraction(cmd_buf_[fi]);
-        VkRenderPassBeginInfo again{};
-        again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        again.renderPass = scene_second_pass_;
-        again.framebuffer = scene_framebuffer_;
-        again.renderArea.extent = {window_width_, window_height_};
-        vkCmdBeginRenderPass(cmd_buf_[fi], &again, VK_SUBPASS_CONTENTS_INLINE);
+        copy_and_continue(cmd_buf_[fi], refracting ? scene_middle_pass_ : scene_second_pass_);
         water_renderer_.render_surface(cmd_buf_[fi], window_width_, window_height_, fi);
         // The meshes Moho draws after the water (M213b), which writes no
         // depth: over it, unrefracted.
@@ -2790,6 +2801,15 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
     particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
     trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
+
+    // 5c. FA's refracting particles (M214d), as WRenViewport's
+    // RenderRefractingEffects draws them: last, over a copy of the finished
+    // frame.
+    if (refracting) {
+        copy_and_continue(cmd_buf_[fi], scene_second_pass_);
+        particle_renderer_.render_refracting(cmd_buf_[fi], window_width_, window_height_, vp.data(),
+                                             fi);
+    }
 
     // ==================== COMPOSITE + BLOOM ====================
     // Scene always renders to offscreen HDR. End scene pass, optionally run
@@ -3201,6 +3221,17 @@ void Renderer::draw_meshes(VkCommandBuffer cmd, u32 fi, const std::array<f32, 16
             vkCmdDrawIndexed(cmd, group.mesh->index_count, group.instance_count, 0, 0, 0);
         }
     }
+}
+
+void Renderer::copy_and_continue(VkCommandBuffer cmd, VkRenderPass next) {
+    vkCmdEndRenderPass(cmd);
+    copy_refraction(cmd);
+    VkRenderPassBeginInfo again{};
+    again.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    again.renderPass = next;
+    again.framebuffer = scene_framebuffer_;
+    again.renderArea.extent = {window_width_, window_height_};
+    vkCmdBeginRenderPass(cmd, &again, VK_SUBPASS_CONTENTS_INLINE);
 }
 
 void Renderer::copy_refraction(VkCommandBuffer cmd) {

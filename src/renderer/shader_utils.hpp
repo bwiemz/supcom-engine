@@ -33,6 +33,7 @@ extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)
 extern const char* particle_vert;     // FA's particle quad (M214c: WorldVS)
 extern const char* particle_frag;     // particle.fx's WorldPS: texture × ramp
+extern const char* particle_refract_frag; // WorldRefractPS: the frame, displaced (M214d)
 extern const char* beam_vert;         // FA's beam strip (M214a)
 extern const char* beam_frag;         // particle.fx's BeamPS: texture × colour
 extern const char* trail_vert;        // FA's trail ribbon (M214b)

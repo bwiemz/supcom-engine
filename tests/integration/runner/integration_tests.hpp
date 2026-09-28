@@ -121,6 +121,8 @@ void test_particle_render(TestContext& ctx);
 void test_water_render(TestContext& ctx);
 /// --water-reflection-test (M213b), in water_reflection_test.cpp.
 void test_water_reflection(TestContext& ctx);
+/// --refract-render-test (M214d), in refract_render_test.cpp.
+void test_refract_render(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

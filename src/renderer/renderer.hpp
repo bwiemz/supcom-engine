@@ -455,6 +455,9 @@ private:
     /// The scene's two passes around the water on a map with it (M213a).
     VkRenderPass scene_first_pass_ = VK_NULL_HANDLE;
     VkRenderPass scene_second_pass_ = VK_NULL_HANDLE;
+    /// One between them, which goes on from the first and ends as it does:
+    /// on a map with water, before the refracting particles' copy (M214d).
+    VkRenderPass scene_middle_pass_ = VK_NULL_HANDLE;
     AllocatedImage scene_color_image_{};
     VkRenderPass scene_render_pass_ = VK_NULL_HANDLE;
     VkFramebuffer scene_framebuffer_ = VK_NULL_HANDLE;
@@ -488,6 +491,9 @@ private:
     /// Copy the frame drawn so far for the water to refract, between the
     /// scene's two passes (M213a).
     void copy_refraction(VkCommandBuffer cmd);
+    /// End the scene pass open, copy the frame (copy_refraction), and go on
+    /// drawing in `next`, one of the scene's passes that load (M214d).
+    void copy_and_continue(VkCommandBuffer cmd, VkRenderPass next);
     /// Which meshes a draw_meshes call draws (M213b): Moho's buckets
     /// before and after the water, or the units in its reflection.
     enum class MeshPass { All, BeforeWater, AfterWater, Reflection };
