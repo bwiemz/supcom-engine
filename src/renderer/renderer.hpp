@@ -24,6 +24,8 @@
 #include "renderer/particle_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
+#include "renderer/trail_blueprint.hpp"
+#include "renderer/trail_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
@@ -157,6 +159,8 @@ public:
     const ParticleSystem& particle_system() const { return particle_system_; }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
+    /// The trail segments drawn last frame (tests read them; M214b).
+    const TrailRenderer& trail_renderer() const { return trail_renderer_; }
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -431,6 +435,8 @@ private:
     EmitterBlueprintCache emitter_bp_cache_;
     BeamRenderer beam_renderer_;
     BeamBlueprintCache beam_bp_cache_;
+    TrailRenderer trail_renderer_;
+    TrailBlueprintCache trail_bp_cache_;
 
     // Bloom post-processing
     bool bloom_enabled_ = true;

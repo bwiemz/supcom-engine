@@ -105,13 +105,14 @@ static int ieffect_ScaleEmitter(lua_State* L) {
     return 1;
 }
 
-// OffsetEmitter(x, y, z) → self
+// OffsetEmitter(x, y, z) → self: adds to the effect's position params, as
+// Moho's cfunc_IEffectOffsetEmitterL does.
 static int ieffect_OffsetEmitter(lua_State* L) {
     auto* fx = check_ieffect(L);
-    if (fx) fx->set_offset(
-        static_cast<f32>(luaL_optnumber(L, 2, 0)),
-        static_cast<f32>(luaL_optnumber(L, 3, 0)),
-        static_cast<f32>(luaL_optnumber(L, 4, 0)));
+    if (fx)
+        fx->set_offset(fx->offset_x() + static_cast<f32>(luaL_optnumber(L, 2, 0)),
+                       fx->offset_y() + static_cast<f32>(luaL_optnumber(L, 3, 0)),
+                       fx->offset_z() + static_cast<f32>(luaL_optnumber(L, 4, 0)));
     lua_pushvalue(L, 1);
     return 1;
 }
@@ -123,6 +124,13 @@ static int ieffect_SetEmitterParam(lua_State* L) {
         const char* name = luaL_optstring(L, 2, "");
         f64 value = luaL_optnumber(L, 3, 0);
         fx->set_param(name, value);
+        // POSITION_X/_Y/_Z are the params OffsetEmitter adds to (a
+        // contrail's Z; M214b).
+        const std::string_view param(name);
+        const auto v = static_cast<f32>(value);
+        if (param == "POSITION_X") fx->set_offset(v, fx->offset_y(), fx->offset_z());
+        if (param == "POSITION_Y") fx->set_offset(fx->offset_x(), v, fx->offset_z());
+        if (param == "POSITION_Z") fx->set_offset(fx->offset_x(), fx->offset_y(), v);
         // An emitter's LIFETIME (ticks from when it was made) sets when it
         // ends, as its blueprint's Lifetime did; negative, it emits on.
         if (std::string_view(name) == "LIFETIME" && fx->has_emitter_blueprint())

@@ -1304,6 +1304,53 @@ void main() {
 )glsl";
 
 // ---------------------------------------------------------------------------
+// FA's trails (M214b): particle.fx's TrailVS/TrailPS. The ribbon is built on
+// the CPU; each vertex carries its end's age fraction t, V across the ribbon
+// and the distance coordinate.
+// ---------------------------------------------------------------------------
+
+const char* trail_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+} pc;
+
+layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec3 inTVU; // t, V across, distance coordinate
+
+layout(location = 0) out vec3 fragTVU;
+
+void main() {
+    gl_Position = pc.viewProj * vec4(inPos, 1.0);
+    fragTVU = inTVU;
+}
+)glsl";
+
+const char* trail_frag = R"glsl(
+#version 450
+
+layout(set = 0, binding = 0) uniform sampler2D texRamp;   // ParticleSampler1: clamps
+layout(set = 1, binding = 0) uniform sampler2D texRepeat; // ParticleSampler0Wrap: wraps
+
+layout(location = 0) in vec3 fragTVU;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    // TrailPS: nothing outside the trail's life (its unborn head, its
+    // spent tail).
+    float t = fragTVU.x;
+    if (t <= 0.0 || t >= 1.0) discard;
+    // The ramp clamps: keep its lookup within its edge texels' centres
+    // (the cache's sampler repeats).
+    vec2 halfTexel = 0.5 / vec2(textureSize(texRamp, 0));
+    vec2 rampUV = clamp(vec2(t, fragTVU.y), halfTexel, 1.0 - halfTexel);
+    outColor = texture(texRamp, rampUV) * texture(texRepeat, fragTVU.yz);
+}
+)glsl";
+
+// ---------------------------------------------------------------------------
 // Particle billboard shaders
 // ---------------------------------------------------------------------------
 

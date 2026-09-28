@@ -34,6 +34,8 @@ extern const char* particle_vert;     // 3D billboard particle (instanced)
 extern const char* particle_frag;     // textured particle with alpha/additive
 extern const char* beam_vert;         // FA's beam strip (M214a)
 extern const char* beam_frag;         // particle.fx's BeamPS: texture × colour
+extern const char* trail_vert;        // FA's trail ribbon (M214b)
+extern const char* trail_frag;        // particle.fx's TrailPS: ramp × repeat within its life
 extern const char* bloom_bright_vert;     // fullscreen triangle (no VBO)
 extern const char* bloom_bright_frag;     // brightness extraction
 extern const char* bloom_blur_frag;       // separable Gaussian blur

@@ -2593,6 +2593,20 @@ Vector3 Unit::bone_world_forward(i32 bone) const {
     return quat_rotate(orientation(), quat_rotate(bone_pose(bone).rotation, kAhead));
 }
 
+Vector3 Unit::bone_world_point(i32 bone, const Vector3& local) const {
+    Vector3 model = local;
+    const BoneData* bd = bone_data();
+    if (bd && bd->is_valid(bone)) {
+        const BonePose pose = bone_pose(bone);
+        const f32 s = bd->model_scale;
+        const Vector3 turned = quat_rotate(pose.rotation, local);
+        model = {pose.position.x * s + turned.x, pose.position.y * s + turned.y,
+                 pose.position.z * s + turned.z};
+    }
+    const Vector3 offset = quat_rotate(orientation(), model);
+    return {position().x + offset.x, position().y + offset.y, position().z + offset.z};
+}
+
 // ---------------------------------------------------------------------------
 // Silo (M206)
 // ---------------------------------------------------------------------------

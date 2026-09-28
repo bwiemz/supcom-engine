@@ -852,6 +852,10 @@ public:
     /// The way a bone faces in the world (its +Z, as a muzzle fires): the
     /// unit's facing if the bone doesn't exist.
     Vector3 bone_world_forward(i32 bone) const;
+    /// Where `local`, a point in a bone's frame (in world units), is in the
+    /// world as the sim poses it: an effect's offset from its bone (the
+    /// unit's own frame if the bone doesn't exist).
+    Vector3 bone_world_point(i32 bone, const Vector3& local) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     void release_manipulators(lua_State* L);
