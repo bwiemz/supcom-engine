@@ -27,7 +27,7 @@ The code is C++20. `.clang-format` records the style: 4-space indent, 100 column
 - **Formatting applies to the lines you change.** Untouched code is never reformatted wholesale, so blame stays useful.
 
   ```bash
-  tools/check_format.sh              # changed lines vs origin/main
+  tools/check_format.sh              # lines changed since you branched from origin/main
   tools/check_format.sh --fix        # format them (stage your changes first)
   ```
 

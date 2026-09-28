@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Formatting ratchet: lines changed since <base> must follow .clang-format.
 
+"Since" is since the branch left <base> (their merge base), not the
+difference from <base>'s tip: a branch that has fallen behind is not held to
+the lines <base> has changed since.
+
 Untouched code is never reformatted wholesale, and moved code counts as
 changed only where it changed:
 - the diff finds renames, and pairs a file rewritten in place (its content
@@ -152,8 +156,15 @@ def main() -> int:
         print(f"format: '{base}' is not a commit (fetch it, or pass another base)", file=sys.stderr)
         return 2
 
+    # Where the branch left base. A shallow clone may not reach it; base
+    # itself is then the best there is.
+    fork = subprocess.run(
+        ["git", "merge-base", base, "HEAD"], capture_output=True, text=True, check=False
+    )
+    since = fork.stdout.strip() if fork.returncode == 0 else base
+
     differs = False
-    for path, spans in sorted(changed_lines(base).items()):
+    for path, spans in sorted(changed_lines(since).items()):
         # Bytes: line endings and encodings are compared as they are.
         source = Path(path).read_bytes()
         result = subprocess.run(
