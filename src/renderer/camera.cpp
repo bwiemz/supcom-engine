@@ -42,15 +42,14 @@ void Camera::update(GLFWwindow* window, f64 dt) {
     // Pan speed scales with zoom distance
     f32 pan_speed = distance_ * 0.8f * fdt;
 
-    // WASD + arrow key pan
-    bool up    = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS ||
-                 glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS;
-    bool down  = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS ||
-                 glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS;
-    bool left  = glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS ||
-                 glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS;
-    bool right = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS ||
-                 glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS;
+    // The arrow keys pan, as Moho's world view does (ui_ArrowKeysScrollView);
+    // the letters are retail's hotkeys (W zooms out, A attacks, S stops, D
+    // dives). Not while a control has the keyboard.
+    const auto key = [&](int k) { return keys_enabled_ && glfwGetKey(window, k) == GLFW_PRESS; };
+    bool up = key(GLFW_KEY_UP);
+    bool down = key(GLFW_KEY_DOWN);
+    bool left = key(GLFW_KEY_LEFT);
+    bool right = key(GLFW_KEY_RIGHT);
 
     // Mouse-edge scroll (cursor within EDGE_MARGIN pixels of window border)
     int win_w, win_h;

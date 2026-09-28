@@ -27,20 +27,13 @@ void submit_sim_callbacks(osc::sim::SimCallbackQueue& queue, osc::sim::SimState&
 /// hit-testable control under it is neither a WorldView (FA's world input
 /// surface) nor the root frame.
 bool mouse_over_ui(lua_State* uiL, osc::f64 x, osc::f64 y) {
-    lua_pushstring(uiL, "__osc_root_frame");
+    lua_pushstring(uiL, "osc_ui_registry");
     lua_rawget(uiL, LUA_REGISTRYINDEX);
-    osc::ui::UIControl* root = nullptr;
-    if (lua_istable(uiL, -1)) {
-        lua_pushstring(uiL, "_c_object");
-        lua_rawget(uiL, -2);
-        root = static_cast<osc::ui::UIControl*>(lua_touserdata(uiL, -1));
-        lua_pop(uiL, 1);
-    }
+    auto* registry = static_cast<osc::ui::UIControlRegistry*>(lua_touserdata(uiL, -1));
     lua_pop(uiL, 1);
-    if (!root) return false;
+    if (!registry) return false;
     osc::ui::UIDispatch dispatch;
-    auto* hit = dispatch.hit_test(uiL, root, x, y);
-    return hit && hit != root && !dynamic_cast<osc::ui::WorldView*>(hit);
+    return dispatch.ui_has_mouse(uiL, *registry, x, y);
 }
 
 // ── FA's command mode (/lua/ui/game/commandmode.lua) ──

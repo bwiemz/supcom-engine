@@ -76,6 +76,13 @@ public:
     f64 mouse_x() const { return mouse_x_; }
     f64 mouse_y() const { return mouse_y_; }
 
+    /// Whether the UI, not the world, has the mouse at (x, y): a control
+    /// other than the root frame or a world view is under it. Under an input
+    /// capture (a modal dialog, retail's opening lock) the mouse is the
+    /// capture's unless a world view in it is under the point, as Moho hit-
+    /// tests under the capture and never past it.
+    bool ui_has_mouse(lua_State* L, UIControlRegistry& registry, f64 x, f64 y);
+
     /// Find the topmost control at (x, y) via front-to-back tree walk.
     /// If \p skip is non-null, controls in that set are treated as invisible.
     UIControl* hit_test(lua_State* L, UIControl* root, f64 x, f64 y,

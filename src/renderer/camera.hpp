@@ -12,7 +12,8 @@ class Terrain;
 
 namespace osc::renderer {
 
-/// RTS-style orbit camera with WASD pan, scroll zoom, middle-mouse orbit.
+/// RTS-style orbit camera: arrow-key and screen-edge pan, scroll zoom,
+/// middle-mouse orbit.
 /// Produces a combined view-projection matrix as push constant data.
 class Camera {
 public:
@@ -56,6 +57,9 @@ public:
 
     /// When false, update() ignores keyboard and mouse (scripted captures).
     void set_input_enabled(bool enabled) { input_enabled_ = enabled; }
+    /// When false, the arrow keys don't pan: a UI control has the keyboard
+    /// (Moho's MAUI_KeyIsDown is false while one has focus).
+    void set_keys_enabled(bool enabled) { keys_enabled_ = enabled; }
 
     /// The ray from the eye through a screen pixel: `dir` has unit length.
     bool screen_ray(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h, f32 origin[3],
@@ -87,6 +91,7 @@ private:
     void decay_shake();
 
     bool input_enabled_ = true;
+    bool keys_enabled_ = true;
     // Look-at target on the ground: x/z where the player put it, y the
     // ground's height there
     f32 target_x_ = 0;

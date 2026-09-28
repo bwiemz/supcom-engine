@@ -5,6 +5,7 @@
 #include "ui/key_codes.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_layout.hpp"
+#include "ui/world_view.hpp"
 #include "core/test_status.hpp"
 
 #include <GLFW/glfw3.h>
@@ -283,6 +284,26 @@ UIControl* UIDispatch::hit_test(lua_State* L, UIControl* root, f64 x, f64 y,
     collect_hit(L, root, static_cast<f32>(x), static_cast<f32>(y), skip, best,
                 best_depth);
     return best;
+}
+
+bool UIDispatch::ui_has_mouse(lua_State* L, UIControlRegistry& registry, f64 x, f64 y) {
+    if (auto* capture = registry.input_capture()) {
+        auto* hit = hit_test(L, capture, x, y);
+        return !dynamic_cast<WorldView*>(hit);
+    }
+    lua_pushstring(L, "__osc_root_frame");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    UIControl* root = nullptr;
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, -2);
+        root = static_cast<UIControl*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    if (!root) return false;
+    auto* hit = hit_test(L, root, x, y);
+    return hit && hit != root && !dynamic_cast<WorldView*>(hit);
 }
 
 bool UIDispatch::fire_handle_event(lua_State* L, UIControl* ctrl,

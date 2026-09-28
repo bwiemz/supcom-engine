@@ -51,8 +51,9 @@ struct CommandModeHooks {
     std::function<void()> cancel;
 };
 
-/// Handles player input: unit selection, command dispatch, drag selection box,
-/// control groups (Ctrl+0-9), and camera bookmarks (Ctrl+Shift+0-9).
+/// Handles player input on the world: unit selection, command dispatch and
+/// the drag selection box. The keys are FA's key map's (control groups
+/// included).
 class InputHandler {
 public:
     /// Set which army the player controls (0-based).
@@ -136,8 +137,6 @@ public:
         x1 = drag_world_x1_; z1 = drag_world_z1_;
     }
 
-    static constexpr u32 NUM_GROUPS = 10; // 0-9
-
     /// Where the cursor at (mx, my) points on the ground: the terrain, or
     /// the water over it (M217a). Every click and drag resolves through it.
     static bool world_at(const Renderer& renderer, const sim::SimState& sim, f32 mx, f32 my,
@@ -169,24 +168,11 @@ private:
     bool rmb_on_ui_ = false;     // current right press began over the UI
     bool rmb_raw_prev_ = false;
 
-    // Control groups (Ctrl+0-9 to assign, 0-9 to recall)
-    std::array<std::unordered_set<u32>, NUM_GROUPS> control_groups_;
-    std::array<bool, NUM_GROUPS> number_was_pressed_{};
-
-    // Camera bookmarks (Ctrl+Shift+0-9 to save, Shift+0-9 to recall)
-    struct CameraBookmark {
-        f32 x = 0, z = 0;
-        bool valid = false;
-    };
-    std::array<CameraBookmark, NUM_GROUPS> camera_bookmarks_{};
-
     void handle_left_click(Renderer& renderer, sim::SimState& sim,
                            f32 mx, f32 my);
     void handle_drag_select(Renderer& renderer, sim::SimState& sim);
     void handle_right_click(Renderer& renderer, sim::SimState& sim,
                             f32 mx, f32 my);
-    void handle_groups_and_bookmarks(Renderer& renderer,
-                                     sim::SimState& sim);
 
     /// Find the nearest player-owned unit to a world XZ point within radius.
     u32 pick_unit(sim::SimState& sim, f32 wx, f32 wz, f32 radius) const;

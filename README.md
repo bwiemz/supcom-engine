@@ -45,7 +45,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
 - Radar jamming: RadarStealth/SonarStealth filtering, IsKnownFake (Omni reveals jammers), IsMaybeDead (no current intel), dead-reckoning position freeze for out-of-sight entities
 - Moho stub conversions: 111 stubs converted to real implementations across 5 milestones (M35 + M49-M51 + M65), covering brain events/utility, weapon fire/control/targeting, projectile collision/child spawning, platoon formation/targeting, damage/kill flags, command caps, movement/fuel/speed multipliers, navigator, elevation, rotation, visibility, scale, mesh override, collision shapes, attachment system, and more
 - Audio: XWB/XSB bank parsers, miniaudio backend, PlaySound/SetAmbientSound real implementations, 3D spatial audio
-- Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), team color via SpecTeam alpha mask (set=2 descriptor), water plane, RTS camera (WASD/scroll/orbit)
+- Vulkan renderer: terrain heightmap mesh, textured SCM mesh rendering (DDS BC1/BC2/BC3 with mipmaps), team color via SpecTeam alpha mask (set=2 descriptor), water plane, RTS camera (WASD/scroll/orbit; arrows only since M217e, when the letters went to FA's key map)
 - Bone system: SCM v5 mesh parser, per-blueprint bone cache, bone position/direction queries, ShowBone/HideBone, muzzle bone weapon fire
 - Manipulators: 4 real types (Rotate, Anim, Slide, Aim) with per-tick simulation, WaitFor coroutine synchronization, 28 moho method implementations, shortest-arc rotation
 - Armor system: per-unit armor types from blueprints, damage multipliers in all damage paths
@@ -113,7 +113,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
   - Interactive game loop: pause/resume, sim speed control (0.5x-10x), title bar stats display
   - Player input command pipeline: left-click unit selection, Shift+click additive selection, drag-box area selection, right-click move/attack commands, minimap click-to-jump
 - **Game HUD & Overlays (M97-M112):**
-  - Interactive RTS camera: arrow+WASD+mouse-edge scrolling, middle-mouse orbit, scroll-wheel zoom with acceleration, camera speed scales with altitude
+  - Interactive RTS camera: arrow+WASD+mouse-edge scrolling (WASD removed in M217e: FA's hotkeys), middle-mouse orbit, scroll-wheel zoom with acceleration, camera speed scales with altitude
   - Game overlays: health bars (green/yellow/red by HP fraction), selection rings (army-colored diamonds), command queue lines (8 command types with distinct colors), build progress bars, waypoint markers
   - Win/lose detection: EndGame/defeat checks, game-over banner overlay (victory/defeat/draw)
   - Minimap: heightmap texture rendering, army-colored unit dots, camera frustum outline, click-to-jump and drag-to-pan
@@ -121,8 +121,8 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
   - Resource economy HUD: mass/energy bars with fill+income indicators, format_number display, DrawGroup-based font switching
   - Selection info panel: single-unit (icon+name+HP bar) and multi-unit (grid of type-grouped icons with counts) display modes
   - Command queue visualization: full command chain lines, 8 command types with distinct colors, entity-targeted projection, waypoint markers
-  - Control groups: Ctrl+0-9 assign, 0-9 recall, dead unit pruning on recall
-  - Camera bookmarks: Ctrl+Shift+0-9 save, Shift+0-9 recall
+  - Control groups: Ctrl+0-9 assign, 0-9 recall, dead unit pruning on recall (replaced by FA's own groups in M217e)
+  - Camera bookmarks: Ctrl+Shift+0-9 save, Shift+0-9 recall (removed in M217e; FA binds those keys)
   - Beam rendering: construction/reclaim/repair/capture operation beams + CollisionBeam weapon beams (army-colored, AABB quad approximation)
   - Shield bubble rendering: projected 16-segment circle outline, army-colored, HP-based alpha, filled center quad
   - Veterancy indicators: gold chevron squares above health bars (capped at 5)
@@ -149,7 +149,7 @@ Over 166 milestones have been completed across the simulation, renderer, UI, and
   - Frustum culling: Gribb-Hartmann plane extraction from VP matrix, `is_sphere_visible()` per entity in UnitRenderer/OverlayRenderer/ParticleSystem
   - LOD mesh switching: LODEntry/LODSet structs, load LODs[1]-[4] from blueprints, distance-based mesh selection per entity
   - Death animations: `dying_` state with configurable duration, begin_dying() clears commands and sets do_not_target, tick_dying() countdown to wreckage
-  - Bloom post-processing: HDR render split, bright extract threshold, 9-tap separable Gaussian blur at half-res, additive composite, B key toggle
+  - Bloom post-processing: HDR render split, bright extract threshold, 9-tap separable Gaussian blur at half-res, additive composite, B key toggle (removed in M217e; B is FA's build mode)
 - **Single-Player Skirmish Infrastructure (M135-M152):**
   - WorldView: UIWorldView with camera control, Project() screen↔world coordinate mapping, IssueSim commands from UI
   - Command pipeline: SimCallback bridge between UI Lua VM and sim Lua VM, build placement with footprint snapping and validity checking
@@ -291,10 +291,15 @@ cheat variants `adaptivecheat`, `rushcheat`, `turtlecheat`, `techcheat`,
 `randomcheat`. Cheat personalities get 2x build rate and 2x income.
 
 Camera controls:
-- **WASD** — Pan camera (speed scales with zoom distance)
+- **Arrow keys**, or the mouse at the window's edge — Pan camera (speed scales
+  with zoom distance; not while a text box has the keyboard)
 - **Mouse scroll** — Zoom in/out
 - **Middle mouse drag** — Orbit camera
-- **ESC** — Close window
+
+The other keys are FA's own, from its key map (`keyNames.lua`,
+`defaultKeyMap.lua`): Esc for the menu, 1–0 and Ctrl-1 for control groups,
+M/A/S for move, attack and stop, Pause, NumPlus/NumMinus for game speed, and
+so on. Close the game from its menu or the window.
 
 The simulation runs at 10 Hz (fixed timestep) decoupled from the render framerate.
 

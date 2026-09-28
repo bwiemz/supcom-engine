@@ -600,6 +600,8 @@ std::optional<int> App::run_window() {
                 first_update_fired = true;
             }
 
+            // The arrow keys pan only while no control has the keyboard.
+            renderer.camera().set_keys_enabled(ui_registry.keyboard_focus() == nullptr);
             renderer.poll_events(dt);
 
             // Resume UI coroutines
