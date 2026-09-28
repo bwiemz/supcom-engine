@@ -336,6 +336,8 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.light_size = fx->light_size();
         r.thickness = static_cast<f32>(fx->get_param("THICKNESS"));
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
+        r.decal = fx->decal();
+        r.seen_by = fx->seen_by();
         capture_beam(sim, *fx, r);
         capture_anchor(sim, *fx, r);
         capture_frame(sim, *fx, r);

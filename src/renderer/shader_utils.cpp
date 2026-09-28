@@ -452,7 +452,83 @@ void main() {
 }
 )glsl";
 
+// Runtime splats (M212c): terrain.fx's SplatsPS. CalculateLighting with no
+// specular, by the terrain's normal; alpha the albedo's times the splat's
+// (its LOD fade and removal fade). No mask.
+const char* kSplatFragMain = R"glsl(
+layout(set = 2, binding = 0) uniform sampler2D splatAlbedo; // DecalAlbedoSampler: clamps
+
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
+layout(location = 3) in vec2 fragSplatUV;
+layout(location = 4) in float fragAlpha;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    vec2 mapSize = pc.mapAlpha.xy;
+    vec2 blendUV = fragWorldXZ / mapSize;
+    // The cache's sampler repeats: clamp as FA's decal sampler does.
+    vec2 edge = 0.5 / vec2(textureSize(splatAlbedo, 0));
+    vec4 albedo = texture(splatAlbedo, clamp(fragSplatUV, edge, 1.0 - edge));
+
+    // The terrain's normal under it (FA reads the terrain's normal buffer).
+    vec4 b0;
+    vec4 b1;
+    terrainMasks(blendUV, b0, b1);
+    vec3 worldNormal = terrainNormal(fragWorldXZ, fragNormal, b0, b1, mapSize);
+    vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
+    float shadow = calcShadow(worldPos);
+    float spec;
+    vec3 lit = lightTTerrain(albedo.rgb, 0.0, worldNormal, worldPos, pc.eye.xyz, shadow, spec);
+    lit = applyWaterColor(lit, blendUV);
+    lit = applyFogOfWar(lit, blendUV);
+    outColor = vec4(lit, albedo.a * fragAlpha);
+}
+)glsl";
+
 } // namespace
+
+const char* splat_frag() {
+    static const std::string source = std::string(kDecalPush) + kTerrainSurface + kSplatFragMain;
+    return source.c_str();
+}
+
+const char* splat_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec4 decalU;
+    vec4 decalV;
+    vec4 mapAlpha;
+    vec4 eye;
+} pc;
+
+// SplatsVS: a quad's corner on the terrain, its UV and its alpha.
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal; // the terrain's there
+layout(location = 2) in vec2 inUV;
+layout(location = 3) in float inAlpha;
+
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec2 fragWorldXZ;
+layout(location = 2) out float fragWorldY;
+layout(location = 3) out vec2 fragSplatUV;
+layout(location = 4) out float fragAlpha;
+
+void main() {
+    gl_Position = pc.viewProj * vec4(inPosition, 1.0);
+    // Rasterizer_Cull_None_Bias_Neg001: a depth bias of -0.001.
+    gl_Position.z += -0.001 * gl_Position.w;
+    fragNormal = inNormal;
+    fragWorldXZ = inPosition.xz;
+    fragWorldY = inPosition.y;
+    fragSplatUV = inUV;
+    fragAlpha = inAlpha;
+}
+)glsl";
 
 const char* terrain_frag() {
     static const std::string source =

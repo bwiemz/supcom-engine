@@ -27,6 +27,7 @@
 #include "sim/ieffect.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/world_snapshot.hpp"
+#include "sim/decal.hpp"
 #include "sim/unit.hpp"
 #include "sim/manipulator.hpp"
 #include "sim/prop.hpp"
@@ -42,6 +43,7 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -20136,16 +20138,24 @@ void test_emitter(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 9: result={}", v); }
     }
 
-    // Test 10: CreateSplat returns table
+    // Test 10: CreateSplat returns nothing, as Moho's does (M212c), and
+    // makes one
     {
+        const size_t before = ctx.sim.effect_registry().count();
         run_lua(R"(
             local pos = {100, 0, 100}
             local fx = CreateSplat(pos, 0, 'scorch_tex', 3, 3, 200, 10, 1)
-            rawset(_G, '_emtest10', (fx and type(fx) == 'table') and 'ok' or 'nil')
+            rawset(_G, '_emtest10', fx == nil and 'ok' or 'returned')
         )");
         auto v = check_result("_emtest10");
-        if (v == "ok") { pass++; spdlog::info("[PASS] Test 10: CreateSplat returns table"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 10: result={}", v); }
+        const bool made = ctx.sim.effect_registry().count() == before + 1;
+        if (v == "ok" && made) {
+            pass++;
+            spdlog::info("[PASS] Test 10: CreateSplat returns nothing, makes one");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 10: result={} made={}", v, made);
+        }
     }
 
     // Test 11: IEffectRegistry has effects from the session's Lua import chain
@@ -20647,23 +20657,37 @@ void test_decal_splat(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 1: result={}", v); }
     }
 
-    // Test 2: CreateDecal stores tex2 and shader type
+    // A decal's or splat's record (M212c): its footprint's middle, from its
+    // corner and turn.
+    const auto middle_of = [](const sim::DecalSpec& spec) {
+        const sim::DecalBounds b = sim::decal_bounds(spec);
+        return std::array<f32, 2>{(b.min_x + b.max_x) * 0.5f, (b.min_z + b.max_z) * 0.5f};
+    };
+    const auto find_spec = [&](sim::EffectType type,
+                               const std::string& texture) -> const sim::DecalSpec* {
+        for (auto& fx : ctx.sim.effect_registry().all())
+            if (fx && fx->type() == type && fx->decal() && fx->decal()->texture1 == texture)
+                return fx->decal().get();
+        return nullptr;
+    };
+
+    // Test 2: CreateDecal keeps its second texture and type, centred on its
+    // position (faf-re's CreateDecalFromTransform)
     {
-        // Verify via IEffect C++ state — the IEffect stores glow_texture (tex2)
-        // and ramp_texture (shader type)
-        auto& reg = ctx.sim.effect_registry();
-        bool found = false;
-        for (auto& fx : reg.all()) {
-            if (fx && fx->type() == sim::EffectType::DECAL &&
-                fx->blueprint_path() == "Crater01_albedo" &&
-                fx->glow_texture() == "Crater01_normals" &&
-                fx->ramp_texture() == "Albedo") {
-                found = true;
-                break;
-            }
+        const sim::DecalSpec* d = find_spec(sim::EffectType::DECAL, "Crater01_albedo");
+        const bool ok = d && d->texture2 == "Crater01_normals" && d->type == "Albedo" &&
+                        std::abs(middle_of(*d)[0] - 100.0f) < 0.01f &&
+                        std::abs(middle_of(*d)[1] - 200.0f) < 0.01f &&
+                        std::abs(d->rotation_y + 1.57f) < 1e-4f && d->size_x == 50.0f &&
+                        d->lod == 1200.0f && d->remove_tick == 0 && d->army == 0 &&
+                        d->fidelity == 1;
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 2: CreateDecal's record, centred on its position");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 2: the decal's record is wrong or missing");
         }
-        if (found) { pass++; spdlog::info("[PASS] Test 2: CreateDecal stores tex2/shader type"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 2: tex2/shader not found on IEffect"); }
     }
 
     // Test 3: CDecalHandle:Destroy works
@@ -20681,61 +20705,76 @@ void test_decal_splat(TestContext& ctx) {
         else { fail++; osc::test_status::fail("[FAIL] Test 3: result={}", v); }
     }
 
-    // Test 4: CreateSplat returns table (no handle needed for TrashBag, but M90 returns one)
+    // Test 4: CreateSplat returns nothing (cfunc_CreateSplatL), yet makes one
     {
         run_lua(R"(
             local pos = {200, 25, 300}
             local splat = CreateSplat(pos, 0.5, 'scorch_010_albedo', 11, 11, 250, 120, 1)
-            rawset(_G, '_dstest4', (type(splat) == 'table' and splat._c_effect_id ~= nil) and 'ok' or 'bad')
+            rawset(_G, '_dstest4', splat == nil and 'ok' or 'bad')
         )");
         auto v = check_result("_dstest4");
-        if (v == "ok") { pass++; spdlog::info("[PASS] Test 4: CreateSplat returns table"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 4: result={}", v); }
-    }
-
-    // Test 5: CreateSplat stores position correctly
-    {
-        bool found = false;
-        for (auto& fx : ctx.sim.effect_registry().all()) {
-            if (fx && fx->type() == sim::EffectType::SPLAT &&
-                fx->blueprint_path() == "scorch_010_albedo" &&
-                std::abs(fx->offset_x() - 200.0f) < 1.0f &&
-                std::abs(fx->offset_z() - 300.0f) < 1.0f) {
-                found = true;
-                break;
-            }
+        const bool made = find_spec(sim::EffectType::SPLAT, "scorch_010_albedo") != nullptr;
+        if (v == "ok" && made) {
+            pass++;
+            spdlog::info("[PASS] Test 4: CreateSplat returns nothing and makes one");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 4: result={} made={}", v, made);
         }
-        if (found) { pass++; spdlog::info("[PASS] Test 5: CreateSplat stores position"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 5: splat position not found"); }
     }
 
-    // Test 6: CreateSplatOnBone creates effect with entity reference
+    // Test 5: CreateSplat is centred on its position
+    {
+        const sim::DecalSpec* d = find_spec(sim::EffectType::SPLAT, "scorch_010_albedo");
+        const bool ok = d && d->splat && std::abs(middle_of(*d)[0] - 200.0f) < 0.01f &&
+                        std::abs(middle_of(*d)[1] - 300.0f) < 0.01f &&
+                        d->remove_tick == ctx.sim.tick_count() + 1200;
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 5: CreateSplat centred on its position, 120 s");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 5: splat record wrong or missing");
+        }
+    }
+
+    // Test 6: CreateSplatOnBone returns nothing, and makes one
     {
         run_lua(R"(
             local unit = rawget(_G, '_dstest_unit')
             if not unit then rawset(_G, '_dstest6', 'no_unit'); return end
             local offset = {0, 0, 0}
             local splat = CreateSplatOnBone(unit, offset, 0, 'czar_mark01_albedo', 5, 5, 100, 70, 1)
-            rawset(_G, '_dstest6', (type(splat) == 'table' and splat._c_effect_id ~= nil) and 'ok' or 'bad')
+            rawset(_G, '_dstest6', splat == nil and 'ok' or 'bad')
         )");
         auto v = check_result("_dstest6");
-        if (v == "ok") { pass++; spdlog::info("[PASS] Test 6: CreateSplatOnBone returns table"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 6: result={}", v); }
+        if (v == "ok") {
+            pass++;
+            spdlog::info("[PASS] Test 6: CreateSplatOnBone returns nothing");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 6: result={}", v);
+        }
     }
 
-    // Test 7: CreateSplatOnBone stores entity_id
+    // Test 7: CreateSplatOnBone lies at its bone, turned by it
     {
-        bool found = false;
-        for (auto& fx : ctx.sim.effect_registry().all()) {
-            if (fx && fx->type() == sim::EffectType::SPLAT &&
-                fx->blueprint_path() == "czar_mark01_albedo" &&
-                fx->entity_id() > 0) {
-                found = true;
-                break;
-            }
+        const sim::DecalSpec* d = find_spec(sim::EffectType::SPLAT, "czar_mark01_albedo");
+        bool ok = false;
+        ctx.sim.entity_registry().for_each([&](sim::Entity& e) {
+            if (ok || !d || !e.is_unit() || e.destroyed()) return;
+            const auto& unit = static_cast<const sim::Unit&>(e);
+            const sim::Vector3 bone = unit.bone_world_position(0);
+            ok = std::abs(middle_of(*d)[0] - bone.x) < 0.01f &&
+                 std::abs(middle_of(*d)[1] - bone.z) < 0.01f;
+        });
+        if (ok) {
+            pass++;
+            spdlog::info("[PASS] Test 7: CreateSplatOnBone lies at its bone");
+        } else {
+            fail++;
+            osc::test_status::fail("[FAIL] Test 7: bone splat not at its bone");
         }
-        if (found) { pass++; spdlog::info("[PASS] Test 7: CreateSplatOnBone stores entity_id"); }
-        else { fail++; osc::test_status::fail("[FAIL] Test 7: bone splat entity_id not found"); }
     }
 
     // Test 8: Effect count increased

@@ -22,6 +22,7 @@
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/particle_renderer.hpp"
+#include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
@@ -171,6 +172,8 @@ public:
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     bool bloom_enabled() const { return bloom_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
+    /// The runtime decals and splats (M212c), as the last frame drew them.
+    const RuntimeDecalRenderer& runtime_decals() const { return runtime_decals_; }
     const MinimapRenderer& minimap() const { return minimap_renderer_; }
 
     /// --legacy-hud: keep drawing the engine's C++ HUD placeholders (economy
@@ -429,6 +432,7 @@ private:
     // Particle system
     ParticleSystem particle_system_;
     ParticleRenderer particle_renderer_;
+    RuntimeDecalRenderer runtime_decals_; // scripts' decals and splats (M212c)
     EmitterBlueprintCache emitter_bp_cache_;
     /// The map build_scene drew (its water, for particles; M214c).
     const map::Terrain* terrain_ = nullptr;

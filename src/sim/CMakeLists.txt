@@ -36,6 +36,7 @@ add_library(osc_sim STATIC
     net_transport.cpp
     sim_state.cpp
     work_range.cpp
+    decal.cpp
     world_snapshot.cpp
     command_codec.cpp
     game_setup.cpp

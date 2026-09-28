@@ -52,6 +52,8 @@ add_executable(osc_tests
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
     test_recon_view.cpp
+    test_decal.cpp
+    test_runtime_decals.cpp
     test_dds_parser.cpp
     test_color.cpp
     test_lod.cpp

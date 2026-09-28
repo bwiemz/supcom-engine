@@ -2,6 +2,7 @@
 #include "sim/steering.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "sim/collision_beam.hpp"
+#include "sim/decal.hpp"
 #include "sim/platoon.hpp"
 #include "sim/formation.hpp"
 #include "sim/build_info.hpp"
@@ -425,6 +426,48 @@ ArmyBrain* SimState::get_army_by_name(const std::string& name) {
 void SimState::set_alliance(i32 army1, i32 army2, Alliance alliance) {
     if (auto* a1 = get_army(army1)) a1->set_alliance(army2, alliance);
     if (auto* a2 = get_army(army2)) a2->set_alliance(army1, alliance);
+}
+
+namespace {
+
+/// The armies as the decals' sight rules ask about them (M212c): "can
+/// detect" is some cell of the army's sight grid in the decal's bounds in
+/// its line of sight now (the grid already holds its allies' sight).
+class SimDecalArmies final : public DecalArmies {
+public:
+    explicit SimDecalArmies(const SimState& sim) : sim_(sim) {}
+    size_t count() const override { return sim_.army_count(); }
+    bool exists(size_t index) const override { return sim_.army_at(index) != nullptr; }
+    bool civilian(size_t index) const override {
+        const ArmyBrain* brain = sim_.army_at(index);
+        return brain && brain->is_civilian();
+    }
+    bool allied(size_t army, size_t other) const override {
+        return sim_.is_ally(static_cast<i32>(army), static_cast<i32>(other));
+    }
+    bool detects(size_t observer, const DecalBounds& rect, f32 /*y*/) const override {
+        const map::VisibilityGrid* grid = sim_.visibility_grid();
+        return grid && grid->any_vision(rect.min_x, rect.min_z, rect.max_x, rect.max_z,
+                                        static_cast<u32>(observer));
+    }
+
+private:
+    const SimState& sim_;
+};
+
+} // namespace
+
+u32 SimState::decal_sight(const DecalSpec& spec) const {
+    return decal_sight_at_creation(spec, SimDecalArmies(*this));
+}
+
+void SimState::update_decal_sight() {
+    const SimDecalArmies armies(*this);
+    for (const auto& fx : effect_registry_.all()) {
+        if (!fx || fx->destroyed() || !fx->decal()) continue;
+        fx->set_seen_by(decal_sight_on_tick(*fx->decal(), fx->seen_by(), fx->created_tick(),
+                                            tick_count_, armies));
+    }
 }
 
 bool SimState::is_ally(i32 army1, i32 army2) const {
@@ -1016,6 +1059,7 @@ void SimState::tick() {
     reap_empty_platoons();
 
     update_visibility();
+    update_decal_sight();
     feed_influence_map();
 
     // --- Victory-condition enforcement (mode + team aware) ---
