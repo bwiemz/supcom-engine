@@ -2,6 +2,7 @@
 // UI's frames (M192 step 2b, moved from run()).
 
 #include "app/app_internal.hpp"
+#include "app/window_commands.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
 #include "core/profiler.hpp"
@@ -45,6 +46,25 @@ std::optional<int> App::run_window() {
                                    !parse_string_arg(argc, argv, "--golden", "").empty() ||
                                    opt.scripted_window;
     if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
+        // A player's window opens as FA's command line and options say
+        // (M217h); captures and scripted checks keep their fixed 1600x900.
+        bool adapter_overridden = false;
+        // The UI's root frame: the size the window was asked for, until its
+        // swapchain has it (the resize lands a frame or more later), then the
+        // swapchain's (review: the boot laid the front end out at 1600x900)
+        u32 root_width = renderer.width();
+        u32 root_height = renderer.height();
+        if (!offscreen_capture) {
+            const std::vector<std::string> args(argv, argv + argc);
+            const WindowMode mode = open_window(renderer, args, prefs);
+            adapter_overridden = mode.overridden;
+            root_width = mode.size.width;
+            root_height = mode.size.height;
+        }
+        register_window_commands(console, prefs, adapter_overridden);
+        std::vector<Resolution> display_modes;
+        for (const auto& m : renderer.display_modes()) display_modes.push_back({m[0], m[1], m[2]});
+
         // Build 3D scene if we have a sim state (--map was provided)
         if (sim_state) {
             // Blueprints through the UI state's store, whose tables are the
@@ -88,6 +108,10 @@ std::optional<int> App::run_window() {
             lua_pushstring(uL, "__osc_hover_entity_id");
             lua_pushnumber(uL, 0);
             lua_rawset(uL, LUA_REGISTRYINDEX);
+            // The UI's root frame is the window's, and the options screen
+            // lists the display's modes (M217h)
+            size_root_frame(uL, root_width, root_height);
+            publish_adapter_options(uL, display_modes, adapter_overridden);
         };
         publish_window_objects();
 
@@ -382,6 +406,12 @@ std::optional<int> App::run_window() {
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
                !replay_flow_done && !load_flow_done) {
             osc::Profiler::instance().begin_frame();
+            // A resized window: the UI's root frame follows it (M217h)
+            if (renderer.take_resized()) {
+                root_width = renderer.width();
+                root_height = renderer.height();
+                size_root_frame(ui_lua_state.raw(), root_width, root_height);
+            }
             auto now = std::chrono::high_resolution_clock::now();
             double dt = std::chrono::duration<double>(now - prev_time).count();
             prev_time = now;
@@ -975,6 +1005,11 @@ std::optional<int> App::run_window() {
         }
 
         save_last_game(); // quitting leaves the game being played
+        if (!offscreen_capture) {
+            // Where and how big the window was, for the next start (M217h)
+            save_window_geometry(prefs, renderer);
+            prefs.save();
+        }
         renderer.shutdown();
         if (opt.load_flow_test) {
             // The first save resumes at its tick, the one saved in the game

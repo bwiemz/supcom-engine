@@ -1,4 +1,5 @@
 #include "renderer/camera.hpp"
+#include "core/cursor.hpp"
 
 #include "map/heightmap.hpp"
 #include "map/terrain.hpp"
@@ -644,8 +645,18 @@ void Camera::update(GLFWwindow* window, f64 dt) {
     f64 mx = 0;
     f64 my = 0;
     glfwGetCursorPos(window, &mx, &my);
-    in.mouse_x = static_cast<f32>(mx);
-    in.mouse_y = static_cast<f32>(my);
+    {
+        // The pointer in framebuffer pixels, the viewport's units (M217h)
+        int ww = 0;
+        int wh = 0;
+        int fw = 0;
+        int fh = 0;
+        glfwGetWindowSize(window, &ww, &wh);
+        glfwGetFramebufferSize(window, &fw, &fh);
+        const auto p = core::to_framebuffer(mx, my, ww, wh, fw, fh);
+        in.mouse_x = static_cast<f32>(p[0]);
+        in.mouse_y = static_cast<f32>(p[1]);
+    }
     // The edges only while the pointer is over the window: a focused window
     // whose cursor is elsewhere reports a stale position
     if (glfwGetWindowAttrib(window, GLFW_FOCUSED) && glfwGetWindowAttrib(window, GLFW_HOVERED)) {
