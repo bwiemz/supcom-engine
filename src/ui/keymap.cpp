@@ -1,232 +1,179 @@
 #include "ui/keymap.hpp"
 
+#include "ui/key_codes.hpp"
+
 #include <GLFW/glfw3.h>
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
+
+#include <cctype>
+#include <vector>
 
 extern "C" {
 #include <lua.h>
-#include <lauxlib.h>
 }
 
 namespace osc::ui {
 
-void KeyMapRegistry::add(lua_State* L, int table_idx) {
-    // Normalize negative index
-    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+namespace {
 
-    KeyMapTable kmt;
-    kmt.table_ptr = lua_topointer(L, table_idx);
-
-    // Store a registry ref to the original table
-    lua_pushvalue(L, table_idx);
-    kmt.table_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    // Iterate the Lua table: keys are key name strings, values are either
-    // functions directly or tables with an "action" function field.
-    lua_pushnil(L);
-    while (lua_next(L, table_idx) != 0) {
-        // key at -2, value at -1
-        if (lua_type(L, -2) == LUA_TSTRING) {
-            const char* key_str = lua_tostring(L, -2);
-            std::string key_name(key_str);
-
-            KeyBinding binding;
-            binding.key_name = key_name;
-
-            if (lua_isfunction(L, -1)) {
-                // Value is a function directly
-                lua_pushvalue(L, -1);
-                binding.action_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-                binding.action_name = key_name;
-            } else if (lua_istable(L, -1)) {
-                // Value is a table with an "action" field
-                lua_pushstring(L, "action");
-                lua_rawget(L, -2);
-                if (lua_isfunction(L, -1)) {
-                    binding.action_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-                    binding.action_name = key_name;
-                } else {
-                    // Try string action name for debug info
-                    if (lua_type(L, -1) == LUA_TSTRING) {
-                        binding.action_name = lua_tostring(L, -1);
-                    }
-                    lua_pop(L, 1);
-                }
-            }
-
-            if (binding.action_ref >= 0) {
-                kmt.bindings.push_back(std::move(binding));
-            }
-        }
-
-        lua_pop(L, 1); // pop value, keep key for lua_next
-    }
-
-    spdlog::debug("KeyMapRegistry: added table with {} bindings", kmt.bindings.size());
-    tables_.push_back(std::move(kmt));
-}
-
-void KeyMapRegistry::remove_by_ref(lua_State* L, int table_idx) {
-    // Normalize negative index
-    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
-
-    const void* ptr = lua_topointer(L, table_idx);
-
-    for (auto it = tables_.begin(); it != tables_.end(); ++it) {
-        if (it->table_ptr == ptr) {
-            // Unref all action bindings
-            for (auto& b : it->bindings) {
-                if (b.action_ref >= 0) {
-                    luaL_unref(L, LUA_REGISTRYINDEX, b.action_ref);
-                }
-            }
-            // Unref the table itself
-            if (it->table_ref >= 0) {
-                luaL_unref(L, LUA_REGISTRYINDEX, it->table_ref);
-            }
-            spdlog::debug("KeyMapRegistry: removed table with {} bindings",
-                          it->bindings.size());
-            tables_.erase(it);
-            return;
-        }
-    }
-
-    spdlog::warn("KeyMapRegistry: remove_by_ref called but table not found");
-}
-
-int KeyMapRegistry::find_action(const std::string& key_name) const {
-    // Search last-to-first (later-added tables take priority)
-    for (int i = static_cast<int>(tables_.size()) - 1; i >= 0; --i) {
-        for (const auto& b : tables_[i].bindings) {
-            if (b.key_name == key_name) {
-                return b.action_ref;
-            }
-        }
-    }
-    return LUA_NOREF;
-}
-
-bool KeyMapRegistry::dispatch(lua_State* L, const std::string& key_name) {
-    int ref = find_action(key_name);
-    if (ref < 0) return false;
-
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    if (!lua_isfunction(L, -1)) {
-        lua_pop(L, 1);
-        return false;
-    }
-
-    if (lua_pcall(L, 0, 0, 0) != 0) {
-        spdlog::warn("KeyMapRegistry: dispatch error for '{}': {}",
-                     key_name, lua_tostring(L, -1));
-        lua_pop(L, 1);
-        // Key was consumed (binding existed) even though handler errored
-    }
-
+bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
     return true;
 }
 
-void KeyMapRegistry::clear(lua_State* L) {
-    for (auto& kmt : tables_) {
-        for (auto& b : kmt.bindings) {
-            if (b.action_ref >= 0) {
-                luaL_unref(L, LUA_REGISTRYINDEX, b.action_ref);
-            }
-        }
-        if (kmt.table_ref >= 0) {
-            luaL_unref(L, LUA_REGISTRYINDEX, kmt.table_ref);
-        }
+/// gpg::STR_Xtoi: the leading hex digits (after an optional 0x) as a number.
+u32 hex_to_u32(std::string_view s) {
+    if (s.size() >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s.remove_prefix(2);
+    u32 v = 0;
+    for (char c : s) {
+        int d;
+        if (c >= '0' && c <= '9') d = c - '0';
+        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+        else break;
+        v = v * 16 + static_cast<u32>(d);
+        if (v > 0xFFFFFF) break; // far out of range already
     }
-    tables_.clear();
-    spdlog::debug("KeyMapRegistry: cleared all tables");
+    return v;
 }
 
-std::string KeyMapRegistry::glfw_to_key_name(int glfw_key, int mods) {
-    // Skip bare modifier key presses — no actionable key name
-    if (glfw_key == GLFW_KEY_LEFT_SHIFT || glfw_key == GLFW_KEY_RIGHT_SHIFT ||
-        glfw_key == GLFW_KEY_LEFT_CONTROL || glfw_key == GLFW_KEY_RIGHT_CONTROL ||
-        glfw_key == GLFW_KEY_LEFT_ALT || glfw_key == GLFW_KEY_RIGHT_ALT ||
-        glfw_key == GLFW_KEY_LEFT_SUPER || glfw_key == GLFW_KEY_RIGHT_SUPER) {
-        return {};
-    }
+/// A table key as text (a string, or a number as Lua writes it).
+bool key_text(lua_State* L, int idx, std::string& out) {
+    if (lua_type(L, idx) != LUA_TSTRING && lua_type(L, idx) != LUA_TNUMBER) return false;
+    lua_pushvalue(L, idx); // lua_tostring converts in place; leave the key alone
+    out = lua_tostring(L, -1);
+    lua_pop(L, 1);
+    return true;
+}
 
-    std::string name;
+} // namespace
 
-    // Modifier prefixes
-    if (mods & GLFW_MOD_CONTROL) name += "Ctrl-";
-    if (mods & GLFW_MOD_SHIFT)   name += "Shift-";
-    if (mods & GLFW_MOD_ALT)     name += "Alt-";
+KeyMapRegistry::KeyMapRegistry() {
+    for (u32 code = 0; code < names_.size(); ++code)
+        names_[code] = fmt::format("Unknown{:02X}", code);
+}
 
-    // Map GLFW key codes to FA-style key name strings
-    // Letters A-Z
-    if (glfw_key >= GLFW_KEY_A && glfw_key <= GLFW_KEY_Z) {
-        name += static_cast<char>('A' + (glfw_key - GLFW_KEY_A));
+void KeyMapRegistry::set_key_names(lua_State* L, int table_idx) {
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    if (!lua_istable(L, table_idx)) {
+        spdlog::warn("CUIKeyHandler::SetKeyNameTable wasn't passed a table");
+        return;
     }
-    // Digits 0-9
-    else if (glfw_key >= GLFW_KEY_0 && glfw_key <= GLFW_KEY_9) {
-        name += static_cast<char>('0' + (glfw_key - GLFW_KEY_0));
+    std::string key;
+    lua_pushnil(L);
+    while (lua_next(L, table_idx) != 0) {
+        if (key_text(L, -2, key) && lua_type(L, -1) == LUA_TSTRING) {
+            const u32 code = hex_to_u32(key);
+            if (code > 0xFF)
+                spdlog::warn(
+                    "CUIKeyHandler::SetKeyNameTable found incorrect key code in key names: {}",
+                    key);
+            else names_[code] = lua_tostring(L, -1);
+        }
+        lua_pop(L, 1);
     }
-    // Function keys F1-F12
-    else if (glfw_key >= GLFW_KEY_F1 && glfw_key <= GLFW_KEY_F12) {
-        name += "F" + std::to_string(glfw_key - GLFW_KEY_F1 + 1);
+}
+
+i32 KeyMapRegistry::parse(std::string_view spec) const {
+    if (spec.empty()) return 0;
+    std::vector<std::string_view> tokens;
+    size_t pos = 0;
+    while (pos <= spec.size()) {
+        const size_t dash = spec.find('-', pos);
+        const std::string_view token =
+            spec.substr(pos, dash == std::string_view::npos ? spec.npos : dash - pos);
+        if (!token.empty()) tokens.push_back(token);
+        if (dash == std::string_view::npos) break;
+        pos = dash + 1;
     }
-    // Named keys
-    else {
-        switch (glfw_key) {
-        case GLFW_KEY_ESCAPE:       name += "Escape"; break;
-        case GLFW_KEY_SPACE:        name += "Space"; break;
-        case GLFW_KEY_ENTER:        name += "Enter"; break;
-        case GLFW_KEY_TAB:          name += "Tab"; break;
-        case GLFW_KEY_DELETE:       name += "Delete"; break;
-        case GLFW_KEY_BACKSPACE:    name += "Backspace"; break;
-        case GLFW_KEY_INSERT:       name += "Insert"; break;
-        case GLFW_KEY_HOME:         name += "Home"; break;
-        case GLFW_KEY_END:          name += "End"; break;
-        case GLFW_KEY_PAGE_UP:      name += "PageUp"; break;
-        case GLFW_KEY_PAGE_DOWN:    name += "PageDown"; break;
-        case GLFW_KEY_UP:           name += "Up"; break;
-        case GLFW_KEY_DOWN:         name += "Down"; break;
-        case GLFW_KEY_LEFT:         name += "Left"; break;
-        case GLFW_KEY_RIGHT:        name += "Right"; break;
-        case GLFW_KEY_PAUSE:        name += "Pause"; break;
-        case GLFW_KEY_PRINT_SCREEN: name += "PrintScreen"; break;
-        case GLFW_KEY_NUM_LOCK:     name += "NumLock"; break;
-        case GLFW_KEY_CAPS_LOCK:    name += "CapsLock"; break;
-        case GLFW_KEY_SCROLL_LOCK:  name += "ScrollLock"; break;
-        case GLFW_KEY_KP_0:         name += "Numpad0"; break;
-        case GLFW_KEY_KP_1:         name += "Numpad1"; break;
-        case GLFW_KEY_KP_2:         name += "Numpad2"; break;
-        case GLFW_KEY_KP_3:         name += "Numpad3"; break;
-        case GLFW_KEY_KP_4:         name += "Numpad4"; break;
-        case GLFW_KEY_KP_5:         name += "Numpad5"; break;
-        case GLFW_KEY_KP_6:         name += "Numpad6"; break;
-        case GLFW_KEY_KP_7:         name += "Numpad7"; break;
-        case GLFW_KEY_KP_8:         name += "Numpad8"; break;
-        case GLFW_KEY_KP_9:         name += "Numpad9"; break;
-        case GLFW_KEY_KP_ADD:       name += "NumpadPlus"; break;
-        case GLFW_KEY_KP_SUBTRACT:  name += "NumpadMinus"; break;
-        case GLFW_KEY_KP_MULTIPLY:  name += "NumpadStar"; break;
-        case GLFW_KEY_KP_DIVIDE:    name += "NumpadSlash"; break;
-        case GLFW_KEY_KP_DECIMAL:   name += "NumpadDot"; break;
-        case GLFW_KEY_KP_ENTER:     name += "NumpadEnter"; break;
-        case GLFW_KEY_MINUS:        name += "Minus"; break;
-        case GLFW_KEY_EQUAL:        name += "Equals"; break;
-        case GLFW_KEY_LEFT_BRACKET: name += "LBracket"; break;
-        case GLFW_KEY_RIGHT_BRACKET:name += "RBracket"; break;
-        case GLFW_KEY_SEMICOLON:    name += "Semicolon"; break;
-        case GLFW_KEY_APOSTROPHE:   name += "Apostrophe"; break;
-        case GLFW_KEY_COMMA:        name += "Comma"; break;
-        case GLFW_KEY_PERIOD:       name += "Period"; break;
-        case GLFW_KEY_SLASH:        name += "Slash"; break;
-        case GLFW_KEY_BACKSLASH:    name += "Backslash"; break;
-        case GLFW_KEY_GRAVE_ACCENT: name += "Grave"; break;
-        default:
-            name += "Key" + std::to_string(glfw_key);
+    if (tokens.empty()) return -1;
+    // The last token is the key.
+    i32 mask = -1;
+    for (u32 code = 0; code < names_.size(); ++code) {
+        if (iequals(names_[code], tokens.back())) {
+            mask = static_cast<i32>(code);
             break;
         }
     }
+    for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+        if (iequals(tokens[i], "SHIFT")) mask |= static_cast<i32>(kShift);
+        else if (iequals(tokens[i], "CTRL")) mask |= static_cast<i32>(kCtrl);
+        else if (iequals(tokens[i], "ALT")) mask |= static_cast<i32>(kAlt);
+        else spdlog::warn("Key map contains unrecognized modifier string: {}", tokens[i]);
+    }
+    return mask;
+}
 
-    return name;
+void KeyMapRegistry::add(lua_State* L, int table_idx) {
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    if (!lua_istable(L, table_idx)) {
+        spdlog::warn("CUIKeyHandler::AddKeyMapTable requires a table");
+        return;
+    }
+    std::string key;
+    lua_pushnil(L);
+    while (lua_next(L, table_idx) != 0) {
+        if (key_text(L, -2, key)) {
+            const u32 chord = static_cast<u32>(parse(key));
+            std::string action;
+            bool repeat = false;
+            if (lua_istable(L, -1)) {
+                lua_pushstring(L, "action");
+                lua_gettable(L, -2);
+                if (lua_type(L, -1) == LUA_TSTRING || lua_type(L, -1) == LUA_TNUMBER)
+                    action = lua_tostring(L, -1);
+                lua_pop(L, 1);
+                lua_pushstring(L, "keyRepeat");
+                lua_gettable(L, -2);
+                repeat = lua_toboolean(L, -1) != 0;
+                lua_pop(L, 1);
+            }
+            actions_[chord] = std::move(action);
+            if (repeat) repeats_.insert(chord);
+        }
+        lua_pop(L, 1);
+    }
+}
+
+void KeyMapRegistry::remove(lua_State* L, int table_idx) {
+    if (table_idx < 0) table_idx = lua_gettop(L) + table_idx + 1;
+    if (!lua_istable(L, table_idx)) {
+        spdlog::warn("CUIKeyHandler::RemoveKeyMapTable requires a table");
+        return;
+    }
+    std::string key;
+    lua_pushnil(L);
+    while (lua_next(L, table_idx) != 0) {
+        if (key_text(L, -2, key)) {
+            const u32 chord = static_cast<u32>(parse(key));
+            actions_.erase(chord);
+            repeats_.erase(chord);
+        }
+        lua_pop(L, 1);
+    }
+}
+
+void KeyMapRegistry::clear() {
+    actions_.clear();
+    repeats_.clear();
+}
+
+u32 KeyMapRegistry::chord(i32 glfw_key, i32 glfw_mods) {
+    u32 c = static_cast<u32>(windows_key_code(glfw_key));
+    if (glfw_mods & GLFW_MOD_SHIFT) c |= kShift;
+    if (glfw_mods & GLFW_MOD_CONTROL) c |= kCtrl;
+    if (glfw_mods & GLFW_MOD_ALT) c |= kAlt;
+    return c;
+}
+
+const std::string* KeyMapRegistry::action(u32 chord) const {
+    const auto it = actions_.find(chord);
+    return it == actions_.end() ? nullptr : &it->second;
 }
 
 } // namespace osc::ui

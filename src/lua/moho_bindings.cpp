@@ -9,6 +9,7 @@
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/lan_dialog_ui.hpp"
+#include "ui/console.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_bindings.hpp"
@@ -66,6 +67,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <initializer_list>
 #include <string_view>
 #include <vector>
 #include <spdlog/spdlog.h>
@@ -2713,7 +2715,8 @@ static int l_GetUnitById(lua_State* L) {
 }
 
 
-/// IN_AddKeyMapTable(keymap) — register a key map table for hotkey dispatch.
+/// IN_AddKeyMapTable(keymap): each key's action (a console command) into
+/// the key map, over any the key had.
 static int l_IN_AddKeyMapTable(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     lua_pushstring(L, "__osc_keymap_registry");
@@ -2724,14 +2727,14 @@ static int l_IN_AddKeyMapTable(lua_State* L) {
     return 0;
 }
 
-/// IN_RemoveKeyMapTable(keymap) — unregister a previously added key map table.
+/// IN_RemoveKeyMapTable(keymap): the table's keys are unbound.
 static int l_IN_RemoveKeyMapTable(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     lua_pushstring(L, "__osc_keymap_registry");
     lua_rawget(L, LUA_REGISTRYINDEX);
     auto* reg = static_cast<osc::ui::KeyMapRegistry*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    if (reg) reg->remove_by_ref(L, 1);
+    if (reg) reg->remove(L, 1);
     return 0;
 }
 
@@ -3340,42 +3343,160 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
 // Speed/pause control bindings (M145d)
 // ====================================================================
 
-/// SetGameSpeed(speed) — set sim speed multiplier (0.0-10.0)
+/// SetGameSpeed(rate): the sim rate (Moho's: an integer game speed, -10 to
+/// +50; retail's cutscenes set 0, normal speed).
 static int l_SetGameSpeed(lua_State* L) {
-    auto* mgr = get_game_state_mgr(L);
-    if (mgr) {
-        f64 speed = luaL_checknumber(L, 1);
-        mgr->set_speed(speed);
-        spdlog::debug("SetGameSpeed: {:.2f}", speed);
-    }
+    if (auto* mgr = get_game_state_mgr(L))
+        mgr->set_sim_rate(static_cast<i32>(luaL_checknumber(L, 1)));
     return 0;
 }
 
-/// GetGameSpeed() → number (current speed multiplier)
+/// GetGameSpeed() -> the sim rate.
 static int l_GetGameSpeed(lua_State* L) {
     auto* mgr = get_game_state_mgr(L);
-    lua_pushnumber(L, mgr ? mgr->speed() : 1.0);
+    lua_pushnumber(L, mgr ? mgr->sim_rate() : 0);
     return 1;
 }
 
-/// ConExecute(cmd) — execute a console command string
+static ui::Console* get_console(lua_State* L) {
+    lua_pushstring(L, "__osc_console");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* console = static_cast<ui::Console*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return console;
+}
+
+/// ConExecute(line) / ConExecuteSave(line): run a console line (Moho's
+/// CON_Execute; the engine keeps no history to save it to).
 static int l_ConExecute(lua_State* L) {
-    const char* cmd = luaL_checkstring(L, 1);
-    std::string s(cmd);
-    if (s.rfind("WLD_GameSpeed", 0) == 0) {
-        auto* mgr = get_game_state_mgr(L);
-        if (mgr) {
-            f64 speed = 1.0;
-            if (s.size() > 14) {
-                try { speed = std::stod(s.substr(14)); }
-                catch (...) { spdlog::warn("ConExecute: invalid speed in '{}'", cmd); }
-            }
-            mgr->set_speed(speed);
-        }
-    } else {
-        spdlog::debug("ConExecute: '{}' (unhandled)", cmd);
-    }
+    const char* line = luaL_checkstring(L, 1);
+    if (auto* console = get_console(L)) console->execute(L, line);
     return 0;
+}
+
+/// Call `module`'s function `fn` with string arguments, in the UI state,
+/// warning if it fails.
+static void call_module_function(lua_State* L, const char* module, const char* fn,
+                                 std::initializer_list<std::string_view> args) {
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    lua_pushstring(L, module);
+    if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("Error running '{}:{}': the module didn't load", module, fn);
+        lua_settop(L, top);
+        return;
+    }
+    lua_pushstring(L, fn);
+    lua_gettable(L, -2);
+    for (const auto& a : args) lua_pushlstring(L, a.data(), a.size());
+    if (lua_pcall(L, static_cast<int>(args.size()), 0, 0) != 0)
+        spdlog::warn("Error running '{}:{}': {}", module, fn, lua_tostring(L, -1));
+    lua_settop(L, top);
+}
+
+void register_console_commands(ui::Console& console) {
+    using Args = std::vector<std::string>;
+    // UI_Lua code...: the tokens after the name, joined by spaces, run in
+    // the UI state.
+    console.add("UI_Lua", [](lua_State* L, const Args& args) {
+        if (args.size() < 2) return;
+        std::string code;
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (i > 1) code += ' ';
+            code += args[i];
+        }
+        if (luaL_loadbuffer(L, code.data(), code.size(), "UI_Lua") != 0 ||
+            lua_pcall(L, 0, 0, 0) != 0) {
+            spdlog::warn("UI_Lua: {}", lua_tostring(L, -1));
+            lua_pop(L, 1);
+        }
+    });
+    console.add("UI_MakeSelectionSet", [](lua_State* L, const Args& args) {
+        if (args.size() != 2) {
+            spdlog::info("Usage: UI_MakeSelectionSet name");
+            return;
+        }
+        call_module_function(L, "/lua/ui/game/selection.lua", "AddCurrentSelectionSet", {args[1]});
+    });
+    console.add("UI_ApplySelectionSet", [](lua_State* L, const Args& args) {
+        if (args.size() != 2) {
+            spdlog::info("Usage: UI_ApplySelectionSet name");
+            return;
+        }
+        call_module_function(L, "/lua/ui/game/selection.lua", "ApplySelectionSet", {args[1]});
+    });
+    console.add("UI_SetSkin", [](lua_State* L, const Args& args) {
+        if (args.size() >= 2)
+            call_module_function(L, "/lua/ui/uiutil.lua", "SetCurrentSkin", {args[1]});
+    });
+    console.add("UI_RotateSkin", [](lua_State* L, const Args& args) {
+        call_module_function(L, "/lua/ui/uiutil.lua", "RotateSkin",
+                             {args.size() >= 2 ? std::string_view(args[1]) : "+"});
+    });
+    console.add("UI_RotateLayout", [](lua_State* L, const Args& args) {
+        call_module_function(L, "/lua/ui/uiutil.lua", "RotateLayout",
+                             {args.size() >= 2 ? std::string_view(args[1]) : "+"});
+    });
+    console.add("UI_ToggleGamePanels", [](lua_State* L, const Args&) {
+        call_module_function(L, "/lua/ui/game/gamemain.lua", "HideGameUI", {});
+    });
+    // The sim rate (Moho's WLD_* commands).
+    console.add("WLD_GameSpeed", [](lua_State* L, const Args& args) {
+        if (args.size() != 2) {
+            spdlog::info("WLD_GameSpeed <int> - set current game speed");
+            return;
+        }
+        if (auto* mgr = get_game_state_mgr(L))
+            mgr->set_sim_rate(
+                static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
+    });
+    console.add("WLD_IncreaseSimRate", [](lua_State* L, const Args&) {
+        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() + 1);
+    });
+    console.add("WLD_DecreaseSimRate", [](lua_State* L, const Args&) {
+        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() - 1);
+    });
+    console.add("WLD_ResetSimRate", [](lua_State* L, const Args&) {
+        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(0);
+    });
+}
+
+void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {
+    const int top = lua_gettop(L);
+    const auto import = [&](const char* module) {
+        lua_pushstring(L, "import");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushstring(L, module);
+        if (!lua_isfunction(L, -2) || lua_pcall(L, 1, 1, 0) != 0 || !lua_istable(L, -1)) {
+            lua_settop(L, top);
+            return false;
+        }
+        return true;
+    };
+    if (!import("/lua/keymap/keyNames.lua")) {
+        spdlog::warn("CUIKeyHandler::LoadKeyMappings unable to open default key names file.");
+        return;
+    }
+    lua_pushstring(L, "keyNames");
+    lua_gettable(L, -2);
+    key_map.set_key_names(L, -1);
+    lua_settop(L, top);
+
+    if (!import("/lua/keymap/keymapper.lua")) {
+        spdlog::warn("CUIKeyHandler::LoadKeyMappings unable to load keymapper.lua.");
+        return;
+    }
+    lua_pushstring(L, "GetKeyMappings");
+    lua_gettable(L, -2);
+    if (lua_pcall(L, 0, 1, 0) != 0 || !lua_istable(L, -1)) {
+        spdlog::warn("CUIKeyHandler::LoadKeyMappings unable to map keys, requires table.");
+        lua_settop(L, top);
+        return;
+    }
+    key_map.add(L, -1);
+    lua_settop(L, top);
+    spdlog::info("Key map: {} bindings", key_map.size());
 }
 
 /// SessionRequestPause() — request the sim to pause
@@ -4230,6 +4351,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SetGameSpeed", l_SetGameSpeed);
     state.register_function("GetGameSpeed", l_GetGameSpeed);
     state.register_function("ConExecute", l_ConExecute);
+    state.register_function("ConExecuteSave", l_ConExecute);
     state.register_function("SessionRequestPause", l_SessionRequestPause);
     state.register_function("SessionResume", l_SessionResume);
 

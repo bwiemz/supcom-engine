@@ -24,6 +24,7 @@
 #include "sim/sim_state.hpp"
 #include "sim/thread_manager.hpp"
 #include "sim/world_snapshot.hpp"
+#include "ui/console.hpp"
 #include "ui/keymap.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/wld_ui_provider.hpp"
@@ -265,6 +266,7 @@ private:
     u32 ui_frame_count = 0;
     lua::BeatFunctionRegistry beat_registry;
     ui::KeyMapRegistry keymap_registry;
+    ui::Console console; ///< Moho's console: key map actions and ConExecute run through it
     FrontEndData front_end_data;
     GameStateManager game_state_mgr;
     /// What a test mode drives.
