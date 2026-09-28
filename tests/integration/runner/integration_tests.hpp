@@ -117,6 +117,8 @@ void test_beam_render(TestContext& ctx);
 void test_trail_render(TestContext& ctx);
 /// --particle-render-test (M214c), in particle_render_test.cpp.
 void test_particle_render(TestContext& ctx);
+/// --water-render-test (M213a), in water_render_test.cpp.
+void test_water_render(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

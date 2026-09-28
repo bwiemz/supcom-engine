@@ -222,6 +222,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
         std::move(heightmap), water_elev, scmap.has_water);
     terrain->set_terrain_types(std::move(scmap.terrain_types));
     terrain->set_lighting(scmap.lighting, std::move(scmap.environment));
+    terrain->set_water(scmap.water, std::move(scmap.water_masks), scmap.water_abyss_elevation);
     spdlog::info("  Lighting: {} sun ({:.2f}, {:.2f}, {:.2f}) x{:.2f}",
                  terrain->environment().terrain_shader, scmap.lighting.sun_direction[0],
                  scmap.lighting.sun_direction[1], scmap.lighting.sun_direction[2],
