@@ -960,6 +960,168 @@ void main() {
 }
 )glsl";
 
+namespace {
+
+// The sky's parameters (M210b), shared by its shaders.
+const char* kSkyUniforms = R"glsl(#version 450
+layout(set = 0, binding = 0) uniform Sky {
+    mat4 viewProj;
+    vec4 viewRight;      // xyz; w the time, in ticks with the frame's interpolant
+    vec4 viewUp;         // xyz; w the decals' glow multiplier
+    vec4 horizon;        // x where it begins, y where it ends; z the cirrus multiplier
+    vec4 horizonColor;
+    vec4 skyColor;
+    vec4 cirrusColor;
+    vec4 cirrusLayer[4]; // each layer's frequency (xy) and direction (zw)
+    vec4 cirrusSpeed;    // each layer's speed
+} u;
+)glsl";
+
+const char* kSkyDomeVertMain = R"glsl(
+layout(location = 0) in vec3 inPos;
+layout(location = 1) in float inTheta;
+
+layout(location = 0) out float fragElevation;
+layout(location = 1) out float fragTheta;
+layout(location = 2) out vec4 fragCirrus01;
+layout(location = 3) out vec4 fragCirrus23;
+
+// computeCirrusCoord: the position turned into the layer's direction, and
+// moved along it with time.
+vec2 cirrusCoord(float time, vec2 position, int i) {
+    vec2 dir = normalize(u.cirrusLayer[i].zw);
+    vec2 p = vec2(dot(position, dir), position.x * dir.y - position.y * dir.x);
+    return u.cirrusLayer[i].xy * (p - time * u.cirrusSpeed[i] * dir);
+}
+
+void main() {
+    float time = u.viewRight.w;
+    fragCirrus01 = vec4(cirrusCoord(time, inPos.xz, 0), cirrusCoord(time, inPos.xz, 1));
+    fragCirrus23 = vec4(cirrusCoord(time, inPos.xz, 2), cirrusCoord(time, inPos.xz, 3));
+    fragElevation = inPos.y;
+    fragTheta = inTheta;
+    gl_Position = u.viewProj * vec4(inPos, 1.0);
+    // Never clipped by the far plane, as Moho's dome isn't (no depth test)
+    gl_Position.z = 0.5 * gl_Position.w;
+}
+)glsl";
+
+const char* kSkyAtmosphereFragMain = R"glsl(
+layout(set = 0, binding = 1) uniform sampler2D horizonLookup; // point, clamped
+
+layout(location = 0) in float fragElevation;
+layout(location = 1) in float fragTheta;
+
+layout(location = 0) out vec4 outColor;
+
+const float TWO_PI = 6.283185;
+const float INV_TWO_PI = 0.159155;
+
+void main() {
+    // AtmospherePS: the lookup by azimuth, times the lookup by the height
+    // through the horizon, blends the horizon's colour into the sky's. Every
+    // sky pass saturates what it writes, as Moho's 8-bit target stores it
+    // (the scene here is half floats; a map's colours may pass 1).
+    float th = INV_TWO_PI * clamp(fragTheta, 0.0, TWO_PI);
+    float tv = clamp((fragElevation - u.horizon.x) / (u.horizon.y - u.horizon.x), 0.0, 1.0);
+    float t = texture(horizonLookup, vec2(th, 0.25)).a * texture(horizonLookup, vec2(tv, 0.75)).a;
+    outColor = vec4(clamp(mix(u.horizonColor.rgb, u.skyColor.rgb, 1.0 - t), 0.0, 1.0), 0.0);
+}
+)glsl";
+
+const char* kSkyCirrusFragMain = R"glsl(
+layout(set = 0, binding = 2) uniform sampler2D cirrusTexture;
+
+layout(location = 2) in vec4 fragCirrus01;
+layout(location = 3) in vec4 fragCirrus23;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    // CirrusPS: each layer a channel of the texture; their product the cloud
+    float c0 = texture(cirrusTexture, fragCirrus01.xy).r;
+    float c1 = texture(cirrusTexture, fragCirrus01.zw).g;
+    float c2 = texture(cirrusTexture, fragCirrus23.xy).b;
+    float c3 = texture(cirrusTexture, fragCirrus23.zw).a;
+    outColor = clamp(vec4(u.cirrusColor.rgb, u.horizon.z * c0 * c1 * c2 * c3), 0.0, 1.0);
+}
+)glsl";
+
+const char* kSkyDecalVertMain = R"glsl(
+layout(location = 0) in vec2 inCorner;   // the quad's
+layout(location = 1) in vec4 inPosition; // the decal's: xyz, w its rotation
+layout(location = 2) in vec2 inSize;
+layout(location = 3) in vec4 inTexcoord; // its rectangle: u, v, width, height
+
+layout(location = 0) out vec2 fragUV;
+
+void main() {
+    // DecalVS: a billboard, turned by the decal's rotation
+    float s = sin(inPosition.w);
+    float c = cos(inPosition.w);
+    fragUV = inTexcoord.xy + 0.5 * inTexcoord.zw * (inCorner + vec2(1.0));
+    fragUV.y = 1.0 - fragUV.y;
+    vec2 corner = inSize * inCorner;
+    vec2 r = vec2(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
+    vec3 pos = inPosition.xyz + r.x * u.viewRight.xyz + r.y * u.viewUp.xyz;
+    gl_Position = u.viewProj * vec4(pos, 1.0);
+    gl_Position.z = 0.5 * gl_Position.w;
+}
+)glsl";
+
+const char* kSkyDecalGlowFragMain = R"glsl(
+layout(set = 0, binding = 4) uniform sampler2D decalGlow;
+
+layout(location = 0) in vec2 fragUV;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    // DecalGlowPS: into the frame's glow alone
+    outColor = vec4(0.0, 0.0, 0.0, clamp(u.viewUp.w * texture(decalGlow, fragUV).a, 0.0, 1.0));
+}
+)glsl";
+
+} // namespace
+
+const char* sky_dome_vert() {
+    static const std::string source = std::string(kSkyUniforms) + kSkyDomeVertMain;
+    return source.c_str();
+}
+
+const char* sky_atmosphere_frag() {
+    static const std::string source = std::string(kSkyUniforms) + kSkyAtmosphereFragMain;
+    return source.c_str();
+}
+
+const char* sky_cirrus_frag() {
+    static const std::string source = std::string(kSkyUniforms) + kSkyCirrusFragMain;
+    return source.c_str();
+}
+
+const char* sky_decal_vert() {
+    static const std::string source = std::string(kSkyUniforms) + kSkyDecalVertMain;
+    return source.c_str();
+}
+
+const char* sky_decal_glow_frag() {
+    static const std::string source = std::string(kSkyUniforms) + kSkyDecalGlowFragMain;
+    return source.c_str();
+}
+
+const char* sky_decal_albedo_frag = R"glsl(
+#version 450
+layout(set = 0, binding = 3) uniform sampler2D decalAlbedo;
+
+layout(location = 0) in vec2 fragUV;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+    outColor = texture(decalAlbedo, fragUV); // DecalAlbedoPS
+}
+)glsl";
+
 const char* mesh_vert = R"glsl(
 #version 450
 

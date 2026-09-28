@@ -42,7 +42,7 @@ public:
     /// as Moho loads them. `view` and `eye` are the camera's.
     void update(const sim::WorldSnapshot* snap, i32 focus_army, const map::Terrain& terrain,
                 const TerrainMesh& mesh, const std::array<f32, 16>& view,
-                const std::array<f32, 3>& eye, f32 aspect, const Frustum& frustum,
+                const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
                 TextureCache& textures, u32 fi);
 
     /// A runtime decal this frame draws, over the terrain's vertices with
@@ -94,7 +94,7 @@ private:
     void gather(const TerrainMesh& mesh, TextureCache& textures);
     void upload_indices(u32 fi);
     void build_splats(const map::Terrain& terrain, const std::array<f32, 16>& view,
-                      const std::array<f32, 3>& eye, f32 aspect, const Frustum& frustum,
+                      const std::array<f32, 3>& eye, f32 half_width, const Frustum& frustum,
                       TextureCache& textures, u32 fi);
 
     VkDevice device_ = VK_NULL_HANDLE;

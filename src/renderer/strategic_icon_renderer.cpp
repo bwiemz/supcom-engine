@@ -445,7 +445,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     quad_count_ = 0;
     load_generic_icons(L);
 
-    const f32 cam_dist = camera.distance();
+    const f32 cam_dist = camera.eye_distance();
     strategic_zoom_active_ = cam_dist >= ZOOM_THRESHOLD;
     const f32 sw = static_cast<f32>(viewport_w);
     const f32 sh = static_cast<f32>(viewport_h);

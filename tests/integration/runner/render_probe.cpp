@@ -70,6 +70,14 @@ OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
     renderer_.set_fog_enabled(false); // the fog of war: all visible
     renderer_.set_decals_enabled(false);
     renderer_.set_fixed_frame_dt(1.0f / 60.0f);
+    // The tests' views (M217f): free (their targets may stand off their
+    // ground) and held at 50 degrees, as the engine's camera sat before it
+    // followed Moho's; a test may pitch it otherwise
+    renderer_.camera().set_free(true);
+    renderer_.camera().set_pitch(kPitch);
+    // The backdrop the tests' scenery stands against, past its ground: the
+    // blue-grey the engine cleared to until the sky dome (M210b), with no glow
+    renderer_.set_clear_color(kBackdrop);
     history_.capture(ctx_.sim);
     history_.capture(ctx_.sim);
 }
@@ -110,13 +118,22 @@ ImageRGBA8 OffscreenShots::shoot_frame(const map::Terrain& terrain, f32 x, f32 z
 ImageRGBA8 OffscreenShots::capture(const map::Terrain& terrain, f32 x, f32 z, f32 distance,
                                    bool with_world) {
     sim::WorldHistory& world = with_world ? history_ : empty_;
+    renderer::Camera& cam = renderer_.camera();
+    const f32 heading = cam.heading();
+    const f32 pitch = cam.pitch();
+    const bool held = cam.rotated();
     renderer_.clear_scene();
     renderer_.build_scene(&terrain, ctx_.sim.blueprint_store(),
                           with_world ? sim::world_blueprints(ctx_.sim) : std::vector<std::string>{},
                           &ctx_.vfs, ctx_.L);
-    renderer_.camera().set_input_enabled(false);
-    renderer_.camera().set_target(x, z);
-    renderer_.camera().set_distance(distance);
+    // The scene's CameraReset drops the test's view: its held turn comes back
+    if (held) {
+        cam.set_heading(heading);
+        cam.set_pitch(pitch);
+    }
+    cam.set_input_enabled(false);
+    cam.set_eye_distance(distance);
+    cam.set_target(x, z);
     // Draw until every texture the view asks for has loaded (they load as
     // they are first drawn), then capture one more frame.
     const auto draw = [&] {
