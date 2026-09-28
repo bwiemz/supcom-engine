@@ -84,6 +84,7 @@ void test_specular(TestContext& ctx);
 /// --lighting-test (M210a), in lighting_test.cpp.
 void test_lighting(TestContext& ctx);
 void test_map_parse(TestContext& ctx);
+void test_waves(TestContext& ctx);
 /// --strata-test (M212a), in strata_test.cpp.
 void test_strata(TestContext& ctx);
 /// --meshless-test, in meshless_test.cpp.

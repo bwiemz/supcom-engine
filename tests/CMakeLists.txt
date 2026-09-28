@@ -34,6 +34,7 @@ add_executable(osc_tests
     test_anim_blend.cpp
     test_emitter_blueprint.cpp
     test_particle_system.cpp
+    test_wave_system.cpp
     test_ui_layout.cpp
     test_world_view.cpp
     test_ui_controls.cpp

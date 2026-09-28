@@ -1704,7 +1704,10 @@ void Renderer::clear_scene() {
                                 "__osc_minimap_terrain", "__water_map", "__water_fresnel"})
             texture_cache_.evict(key);
     }
+    // The waves' particles point into the wave system's blueprints (M213c):
+    // the particles go first.
     particle_system_.clear();
+    wave_system_.clear();
     runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
@@ -1854,6 +1857,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // FA's water: its quad, water map, Fresnel table and textures (M213a),
     // before the terrain, which is tinted under it by the water map.
     water_renderer_.build(*terrain, texture_cache_);
+    // The shoreline's wave generators, out of step from the start (M213c)
+    wave_system_.load(terrain->waves(), wave_clock_);
 
     // The map's normal maps (M212e), whose tile size the strata's block holds.
     const TerrainNormalMaps normal_maps = terrain_normal_maps(*terrain);
@@ -2284,6 +2289,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         last_frame_time_ = now;
         if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
         frame_dt_ = dt;
+        wave_clock_ += static_cast<f64>(dt);
     }
 
     // Update UI quads (walk control tree, read LazyVar positions)
@@ -2345,6 +2351,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
         PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
         particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
         particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
