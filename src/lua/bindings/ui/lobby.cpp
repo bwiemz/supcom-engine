@@ -113,65 +113,23 @@ static void ensure_table_field(lua_State* L, int table_idx, const char* key) {
 }
 
 static int discovery_GetGameCount(lua_State* L) {
-    if (!lua_istable(L, 1)) {
-        lua_pushnumber(L, 0);
-        return 1;
-    }
-    ensure_table_field(L, 1, "__osc_games");
-    int count = sequence_count(L, -1);
-    lua_pop(L, 1);
-    lua_pushnumber(L, count);
-    return 1;
-}
-
-static int discovery_GetGame(lua_State* L) {
-    if (!lua_istable(L, 1)) {
-        lua_pushnil(L);
-        return 1;
-    }
-    int index = static_cast<int>(luaL_checknumber(L, 2));
-    ensure_table_field(L, 1, "__osc_games");
-    lua_rawgeti(L, -1, index);
-    lua_remove(L, -2);
-    return 1;
-}
-
-static int discovery_AddGame(lua_State* L) {
-    if (!lua_istable(L, 1) || !lua_istable(L, 2)) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    ensure_table_field(L, 1, "__osc_games");
-    int next = sequence_count(L, -1) + 1;
-    lua_pushvalue(L, 2);
-    lua_rawseti(L, -2, next);
-    lua_pop(L, 1);
-    lua_pushboolean(L, 1);
+    if (NetDiscovery* d = net_discovery_of(L, 1)) return net_discovery_GetGameCount(L, *d);
+    lua_pushnumber(L, 0);
     return 1;
 }
 
 static int discovery_Reset(lua_State* L) {
-    if (lua_istable(L, 1)) {
-        lua_pushstring(L, "__osc_games");
-        lua_newtable(L);
-        lua_rawset(L, 1);
-    }
+    if (NetDiscovery* d = net_discovery_of(L, 1)) return net_discovery_Reset(L, *d);
     return 0;
 }
 
 static int discovery_Destroy(lua_State* L) {
-    if (lua_istable(L, 1)) {
-        lua_pushstring(L, "__osc_destroyed");
-        lua_pushboolean(L, 1);
-        lua_rawset(L, 1);
-    }
+    if (NetDiscovery* d = net_discovery_of(L, 1)) return net_discovery_Destroy(L, *d);
     return 0;
 }
 
 // clang-format off
 const MethodEntry ui_discovery_methods[] = {
-    {"AddGame",      discovery_AddGame},
-    {"GetGame",      discovery_GetGame},
     {"GetGameCount", discovery_GetGameCount},
     {"Reset",        discovery_Reset},
     {"Destroy",      discovery_Destroy},

@@ -1,6 +1,7 @@
 #include "lua/net_lobby.hpp"
 
 #include "lua/lobby_wire.hpp"
+#include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
 
 extern "C" {
@@ -25,9 +26,19 @@ struct NetLobby {
     u16 port = 0;
     u32 max_connections = 8;
     std::string player_name;
+    u8 protocol = 2; ///< Moho's: 1 TCP, 2 UDP (what discovery tells)
     std::unique_ptr<sim::LobbyNet> net;
+    /// A host's: answers the LAN's discovery (M218b)
+    std::unique_ptr<sim::DiscoveryResponder> responder;
     bool hosting_pending = false; ///< Hosting() at the next pump
     bool join_failed = false;     ///< ConnectionFailed at the next pump
+};
+
+struct NetDiscovery {
+    lua_State* L = nullptr;
+    int self_ref = LUA_NOREF;
+    sim::LanDiscovery finder;
+    NetDiscovery(const std::string& address, u16 port) : finder(address, port) {}
 };
 
 namespace {
@@ -38,6 +49,26 @@ constexpr size_t kMaxPlayerName = 24;
 std::vector<std::unique_ptr<NetLobby>>& lobbies() {
     static std::vector<std::unique_ptr<NetLobby>> all;
     return all;
+}
+
+std::vector<std::unique_ptr<NetDiscovery>>& discoveries() {
+    static std::vector<std::unique_ptr<NetDiscovery>> all;
+    return all;
+}
+
+/// Where discovery asks and hosts listen (set_lan_discovery).
+std::string& discovery_address() {
+    static std::string address = "255.255.255.255";
+    return address;
+}
+u16& discovery_port() {
+    static u16 port = sim::kLanDiscoveryPort;
+    return port;
+}
+
+bool alive(const NetDiscovery* d) {
+    return std::any_of(discoveries().begin(), discoveries().end(),
+                       [&](const auto& x) { return x.get() == d; });
 }
 
 bool alive(const NetLobby* lobby) {
@@ -202,6 +233,84 @@ void dispatch(NetLobby& lobby, const sim::LobbyEvent& e) {
     }
 }
 
+/// The object's `method`, called with no arguments; its result left on the
+/// stack (nil if it has none, or fails).
+void call_for_value(lua_State* L, int self_ref, const char* method) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, self_ref);
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        lua_pushnil(L);
+        return;
+    }
+    lua_insert(L, -2);
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("lobby {}: {}", method, lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+}
+
+/// A host answering the LAN's discovery: its scripts' description of the
+/// game (GameConfigRequested), its protocol and port.
+void answer_discovery(NetLobby& lobby) {
+    const std::vector<sim::DiscoveryAsker> askers = lobby.responder->poll();
+    if (askers.empty()) return;
+    lua_State* L = lobby.L;
+    const int top = lua_gettop(L);
+    call_for_value(L, lobby.self_ref, "GameConfigRequested");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+    }
+    const std::vector<u8> config = encode_lobby_value(L, -1);
+    lua_settop(L, top);
+    if (!alive(&lobby) || !lobby.responder || !lobby.net) return;
+    for (const sim::DiscoveryAsker& asker : askers)
+        lobby.responder->answer(asker, lobby.protocol, lobby.net->port(), config);
+}
+
+/// A discovery service's callbacks: GameFound(index, config),
+/// GameUpdated(index, config), RemoveGame(index); the config carries the
+/// game's Address, Hostname and Protocol.
+void discovery_dispatch(NetDiscovery& d, const sim::DiscoveryEvent& e) {
+    lua_State* L = d.L;
+    const int top = lua_gettop(L);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, d.self_ref);
+    const char* method = e.kind == sim::DiscoveryEvent::Kind::Found     ? "GameFound"
+                         : e.kind == sim::DiscoveryEvent::Kind::Updated ? "GameUpdated"
+                                                                        : "RemoveGame";
+    lua_pushstring(L, method);
+    lua_gettable(L, -2);
+    if (!lua_isfunction(L, -1)) {
+        lua_settop(L, top);
+        return;
+    }
+    lua_insert(L, -2);
+    lua_pushnumber(L, e.index);
+    int nargs = 2;
+    if (e.kind != sim::DiscoveryEvent::Kind::Removed) {
+        if (!push_lobby_value(L, e.game.config) || !lua_istable(L, -1)) {
+            lua_pop(L, 1);
+            lua_newtable(L);
+        }
+        lua_pushstring(L, "Address");
+        lua_pushstring(L, e.game.address.c_str());
+        lua_rawset(L, -3);
+        lua_pushstring(L, "Hostname");
+        lua_pushstring(L, e.game.hostname.c_str());
+        lua_rawset(L, -3);
+        lua_pushstring(L, "Protocol");
+        lua_pushstring(L, e.game.protocol == 1 ? "TCP" : "UDP");
+        lua_rawset(L, -3);
+        ++nargs;
+    }
+    if (lua_pcall(L, nargs, 0, 0) != 0)
+        spdlog::warn("discovery {}: {}", method, lua_tostring(L, -1));
+    lua_settop(L, top);
+}
+
 } // namespace
 
 NetLobby* net_lobby_of(lua_State* L, int idx) {
@@ -215,11 +324,12 @@ NetLobby* net_lobby_of(lua_State* L, int idx) {
     return nullptr;
 }
 
-void make_net_lobby(lua_State* L, int idx, u16 port, u32 max_connections,
-                    const std::string& player_name) {
+void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port,
+                    u32 max_connections, const std::string& player_name) {
     if (idx < 0) idx = lua_gettop(L) + idx + 1;
     auto lobby = std::make_unique<NetLobby>();
     lobby->L = L;
+    lobby->protocol = protocol == "TCP" ? 1 : 2;
     lobby->port = port;
     lobby->max_connections = max_connections;
     lobby->player_name = player_name.substr(0, kMaxPlayerName);
@@ -243,6 +353,15 @@ int net_lobby_HostGame(lua_State* L, NetLobby& lobby) {
         return luaL_error(L, "HostGame: can't listen on port %d", static_cast<int>(lobby.port));
     lobby.net = std::move(net);
     lobby.player_name = lobby.net->local_name();
+    // The LAN's discovery finds it (M218b); a second host on one machine
+    // can't listen, as Moho's couldn't
+    lobby.responder = std::make_unique<sim::DiscoveryResponder>();
+    if (!lobby.responder->open(discovery_port())) {
+        spdlog::warn("lobby: can't answer the LAN's discovery on port {}: someone else must be "
+                     "hosting a game on this machine",
+                     discovery_port());
+        lobby.responder.reset();
+    }
     // Hosting() comes at the next pump, once the scripts' own setup is done
     lobby.hosting_pending = true;
     spdlog::info("lobby: hosting on port {}", lobby.net->port());
@@ -414,6 +533,18 @@ void pump_net_lobbies(lua_State* L, i64 now_ms) {
             if (!alive(lobby) || !lobby->net) break;
             dispatch(*lobby, e);
         }
+        if (alive(lobby) && lobby->responder && lobby->net) answer_discovery(*lobby);
+    }
+    std::vector<NetDiscovery*> finders;
+    for (const auto& d : discoveries())
+        if (d->L == L) finders.push_back(d.get());
+    for (NetDiscovery* d : finders) {
+        if (!alive(d)) continue;
+        const std::vector<sim::DiscoveryEvent> events = d->finder.poll(now_ms);
+        for (const sim::DiscoveryEvent& e : events) {
+            if (!alive(d)) break;
+            discovery_dispatch(*d, e);
+        }
     }
 }
 
@@ -427,6 +558,68 @@ void close_net_lobbies(lua_State* L) {
             ++it;
         }
     }
+    auto& finders = discoveries();
+    for (auto it = finders.begin(); it != finders.end();) {
+        if ((*it)->L == L) {
+            luaL_unref(L, LUA_REGISTRYINDEX, (*it)->self_ref);
+            it = finders.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+NetDiscovery* net_discovery_of(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return nullptr;
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, idx);
+    auto* p = static_cast<NetDiscovery*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    for (const auto& d : discoveries())
+        if (d.get() == p && d->L == L) return p;
+    return nullptr;
+}
+
+void make_net_discovery(lua_State* L, int idx) {
+    if (idx < 0) idx = lua_gettop(L) + idx + 1;
+    auto d = std::make_unique<NetDiscovery>(discovery_address(), discovery_port());
+    if (!d->finder.open()) spdlog::warn("discovery: no socket to ask the LAN with");
+    d->L = L;
+    lua_pushvalue(L, idx);
+    d->self_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, d.get());
+    lua_rawset(L, idx);
+    discoveries().push_back(std::move(d));
+}
+
+int net_discovery_GetGameCount(lua_State* L, NetDiscovery& d) {
+    lua_pushnumber(L, static_cast<double>(d.finder.game_count()));
+    return 1;
+}
+
+int net_discovery_Reset(lua_State* L, NetDiscovery& d) {
+    (void)L;
+    for (const sim::DiscoveryEvent& e : d.finder.reset()) {
+        if (!alive(&d)) break;
+        discovery_dispatch(d, e);
+    }
+    return 0;
+}
+
+int net_discovery_Destroy(lua_State* L, NetDiscovery& d) {
+    auto& all = discoveries();
+    const auto it =
+        std::find_if(all.begin(), all.end(), [&](const auto& x) { return x.get() == &d; });
+    if (it == all.end()) return 0;
+    luaL_unref(L, LUA_REGISTRYINDEX, d.self_ref);
+    all.erase(it);
+    return 0;
+}
+
+void set_lan_discovery(const std::string& broadcast_address, u16 port) {
+    discovery_address() = broadcast_address;
+    discovery_port() = port;
 }
 
 i64 net_lobby_clock_ms() {

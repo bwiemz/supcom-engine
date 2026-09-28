@@ -2,6 +2,7 @@
 #include "core/front_end_data.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/net_lobby.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 #include "vfs/mount_point.hpp"
@@ -569,7 +570,9 @@ TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][
     front_end_data.clear();
 }
 
-TEST_CASE("Discovery service tracks advertised lobby entries", "[lua][ui]") {
+TEST_CASE("A discovery service starts with no games (M218b)", "[lua][ui]") {
+    // Moho's methods (GetGameCount, Reset, Destroy); what it finds on a
+    // network: test_net_lobby.cpp
     LuaState state;
     osc::sim::SimState sim(state.raw(), nullptr);
     osc::ui::UIControlRegistry ui_registry;
@@ -581,15 +584,10 @@ TEST_CASE("Discovery service tracks advertised lobby entries", "[lua][ui]") {
         DiscoveryClass = {}
         for k, v in moho.discovery_service_methods do DiscoveryClass[k] = v end
         discovery = InternalCreateDiscoveryService(DiscoveryClass)
-
-        discovery:AddGame({Name = 'Setons Test', Host = 'Player', Map = '/maps/setons.scmap'})
-        discovery:AddGame({Name = 'Theta Test', Host = 'AI', Map = '/maps/theta.scmap'})
-        game_count_before_reset = discovery:GetGameCount()
-        first_game = discovery:GetGame(1)
-        first_game_name = first_game and first_game.Name
-
+        game_count = discovery:GetGameCount()
         discovery:Reset()
         game_count_after_reset = discovery:GetGameCount()
+        discovery:Destroy()
     )");
     if (!result.ok()) {
         UNSCOPED_INFO(result.error().message);
@@ -597,13 +595,13 @@ TEST_CASE("Discovery service tracks advertised lobby entries", "[lua][ui]") {
     REQUIRE(result.ok());
 
     lua_State* L = state.raw();
-    lua_getglobal(L, "game_count_before_reset");
-    CHECK(lua_tonumber(L, -1) == 2);
+    lua_getglobal(L, "game_count");
+    CHECK(lua_tonumber(L, -1) == 0);
     lua_pop(L, 1);
-    CHECK(global_string(L, "first_game_name") == "Setons Test");
     lua_getglobal(L, "game_count_after_reset");
     CHECK(lua_tonumber(L, -1) == 0);
     lua_pop(L, 1);
+    osc::lua::close_net_lobbies(L);
 }
 
 TEST_CASE("Front-end options persist skin layout and key binding overrides", "[lua][ui]") {

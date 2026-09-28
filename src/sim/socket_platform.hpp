@@ -92,6 +92,33 @@ inline bool connect_in_progress() {
 #endif
 }
 
+/// A non-blocking read that found nothing waiting (rather than failed).
+inline bool would_block() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
+/// A UDP socket's reads go on past an ICMP "port unreachable" for an
+/// earlier send. Windows otherwise fails the next recvfrom with
+/// WSAECONNRESET (an answer to a finder that has gone, say); elsewhere an
+/// unconnected socket never sees it.
+inline void ignore_udp_resets(socket_t s) {
+#ifdef _WIN32
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12) // mstcpip.h's
+#endif
+    BOOL report = FALSE;
+    DWORD returned = 0;
+    WSAIoctl(s, SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &returned, nullptr,
+             nullptr);
+#else
+    (void)s;
+#endif
+}
+
 /// Blocking send of the whole buffer; false on error.
 inline bool send_all(socket_t s, const u8* data, size_t len) {
     size_t sent = 0;

@@ -7,6 +7,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/net_lobby.hpp"
+#include "sim/lan_discovery.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -199,5 +200,76 @@ TEST_CASE("The single-player lobby stays a loopback (M218a)", "[lobby][lua]") {
         sp:SendData('1', {Type = 'Echo'})
         assert(sp.got and sp.got[1].Type == 'Echo', 'SendData calls back at once')
         assert(sp:IsHost())
+    )"));
+}
+
+TEST_CASE("The LAN's discovery finds a hosted lobby, as the LAN screen sees it (M218b)",
+          "[lobby][lua][discovery]") {
+    // Discovery asks the loopback, on a port no other test holds
+    osc::u16 port = 0;
+    {
+        osc::sim::DiscoveryResponder probe;
+        REQUIRE(probe.open(0));
+        port = probe.port();
+    }
+    osc::lua::set_lan_discovery("127.0.0.1", port);
+    World w;
+    REQUIRE(w.run(R"(
+        TestComm.GameConfigRequested = function(self)
+            return {GameName = 'Test Game', HostedBy = 'Host', PlayerCount = 1,
+                    Options = {ScenarioFile = '/maps/SCMP_009/SCMP_009_scenario.lua'}}
+        end
+        host = NewLobby('Host') host:HostGame()
+        Finder = {
+            GameFound = function(self, index, config) self.found = {index, config} end,
+            GameUpdated = function(self, index, config) self.updated = {index, config} end,
+            RemoveGame = function(self, index) self.removed = index end,
+        }
+        setmetatable(Finder, {__index = moho.discovery_service_methods})
+        finder = InternalCreateDiscoveryService(Finder)
+    )"));
+    REQUIRE(w.until("finder.found ~= nil"));
+    REQUIRE(w.run(R"(
+        local index, config = finder.found[1], finder.found[2]
+        assert(index == 0, 'the first game, at 0 (gameselect keeps games[index + 1])')
+        assert(config.GameName == 'Test Game' and config.HostedBy == 'Host')
+        assert(config.Options.ScenarioFile == '/maps/SCMP_009/SCMP_009_scenario.lua')
+        assert(config.Address == '127.0.0.1:' .. host:GetLocalPort(), config.Address)
+        assert(config.Hostname == '127.0.0.1' and config.Protocol == 'UDP')
+        assert(finder:GetGameCount() == 1)
+        -- Reset: each game goes, RemoveGame
+        finder:Reset()
+        assert(finder.removed == 0 and finder:GetGameCount() == 0)
+        -- A second host on this machine can't answer (it still hosts)
+        second = NewLobby('Second') second:HostGame()
+        assert(second:GetLocalPort() > 0)
+    )"));
+    osc::lua::set_lan_discovery("255.255.255.255", osc::sim::kLanDiscoveryPort);
+}
+
+TEST_CASE("The Steam build's calls, with no Steam; ValidateIPAddress (M218b)", "[lobby][lua]") {
+    World w;
+    REQUIRE(w.run(R"(
+        assert(IsSignedInToSteam() == false)
+        InternalStartSteamDiscoveryService()
+        RefreshSteamGames(false)
+        assert(type(moho.steam_discovery_service_methods) == 'table')
+        local S = {} setmetatable(S, {__index = moho.steam_discovery_service_methods})
+        local steam = InternalCreateSteamDiscoveryService(S)
+        assert(steam:GetGameCount() == 0)
+        -- The LAN screen's direct connect
+        assert(ValidateIPAddress('192.168.1.20:15000') == '192.168.1.20:15000')
+        assert(ValidateIPAddress('localhost:6112') == '127.0.0.1:6112')
+        assert(ValidateIPAddress('010.0.0.1:1') == '10.0.0.1:1')
+        assert(ValidateIPAddress('256.1.1.1:15000') == nil)
+        assert(ValidateIPAddress('1.2.3:15000') == nil)
+        assert(ValidateIPAddress('1.2.3.4') == nil)
+        assert(ValidateIPAddress('1.2.3.4:0') == nil and ValidateIPAddress('1.2.3.4:70000') == nil)
+        assert(ValidateIPAddress('1.2.3.4x:5') == nil and ValidateIPAddress('') == nil)
+        assert(ValidateIPAddress(' 1.2.3.4:5') == nil and ValidateIPAddress('+1.2.3.4:5') == nil)
+        assert(ValidateIPAddress('1.-2.3.4:5') == nil)
+        assert(ValidateIPAddress('1.2.3.4.5:6') == nil and ValidateIPAddress('1.2.3.4.:6') == nil)
+        assert(ValidateIPAddress('1..2.3:4') == nil)
+        assert(ValidateIPAddress('1.2.3.99999999999:5') == nil)
     )"));
 }

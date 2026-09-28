@@ -60,6 +60,7 @@
 #include "lua/sim_sync.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cctype>
 #include <map>
 #include <chrono>
@@ -71,6 +72,7 @@
 #include <initializer_list>
 #include <string_view>
 #include <vector>
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -1362,13 +1364,81 @@ static int l_InternalCreateDiscoveryService(lua_State* L) {
     lua_rawset(L, -3);   // mt.__index = class
     lua_setmetatable(L, -2); // setmetatable(instance, mt)
 
-    // Set _c_object dummy
-    lua_pushstring(L, "_c_object");
-    lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x2)));
-    lua_rawset(L, -3);
+    // It asks the LAN for games (M218b)
+    make_net_discovery(L, -1);
 
     spdlog::debug("InternalCreateDiscoveryService: created");
     return 1; // return instance
+}
+
+/// InternalCreateSteamDiscoveryService(serviceClass): the Steam build's
+/// game finder. With no Steam, an object of the class that finds nothing.
+static int l_InternalCreateSteamDiscoveryService(lua_State* L) {
+    if (!lua_istable(L, 1))
+        return luaL_error(L, "InternalCreateSteamDiscoveryService: arg 1 must be class table");
+    lua_newtable(L);
+    lua_newtable(L);
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, 1);
+    lua_rawset(L, -3);
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+/// InternalStartSteamDiscoveryService(): retail's LAN screen calls it
+/// whether Steam is used or not; RefreshSteamGames(friendsOnly) refreshes
+/// the Steam list. No Steam here: nothing to start or find.
+static int l_InternalStartSteamDiscoveryService(lua_State* /*L*/) {
+    return 0;
+}
+static int l_RefreshSteamGames(lua_State* /*L*/) {
+    return 0;
+}
+
+/// IsSignedInToSteam(): no Steam here.
+static int l_IsSignedInToSteam(lua_State* L) {
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+/// ValidateIPAddress("host:port") -> "a.b.c.d:port", or nil for no address
+/// (Moho's, for the LAN screen's direct connect). A dotted address or
+/// "localhost"; names aren't looked up.
+static int l_ValidateIPAddress(lua_State* L) {
+    const std::string text = lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : "";
+    const size_t colon = text.rfind(':');
+    if (colon == std::string::npos) {
+        lua_pushnil(L);
+        return 1;
+    }
+    std::string host = text.substr(0, colon);
+    const std::string port = text.substr(colon + 1);
+    if (host == "localhost") host = "127.0.0.1";
+    // Four parts of one to three digits, each at most 255
+    int parts[4] = {};
+    size_t count = 0;
+    bool dotted = true;
+    for (size_t start = 0; dotted && start <= host.size();) {
+        const size_t dot = std::min(host.find('.', start), host.size());
+        const std::string part = host.substr(start, dot - start);
+        dotted = count < 4 && !part.empty() && part.size() <= 3 &&
+                 part.find_first_not_of("0123456789") == std::string::npos &&
+                 std::stoi(part) <= 255;
+        if (dotted) parts[count++] = std::stoi(part);
+        start = dot + 1;
+    }
+    dotted = dotted && count == 4;
+    const bool port_ok = !port.empty() && port.size() <= 5 &&
+                         port.find_first_not_of("0123456789") == std::string::npos &&
+                         std::stoi(port) > 0 && std::stoi(port) <= 65535;
+    if (!dotted || !port_ok) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(
+        L, fmt::format("{}.{}.{}.{}:{}", parts[0], parts[1], parts[2], parts[3], std::stoi(port))
+               .c_str());
+    return 1;
 }
 
 /// InternalCreateLobby(lobbyComClass, protocol, port, maxConns, name, uid, nat) -> instance
@@ -1398,7 +1468,7 @@ static int l_InternalCreateLobby(lua_State* L) {
         const double port = lua_type(L, 3) == LUA_TNUMBER ? lua_tonumber(L, 3) : 0.0;
         const double max_connections = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 8.0;
         const std::string name = lua_type(L, 5) == LUA_TSTRING ? lua_tostring(L, 5) : "Player";
-        make_net_lobby(L, -1, static_cast<u16>(std::clamp(port, 0.0, 65535.0)),
+        make_net_lobby(L, -1, protocol, static_cast<u16>(std::clamp(port, 0.0, 65535.0)),
                        static_cast<u32>(std::max(0.0, max_connections)), name);
     }
 
@@ -1597,6 +1667,9 @@ static const MohoClassDef moho_classes[] = {
     {"border_methods",          ui_border_methods,  "control_methods"},
     {"cursor_methods",          ui_cursor_methods,  nullptr},
     {"discovery_service_methods", ui_discovery_methods, nullptr},
+    // The Steam build's (retail FA 3599 on Steam): lobbyComm.lua subclasses
+    // it as the module loads. No Steam here: a service that finds nothing.
+    {"steam_discovery_service_methods", ui_discovery_methods, nullptr},
     {"dragger_methods",         ui_dragger_methods,  nullptr},
     {"edit_methods",            ui_edit_methods,  "control_methods"},
     {"histogram_methods",       ui_histogram_methods,  "control_methods"},
@@ -4243,6 +4316,13 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("InternalCreateHistogram", l_InternalCreateHistogram);
     state.register_function("InternalCreateWorldMesh", l_InternalCreateWorldMesh);
     state.register_function("InternalCreateDiscoveryService", l_InternalCreateDiscoveryService);
+    state.register_function("InternalCreateSteamDiscoveryService",
+                            l_InternalCreateSteamDiscoveryService);
+    state.register_function("InternalStartSteamDiscoveryService",
+                            l_InternalStartSteamDiscoveryService);
+    state.register_function("RefreshSteamGames", l_RefreshSteamGames);
+    state.register_function("IsSignedInToSteam", l_IsSignedInToSteam);
+    state.register_function("ValidateIPAddress", l_ValidateIPAddress);
     state.register_function("InternalCreateLobby", l_InternalCreateLobby);
     state.register_function("GetTextureDimensions", l_GetTextureDimensions);
     state.register_function("GetFrame", l_GetFrame);

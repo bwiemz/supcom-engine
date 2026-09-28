@@ -21,10 +21,11 @@ struct NetLobby;
 /// The networked lobby the object at `idx` is, or null (a loopback one).
 NetLobby* net_lobby_of(lua_State* L, int idx);
 
-/// Make the object at `idx` a networked lobby: `port` to host on (0: any),
-/// `max_connections` players who may join, and its player's name.
-void make_net_lobby(lua_State* L, int idx, u16 port, u32 max_connections,
-                    const std::string& player_name);
+/// Make the object at `idx` a networked lobby: its protocol ("UDP" or
+/// "TCP"), `port` to host on (0: any), `max_connections` players who may
+/// join, and its player's name.
+void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port,
+                    u32 max_connections, const std::string& player_name);
 
 // The methods, for a networked lobby object at 1 (its arguments after it).
 int net_lobby_HostGame(lua_State* L, NetLobby& lobby);
@@ -43,11 +44,31 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby);
 int net_lobby_Destroy(lua_State* L, NetLobby& lobby);
 int net_lobby_DebugDump(lua_State* L, NetLobby& lobby);
 
-/// Each frame: the networked lobbies of state `L` take what has arrived and
-/// call their objects' callbacks. `now_ms`: a monotonic clock.
+// The discovery service (M218b): InternalCreateDiscoveryService's object.
+// It asks the LAN for games every two seconds; the frame's pump brings
+// GameFound(index, config), GameUpdated(index, config) and RemoveGame(index).
+// A hosting lobby answers with its scripts' GameConfigRequested().
+struct NetDiscovery;
+
+/// The discovery service the object at `idx` is, or null.
+NetDiscovery* net_discovery_of(lua_State* L, int idx);
+/// Make the object at `idx` a discovery service.
+void make_net_discovery(lua_State* L, int idx);
+int net_discovery_GetGameCount(lua_State* L, NetDiscovery& discovery);
+int net_discovery_Reset(lua_State* L, NetDiscovery& discovery);
+int net_discovery_Destroy(lua_State* L, NetDiscovery& discovery);
+
+/// Where discovery asks and hosts listen: 255.255.255.255 and port 15000,
+/// FA's (tests ask the loopback, on a port of their own).
+void set_lan_discovery(const std::string& broadcast_address, u16 port);
+
+/// Each frame: the networked lobbies and discovery services of state `L`
+/// take what has arrived and call their objects' callbacks. `now_ms`: a
+/// monotonic clock.
 void pump_net_lobbies(lua_State* L, i64 now_ms);
 
-/// A state about to close: its lobbies go with it (their sockets close).
+/// A state about to close: its lobbies and discovery services go with it
+/// (their sockets close).
 void close_net_lobbies(lua_State* L);
 
 /// A monotonic clock in milliseconds, for pump_net_lobbies.

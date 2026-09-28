@@ -35,6 +35,7 @@ add_library(osc_sim STATIC
     lockstep_session.cpp
     net_transport.cpp
     lobby_net.cpp
+    lan_discovery.cpp
     sim_state.cpp
     work_range.cpp
     decal.cpp
