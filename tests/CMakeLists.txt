@@ -37,6 +37,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_world_view.cpp
     test_ui_controls.cpp
+    test_key_codes.cpp
     test_overlay_filters.cpp
     test_font_cache.cpp
     test_minimap_area.cpp
@@ -106,6 +107,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::sim
     osc::renderer
     osc::video
+    glfw # key codes (test_key_codes)
 )
 
 target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

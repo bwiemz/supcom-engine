@@ -4,7 +4,12 @@
 #include "lua/moho_bindings.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
+#include "ui/keymap.hpp"
 #include "ui/ui_dispatch.hpp"
+
+#include <GLFW/glfw3.h>
+
+#include <string>
 
 extern "C" {
 #include <lua.h>
@@ -154,4 +159,193 @@ TEST_CASE("UI hit-testing picks the deepest control as Moho does", "[ui][lua]") 
     // A container with hit-testing disabled passes clicks to its children.
     CHECK(dispatch.hit_test(L, root, 260, 30) == control_of(L, "child"));
     CHECK(dispatch.hit_test(L, root, 350, 80) == nullptr);
+}
+
+namespace {
+
+/// A UI state with the input fixtures: boxes laid out in plain numbers, each
+/// logging the events it handles (and consuming them if `eats` is set).
+struct InputFixture {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim{lua.raw(), nullptr};
+    osc::ui::UIControlRegistry registry;
+    osc::ui::KeyMapRegistry keymap;
+    osc::ui::UIDispatch dispatch;
+
+    InputFixture() {
+        osc::lua::register_moho_bindings(lua, sim);
+        osc::lua::register_ui_bindings(lua, registry);
+        lua_State* L = lua.raw();
+        lua_pushstring(L, "__osc_keymap_registry");
+        lua_pushlightuserdata(L, &keymap);
+        lua_rawset(L, LUA_REGISTRYINDEX);
+        auto result = lua.do_string(R"(
+            handled = {}
+            hotkeys = 0
+            IN_AddKeyMapTable({ Q = function() hotkeys = hotkeys + 1 end })
+            function box(name, parent, l, t, r, b, depth)
+                local c = {}
+                setmetatable(c, { __index = moho.control_methods })
+                InternalCreateGroup(c, parent)
+                rawset(c, 'Left', l) rawset(c, 'Top', t)
+                rawset(c, 'Right', r) rawset(c, 'Bottom', b)
+                rawset(c, 'Width', r - l) rawset(c, 'Height', b - t)
+                rawset(c, 'Depth', depth)
+                c.HandleEvent = function(self, event)
+                    table.insert(handled, { who = name, event = event })
+                    return self.eats
+                end
+                return c
+            end
+            -- The events of a type handled, in order: {who, event} each.
+            function of_type(type)
+                local out = {}
+                for _, e in handled do
+                    if e.event.Type == type then table.insert(out, e) end
+                end
+                return out
+            end
+            -- Who handled them, as 'a,b,c'.
+            function whos(type)
+                local names = {}
+                for _, e in of_type(type) do table.insert(names, e.who) end
+                return table.concat(names, ',')
+            end
+        )");
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+    }
+    ~InputFixture() { keymap.clear(lua.raw()); }
+    InputFixture(const InputFixture&) = delete;
+    InputFixture& operator=(const InputFixture&) = delete;
+
+    void run(const char* code) {
+        auto result = lua.do_string(code);
+        INFO(code);
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+    }
+    bool check(const char* expr) {
+        auto result = lua.do_string(std::string("__check = ") + expr);
+        INFO(expr);
+        INFO((result.ok() ? std::string() : result.error().message));
+        REQUIRE(result.ok());
+        lua_State* L = lua.raw();
+        lua_getglobal(L, "__check");
+        const bool ok = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return ok;
+    }
+    void deliver() { dispatch.dispatch_events(lua.raw(), registry); }
+};
+
+} // namespace
+
+TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][input]") {
+    InputFixture f;
+    f.run("target = box('target', GetFrame(0), 0, 0, 100, 100, 1) target.eats = true");
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "target"));
+
+    f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
+    f.dispatch.on_key(GLFW_KEY_F1, GLFW_RELEASE, GLFW_MOD_SHIFT);
+    f.deliver();
+    CHECK(f.check("of_type('KeyDown')[1].event.KeyCode == 27 "
+                  "and of_type('KeyDown')[1].event.RawKeyCode == 27"));
+    CHECK(f.check("of_type('KeyUp')[1].event.KeyCode == 342 "
+                  "and of_type('KeyUp')[1].event.RawKeyCode == 112 "
+                  "and of_type('KeyUp')[1].event.Modifiers.Shift"));
+
+    // The mouse: wx's button numbers, and the buttons held after the event.
+    // A key event carries no buttons, even with one held.
+    f.run("handled = {}");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0); // at (0, 0)
+    f.dispatch.on_key(GLFW_KEY_A, GLFW_PRESS, 0);
+    f.dispatch.on_cursor_pos(50, 50);
+    f.deliver();
+    f.registry.set_keyboard_focus(nullptr);
+    CHECK(
+        f.check("whos('ButtonPress') == 'target' and of_type('ButtonPress')[1].event.KeyCode == 1 "
+                "and of_type('ButtonPress')[1].event.Modifiers.Left "
+                "and not of_type('ButtonPress')[1].event.Modifiers.Right"));
+    CHECK(f.check("of_type('KeyDown')[1].event.KeyCode == 65 "
+                  "and of_type('KeyDown')[1].event.Modifiers.Left == nil"));
+    CHECK(f.check("of_type('MouseMotion')[1].event.KeyCode == 0 "
+                  "and of_type('MouseMotion')[1].event.RawKeyCode == 0 "
+                  "and of_type('MouseMotion')[1].event.Modifiers.Left"));
+
+    f.run("handled = {}");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_RIGHT, GLFW_PRESS, GLFW_MOD_CONTROL);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_MIDDLE, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("of_type('ButtonPress')[1].event.KeyCode == 3 "
+                  "and of_type('ButtonPress')[1].event.Modifiers.Right "
+                  "and of_type('ButtonPress')[1].event.Modifiers.Left "
+                  "and of_type('ButtonPress')[1].event.Modifiers.Ctrl"));
+    CHECK(f.check("of_type('ButtonRelease')[1].event.KeyCode == 1 "
+                  "and not of_type('ButtonRelease')[1].event.Modifiers.Left "
+                  "and of_type('ButtonRelease')[1].event.Modifiers.Right"));
+    CHECK(f.check("of_type('ButtonPress')[2].event.KeyCode == 2 "
+                  "and of_type('ButtonPress')[2].event.Modifiers.Middle"));
+}
+
+TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua][input]") {
+    InputFixture f;
+    f.run(R"(
+        other = box('other', GetFrame(0), 0, 0, 100, 100, 1)
+        other.eats = true
+        screen = box('screen', GetFrame(0), 200, 0, 400, 100, 1)
+        inner = box('inner', screen, 250, 20, 300, 60, 2)
+    )");
+    CHECK(f.check("AnyInputCapture() == false and GetInputCapture() == nil"));
+    f.run("AddInputCapture(screen)");
+    CHECK(f.check("AnyInputCapture() and GetInputCapture() == screen"));
+
+    // A click over another control goes to the capture instead.
+    f.dispatch.on_cursor_pos(50, 50);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('ButtonPress') == 'screen'"));
+    CHECK(f.check("not string.find(whos('ButtonPress') .. whos('MouseMotion'), 'other')"));
+    // One over the capture's own children reaches them first, then it.
+    f.run("handled = {}");
+    f.dispatch.on_cursor_pos(260, 30);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("string.find(whos('ButtonRelease'), '^inner,screen')"));
+
+    // With no focus the capture takes the keys, and the key map never sees them.
+    f.run("handled = {}");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('KeyDown') == 'screen' and of_type('KeyDown')[1].event.KeyCode == 81 "
+                  "and hotkeys == 0"));
+    // The focus comes first.
+    f.registry.set_keyboard_focus(control_of(f.lua.raw(), "other"));
+    f.run("handled = {}");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("whos('KeyDown') == 'other' and hotkeys == 0"));
+    f.registry.set_keyboard_focus(nullptr);
+
+    // Captures stack; removal takes the last entry of that control.
+    f.run("AddInputCapture(other) AddInputCapture(screen) AddInputCapture(other)");
+    CHECK(f.check("GetInputCapture() == other"));
+    f.run("RemoveInputCapture(other)");
+    CHECK(f.check("GetInputCapture() == screen"));
+    f.run("RemoveInputCapture(screen)");
+    CHECK(f.check("GetInputCapture() == other"));
+    f.run("RemoveInputCapture(other)");
+    CHECK(f.check("GetInputCapture() == screen"));
+
+    // A destroyed control leaves the stack.
+    f.run("screen:Destroy()");
+    CHECK(f.check("AnyInputCapture() == false and GetInputCapture() == nil"));
+    // Without a capture, keys go on to the key map, clicks to what they hit.
+    f.run("handled = {}");
+    f.dispatch.on_key(GLFW_KEY_Q, GLFW_PRESS, 0);
+    f.dispatch.on_cursor_pos(50, 50);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(f.check("hotkeys == 1 and whos('ButtonPress') == 'other'"));
 }
