@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "renderer/decal_math.hpp"
 #include "renderer/runtime_decals.hpp"
 #include "renderer/vk_types.hpp"
 
@@ -45,10 +46,10 @@ public:
                 TextureCache& textures, u32 fi);
 
     /// A runtime decal this frame draws, over the terrain's vertices with
-    /// index_buffer(): Albedo (DecalsPS) or AlbedoXP.
+    /// index_buffer(), in its technique's pass.
     struct DecalDraw {
         const RuntimeDecals::Decal* decal = nullptr;
-        bool xp = false;
+        DecalTechnique technique = DecalTechnique::Albedo;
         f32 u[4] = {};
         f32 v[4] = {};
         f32 alpha = 1; ///< its LOD fade times its own

@@ -394,6 +394,31 @@ void test_runtime_decal(TestContext& ctx) {
                             "covers {:.2f} within 3/4 of its cutoff, {:.2f} at 7/8, {:.2f} past it",
                             corner, middle, whole, half, gone));
     }
+
+    // Test 11: a script's Glow decal (M212d) adds to the frame's glow as a
+    // map's does: its albedo's alpha times a quarter of the mask.
+    {
+        const auto glow_at_middle = [&] {
+            (void)shoot(fill);
+            renderer::Renderer::SceneImage scene;
+            r.request_scene_capture(
+                [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
+            (void)shots.grab();
+            const auto s = screen_of(r, {32, 0, 32});
+            if (!s || scene.width == 0) return -1.0f;
+            const u32 x = static_cast<u32>((*s)[0]);
+            const u32 y = static_cast<u32>((*s)[1]);
+            return scene.rgba[(static_cast<size_t>(y) * scene.width + x) * 4 + 3];
+        };
+        forget();
+        const f32 before = glow_at_middle();
+        lua(fmt::format("CreateDecal({{32, 0, 32}}, 0, {}, '', 'Glow', 8, 8, 1000, 0, 1)",
+                        tex("red.dds")));
+        const f32 after = glow_at_middle();
+        t.check(std::abs(after - before - 0.25f) < 0.005f,
+                fmt::format("Test 11: a script's Glow decal adds {:.3f} glow (0.25 wanted)",
+                            after - before));
+    }
     forget();
 
     spdlog::info("Runtime decal test: {}/{} passed", t.pass, t.pass + t.fail);

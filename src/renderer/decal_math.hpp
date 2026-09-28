@@ -4,8 +4,19 @@
 #include "map/terrain.hpp"
 
 #include <array>
+#include <optional>
 
 namespace osc::renderer {
+
+/// The technique a decal draws over the terrain's colour with, in the order
+/// HighFidelityTerrain::DrawNormals draws them: the glow masks (TDecalGlowMask),
+/// Albedo (TDecals), AlbedoXP (TDecalsXP), then, after the splats, the glowing
+/// ones (TDecalsGlow).
+enum class DecalTechnique : u8 { GlowMask, Albedo, AlbedoXP, Glow };
+
+/// A decal type's technique; none for the types that don't draw over the
+/// terrain's colour (normals, water).
+std::optional<DecalTechnique> decal_technique(map::DecalType type);
 
 /// A decal's texture matrix (CWldTerrainDecal::Update), as DecalsVS
 /// applies it to a world position (a row vector, D3D's mul): its corner taken

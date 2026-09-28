@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "renderer/decal_math.hpp"
 #include "renderer/normal_overlay.hpp"
 #include "map/terrain.hpp"
 
@@ -134,13 +135,21 @@ TEST_CASE("bake_normal_overlay: a decal is placed by its corner, as Moho places 
     CHECK(at(turned, 6, 7) == 0.0f);
 }
 
-TEST_CASE("decal types: which draw into the normals and which lit", "[normal_overlay]") {
+TEST_CASE("decal types: which draw into the normals and which over the colour",
+          "[normal_overlay]") {
     // CWldTerrainDecal's types: Normals and Alpha Normals go to the normals
-    // (TDecalsNormals, TDecalsNormalsAlpha); Albedo and AlbedoXP draw lit
-    // (TDecals, TDecalsXP); the water and glow types do neither.
+    // (TDecalsNormals, TDecalsNormalsAlpha); Glow Mask, Albedo, AlbedoXP and
+    // Glow draw over the colour (TDecalGlowMask, TDecals, TDecalsXP,
+    // TDecalsGlow; M212b, M212d); the water types do neither.
+    using osc::renderer::DecalTechnique;
     for (u32 raw = 0; raw <= 9; ++raw) {
         const auto t = static_cast<DecalType>(raw);
         CHECK(normal_decal(t) == (raw == 2 || raw == 7));
-        CHECK(lit_decal(t) == (raw == 1 || raw == 9));
+        CHECK(osc::renderer::decal_technique(t).has_value() ==
+              (raw == 1 || raw == 6 || raw == 8 || raw == 9));
     }
+    CHECK(osc::renderer::decal_technique(DecalType::GlowMask) == DecalTechnique::GlowMask);
+    CHECK(osc::renderer::decal_technique(DecalType::Albedo) == DecalTechnique::Albedo);
+    CHECK(osc::renderer::decal_technique(DecalType::AlbedoXP) == DecalTechnique::AlbedoXP);
+    CHECK(osc::renderer::decal_technique(DecalType::Glow) == DecalTechnique::Glow);
 }

@@ -22,6 +22,7 @@
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/particle_renderer.hpp"
+#include "renderer/decal_math.hpp"
 #include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
@@ -200,6 +201,19 @@ public:
     /// swapchain cannot be read back on this driver (no TRANSFER_SRC usage).
     bool request_capture(CaptureCallback on_captured);
 
+    /// The scene as drawn, before the bloom and the UI: its colour and, in
+    /// alpha, what glows (M211e), as floats.
+    struct SceneImage {
+        u32 width = 0, height = 0;
+        std::vector<f32> rgba; ///< width*height*4, row-major from the top
+    };
+    using SceneCallback = std::function<void(SceneImage)>;
+    /// Capture the next render() frame's scene (tests of what glows; M212d).
+    /// The callback runs on this thread once the GPU has finished it.
+    void request_scene_capture(SceneCallback on_captured) {
+        pending_scene_capture_ = std::move(on_captured);
+    }
+
     /// Vulkan validation errors reported so far (0 when validation is off).
     /// Screenshot / golden runs fail if this is non-zero.
     static u32 validation_error_count() { return validation_errors_.load(); }
@@ -227,6 +241,13 @@ private:
     void deliver_capture();
 
     CaptureCallback pending_capture_;
+    /// A requested scene capture (request_scene_capture): recorded after the
+    /// scene pass, before the bloom reads it.
+    bool record_scene_capture(VkCommandBuffer cmd);
+    void deliver_scene_capture();
+    SceneCallback pending_scene_capture_;
+    AllocatedBuffer scene_capture_buf_{};
+    VkDeviceSize scene_capture_buf_size_ = 0;
     f32 fixed_frame_dt_ = 0.0f;
     bool capture_supported_ = false;
     AllocatedBuffer capture_buf_{};
@@ -301,6 +322,12 @@ private:
     VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
+    // The glowing and glow-mask decals' (M212d): decal_layout_'s sets and push
+    // block, each with a layout of its own that matches it.
+    VkPipeline decal_glow_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_glow_layout_ = VK_NULL_HANDLE;
+    VkPipeline decal_glow_mask_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_glow_mask_layout_ = VK_NULL_HANDLE;
 
     // Texture infrastructure
     VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
@@ -363,9 +390,9 @@ private:
     struct StoredDecal {
         std::string albedo_path;
         std::string spec_path; ///< empty: none (no specular)
-        bool xp = false;       ///< AlbedoXP: DecalAlbedoXP, not DecalsPS
-        f32 u[4] = {};         ///< the texture matrix's u column (DecalsVS)
-        f32 v[4] = {};         ///< its v (world z) column
+        DecalTechnique technique = DecalTechnique::Albedo;
+        f32 u[4] = {}; ///< the texture matrix's u column (DecalsVS)
+        f32 v[4] = {}; ///< its v (world z) column
         f32 mid_x = 0, mid_z = 0;
         f32 radius = 0; ///< its bounds' half diagonal, for the view's cull
         f32 cut_off_lod = 1000.0f;

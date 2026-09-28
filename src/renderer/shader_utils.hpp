@@ -26,6 +26,10 @@ extern const char* mesh_frag;
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)
 /// The map's decals, lit as the terrain is (DecalsPS, DecalAlbedoXP; M212b).
 const char* decal_lit_frag();
+/// Glowing decals, added into the frame's glow (DecalsPSGlow; M212d).
+const char* decal_glow_frag();
+/// Glow-mask decals, lit and setting the glow to 0.01 (DecalsGlowMaskPS; M212d).
+const char* decal_glow_mask_frag();
 extern const char* splat_vert; // runtime splats: a quad on the terrain (SplatsVS; M212c)
 /// Runtime splats, lit as the terrain is with no specular (SplatsPS; M212c).
 const char* splat_frag();
