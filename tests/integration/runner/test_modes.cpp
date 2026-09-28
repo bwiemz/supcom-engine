@@ -2,6 +2,8 @@
 // game until the executable was split. The flag table dispatches most of
 // them; the rest keep their own code, as it stood in main().
 
+#include "sim/lan_discovery.hpp"
+#include "lua/net_lobby.hpp"
 #include "test_modes.hpp"
 #include "app/support.hpp"
 #include "audio_data_test.hpp"
@@ -36,6 +38,8 @@
 #include "vfs/virtual_file_system.hpp"
 
 extern "C" {
+#include <thread>
+#include <chrono>
 #include <lua.h>
 }
 
@@ -242,7 +246,7 @@ constexpr const char* kOwnModes[] = {
     "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
     "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
     "--session-command-test", "--keyboard-test",     "--camera-moves-test", "--window-test",
-    "--options-test",
+    "--options-test",         "--lan-screen-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -386,6 +390,7 @@ void IntegrationModes::print_usage() const {
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
               << "  --render-dump <f>  Windowed: dump what the renderers generate for a scripted scene\n"
               << "  --lobby-flow-test  Front-end ButtonSkirmish -> hosted lobby callback smoke\n"
+              << "  --lan-screen-test  Retail's LAN screen finds a game hosted here (M218b)\n"
               << "  --movie-test       The splash's movies to the main menu; movie playback and drawing\n"
               << "  --uirender-test    UI 2D rendering pipeline (LazyVar positions, quad building)\n"
               << "  --font-test        Font rendering (stb_truetype metrics, per-glyph advance)\n"
@@ -635,6 +640,88 @@ std::optional<int> IntegrationModes::front_end(Engine& e) {
         lobby_harness.write_report_to_file("smoke_report.txt");
         lobby_harness.deactivate();
         return finish_test_run("lobby-flow-test", lobby_harness.total_count());
+    }
+    if (has("--lan-screen-test")) {
+        // M218b: retail's Multiplayer -> LAN screen (gameselect.lua) finds a
+        // game hosted on this machine: its discovery service asks, the
+        // hosting lobby answers with its GameConfigRequested(), and the
+        // screen lists it, with no script error.
+        if (!map_path.empty()) {
+            spdlog::error("--lan-screen-test runs from the no-map front-end boot; omit --map");
+            return 1;
+        }
+        static osc::lua::SmokeTestHarness lan_harness;
+        lan_harness.activate();
+        lan_harness.set_phase("LAN_SCREEN");
+        lan_harness.install_panic_handler(ui_lua_state.raw());
+        lan_harness.install_global_interceptor(ui_lua_state.raw());
+        lan_harness.install_all_method_interceptors(ui_lua_state.raw());
+        // Ask the loopback, on a port no other run holds
+        osc::u16 port = 0;
+        {
+            osc::sim::DiscoveryResponder probe;
+            if (probe.open(0)) port = probe.port();
+        }
+        osc::lua::set_lan_discovery("127.0.0.1", port);
+        spdlog::info("=== LAN Screen Test: gameselect finds a hosted game ===");
+        auto setup = ui_lua_state.do_string(R"(
+            local create = InternalCreateDiscoveryService
+            rawset(_G, 'InternalCreateDiscoveryService', function(class)
+                local d = create(class)
+                rawset(_G, '__osc_lan_discovery', d)
+                return d
+            end)
+            -- A game hosted here, as gamecreate.lua hosts one ("UDP")
+            local host = import('/lua/ui/lobby/lobbyComm.lua').CreateLobbyComm('UDP', 0, 'LanHost', nil, nil)
+            host.GameConfigRequested = function(self)
+                return {GameName = 'LAN Screen Test', HostedBy = 'LanHost', PlayerCount = 2,
+                        ProductCode = import('/lua/productcode.lua').productCode,
+                        Options = {ScenarioFile = '/maps/SCMP_009/SCMP_009_scenario.lua',
+                                   Victory = 'demoralization', UnitCap = '500', Timeouts = '3'}}
+            end
+            host:HostGame()
+            rawset(_G, '__osc_lan_host', host)
+            import('/lua/ui/lobby/gameselect.lua').CreateUI(GetFrame(0), function() end, false)
+        )");
+        if (!setup) {
+            spdlog::error("LAN screen setup: {}", setup.error().message);
+            lan_harness.print_report(true);
+            lan_harness.deactivate();
+            return 1;
+        }
+        bool found = false;
+        for (int frame = 0; frame < 300 && !found; ++frame) {
+            osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+            pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
+                                         ui_registry, 1, ui_frame_count);
+            auto check = ui_lua_state.do_string(
+                "rawset(_G, '__osc_lan_found', __osc_lan_discovery ~= nil and "
+                "__osc_lan_discovery:GetGameCount() == 1)");
+            lua_State* uL = ui_lua_state.raw();
+            lua_getglobal(uL, "__osc_lan_found");
+            found = check && lua_toboolean(uL, -1) != 0;
+            lua_pop(uL, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        // A few more frames: the screen formats and lists it
+        for (int frame = 0; frame < 10; ++frame) {
+            osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+            pump_ui_frames_with_controls(ui_lua_state, ui_thread_manager, beat_registry,
+                                         ui_registry, 1, ui_frame_count);
+        }
+        osc::lua::close_net_lobbies(ui_lua_state.raw());
+        osc::lua::set_lan_discovery("255.255.255.255", osc::sim::kLanDiscoveryPort);
+        if (!found) {
+            spdlog::error("LAN screen: the hosted game wasn't found");
+            lan_harness.print_report(true);
+            lan_harness.deactivate();
+            return 1;
+        }
+        spdlog::info("[PASS] LAN screen: the hosted game found and listed");
+        spdlog::info("=== LAN Screen Test Complete ===");
+        lan_harness.print_report(true);
+        lan_harness.deactivate();
+        return finish_test_run("lan-screen-test", lan_harness.total_count());
     }
     return std::nullopt;
 }
