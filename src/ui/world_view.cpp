@@ -50,20 +50,11 @@ bool WorldView::get_mouse_world_pos(f32 sx, f32 sy,
     return camera_->pick_ground(sx, sy, w, h, terrain_, wx, wy, wz);
 }
 
-void WorldView::zoom_scale(f32 /*x*/, f32 /*y*/, f32 /*rotation*/, f32 delta) {
-    if (!camera_) return;
-
-    // Scale zoom speed by current distance for smooth feel
-    constexpr f32 ZOOM_SPEED = 0.1f;
-    f32 new_dist = camera_->distance() - delta * ZOOM_SPEED * camera_->distance();
-
-    // Clamp to reasonable range
-    constexpr f32 MIN_DIST = 10.0f;
-    constexpr f32 MAX_DIST = 1000.0f;
-    if (new_dist < MIN_DIST) new_dist = MIN_DIST;
-    if (new_dist > MAX_DIST) new_dist = MAX_DIST;
-
-    camera_->set_distance(new_dist);
+void WorldView::zoom_scale(f32 x, f32 y, f32 rotation, f32 delta) {
+    // Moho's ZoomScale: about (x, y), by the wheel's notches
+    if (!camera_ || delta == 0.0f) return;
+    camera_->set_pivot(x, y);
+    camera_->zoom(rotation / delta);
 }
 
 } // namespace osc::ui

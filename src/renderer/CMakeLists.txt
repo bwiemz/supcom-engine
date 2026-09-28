@@ -3,6 +3,8 @@ add_library(osc_renderer STATIC
     terrain_mesh.cpp
     unit_renderer.cpp
     water_renderer.cpp
+    sky_dome.cpp
+    sky_renderer.cpp
     mesh_cache.cpp
     texture_cache.cpp
     dds_parser.cpp

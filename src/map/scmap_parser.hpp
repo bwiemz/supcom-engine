@@ -117,6 +117,58 @@ struct ScmapWaveGenerator {
     f32 strip_count = 1.0f;           ///< strips down its texture
 };
 
+/// One of a sky's decals (M210b): a billboard in the sky (the sun, a planet,
+/// a bright cloud), 40 bytes in the .scmap.
+struct ScmapSkyDecal {
+    f32 position[3] = {};
+    f32 rotation = 0; ///< radians, about the view's axis
+    f32 size[2] = {};
+    f32 uv[4] = {}; ///< its rectangle in the atlas: u, v, width, height
+};
+
+/// One of the sky's four cirrus layers (sky.fx's Cirrus): 20 bytes.
+struct ScmapCirrusLayer {
+    f32 frequency[2] = {};
+    f32 speed = 0;
+    f32 direction[2] = {1, 0};
+};
+
+/// A map's sky (M210b): Moho's SkyDome, the .scmap's block from version 58.
+/// The defaults are SkyDome's constructor's.
+struct ScmapSky {
+    f32 origin[3] = {};
+    f32 elevation = 0;            ///< the dome's lowest ring: where the horizon starts
+    f32 radius = 512;             ///< the lowest ring's
+    f32 start_angle = 1.2566371f; ///< the lowest ring's angle up the sphere
+    i32 width = 16, height = 6;   ///< segments around, and rings up
+    f32 horizon_size = 44;        ///< the horizon ends this far above its start
+    f32 horizon_color[3] = {0.5608f, 0.6706f, 0.8857f};
+    f32 sky_color[3] = {0.1804f, 0.4039f, 0.7245f};
+    f32 decal_glow = 0.1f;    ///< decalGlowMultiplier (faf-re's mHorizonBlend)
+    std::string decal_albedo; ///< the decals' atlas
+    std::string decal_glow_texture;
+    std::vector<ScmapSkyDecal> decals;
+    /// The cumulus's light ramp, dispersion ramp and texture: never drawn
+    /// (Moho hands its cumulus pass no clouds).
+    std::string cumulus[3];
+    f32 cirrus_multiplier = 1.8f;
+    f32 cirrus_color[3] = {1, 1, 1};
+    std::string cirrus_texture = "/textures/environment/cirrus000.dds";
+    /// FA's static table (ForgedAlliance.exe's, which SetupHorizonAndCirrus
+    /// installs), until a map's own.
+    ScmapCirrusLayer cirrus[4] = {
+        {{0.00428f, 0.00301f}, 0.55f, {0.53288f, -0.84619f}},
+        {{0.00191f, 0.00164f}, 0.09f, {0.96638f, 0.25713f}},
+        {{0.00119f, 0.006f}, 0.15f, {0.15816f, 0.98741f}},
+        {{0.00264f, 0.0011f}, 0.3f, {-0.59482f, -0.80386f}},
+    };
+};
+
+/// The sky a map older than version 58 gets (SkyDome::SetupHorizonAndCirrus):
+/// a dome over the map's centre, from `elevation` (the water's, or the
+/// terrain's floor), its radius the half-diagonal / cos 72 degrees.
+ScmapSky default_sky(u32 map_width, u32 map_height, f32 elevation);
+
 /// Data extracted from a .scmap file.
 struct ScmapData {
     u32 map_width = 0;
@@ -136,6 +188,7 @@ struct ScmapData {
     bool read_whole = false;
     ScmapLighting lighting;
     ScmapEnvironment environment;
+    ScmapSky sky; ///< the map's, or default_sky's for an older map (M210b)
     i32 version_minor = 0;
     std::vector<ScmapProp> props;   // map props from .scmap binary
     std::vector<ScmapDecal> decals; // terrain decals from .scmap binary
