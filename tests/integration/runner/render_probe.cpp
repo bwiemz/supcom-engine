@@ -70,6 +70,9 @@ OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
     renderer_.set_fog_enabled(false); // the fog of war: all visible
     renderer_.set_decals_enabled(false);
     renderer_.set_fixed_frame_dt(1.0f / 60.0f);
+    // The backdrop the tests' scenery stands against, past its ground: the
+    // blue-grey the engine cleared to until the sky dome (M210b), with no glow
+    renderer_.set_clear_color(kBackdrop);
     history_.capture(ctx_.sim);
     history_.capture(ctx_.sim);
 }
