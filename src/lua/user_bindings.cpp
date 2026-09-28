@@ -51,7 +51,8 @@ namespace osc::lua {
 namespace {
 // Headless (no renderer) the camera methods answer with the renderer
 // camera's defaults, so UI scripts run the same in tests.
-constexpr f32 kHeadlessMaxZoom = 1536.0f; // 1024 map x 1.5
+// A 1024 map's farthest zoom at 4:3 (the renderer camera's defaults)
+constexpr f32 kHeadlessMaxZoom = 1024.0f * 1.4f * (1024.0f / 768.0f);
 
 /// Add methods to a moho class table (moho[cls]) that register_moho_bindings
 /// made. Missing, it is a setup error: the UI's classes would lack them.
@@ -321,82 +322,94 @@ static int worldview_Register(lua_State* L) {
     return 0;
 }
 
-/// camera:SaveSettings() -> table with camera state
+/// A vector's three numbers ({x, y, z}, as SCR_ToLua writes one).
+static bool read_vec3(lua_State* L, int idx, f32 out[3]) {
+    if (!lua_istable(L, idx)) return false;
+    bool ok = true;
+    for (int i = 0; i < 3; ++i) {
+        lua_rawgeti(L, idx, i + 1);
+        ok = ok && lua_isnumber(L, -1);
+        out[i] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+    return ok;
+}
+
+static void push_vec3(lua_State* L, f32 x, f32 y, f32 z) {
+    lua_newtable(L);
+    lua_pushnumber(L, x);
+    lua_rawseti(L, -2, 1);
+    lua_pushnumber(L, y);
+    lua_rawseti(L, -2, 2);
+    lua_pushnumber(L, z);
+    lua_rawseti(L, -2, 3);
+}
+
+/// A named number of a table (nil or missing: `fallback`).
+static f32 field_number(lua_State* L, int idx, const char* name, f32 fallback) {
+    lua_pushstring(L, name);
+    lua_rawget(L, idx);
+    const f32 v = lua_isnumber(L, -1) ? static_cast<f32>(lua_tonumber(L, -1)) : fallback;
+    lua_pop(L, 1);
+    return v;
+}
+
+/// camera:SaveSettings() -> {Focus, Zoom, Pitch, Heading} (Moho's: the
+/// focus, the target zoom, the pitch and heading)
 static int camera_SaveSettings(lua_State* L) {
     auto* r = get_renderer(L);
-    if (!r) {
-        lua_newtable(L);
-        return 1;
-    }
-    auto& cam = r->camera();
     lua_newtable(L);
-    lua_pushstring(L, "target_x");
-    lua_pushnumber(L, cam.target_x());
+    if (!r) return 1;
+    const auto& cam = r->camera();
+    lua_pushstring(L, "Focus");
+    push_vec3(L, cam.focus_x(), cam.focus_y(), cam.focus_z());
     lua_rawset(L, -3);
-    lua_pushstring(L, "target_z");
-    lua_pushnumber(L, cam.target_z());
+    lua_pushstring(L, "Zoom");
+    lua_pushnumber(L, cam.zoom());
     lua_rawset(L, -3);
-    lua_pushstring(L, "distance");
-    lua_pushnumber(L, cam.distance());
-    lua_rawset(L, -3);
-    lua_pushstring(L, "yaw");
-    lua_pushnumber(L, cam.yaw());
-    lua_rawset(L, -3);
-    lua_pushstring(L, "pitch");
+    lua_pushstring(L, "Pitch");
     lua_pushnumber(L, cam.pitch());
+    lua_rawset(L, -3);
+    lua_pushstring(L, "Heading");
+    lua_pushnumber(L, cam.heading());
     lua_rawset(L, -3);
     return 1;
 }
 
-/// camera:RestoreSettings(settings) — self at index 1, settings at index 2
+/// camera:RestoreSettings(settings): TargetManual to them at once, then the
+/// rotation reverts (the pitch glides back to the zoom's)
 static int camera_RestoreSettings(lua_State* L) {
     if (!lua_istable(L, 2)) return 0;
     auto* r = get_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
-
-    lua_pushstring(L, "target_x");
+    f32 focus[3] = {cam.focus_x(), cam.focus_y(), cam.focus_z()};
+    lua_pushstring(L, "Focus");
     lua_rawget(L, 2);
-    f32 tx = static_cast<f32>(lua_tonumber(L, -1));
+    (void)read_vec3(L, lua_gettop(L), focus);
     lua_pop(L, 1);
-    lua_pushstring(L, "target_z");
-    lua_rawget(L, 2);
-    f32 tz = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_pushstring(L, "distance");
-    lua_rawget(L, 2);
-    f32 d = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_pushstring(L, "yaw");
-    lua_rawget(L, 2);
-    f32 yaw = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-    lua_pushstring(L, "pitch");
-    lua_rawget(L, 2);
-    f32 pitch = static_cast<f32>(lua_tonumber(L, -1));
-    lua_pop(L, 1);
-
-    cam.set_target(tx, tz);
-    cam.set_distance(d);
-    cam.set_yaw(yaw);
-    cam.set_pitch(pitch);
+    cam.target_manual(focus[0], focus[1], focus[2], field_number(L, 2, "Heading", cam.heading()),
+                      field_number(L, 2, "Pitch", cam.pitch()),
+                      field_number(L, 2, "Zoom", cam.zoom()));
+    cam.revert_rotation();
     return 0;
 }
 
+/// camera:SetZoom(zoom, seconds): TargetManual at the target, heading and
+/// pitch (the move is at once until M217g's timed moves)
 static int camera_SetZoom(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
-    r->camera().set_zoom(static_cast<f32>(luaL_checknumber(L, 2)));
+    auto& cam = r->camera();
+    cam.target_manual(cam.target_x(), cam.target_y(), cam.target_z(), cam.heading(), cam.pitch(),
+                      static_cast<f32>(luaL_checknumber(L, 2)));
     return 0;
 }
 
+/// camera:GetZoom(): the target zoom (CameraGetTargetZoom)
 static int camera_GetZoom(lua_State* L) {
     auto* r = get_renderer(L);
-    if (!r) {
-        lua_pushnumber(L, 300);
-        return 1;
-    }
-    lua_pushnumber(L, static_cast<lua_Number>(r->camera().distance()));
+    lua_pushnumber(L, r ? r->camera().zoom() : kHeadlessMaxZoom);
     return 1;
 }
 
@@ -407,9 +420,9 @@ static int camera_SetMaxZoomMult(lua_State* L) {
     return 0;
 }
 
+/// camera:GetMinZoom(): cam_NearZoom
 static int camera_GetMinZoom(lua_State* L) {
-    auto* r = get_renderer(L);
-    lua_pushnumber(L, r ? r->camera().min_zoom() : renderer::Camera::MIN_ZOOM);
+    lua_pushnumber(L, renderer::Camera::kNearZoom);
     return 1;
 }
 
@@ -419,14 +432,18 @@ static int camera_GetMaxZoom(lua_State* L) {
     return 1;
 }
 
-/// Zoom changes are immediate (no easing yet), so the target zoom is the
-/// current one.
+/// camera:SetTargetZoom(zoom): the zoom the view glides toward (mNearZoom)
 static int camera_SetTargetZoom(lua_State* L) {
-    return camera_SetZoom(L);
+    auto* r = get_renderer(L);
+    if (r) r->camera().set_requested_zoom(static_cast<f32>(luaL_checknumber(L, 2)));
+    return 0;
 }
 
+/// camera:GetTargetZoom(): the zoom the view glides toward
 static int camera_GetTargetZoom(lua_State* L) {
-    return camera_GetZoom(L);
+    auto* r = get_renderer(L);
+    lua_pushnumber(L, r ? r->camera().requested_zoom() : kHeadlessMaxZoom);
+    return 1;
 }
 
 static int camera_Reset(lua_State* L) {
@@ -436,27 +453,24 @@ static int camera_Reset(lua_State* L) {
 }
 
 /// camera:MoveTo(position, orientationHPR, zoom, seconds) and
-/// camera:SnapTo(position, orientationHPR, zoom): placed at once (no
-/// animation yet). Orientation is heading, pitch, roll in radians.
+/// camera:SnapTo(position, orientationHPR, zoom): TargetManual (heading and
+/// pitch from the orientation), at once until M217g's timed moves.
 static int camera_MoveTo(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
-    f32 x = 0, z = 0;
-    if (read_xz(L, 2, x, z)) cam.set_target(x, z);
-    if (lua_istable(L, 3)) {
-        lua_rawgeti(L, 3, 1);
-        lua_rawgeti(L, 3, 2);
-        if (lua_isnumber(L, -2)) cam.set_yaw(static_cast<f32>(lua_tonumber(L, -2)));
-        if (lua_isnumber(L, -1)) cam.set_pitch(static_cast<f32>(lua_tonumber(L, -1)));
-        lua_pop(L, 2);
-    }
-    if (lua_isnumber(L, 4)) cam.set_zoom(static_cast<f32>(lua_tonumber(L, 4)));
+    f32 pos[3] = {cam.target_x(), cam.focus_y(), cam.target_z()};
+    (void)read_vec3(L, 2, pos);
+    f32 hpr[3] = {cam.heading(), cam.pitch(), 0.0f};
+    (void)read_vec3(L, 3, hpr);
+    const f32 zoom = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : cam.zoom();
+    cam.target_manual(pos[0], pos[1], pos[2], hpr[0], hpr[1], zoom);
     return 0;
 }
 
 /// camera:MoveToRegion(rect, seconds): centre on the rect ({x0, y0, x1, y1}
 /// or a Rect with x0/y0/x1/y1 fields, y being map z) and zoom to fit it.
+/// (Moho's TargetBox frames it; M217g.)
 static int camera_MoveToRegion(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r || !lua_istable(L, 2)) return 0;
@@ -478,33 +492,29 @@ static int camera_MoveToRegion(lua_State* L) {
     return 0;
 }
 
-/// camera:GetFocusPosition() -> {x, y, z} of the point the camera looks at.
+/// camera:GetFocusPosition() -> the point the camera looks at (its focus,
+/// on the ground or the water's surface)
 static int camera_GetFocusPosition(lua_State* L) {
     auto* r = get_renderer(L);
-    f32 x = r ? r->camera().target_x() : 512.0f;
-    f32 z = r ? r->camera().target_z() : 512.0f;
-    // On the ground, or the water's surface over it, as the camera keeps it.
-    f32 y = 0.0f;
-    if (auto* sim = get_sim(L); sim && sim->terrain()) y = sim->terrain()->get_surface_height(x, z);
-    lua_newtable(L);
-    lua_pushnumber(L, x);
-    lua_rawseti(L, -2, 1);
-    lua_pushnumber(L, y);
-    lua_rawseti(L, -2, 2);
-    lua_pushnumber(L, z);
-    lua_rawseti(L, -2, 3);
+    if (!r) {
+        push_vec3(L, 512.0f, 0.0f, 512.0f);
+        return 1;
+    }
+    const auto& cam = r->camera();
+    push_vec3(L, cam.focus_x(), cam.focus_y(), cam.focus_z());
     return 1;
 }
 
 static int camera_GetHeading(lua_State* L) {
     auto* r = get_renderer(L);
-    lua_pushnumber(L, r ? r->camera().yaw() : 0.0f);
+    lua_pushnumber(L, r ? r->camera().heading() : renderer::Camera::kPi);
     return 1;
 }
 
 static int camera_GetPitch(lua_State* L) {
     auto* r = get_renderer(L);
-    lua_pushnumber(L, r ? r->camera().pitch() : 0.87f);
+    lua_pushnumber(L, r ? r->camera().pitch()
+                        : renderer::Camera::kFarPitchDeg * renderer::Camera::kPi / 180.0f);
     return 1;
 }
 

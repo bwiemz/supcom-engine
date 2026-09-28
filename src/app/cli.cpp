@@ -27,7 +27,7 @@ void print_usage() {
               << "  --print-install    Show which FA install would be used and exit\n"
               << "  --screenshot <png> Render on a fixed clock, save frame N, exit\n"
               << "  --screenshot-frame <N>  Frame to capture (default 120)\n"
-              << "  --camera <x>,<z>,<d>    Initial camera target and distance\n"
+              << "  --camera <x>,<z>,<zoom> Initial camera target and zoom\n"
               << "  --legacy-hud       Draw the C++ HUD placeholders over FA's game interface\n"
               << "  --prefs <path>     Game.prefs to use (default: the user's config dir;\n"
               << "                     tests and captures keep preferences in memory)\n"

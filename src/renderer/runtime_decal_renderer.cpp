@@ -126,7 +126,7 @@ void RuntimeDecalRenderer::clear() {
 void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army,
                                   const map::Terrain& terrain, const TerrainMesh& mesh,
                                   const std::array<f32, 16>& view, const std::array<f32, 3>& eye,
-                                  f32 aspect, const Frustum& frustum, TextureCache& textures,
+                                  f32 half_width, const Frustum& frustum, TextureCache& textures,
                                   u32 fi) {
     decal_draws_.clear();
     runs_.clear();
@@ -146,7 +146,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         if (!frustum.is_sphere_visible(g.mid_x, ground, g.mid_z, g.radius + 64.0f)) continue;
         const f32 alpha =
             decal_lod_alpha(d.info.cut_off_lod, d.info.near_cut_off_lod,
-                            decal_lod_metric(view, eye, aspect, g.mid_x, ground, g.mid_z)) *
+                            decal_lod_metric(view, eye, half_width, g.mid_x, ground, g.mid_z)) *
             d.alpha;
         if (alpha < 1.0f / 255.0f) continue;
         DecalDraw draw;
@@ -160,7 +160,7 @@ void RuntimeDecalRenderer::update(const sim::WorldSnapshot* snap, i32 focus_army
         decal_draws_.push_back(draw);
     }
 
-    build_splats(terrain, view, eye, aspect, frustum, textures, fi);
+    build_splats(terrain, view, eye, half_width, frustum, textures, fi);
 }
 
 void RuntimeDecalRenderer::gather(const TerrainMesh& mesh, TextureCache& textures) {
@@ -213,7 +213,7 @@ void RuntimeDecalRenderer::upload_indices(u32 fi) {
 
 void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
                                         const std::array<f32, 16>& view,
-                                        const std::array<f32, 3>& eye, f32 aspect,
+                                        const std::array<f32, 3>& eye, f32 half_width,
                                         const Frustum& frustum, TextureCache& textures, u32 fi) {
     auto* out = static_cast<SplatVertex*>(splat_mapped_[fi]);
     if (!out || !splat_pipeline_) return;
@@ -233,7 +233,7 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
         if (!frustum.is_sphere_visible(mid_x, corners[0][1], mid_z, radius + 64.0f)) continue;
         // The LOD metric at its first corner; past its cutoff it isn't drawn.
         const f32 distance =
-            decal_lod_metric(view, eye, aspect, corners[0][0], corners[0][1], corners[0][2]);
+            decal_lod_metric(view, eye, half_width, corners[0][0], corners[0][1], corners[0][2]);
         if (distance > s.info.cut_off_lod) continue;
         if (++budget >= kMaxSplats) break;
         const f32 alpha =

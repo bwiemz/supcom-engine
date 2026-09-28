@@ -52,7 +52,7 @@ TEST_CASE("Frustum: RTS camera culls correctly", "[frustum]") {
     Camera cam;
     cam.init(512, 512);
     cam.set_target(256, 256);
-    cam.set_distance(300);
+    cam.set_zoom(300);
     auto vp = cam.view_proj(16.0f / 9.0f);
     Frustum f(vp);
 

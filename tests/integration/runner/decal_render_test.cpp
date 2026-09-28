@@ -230,8 +230,9 @@ void test_decal_render(TestContext& ctx) {
         {
             renderer::Camera cam; // placed as shoot_frame places the renderer's
             cam.init(static_cast<f32>(kSize), static_cast<f32>(kSize));
+            cam.set_pitch(OffscreenShots::kPitch); // the shots' held pitch
             cam.set_target(36.0f, 36.0f);
-            cam.set_distance(kDistance);
+            cam.set_eye_distance(kDistance);
             f32 ex = 0;
             f32 ey = 0;
             f32 ez = 0;
@@ -280,7 +281,7 @@ void test_decal_render(TestContext& ctx) {
         const sim::Vector3 mid{36, 0, 36};
         const f32 depth = -(v[2] * (mid.x - ex) + v[6] * (mid.y - ey) + v[10] * (mid.z - ez));
         const f32 aspect = static_cast<f32>(bare.width) / static_cast<f32>(bare.height);
-        const f32 metric = 2.0f * std::tan(renderer::Camera::kFovY * 0.5f) * aspect * depth;
+        const f32 metric = 2.0f * cam.tan_half_fov_y(aspect) * aspect * depth;
         const auto shown = [&](f32 cutoff) {
             const ImageRGBA8 img = frame(
                 *ground,

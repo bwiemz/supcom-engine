@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <string>
 
@@ -109,6 +110,73 @@ private:
     size_t size_;
     size_t pos_;
 };
+
+/// The sky block (M210b; SkyDome::Load, field for field).
+bool read_sky(BinaryReader& r, ScmapSky& sky) {
+    const auto floats = [&](f32* out, int n) {
+        for (int i = 0; i < n; ++i) out[i] = r.read_f32();
+    };
+    if (!r.has_remaining(64)) return false;
+    floats(sky.origin, 3);
+    sky.elevation = r.read_f32();
+    sky.radius = r.read_f32();
+    sky.start_angle = r.read_f32();
+    sky.width = r.read_i32();
+    sky.height = r.read_i32();
+    sky.horizon_size = r.read_f32();
+    floats(sky.horizon_color, 3);
+    floats(sky.sky_color, 3);
+    sky.decal_glow = r.read_f32();
+    sky.decal_albedo = r.read_cstring();
+    sky.decal_glow_texture = r.read_cstring();
+
+    if (!r.has_remaining(4)) return false;
+    const i32 decal_count = r.read_i32();
+    constexpr size_t kDecalBytes = 40;
+    if (decal_count < 0 || !r.has_remaining(static_cast<size_t>(decal_count) * kDecalBytes))
+        return false;
+    sky.decals.resize(static_cast<size_t>(decal_count));
+    for (ScmapSkyDecal& d : sky.decals) {
+        floats(d.position, 3);
+        d.rotation = r.read_f32();
+        floats(d.size, 2);
+        floats(d.uv, 4);
+    }
+    for (std::string& path : sky.cumulus) path = r.read_cstring();
+
+    if (!r.has_remaining(16)) return false;
+    sky.cirrus_multiplier = r.read_f32();
+    floats(sky.cirrus_color, 3);
+    sky.cirrus_texture = r.read_cstring();
+    // A layer count Moho reads and ignores: the four layers are fixed.
+    if (!r.has_remaining(4 + 4 * 20)) return false;
+    r.skip(4);
+    for (ScmapCirrusLayer& layer : sky.cirrus) {
+        floats(layer.frequency, 2);
+        layer.speed = r.read_f32();
+        floats(layer.direction, 2);
+    }
+    return true;
+}
+
+/// The cartographic decal batches (Cartographic::ReadDecals), which the
+/// engine doesn't draw: a technique (from version 60), a texture and 36
+/// bytes a decal, each.
+bool skip_cartographic_decals(BinaryReader& r, i32 version_minor) {
+    if (!r.has_remaining(4)) return false;
+    const i32 batches = r.read_i32();
+    if (batches < 0) return false;
+    for (i32 b = 0; b < batches; ++b) {
+        if (version_minor >= 60) r.read_cstring();
+        r.read_cstring();
+        if (!r.has_remaining(4)) return false;
+        const i32 count = r.read_i32();
+        constexpr size_t kDecalBytes = 36;
+        if (count < 0 || !r.has_remaining(static_cast<size_t>(count) * kDecalBytes)) return false;
+        r.skip(static_cast<size_t>(count) * kDecalBytes);
+    }
+    return true;
+}
 
 /// Skip from after water elevation data to the props section,
 /// capturing stratum metadata and blend DDS along the way.
@@ -374,29 +442,40 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
         r.skip(2);
     }
 
-    // --- Version >=59: extended metadata ---
-    if (version_minor >= 59) {
-        if (!r.has_remaining(64)) return false;
-        r.skip(64);
-        r.read_cstring(); // unknown string 1
-        r.read_cstring(); // unknown string 2
-        if (!r.has_remaining(4)) return false;
-        u32 extra_count = r.read_u32();
-        if (extra_count > 10000) return false;
-        size_t extra_bytes = static_cast<size_t>(extra_count) * 40;
-        if (!r.has_remaining(extra_bytes)) return false;
-        r.skip(extra_bytes);
-        if (!r.has_remaining(19)) return false;
-        r.skip(19);
-        r.read_cstring(); // unknown string 3
-        if (!r.has_remaining(88)) return false;
-        r.skip(88);
+    // --- The sky (from version 58), then the cartographic decals (59) ---
+    if (version_minor >= 58) {
+        ScmapSky sky;
+        if (!read_sky(r, sky)) return false;
+        result.sky = std::move(sky);
     }
+    if (version_minor >= 59 && !skip_cartographic_decals(r, version_minor)) return false;
 
     return true;
 }
 
 } // namespace
+
+ScmapSky default_sky(u32 map_width, u32 map_height, f32 elevation) {
+    ScmapSky sky;
+    const f32 half_x = static_cast<f32>(map_width) * 0.5f;
+    const f32 half_z = static_cast<f32>(map_height) * 0.5f;
+    sky.origin[0] = half_x;
+    sky.origin[2] = half_z;
+    // cos(72 degrees), the start angle's, as Moho's double
+    sky.radius = static_cast<f32>(
+        std::sqrt(static_cast<f64>(half_x) * half_x + static_cast<f64>(half_z) * half_z) /
+        std::cos(1.25663697719574));
+    sky.elevation = elevation;
+    sky.horizon_size = sky.radius * 0.15360001f;
+    const f32 horizon[3] = {0.81f, 0.74f, 0.64f};
+    const f32 colour[3] = {0.26f, 0.46f, 0.59f};
+    const f32 cirrus[3] = {1.39f, 0.76f, 0.49f};
+    std::copy(std::begin(horizon), std::end(horizon), sky.horizon_color);
+    std::copy(std::begin(colour), std::end(colour), sky.sky_color);
+    std::copy(std::begin(cirrus), std::end(cirrus), sky.cirrus_color);
+    sky.cirrus_texture = "/textures/environment/cirrus001_512.dds";
+    return sky;
+}
 
 Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     if (file_data.size() < 30) {
@@ -540,6 +619,14 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     result.environment = std::move(environment);
     result.version_minor = version_minor;
     result.preview_dds = std::move(preview_dds);
+
+    // The sky of a map without one (or whose block can't be read)
+    const f32 floor = result.heightmap.empty()
+                          ? 0.0f
+                          : static_cast<f32>(*std::min_element(result.heightmap.begin(),
+                                                               result.heightmap.end())) *
+                                height_scale;
+    result.sky = default_sky(map_width, map_height, has_water ? water_elevation : floor);
 
     // --- Skip intermediate sections to reach props ---
     // Graceful degradation: if skip fails, return result without props

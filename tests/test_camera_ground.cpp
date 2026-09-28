@@ -35,13 +35,14 @@ map::Terrain stepped_map(f32 height) {
     return map::Terrain(map::Heightmap(64, 64, kScale, std::move(raw)), 0.0f, false);
 }
 
-Camera camera_at(f32 x, f32 z, f32 focus_y, f32 distance) {
+/// A camera looking at (x, focus_y, z), no ground of its own under it
+/// (TargetManual: a held view), pitched 50 degrees.
+Camera camera_at(f32 x, f32 z, f32 focus_y, f32 zoom) {
     Camera cam;
     cam.init(64.0f, 64.0f);
     cam.set_input_enabled(false);
-    cam.set_target(x, z);
-    cam.set_target_y(focus_y);
-    cam.set_distance(distance);
+    cam.set_viewport(kW, kH);
+    cam.target_manual(x, focus_y, z, Camera::kPi, 0.87f, zoom);
     return cam;
 }
 

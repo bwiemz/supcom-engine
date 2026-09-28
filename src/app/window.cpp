@@ -190,16 +190,17 @@ std::optional<int> App::run_window() {
             // Golden images must not depend on where the mouse happens to be.
             renderer.camera().set_input_enabled(false);
         }
-        // --camera <x>,<z>,<distance>: initial camera placement (world units).
+        // --camera <x>,<z>,<zoom>: the camera's first target and zoom (the
+        // world's extent across the view)
         {
             const std::string cam = parse_string_arg(argc, argv, "--camera", "");
-            float cx = 0, cz = 0, dist = 0;
+            float cx = 0, cz = 0, zoom = 0;
             if (!cam.empty()) {
-                if (std::sscanf(cam.c_str(), "%f,%f,%f", &cx, &cz, &dist) == 3 && dist > 0) {
+                if (std::sscanf(cam.c_str(), "%f,%f,%f", &cx, &cz, &zoom) == 3 && zoom > 0) {
+                    renderer.camera().set_zoom(zoom);
                     renderer.camera().set_target(cx, cz);
-                    renderer.camera().set_distance(dist);
                 } else {
-                    spdlog::error("--camera expects <x>,<z>,<distance>, got '{}'", cam);
+                    spdlog::error("--camera expects <x>,<z>,<zoom>, got '{}'", cam);
                     return 1;
                 }
             }
@@ -389,21 +390,21 @@ std::optional<int> App::run_window() {
             // Clamp dt to avoid spiral of death
             if (dt > 0.25) dt = 0.25;
 
-            // Audio: the camera is the listener, and FA's zoom and angle
-            // curves read its distance and pitch.
+            // Audio: the camera is the listener, and FA's zoom curves read
+            // its CameraDistance (the LOD metric at its focus: the zoom) and
+            // ZoomPercent (the zoom over the farthest), as Moho's
+            // CUserSoundManager sets them.
             {
                 const auto& cam = renderer.camera();
                 osc::f32 ex = 0, ey = 0, ez = 0;
                 cam.eye_position(ex, ey, ez);
-                const osc::f32 fx = cam.target_x() - ex;
-                const osc::f32 fy = cam.target_y() - ey;
-                const osc::f32 fz = cam.target_z() - ez;
+                const osc::f32 fx = cam.focus_x() - ex;
+                const osc::f32 fy = cam.focus_y() - ey;
+                const osc::f32 fz = cam.focus_z() - ez;
                 const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
                 sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});
-                sound.set_global_variable("CameraDistance", cam.distance());
-                const osc::f32 zoom_span = std::max(1.0f, cam.max_zoom() - cam.min_zoom());
-                sound.set_global_variable("ZoomPercent",
-                                          100.0f * (cam.distance() - cam.min_zoom()) / zoom_span);
+                sound.set_global_variable("CameraDistance", cam.zoom());
+                sound.set_global_variable("ZoomPercent", cam.zoom() / cam.max_zoom() * 100.0f);
                 sound.set_global_variable("Angle", cam.pitch() * 57.29578f);
                 sound.update(static_cast<osc::f32>(dt));
             }
@@ -600,8 +601,20 @@ std::optional<int> App::run_window() {
                 first_update_fired = true;
             }
 
-            // The arrow keys pan only while no control has the keyboard.
+            // The world view's camera (M217f): its keys only while no control
+            // has the keyboard, its mouse only off the UI's controls; it
+            // keeps to the sim's playable rect.
             renderer.camera().set_keys_enabled(ui_registry.keyboard_focus() == nullptr);
+            {
+                osc::f64 mx = 0, my = 0;
+                renderer.mouse_position(mx, my);
+                renderer.camera().set_mouse_enabled(!mouse_over_ui(ui_lua_state.raw(), mx, my));
+            }
+            if (sim_state && sim_state->has_playable_rect()) {
+                renderer.camera().set_playable_rect(
+                    sim_state->playable_x0(), sim_state->playable_z0(), sim_state->playable_x1(),
+                    sim_state->playable_z1());
+            }
             renderer.poll_events(dt);
 
             // Resume UI coroutines

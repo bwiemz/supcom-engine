@@ -244,7 +244,7 @@ void test_strategic_icons(TestContext& ctx) {
     // Test 9: zoomed in, inside IconFadeInZoom: ARMY_1's units, drawn as
     // themselves, have none; the blips keep theirs.
     r.camera().set_target(sx, sz + 42);
-    r.camera().set_distance(110.0f);
+    r.camera().set_eye_distance(110.0f);
     f = next();
     t.check(icons_at(f, tank).empty() && icons_at(f, scout).empty() && !icons_at(f, e_eng).empty(),
             fmt::format("Test 9: zoomed in, the tank has no icon ({}), the blip has ({})",
