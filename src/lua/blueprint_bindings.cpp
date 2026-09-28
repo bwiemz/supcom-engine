@@ -45,6 +45,23 @@ static int l_RegisterUnitBlueprint(lua_State* L) {
     }
     int defense_idx = lua_gettop(L);
 
+    // Its threat levels and regeneration, which Moho's RUnitBlueprint
+    // defaults to 0: the AI's GetThreatOfUnits adds SurfaceThreatLevel
+    // unguarded, and 174 of retail's 568 units (the UEF T1 transport among
+    // them) leave all four threat levels out.
+    for (const char* field : {"AirThreatLevel", "SurfaceThreatLevel", "SubThreatLevel",
+                              "EconomyThreatLevel", "RegenRate"}) {
+        lua_pushstring(L, field);
+        lua_rawget(L, defense_idx);
+        const bool missing = lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (missing) {
+            lua_pushstring(L, field);
+            lua_pushnumber(L, 0);
+            lua_rawset(L, defense_idx);
+        }
+    }
+
     // Ensure Defense.Shield table exists
     lua_pushstring(L, "Shield");
     lua_rawget(L, defense_idx);
