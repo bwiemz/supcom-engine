@@ -544,6 +544,11 @@ AllocatedImage TextureCache::upload_dds(const DDSTexture& dds) {
     view_ci.image = result.image;
     view_ci.viewType = dds.faces == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D;
     view_ci.format = dds.format;
+    if (dds.alpha_only) {
+        // D3D's A8 reads as (0, 0, 0, a)
+        view_ci.components = {VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_ZERO,
+                              VK_COMPONENT_SWIZZLE_ZERO, VK_COMPONENT_SWIZZLE_R};
+    }
     view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_ci.subresourceRange.baseMipLevel = 0;
     view_ci.subresourceRange.levelCount = dds.mip_count;

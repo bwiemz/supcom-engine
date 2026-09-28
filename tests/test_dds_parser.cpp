@@ -63,3 +63,33 @@ TEST_CASE("A cubemap without all six faces, or cut short, is refused (M211a)", "
     cut.resize(cut.size() - 8); // the last face's last mip gone
     CHECK_FALSE(parse_dds(cut));
 }
+
+TEST_CASE("An A8 DDS parses as alpha alone, one byte a texel (M210b)", "[dds]") {
+    // retail's horizonLookup.dds: 128 x 4, DDPF_ALPHA, 8 bits
+    std::vector<char> d(128 + 128 * 4, 0);
+    const auto put = [&](size_t offset, u32 v) { std::memcpy(d.data() + offset, &v, 4); };
+    std::memcpy(d.data(), "DDS ", 4);
+    put(4, 124);
+    put(12, 4);   // height
+    put(16, 128); // width
+    put(76, 32);
+    put(80, 0x2); // DDPF_ALPHA
+    put(88, 8);   // bits a texel
+    put(104, 0xFF);
+    d[128 + 128 * 3 + 5] = static_cast<char>(200);
+    const auto tex = parse_dds(d);
+    REQUIRE(tex);
+    CHECK(tex->alpha_only);
+    CHECK(tex->format == VK_FORMAT_R8_UNORM);
+    CHECK(tex->width == 128);
+    CHECK(tex->height == 4);
+    REQUIRE(tex->mips.size() == 1);
+    CHECK(tex->mips[0].size == 128u * 4u);
+    CHECK(static_cast<unsigned char>(tex->mips[0].data[128 * 3 + 5]) == 200);
+
+    // An 8-bit texture of another kind isn't alpha alone
+    put(80, 0x40); // DDPF_RGB
+    const auto rgb = parse_dds(d);
+    REQUIRE(rgb);
+    CHECK_FALSE(rgb->alpha_only);
+}
