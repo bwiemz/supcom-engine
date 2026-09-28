@@ -161,6 +161,39 @@ void test_options(TestContext& ui, TestContext& sim, const std::function<void(in
                             on, off));
     }
 
+    // Test 5: ren_Skydome draws the sky dome, and off, leaves the clear
+    // (WRenViewport::Render's ren_SkyDome): looking north over the map's
+    // edge, nearly level, the scene's top tenth (under the UI) is sky
+    {
+        const auto top = [&](const char* command) {
+            console->execute(L, command);
+            r.camera().set_heading(std::atan2(0.0f, -1.0f)); // north: toward -z
+            r.camera().set_pitch(0.1f);
+            (void)shots.shoot(*terrain, 512.0f, 4.0f, 150.0f, false);
+            renderer::Renderer::SceneImage scene;
+            r.request_scene_capture(
+                [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
+            shots.redraw();
+            // Its distance from the clear, per channel
+            f32 off_clear = 0.0f;
+            u32 n = 0;
+            for (u32 y = 0; y < scene.height / 10; ++y)
+                for (u32 x = 0; x < scene.width; x += 4) {
+                    const size_t i = (static_cast<size_t>(y) * scene.width + x) * 4;
+                    for (size_t c = 0; c < 3; ++c)
+                        off_clear += std::abs(scene.rgba[i + c] - OffscreenShots::kBackdrop[c]);
+                    ++n;
+                }
+            return n ? off_clear / static_cast<f32>(n * 3) : -1.0f;
+        };
+        const f32 sky = top("ren_Skydome on");
+        const f32 clear = top("ren_Skydome off");
+        t.check(!r.video_options().skydome && sky > 0.02f && clear >= 0.0f && clear < 0.005f,
+                fmt::format("Test 5: the scene's top is {:.4f} off the clear with the sky dome, "
+                            "{:.4f} without",
+                            sky, clear));
+    }
+
     lua_pushstring(L, "__osc_renderer");
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);

@@ -196,9 +196,10 @@ public:
     bool icons_always() const { return strategic_icon_renderer_.always(); }
     /// The strategic icons drawn last frame (tests read them).
     const StrategicIconRenderer& strategic_icons() const { return strategic_icon_renderer_; }
-    /// The video options the renderer keeps but doesn't draw by yet (M217i):
-    /// ren_Skydome (the sky dome's own), graphics_Fidelity, shadow_Fidelity,
-    /// ren_MipSkipLevels, SC_CameraScaleLOD, SC_AntiAliasingSamples.
+    /// The video options (M217i): ren_Skydome, whether the sky dome draws;
+    /// and those the renderer keeps but doesn't draw by yet:
+    /// graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
+    /// SC_CameraScaleLOD, SC_AntiAliasingSamples.
     struct VideoOptions {
         bool skydome = true;
         int graphics_fidelity = 2;
