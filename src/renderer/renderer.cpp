@@ -112,6 +112,16 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     window_width_ = width;
     window_height_ = height;
     camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
+    // The camera's targets are the world's entities as they are drawn
+    camera_.set_entity_lookup([this](u32 id, CameraEntityPose& out) {
+        const sim::EntityRecord* e = camera_view_.find(id);
+        if (!e) return false;
+        const sim::Vector3 p = camera_view_.position(*e);
+        const sim::Quaternion q = camera_view_.orientation(*e);
+        out.pos = {p.x, p.y, p.z};
+        out.orient = {q.x, q.y, q.z, q.w};
+        return true;
+    });
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
@@ -1715,7 +1725,10 @@ void Renderer::clear_scene() {
                                 "__osc_minimap_terrain", "__water_map", "__water_fresnel"})
             texture_cache_.evict(key);
     }
+    // The waves' particles point into the wave system's blueprints (M213c):
+    // the particles go first.
     particle_system_.clear();
+    wave_system_.clear();
     runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
@@ -1730,6 +1743,7 @@ void Renderer::clear_scene() {
     destroy_terrain_strata_ubo();
     camera_.set_ground(nullptr, false, 0.0f);
     ground_.reset();
+    camera_view_ = sim::FrameView{}; // the old world's entities are gone
 }
 
 void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata,
@@ -1866,6 +1880,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // FA's water: its quad, water map, Fresnel table and textures (M213a),
     // before the terrain, which is tinted under it by the water map.
     water_renderer_.build(*terrain, texture_cache_);
+    // The shoreline's wave generators, out of step from the start (M213c)
+    wave_system_.load(terrain->waves(), wave_clock_);
     // The map's sky dome (M210b)
     sky_renderer_.build(*terrain, texture_cache_);
 
@@ -2165,8 +2181,11 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
     // The view's aspect, which the camera's farthest zoom and projection
-    // take (its moves and basis run in poll_events)
+    // take (its moves and basis run in poll_events); the world it follows
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    camera_view_ = view;
+    camera_game_time_ =
+        view.cur() ? (static_cast<f64>(view.cur()->tick) + view.alpha()) * 0.1 : 0.0;
     // FA's own game interface replaces the C++ HUD placeholders.
     {
         bool world_ui = false;
@@ -2301,6 +2320,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         last_frame_time_ = now;
         if (fixed_frame_dt_ > 0.0f) dt = fixed_frame_dt_;
         frame_dt_ = dt;
+        wave_clock_ += static_cast<f64>(dt);
     }
 
     // Update UI quads (walk control tree, read LazyVar positions)
@@ -2364,6 +2384,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
         PROFILE_ZONE("Render::particle_update");
+        // The waves in view emit on the system clock (M213c)
+        if (view.cur()) {
+            waves_emitted_.clear();
+            wave_system_.update(frustum, frame_dt_, view.cur()->tick, wave_clock_, waves_emitted_);
+            for (const WaveParticle& w : waves_emitted_) particle_system_.add_wave(w);
+        }
         particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
         particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
@@ -3587,6 +3613,8 @@ void Renderer::poll_events(f64 dt) {
     // The world view's camera, before input picks this frame: its moves,
     // then its basis (a pan has moved the target)
     camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
+    // Its clocks: the system's, and the game's
+    camera_.set_clocks(glfwGetTime(), camera_game_time_);
     camera_.update(window_, dt);
 }
 

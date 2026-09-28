@@ -21,6 +21,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -237,6 +238,95 @@ TEST_CASE("Commands with callbacks survive the codec, and bad ones are refused",
     std::vector<osc::u8> truncated(bytes.begin(), bytes.end() - 3);
     osc::sim::ByteReader rt(truncated);
     CHECK_FALSE(osc::sim::read_command(rt, back));
+}
+
+TEST_CASE("A SimCallback's Args may be one value, recorded and replayed", "[simcallback]") {
+    // SimCamera's move callback: {Func = "OnCameraFinish", Args = name}
+    SimCallbackEntry cb;
+    cb.func_name = "OnCameraFinish";
+    cb.value = std::string("WorldCamera");
+    Replay replay;
+    {
+        CallbackSim rec;
+        rec.sim.set_recording(true);
+        rec.sim.tick();
+        rec.sim.submit_callback(cb);
+        rec.sim.submit_callback(SimCallbackEntry{"Count", {}, 7.0, {}});
+        rec.sim.tick();
+        REQUIRE(rec.call_count() == 2);
+        CHECK(rec.field(1, "c.args") == "WorldCamera");
+        CHECK(rec.field(2, "type(c.args)") == "number");
+        CHECK(rec.field(2, "c.args") == "7");
+        REQUIRE(Replay::deserialize(rec.sim.recorded_replay().serialize(), replay));
+    }
+    CallbackSim play;
+    play.sim.queue_replay(replay);
+    for (int i = 0; i < 3; ++i) play.sim.tick();
+    REQUIRE(play.call_count() == 2);
+    CHECK(play.field(1, "c.args") == "WorldCamera");
+    CHECK(play.field(2, "c.args") == "7");
+}
+
+TEST_CASE("A callback's one value survives the codec; older replays have none",
+          "[simcallback][replay]") {
+    ScheduledCommand c;
+    c.callback = SimCallbackEntry{"OnCameraFinish", {}, true, {}};
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    osc::sim::write_command(w, c);
+    osc::sim::ByteReader r(bytes);
+    ScheduledCommand back;
+    REQUIRE(osc::sim::read_command(r, back));
+    REQUIRE(back.callback);
+    REQUIRE(back.callback->value);
+    CHECK(std::get<bool>(*back.callback->value));
+    CHECK(r.position() == bytes.size());
+
+    // A v7 command ends at its callback's units: read without the value
+    c.callback->value.reset();
+    std::vector<osc::u8> v7;
+    osc::sim::ByteWriter w7(v7);
+    osc::sim::write_command(w7, c);
+    v7.pop_back(); // v8's "no value" byte
+    osc::sim::ByteReader r7(v7);
+    REQUIRE(osc::sim::read_command(r7, back, true, true, true, true, /*with_value=*/false));
+    CHECK_FALSE(back.callback->value);
+    CHECK(r7.position() == v7.size());
+
+    // An unknown value tag is refused
+    c.callback->value = std::string("x");
+    std::vector<osc::u8> bad;
+    osc::sim::ByteWriter wb(bad);
+    osc::sim::write_command(wb, c);
+    bad[bad.size() - 6] = 9; // the tag, before the string's length and byte
+    osc::sim::ByteReader rb(bad);
+    CHECK_FALSE(osc::sim::read_command(rb, back));
+}
+
+TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][replay]") {
+    std::vector<osc::u8> bytes;
+    {
+        CallbackSim rec;
+        const osc::u32 unit = rec.spawn();
+        rec.sim.set_recording(true);
+        rec.sim.tick();
+        rec.sim.submit_callback(toggle(unit));
+        rec.sim.tick();
+        bytes = rec.sim.recorded_replay().serialize();
+    }
+    // The callback is the last command, its "no value" byte the file's last:
+    // v7 wrote neither
+    REQUIRE(bytes.back() == 0);
+    bytes.pop_back();
+    const osc::u32 v7 = 7;
+    std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
+    Replay back;
+    REQUIRE(Replay::deserialize(bytes, back));
+    CHECK(back.version == 7);
+    REQUIRE(back.commands.size() == 1);
+    REQUIRE(back.commands[0].callback);
+    CHECK(back.commands[0].callback->func_name == "ToggleThing");
+    CHECK_FALSE(back.commands[0].callback->value);
 }
 
 TEST_CASE("Lockstep peers run a SimCallback on the same tick", "[simcallback][lockstep]") {

@@ -24,6 +24,7 @@
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
+#include "renderer/wave_system.hpp"
 #include "renderer/particle_renderer.hpp"
 #include "renderer/decal_math.hpp"
 #include "renderer/runtime_decal_renderer.hpp"
@@ -167,6 +168,8 @@ public:
     /// The terrain shader's Time, TTerrainGlow's scroll (tests read it;
     /// M212f).
     f32 terrain_time() const { return terrain_time_.value(); }
+    /// The shoreline's wave generators (tests read them; M213c).
+    const WaveSystem& wave_system() const { return wave_system_; }
     /// The beams drawn last frame (tests read them; M214a).
     const BeamRenderer& beam_renderer() const { return beam_renderer_; }
     /// The trail segments drawn last frame (tests read them; M214b).
@@ -405,6 +408,9 @@ private:
     f64 last_frame_time_ = 0.0;
     f32 total_time_ = 0.0f;
     f32 frame_dt_ = 0.0f;
+    /// The waves' system clock: the frames' steps summed, so a test's fixed
+    /// step runs it as it runs the particles (M213c).
+    f64 wave_clock_ = 0.0;
     MeshCache mesh_cache_;
     TextureCache texture_cache_;
     FontCache font_cache_;
@@ -495,6 +501,12 @@ private:
     };
     /// The scene's ground, for the camera's focus (M217a).
     std::optional<map::Heightmap> ground_;
+    /// The last frame's view of the world, whose entities the camera's
+    /// targets follow (M217g): the app's history outlives it; a test drawing
+    /// from its own snapshots must keep them while it polls.
+    sim::FrameView camera_view_;
+    /// Its game time, (tick + interpolant) x 0.1: the camera's game clock.
+    f64 camera_game_time_ = 0.0;
     /// Bind the map's environment cubes and FA's lookups for meshes (M211a/b).
     void bind_mesh_environment(const map::ScmapEnvironment& environment);
     /// Clamped, for FA's lookup textures.
@@ -509,6 +521,8 @@ private:
 
     // Particle system
     ParticleSystem particle_system_;
+    WaveSystem wave_system_;
+    std::vector<WaveParticle> waves_emitted_; ///< this frame's, for the particles
     ParticleRenderer particle_renderer_;
     RuntimeDecalRenderer runtime_decals_; // scripts' decals and splats (M212c)
     EmitterBlueprintCache emitter_bp_cache_;

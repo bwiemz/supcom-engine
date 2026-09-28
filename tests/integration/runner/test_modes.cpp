@@ -5,6 +5,7 @@
 #include "test_modes.hpp"
 #include "app/support.hpp"
 #include "audio_data_test.hpp"
+#include "camera_moves_test.hpp"
 #include "keymap_test.hpp"
 #include "movie_test.hpp"
 #include "integration_tests.hpp"
@@ -124,6 +125,7 @@ constexpr Mode kModesBefore[] = {
     {"--lighting-test", test_lighting, false},
     {"--map-parse-test", test_map_parse, false},
     {"--terrain-glow-test", test_terrain_glow, false},
+    {"--wave-test", test_waves, false},
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
     {"--camera-test", test_camera, false},
@@ -233,11 +235,11 @@ constexpr Mode kModesAfter[] = {
 
 /// Modes with code of their own (below), and the windowed ones.
 constexpr const char* kOwnModes[] = {
-    "--gameui-test",          "--victory-test",      "--audio-data-test", "--lobby-flow-test",
-    "--dualstate-test",       "--construction-test", "--phase2-test",     "--phase3-test",
-    "--phase4-test",          "--phase5-test",       "--smoke-test",      "--draw-test",
-    "--stress-test",          "--full-smoke-test",   "--movie-test",      "--keymap-test",
-    "--session-command-test", "--keyboard-test",
+    "--gameui-test",          "--victory-test",      "--audio-data-test",   "--lobby-flow-test",
+    "--dualstate-test",       "--construction-test", "--phase2-test",       "--phase3-test",
+    "--phase4-test",          "--phase5-test",       "--smoke-test",        "--draw-test",
+    "--stress-test",          "--full-smoke-test",   "--movie-test",        "--keymap-test",
+    "--session-command-test", "--keyboard-test",     "--camera-moves-test",
 };
 
 /// Runs the sim Lua state's `code`; false (logged) on an error.
@@ -306,6 +308,7 @@ void IntegrationModes::print_usage() const {
               << "  --lighting-test    The map's lighting (sun, shadow fill, multiplier) in the lit shaders\n"
               << "  --map-parse-test   Every map's .scmap read to its last byte\n"
               << "  --terrain-glow-test TTerrainGlow's lava (Varga Pass, M212f)\n"
+              << "  --wave-test        The shoreline's waves (M213c)\n"
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
               << "  --camera-test      The camera focuses on the ground; clicks pick the ground under the cursor\n"
@@ -372,6 +375,7 @@ void IntegrationModes::print_usage() const {
               << "  --keymap-test      Retail's key map: names, default mappings, actions through the console\n"
               << "  --session-command-test  The console's session commands (select by category, command modes)\n"
               << "  --keyboard-test    Retail's keys own the keyboard; the world respects the capture\n"
+              << "  --camera-moves-test The camera's timed moves, WaitFor(camera), tracking, SimCamera\n"
               << "  --audio-data-test  Every cue in FA's sound banks resolves to playable waves\n"
               << "  --victory-test     The scenario's victory script decides a game (victory.lua)\n"
               << "  --interp-test      Windowed: a walking ACU is drawn between sim ticks\n"
@@ -422,7 +426,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     request.ai_army_2 =
         has("--ai-test") || has("--platoon-test") || has("--threat-test") || has("--combat-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
-                       has("--session-command-test") || has("--keyboard-test");
+                       has("--session-command-test") || has("--keyboard-test") ||
+                       has("--camera-moves-test");
     request.splash = has("--movie-test");
     // --render-dump compares renders; its scene's script errors are logged,
     // not counted, so a dump is still written.
@@ -1036,13 +1041,15 @@ void IntegrationModes::headless(Engine& e) {
     const bool keymap_test = has("--keymap-test");
     const bool session_command_test = has("--session-command-test");
     const bool keyboard_test = has("--keyboard-test");
+    const bool camera_moves_test = has("--camera-moves-test");
     const bool dualstate_test = has("--dualstate-test");
     const bool construction_test = has("--construction-test");
     const bool phase2_test = has("--phase2-test");
     const bool phase3_test = has("--phase3-test");
     const bool phase4_test = has("--phase4-test");
     const bool phase5_test = has("--phase5-test");
-    if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test) &&
+    if ((gameui_test || victory_test || keymap_test || session_command_test || keyboard_test ||
+         camera_moves_test) &&
         !map_path.empty()) {
         // Selection is input-handler state; a headless one lets the test
         // select units (SelectUnits) and drive the selection UI.
@@ -1096,6 +1103,8 @@ void IntegrationModes::headless(Engine& e) {
         if (session_command_test)
             osc::test::test_session_commands(ui_test_ctx, ui_registry, pump, play, sim_lua);
         if (keyboard_test) osc::test::test_keyboard(ui_test_ctx, ui_registry, pump, play, sim_lua);
+        if (camera_moves_test)
+            osc::test::test_camera_moves(ui_test_ctx, test_ctx, pump, play, sim_lua);
         if (victory_test) {
             osc::test::test_victory_flow(ui_test_ctx, pump, play, sim_lua);
         }

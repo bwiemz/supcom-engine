@@ -50,8 +50,10 @@ private:
 void write_command(ByteWriter& w, const ScheduledCommand& c);
 /// False when the bytes ran out or are malformed. The flags are false only
 /// for replays written before commands carried callbacks (v3), formations
-/// (v5), a specific unload's cargo (v6) or the factory-command flag (v7).
+/// (v5), a specific unload's cargo (v6), the factory-command flag (v7) or a
+/// callback's Args as one value (v8).
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback = true,
-                  bool with_formation = true, bool with_unload = true, bool with_factory = true);
+                  bool with_formation = true, bool with_unload = true, bool with_factory = true,
+                  bool with_value = true);
 
 } // namespace osc::sim

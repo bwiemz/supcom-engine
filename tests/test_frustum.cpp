@@ -59,3 +59,20 @@ TEST_CASE("Frustum: RTS camera culls correctly", "[frustum]") {
     CHECK(f.is_sphere_visible(256, 0, 256, 10.0f));
     CHECK_FALSE(f.is_sphere_visible(2256, 0, 256, 10.0f));
 }
+
+TEST_CASE("Frustum: a box is visible while any of it is inside (M213c)", "[frustum]") {
+    Frustum f(make_test_vp());
+    // From 100 up with a 45 degree view, the ground's half-width is 100 tan
+    // 22.5 = 41.4
+    CHECK(f.is_box_visible({-5, -1, -5}, {5, 1, 5}));
+    // Straddling an edge, either side: its middle is out, a corner in
+    CHECK(f.is_box_visible({40, -0.1f, -5}, {60, 0.1f, 5}));
+    CHECK(f.is_box_visible({-60, -0.1f, -5}, {-40, 0.1f, 5}));
+    CHECK(f.is_box_visible({-5, -0.1f, -60}, {5, 0.1f, -40}));
+    CHECK_FALSE(f.is_sphere_visible(50, 0, 0, 1.0f));
+    // Just past the edge, and far off: out
+    CHECK_FALSE(f.is_box_visible({43, -0.1f, -5}, {60, 0.1f, 5}));
+    CHECK_FALSE(f.is_box_visible({200, -1, -5}, {210, 1, 5}));
+    // Above the eye, behind it: out
+    CHECK_FALSE(f.is_box_visible({-5, 150, -5}, {5, 160, 5}));
+}

@@ -1532,25 +1532,6 @@ static int l_KillThread(lua_State* L) {
     return 0;
 }
 
-static int l_CurrentThread(lua_State* L) {
-    // Lua 5.0 doesn't have lua_pushthread.
-    // Return nil — threads are rarely inspected directly.
-    lua_pushnil(L);
-    return 1;
-}
-
-static int l_SuspendCurrentThread(lua_State* L) {
-    // Equivalent to WaitTicks(1). Only safe inside a coroutine.
-    // Guard: if we're the main thread with no active call frames, just return.
-    lua_Debug ar;
-    if (lua_getstack(L, 1, &ar) == 0 && lua_gettop(L) == 0) {
-        spdlog::warn("SuspendCurrentThread called outside coroutine context");
-        return 0;
-    }
-    return lua_yield(L, 0);
-}
-
-static int l_ResumeThread(lua_State*) { return 0; }
 
 // ====================================================================
 // Game state queries
@@ -5651,9 +5632,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     sim.thread_manager().register_in_registry(L);
     state.register_function("ForkThread", l_ForkThread);
     state.register_function("KillThread", l_KillThread);
-    state.register_function("CurrentThread", l_CurrentThread);
-    state.register_function("SuspendCurrentThread", l_SuspendCurrentThread);
-    state.register_function("ResumeThread", l_ResumeThread);
+    state.register_function("CurrentThread", sim::ThreadManager::lua_current_thread);
+    state.register_function("SuspendCurrentThread", sim::ThreadManager::lua_suspend_current_thread);
+    state.register_function("ResumeThread", sim::ThreadManager::lua_resume_thread);
 
     // Loading hints
     state.register_function("CreatePrefetchSet", l_CreatePrefetchSet);

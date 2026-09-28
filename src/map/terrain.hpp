@@ -112,6 +112,10 @@ public:
     const ScmapWaterMasks& water_masks() const { return water_masks_; }
     f32 water_abyss_elevation() const { return water_abyss_elevation_; }
 
+    /// The shoreline's wave generators (M213c).
+    void set_waves(std::vector<ScmapWaveGenerator> waves) { waves_ = std::move(waves); }
+    const std::vector<ScmapWaveGenerator>& waves() const { return waves_; }
+
     /// The map's sky (M210b): its dome, horizon, decals and cirrus.
     void set_sky(ScmapSky sky) { sky_ = std::move(sky); }
     const ScmapSky& sky() const { return sky_; }
@@ -137,6 +141,7 @@ private:
     ScmapEnvironment environment_;
     ScmapWater water_;
     ScmapWaterMasks water_masks_;
+    std::vector<ScmapWaveGenerator> waves_;
     f32 water_abyss_elevation_ = 0.0f;
     ScmapSky sky_;
 };

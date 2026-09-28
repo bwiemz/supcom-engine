@@ -69,6 +69,74 @@ void ThreadManager::rebind(lua_State* L) {
     L_ = L;
 }
 
+ThreadEntry* ThreadManager::find_running(lua_State* co) {
+    for (auto& t : threads_)
+        if (!t.dead && t.coroutine == co) return &t;
+    for (auto& t : pending_threads_)
+        if (!t.dead && t.coroutine == co) return &t;
+    return nullptr;
+}
+
+namespace {
+ThreadManager* registered_manager(lua_State* L) {
+    lua_pushstring(L, "osc_thread_mgr");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* tm = static_cast<ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    return tm;
+}
+} // namespace
+
+int ThreadManager::lua_current_thread(lua_State* L) {
+    ThreadManager* tm = registered_manager(L);
+    const ThreadEntry* t = tm ? tm->find_running(L) : nullptr;
+    if (!t || t->wrapper_ref < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_rawgeti(L, LUA_REGISTRYINDEX, t->wrapper_ref);
+    return 1;
+}
+
+int ThreadManager::lua_suspend_current_thread(lua_State* L) {
+    ThreadManager* tm = registered_manager(L);
+    ThreadEntry* t = tm ? tm->find_running(L) : nullptr;
+    if (!t) {
+        spdlog::warn("SuspendCurrentThread called outside a thread");
+        return 0;
+    }
+    t->suspended = true;
+    return lua_yield(L, 0);
+}
+
+int ThreadManager::lua_resume_thread(lua_State* L) {
+    ThreadManager* tm = registered_manager(L);
+    if (!tm || !lua_istable(L, 1)) return 0;
+    lua_pushstring(L, "_c_ref");
+    lua_rawget(L, 1);
+    lua_pushstring(L, "_c_serial");
+    lua_rawget(L, 1);
+    if (!lua_isnumber(L, -2) || !lua_isnumber(L, -1)) {
+        lua_pop(L, 2);
+        return 0;
+    }
+    const auto ref = static_cast<int>(lua_tonumber(L, -2));
+    const auto serial = static_cast<u64>(lua_tonumber(L, -1));
+    lua_pop(L, 2);
+    // The suspended thread runs again at the next resume (a thread not yet
+    // asleep is left be)
+    const auto wake = [&](std::vector<ThreadEntry>& list) {
+        for (auto& t : list) {
+            if (t.dead || t.lua_ref != ref || t.serial != serial || !t.suspended) continue;
+            t.suspended = false;
+            t.wait_until_tick = 0;
+        }
+    };
+    wake(tm->threads_);
+    wake(tm->pending_threads_);
+    return 0;
+}
+
 void ThreadManager::register_in_registry(lua_State* L) {
     lua_pushstring(L, "osc_thread_mgr");
     lua_pushlightuserdata(L, this);
@@ -223,6 +291,10 @@ void ThreadManager::resume_all(u32 current_tick) {
                 // Discard any return values the thread may have produced.
                 lua_settop(t.coroutine, 0);
                 t.dead = true;
+            } else if (t.suspended) {
+                // SuspendCurrentThread: asleep until ResumeThread
+                lua_settop(t.coroutine, 0);
+                t.wait_until_tick = INT32_MAX;
             } else {
                 // Thread yielded. Check what it yielded:
                 // - number → WaitTicks(n), resume after n ticks

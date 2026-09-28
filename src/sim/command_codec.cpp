@@ -76,6 +76,28 @@ std::string ByteReader::str() {
     return s;
 }
 
+namespace {
+
+/// A callback argument: its variant index, then the value.
+void write_arg(ByteWriter& w, const SimCallbackArg& value) {
+    w.u8v(static_cast<u8>(value.index()));
+    if (const auto* s = std::get_if<std::string>(&value)) w.str(*s);
+    else if (const auto* n = std::get_if<f64>(&value)) w.f64v(*n);
+    else w.u8v(std::get<bool>(value) ? 1 : 0);
+}
+
+/// False for an unknown tag (the reader is failed too).
+bool read_arg(ByteReader& r, SimCallbackArg& out) {
+    switch (r.u8v()) {
+    case 0: out = r.str(); return true;
+    case 1: out = r.f64v(); return true;
+    case 2: out = r.u8v() != 0; return true;
+    default: r.fail(); return false;
+    }
+}
+
+} // namespace
+
 void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.u32v(c.exec_tick);
     w.u32v(c.source);
@@ -103,17 +125,16 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.u32v(static_cast<u32>(cb.args.size()));
     for (const auto& [key, value] : cb.args) {
         w.str(key);
-        w.u8v(static_cast<u8>(value.index()));
-        if (const auto* s = std::get_if<std::string>(&value)) w.str(*s);
-        else if (const auto* n = std::get_if<f64>(&value)) w.f64v(*n);
-        else w.u8v(std::get<bool>(value) ? 1 : 0);
+        write_arg(w, value);
     }
     w.u32v(static_cast<u32>(cb.unit_ids.size()));
     for (u32 id : cb.unit_ids) w.u32v(id);
+    w.u8v(cb.value ? 1 : 0);
+    if (cb.value) write_arg(w, *cb.value);
 }
 
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation,
-                  bool with_unload, bool with_factory) {
+                  bool with_unload, bool with_factory, bool with_value) {
     c = ScheduledCommand{};
     c.exec_tick = r.u32v();
     c.source = r.u32v();
@@ -144,15 +165,14 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
     const u32 nargs = r.u32v();
     for (u32 i = 0; i < nargs && r.ok(); ++i) {
         std::string key = r.str();
-        switch (r.u8v()) {
-        case 0: cb.args[key] = r.str(); break;
-        case 1: cb.args[key] = r.f64v(); break;
-        case 2: cb.args[key] = r.u8v() != 0; break;
-        default: r.fail(); break;
-        }
+        read_arg(r, cb.args[key]);
     }
     const u32 nunits = r.u32v();
     for (u32 i = 0; i < nunits && r.ok(); ++i) cb.unit_ids.push_back(r.u32v());
+    if (with_value && r.u8v() != 0) {
+        SimCallbackArg value;
+        if (read_arg(r, value)) cb.value = std::move(value);
+    }
     if (r.ok()) c.callback = std::move(cb);
     return r.ok();
 }

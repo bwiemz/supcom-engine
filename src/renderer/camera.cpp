@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <optional>
 
@@ -17,13 +18,59 @@ constexpr f32 kDegToRad = Camera::kPi / 180.0f;
 /// Far enough to cross any map from any eye.
 constexpr f32 kReach = 40000.0f;
 
-/// An angle into [-pi, pi] (NormalizeAngleSignedRadians).
+/// An angle into [-pi, pi], pi itself left be (NormalizeAngleSignedRadians).
 f32 signed_angle(f32 a) {
     constexpr f32 kTwoPi = 2.0f * Camera::kPi;
-    a = std::fmod(a + Camera::kPi, kTwoPi);
-    if (a < 0.0f) a += kTwoPi;
-    return a - Camera::kPi;
+    a = std::fmod(a, kTwoPi);
+    if (a < -Camera::kPi) return a + kTwoPi;
+    if (a > Camera::kPi) return a - kTwoPi;
+    return a;
 }
+
+/// An angle into [-pi, pi], then unwrapped to lie within pi of `reference`
+/// (NormalizeQuadrant).
+f32 near_angle(f32 angle, f32 reference) {
+    constexpr f32 kTwoPi = 2.0f * Camera::kPi;
+    f32 a = std::fmod(angle, kTwoPi);
+    if (a < -Camera::kPi) {
+        a += kTwoPi;
+    } else if (a > Camera::kPi) {
+        a -= kTwoPi;
+    }
+    if (std::abs(a - reference) > Camera::kPi) a += a < reference ? kTwoPi : -kTwoPi;
+    return a;
+}
+
+/// An entity's heading from its orientation (x, y, z, w).
+f32 heading_of(const std::array<f32, 4>& q) {
+    return std::atan2((q[2] * q[0] + q[1] * q[3]) * 2.0f,
+                      1.0f - (q[1] * q[1] + q[0] * q[0]) * 2.0f);
+}
+
+/// An entity's pitch from its orientation: Moho's arcsine (COORDS_Pitch's
+/// polynomial).
+f32 pitch_of(const std::array<f32, 4>& q) {
+    const f32 c = std::clamp((q[3] * q[2] - q[1] * q[0]) * -2.0f, -1.0f, 1.0f);
+    const f32 poly = c * (c * (c * -0.018729299f + 0.074261002f) - 0.21211439f) + 1.5707288f;
+    return 1.5707963f - std::sqrt(1.0f - c) * poly;
+}
+
+/// The cubic Hermite basis at t: start value, start tangent, end tangent,
+/// end value.
+struct Hermite {
+    f32 start = 0.0f, start_tangent = 0.0f, end_tangent = 0.0f, end = 0.0f;
+    explicit Hermite(f32 t) {
+        const f32 tt = t * t;
+        const f32 ttt = tt * t;
+        start = ttt * 2.0f - tt * 3.0f + 1.0f;
+        start_tangent = ttt - tt * 2.0f + t;
+        end_tangent = ttt - tt;
+        end = tt * 3.0f - ttt * 2.0f;
+    }
+    f32 blend(f32 from, f32 delta, f32 to) const {
+        return start * from + start_tangent * delta + end_tangent * delta + end * to;
+    }
+};
 
 } // namespace
 
@@ -67,6 +114,16 @@ void Camera::reset() {
     target_zoom_ = near_zoom_;
     focus_ = target_;
     eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
+    // A move under way runs on (CameraReset leaves it)
+    end_pitch_ = pitch_;
+    end_heading_ = kPi;
+    nose_pitch_adjust_ = 0.0f;
+    ease_in_out_ = true;
+    heading_rate_ = 0.0f;
+    zoom_rate_ = 0.0f;
+    target_type_ = CameraTarget::Location;
+    target_time_armed_ = false;
+    target_time_left_ = 0.0f;
 }
 
 void Camera::zoom(f32 notches) {
@@ -107,26 +164,183 @@ void Camera::set_view(f32 x, f32 z, f32 zoom, f32 heading, f32 pitch) {
     set_target(x, z);
 }
 
-void Camera::target_manual(f32 x, f32 y, f32 z, f32 heading, f32 pitch, f32 zoom) {
-    // The heading unwrapped to lie within pi of the current (NormalizeQuadrant)
-    constexpr f32 kTwoPi = 2.0f * kPi;
-    f32 h = std::fmod(heading, kTwoPi);
-    if (h < -kPi) {
-        h += kTwoPi;
-    } else if (h > kPi) {
-        h -= kTwoPi;
-    }
-    if (std::abs(h - heading_) > kPi) h += h < heading_ ? kTwoPi : -kTwoPi;
-    heading_ = h;
-    pitch_ = pitch;
+void Camera::target_manual(f32 x, f32 y, f32 z, f32 heading, f32 pitch, f32 zoom, f32 seconds) {
+    timed_move_init(seconds, 0.0f);
+    end_pitch_ = pitch;
+    // Unwrapped about the heading wrapped to +-pi, where the move starts.
+    // faf-re's TargetManual reads the raw heading here; after a move that
+    // ended past +-pi, the next across it would turn the long way round.
+    end_heading_ = near_angle(heading, signed_angle(heading_));
     near_zoom_ = zoom;
-    target_zoom_ = zoom;
     target_ = {x, y, z};
+    if (seconds == 0.0f) {
+        target_type_ = CameraTarget::Location;
+        heading_ = end_heading_;
+        pitch_ = end_pitch_;
+        target_zoom_ = near_zoom_;
+        focus_ = target_;
+        rotated_ = true;
+        clamp_focus();
+        fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
+        eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
+    } else {
+        target_type_ = CameraTarget::Hermite;
+        setup_hermite();
+    }
+}
+
+void Camera::timed_move_init(f32 seconds, f32 transition) {
+    // TimedMoveInit: the move's start, on the camera's clock
+    move_focus_ = {};
+    move_zoom_ = 0.0f;
+    move_start_ = 0.0;
+    move_pitch_ = 0.0f;
+    move_heading_ = 0.0f;
+    move_seconds_ = seconds;
+    move_transition_ = transition;
+    if (seconds > 0.0f) {
+        move_start_ = now();
+        move_focus_ = focus_;
+        move_zoom_ = target_zoom_;
+        move_pitch_ = pitch_;
+        move_heading_ = signed_angle(heading_);
+        signaled_ = false;
+    }
+}
+
+void Camera::setup_hermite() {
+    // With ease-in-out on the tangents stay as they were (zero until turned
+    // off): an eased cubic. Off, both are the whole change: a straight line.
+    if (ease_in_out_) return;
+    for (int i = 0; i < 3; ++i) hermite_focus_[i] = target_[i] - move_focus_[i];
+    hermite_heading_ = end_heading_ - move_heading_;
+    hermite_pitch_ = end_pitch_ - move_pitch_;
+    hermite_zoom_ = near_zoom_ - move_zoom_;
+}
+
+void Camera::target_box(const std::array<f32, 3>& min, const std::array<f32, 3>& max, f32 seconds) {
+    timed_move_init(seconds, 0.0f);
+    for (int i = 0; i < 3; ++i) target_[i] = (min[i] + max[i]) * 0.5f;
+    near_zoom_ = std::max(max[0] - min[0], max[2] - min[2]);
+    target_type_ = CameraTarget::Box;
+    if (seconds == 0.0f) {
+        target_zoom_ = near_zoom_;
+        clamp_target();
+        focus_ = target_;
+        clamp_focus();
+        fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
+        eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
+    } else {
+        setup_hermite();
+    }
+}
+
+void Camera::target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 seconds) {
+    target_time_left_ = 0.0f;
+    target_time_armed_ = false;
+    target_ids_ = std::move(ids);
+    active_target_ = 0;
+    if (target_ids_.empty()) return;
+    timed_move_init(seconds, 0.0f);
+    CameraEntityPose pose;
+    if (!target_pose(pose)) return;
+    target_ = pose.pos;
+    near_zoom_ = zoom;
+    target_type_ = track ? CameraTarget::Entity : CameraTarget::Location;
+    setup_hermite();
+}
+
+void Camera::target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
+                             f32 transition) {
+    target_time_left_ = 0.0f;
+    target_time_armed_ = false;
+    target_ids_ = std::move(ids);
+    active_target_ = 0;
+    if (target_ids_.empty()) return;
+    timed_move_init(seconds, transition);
+    CameraEntityPose pose;
+    if (!target_pose(pose)) return;
+    // The view at once; a move eases into it from where it was
+    target_ = pose.pos;
+    end_heading_ = near_angle(heading_of(pose.orient), move_heading_);
+    end_pitch_ = pitch_of(pose.orient) + pitch_adjust;
+    near_zoom_ = zoom;
+    nose_pitch_adjust_ = pitch_adjust;
+    pitch_ = end_pitch_;
+    target_type_ = CameraTarget::NoseCam;
+    heading_ = end_heading_;
+    target_zoom_ = near_zoom_;
     focus_ = target_;
-    rotated_ = true;
     clamp_focus();
     fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
     eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
+}
+
+void Camera::target_nothing() {
+    target_type_ = CameraTarget::Location;
+    target_time_armed_ = false;
+    target_time_left_ = 0.0f;
+}
+
+void Camera::spin_rates(f32 heading_rate, f32 zoom_rate) {
+    heading_rate_ = heading_rate;
+    zoom_rate_ = zoom_rate;
+    rotated_ = true;
+    target_type_ = CameraTarget::Hermite;
+}
+
+bool Camera::set_acc_mode(const std::string& name) {
+    const auto is = [&](const char* want) {
+        if (name.size() != std::char_traits<char>::length(want)) return false;
+        for (size_t i = 0; i < name.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(name[i])) !=
+                std::tolower(static_cast<unsigned char>(want[i])))
+                return false;
+        }
+        return true;
+    };
+    if (is("Linear")) {
+        accel_ = CameraAccel::Linear;
+    } else if (is("FastInSlowOut")) {
+        accel_ = CameraAccel::FastInSlowOut;
+    } else if (is("SlowInOut")) {
+        accel_ = CameraAccel::SlowInOut;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+bool Camera::target_pose(CameraEntityPose& out) const {
+    if (!entity_lookup_ || active_target_ >= target_ids_.size()) return false;
+    return entity_lookup_(target_ids_[active_target_], out);
+}
+
+void Camera::target_next_entity() {
+    // TargetNextEntity: on round the list to a live one, dropping the gone
+    while (!target_ids_.empty()) {
+        const size_t next = (active_target_ + 1) % target_ids_.size();
+        active_target_ = next;
+        CameraEntityPose pose;
+        if (target_pose(pose)) {
+            target_type_ = CameraTarget::Entity;
+            target_time_left_ = 0.0f;
+            target_time_armed_ = false;
+            return;
+        }
+        target_ids_.erase(target_ids_.begin() + static_cast<std::ptrdiff_t>(next));
+        if (target_ids_.empty()) return;
+        // The one after the gone now sits where it was: step back so the
+        // next turn lands on it
+        active_target_ = (next + target_ids_.size() - 1) % target_ids_.size();
+    }
+}
+
+void Camera::signal() {
+    signaled_ = true;
+    std::vector<std::function<void()>> waiters;
+    waiters.swap(waiters_);
+    for (auto& w : waiters) w();
 }
 
 void Camera::set_eye_distance(f32 distance) {
@@ -146,7 +360,9 @@ void Camera::set_eye_distance(f32 distance) {
 }
 
 void Camera::revert_rotation() {
-    if (rotated_) revert_ = true;
+    if (!rotated_) return;
+    revert_ = true;
+    if (target_type_ != CameraTarget::Entity) target_type_ = CameraTarget::Location;
 }
 
 f32 Camera::zoom_fraction() const {
@@ -238,7 +454,51 @@ void Camera::clamp_focus() {
 }
 
 void Camera::frame(f64 dt) {
+    // Frame: on the game clock the step is the game time's
+    if (game_clock_) dt = game_time_ - last_game_time_;
     const auto seconds = static_cast<f32>(dt);
+    update_targets(seconds);
+    if (move_seconds_ > 0.0f) {
+        interpolate_basis();
+    } else {
+        update_basis(seconds);
+    }
+    // UpdateCoords: the eye's distance from the zoom and the FOV
+    eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
+    last_game_time_ = game_time_;
+    decay_shake();
+}
+
+void Camera::update_targets(f32 dt) {
+    // A target gone: the next in the list, once its time is up
+    if (target_time_armed_) {
+        target_time_left_ = std::max(0.0f, target_time_left_ - dt);
+        if (target_time_left_ == 0.0f) target_next_entity();
+    }
+    if (target_type_ == CameraTarget::Entity || target_type_ == CameraTarget::NoseCam) {
+        CameraEntityPose pose;
+        if (!target_pose(pose)) {
+            // Gone: a location, a turned view turned back
+            target_time_armed_ = true;
+            target_type_ = CameraTarget::Location;
+            if (rotated_) revert_ = true;
+            return;
+        }
+        target_ = pose.pos;
+        if (target_type_ == CameraTarget::NoseCam) {
+            end_pitch_ = pitch_of(pose.orient) + nose_pitch_adjust_;
+            end_heading_ = near_angle(heading_of(pose.orient), move_heading_);
+        }
+        return;
+    }
+    if (target_type_ == CameraTarget::Hermite) {
+        // Spin's rates: revolutions and zoom a second
+        end_heading_ += heading_rate_ * dt * 2.0f * kPi;
+        near_zoom_ += zoom_rate_ * dt;
+    }
+}
+
+void Camera::update_basis(f32 seconds) {
     // UpdateBasis: the target zoom glides toward the zoom asked for in log2
     // space, by at most (|delta| * 8 + 1) a second
     const f32 start = target_zoom_;
@@ -249,9 +509,11 @@ void Camera::frame(f64 dt) {
     target_zoom_ = std::exp2(log_start + std::copysign(step, delta));
     if (!rotated_) target_zoom_ = std::clamp(target_zoom_, kNearZoom, max_zoom());
 
-    // Closing in, the ground under the pivot keeps its place on the screen:
-    // the target is drawn toward it by the zoom's ratio
-    if (start > target_zoom_ && start > 0.0f) {
+    // Closing in on a place, the ground under the pivot keeps its place on
+    // the screen: the target is drawn toward it by the zoom's ratio
+    const bool anchored =
+        target_type_ == CameraTarget::Location || target_type_ == CameraTarget::Hermite;
+    if (anchored && start > target_zoom_ && start > 0.0f) {
         f32 o[3];
         f32 d[3];
         f32 hit[3];
@@ -265,6 +527,23 @@ void Camera::frame(f64 dt) {
     focus_ = target_;
     fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
 
+    // The heading and pitch by the target: a nose's the entity's, a
+    // Hermite's (a finished move, a spin) its own
+    if (target_type_ == CameraTarget::NoseCam) {
+        CameraEntityPose pose;
+        if (target_pose(pose)) {
+            heading_ = heading_of(pose.orient);
+            pitch_ = pitch_of(pose.orient) + nose_pitch_adjust_;
+        }
+        clamp_focus();
+        return;
+    }
+    if (target_type_ == CameraTarget::Hermite) {
+        heading_ = end_heading_;
+        pitch_ = end_pitch_;
+        clamp_focus();
+        return;
+    }
     if (!rotated_) {
         pitch_ = zoom_pitch();
     } else if (revert_) {
@@ -282,10 +561,66 @@ void Camera::frame(f64 dt) {
         }
     }
     clamp_focus();
+}
 
-    // UpdateCoords: the eye's distance from the zoom and the FOV
-    eye_distance_ = target_zoom_ / std::tan(fov_ * 0.5f) / 2.0f;
-    decay_shake();
+void Camera::interpolate_basis() {
+    // InterpolateBasis: the move's progress on its clock
+    const auto progress = static_cast<f32>((now() - move_start_) / move_seconds_);
+    if (target_type_ == CameraTarget::Entity) {
+        CameraEntityPose pose;
+        if (target_pose(pose)) target_ = pose.pos;
+    }
+    const bool steered =
+        target_type_ == CameraTarget::Hermite || target_type_ == CameraTarget::NoseCam;
+    if (progress >= 1.0f) {
+        // There: the end, held
+        focus_ = target_;
+        move_seconds_ = 0.0f;
+        target_zoom_ = near_zoom_;
+        signal();
+        if (steered) {
+            rotated_ = true;
+            heading_ = end_heading_;
+            // faf-re's recovery reads the start pitch here, which would
+            // snap every move back; its UpdateBasis holds the end pitch
+            pitch_ = end_pitch_;
+        }
+    } else {
+        // A nose move's curve runs on its transition's own seconds
+        f32 input = progress;
+        if (target_type_ == CameraTarget::NoseCam) {
+            input = 1.0f;
+            if (move_transition_ > 0.0f) {
+                input = std::min(1.0f, static_cast<f32>((now() - move_start_) / move_transition_));
+            }
+        }
+        f32 t = input;
+        if (accel_ == CameraAccel::FastInSlowOut) {
+            t = std::sin(input * kPi * 0.5f);
+        } else if (accel_ == CameraAccel::SlowInOut) {
+            t = progress < 0.5f ? (1.0f - std::cos(input * kPi)) * 0.5f
+                                : std::sin((input - 0.5f) * kPi) * 0.5f + 0.5f;
+        }
+        const Hermite w(t);
+        if (steered) {
+            pitch_ = w.blend(move_pitch_, hermite_pitch_, end_pitch_);
+            heading_ = w.blend(move_heading_, hermite_heading_, end_heading_);
+            rotated_ = true;
+        }
+        target_zoom_ = w.blend(move_zoom_, hermite_zoom_, near_zoom_);
+        for (int i = 0; i < 3; ++i)
+            focus_[i] = w.blend(move_focus_[i], hermite_focus_[i], target_[i]);
+    }
+    // A place's or a box's pitch follows the zoom, as the basis's does
+    if (!steered && target_type_ != CameraTarget::Entity) pitch_ = zoom_pitch();
+    fov_ = (kNearFovDeg + zoom_fraction() * (kFarFovDeg - kNearFovDeg)) * kDegToRad;
+    // The focus onto the ground ahead of it along the view
+    const std::array<f32, 3> d = direction();
+    f32 hit[3];
+    if (surface_hit(focus_.data(), d.data(), kReach, hit)) focus_ = {hit[0], hit[1], hit[2]};
+    if (progress >= 1.0f && target_type_ != CameraTarget::NoseCam &&
+        target_type_ != CameraTarget::Entity)
+        target_type_ = CameraTarget::Location;
 }
 
 void Camera::update(GLFWwindow* window, f64 dt) {

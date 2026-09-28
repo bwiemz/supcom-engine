@@ -3,6 +3,9 @@
 #include "core/types.hpp"
 
 #include <array>
+#include <functional>
+#include <string>
+#include <vector>
 
 struct GLFWwindow;
 
@@ -22,6 +25,17 @@ struct CameraInput {
     /// The cursor on the screen's edges (windowed, focused and over it).
     bool at_left = false, at_right = false, at_top = false, at_bottom = false;
     f32 mouse_x = 0.0f, mouse_y = 0.0f;
+};
+
+/// Where the camera aims (Moho's target types, M217g).
+enum class CameraTarget : u8 { Location, Box, Entity, NoseCam, Hermite };
+/// A move's pace (SetAccMode).
+enum class CameraAccel : u8 { Linear, FastInSlowOut, SlowInOut };
+/// An entity as the camera sees it: its interpolated position, and its
+/// orientation (x, y, z, w).
+struct CameraEntityPose {
+    std::array<f32, 3> pos{};
+    std::array<f32, 4> orient{0.0f, 0.0f, 0.0f, 1.0f};
 };
 
 /// Moho's world camera (CameraImpl, M217f). The zoom is the world's extent
@@ -116,9 +130,10 @@ public:
     void set_pitch(f32 pitch);
     /// A whole view, held: target, zoom, heading and pitch.
     void set_view(f32 x, f32 z, f32 zoom, f32 heading, f32 pitch);
-    /// TargetManual at once (0 seconds): the target, heading (unwrapped
-    /// nearest the current), pitch and zoom, unclamped and held.
-    void target_manual(f32 x, f32 y, f32 z, f32 heading, f32 pitch, f32 zoom);
+    /// TargetManual: the target, heading (unwrapped nearest the current),
+    /// pitch and zoom. At once (0 seconds), unclamped and held; else a
+    /// Hermite move over `seconds`.
+    void target_manual(f32 x, f32 y, f32 z, f32 heading, f32 pitch, f32 zoom, f32 seconds = 0.0f);
     /// SetTargetZoom: the zoom the view glides toward, as given.
     void set_requested_zoom(f32 zoom) { near_zoom_ = zoom; }
     /// The zoom (held, at once) that puts the eye `distance` from the focus:
@@ -129,6 +144,45 @@ public:
     void set_free(bool free) { free_ = free; }
     bool free() const { return free_; }
     void set_max_zoom_mult(f32 mult);
+
+    // --- Moves (M217g) ---
+    /// An entity's pose by id (the frame's interpolated view), for the
+    /// targets that follow one; false when it is gone.
+    using EntityLookup = std::function<bool(u32 id, CameraEntityPose& out)>;
+    void set_entity_lookup(EntityLookup lookup) { entity_lookup_ = std::move(lookup); }
+    /// This frame's clocks: the system's seconds, and the game's
+    /// ((tick + interpolant) x 0.1, GameTimeSource).
+    void set_clocks(f64 system_seconds, f64 game_seconds) {
+        system_time_ = system_seconds;
+        game_time_ = game_seconds;
+    }
+    /// UseGameClock / UseSystemClock: the clock the moves run on.
+    void use_game_clock(bool game) { game_clock_ = game; }
+    /// TargetBox: the box's centre, zoomed to its wider x or z extent.
+    void target_box(const std::array<f32, 3>& min, const std::array<f32, 3>& max, f32 seconds);
+    /// TargetEntities: the first live one, at `zoom`; followed if tracked.
+    void target_entities(std::vector<u32> ids, bool track, f32 zoom, f32 seconds);
+    /// TargetNoseCam: behind the first live one's nose, at its heading and
+    /// its pitch plus `pitch_adjust`.
+    void target_nose_cam(std::vector<u32> ids, f32 pitch_adjust, f32 zoom, f32 seconds,
+                         f32 transition);
+    /// TargetNothing: a location, followed no more.
+    void target_nothing();
+    /// Spin (Lua): turn `heading_rate` revolutions a second, zoom
+    /// `zoom_rate` a second.
+    void spin_rates(f32 heading_rate, f32 zoom_rate);
+    /// SetAccMode: Linear, FastInSlowOut or SlowInOut (any case); false for
+    /// another name (unchanged).
+    bool set_acc_mode(const std::string& name);
+    void set_ease_in_out(bool on) { ease_in_out_ = on; }
+    /// A move is under way.
+    bool moving() const { return move_seconds_ > 0.0f; }
+    /// The camera's event: signalled when a move ends (WaitFor).
+    bool signaled() const { return signaled_; }
+    /// Called once, when the event is next signalled.
+    void on_signal(std::function<void()> waiter) { waiters_.push_back(std::move(waiter)); }
+    CameraTarget target_type() const { return target_type_; }
+    CameraAccel acc_mode() const { return accel_; }
 
     // --- The lanes ---
     f32 target_x() const { return target_[0]; }
@@ -199,6 +253,18 @@ private:
     void decay_shake();
     /// The unit view direction, from the eye toward the focus.
     std::array<f32, 3> direction() const;
+    f64 now() const { return game_clock_ ? game_time_ : system_time_; }
+    void timed_move_init(f32 seconds, f32 transition);
+    void setup_hermite();
+    void update_targets(f32 dt);
+    /// UpdateBasis: the zoom's glide, the clamps, the FOV, the heading and
+    /// pitch by the target's type.
+    void update_basis(f32 seconds);
+    void interpolate_basis();
+    void signal();
+    /// The active target entity's pose (false: none, or gone).
+    bool target_pose(CameraEntityPose& out) const;
+    void target_next_entity();
     /// The log-zoom blend, 0 at the nearest zoom and 1 at the farthest.
     f32 zoom_fraction() const;
     f32 zoom_pitch() const;
@@ -236,6 +302,39 @@ private:
     f32 viewport_w_ = 1024.0f;
     f32 viewport_h_ = 1024.0f;
     std::array<f32, 4> rect_{0.0f, 0.0f, 1024.0f, 1024.0f}; ///< x0, z0, x1, z1
+
+    // The moves (M217g)
+    CameraTarget target_type_ = CameraTarget::Location;
+    CameraAccel accel_ = CameraAccel::Linear;
+    bool ease_in_out_ = true; ///< mEnableEaseInOut
+    bool game_clock_ = false;
+    f64 system_time_ = 0.0;
+    f64 game_time_ = 0.0;
+    f64 last_game_time_ = 0.0;
+    f32 move_seconds_ = 0.0f;    ///< mTimedMoveDuration
+    f32 move_transition_ = 0.0f; ///< a nose move's own seconds
+    f64 move_start_ = 0.0;
+    std::array<f32, 3> move_focus_{};
+    f32 move_zoom_ = 0.0f;
+    f32 move_pitch_ = 0.0f;
+    f32 move_heading_ = 0.0f;
+    /// SetupHermite's deltas (its start and end tangents are the same)
+    std::array<f32, 3> hermite_focus_{};
+    f32 hermite_heading_ = 0.0f;
+    f32 hermite_pitch_ = 0.0f;
+    f32 hermite_zoom_ = 0.0f;
+    f32 end_heading_ = kPi; ///< mHeadingZoom
+    f32 end_pitch_ = 0.0f;  ///< mCurrentPitch
+    f32 heading_rate_ = 0.0f;
+    f32 zoom_rate_ = 0.0f;
+    f32 nose_pitch_adjust_ = 0.0f;
+    std::vector<u32> target_ids_;
+    size_t active_target_ = 0;
+    bool target_time_armed_ = false; ///< mTargetTime
+    f32 target_time_left_ = 0.0f;
+    bool signaled_ = true;
+    std::vector<std::function<void()>> waiters_;
+    EntityLookup entity_lookup_;
 
     // The world view's drags
     bool dragging_ = false;

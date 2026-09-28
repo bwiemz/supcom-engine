@@ -19,6 +19,8 @@ struct ThreadEntry {
     int wrapper_ref = -2;
     i32 wait_until_tick = 0; // Tick at which to resume (0 = resume next tick)
     bool dead = false;
+    /// SuspendCurrentThread: asleep until ResumeThread wakes it.
+    bool suspended = false;
     std::string source;     // Debug: where this thread was forked from
     u64 serial = 0;         // unique per thread (refs are reused)
 };
@@ -77,6 +79,14 @@ public:
     /// again at `current_tick`), and clear the waiter.
     void wake(Waitable& w, u32 current_tick);
 
+    /// Moho's thread calls, for a Lua state whose manager registered itself:
+    /// CurrentThread() -> the running thread's handle (ForkThread's);
+    /// SuspendCurrentThread() -> it sleeps until ResumeThread(handle), as
+    /// SingleEvent/MultiEvent wait (SimCamera's moves).
+    static int lua_current_thread(lua_State* L);
+    static int lua_suspend_current_thread(lua_State* L);
+    static int lua_resume_thread(lua_State* L);
+
     /// Set the maximum number of Lua VM instructions per coroutine resume.
     /// Set to 0 to disable the instruction limit.
     void set_instruction_budget(i32 budget) { instruction_budget_ = budget; }
@@ -90,6 +100,8 @@ private:
     i32 instruction_budget_ = DEFAULT_INSTRUCTION_BUDGET;
 
     void cleanup_dead_threads();
+    /// The live thread running on coroutine `co`, or null.
+    ThreadEntry* find_running(lua_State* co);
 
     /// Create and cache the shared metatable for thread wrapper tables.
     static void create_thread_metatable(lua_State* L);
