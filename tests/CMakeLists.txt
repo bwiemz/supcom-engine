@@ -98,6 +98,7 @@ add_executable(osc_tests
     test_lockstep.cpp
     test_tcp_transport.cpp
     test_lobby_net.cpp
+    test_lan_discovery.cpp
     test_lobby_wire.cpp
     test_net_lobby.cpp
     test_command_routing.cpp
