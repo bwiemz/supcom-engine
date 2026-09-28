@@ -58,9 +58,9 @@ private:
     /// sky.fx's parameters (std140).
     struct Uniforms {
         f32 view_proj[16];
-        f32 view_right[4];   ///< w the time, in ticks
-        f32 view_up[4];      ///< w the decals' glow multiplier
-        f32 horizon[4];      ///< its start and end; z the cirrus multiplier
+        f32 view_right[4]; ///< w the time, in ticks
+        f32 view_up[4];    ///< w the decals' glow multiplier
+        f32 horizon[4];    ///< its start and end; z the cirrus multiplier
         f32 horizon_color[4];
         f32 sky_color[4];
         f32 cirrus_color[4];
@@ -90,7 +90,7 @@ private:
     VkSampler point_ = VK_NULL_HANDLE, wrap_ = VK_NULL_HANDLE, clamp_ = VK_NULL_HANDLE;
     AllocatedBuffer uniform_buf_[FRAMES_IN_FLIGHT] = {};
     void* uniform_mapped_[FRAMES_IN_FLIGHT] = {};
-    AllocatedBuffer quad_buf_{};       ///< the billboard's corners, then its six indices
+    AllocatedBuffer quad_buf_{}; ///< the billboard's corners, then its six indices
     AllocatedBuffer dome_vertices_{};
     AllocatedBuffer dome_indices_{};
     AllocatedBuffer decal_buf_{};

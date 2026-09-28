@@ -139,12 +139,14 @@ void SkyRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass sce
     layout_ci.pSetLayouts = &set_layout_;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout_);
 
-    VkShaderModule dome_vert = compile_glsl(device, shaders::sky_dome_vert(), "sky_dome_vert", true);
+    VkShaderModule dome_vert =
+        compile_glsl(device, shaders::sky_dome_vert(), "sky_dome_vert", true);
     VkShaderModule decal_vert =
         compile_glsl(device, shaders::sky_decal_vert(), "sky_decal_vert", true);
     VkShaderModule atmosphere =
         compile_glsl(device, shaders::sky_atmosphere_frag(), "sky_atmosphere_frag", false);
-    VkShaderModule cirrus = compile_glsl(device, shaders::sky_cirrus_frag(), "sky_cirrus_frag", false);
+    VkShaderModule cirrus =
+        compile_glsl(device, shaders::sky_cirrus_frag(), "sky_cirrus_frag", false);
     VkShaderModule albedo =
         compile_glsl(device, shaders::sky_decal_albedo_frag, "sky_decal_albedo_frag", false);
     VkShaderModule glow =
@@ -281,15 +283,15 @@ void SkyRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
     // The dome
     const SkyDomeMesh dome = build_sky_dome(sky);
     if (dome.indices.empty()) {
-        spdlog::warn("SkyRenderer: the map's dome ({} x {}) can't be drawn", sky.width,
-                     sky.height);
+        spdlog::warn("SkyRenderer: the map's dome ({} x {}) can't be drawn", sky.width, sky.height);
         return;
     }
-    dome_vertices_ =
-        filled_buffer(allocator_, dome.vertices.data(),
-                      sizeof(SkyDomeVertex) * dome.vertices.size(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    dome_indices_ = filled_buffer(allocator_, dome.indices.data(), sizeof(u16) * dome.indices.size(),
-                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    dome_vertices_ = filled_buffer(allocator_, dome.vertices.data(),
+                                   sizeof(SkyDomeVertex) * dome.vertices.size(),
+                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    dome_indices_ =
+        filled_buffer(allocator_, dome.indices.data(), sizeof(u16) * dome.indices.size(),
+                      VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     if (!dome_vertices_.buffer || !dome_indices_.buffer) {
         free_buffers();
         return;
@@ -316,9 +318,9 @@ void SkyRenderer::build(const map::Terrain& terrain, TextureCache& textures) {
                                  {d.size[0], d.size[1]},
                                  {d.uv[0], d.uv[1], d.uv[2], d.uv[3]}});
         }
-        decal_buf_ = filled_buffer(allocator_, instances.data(),
-                                   sizeof(DecalInstance) * instances.size(),
-                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+        decal_buf_ =
+            filled_buffer(allocator_, instances.data(), sizeof(DecalInstance) * instances.size(),
+                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
         if (decal_buf_.buffer) decal_count_ = decals;
     }
     if (!decal_albedo_) decal_albedo_ = textures.zero_fallback_view();

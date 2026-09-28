@@ -172,8 +172,7 @@ bool skip_cartographic_decals(BinaryReader& r, i32 version_minor) {
         if (!r.has_remaining(4)) return false;
         const i32 count = r.read_i32();
         constexpr size_t kDecalBytes = 36;
-        if (count < 0 || !r.has_remaining(static_cast<size_t>(count) * kDecalBytes))
-            return false;
+        if (count < 0 || !r.has_remaining(static_cast<size_t>(count) * kDecalBytes)) return false;
         r.skip(static_cast<size_t>(count) * kDecalBytes);
     }
     return true;
@@ -446,9 +445,9 @@ ScmapSky default_sky(u32 map_width, u32 map_height, f32 elevation) {
     sky.origin[0] = half_x;
     sky.origin[2] = half_z;
     // cos(72 degrees), the start angle's, as Moho's double
-    sky.radius = static_cast<f32>(std::sqrt(static_cast<f64>(half_x) * half_x +
-                                            static_cast<f64>(half_z) * half_z) /
-                                  std::cos(1.25663697719574));
+    sky.radius = static_cast<f32>(
+        std::sqrt(static_cast<f64>(half_x) * half_x + static_cast<f64>(half_z) * half_z) /
+        std::cos(1.25663697719574));
     sky.elevation = elevation;
     sky.horizon_size = sky.radius * 0.15360001f;
     const f32 horizon[3] = {0.81f, 0.74f, 0.64f};

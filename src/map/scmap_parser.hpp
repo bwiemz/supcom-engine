@@ -117,15 +117,15 @@ struct ScmapCirrusLayer {
 /// The defaults are SkyDome's constructor's.
 struct ScmapSky {
     f32 origin[3] = {};
-    f32 elevation = 0;             ///< the dome's lowest ring: where the horizon starts
-    f32 radius = 512;              ///< the lowest ring's
-    f32 start_angle = 1.2566371f;  ///< the lowest ring's angle up the sphere
-    i32 width = 16, height = 6;    ///< segments around, and rings up
-    f32 horizon_size = 44;         ///< the horizon ends this far above its start
+    f32 elevation = 0;            ///< the dome's lowest ring: where the horizon starts
+    f32 radius = 512;             ///< the lowest ring's
+    f32 start_angle = 1.2566371f; ///< the lowest ring's angle up the sphere
+    i32 width = 16, height = 6;   ///< segments around, and rings up
+    f32 horizon_size = 44;        ///< the horizon ends this far above its start
     f32 horizon_color[3] = {0.5608f, 0.6706f, 0.8857f};
     f32 sky_color[3] = {0.1804f, 0.4039f, 0.7245f};
-    f32 decal_glow = 0.1f;         ///< decalGlowMultiplier (faf-re's mHorizonBlend)
-    std::string decal_albedo;      ///< the decals' atlas
+    f32 decal_glow = 0.1f;    ///< decalGlowMultiplier (faf-re's mHorizonBlend)
+    std::string decal_albedo; ///< the decals' atlas
     std::string decal_glow_texture;
     std::vector<ScmapSkyDecal> decals;
     /// The cumulus's light ramp, dispersion ramp and texture: never drawn

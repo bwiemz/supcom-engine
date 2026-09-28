@@ -36,10 +36,10 @@ SkyDomeMesh build_sky_dome(const map::ScmapSky& sky) {
         const f32 ring_height = std::sin(angle) * radius_div_cos - base_height;
         for (i32 column = 0; column <= width; ++column) {
             const f32 theta = static_cast<f32>(column) * inv_width * kTwoPi;
-            mesh.vertices.push_back({{std::cos(theta) * ring_radius + sky.origin[0],
-                                      ring_height + lift,
-                                      std::sin(theta) * ring_radius + sky.origin[2]},
-                                     theta});
+            mesh.vertices.push_back(
+                {{std::cos(theta) * ring_radius + sky.origin[0], ring_height + lift,
+                  std::sin(theta) * ring_radius + sky.origin[2]},
+                 theta});
         }
     }
     mesh.vertices.push_back(

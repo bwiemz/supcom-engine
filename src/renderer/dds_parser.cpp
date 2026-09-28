@@ -44,7 +44,7 @@ static constexpr u32 DDSCAPS2_CUBEMAP = 0x200;
 static constexpr u32 DDSCAPS2_CUBEMAP_ALLFACES = 0xFC00;
 
 // Pixel format flags
-static constexpr u32 DDPF_ALPHA  = 0x2;
+static constexpr u32 DDPF_ALPHA = 0x2;
 static constexpr u32 DDPF_FOURCC = 0x4;
 static constexpr u32 DDPF_RGB    = 0x40;
 

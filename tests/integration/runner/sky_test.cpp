@@ -66,8 +66,10 @@ std::optional<DomeHit> hit_dome(const renderer::SkyDomeMesh& dome, const f32 o[3
         const auto& b = dome.vertices[dome.indices[i + 1]];
         const auto& c = dome.vertices[dome.indices[i + 2]];
         // Moller-Trumbore
-        const std::array<f32, 3> e1 = {b.pos[0] - a.pos[0], b.pos[1] - a.pos[1], b.pos[2] - a.pos[2]};
-        const std::array<f32, 3> e2 = {c.pos[0] - a.pos[0], c.pos[1] - a.pos[1], c.pos[2] - a.pos[2]};
+        const std::array<f32, 3> e1 = {b.pos[0] - a.pos[0], b.pos[1] - a.pos[1],
+                                       b.pos[2] - a.pos[2]};
+        const std::array<f32, 3> e2 = {c.pos[0] - a.pos[0], c.pos[1] - a.pos[1],
+                                       c.pos[2] - a.pos[2]};
         const std::array<f32, 3> p = {d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2],
                                       d[0] * e2[1] - d[1] * e2[0]};
         const f32 det = e1[0] * p[0] + e1[1] * p[1] + e1[2] * p[2];
@@ -126,8 +128,8 @@ std::array<f32, 3> atmosphere(const map::ScmapSky& sky, const Lookup& lookup, co
     *t_out = t;
     std::array<f32, 3> c{};
     for (int k = 0; k < 3; ++k)
-        c[k] = std::clamp(sky.horizon_color[k] + (sky.sky_color[k] - sky.horizon_color[k]) * (1 - t),
-                          0.0f, 1.0f);
+        c[k] = std::clamp(
+            sky.horizon_color[k] + (sky.sky_color[k] - sky.horizon_color[k]) * (1 - t), 0.0f, 1.0f);
     return c;
 }
 
@@ -381,8 +383,7 @@ void test_sky(TestContext& ctx) {
                 const auto c = texel(scene, x, y);
                 if (std::max({c[0], c[1], c[2], c[3]}) < 1e-3f) ++black;
             }
-        spdlog::info("Sky test: from above, {} of {} pixels over the dome black", black,
-                     over_dome);
+        spdlog::info("Sky test: from above, {} of {} pixels over the dome black", black, over_dome);
         t.check(over_dome >= 20 && black == over_dome,
                 "from above, the dome isn't drawn: the clear's black past the map (" +
                     std::to_string(black) + " of " + std::to_string(over_dome) + ")");
@@ -463,8 +464,12 @@ void test_sky(TestContext& ctx) {
             f32 opaque = 0; // the most albedo alpha sampled
             std::string worst;
             f32 worst_err = 0;
-            for (const std::array<f32, 2> c : {std::array<f32, 2>{0, 0}, {0.5f, 0.5f}, {-0.5f, 0.5f},
-                                               {0.5f, -0.5f}, {-0.5f, -0.5f}, {0.8f, 0.1f}}) {
+            for (const std::array<f32, 2> c : {std::array<f32, 2>{0, 0},
+                                               {0.5f, 0.5f},
+                                               {-0.5f, 0.5f},
+                                               {0.5f, -0.5f},
+                                               {-0.5f, -0.5f},
+                                               {0.8f, 0.1f}}) {
                 // The corner's world point, then its pixel
                 const f32 cs = std::cos(d.rotation);
                 const f32 sn = std::sin(d.rotation);
@@ -540,8 +545,8 @@ void test_sky(TestContext& ctx) {
             const auto s = screen_of(r, {d.position[0], d.position[1], d.position[2]});
             f32 eye[3];
             r.camera().eye_position(eye[0], eye[1], eye[2]);
-            const f32 dist = std::hypot(d.position[0] - eye[0], d.position[1] - eye[1],
-                                        d.position[2] - eye[2]);
+            const f32 dist =
+                std::hypot(d.position[0] - eye[0], d.position[1] - eye[1], d.position[2] - eye[2]);
             const f32 radius = std::min(d.size[0], d.size[1]) / dist *
                                (sh * 0.5f / std::tan(renderer::Camera::kFovY * 0.5f)) * 0.7f;
             f32 glow = 0;
@@ -553,7 +558,8 @@ void test_sky(TestContext& ctx) {
             if (s && with.width > 0 && without.width > 0) {
                 for (i32 dy = -static_cast<i32>(radius); dy <= static_cast<i32>(radius); ++dy)
                     for (i32 dx = -static_cast<i32>(radius); dx <= static_cast<i32>(radius); ++dx) {
-                        if (std::hypot(static_cast<f32>(dx), static_cast<f32>(dy)) > radius) continue;
+                        if (std::hypot(static_cast<f32>(dx), static_cast<f32>(dy)) > radius)
+                            continue;
                         const i32 px = static_cast<i32>((*s)[0]) + dx;
                         const i32 py = static_cast<i32>((*s)[1]) + dy;
                         if (px < 0 || py < 0 || px >= static_cast<i32>(with.width) ||
@@ -572,7 +578,8 @@ void test_sky(TestContext& ctx) {
                         glow_without = std::max(glow_without, b[3]);
                         bright_with += a[0] + a[1] + a[2];
                         bright_without += b[0] + b[1] + b[2];
-                        diff += std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
+                        diff +=
+                            std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]);
                         ++n;
                     }
             }
@@ -590,8 +597,7 @@ void test_sky(TestContext& ctx) {
                     "opaque texels)");
             t.check(glow > 0.004f && glow <= sky.decal_glow + 1e-3f && glow_without < 1e-3f,
                     "its glow goes into alpha, at most the multiplier (0.1)");
-            t.check(bright_with > 0.5f * bright_without,
-                    "its glow pass leaves the colour alone");
+            t.check(bright_with > 0.5f * bright_without, "its glow pass leaves the colour alone");
         }
     }
 
