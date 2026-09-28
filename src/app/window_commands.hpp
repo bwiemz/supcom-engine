@@ -50,4 +50,16 @@ void publish_adapter_options(lua_State* uL, const std::vector<Resolution>& modes
 /// the renderer the UI state was given ("__osc_renderer").
 void register_window_commands(ui::Console& console, core::Preferences& prefs, bool overridden);
 
+/// The options' console variables and commands (M217i), Moho's TConVars
+/// on the engine's tunables: cam_ZoomAmount, the ui_* pan and rotate speeds
+/// and scroll switches, ui_AlwaysRenderStrategicIcons, ren_bloom,
+/// ren_Skydome, graphics_Fidelity, shadow_Fidelity, ren_MipSkipLevels,
+/// SC_CameraScaleLOD; and SC_AntiAliasingSamples and SC_ToggleCursorClip.
+/// Without a renderer they read their defaults and set nothing.
+void register_option_commands(ui::Console& console);
+
+/// OPTIONS_Apply: optionsLogic.Apply(true), each option's set at startup,
+/// as Moho runs it once the window is up.
+void apply_options(lua_State* uL);
+
 } // namespace osc::app

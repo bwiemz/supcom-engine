@@ -3656,6 +3656,15 @@ std::optional<Renderer::WindowGeometry> Renderer::windowed_geometry() const {
     return g;
 }
 
+void Renderer::set_cursor_clip(bool on) {
+    // Moho clips only a windowed head (ClipCursor to its rect): GLFW's
+    // captured cursor
+    cursor_clipped_ = on && window_ && !fullscreen();
+    if (window_)
+        glfwSetInputMode(window_, GLFW_CURSOR,
+                         cursor_clipped_ ? GLFW_CURSOR_CAPTURED : GLFW_CURSOR_NORMAL);
+}
+
 void Renderer::set_vsync(bool on) {
     if (vsync_ == on) return;
     vsync_ = on;

@@ -128,7 +128,7 @@ void Camera::reset() {
 }
 
 void Camera::zoom(f32 notches) {
-    near_zoom_ = std::clamp(std::exp2(-kZoomAmount * notches) * near_zoom_, kNearZoom, max_zoom());
+    near_zoom_ = std::clamp(std::exp2(-zoom_amount_ * notches) * near_zoom_, kNearZoom, max_zoom());
 }
 
 void Camera::set_target(f32 x, f32 z) {
@@ -676,8 +676,9 @@ void Camera::apply(const CameraInput& in, f64 dt) {
         frame(dt);
         return;
     }
-    const f32 pan_speed = kKeyboardPanSpeed * (in.control ? kKeyboardPanAccelerate : 1.0f);
-    const f32 rotate_speed = kKeyboardRotateSpeed * (in.control ? kKeyboardRotateAccelerate : 1.0f);
+    const f32 pan_speed = keyboard_pan_speed_ * (in.control ? keyboard_pan_accelerate_ : 1.0f);
+    const f32 rotate_speed =
+        keyboard_rotate_speed_ * (in.control ? keyboard_rotate_accelerate_ : 1.0f);
     const f32 dx = in.mouse_x - last_mouse_x_;
     const f32 dy = in.mouse_y - last_mouse_y_;
 
@@ -705,14 +706,20 @@ void Camera::apply(const CameraInput& in, f64 dt) {
     // The screen's edges and the arrow keys pan, a fixed step a frame
     f32 px = 0.0f;
     f32 py = 0.0f;
-    if (in.at_left) px = pan_speed;
-    if (in.at_top) py = pan_speed;
-    if (in.at_right) px -= pan_speed;
-    if (in.at_bottom) py -= pan_speed;
-    if (in.up) py += pan_speed;
-    if (in.down) py -= pan_speed;
-    if (in.left) px += pan_speed;
-    if (in.right) px -= pan_speed;
+    // (each as its option allows: ui_ScreenEdgeScrollView,
+    // ui_ArrowKeysScrollView)
+    if (edge_scroll_) {
+        if (in.at_left) px = pan_speed;
+        if (in.at_top) py = pan_speed;
+        if (in.at_right) px -= pan_speed;
+        if (in.at_bottom) py -= pan_speed;
+    }
+    if (arrow_scroll_) {
+        if (in.up) py += pan_speed;
+        if (in.down) py -= pan_speed;
+        if (in.left) px += pan_speed;
+        if (in.right) px -= pan_speed;
+    }
     if (!in.alt && (px != 0.0f || py != 0.0f)) pan(px, py);
 
     // The middle button drags the ground (CameraDragger), from over the
