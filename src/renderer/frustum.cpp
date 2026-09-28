@@ -45,4 +45,14 @@ bool Frustum::is_sphere_visible(f32 cx, f32 cy, f32 cz, f32 radius) const {
     return true;
 }
 
+bool Frustum::is_box_visible(const std::array<f32, 3>& min, const std::array<f32, 3>& max) const {
+    for (const auto& p : planes_) {
+        const f32 x = p.a >= 0.0f ? max[0] : min[0];
+        const f32 y = p.b >= 0.0f ? max[1] : min[1];
+        const f32 z = p.c >= 0.0f ? max[2] : min[2];
+        if (p.a * x + p.b * y + p.c * z + p.d < 0.0f) return false;
+    }
+    return true;
+}
+
 } // namespace osc::renderer

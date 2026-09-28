@@ -1,4 +1,5 @@
 #include "renderer/particle_system.hpp"
+#include "renderer/wave_system.hpp"
 
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
@@ -93,10 +94,26 @@ void ParticleSystem::clear() {
     unknown_.clear();
     unmade_.clear();
     particles_.clear();
+    added_.clear();
     last_tick_.reset();
     instances_.clear();
     groups_.clear();
     drawn_.clear();
+}
+
+void ParticleSystem::add_wave(const WaveParticle& wave) {
+    if (!wave.bp) return;
+    Particle p;
+    p.bp = wave.bp;
+    p.lifetime = wave.lifetime;
+    p.position = wave.position;
+    p.velocity = wave.velocity;
+    p.begin_size = wave.begin_size;
+    p.end_size = wave.end_size;
+    p.angle = wave.angle;
+    p.framerate = wave.framerate;
+    p.texture_selection = wave.texture_selection;
+    added_.push_back(p);
 }
 
 std::vector<ParticleSystem::EmitterView> ParticleSystem::emitters() const {
@@ -326,6 +343,13 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
 
     // The render clock: the entity is drawn between its last two ticks.
     const f64 now = static_cast<f64>(cur->tick) + static_cast<f64>(view.alpha());
+    // Waves join now, born this frame (while the buffer has room)
+    for (Particle& p : added_) {
+        if (particles_.size() >= MAX_PARTICLES) break;
+        p.born = now;
+        particles_.push_back(p);
+    }
+    added_.clear();
     std::erase_if(particles_, [now](const Particle& p) {
         return p.lifetime <= 0.0f || now >= p.born + static_cast<f64>(p.lifetime);
     });

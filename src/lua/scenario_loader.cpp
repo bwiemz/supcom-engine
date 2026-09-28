@@ -226,6 +226,7 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     terrain->set_terrain_types(std::move(scmap.terrain_types));
     terrain->set_lighting(scmap.lighting, std::move(scmap.environment));
     terrain->set_water(scmap.water, std::move(scmap.water_masks), scmap.water_abyss_elevation);
+    terrain->set_waves(std::move(scmap.waves));
     terrain->set_sky(std::move(scmap.sky));
     terrain->set_normal_maps(
         {scmap.normal_map_width, scmap.normal_map_height, std::move(scmap.normal_maps)});

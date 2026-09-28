@@ -27,6 +27,7 @@ namespace osc::renderer {
 class Camera;
 class Frustum;
 class ReconView;
+struct WaveParticle;
 
 /// One particle's quad for the GPU this frame: its centre, the two axes a
 /// corner (±1, ±1) spans, its texture rectangle and its ramp coordinate.
@@ -50,6 +51,11 @@ public:
     /// player's army sees, and a CreateIfVisible one it doesn't see made is
     /// never made (null: everything seen; M215b).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+
+    /// A particle from outside an emitter: a shoreline wave (M213c). It
+    /// joins at the next update, born at that frame's render time, as
+    /// CWorldParticles stamps a particle when it uploads it.
+    void add_wave(const WaveParticle& wave);
 
     /// Emit what a tick `view` hasn't shown before brings, then place this
     /// frame's particles. `terrain` (may be null) is the water they snap to.
@@ -158,6 +164,7 @@ private:
     std::unordered_set<u32> unknown_; ///< effects with no emitter blueprint
     std::unordered_set<u32> unmade_;  ///< CreateIfVisible ones the player didn't see made
     std::vector<Particle> particles_;
+    std::vector<Particle> added_; ///< waves, born at the next update
     std::optional<u32> last_tick_;
     u64 random_state_ = 0x2545F4914F6CDD1Dull;
     std::vector<ParticleInstance> instances_;
