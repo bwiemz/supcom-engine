@@ -2366,10 +2366,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         f32 ey = 0;
         f32 ez = 0;
         camera_.eye_position(ex, ey, ez);
-        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
-                               terrain_mesh_, camera_.view(), {ex, ey, ez},
-                               camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_,
-                               fi);
+        runtime_decals_.update(
+            view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_, terrain_mesh_, camera_.view(),
+            {ex, ey, ez}, camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi);
     }
 
     // Update minimap (terrain bg, unit dots, camera frustum box)

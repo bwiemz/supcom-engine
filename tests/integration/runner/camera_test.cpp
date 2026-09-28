@@ -237,8 +237,8 @@ void test_camera(TestContext& ctx) {
         f32 o[3];
         f32 d[3];
         const bool ray = live.screen_ray(sw * 0.5f, 0.0f, sw, sh, o, d);
-        const bool tilted = live.rotated() && std::abs(live.pitch() - 0.1f) < 1e-5f && ray &&
-                            d[1] > 0.0f;
+        const bool tilted =
+            live.rotated() && std::abs(live.pitch() - 0.1f) < 1e-5f && ray && d[1] > 0.0f;
         in.space = false;
         int frames = 0;
         for (; frames < 120 && live.rotated(); ++frames) live.apply(in, 1.0 / 60.0);
@@ -247,8 +247,7 @@ void test_camera(TestContext& ctx) {
                     std::abs(live.heading() - renderer::Camera::kPi) < 1e-5f,
                 fmt::format("Test 9: spun to a pitch of 0.1 (the frame's top looking {} the "
                             "horizon), let go it turned back in {} frames to {:.2f} degrees",
-                            ray && d[1] > 0.0f ? "above" : "below", frames,
-                            live.pitch() / kDeg));
+                            ray && d[1] > 0.0f ? "above" : "below", frames, live.pitch() / kDeg));
     }
 
     spdlog::info("Camera test: {}/{} passed", t.pass, t.pass + t.fail);

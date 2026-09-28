@@ -39,8 +39,8 @@ std::array<f32, 2> decal_corner(const map::DecalInfo& d, f32 lx, f32 lz);
 /// width the screen spans, in world units, at the point's view depth, for a
 /// camera at `eye` with view matrix `view` (column-major) whose half width
 /// is `half_width` (the tangent of half its horizontal field of view).
-f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& eye,
-                     f32 half_width, f32 x, f32 y, f32 z);
+f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& eye, f32 half_width,
+                     f32 x, f32 y, f32 z);
 
 /// CWldTerrainDecal::GetLODAlpha: whole until ren_DecalFadeFraction (0.75)
 /// of its cutoff, then fading to none at it; a near cutoff fades it in

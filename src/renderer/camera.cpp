@@ -244,8 +244,8 @@ void Camera::frame(f64 dt) {
     const f32 start = target_zoom_;
     const f32 log_start = std::log2(start);
     const f32 delta = std::log2(near_zoom_) - log_start;
-    const f32 step = std::min(std::abs(delta), (std::abs(delta) * kZoomSpeedLarge + kZoomSpeedSmall) *
-                                                   seconds);
+    const f32 step =
+        std::min(std::abs(delta), (std::abs(delta) * kZoomSpeedLarge + kZoomSpeedSmall) * seconds);
     target_zoom_ = std::exp2(log_start + std::copysign(step, delta));
     if (!rotated_) target_zoom_ = std::clamp(target_zoom_, kNearZoom, max_zoom());
 
@@ -331,8 +331,7 @@ void Camera::apply(const CameraInput& in, f64 dt) {
         return;
     }
     const f32 pan_speed = kKeyboardPanSpeed * (in.control ? kKeyboardPanAccelerate : 1.0f);
-    const f32 rotate_speed =
-        kKeyboardRotateSpeed * (in.control ? kKeyboardRotateAccelerate : 1.0f);
+    const f32 rotate_speed = kKeyboardRotateSpeed * (in.control ? kKeyboardRotateAccelerate : 1.0f);
     const f32 dx = in.mouse_x - last_mouse_x_;
     const f32 dy = in.mouse_y - last_mouse_y_;
 
@@ -398,9 +397,13 @@ void Camera::apply_shake(f32 intensity) {
     shake_intensity_ = std::max(shake_intensity_, intensity);
 }
 
-f32 Camera::near_clip() const { return std::max(eye_distance_ * 0.01f, 0.01f); }
+f32 Camera::near_clip() const {
+    return std::max(eye_distance_ * 0.01f, 0.01f);
+}
 
-f32 Camera::far_clip() const { return eye_distance_ + 17000.0f; }
+f32 Camera::far_clip() const {
+    return eye_distance_ + 17000.0f;
+}
 
 f32 Camera::tan_half_fov_y(f32 aspect) const {
     // VEC_D3DProjectionMatrixFOV with fovX = fovY: the FOV spans the wider

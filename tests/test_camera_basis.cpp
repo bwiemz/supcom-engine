@@ -36,7 +36,9 @@ Camera camera_over(const map::Heightmap& ground) {
     return cam;
 }
 
-f32 max_zoom() { return 256.0f * 1.4f * kAspect; }
+f32 max_zoom() {
+    return 256.0f * 1.4f * kAspect;
+}
 
 /// Moho's log-zoom blend: 0 at the nearest zoom, 1 at the farthest.
 f32 blend(f32 zoom) {
@@ -77,8 +79,7 @@ TEST_CASE("CameraReset: the whole map from above (M217f)", "[camera]") {
     CHECK_THAT(cam.target_x(), WithinAbs(128.0, 1e-4));
     CHECK_THAT(cam.target_z(), WithinAbs(128.0, 1e-4));
     CHECK_THAT(cam.focus_y(), WithinAbs(kGround, 1e-3));
-    CHECK_THAT(cam.eye_distance(),
-               WithinRel(max_zoom() / std::tan(30.0f * kDeg) / 2.0f, 1e-5f));
+    CHECK_THAT(cam.eye_distance(), WithinRel(max_zoom() / std::tan(30.0f * kDeg) / 2.0f, 1e-5f));
     CHECK_FALSE(cam.rotated());
 }
 
@@ -225,8 +226,7 @@ TEST_CASE("A spin turns and tilts, and a revert glides it back (M217f)", "[camer
     CHECK_THAT(cam.pitch(), WithinAbs(zoom_pitch, 1e-4));
 }
 
-TEST_CASE("Closing in, the target is drawn toward the ground under the pivot (M217f)",
-          "[camera]") {
+TEST_CASE("Closing in, the target is drawn toward the ground under the pivot (M217f)", "[camera]") {
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);
     cam.set_zoom(120.0f);
@@ -363,8 +363,7 @@ TEST_CASE("Space spins the view near the ground; let go, it turns back (M217f)",
     CHECK_FALSE(covered.rotated());
 }
 
-TEST_CASE("The middle button drags the ground; let go, a rotation reverts (M217f)",
-          "[camera]") {
+TEST_CASE("The middle button drags the ground; let go, a rotation reverts (M217f)", "[camera]") {
     const map::Heightmap ground = flat();
     Camera cam = camera_over(ground);
     cam.set_zoom(64.0f);

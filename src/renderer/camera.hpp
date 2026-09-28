@@ -223,7 +223,7 @@ private:
     f32 heading_ = kPi;
     f32 pitch_ = kFarPitchDeg * kPi / 180.0f; ///< mFarPitch
     f32 fov_ = kFarFovDeg * kPi / 180.0f;     ///< mFarFov
-    f32 near_zoom_ = 1024.0f;                ///< the zoom asked for
+    f32 near_zoom_ = 1024.0f;                 ///< the zoom asked for
     f32 target_zoom_ = 1024.0f;
     f32 eye_distance_ = 0.0f; ///< mZoom
     bool rotated_ = false;

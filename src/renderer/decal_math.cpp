@@ -66,8 +66,8 @@ void decal_bounds(const map::DecalInfo& d, f32& min_x, f32& min_z, f32& max_x, f
     max_z = d.position_z + std::max({0.0f, xz, zz, xz + zz});
 }
 
-f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& eye,
-                     f32 half_width, f32 x, f32 y, f32 z) {
+f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& eye, f32 half_width,
+                     f32 x, f32 y, f32 z) {
     const f32 depth =
         -(view[2] * (x - eye[0]) + view[6] * (y - eye[1]) + view[10] * (z - eye[2])); // along -Z
     return 2.0f * half_width * depth;
