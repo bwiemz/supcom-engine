@@ -11,6 +11,19 @@
 
 namespace osc::renderer {
 
+namespace {
+
+/// The six indices of quad (x, z) in a grid `w` vertices across.
+void emit_quad(u32 x, u32 z, u32 w, std::vector<u32>& out) {
+    const u32 tl = z * w + x;
+    const u32 tr = tl + 1;
+    const u32 bl = (z + 1) * w + x;
+    const u32 br = bl + 1;
+    out.insert(out.end(), {tl, bl, tr, tr, bl, br});
+}
+
+} // namespace
+
 void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
                         VmaAllocator allocator, VkCommandPool cmd_pool,
                         VkQueue queue) {
@@ -60,24 +73,12 @@ void TerrainMesh::build(const osc::map::Terrain& terrain, VkDevice device,
     std::vector<u32> indices;
     indices.reserve(quads_x * quads_z * 6);
 
-    for (u32 z = 0; z < quads_z; z++) {
-        for (u32 x = 0; x < quads_x; x++) {
-            u32 tl = z * dw + x;
-            u32 tr = tl + 1;
-            u32 bl = (z + 1) * dw + x;
-            u32 br = bl + 1;
-
-            indices.push_back(tl);
-            indices.push_back(bl);
-            indices.push_back(tr);
-
-            indices.push_back(tr);
-            indices.push_back(bl);
-            indices.push_back(br);
-        }
-    }
+    for (u32 z = 0; z < quads_z; z++)
+        for (u32 x = 0; x < quads_x; x++) emit_quad(x, z, dw, indices);
 
     index_count_ = static_cast<u32>(indices.size());
+    grid_w_ = dw;
+    grid_h_ = dh;
 
     spdlog::info("Terrain mesh: {}x{} grid, {} vertices, {} indices",
                  dw, dh, vertices.size(), index_count_);
@@ -101,6 +102,26 @@ void TerrainMesh::destroy(VkDevice device, VmaAllocator allocator) {
     vertex_buf_ = {};
     index_buf_ = {};
     index_count_ = 0;
+    grid_w_ = grid_h_ = 0;
+}
+
+void TerrainMesh::collect_indices(f32 min_x, f32 min_z, f32 max_x, f32 max_z,
+                                  std::vector<u32>& out) const {
+    if (grid_w_ < 2 || grid_h_ < 2) return;
+    const u32 quads_x = grid_w_ - 1;
+    const u32 quads_z = grid_h_ - 1;
+    const auto span = static_cast<f32>(DECIMATE);
+    // Quad q covers the world from q * DECIMATE to (q + 1) * DECIMATE.
+    if (max_x < 0.0f || max_z < 0.0f || min_x >= static_cast<f32>(quads_x) * span ||
+        min_z >= static_cast<f32>(quads_z) * span)
+        return;
+    const auto quad = [span](f32 v, u32 quads) {
+        return static_cast<u32>(
+            std::clamp(std::floor(v / span), 0.0f, static_cast<f32>(quads - 1)));
+    };
+    for (u32 z = quad(min_z, quads_z); z <= quad(max_z, quads_z); ++z)
+        for (u32 x = quad(min_x, quads_x); x <= quad(max_x, quads_x); ++x)
+            emit_quad(x, z, grid_w_, out);
 }
 
 } // namespace osc::renderer

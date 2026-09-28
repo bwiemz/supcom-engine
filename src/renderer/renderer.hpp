@@ -354,31 +354,28 @@ private:
     bool decals_enabled_ = true;
     bool b_key_was_pressed_ = false;
 
-    // Decal rendering
-    AllocatedBuffer decal_quad_verts_{};
-    AllocatedBuffer decal_quad_indices_{};
-    AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
-    void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
-    /// Free the decal quad and instance buffers (build_scene makes them for a
-    /// map with decals). The device must be idle.
-    void destroy_decal_buffers();
-
+    // The map's decals, projected and lit (M212b): each draws the terrain's
+    // own triangles under it, a range of decal_indices_ over the terrain's
+    // vertices, projected by its texture matrix.
     struct StoredDecal {
-        std::string texture_path;
-        f32 model[16];
-        f32 position_x, position_y, position_z;
-        f32 cut_off_lod;
+        std::string albedo_path;
+        std::string spec_path; ///< empty: none (no specular)
+        bool xp = false;       ///< AlbedoXP: DecalAlbedoXP, not DecalsPS
+        f32 u[4] = {};         ///< the texture matrix's u column (DecalsVS)
+        f32 v[4] = {};         ///< its v (world z) column
+        f32 mid_x = 0, mid_z = 0;
+        f32 radius = 0; ///< its bounds' half diagonal, for the view's cull
+        f32 cut_off_lod = 1000.0f;
+        f32 near_cut_off_lod = 0.0f;
+        u32 first_index = 0, index_count = 0;
     };
     std::vector<StoredDecal> stored_decals_;
-
-    struct DecalDrawGroup {
-        VkDescriptorSet texture_ds = VK_NULL_HANDLE;
-        u32 instance_offset = 0;
-        u32 instance_count = 0;
-    };
-    std::vector<DecalDrawGroup> decal_groups_;
-
-    static constexpr u32 MAX_DECALS = 4096;
+    AllocatedBuffer decal_indices_{};
+    /// Retail's mask, which every decal's alpha takes (TerrainCommon).
+    VkDescriptorSet decal_mask_ds_ = VK_NULL_HANDLE;
+    /// Free the decals' index buffer (build_scene makes it for a map with
+    /// decals). The device must be idle.
+    void destroy_decal_buffers();
 
     // UI 2D pipeline
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;

@@ -3,6 +3,8 @@
 #include "renderer/vk_types.hpp"
 #include "core/types.hpp"
 
+#include <vector>
+
 namespace osc::map {
 class Terrain;
 }
@@ -27,12 +29,20 @@ public:
     VkBuffer index_buffer() const { return index_buf_.buffer; }
     u32 index_count() const { return index_count_; }
 
+    /// Append the indices of its quads (two triangles each, as it draws
+    /// them) that lie in the world rectangle [min_x, max_x] x [min_z,
+    /// max_z]: the terrain's own triangles, which a decal draws (Moho's
+    /// CollectClippedCollisionIndicesInRect; M212b). Nothing for a
+    /// rectangle off the map.
+    void collect_indices(f32 min_x, f32 min_z, f32 max_x, f32 max_z, std::vector<u32>& out) const;
+
     static constexpr u32 DECIMATE = 2; // sample every 2nd point
 
 private:
     AllocatedBuffer vertex_buf_{};
     AllocatedBuffer index_buf_{};
     u32 index_count_ = 0;
+    u32 grid_w_ = 0, grid_h_ = 0; ///< its vertices across and down
 };
 
 } // namespace osc::renderer

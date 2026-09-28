@@ -3,6 +3,8 @@
 #include <shaderc/shaderc.hpp>
 #include <spdlog/spdlog.h>
 
+#include <string>
+
 namespace osc::renderer {
 
 VkShaderModule compile_glsl(VkDevice device, const char* source,
@@ -65,16 +67,14 @@ void main() {
 }
 )glsl";
 
-const char* terrain_frag = R"glsl(
-#version 450
+namespace {
 
-layout(push_constant) uniform PushConstants {
-    mat4 viewProj;
-    float mapWidth, mapHeight;
-    float _pad0, _pad1;   // explicit padding to match vec4 alignment
-    float eyeX, eyeY, eyeZ;
-} pc;
-
+// The terrain's surface (M212b): its bindings, its normal, and FA's
+// terrain.fx lighting, water tint and the fog of war, shared by the
+// terrain's fragment shader and the lit decals', which follow the terrain's
+// normal and light as FA's DecalsPS does. It follows each shader's #version
+// and push block.
+const char* kTerrainSurface = R"glsl(
 // Blend maps
 layout(set = 0, binding = 0) uniform sampler2D blendMap0;
 layout(set = 0, binding = 1) uniform sampler2D blendMap1;
@@ -136,12 +136,6 @@ layout(set = 1, binding = 1) uniform LightUBO {
     vec4 specularColor;
 } lightUbo;
 
-layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec2 fragWorldXZ;
-layout(location = 2) in float fragWorldY;
-
-layout(location = 0) out vec4 outColor;
-
 float calcShadow(vec3 worldPos) {
     vec4 lc = lightUbo.lightViewProj * vec4(worldPos, 1.0);
     vec3 pc2 = lc.xyz / lc.w;
@@ -174,16 +168,153 @@ vec3 decodeNormal(sampler2D nmap, vec2 uv) {
     return texture(nmap, uv).rgb * 2.0 - 1.0;
 }
 
+// TTerrain maps (the original game's) blend four strata, from the first
+// blend texture; TTerrainXP maps all eight (FA's TerrainPS, TerrainAlbedoXP).
+bool terrainXP() {
+    return lightUbo.sunAmbience.w >= 0.5;
+}
+
+// The strata's blend weights at `blendUV` (RGBA = 4 strata each).
+void terrainMasks(vec2 blendUV, out vec4 b0, out vec4 b1) {
+    b0 = texture(blendMap0, blendUV);
+    b1 = terrainXP() ? texture(blendMap1, blendUV) : vec4(0.0);
+}
+
+// The terrain's normal in the world at `worldXZ`: the strata's normal maps,
+// each at its own size, blended by the raw masks (TerrainNormalsPS reads the
+// blend texture as it is), perturbed by the normal decals, about the
+// vertex's normal.
+vec3 terrainNormal(vec2 worldXZ, vec3 vertexNormal, vec4 b0, vec4 b1, vec2 mapSize) {
+    vec3 n0 = decodeNormal(normalMap0, worldXZ / strata.normalSize0_3.x);
+    vec3 n1 = decodeNormal(normalMap1, worldXZ / strata.normalSize0_3.y);
+    vec3 n2 = decodeNormal(normalMap2, worldXZ / strata.normalSize0_3.z);
+    vec3 n3 = decodeNormal(normalMap3, worldXZ / strata.normalSize0_3.w);
+    vec3 n4 = decodeNormal(normalMap4, worldXZ / strata.normalSize4_7.x);
+    vec3 n5 = decodeNormal(normalMap5, worldXZ / strata.normalSize4_7.y);
+    vec3 n6 = decodeNormal(normalMap6, worldXZ / strata.normalSize4_7.z);
+    vec3 n7 = decodeNormal(normalMap7, worldXZ / strata.normalSize4_7.w);
+    vec3 n8 = decodeNormal(normalMap8, worldXZ / strata.normalSize8.x);
+
+    vec3 blendedTangentNormal = n0;
+    blendedTangentNormal = mix(blendedTangentNormal, n1, b0.r);
+    blendedTangentNormal = mix(blendedTangentNormal, n2, b0.g);
+    blendedTangentNormal = mix(blendedTangentNormal, n3, b0.b);
+    blendedTangentNormal = mix(blendedTangentNormal, n4, b0.a);
+    blendedTangentNormal = mix(blendedTangentNormal, n5, b1.r);
+    blendedTangentNormal = mix(blendedTangentNormal, n6, b1.g);
+    blendedTangentNormal = mix(blendedTangentNormal, n7, b1.b);
+    blendedTangentNormal = mix(blendedTangentNormal, n8, b1.a);
+    blendedTangentNormal = normalize(blendedTangentNormal);
+
+    // Apply baked normal overlay from decal normal maps
+    {
+        vec2 overlayUV = worldXZ / mapSize;
+        vec2 overlayVal = texture(normalOverlay, overlayUV).rg;
+        // Decode from [0,1] RGBA8 back to [-1,1] perturbation
+        vec2 perturbation = overlayVal * 2.0 - 1.0;
+        // Only apply if non-neutral (avoid perturbing where no decals exist)
+        if (abs(perturbation.x) > 0.004 || abs(perturbation.y) > 0.004) {
+            blendedTangentNormal.x += perturbation.x;
+            blendedTangentNormal.y += perturbation.y;
+            blendedTangentNormal = normalize(blendedTangentNormal);
+        }
+    }
+
+    // TBN: terrain UV is world-XZ-aligned, so T=(1,0,0), B=(0,0,1)
+    // Gram-Schmidt orthogonalize against vertex normal for slopes
+    // Falls back to Z-axis when N is nearly parallel to X (steep cliff faces)
+    vec3 N = normalize(vertexNormal);
+    float d = dot(N, vec3(1.0, 0.0, 0.0));
+    vec3 T;
+    if (abs(d) > 0.999) {
+        T = normalize(vec3(0.0, 0.0, 1.0) - N * dot(N, vec3(0.0, 0.0, 1.0)));
+    } else {
+        T = normalize(vec3(1.0, 0.0, 0.0) - N * d);
+    }
+    vec3 B = cross(N, T);
+    mat3 TBN = mat3(T, B, N);
+
+    return normalize(TBN * blendedTangentNormal);
+}
+
+// terrain.fx's CalculateLighting (TTerrain), by the map's light (M210a):
+// specular added into the light by `specAmount` (the terrain's 1 - albedo
+// alpha; a decal's specular red), which `spec` returns for the glow.
+vec3 lightTTerrain(vec3 color, float specAmount, vec3 worldNormal, vec3 worldPos, vec3 eye,
+                   float shadow, out float spec) {
+    vec3 S = lightUbo.sunDirection.xyz;
+    float SdotN = dot(S, worldNormal);
+    vec3 V = normalize(worldPos - eye); // eye to point
+    float multiplier = lightUbo.sunColor.w;
+    vec3 fill = lightUbo.shadowFill.rgb;
+    vec3 R = S - 2.0 * SdotN * worldNormal;
+    spec = pow(clamp(dot(R, V), 0.0, 1.0), 80.0) * lightUbo.specularColor.x * specAmount;
+    vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb + spec;
+    light = multiplier * light + fill * (1.0 - light);
+    return light * color;
+}
+
+// TTerrainXP's light (TerrainAlbedoXP, DecalAlbedoXP): specular by
+// `specAmount` (the terrain's albedo alpha; a decal's specular alpha).
+vec3 lightXP(vec3 color, float specAmount, vec3 worldNormal, vec3 worldPos, vec3 eye,
+             float shadow) {
+    vec3 S = lightUbo.sunDirection.xyz;
+    float SdotN = dot(S, worldNormal);
+    vec3 V = normalize(worldPos - eye); // eye to point
+    float multiplier = lightUbo.sunColor.w;
+    vec3 fill = lightUbo.shadowFill.rgb;
+    vec3 r = reflect(V, worldNormal);
+    vec3 spec = pow(clamp(dot(r, S), 0.0, 1.0), 80.0) * specAmount * lightUbo.specularColor.a * lightUbo.specularColor.rgb;
+    vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
+    light = multiplier * light + fill * (1.0 - light);
+    return light * (color + spec);
+}
+
+// Under the water, lerped to the water ramp by depth (ApplyWaterColor).
+vec3 applyWaterColor(vec3 lit, vec2 blendUV) {
+    float waterDepth = texture(waterMap, blendUV).g;
+    vec4 waterTint = texture(waterRamp, vec2(waterDepth, 0.5));
+    return mix(lit, waterTint.rgb, waterTint.a);
+}
+
+// Fog of war: CPU-blurred texture, smooth transitions
+// FA shows unexplored at ~45% brightness with mild desaturation
+vec3 applyFogOfWar(vec3 lit, vec2 blendUV) {
+    float fogVal = texture(fogMap, blendUV).r;
+    float fogBright = mix(0.45, 1.0, fogVal);
+    // Mild desaturation in unexplored areas
+    float fogSat = mix(0.65, 1.0, fogVal);
+    vec3 gray = vec3(dot(lit, vec3(0.299, 0.587, 0.114)));
+    lit = mix(gray, lit, fogSat);
+    return lit * fogBright;
+}
+)glsl";
+
+const char* kTerrainPush = R"glsl(#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    float mapWidth, mapHeight;
+    float _pad0, _pad1;   // explicit padding to match vec4 alignment
+    float eyeX, eyeY, eyeZ;
+} pc;
+)glsl";
+
+const char* kTerrainFragMain = R"glsl(
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
+
+layout(location = 0) out vec4 outColor;
+
 void main() {
     // Blend map UV: world position normalized to [0,1] over map extents
-    vec2 blendUV = fragWorldXZ / vec2(pc.mapWidth, pc.mapHeight);
-
-    // Sample blend weights (RGBA = 4 strata weights each). TTerrain maps
-    // (the original game's) blend four strata, from the first texture;
-    // TTerrainXP maps all eight (FA's TerrainPS, TerrainAlbedoXP).
-    bool xp = lightUbo.sunAmbience.w >= 0.5;
-    vec4 b0 = texture(blendMap0, blendUV);
-    vec4 b1 = xp ? texture(blendMap1, blendUV) : vec4(0.0);
+    vec2 mapSize = vec2(pc.mapWidth, pc.mapHeight);
+    vec2 blendUV = fragWorldXZ / mapSize;
+    bool xp = terrainXP();
+    vec4 b0;
+    vec4 b1;
+    terrainMasks(blendUV, b0, b1);
 
     // Per-stratum UVs: the world over each texture's size
     vec2 uv0 = fragWorldXZ / strata.albedoSize0_3.x;
@@ -225,105 +356,145 @@ void main() {
     albedo.rgb = mix(albedo.rgb, upper.rgb, upper.a);
     vec3 color = albedo.rgb;
 
-    // Normal maps, each at its own size, blend by the raw masks
-    // (TerrainNormalsPS reads the blend texture as it is).
-    vec3 n0 = decodeNormal(normalMap0, fragWorldXZ / strata.normalSize0_3.x);
-    vec3 n1 = decodeNormal(normalMap1, fragWorldXZ / strata.normalSize0_3.y);
-    vec3 n2 = decodeNormal(normalMap2, fragWorldXZ / strata.normalSize0_3.z);
-    vec3 n3 = decodeNormal(normalMap3, fragWorldXZ / strata.normalSize0_3.w);
-    vec3 n4 = decodeNormal(normalMap4, fragWorldXZ / strata.normalSize4_7.x);
-    vec3 n5 = decodeNormal(normalMap5, fragWorldXZ / strata.normalSize4_7.y);
-    vec3 n6 = decodeNormal(normalMap6, fragWorldXZ / strata.normalSize4_7.z);
-    vec3 n7 = decodeNormal(normalMap7, fragWorldXZ / strata.normalSize4_7.w);
-    vec3 n8 = decodeNormal(normalMap8, fragWorldXZ / strata.normalSize8.x);
-
-    vec3 blendedTangentNormal = n0;
-    blendedTangentNormal = mix(blendedTangentNormal, n1, b0.r);
-    blendedTangentNormal = mix(blendedTangentNormal, n2, b0.g);
-    blendedTangentNormal = mix(blendedTangentNormal, n3, b0.b);
-    blendedTangentNormal = mix(blendedTangentNormal, n4, b0.a);
-    blendedTangentNormal = mix(blendedTangentNormal, n5, b1.r);
-    blendedTangentNormal = mix(blendedTangentNormal, n6, b1.g);
-    blendedTangentNormal = mix(blendedTangentNormal, n7, b1.b);
-    blendedTangentNormal = mix(blendedTangentNormal, n8, b1.a);
-    blendedTangentNormal = normalize(blendedTangentNormal);
-
-    // Apply baked normal overlay from decal normal maps
-    {
-        vec2 overlayUV = fragWorldXZ / vec2(pc.mapWidth, pc.mapHeight);
-        vec2 overlayVal = texture(normalOverlay, overlayUV).rg;
-        // Decode from [0,1] RGBA8 back to [-1,1] perturbation
-        vec2 perturbation = overlayVal * 2.0 - 1.0;
-        // Only apply if non-neutral (avoid perturbing where no decals exist)
-        if (abs(perturbation.x) > 0.004 || abs(perturbation.y) > 0.004) {
-            blendedTangentNormal.x += perturbation.x;
-            blendedTangentNormal.y += perturbation.y;
-            blendedTangentNormal = normalize(blendedTangentNormal);
-        }
-    }
-
-    // TBN: terrain UV is world-XZ-aligned, so T=(1,0,0), B=(0,0,1)
-    // Gram-Schmidt orthogonalize against vertex normal for slopes
-    // Falls back to Z-axis when N is nearly parallel to X (steep cliff faces)
-    vec3 N = normalize(fragNormal);
-    float d = dot(N, vec3(1.0, 0.0, 0.0));
-    vec3 T;
-    if (abs(d) > 0.999) {
-        T = normalize(vec3(0.0, 0.0, 1.0) - N * dot(N, vec3(0.0, 0.0, 1.0)));
-    } else {
-        T = normalize(vec3(1.0, 0.0, 0.0) - N * d);
-    }
-    vec3 B = cross(N, T);
-    mat3 TBN = mat3(T, B, N);
-
-    vec3 worldNormal = normalize(TBN * blendedTangentNormal);
+    vec3 worldNormal = terrainNormal(fragWorldXZ, fragNormal, b0, b1, mapSize);
 
     // FA's terrain lighting (terrain.fx), by the map's light (M210a).
     vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
     float shadow = calcShadow(worldPos);
-    vec3 S = lightUbo.sunDirection.xyz;
-    float SdotN = dot(S, worldNormal);
-    vec3 V = normalize(worldPos - vec3(pc.eyeX, pc.eyeY, pc.eyeZ)); // eye to point
-    float multiplier = lightUbo.sunColor.w;
-    vec3 fill = lightUbo.shadowFill.rgb;
+    vec3 eye = vec3(pc.eyeX, pc.eyeY, pc.eyeZ);
     vec3 lit;
     // The frame's glow (M211e): TTerrain's specular, a little; XP's none.
     float glow = 0.0;
     if (!xp) {
         // TTerrain (CalculateLighting): specular where the albedo's alpha
         // is low, added into the light.
-        vec3 R = S - 2.0 * SdotN * worldNormal;
-        float spec = pow(clamp(dot(R, V), 0.0, 1.0), 80.0) * lightUbo.specularColor.x * (1.0 - albedo.a);
-        vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb + spec;
-        light = multiplier * light + fill * (1.0 - light);
-        lit = light * color;
+        float spec;
+        lit = lightTTerrain(color, 1.0 - albedo.a, worldNormal, worldPos, eye, shadow, spec);
         glow = 0.01 + spec * lightUbo.specularColor.w;
     } else {
         // TTerrainXP (TerrainAlbedoXP): specular from the albedo's alpha.
-        vec3 r = reflect(V, worldNormal);
-        vec3 spec = pow(clamp(dot(r, S), 0.0, 1.0), 80.0) * albedo.a * lightUbo.specularColor.a * lightUbo.specularColor.rgb;
-        vec3 light = lightUbo.sunColor.rgb * clamp(SdotN, 0.0, 1.0) * shadow + lightUbo.sunAmbience.rgb;
-        light = multiplier * light + fill * (1.0 - light);
-        lit = light * (color + spec);
+        lit = lightXP(color, albedo.a, worldNormal, worldPos, eye, shadow);
     }
 
-    // Under the water, lerped to the water ramp by depth (both techniques).
-    float waterDepth = texture(waterMap, blendUV).g;
-    vec4 waterTint = texture(waterRamp, vec2(waterDepth, 0.5));
-    lit = mix(lit, waterTint.rgb, waterTint.a);
-
-    // Fog of war: CPU-blurred texture, smooth transitions
-    // FA shows unexplored at ~45% brightness with mild desaturation
-    float fogVal = texture(fogMap, blendUV).r;
-    float fogBright = mix(0.45, 1.0, fogVal);
-    // Mild desaturation in unexplored areas
-    float fogSat = mix(0.65, 1.0, fogVal);
-    vec3 gray = vec3(dot(lit, vec3(0.299, 0.587, 0.114)));
-    lit = mix(gray, lit, fogSat);
-    lit *= fogBright;
-    // No distance fog: FA's shaders have none (M210a).
+    // Under the water (both techniques), then the fog of war. No distance
+    // fog: FA's shaders have none (M210a).
+    lit = applyWaterColor(lit, blendUV);
+    lit = applyFogOfWar(lit, blendUV);
 
     outColor = vec4(lit, glow);
+}
+)glsl";
+
+// The map's decals, projected and lit (M212b): terrain.fx's DecalsVS, with
+// FA's decalDepthOffset as a depth bias, and DecalsPS / DecalAlbedoXP.
+const char* kDecalPush = R"glsl(#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec4 decalU;   // the decal matrix's u column: u = dot(decalU, world, 1)
+    vec4 decalV;   // its v (world z) column
+    vec4 mapAlpha; // x, y: the map's size; z: DecalAlpha; w: 1 for AlbedoXP
+    vec4 eye;      // xyz: the camera
+} pc;
+)glsl";
+
+const char* kDecalFragMain = R"glsl(
+layout(set = 2, binding = 0) uniform sampler2D decalAlbedo; // DecalAlbedoSampler: clamps
+layout(set = 3, binding = 0) uniform sampler2D decalSpec;   // DecalSpecSampler: clamps
+layout(set = 4, binding = 0) uniform sampler2D decalMask;   // DecalMaskSampler: clamps
+
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec2 fragWorldXZ;
+layout(location = 2) in float fragWorldY;
+layout(location = 3) in vec2 fragDecalUV;
+
+layout(location = 0) out vec4 outColor;
+
+// The cache's sampler repeats: clamp as FA's decal samplers do, keeping the
+// lookup within the edge texels' centres.
+vec4 clamped(sampler2D tex, vec2 uv) {
+    vec2 edge = 0.5 / vec2(textureSize(tex, 0));
+    return texture(tex, clamp(uv, edge, 1.0 - edge));
+}
+
+void main() {
+    vec2 mapSize = pc.mapAlpha.xy;
+    vec2 blendUV = fragWorldXZ / mapSize;
+    vec4 albedo = clamped(decalAlbedo, fragDecalUV);
+    vec4 specular = clamped(decalSpec, fragDecalUV);
+    vec4 mask = clamped(decalMask, fragDecalUV);
+
+    // The terrain's normal under it (FA reads the terrain's normal buffer).
+    vec4 b0;
+    vec4 b1;
+    terrainMasks(blendUV, b0, b1);
+    vec3 worldNormal = terrainNormal(fragWorldXZ, fragNormal, b0, b1, mapSize);
+    vec3 worldPos = vec3(fragWorldXZ.x, fragWorldY, fragWorldXZ.y);
+    float shadow = calcShadow(worldPos);
+
+    vec3 lit;
+    float alpha;
+    if (pc.mapAlpha.w < 0.5) {
+        // DecalsPS: CalculateLighting, the specular's red its amount; the
+        // mask's red (.xxxx).
+        float spec;
+        lit = lightTTerrain(albedo.rgb, specular.r, worldNormal, worldPos, pc.eye.xyz, shadow, spec);
+        alpha = albedo.a * mask.r * pc.mapAlpha.z;
+    } else {
+        // DecalAlbedoXP: the XP light, the specular's alpha its amount; the
+        // mask's alpha.
+        lit = lightXP(albedo.rgb, specular.a, worldNormal, worldPos, pc.eye.xyz, shadow);
+        alpha = albedo.a * mask.a * pc.mapAlpha.z;
+    }
+    lit = applyWaterColor(lit, blendUV);
+    lit = applyFogOfWar(lit, blendUV);
+    outColor = vec4(lit, alpha);
+}
+)glsl";
+
+} // namespace
+
+const char* terrain_frag() {
+    static const std::string source =
+        std::string(kTerrainPush) + kTerrainSurface + kTerrainFragMain;
+    return source.c_str();
+}
+
+const char* decal_lit_frag() {
+    static const std::string source = std::string(kDecalPush) + kTerrainSurface + kDecalFragMain;
+    return source.c_str();
+}
+
+const char* decal_lit_vert = R"glsl(
+#version 450
+
+layout(push_constant) uniform PushConstants {
+    mat4 viewProj;
+    vec4 decalU;
+    vec4 decalV;
+    vec4 mapAlpha;
+    vec4 eye;
+} pc;
+
+// The terrain's own vertices (TerrainVertex).
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec2 fragWorldXZ;
+layout(location = 2) out float fragWorldY;
+layout(location = 3) out vec2 fragDecalUV;
+
+void main() {
+    vec4 world = vec4(inPosition, 1.0);
+    gl_Position = pc.viewProj * world;
+    // Rasterizer_Bias_Decal: decalDepthOffset (-0.00001) on the depth.
+    gl_Position.z += -0.00001 * gl_Position.w;
+    fragNormal = inNormal;
+    fragWorldXZ = inPosition.xz;
+    fragWorldY = inPosition.y;
+    // DecalsVS: mul(position, DecalMatrix).xz
+    fragDecalUV = vec2(dot(pc.decalU, world), dot(pc.decalV, world));
 }
 )glsl";
 
@@ -1064,45 +1235,6 @@ void main() {
         alpha = 0.5;
     }
     outColor = vec4(lit, alpha);
-}
-)glsl";
-
-const char* decal_vert = R"glsl(
-#version 450
-
-layout(push_constant) uniform PushConstants {
-    mat4 viewProj;
-} pc;
-
-// Per-vertex (binding 0): position + UV
-layout(location = 0) in vec3 inPosition;
-layout(location = 1) in vec2 inUV;
-
-// Per-instance (binding 1): model matrix (4 vec4 columns at locations 2-5)
-layout(location = 2) in mat4 inModel;
-
-layout(location = 0) out vec2 fragUV;
-
-void main() {
-    vec4 worldPos = inModel * vec4(inPosition, 1.0);
-    gl_Position = pc.viewProj * worldPos;
-    fragUV = inUV;
-}
-)glsl";
-
-const char* decal_frag = R"glsl(
-#version 450
-
-layout(set = 0, binding = 0) uniform sampler2D texAlbedo;
-
-layout(location = 0) in vec2 fragUV;
-
-layout(location = 0) out vec4 outColor;
-
-void main() {
-    vec4 color = texture(texAlbedo, fragUV);
-    if (color.a < 0.01) discard;
-    outColor = color;
 }
 )glsl";
 

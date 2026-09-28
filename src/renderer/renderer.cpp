@@ -53,6 +53,96 @@ constexpr VkColorComponentFlags kColorAndGlow = kColorOnly | VK_COLOR_COMPONENT_
 constexpr f32 kBloomGlowCopyScale = 2.0f;
 constexpr f32 kBloomBlurKernelScale = 1.5f;
 constexpr int kBloomBlurCount = 2;
+/// A map decal's texture matrix (CWldTerrainDecal::Update), as DecalsVS
+/// applies it to a world position (a row vector, D3D's mul): its corner taken
+/// away, turned by D3DX's RotationY, X and Z, over its scale. `u` and `v` are
+/// the columns that give the decal's (x, z): 0 to 1 over its footprint.
+void decal_texture_matrix(const map::DecalInfo& d, f32 u[4], f32 v[4]) {
+    using M = std::array<std::array<f32, 4>, 4>; // m[row][column]
+    const auto identity = [] {
+        M m{};
+        for (size_t i = 0; i < 4; ++i) m[i][i] = 1.0f;
+        return m;
+    };
+    const auto mul = [](const M& a, const M& b) {
+        M r{};
+        for (size_t i = 0; i < 4; ++i)
+            for (size_t j = 0; j < 4; ++j)
+                for (size_t k = 0; k < 4; ++k) r[i][j] += a[i][k] * b[k][j];
+        return r;
+    };
+    M m = identity();
+    m[3][0] = -d.position_x;
+    m[3][1] = -d.position_y;
+    m[3][2] = -d.position_z;
+    M ry = identity();
+    ry[0][0] = std::cos(d.rotation_y);
+    ry[0][2] = -std::sin(d.rotation_y);
+    ry[2][0] = std::sin(d.rotation_y);
+    ry[2][2] = std::cos(d.rotation_y);
+    M rx = identity();
+    rx[1][1] = std::cos(d.rotation_x);
+    rx[1][2] = std::sin(d.rotation_x);
+    rx[2][1] = -std::sin(d.rotation_x);
+    rx[2][2] = std::cos(d.rotation_x);
+    M rz = identity();
+    rz[0][0] = std::cos(d.rotation_z);
+    rz[0][1] = std::sin(d.rotation_z);
+    rz[1][0] = -std::sin(d.rotation_z);
+    rz[1][1] = std::cos(d.rotation_z);
+    m = mul(mul(mul(m, ry), rx), rz);
+    // ApplyInverseScaleToTextureMatrix: each row's x, y and z over the scale.
+    for (auto& row : m) {
+        row[0] /= d.scale_x;
+        row[1] /= d.scale_y;
+        row[2] /= d.scale_z;
+    }
+    for (size_t r = 0; r < 4; ++r) {
+        u[r] = m[r][0];
+        v[r] = m[r][2];
+    }
+}
+
+/// A map decal's bounds on the ground (ProjectDecalBoundsXZ): placed by its
+/// corner, it runs along its x axis (sx cos, sx sin) and z axis (-sz sin, sz
+/// cos) from its position.
+void decal_bounds(const map::DecalInfo& d, f32& min_x, f32& min_z, f32& max_x, f32& max_z) {
+    const f32 c = std::cos(d.rotation_y);
+    const f32 s = std::sin(d.rotation_y);
+    const f32 xx = d.scale_x * c;
+    const f32 xz = d.scale_x * s;
+    const f32 zx = -d.scale_z * s;
+    const f32 zz = d.scale_z * c;
+    min_x = d.position_x + std::min({0.0f, xx, zx, xx + zx});
+    max_x = d.position_x + std::max({0.0f, xx, zx, xx + zx});
+    min_z = d.position_z + std::min({0.0f, xz, zz, xz + zz});
+    max_z = d.position_z + std::max({0.0f, xz, zz, xz + zz});
+}
+
+/// Moho's LOD metric (GeomCamera3's viewport.r[1], at lodScale 1): the
+/// width the screen spans, in world units, at the point's view depth, for a
+/// camera at `eye` with view matrix `view` (column-major).
+f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& eye, f32 aspect,
+                     f32 x, f32 y, f32 z) {
+    const f32 depth =
+        -(view[2] * (x - eye[0]) + view[6] * (y - eye[1]) + view[10] * (z - eye[2])); // along -Z
+    return 2.0f * std::tan(Camera::kFovY * 0.5f) * aspect * depth;
+}
+
+/// CWldTerrainDecal::GetLODAlpha: whole until ren_DecalFadeFraction (0.75)
+/// of its cutoff, then fading to none at it; a near cutoff fades it in
+/// instead. A cutoff of 0 doesn't fade.
+f32 decal_lod_alpha(f32 cutoff, f32 near_cutoff, f32 distance) {
+    constexpr f32 kFadeFraction = 0.75f;
+    if (near_cutoff > 0.0f) {
+        const f32 begin = near_cutoff * kFadeFraction;
+        return (std::clamp(distance, begin, near_cutoff) - begin) / (near_cutoff - begin);
+    }
+    if (cutoff <= 0.0f) return 1.0f;
+    const f32 begin = cutoff * kFadeFraction;
+    return 1.0f - (std::clamp(distance, begin, cutoff) - begin) / (cutoff - begin);
+}
+
 /// `view_proj` (column-major) seen through the water's plane y = e, as
 /// Moho mirrors its view for the reflection (M213b): the world's (x, 2e - y,
 /// z). Its columns: y's negated, and 2e of y's added to the translation.
@@ -829,13 +919,13 @@ std::array<f32, 16> Renderer::compute_light_vp() const {
 void Renderer::create_pipelines() {
     // Compile shaders from embedded GLSL
     auto tv = compile_glsl(device_, shaders::terrain_vert, "terrain.vert", true);
-    auto tf = compile_glsl(device_, shaders::terrain_frag, "terrain.frag", false);
+    auto tf = compile_glsl(device_, shaders::terrain_frag(), "terrain.frag", false);
     auto uv = compile_glsl(device_, shaders::unit_vert, "unit.vert", true);
     auto uf = compile_glsl(device_, shaders::unit_frag, "unit.frag", false);
     auto mv = compile_glsl(device_, shaders::mesh_vert, "mesh.vert", true);
     auto mf = compile_glsl(device_, shaders::mesh_frag, "mesh.frag", false);
-    auto dv = compile_glsl(device_, shaders::decal_vert, "decal.vert", true);
-    auto df = compile_glsl(device_, shaders::decal_frag, "decal.frag", false);
+    auto dv = compile_glsl(device_, shaders::decal_lit_vert, "decal_lit.vert", true);
+    auto df = compile_glsl(device_, shaders::decal_lit_frag(), "decal_lit.frag", false);
 
     // Abort if any shader failed to compile
     if (!tv || !tf || !uv || !uf || !mv || !mf || !dv || !df) {
@@ -981,38 +1071,33 @@ void Renderer::create_pipelines() {
         mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     }
 
-    // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
+    // --- The map's decals (M212b): the terrain's vertices, lit as the
+    // terrain is, blended over it (TDecals / TDecalsXP: SrcAlpha /
+    // InvSrcAlpha, RGB, depth LessEqual unwritten, FA's bias in the shader).
     {
-        std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex quad data (pos3 + uv2 = 20 bytes)
-        bindings[0].binding = 0;
-        bindings[0].stride = sizeof(f32) * 5;
-        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance model matrix (mat4 = 64 bytes)
-        bindings[1].binding = 1;
-        bindings[1].stride = sizeof(f32) * 16;
-        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(TerrainVertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::array<VkVertexInputAttributeDescription, 2> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
 
-        std::array<VkVertexInputAttributeDescription, 6> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 3};                   // UV
-        attrs[2] = {2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};                            // model col0
-        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 4};              // model col1
-        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};              // model col2
-        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 12};             // model col3
-
+        // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B
         decal_pipeline_ =
             PipelineBuilder()
                 .set_shaders(dv, df)
-                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
-                                  static_cast<u32>(attrs.size()))
-                .set_depth_test(true, false) // test ON, write OFF
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(true, false)
                 .set_blend(true)
-                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_depth_bias(-1.0f, -1.0f)
-                .set_push_constant(sizeof(f32) * 16,
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 32,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(texture_ds_layout_)
+                .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: the terrain's
+                .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow and light
+                .add_descriptor_set_layout(texture_ds_layout_)     // set=2: albedo
+                .add_descriptor_set_layout(texture_ds_layout_)     // set=3: specular
+                .add_descriptor_set_layout(texture_ds_layout_)     // set=4: the mask
                 .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
                 .build(device_, scene_render_pass_, &decal_layout_);
     }
@@ -1590,12 +1675,7 @@ void Renderer::destroy_decal_buffers() {
         if (b.buffer) vmaDestroyBuffer(allocator_, b.buffer, b.allocation);
         b = {};
     };
-    destroy(decal_quad_verts_);
-    destroy(decal_quad_indices_);
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-        destroy(decal_instance_buf_[i]);
-        decal_instance_mapped_[i] = nullptr;
-    }
+    destroy(decal_indices_);
 }
 
 void Renderer::clear_scene() {
@@ -1620,7 +1700,7 @@ void Renderer::clear_scene() {
     }
 
     stored_decals_.clear();
-    decal_groups_.clear();
+    decal_mask_ds_ = VK_NULL_HANDLE;
     // build_scene makes them again for the next map: a game started from
     // another leaked the last one's otherwise.
     destroy_decal_buffers();
@@ -2073,104 +2153,43 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         } // else (non-empty decals)
     }
 
-    // Build decal quad mesh + instance buffer + populate stored decals
+    // The map's lit decals (M212b): each the terrain's triangles under its
+    // footprint, projected by its texture matrix (CWldTerrainDecal::Update).
     if (!terrain->decals().empty() && decal_pipeline_) {
-        // Unit quad: (-0.5, 0, -0.5) to (0.5, 0, 0.5) with UV
-        // Each vertex: pos(3) + uv(2)
-        const f32 quad_verts[] = {
-            -0.5f, 0.0f, -0.5f, 0.0f, 0.0f,
-             0.5f, 0.0f, -0.5f, 1.0f, 0.0f,
-             0.5f, 0.0f,  0.5f, 1.0f, 1.0f,
-            -0.5f, 0.0f,  0.5f, 0.0f, 1.0f,
-        };
-        const u32 quad_indices[] = {0, 1, 2, 0, 2, 3};
-
-        decal_quad_verts_ = upload_buffer(
-            device_, allocator_, cmd_pool_, graphics_queue_,
-            quad_verts, sizeof(quad_verts),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        decal_quad_indices_ = upload_buffer(
-            device_, allocator_, cmd_pool_, graphics_queue_,
-            quad_indices, sizeof(quad_indices),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-
-        // Host-visible, persistently-mapped instance buffers (per-frame for FIF safety)
-        VkDeviceSize inst_size = MAX_DECALS * sizeof(f32) * 16;
-        bool decal_alloc_ok = true;
-        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-            VkBufferCreateInfo buf_ci{};
-            buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            buf_ci.size = inst_size;
-            buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-            VmaAllocationCreateInfo alloc_ci{};
-            alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-            alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-            VmaAllocationInfo alloc_info{};
-            VkResult vma_res = vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci,
-                            &decal_instance_buf_[i].buffer,
-                            &decal_instance_buf_[i].allocation, &alloc_info);
-            if (vma_res != VK_SUCCESS || !alloc_info.pMappedData) {
-                spdlog::error("Decal: failed to allocate instance buffer {}", i);
-                decal_alloc_ok = false;
-                break;
-            }
-            decal_instance_mapped_[i] = alloc_info.pMappedData;
-        }
-        if (!decal_alloc_ok) {
-            spdlog::error("Decal: instance buffer allocation failed");
-        } else {
-
-        // Build model matrix helper (same as unit_renderer.cpp)
-        auto build_mat = [](f32* out, f32 px, f32 py, f32 pz,
-                            const sim::Quaternion& q,
-                            f32 sx, f32 sy, f32 sz) {
-            f32 xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
-            f32 xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
-            f32 wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
-            out[0]  = (1.f - 2.f*(yy+zz))*sx; out[1]  = (2.f*(xy+wz))*sx;
-            out[2]  = (2.f*(xz-wy))*sx;        out[3]  = 0.f;
-            out[4]  = (2.f*(xy-wz))*sy;         out[5]  = (1.f - 2.f*(xx+zz))*sy;
-            out[6]  = (2.f*(yz+wx))*sy;          out[7]  = 0.f;
-            out[8]  = (2.f*(xz+wy))*sz;         out[9]  = (2.f*(yz-wx))*sz;
-            out[10] = (1.f - 2.f*(xx+yy))*sz;   out[11] = 0.f;
-            out[12] = px; out[13] = py; out[14] = pz; out[15] = 1.f;
-        };
-
-        // Populate stored decals and preload textures
-        stored_decals_.reserve(terrain->decals().size());
-        for (auto& d : terrain->decals()) {
+        std::vector<u32> indices;
+        for (const map::DecalInfo& d : terrain->decals()) {
+            if (!map::lit_decal(d.type)) continue; // M212c: water, glow and the glow mask
+            if (d.scale_x == 0.0f || d.scale_y == 0.0f || d.scale_z == 0.0f) continue;
             StoredDecal sd;
-            sd.texture_path = d.texture_path;
-            sd.position_x = d.position_x;
-            sd.position_y = d.position_y;
-            sd.position_z = d.position_z;
+            sd.albedo_path = d.texture_path;
+            sd.spec_path = d.texture2_path;
+            sd.xp = d.type == map::DecalType::AlbedoXP;
+            decal_texture_matrix(d, sd.u, sd.v);
+            f32 min_x = 0, min_z = 0, max_x = 0, max_z = 0;
+            decal_bounds(d, min_x, min_z, max_x, max_z);
+            sd.mid_x = (min_x + max_x) * 0.5f;
+            sd.mid_z = (min_z + max_z) * 0.5f;
+            sd.radius = 0.5f * std::hypot(max_x - min_x, max_z - min_z);
             sd.cut_off_lod = d.cut_off_lod;
-
-            auto q = sim::euler_to_quat(d.rotation_y, d.rotation_x, d.rotation_z);
-            build_mat(sd.model, d.position_x, d.position_y, d.position_z,
-                      q, d.scale_x, d.scale_y, d.scale_z);
+            sd.near_cut_off_lod = d.near_cut_off_lod;
+            sd.first_index = static_cast<u32>(indices.size());
+            terrain_mesh_.collect_indices(min_x, min_z, max_x, max_z, indices);
+            sd.index_count = static_cast<u32>(indices.size()) - sd.first_index;
+            if (sd.index_count == 0) continue;
+            // Loaded with the map, as Moho loads a map's decal textures: the
+            // first frame shows them.
+            (void)texture_cache_.get_blocking(sd.albedo_path);
+            if (!sd.spec_path.empty()) (void)texture_cache_.get_blocking(sd.spec_path);
             stored_decals_.push_back(std::move(sd));
         }
-
-        // Preload all unique decal textures into texture_cache_
-        std::unordered_map<std::string, VkDescriptorSet> preloaded;
-        for (auto& sd : stored_decals_) {
-            if (preloaded.count(sd.texture_path)) continue;
-            auto* tex = texture_cache_.get(sd.texture_path);
-            preloaded[sd.texture_path] = tex ? tex->descriptor_set : VK_NULL_HANDLE;
-        }
-
-        // Sort stored_decals_ by texture_path for efficient per-frame grouping
-        std::sort(stored_decals_.begin(), stored_decals_.end(),
-                  [](const StoredDecal& a, const StoredDecal& b) {
-                      return a.texture_path < b.texture_path;
-                  });
-
-        spdlog::info("Decals: {} stored for rendering ({} unique textures)",
-                     stored_decals_.size(), preloaded.size());
-        } // else (vma success)
+        if (!indices.empty())
+            decal_indices_ =
+                upload_buffer(device_, allocator_, cmd_pool_, graphics_queue_, indices.data(),
+                              indices.size() * sizeof(u32), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        const GPUTexture* mask = texture_cache_.get_blocking("/textures/engine/decalMask.dds");
+        decal_mask_ds_ = mask ? mask->descriptor_set : texture_cache_.fallback_descriptor();
+        spdlog::info("Decals: {} lit, over {} of the terrain's indices", stored_decals_.size(),
+                     indices.size());
     }
 
     // Build minimap terrain texture
@@ -2670,73 +2689,68 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
-    // 2. Draw decals (textured quads on terrain)
-    // stored_decals_ is pre-sorted by texture_path (in build_scene) for
-    // allocation-free per-frame grouping via linear scan.
-    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_[fi]) {
-        f32 cam_x, cam_y, cam_z;
-        camera_.eye_position(cam_x, cam_y, cam_z);
-
-        // Linear scan over pre-sorted decals: distance-cull + group by texture
-        decal_groups_.clear();
-        u32 total_instances = 0;
-        auto* dst = static_cast<f32*>(decal_instance_mapped_[fi]);
-        const std::string* cur_path = nullptr;
-        VkDescriptorSet cur_ds = VK_NULL_HANDLE;
-
-        for (auto& sd : stored_decals_) {
-            if (total_instances >= MAX_DECALS) break;
-
-            // Distance cull
-            f32 dx = sd.position_x - cam_x;
-            f32 dz = sd.position_z - cam_z;
-            if (dx * dx + dz * dz > sd.cut_off_lod * sd.cut_off_lod) continue;
-
-            // New texture group?
-            if (!cur_path || *cur_path != sd.texture_path) {
-                cur_path = &sd.texture_path;
-                auto* tex = texture_cache_.get(sd.texture_path);
-                cur_ds = tex ? tex->descriptor_set : VK_NULL_HANDLE;
-                if (cur_ds) {
-                    decal_groups_.push_back({cur_ds, total_instances, 0});
-                }
+    // 2. The map's decals (M212b), as HighFidelityTerrain's DrawDecalPass
+    // draws them: Albedo, then AlbedoXP, each faded by its LOD (GetLODAlpha).
+    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_indices_.buffer &&
+        terrain_ && terrain_tex_ds_ && shadow_ds_[fi] && decal_mask_ds_) {
+        const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
+        f32 eye_x = 0;
+        f32 eye_y = 0;
+        f32 eye_z = 0;
+        camera_.eye_position(eye_x, eye_y, eye_z);
+        const std::array<f32, 3> eye = {eye_x, eye_y, eye_z};
+        const std::array<f32, 16> view_matrix = camera_.view();
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, decal_pipeline_);
+        const std::array<VkDescriptorSet, 2> shared = {terrain_tex_ds_, shadow_ds_[fi]};
+        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
+                                static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
+        VkBuffer vertices = terrain_mesh_.vertex_buffer();
+        const VkDeviceSize no_offset = 0;
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], decal_indices_.buffer, 0, VK_INDEX_TYPE_UINT32);
+        struct DecalPC {
+            f32 view_proj[16];
+            f32 u[4];
+            f32 v[4];
+            f32 map_alpha[4]; // the map's size, DecalAlpha, 1 for AlbedoXP
+            f32 eye[4];
+        } pc{};
+        static_assert(sizeof(DecalPC) == 128, "matches decal_lit's push block");
+        std::memcpy(pc.view_proj, vp.data(), sizeof(pc.view_proj));
+        pc.map_alpha[0] = static_cast<f32>(terrain_->map_width());
+        pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
+        pc.eye[0] = eye_x;
+        pc.eye[1] = eye_y;
+        pc.eye[2] = eye_z;
+        VkDescriptorSet no_spec = texture_cache_.specteam_fallback_descriptor();
+        for (const bool xp : {false, true})
+            for (const StoredDecal& sd : stored_decals_) {
+                if (sd.xp != xp) continue;
+                const f32 ground = terrain_->get_terrain_height(sd.mid_x, sd.mid_z);
+                if (!frustum.is_sphere_visible(sd.mid_x, ground, sd.mid_z, sd.radius + 64.0f))
+                    continue;
+                const f32 alpha = decal_lod_alpha(
+                    sd.cut_off_lod, sd.near_cut_off_lod,
+                    decal_lod_metric(view_matrix, eye, aspect, sd.mid_x, ground, sd.mid_z));
+                if (alpha < 1.0f / 255.0f) continue;
+                const GPUTexture* albedo = texture_cache_.get(sd.albedo_path);
+                if (!albedo) continue; // still loading
+                const GPUTexture* spec =
+                    sd.spec_path.empty() ? nullptr : texture_cache_.get(sd.spec_path);
+                const std::array<VkDescriptorSet, 3> own = {
+                    albedo->descriptor_set, spec ? spec->descriptor_set : no_spec, decal_mask_ds_};
+                vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        decal_layout_, 2, static_cast<u32>(own.size()), own.data(),
+                                        0, nullptr);
+                std::memcpy(pc.u, sd.u, sizeof(pc.u));
+                std::memcpy(pc.v, sd.v, sizeof(pc.v));
+                pc.map_alpha[2] = alpha;
+                pc.map_alpha[3] = xp ? 1.0f : 0.0f;
+                vkCmdPushConstants(cmd_buf_[fi], decal_layout_,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                                   sizeof(pc), &pc);
+                vkCmdDrawIndexed(cmd_buf_[fi], sd.index_count, 1, sd.first_index, 0, 0);
             }
-
-            if (!cur_ds) continue;
-
-            std::memcpy(dst + total_instances * 16, sd.model, sizeof(f32) * 16);
-            total_instances++;
-            decal_groups_.back().instance_count++;
-        }
-
-        if (total_instances > 0) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              decal_pipeline_);
-            vkCmdPushConstants(cmd_buf_[fi], decal_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(f32) * 16, vp.data());
-
-            VkBuffer quad_buf = decal_quad_verts_.buffer;
-            VkBuffer inst_buf = decal_instance_buf_[fi].buffer;
-
-            for (auto& group : decal_groups_) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi],
-                                        VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        decal_layout_, 0, 1,
-                                        &group.texture_ds, 0, nullptr);
-
-                VkBuffer vbufs[] = {quad_buf, inst_buf};
-                VkDeviceSize buf_offsets[] = {
-                    0,
-                    static_cast<VkDeviceSize>(group.instance_offset) *
-                        sizeof(f32) * 16};
-                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
-                vkCmdBindIndexBuffer(cmd_buf_[fi], decal_quad_indices_.buffer, 0,
-                                     VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd_buf_[fi], 6, group.instance_count, 0, 0, 0);
-            }
-        }
     }
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,

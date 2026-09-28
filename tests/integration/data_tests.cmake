@@ -33,7 +33,7 @@ set(OSC_DATA_TESTS_GATE
     beam-render-test beam-test beam-weapon-test bitmap-test blend-test bone-test border-render-test build-test
     camera-test
     canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test collision-test combat-test
-    construction-test controls-test counter-intel-test cursor-render-test damage-test decal-test
+    construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
     death-test decalsplat-test defence-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
