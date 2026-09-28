@@ -45,7 +45,6 @@ add_executable(osc_tests
     test_thread_wait.cpp
     test_economy_event.cpp
     test_dds_decode.cpp
-    test_normal_overlay.cpp
     test_frustum.cpp
     test_light_view.cpp
     test_camera_ground.cpp
@@ -54,6 +53,7 @@ add_executable(osc_tests
     test_recon_view.cpp
     test_decal.cpp
     test_runtime_decals.cpp
+    test_terrain_normal_maps.cpp
     test_dds_parser.cpp
     test_color.cpp
     test_lod.cpp

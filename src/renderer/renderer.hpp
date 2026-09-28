@@ -29,7 +29,6 @@
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
-#include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/image.hpp"
 #include "core/types.hpp"
@@ -328,6 +327,17 @@ private:
     VkPipelineLayout decal_glow_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_glow_mask_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_glow_mask_layout_ = VK_NULL_HANDLE;
+    // The normal pass (M212e): the terrain's normals and the normal decals,
+    // into the normal target the scene then reads.
+    VkPipeline terrain_normal_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout terrain_normal_layout_ = VK_NULL_HANDLE;
+    VkPipeline decal_normal_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_normal_layout_ = VK_NULL_HANDLE;
+    AllocatedImage terrain_normal_image_{};
+    VkFramebuffer terrain_normal_framebuffer_ = VK_NULL_HANDLE;
+    /// Point the terrain set's binding 26 at the normal target (a new scene,
+    /// or a new target after a resize).
+    void bind_normal_target();
 
     // Texture infrastructure
     VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
@@ -354,7 +364,8 @@ private:
     static constexpr u32 kTerrainStrataBinding = 23;
     AllocatedBuffer terrain_strata_ubo_{};
     /// Made per scene, with the terrain's descriptor set.
-    void create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata);
+    void create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata, u32 normal_tile_w,
+                                   u32 normal_tile_h);
     void destroy_terrain_strata_ubo();
 
     // Sub-renderers
@@ -391,8 +402,9 @@ private:
         std::string albedo_path;
         std::string spec_path; ///< empty: none (no specular)
         DecalTechnique technique = DecalTechnique::Albedo;
-        f32 u[4] = {}; ///< the texture matrix's u column (DecalsVS)
-        f32 v[4] = {}; ///< its v (world z) column
+        f32 rotation_y = 0; ///< its turn, which turns a normal decal's normals (M212e)
+        f32 u[4] = {};      ///< the texture matrix's u column (DecalsVS)
+        f32 v[4] = {};      ///< its v (world z) column
         f32 mid_x = 0, mid_z = 0;
         f32 radius = 0; ///< its bounds' half diagonal, for the view's cull
         f32 cut_off_lod = 1000.0f;
@@ -400,6 +412,28 @@ private:
         u32 first_index = 0, index_count = 0;
     };
     std::vector<StoredDecal> stored_decals_;
+    /// A decal this frame draws: the map's or a script's, its technique,
+    /// textures, matrix, alpha (its LOD fade times its own), turn and
+    /// triangles, from the map's index buffer or the scripts'.
+    struct FrameDecal {
+        DecalTechnique technique = DecalTechnique::Albedo;
+        const std::string* albedo = nullptr;
+        const std::string* spec = nullptr;
+        const f32* u = nullptr;
+        const f32* v = nullptr;
+        f32 alpha = 1, rotation_y = 0;
+        u32 first_index = 0, index_count = 0;
+        bool runtime = false;
+    };
+    std::vector<FrameDecal> frame_decals_;
+    /// This frame's decals, the map's then the scripts', seen and not faded
+    /// out (M212e: the normal pass and the colour passes both draw them).
+    void collect_frame_decals(const Frustum& frustum);
+    /// Draw this frame's decals of `technique` with `pipeline`, over the
+    /// terrain's vertices, in the render pass open (the normal pass, or the
+    /// scene's).
+    void record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique technique, VkPipeline pipeline,
+                       const std::array<f32, 16>& view_proj);
     AllocatedBuffer decal_indices_{};
     /// Retail's mask, which every decal's alpha takes (TerrainCommon).
     VkDescriptorSet decal_mask_ds_ = VK_NULL_HANDLE;

@@ -118,6 +118,12 @@ struct ScmapData {
     std::vector<char> blend_dds_0;      // strata 1-4 blend weights (raw DDS)
     std::vector<char> blend_dds_1;      // strata 5-8 blend weights (raw DDS)
     std::vector<char> preview_dds;      // lobby preview image (raw DDS, may be empty)
+    /// The map's normal maps (M212e): tiles of normal_map_width x
+    /// normal_map_height texels, one a world unit, row by row across the map;
+    /// each a raw DDS (DXT5, x in alpha, z in green).
+    u32 normal_map_width = 0;
+    u32 normal_map_height = 0;
+    std::vector<std::vector<char>> normal_maps;
     /// Each map cell's terrain type: a TypeCode of /lua/TerrainTypes.lua,
     /// map_width x map_height, row by row.
     std::vector<u8> terrain_types;

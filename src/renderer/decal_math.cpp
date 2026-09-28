@@ -86,6 +86,8 @@ f32 decal_lod_alpha(f32 cutoff, f32 near_cutoff, f32 distance) {
 
 std::optional<DecalTechnique> decal_technique(map::DecalType type) {
     switch (type) {
+    case map::DecalType::Normals: return DecalTechnique::Normals;
+    case map::DecalType::AlphaNormals: return DecalTechnique::Normals;
     case map::DecalType::GlowMask: return DecalTechnique::GlowMask;
     case map::DecalType::Albedo: return DecalTechnique::Albedo;
     case map::DecalType::AlbedoXP: return DecalTechnique::AlbedoXP;
@@ -99,16 +101,6 @@ std::array<f32, 2> decal_corner(const map::DecalInfo& d, f32 lx, f32 lz) {
     const f32 s = std::sin(d.rotation_y);
     return {d.position_x + lz * (-d.scale_z * s) + lx * (d.scale_x * c),
             d.position_z + lz * (d.scale_z * c) + lx * (d.scale_x * s)};
-}
-
-std::array<f32, 3> terrain_normal_at(const map::Terrain& terrain, f32 x, f32 z) {
-    const f32 nx =
-        terrain.get_terrain_height(x - 1.0f, z) - terrain.get_terrain_height(x + 1.0f, z);
-    const f32 nz =
-        terrain.get_terrain_height(x, z - 1.0f) - terrain.get_terrain_height(x, z + 1.0f);
-    const f32 ny = 2.0f;
-    const f32 length = std::sqrt(nx * nx + ny * ny + nz * nz);
-    return {nx / length, ny / length, nz / length};
 }
 
 } // namespace osc::renderer
