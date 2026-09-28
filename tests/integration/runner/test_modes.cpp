@@ -746,6 +746,7 @@ std::optional<int> IntegrationModes::headless_first(Engine& e) {
         bool reload_ok = execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
                                                  loader, config, scenario_meta, game_state_mgr,
                                                  nullptr, // renderer (headless)
+                                                 nullptr, // its store (headless)
                                                  nullptr, // input_handler (headless)
                                                  nullptr, // prev_selection (headless)
                                                  nullptr, // world_interp (headless)

@@ -48,7 +48,9 @@ std::optional<int> App::run_window() {
     if (renderer.init(1600, 900, "OpenSupCom", offscreen_capture)) {
         // Build 3D scene if we have a sim state (--map was provided)
         if (sim_state) {
-            renderer.build_scene(sim_state->terrain(), sim_state->blueprint_store(),
+            // Blueprints through the UI state's store, whose tables are the
+            // state the renderer is given (the sim's store's are the sim's).
+            renderer.build_scene(sim_state->terrain(), &ui_store,
                                  osc::sim::world_blueprints(*sim_state), &vfs, ui_lua_state.raw());
         }
 
@@ -559,9 +561,14 @@ std::optional<int> App::run_window() {
             // --replay-flow-test ends when the replay has played out.
             if (opt.replay_flow_test) {
                 ++replay_flow_frames;
-                if (active_playback && sim_state && active_playback->finished(*sim_state))
+                if (active_playback && sim_state && active_playback->finished(*sim_state)) {
                     replay_flow_done = true;
-                else if (replay_flow_frames > 40000)
+                    // Watched from the front end, its units draw their meshes.
+                    if (renderer.mesh_instance_count() == 0 || renderer.cube_instance_count() != 0)
+                        osc::test_status::fail("[FAIL] replay-flow: {} meshes and {} cubes drawn",
+                                               renderer.mesh_instance_count(),
+                                               renderer.cube_instance_count());
+                } else if (replay_flow_frames > 40000)
                     replay_flow_done = true; // stuck: reported below
             }
 
@@ -591,6 +598,14 @@ std::optional<int> App::run_window() {
                     if (auto r = ui_lua_state.do_string(code); !r)
                         osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
                 };
+                // Each load draws its units' meshes, none a cube (every game
+                // started from the front end once drew cubes: its caches had
+                // no mesh cache). Retail's units all have meshes.
+                if (played_on &&
+                    (renderer.mesh_instance_count() == 0 || renderer.cube_instance_count() != 0))
+                    osc::test_status::fail("[FAIL] load-flow: load {} drew {} meshes and {} cubes",
+                                           load_flow_phase + 1, renderer.mesh_instance_count(),
+                                           renderer.cube_instance_count());
                 if (load_flow_phase == 0 && played_on) {
                     save_again_in_load_flow();
                     // The game menu's Load dialog: load, then destroy the
@@ -855,8 +870,8 @@ std::optional<int> App::run_window() {
                         // Execute reload in stages, pumping UI frames between each
                         execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
                                                 loader, config, scenario_meta, game_state_mgr,
-                                                &renderer, &input_handler, &prev_selection,
-                                                &world_interp,
+                                                &renderer, &ui_store, &input_handler,
+                                                &prev_selection, &world_interp,
                                                 launch_seed(opt.seed_arg, opt.reproducible_run),
                                                 sim_accumulator, launch_scenario, recorded);
                         if (launch_replay && sim_state) {

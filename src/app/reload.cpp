@@ -27,6 +27,7 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
                              osc::lua::ScenarioMetadata& scenario_meta,
                              osc::GameStateManager& game_state_mgr,
                              osc::renderer::Renderer* renderer,            // nullable for headless
+                             osc::blueprints::BlueprintStore* ui_store,    // nullable for headless
                              osc::renderer::InputHandler* input_handler,   // nullable for headless
                              std::unordered_set<osc::u32>* prev_selection, // nullable for headless
                              WorldInterp* world_interp,                    // nullable for headless
@@ -215,9 +216,10 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         lua_rawset(uiL, LUA_REGISTRYINDEX);
     }
 
-    // 14. Rebuild renderer scene
+    // 14. Rebuild renderer scene, reading blueprints through the UI state's
+    // store: its tables are uiL's
     if (renderer)
-        renderer->build_scene(sim_state->terrain(), sim_state->blueprint_store(),
+        renderer->build_scene(sim_state->terrain(), ui_store,
                               osc::sim::world_blueprints(*sim_state), &vfs, uiL);
 
     // 15. Reset camera to map center (spherical coords: target + distance)
