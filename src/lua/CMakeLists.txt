@@ -24,6 +24,8 @@ add_library(osc_lua STATIC
     bindings/ui/world.cpp
     mp_net_state.cpp
     lan_lobby.cpp
+    lobby_wire.cpp
+    net_lobby.cpp
     sim_bindings.cpp
     sim_loader.cpp
     sim_sync.cpp

@@ -7,6 +7,7 @@
 #include "core/image.hpp"
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
+#include "lua/net_lobby.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
@@ -650,6 +651,10 @@ std::optional<int> App::run_window() {
                     sim_state->playable_z1());
             }
             renderer.poll_events(dt);
+
+            // The lobbies' networks: what has come, into their callbacks
+            // (M218a)
+            osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
 
             // Resume UI coroutines
             ++ui_frame_count;

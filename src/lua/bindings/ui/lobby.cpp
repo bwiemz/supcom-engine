@@ -56,6 +56,7 @@
 #include "core/preferences.hpp"
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/net_lobby.hpp"
 #include "lua/sim_sync.hpp"
 #include <algorithm>
 #include <cctype>
@@ -181,7 +182,10 @@ const MethodEntry ui_discovery_methods[] = {
 // --- Lobby methods (M76) ---
 
 static int lobby_SendData(lua_State* L);
-static int lobby_BroadcastData(lua_State* L) { return lobby_SendData(L); }
+static int lobby_BroadcastData(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_BroadcastData(L, *nl);
+    return lobby_SendData(L);
+}
 
 static const char* lobby_arg_string(lua_State* L, int idx, const char* fallback) {
     return lua_type(L, idx) == LUA_TSTRING ? lua_tostring(L, idx) : fallback;
@@ -267,6 +271,8 @@ static void lobby_store_peer(lua_State* L, int lobby_idx, const char* id,
 }
 
 static int lobby_ConnectToPeer(lua_State* L) {
+    // Networked: every peer is reached through the host (M218a)
+    if (net_lobby_of(L, 1)) return 0;
     if (!lua_istable(L, 1)) {
         lua_pushboolean(L, 0);
         return 1;
@@ -284,6 +290,7 @@ static int lobby_ConnectToPeer(lua_State* L) {
 }
 
 static int lobby_DebugDump(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_DebugDump(L, *nl);
     if (!lua_istable(L, 1)) return 0;
     lobby_push_peers(L, 1);
     spdlog::debug("Lobby peers: {}", luaL_getn(L, -1));
@@ -292,6 +299,7 @@ static int lobby_DebugDump(lua_State* L) {
 }
 
 static int lobby_Destroy(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_Destroy(L, *nl);
     if (lua_istable(L, 1)) {
         lua_pushstring(L, "__osc_destroyed");
         lua_pushboolean(L, 1);
@@ -304,6 +312,8 @@ static int lobby_Destroy(lua_State* L) {
 }
 
 static int lobby_DisconnectFromPeer(lua_State* L) {
+    // Networked: every peer is reached through the host (M218a)
+    if (net_lobby_of(L, 1)) return 0;
     if (!lua_istable(L, 1)) {
         lua_pushboolean(L, 0);
         return 1;
@@ -324,15 +334,18 @@ static int lobby_DisconnectFromPeer(lua_State* L) {
 }
 
 static int lobby_EjectPeer(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_EjectPeer(L, *nl);
     return lobby_DisconnectFromPeer(L);
 }
 
 static int lobby_GetLocalPlayerID(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_GetLocalPlayerID(L, *nl);
     lua_pushstring(L, "0");
     return 1;
 }
 
 static int lobby_GetLocalPlayerName(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_GetLocalPlayerName(L, *nl);
     // Try to read player name from preferences
     lua_pushstring(L, "GetPreference");
     lua_rawget(L, LUA_GLOBALSINDEX);
@@ -351,11 +364,13 @@ static int lobby_GetLocalPlayerName(lua_State* L) {
 }
 
 static int lobby_GetLocalPort(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_GetLocalPort(L, *nl);
     lua_pushnumber(L, 0);
     return 1;
 }
 
 static int lobby_GetPeer(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_GetPeer(L, *nl);
     if (!lua_istable(L, 1)) {
         lua_pushnil(L);
         return 1;
@@ -379,6 +394,7 @@ static int lobby_GetPeer(lua_State* L) {
 }
 
 static int lobby_GetPeers(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_GetPeers(L, *nl);
     if (!lua_istable(L, 1)) {
         lua_newtable(L);
         return 1;
@@ -391,6 +407,7 @@ static int lobby_GetPeers(lua_State* L) {
 /// to the next frame via ForkThread. FA's engine fires this asynchronously;
 /// we simulate with a 1-tick delay so InitLobbyComm fully completes first.
 static int lobby_HostGame(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_HostGame(L, *nl);
     if (!lua_istable(L, 1)) return 0;
 
     lua_pushstring(L, "__osc_lobby_host_game_called");
@@ -472,6 +489,7 @@ static int lobby_HostGame(lua_State* L) {
 }
 
 static int lobby_IsHost(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_IsHost(L, *nl);
     lua_pushboolean(L, 1); // always host in our engine
     return 1;
 }
@@ -480,6 +498,7 @@ static int lobby_IsHost(lua_State* L) {
 /// join address has been configured (single-player never sets one, so this is
 /// a no-op there, matching the old loopback behavior).
 static int lobby_JoinGame(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_JoinGame(L, *nl);
     lua_pushstring(L, "__osc_mp_join_address");
     lua_rawget(L, LUA_GLOBALSINDEX);
     std::string addr =
@@ -498,6 +517,7 @@ static int lobby_JoinGame(lua_State* L) {
 }
 /// lobby:LaunchGame(config) — delegates to LaunchSinglePlayerSession
 static int lobby_LaunchGame(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_LaunchGame(L, *nl);
     lua_pushstring(L, "LaunchSinglePlayerSession");
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_isfunction(L, -1)) {
@@ -513,15 +533,16 @@ static int lobby_LaunchGame(lua_State* L) {
 }
 
 static int lobby_MakeValidGameName(lua_State* L) {
-    // Return the original name
+    // Moho's: at most 32 characters
     if (lua_type(L, 2) == LUA_TSTRING)
-        lua_pushvalue(L, 2);
+        lua_pushstring(L, std::string(lua_tostring(L, 2)).substr(0, 32).c_str());
     else
         lua_pushstring(L, "Game");
     return 1;
 }
 
 static int lobby_MakeValidPlayerName(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_MakeValidPlayerName(L, *nl);
     // Return the original name (arg 3)
     if (lua_type(L, 3) == LUA_TSTRING)
         lua_pushvalue(L, 3);
@@ -531,6 +552,7 @@ static int lobby_MakeValidPlayerName(lua_State* L) {
 }
 
 static int lobby_SendData(lua_State* L) {
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_SendData(L, *nl);
     // Single-player loopback: call lobbyComm:DataReceived(data) directly
     // Args: self (lobbyComm), targetID, data
     if (!lua_istable(L, 1)) return 0;

@@ -56,6 +56,7 @@
 #include "core/preferences.hpp"
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
+#include "lua/net_lobby.hpp"
 #include "lua/sim_sync.hpp"
 
 #include <algorithm>
@@ -1390,7 +1391,18 @@ static int l_InternalCreateLobby(lua_State* L) {
     lua_pushlightuserdata(L, reinterpret_cast<void*>(static_cast<uintptr_t>(0x3)));
     lua_rawset(L, -3);
 
-    spdlog::debug("InternalCreateLobby: created");
+    // A LAN lobby ("UDP", or "TCP") is networked (M218a); "None", the
+    // single-player lobby's, loops back to itself.
+    const std::string protocol = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "None";
+    if (protocol == "UDP" || protocol == "TCP") {
+        const double port = lua_type(L, 3) == LUA_TNUMBER ? lua_tonumber(L, 3) : 0.0;
+        const double max_connections = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 8.0;
+        const std::string name = lua_type(L, 5) == LUA_TSTRING ? lua_tostring(L, 5) : "Player";
+        make_net_lobby(L, -1, static_cast<u16>(std::clamp(port, 0.0, 65535.0)),
+                       static_cast<u32>(std::max(0.0, max_connections)), name);
+    }
+
+    spdlog::debug("InternalCreateLobby: created ({})", protocol);
     return 1; // return instance
 }
 

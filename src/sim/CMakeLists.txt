@@ -34,6 +34,7 @@ add_library(osc_sim STATIC
     saved_game.cpp
     lockstep_session.cpp
     net_transport.cpp
+    lobby_net.cpp
     sim_state.cpp
     work_range.cpp
     decal.cpp

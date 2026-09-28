@@ -452,7 +452,9 @@ TEST_CASE("Lobby peer methods maintain single-process peer state", "[lua][ui]") 
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
-        lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Host')
+        -- The single-player lobby's loopback ("None"; a "UDP" one is
+        -- networked, M218a: test_net_lobby.cpp)
+        lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
 
         connected = lobby:ConnectToPeer('2', 'RemotePlayer', 6113)
         peers_after_connect = lobby:GetPeers()
@@ -504,7 +506,8 @@ TEST_CASE("Lobby LaunchGame preserves lobby config for skirmish launch", "[lua][
     auto result = state.do_string(R"(
         LobbyClass = {}
         for k, v in moho.lobby_methods do LobbyClass[k] = v end
-        lobby = InternalCreateLobby(LobbyClass, 'UDP', 6112, 16, 'Host')
+        -- The single-player lobby ("None"): a skirmish's launch
+        lobby = InternalCreateLobby(LobbyClass, 'None', 6112, 16, 'Host')
 
         lobby:LaunchGame({
             GameOptions = {
