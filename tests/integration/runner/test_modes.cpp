@@ -139,6 +139,7 @@ constexpr Mode kModesBefore[] = {
     {"--particle-render-test", test_particle_render, false},
     {"--water-render-test", test_water_render, false},
     {"--water-reflection-test", test_water_reflection, false},
+    {"--refract-render-test", test_refract_render, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -313,6 +314,7 @@ void IntegrationModes::print_usage() const {
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
+              << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

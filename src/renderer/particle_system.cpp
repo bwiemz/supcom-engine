@@ -331,15 +331,19 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
     });
 
     // Draw order: under the water first, then by SortOrder, textures and
-    // blend (Moho's buckets), each bucket in the order it emitted.
+    // blend (Moho's buckets), each bucket in the order it emitted; the
+    // refracting ones apart, after them all (Moho's refracting buckets,
+    // whatever their SortOrder; M214d).
     std::vector<const Particle*> order;
     order.reserve(particles_.size());
     for (const Particle& p : particles_)
-        if (p.bp->blendmode >= 0 && p.bp->blendmode <= 4) order.push_back(&p); // REFRACT: M214d
+        if (p.bp->blendmode >= 0 && p.bp->blendmode <= kBlendRefract) order.push_back(&p);
     std::stable_sort(order.begin(), order.end(), [](const Particle* a, const Particle* b) {
         const EmitterBlueprintData& x = *a->bp;
         const EmitterBlueprintData& y = *b->bp;
-        if ((x.sort_order < 0) != (y.sort_order < 0)) return x.sort_order < 0;
+        const bool x_refracts = x.blendmode == kBlendRefract;
+        if (x_refracts != (y.blendmode == kBlendRefract)) return !x_refracts;
+        if (!x_refracts && (x.sort_order < 0) != (y.sort_order < 0)) return x.sort_order < 0;
         if (x.sort_order != y.sort_order) return x.sort_order < y.sort_order;
         if (x.texture != y.texture) return x.texture < y.texture;
         if (x.ramp_texture != y.ramp_texture) return x.ramp_texture < y.ramp_texture;
@@ -412,7 +416,7 @@ void ParticleSystem::update(const sim::FrameView& view, const Camera& camera,
         std::copy(uv.begin(), uv.end(), inst.uv);
         inst.ramp[0] = t / p.lifetime;
         inst.ramp[1] = p.ramp_selection;
-        const bool under = bp.sort_order < 0;
+        const bool under = bp.sort_order < 0 && bp.blendmode != kBlendRefract;
         const auto offset = static_cast<u32>(instances_.size());
         instances_.push_back(inst);
         const bool same = !groups_.empty() && groups_.back().under_water == under &&
