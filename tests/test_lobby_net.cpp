@@ -1,10 +1,22 @@
 // The lobby's network (M218a), over the localhost loopback: FA's CLobby's
-// joins, uids, names, relayed data, ejection, departures and keepalive.
+// joins, uids, names, relayed data, ejection, departures and keepalive; and
+// (M218c) the launched game's frames over the same connections.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "sim/lobby_net.hpp"
+#include "sim/lockstep_session.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/shield.hpp"
+#include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+#include "sim/unit_command.hpp"
 
+extern "C" {
+#include <lua.h>
+}
+
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -215,4 +227,158 @@ TEST_CASE("Joining nowhere fails; pings measure the host (M218a)", "[lobby]") {
         const auto* p = host.net.peer(a.net.local_uid());
         return h && p && h->last_heard_ms > start && p->last_heard_ms > start;
     }));
+}
+
+namespace {
+
+using Frames = std::vector<std::vector<osc::u8>>;
+
+/// The game frames `side` has had, appended to `into`.
+void take(Side& side, Frames& into) {
+    for (auto& f : side.net.take_game()) into.push_back(std::move(f));
+}
+
+} // namespace
+
+TEST_CASE("A launched game's frames reach every other player, apart from the data (M218c)",
+          "[lobby]") {
+    Side host("Host");
+    REQUIRE(host.net.host(0, 1));
+    Side a("Alice");
+    Side b("Bob");
+    REQUIRE(a.net.join("127.0.0.1", host.net.port()));
+    REQUIRE(b.net.join("127.0.0.1", host.net.port()));
+    REQUIRE(pump({&host, &a, &b},
+                 [&] { return a.net.joined() && b.net.joined() && host.net.peers().size() == 2; }));
+
+    a.net.send_game(bytes("a1"));
+    a.net.send_game(bytes("a2"));
+    host.net.send_game(bytes("h1"));
+    Frames at_host;
+    Frames at_a;
+    Frames at_b;
+    REQUIRE(pump({&host, &a, &b}, [&] {
+        take(host, at_host);
+        take(a, at_a);
+        take(b, at_b);
+        return at_host.size() == 2 && at_a.size() == 1 && at_b.size() == 3;
+    }));
+    // A client's reach the host and, relayed, the other client, in order;
+    // no one hears their own
+    CHECK(at_host == Frames{bytes("a1"), bytes("a2")});
+    CHECK(at_a == Frames{bytes("h1")});
+    const auto a1 = std::find(at_b.begin(), at_b.end(), bytes("a1"));
+    const auto a2 = std::find(at_b.begin(), at_b.end(), bytes("a2"));
+    CHECK(std::count(at_b.begin(), at_b.end(), bytes("h1")) == 1);
+    CHECK((a1 != at_b.end() && a2 != at_b.end() && a1 < a2));
+    // They aren't the scripts' data
+    CHECK_FALSE(host.last(Kind::Data));
+    CHECK_FALSE(a.last(Kind::Data));
+    CHECK_FALSE(b.last(Kind::Data));
+}
+
+TEST_CASE("Once the game starts the host takes no more joins (M218c)", "[lobby]") {
+    Side host("Host");
+    REQUIRE(host.net.host(0, 1));
+    Side a("Alice");
+    REQUIRE(a.net.join("127.0.0.1", host.net.port()));
+    REQUIRE(pump({&host, &a}, [&] { return a.net.joined(); }));
+
+    host.net.stop_joining();
+    CHECK(host.net.hosting()); // still the host of those joined
+    Side late("Late");
+    if (late.net.join("127.0.0.1", host.net.port()))
+        REQUIRE(pump({&host, &a, &late}, [&] { return late.saw(Kind::ConnectionFailed, 0); }));
+    CHECK_FALSE(late.net.joined());
+    CHECK(host.net.peers().size() == 1);
+    // Those joined play on
+    a.net.send_game(bytes("go"));
+    Frames at_host;
+    REQUIRE(pump({&host, &a}, [&] {
+        take(host, at_host);
+        return at_host.size() == 1;
+    }));
+}
+
+namespace {
+
+struct LuaGuard {
+    lua_State* L = lua_open();
+    ~LuaGuard() { lua_close(L); }
+    LuaGuard() = default;
+    LuaGuard(const LuaGuard&) = delete;
+    LuaGuard& operator=(const LuaGuard&) = delete;
+};
+
+osc::u32 spawn_mover(osc::sim::SimState& sim) {
+    auto u = std::make_unique<osc::sim::Unit>();
+    u->set_army(0);
+    u->set_max_speed(5.0f);
+    return sim.entity_registry().register_entity(std::move(u));
+}
+
+} // namespace
+
+TEST_CASE("Three sims play in lockstep over the lobby's connections (M218c)", "[lobby][lockstep]") {
+    using osc::sim::LobbyGameTransport;
+    using osc::sim::LockstepSession;
+    using osc::sim::SimState;
+    // The lobby: a host (uid 0) and two players (1, 2)
+    auto host = std::make_unique<LobbyNet>("Host", 8);
+    REQUIRE(host->host(0, 99));
+    auto one = std::make_unique<LobbyNet>("One", 8);
+    auto two = std::make_unique<LobbyNet>("Two", 8);
+    REQUIRE(one->join("127.0.0.1", host->port()));
+    REQUIRE(two->join("127.0.0.1", host->port()));
+    const osc::i64 deadline = now_ms() + 2000;
+    while (now_ms() < deadline && !(one->joined() && two->joined() && host->peers().size() == 2)) {
+        for (LobbyNet* n : {host.get(), one.get(), two.get()}) n->poll(now_ms());
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    REQUIRE((one->joined() && two->joined()));
+    REQUIRE(two->local_uid() == 2);
+
+    // The launch: each side's connections go to its game
+    host->stop_joining();
+    LobbyGameTransport th(std::move(host), now_ms);
+    LobbyGameTransport t1(std::move(one), now_ms);
+    LobbyGameTransport t2(std::move(two), now_ms);
+    LuaGuard g0;
+    LuaGuard g1;
+    LuaGuard g2;
+    SimState s0(g0.L, nullptr);
+    SimState s1(g1.L, nullptr);
+    SimState s2(g2.L, nullptr);
+    const osc::u32 id = spawn_mover(s0);
+    REQUIRE(spawn_mover(s1) == id);
+    REQUIRE(spawn_mover(s2) == id);
+    const std::vector<osc::u32> sources{0, 1, 2};
+    LockstepSession l0(s0, th, 0, sources);
+    LockstepSession l1(s1, t1, 1, sources);
+    LockstepSession l2(s2, t2, 2, sources);
+
+    for (osc::u32 round = 0; round < 30; ++round) {
+        if (round == 0) {
+            // Player two's order reaches player one only through the host
+            osc::sim::UnitCommand move;
+            move.type = osc::sim::CommandType::Move;
+            move.target_pos = {400.0f, 0.0f, 0.0f};
+            l2.submit_local({id}, move, true);
+        }
+        for (LockstepSession* l : {&l0, &l1, &l2}) l->send_frame();
+        const osc::i64 until = now_ms() + 2000;
+        while (now_ms() < until &&
+               (s0.tick_count() <= round || s1.tick_count() <= round || s2.tick_count() <= round)) {
+            for (LockstepSession* l : {&l0, &l1, &l2}) l->receive_and_advance();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        REQUIRE(s0.tick_count() == round + 1);
+        REQUIRE(s1.tick_count() == round + 1);
+        REQUIRE(s2.tick_count() == round + 1);
+    }
+    CHECK(s0.compute_sync_checksum() == s1.compute_sync_checksum());
+    CHECK(s1.compute_sync_checksum() == s2.compute_sync_checksum());
+    CHECK_FALSE((l0.desynced() || l1.desynced() || l2.desynced()));
+    const auto* moved = static_cast<osc::sim::Unit*>(s1.entity_registry().find(id));
+    CHECK(moved->position().x > 0.0f);
 }
