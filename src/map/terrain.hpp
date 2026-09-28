@@ -31,12 +31,6 @@ enum class DecalType : u32 {
     AlbedoXP = 9,
 };
 
-/// A type that draws into the terrain's normals (TDecalsNormals and its
-/// Alpha kin), not its colour.
-inline bool normal_decal(DecalType t) {
-    return t == DecalType::Normals || t == DecalType::AlphaNormals;
-}
-
 /// A map decal for rendering (static, not simulated). It is placed by its
 /// corner: its footprint runs from its position along its x and z axes.
 struct DecalInfo {
@@ -48,14 +42,6 @@ struct DecalInfo {
     f32 rotation_x = 0, rotation_y = 0, rotation_z = 0;
     f32 cut_off_lod = 1000.0f;
     f32 near_cut_off_lod = 0.0f;
-};
-
-/// A normal-map decal for terrain normal perturbation (decal_type == 2).
-struct NormalDecalInfo {
-    std::string texture_path;
-    f32 position_x, position_z;  // World-space XZ center
-    f32 scale_x, scale_z;        // World-space footprint
-    f32 rotation_y;              // Y-axis rotation in radians
 };
 
 /// Terrain system combining heightmap and water data.
@@ -94,8 +80,17 @@ public:
     void set_decals(std::vector<DecalInfo> decals);
     const std::vector<DecalInfo>& decals() const { return decals_; }
 
-    void set_normal_decals(std::vector<NormalDecalInfo> decals);
-    const std::vector<NormalDecalInfo>& normal_decals() const { return normal_decals_; }
+
+    /// The map's normal maps (M212e): tiles of tile_width x tile_height
+    /// texels, one a world unit, row by row across the map, each a raw DDS
+    /// (DXT5: x in alpha, z in green). None for a terrain made without them
+    /// (the renderer makes one from the heights).
+    struct NormalMaps {
+        u32 tile_width = 0, tile_height = 0;
+        std::vector<std::vector<char>> tiles;
+    };
+    void set_normal_maps(NormalMaps maps) { normal_maps_ = std::move(maps); }
+    const NormalMaps& normal_maps() const { return normal_maps_; }
 
     /// The map's lighting and environment (M210a): SCMP_009's until a map
     /// sets them.
@@ -132,7 +127,7 @@ private:
     std::vector<char> blend_dds_0_;
     std::vector<char> blend_dds_1_;
     std::vector<DecalInfo> decals_;
-    std::vector<NormalDecalInfo> normal_decals_;
+    NormalMaps normal_maps_;
     std::vector<u8> terrain_types_;
     ScmapLighting lighting_;
     ScmapEnvironment environment_;

@@ -26,6 +26,11 @@ extern const char* mesh_frag;
 extern const char* decal_lit_vert; // the map's decals over the terrain's vertices (M212b)
 /// The map's decals, lit as the terrain is (DecalsPS, DecalAlbedoXP; M212b).
 const char* decal_lit_frag();
+/// The terrain in the normal pass: strata normals into RG, the map's normal
+/// maps (bicubic) into BA (M212e).
+const char* terrain_normal_frag();
+/// The normal decals in the normal pass (DecalsNormalsPS; M212e).
+const char* decal_normal_frag();
 /// Glowing decals, added into the frame's glow (DecalsPSGlow; M212d).
 const char* decal_glow_frag();
 /// Glow-mask decals, lit and setting the glow to 0.01 (DecalsGlowMaskPS; M212d).

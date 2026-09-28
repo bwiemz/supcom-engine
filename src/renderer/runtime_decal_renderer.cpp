@@ -19,16 +19,14 @@ namespace osc::renderer {
 
 namespace {
 
-/// A splat's vertex: its corner on the terrain, the terrain's normal
-/// there, its UV and its alpha (CWldSplat::SplatVertex, with the normal
-/// Moho reads from its normal buffer).
+/// A splat's vertex: its corner on the terrain, its UV and its alpha
+/// (CWldSplat::SplatVertex).
 struct SplatVertex {
     f32 position[3];
-    f32 normal[3];
     f32 uv[2];
     f32 alpha;
 };
-static_assert(sizeof(SplatVertex) == 36);
+static_assert(sizeof(SplatVertex) == 24);
 
 /// Two triangles a quad (cull none: their winding doesn't matter).
 constexpr u32 kVerticesPerSplat = 6;
@@ -84,11 +82,10 @@ void RuntimeDecalRenderer::init(VkDevice device, VmaAllocator allocator, VkRende
         binding.binding = 0;
         binding.stride = sizeof(SplatVertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        const std::array<VkVertexInputAttributeDescription, 4> attrs = {{
+        const std::array<VkVertexInputAttributeDescription, 3> attrs = {{
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SplatVertex, position)},
-            {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SplatVertex, normal)},
-            {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SplatVertex, uv)},
-            {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(SplatVertex, alpha)},
+            {1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(SplatVertex, uv)},
+            {2, 0, VK_FORMAT_R32_SFLOAT, offsetof(SplatVertex, alpha)},
         }};
         // TSplats: SrcAlpha / InvSrcAlpha into RGB (the glow in alpha
         // stays), depth LessEqual unwritten, no culling, the bias in the
@@ -245,13 +242,9 @@ void RuntimeDecalRenderer::build_splats(const map::Terrain& terrain,
         if (!texture) continue;
 
         std::array<SplatVertex, 4> quad{};
-        for (size_t c = 0; c < 4; ++c) {
-            const auto n = terrain_normal_at(terrain, corners[c][0], corners[c][2]);
-            quad[c] = {{corners[c][0], corners[c][1], corners[c][2]},
-                       {n[0], n[1], n[2]},
-                       {kLocal[c][0], kLocal[c][1]},
-                       alpha};
-        }
+        for (size_t c = 0; c < 4; ++c)
+            quad[c] = {
+                {corners[c][0], corners[c][1], corners[c][2]}, {kLocal[c][0], kLocal[c][1]}, alpha};
         for (const size_t c : {0u, 1u, 2u, 0u, 2u, 3u}) out[written++] = quad[c];
         if (runs_.empty() || runs_.back().texture != texture->descriptor_set)
             runs_.push_back({texture->descriptor_set, written - kVerticesPerSplat, 0});

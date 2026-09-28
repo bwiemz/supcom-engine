@@ -127,6 +127,8 @@ void test_refract_render(TestContext& ctx);
 void test_decal_render(TestContext& ctx);
 /// --runtime-decal-test (M212c), in runtime_decal_test.cpp.
 void test_runtime_decal(TestContext& ctx);
+/// --terrain-normal-render-test (M212e), in terrain_normal_render_test.cpp.
+void test_terrain_normal_render(TestContext& ctx);
 /// --colors-test (UI) and --army-colors-test, in colors_test.cpp.
 void test_colors(TestContext& ctx);
 void test_army_colors(TestContext& ctx);

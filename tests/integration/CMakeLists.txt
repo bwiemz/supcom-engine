@@ -32,6 +32,7 @@ add_executable(osc_integration
     runner/refract_render_test.cpp
     runner/decal_render_test.cpp
     runner/runtime_decal_test.cpp
+    runner/terrain_normal_render_test.cpp
     runner/plate_fixtures.cpp
     runner/colors_test.cpp
 )

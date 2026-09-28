@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "renderer/decal_math.hpp"
 #include "renderer/runtime_decals.hpp"
 #include "sim/decal.hpp"
 #include "sim/world_snapshot.hpp"
@@ -167,4 +168,23 @@ TEST_CASE("A decal the focus stops seeing is removed; a new game clears", "[runt
     CHECK_FALSE(w.decals.decals()[0].live);
     w.tick(2, 1); // an earlier tick: a new game
     CHECK(w.decals.decals().empty());
+}
+
+TEST_CASE("Decal types: each one's technique", "[runtime_decals]") {
+    // CWldTerrainDecal's types: Normals and Alpha Normals draw into the
+    // normal pass (TDecalsNormals, TDecalsNormalsAlpha; M212e); Glow Mask,
+    // Albedo, AlbedoXP and Glow over the colour (TDecalGlowMask, TDecals,
+    // TDecalsXP, TDecalsGlow; M212b, M212d); the water types neither.
+    using renderer::decal_technique;
+    using renderer::DecalTechnique;
+    for (u32 raw = 0; raw <= 9; ++raw) {
+        const auto t = static_cast<map::DecalType>(raw);
+        CHECK(decal_technique(t).has_value() == (raw == 1 || raw == 2 || raw >= 6));
+    }
+    CHECK(decal_technique(map::DecalType::Normals) == DecalTechnique::Normals);
+    CHECK(decal_technique(map::DecalType::AlphaNormals) == DecalTechnique::Normals);
+    CHECK(decal_technique(map::DecalType::GlowMask) == DecalTechnique::GlowMask);
+    CHECK(decal_technique(map::DecalType::Albedo) == DecalTechnique::Albedo);
+    CHECK(decal_technique(map::DecalType::AlbedoXP) == DecalTechnique::AlbedoXP);
+    CHECK(decal_technique(map::DecalType::Glow) == DecalTechnique::Glow);
 }

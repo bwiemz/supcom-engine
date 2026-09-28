@@ -278,14 +278,16 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
 
     // --- Normal maps (width, height, count + length-prefixed DDS blobs) ---
     if (!r.has_remaining(12)) return false;
-    r.skip(8); // width + height
+    result.normal_map_width = r.read_u32();
+    result.normal_map_height = r.read_u32();
     u32 normal_map_count = r.read_u32();
     if (normal_map_count > 100) return false;
+    result.normal_maps.reserve(normal_map_count);
     for (u32 i = 0; i < normal_map_count; i++) {
         if (!r.has_remaining(4)) return false;
         u32 data_len = r.read_u32();
         if (!r.has_remaining(data_len)) return false;
-        r.skip(data_len);
+        result.normal_maps.push_back(r.read_bytes(data_len));
     }
 
     // --- Version <56: extra u32 ---

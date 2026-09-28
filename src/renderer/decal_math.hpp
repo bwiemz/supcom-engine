@@ -8,14 +8,15 @@
 
 namespace osc::renderer {
 
-/// The technique a decal draws over the terrain's colour with, in the order
-/// HighFidelityTerrain::DrawNormals draws them: the glow masks (TDecalGlowMask),
-/// Albedo (TDecals), AlbedoXP (TDecalsXP), then, after the splats, the glowing
-/// ones (TDecalsGlow).
-enum class DecalTechnique : u8 { GlowMask, Albedo, AlbedoXP, Glow };
+/// The technique a decal draws with. Normals (TDecalsNormals and
+/// TDecalsNormalsAlpha, alike) draw into the normal pass's target (M212e);
+/// the rest over the terrain's colour, in the order HighFidelityTerrain::
+/// DrawNormals draws them: the glow masks (TDecalGlowMask), Albedo (TDecals),
+/// AlbedoXP (TDecalsXP), then, after the splats, the glowing ones
+/// (TDecalsGlow).
+enum class DecalTechnique : u8 { Normals, GlowMask, Albedo, AlbedoXP, Glow };
 
-/// A decal type's technique; none for the types that don't draw over the
-/// terrain's colour (normals, water).
+/// A decal type's technique; none for the water types.
 std::optional<DecalTechnique> decal_technique(map::DecalType type);
 
 /// A decal's texture matrix (CWldTerrainDecal::Update), as DecalsVS
@@ -45,8 +46,5 @@ f32 decal_lod_metric(const std::array<f32, 16>& view, const std::array<f32, 3>& 
 /// instead. A cutoff of 0 doesn't fade.
 f32 decal_lod_alpha(f32 cutoff, f32 near_cutoff, f32 distance);
 
-/// The terrain's normal at (x, z), by central differences of its height a
-/// unit either side, as the terrain mesh's vertices take theirs.
-std::array<f32, 3> terrain_normal_at(const map::Terrain& terrain, f32 x, f32 z);
 
 } // namespace osc::renderer
