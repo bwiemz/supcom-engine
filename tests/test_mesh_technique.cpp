@@ -104,8 +104,9 @@ TEST_CASE("The shields' techniques: their names, stage and parameter (M211k)", "
     CHECK(mesh_technique("TMeshZFill") == MeshTechnique::ShieldFill); // the legacy name
     CHECK(mesh_technique("ShieldImpact") == MeshTechnique::ShieldImpact);
     CHECK(mesh_technique("CybranShieldImpact") == MeshTechnique::CybranShieldImpact);
-    // The personal shields' are M211l's
-    CHECK(mesh_technique("PhaseShield") == MeshTechnique::Unit);
+    // The personal shields' (M211l) aren't bubbles
+    CHECK_FALSE(is_shield_technique(MeshTechnique::PhaseShield));
+    CHECK_FALSE(is_shield_technique(MeshTechnique::SeraphimPersonalShield));
 
     // All seven draw after the effects (POSTWATER + POSTEFFECT), and only
     // they: not among the post-water meshes drawn before the effects
@@ -161,4 +162,27 @@ TEST_CASE("The shields' passes: mesh.fx's states (M211k)", "[renderer][mesh]") {
     CHECK(is(MeshTechnique::ShieldImpact, ShieldState::AddRGBA, 1));
     // AlphaBlend_Disable_Write_None with the depth written
     CHECK(is(MeshTechnique::ShieldFill, ShieldState::Fill, 1));
+}
+
+TEST_CASE("The personal shields' techniques: the unit, then its shell (M211l)",
+          "[renderer][mesh]") {
+    CHECK(mesh_technique("PhaseShield") == MeshTechnique::PhaseShield);
+    CHECK(mesh_technique("SeraphimPersonalShield") == MeshTechnique::SeraphimPersonalShield);
+    CHECK(is_personal_shield_technique(MeshTechnique::PhaseShield));
+    CHECK(is_personal_shield_technique(MeshTechnique::SeraphimPersonalShield));
+    CHECK_FALSE(is_personal_shield_technique(MeshTechnique::Unit));
+    CHECK_FALSE(is_personal_shield_technique(MeshTechnique::ShieldUEF));
+    // P0 is the unit: NormalMappedPS, or the Seraphim's UnitFalloffPS
+    CHECK(base_technique(MeshTechnique::PhaseShield) == MeshTechnique::Unit);
+    CHECK(base_technique(MeshTechnique::SeraphimPersonalShield) == MeshTechnique::Seraphim);
+    CHECK(base_technique(MeshTechnique::Aeon) == MeshTechnique::Aeon);
+    CHECK(base_technique(MeshTechnique::ShieldCybran) == MeshTechnique::ShieldCybran);
+    // A unit's stages: before the water and the effects, casting a shadow
+    for (const MeshTechnique t :
+         {MeshTechnique::PhaseShield, MeshTechnique::SeraphimPersonalShield}) {
+        CHECK_FALSE(is_post_water_technique(t));
+        CHECK_FALSE(is_post_effect_technique(t));
+        CHECK(has_depth_stage(t));
+        CHECK_FALSE(is_blended_technique(t));
+    }
 }

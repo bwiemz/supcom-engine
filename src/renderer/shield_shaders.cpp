@@ -9,6 +9,10 @@
 //   22 ShieldFill         FlatVS, ShieldFillPS (depth alone)
 //   23 ShieldImpact       ShieldImpactVS, ShieldImpactPS(2, 0.2)
 //   24 CybranShieldImpact ShieldImpactVS, CybranShieldImpactPS(6, 0.15, 4.5)
+//   25 PhaseShield        P1: PositionNormalOffsetVS(0.05), PhaseShieldPS (M211l)
+//   26 SeraphimPersonalShield  P1: the same, SeraphimPhaseShieldPS
+//
+// (A personal shield's P0, the unit itself, draws with the mesh shaders.)
 //
 // Each technique's medium fidelity variant, which High draws too. Shields
 // are never in the water's reflection (Moho reflects only units), so the
@@ -101,6 +105,11 @@ void main() {
     // ShieldPositionNormalOffsetVS(0.01): Cybran's second shell, pushed out
     // along the normal (over the bone's scale, 1 for the shield's sphere)
     if (pc.technique == 19u && pc.pass == 1u) position += inNormal * 0.01;
+    // PositionNormalOffsetVS(0.05), a personal shield's shell (M211l): over
+    // the palette's scale, which for a unit (skinned) is its own: 0.05 out
+    // in the world whatever its size
+    if (pc.technique == 25u || pc.technique == 26u)
+        position += inNormal * (0.05 / max(length(inModel[0].xyz), 1e-6));
     vec4 worldPos = inModel * (bone * vec4(position, 1.0));
     gl_Position = pc.viewProj * worldPos;
     fragWorldPos = worldPos.xyz;
@@ -138,7 +147,8 @@ void main() {
         fragTex2.x += fract(t2x * inShaderTime);
         return;
     }
-    if (pc.technique == 22u) { // FlatVS: position alone
+    if (pc.technique == 22u || pc.technique == 25u || pc.technique == 26u) {
+        // FlatVS: position alone; PositionNormalOffsetVS: texcoord0 as it is
         fragTex0 = uv;
         fragTex1 = uv;
         return;
@@ -154,6 +164,7 @@ layout(set = 0, binding = 0) uniform sampler2D albedoSampler;
 layout(set = 2, binding = 0) uniform sampler2D specularSampler;
 layout(set = 3, binding = 0) uniform sampler2D normalsSampler;
 layout(set = 4, binding = 2) uniform samplerCube environmentSampler; // "<default>"
+layout(set = 5, binding = 0) uniform sampler2D lookupSampler;
 layout(set = 6, binding = 0) uniform sampler2D secondarySampler;
 
 layout(location = 0) in vec3 fragNormal;
@@ -304,6 +315,22 @@ vec4 cybranShieldImpact(float age) { // CybranShieldImpactPS(6, 0.15, 4.5)
     return vec4(color1.rrr + color0.g, color1.b * color2.r * 4.5 * alphaFade * color0.a);
 }
 
+// PhaseShieldPS and SeraphimPhaseShieldPS (M211l): a personal shield's
+// electric shell, from three scrolled reads of its lookup (the Seraphim's:
+// its secondary texture)
+vec4 phaseShield(float age, bool seraphim) {
+    vec2 tc1 = fragTex0.xy * 0.5 + age * vec2(0.005, 0.02);
+    vec2 tc2 = fragTex0.xy * 4.0 + age * vec2(-0.008, 0.008);
+    vec2 tc3 = fragTex0.xy * 0.01 + age * vec2(-0.0018, 0.0);
+    vec4 lookup = seraphim ? texture(secondarySampler, tc1) : texture(lookupSampler, tc1);
+    vec4 lookup2 = seraphim ? texture(secondarySampler, tc2) : texture(lookupSampler, tc2);
+    vec4 lookup3 = seraphim ? texture(secondarySampler, tc3) : texture(lookupSampler, tc3);
+    float electricity = lookup.r * lookup2.b;
+    vec4 baseShellColor = vec4(0.5, 0.5, 1.0, 1.0);
+    vec4 glowPulse = vec4(lookup3.ggg, min(lookup3.g, 0.65) + electricity);
+    return (baseShellColor + electricity) * glowPulse;
+}
+
 void main() {
     float age = fragMaterial.x;
     float health = fragMaterial.y;
@@ -314,6 +341,8 @@ void main() {
     else if (pc.technique == 21u) color = shieldSeraphim();
     else if (pc.technique == 23u) color = shieldImpact(age);
     else if (pc.technique == 24u) color = cybranShieldImpact(age);
+    else if (pc.technique == 25u) color = phaseShield(age, false);
+    else if (pc.technique == 26u) color = phaseShield(age, true);
     // FA drew into an 8-bit target, which clamps what a shader writes
     // before it blends: Cybran's colour goes below 0, UEF's alpha past 1.
     outColor = clamp(color, 0.0, 1.0);

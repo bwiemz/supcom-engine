@@ -195,6 +195,8 @@ MeshTechnique mesh_technique(const std::string& shader) {
     if (shader_name == "ShieldFill") return MeshTechnique::ShieldFill;
     if (shader_name == "ShieldImpact") return MeshTechnique::ShieldImpact;
     if (shader_name == "CybranShieldImpact") return MeshTechnique::CybranShieldImpact;
+    if (shader_name == "PhaseShield") return MeshTechnique::PhaseShield;
+    if (shader_name == "SeraphimPersonalShield") return MeshTechnique::SeraphimPersonalShield;
     return MeshTechnique::Unit;
 }
 

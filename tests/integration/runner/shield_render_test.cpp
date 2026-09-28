@@ -89,6 +89,22 @@ f32 darker_share(const Pixels& a, const Pixels& b) {
     return a.empty() ? 0.0f : static_cast<f32>(darker) / static_cast<f32>(a.size());
 }
 
+/// The mean difference of two scenes' alpha (the glow) over their middle
+/// (35%-65% each way).
+f32 mean_alpha_diff(const renderer::Renderer::SceneImage& a,
+                    const renderer::Renderer::SceneImage& b) {
+    if (a.width != b.width || a.height != b.height || a.width == 0) return 0.0f;
+    f32 sum = 0.0f;
+    u32 n = 0;
+    for (u32 y = a.height * 35 / 100; y < a.height * 65 / 100; ++y)
+        for (u32 x = a.width * 35 / 100; x < a.width * 65 / 100; ++x) {
+            const size_t i = (static_cast<size_t>(y) * a.width + x) * 4 + 3;
+            sum += std::abs(a.rgba[i] - b.rgba[i]);
+            ++n;
+        }
+    return n ? sum / static_cast<f32>(n) : 0.0f;
+}
+
 /// The mean of one channel over the frame's middle.
 f32 mean_channel(const Pixels& p, int channel) {
     f32 sum = 0.0f;
@@ -323,6 +339,83 @@ void test_shield_render(TestContext& ctx) {
                             instances_of(r, MeshTechnique::ShieldSeraphim);
         t.check(fills == 4 && shields == 4,
                 fmt::format("Test 4: all four in view, {} shields and {} fills", shields, fills));
+    }
+
+    // Test 5: a personal shield (M211l). The Obsidian's is built in: up, its
+    // owner wears the PhaseShield mesh, drawn as the unit, then its shell;
+    // down, its own mesh again.
+    {
+        const Spot obsidian_at{spot->x + 20, spot->z + 25};
+        (void)spawn_unit(ctx, "__osc_sh_obsidian", "ual0202", "ARMY_1", obsidian_at);
+        tick(20);
+        const ImageRGBA8 frame = shots.shoot_frame(*terrain, obsidian_at.x, obsidian_at.z, 6.0f);
+        keep("obsidian", frame);
+        const Pixels on = centre_pixels(frame);
+        const u32 worn = instances_of(r, MeshTechnique::PhaseShield);
+        // Its shell draws as PhaseShield; the unit under it as Unit
+        const u32 shells = r.mesh_draws(MeshTechnique::PhaseShield);
+        run_lua(ctx, "__osc_sh_obsidian.MyShield:RemoveShield()\n");
+        tick(1);
+        const ImageRGBA8 plain = shots.grab();
+        const Pixels off = centre_pixels(plain);
+        const u32 worn_after = instances_of(r, MeshTechnique::PhaseShield);
+        const int itself = meshes_near(drawn(r), "ual0202_albedo", obsidian_at.x, 4.0f);
+        const f32 shown = mean_abs_diff(on, off);
+        t.check(worn == 1 && shells == 1 && worn_after == 0 && itself == 1 && shown > 0.005f,
+                fmt::format("Test 5: the Obsidian's shield up, {} PhaseShield mesh, {} shell "
+                            "drawn; down, {} (its own mesh {} time(s)); the shell changes the "
+                            "frame by {:.4f}",
+                            worn, shells, worn_after, itself, shown));
+
+        // The UEF ACU wears its PhaseShield mesh as its warp-in does. Its
+        // unit pass shades by another normal map than its own mesh's, but
+        // writes the same glow (the specular's blue): the scene's alpha
+        // changes by the shell alone.
+        const Spot acu_at{spot->x + 10, spot->z + 40};
+        (void)spawn_unit(ctx, "__osc_sh_acu", "uel0001", "ARMY_1", acu_at);
+        tick(2);
+        (void)shots.shoot(*terrain, acu_at.x, acu_at.z, 6.0f);
+        const auto glow = [&]() {
+            renderer::Renderer::SceneImage scene;
+            r.request_scene_capture(
+                [&](renderer::Renderer::SceneImage image) { scene = std::move(image); });
+            shots.redraw();
+            return scene;
+        };
+        const renderer::Renderer::SceneImage acu_bare = glow();
+        run_lua(ctx, "__osc_sh_acu:SetMesh('/units/uel0001/UEL0001_PhaseShield_mesh', true)\n");
+        tick(1);
+        keep("acu", shots.grab());
+        const renderer::Renderer::SceneImage acu_shell = glow();
+        const f32 acu_glow = mean_alpha_diff(acu_shell, acu_bare);
+        t.check(acu_glow > 0.005f,
+                fmt::format("Test 5: the UEF ACU in its PhaseShield mesh, the shell changes the "
+                            "frame's glow by {:.4f}",
+                            acu_glow));
+
+        // The Seraphim SCU's comes with its Shield enhancement: its
+        // SeraphimPersonalShield mesh, the unit as Seraphim, then its shell
+        // from the secondary texture
+        const Spot scu_at{spot->x + 20, spot->z + 40};
+        (void)spawn_unit(ctx, "__osc_sh_scu", "xsl0301", "ARMY_1", scu_at);
+        tick(2);
+        const ImageRGBA8 bare = shots.shoot_frame(*terrain, scu_at.x, scu_at.z, 6.0f);
+        const u32 bare_seraphim = r.mesh_draws(MeshTechnique::Seraphim);
+        run_lua(ctx, "__osc_sh_scu:CreateEnhancement('Shield')\n");
+        tick(20);
+        const ImageRGBA8 shielded = shots.grab();
+        keep("scu", shielded);
+        const u32 scu_worn = instances_of(r, MeshTechnique::SeraphimPersonalShield);
+        // The unit under the shell draws as Seraphim, as it did bare
+        const u32 scu_shells = r.mesh_draws(MeshTechnique::SeraphimPersonalShield);
+        const u32 shielded_seraphim = r.mesh_draws(MeshTechnique::Seraphim);
+        const f32 scu_shown = mean_abs_diff(centre_pixels(shielded), centre_pixels(bare));
+        t.check(scu_worn == 1 && scu_shells == 1 && bare_seraphim >= 1 &&
+                    shielded_seraphim == bare_seraphim && scu_shown > 0.005f,
+                fmt::format("Test 5: the Seraphim SCU's shield, {} SeraphimPersonalShield mesh, "
+                            "{} shell; {} Seraphim draws shielded, {} bare; the frame changes by "
+                            "{:.4f}",
+                            scu_worn, scu_shells, shielded_seraphim, bare_seraphim, scu_shown));
     }
 
     spdlog::info("Shield render test: {} passed, {} failed", t.pass, t.fail);
