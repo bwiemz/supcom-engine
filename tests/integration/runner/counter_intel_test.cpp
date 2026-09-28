@@ -165,7 +165,7 @@ void test_counter_intel(TestContext& ctx) {
     const bool still_drawn = drawn_at(f, gen_at);
     const sim::Vector3 gen_pos{gen_at.x, ctx.sim.terrain()->get_terrain_height(gen_at.x, gen_at.z),
                                gen_at.z};
-    r.camera().set_distance(300.0f);
+    r.camera().set_eye_distance(300.0f);
     f = next();
     // Its icon and minimap dot in ARMY_2's colour halved.
     const sim::ArmyRecord* a = seen.cur().army(1);
@@ -190,7 +190,7 @@ void test_counter_intel(TestContext& ctx) {
                         gone_from_world, still_drawn, dark_icon, dark_dot));
 
     // Test 7: seen, the spot is empty: it's gone.
-    r.camera().set_distance(110.0f);
+    r.camera().set_eye_distance(110.0f);
     scry = {gen_at};
     f = next();
     t.check(!drawn_at(f, gen_at) && !r.recon().maybe_dead(gen),

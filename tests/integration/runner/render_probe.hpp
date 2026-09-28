@@ -50,6 +50,8 @@ class OffscreenShots {
 public:
     /// What it clears to (the tests measure their scenery against it).
     static constexpr std::array<f32, 4> kBackdrop = {0.55f, 0.62f, 0.72f, 0.0f};
+    /// The tests' pitch unless one sets another (radians, held).
+    static constexpr f32 kPitch = 0.87f;
 
     explicit OffscreenShots(TestContext& ctx);
     ~OffscreenShots();

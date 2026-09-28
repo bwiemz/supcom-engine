@@ -213,7 +213,7 @@ void test_trail_render(TestContext& ctx) {
     };
     const auto look_at = [&](f32 x, f32 z, f32 dist) {
         r.camera().set_target(x, z);
-        r.camera().set_distance(dist);
+        r.camera().set_eye_distance(dist);
     };
 
     // Test 1: A's trail as A moves 2 east a tick: a segment a tick, joined,
@@ -563,8 +563,8 @@ void test_trail_render(TestContext& ctx) {
         f32 ex = 0, ey = 0, ez = 0;
         r.camera().eye_position(ex, ey, ez);
         const sim::Vector3 mid = on(g0, 16);
-        const sim::Vector3 fwd{r.camera().target_x() - ex, r.camera().target_y() - ey,
-                               r.camera().target_z() - ez};
+        const sim::Vector3 fwd{r.camera().focus_x() - ex, r.camera().focus_y() - ey,
+                               r.camera().focus_z() - ez};
         // cross(view axis, east): the way the ribbon spreads.
         sim::Vector3 side{0.0f, fwd.z, -fwd.y};
         const f32 n = std::sqrt(side.x * side.x + side.y * side.y + side.z * side.z);

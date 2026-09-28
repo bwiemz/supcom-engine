@@ -232,7 +232,7 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
     f32 ez = 0;
     camera.eye_position(ex, ey, ez);
     const Vector3 eye{ex, ey, ez};
-    Vector3 forward = sub({camera.target_x(), camera.target_y(), camera.target_z()}, eye);
+    Vector3 forward = sub({camera.focus_x(), camera.focus_y(), camera.focus_z()}, eye);
     if (const f32 len = length(forward); len > 1e-6f) forward = scale(forward, 1.0f / len);
 
     struct Strip {

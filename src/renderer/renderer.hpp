@@ -491,14 +491,10 @@ private:
     };
     /// The scene's ground, for the camera's focus (M217a).
     std::optional<map::Heightmap> ground_;
-    /// Set the camera's focus height from the ground under its target.
-    void update_camera_focus();
     /// Bind the map's environment cubes and FA's lookups for meshes (M211a/b).
     void bind_mesh_environment(const map::ScmapEnvironment& environment);
     /// Clamped, for FA's lookup textures.
     VkSampler lookup_sampler_ = VK_NULL_HANDLE;
-    f32 ground_water_ = 0.0f;
-    bool ground_has_water_ = false;
     /// The scene's lighting: its map's, else SCMP_009's.
     map::ScmapLighting lighting_{};
     bool terrain_xp_ = false;

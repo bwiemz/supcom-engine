@@ -15,7 +15,7 @@ TEST_CASE("A world view's unprojection undoes its projection", "[ui][worldview]"
     osc::renderer::Camera camera;
     camera.init(512.0f, 512.0f);
     camera.set_target(200.0f, 300.0f);
-    camera.set_distance(150.0f);
+    camera.set_zoom(150.0f);
     osc::ui::WorldView view;
     view.register_camera("WorldCamera", &camera);
     view.set_viewport(1280, 720);

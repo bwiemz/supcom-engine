@@ -178,8 +178,8 @@ std::array<f32, 4> texel(const Scene& s, u32 x, u32 y) {
 
 /// Aim the camera from (x, z) toward a world point's bearing, nearly level.
 void aim(renderer::Renderer& r, f32 x, f32 z, f32 toward_x, f32 toward_z, f32 pitch) {
-    // The eye sits behind the focus, away from where it looks.
-    r.camera().set_yaw(std::atan2(-(toward_x - x), -(toward_z - z)));
+    // The heading is where it looks (M217f); the eye sits behind the focus.
+    r.camera().set_heading(std::atan2(toward_x - x, toward_z - z));
     r.camera().set_pitch(pitch);
 }
 
@@ -363,7 +363,7 @@ void test_sky(TestContext& ctx) {
                 const f32 dz = dcl.position[2] - eye[2];
                 const f32 dist = std::sqrt(dx * dx + dy * dy + dz * dz);
                 const f32 radius = std::max(dcl.size[0], dcl.size[1]) * 1.5f / dist *
-                                   (sh * 0.5f / std::tan(renderer::Camera::kFovY * 0.5f));
+                                   (sh * 0.5f / r.camera().tan_half_fov_y(sw / sh));
                 if (std::hypot(px - (*s)[0], py - (*s)[1]) < radius + 4) return true;
             }
             return false;
@@ -548,7 +548,7 @@ void test_sky(TestContext& ctx) {
             const f32 dist =
                 std::hypot(d.position[0] - eye[0], d.position[1] - eye[1], d.position[2] - eye[2]);
             const f32 radius = std::min(d.size[0], d.size[1]) / dist *
-                               (sh * 0.5f / std::tan(renderer::Camera::kFovY * 0.5f)) * 0.7f;
+                               (sh * 0.5f / r.camera().tan_half_fov_y(sw / sh)) * 0.7f;
             f32 glow = 0;
             f32 glow_without = 0;
             f32 bright_with = 0;

@@ -107,7 +107,7 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
     f32 sh = static_cast<f32>(viewport_h);
 
     // Camera distance for LOD (skip overlays when very far)
-    f32 cam_dist = camera.distance();
+    f32 cam_dist = camera.eye_distance();
 
     // Eye position for distance culling
     f32 eye_x, eye_y, eye_z;

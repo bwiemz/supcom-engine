@@ -78,8 +78,14 @@ static void glfw_scroll_callback(GLFWwindow* window, double /*xoffset*/,
 }
 
 void Renderer::on_scroll(f64 y_offset) {
-    f32 zoom_factor = 1.0f - static_cast<f32>(y_offset) * 0.1f;
-    camera_.set_zoom(camera_.distance() * zoom_factor);
+    // A wheel notch over the world zooms about the cursor (CUIWorldView's
+    // HandleEvent): the pivot, then CameraZoom
+    if (!window_ || !camera_.accepts_mouse()) return;
+    f64 mx = 0;
+    f64 my = 0;
+    glfwGetCursorPos(window_, &mx, &my);
+    camera_.set_pivot(static_cast<f32>(mx), static_cast<f32>(my));
+    camera_.zoom(static_cast<f32>(y_offset));
 }
 
 bool Renderer::init(u32 width, u32 height, const std::string& title,
@@ -105,6 +111,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     }
     window_width_ = width;
     window_height_ = height;
+    camera_.set_viewport(static_cast<f32>(width), static_cast<f32>(height));
 
     glfwSetWindowUserPointer(window_, this);
     glfwSetScrollCallback(window_, glfw_scroll_callback);
@@ -830,10 +837,10 @@ void Renderer::upload_lighting() {
 
 std::array<f32, 16> Renderer::compute_light_vp() const {
     // Looking down the map's sun, as every lit shader lights by it (M210a),
-    // over a box centred on the camera's target, proportional to zoom.
-    const f32 half = std::clamp(camera_.distance() * 0.8f, 50.0f, 800.0f);
-    return math::light_view_proj(lighting_.sun_direction, camera_.target_x(), camera_.target_y(),
-                                 camera_.target_z(), half);
+    // over a box centred on the camera's focus, proportional to zoom.
+    const f32 half = std::clamp(camera_.eye_distance() * 0.8f, 50.0f, 800.0f);
+    return math::light_view_proj(lighting_.sun_direction, camera_.focus_x(), camera_.focus_y(),
+                                 camera_.focus_z(), half);
 }
 
 void Renderer::create_pipelines() {
@@ -1720,8 +1727,8 @@ void Renderer::clear_scene() {
     terrain_map_width_ = 0;
     terrain_map_height_ = 0;
     destroy_terrain_strata_ubo();
+    camera_.set_ground(nullptr, false, 0.0f);
     ground_.reset();
-    camera_.set_target_y(0.0f);
 }
 
 void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata,
@@ -1777,8 +1784,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // The ground the camera's focus sits on: a copy, as the sim's terrain
     // is replaced on a reload.
     ground_ = terrain->heightmap();
-    ground_water_ = terrain->water_elevation();
-    ground_has_water_ = terrain->has_water();
+    camera_.set_ground(&*ground_, terrain->has_water(), terrain->water_elevation());
 
     terrain_mesh_.build(*terrain, device_, allocator_, cmd_pool_,
                         graphics_queue_);
@@ -2143,6 +2149,8 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // Build strategic icon atlas
     strategic_icon_renderer_.build_atlas(texture_cache_);
 
+    // The view's size before the reset: the farthest zoom takes its aspect
+    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
     camera_.init(static_cast<f32>(terrain->map_width()),
                  static_cast<f32>(terrain->map_height()));
 
@@ -2153,8 +2161,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                       const BuildGhost* ghost, lua_State* L,
                       ui::UIControlRegistry* ui_registry,
                       const std::unordered_set<u32>* selected_ids) {
-    // Scripts may have moved the camera since the last poll.
-    update_camera_focus();
+    // The view's aspect, which the camera's farthest zoom and projection
+    // take (its moves and basis run in poll_events)
+    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
     // FA's own game interface replaces the C++ HUD placeholders.
     {
         bool world_ui = false;
@@ -2364,9 +2373,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         f32 ey = 0;
         f32 ez = 0;
         camera_.eye_position(ex, ey, ez);
-        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
-                               terrain_mesh_, camera_.view(), {ex, ey, ez}, aspect, frustum,
-                               texture_cache_, fi);
+        runtime_decals_.update(
+            view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_, terrain_mesh_, camera_.view(),
+            {ex, ey, ez}, camera_.tan_half_fov_y(aspect) * aspect, frustum, texture_cache_, fi);
     }
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
@@ -3423,6 +3432,7 @@ void Renderer::collect_frame_decals(const Frustum& frustum) {
     frame_decals_.clear();
     if (!decals_enabled_ || !terrain_) return;
     const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
+    const f32 half_width = camera_.tan_half_fov_y(aspect) * aspect;
     f32 ex = 0;
     f32 ey = 0;
     f32 ez = 0;
@@ -3434,7 +3444,7 @@ void Renderer::collect_frame_decals(const Frustum& frustum) {
         if (!frustum.is_sphere_visible(sd.mid_x, ground, sd.mid_z, sd.radius + 64.0f)) continue;
         const f32 alpha =
             decal_lod_alpha(sd.cut_off_lod, sd.near_cut_off_lod,
-                            decal_lod_metric(view, eye, aspect, sd.mid_x, ground, sd.mid_z));
+                            decal_lod_metric(view, eye, half_width, sd.mid_x, ground, sd.mid_z));
         if (alpha < 1.0f / 255.0f) continue;
         frame_decals_.push_back({sd.technique, &sd.albedo_path, &sd.spec_path, sd.u, sd.v, alpha,
                                  sd.rotation_y, sd.first_index, sd.index_count, false});
@@ -3561,9 +3571,10 @@ void Renderer::poll_events(f64 dt) {
     if (!window_) return;
     glfwPollEvents();
 
+    // The world view's camera, before input picks this frame: its moves,
+    // then its basis (a pan has moved the target)
+    camera_.set_viewport(static_cast<f32>(window_width_), static_cast<f32>(window_height_));
     camera_.update(window_, dt);
-    // Before input picks this frame: a pan has moved the target.
-    update_camera_focus();
 }
 
 void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
@@ -3619,15 +3630,6 @@ void Renderer::bind_mesh_environment(const map::ScmapEnvironment& environment) {
 MeshTechnique Renderer::mesh_technique(const std::string& blueprint_id, lua_State* L) {
     const GPUMesh* mesh = mesh_cache_.get(blueprint_id, L);
     return mesh ? mesh->technique : MeshTechnique::Unit;
-}
-
-void Renderer::update_camera_focus() {
-    // The camera's focus sits on the ground under its target (the water's
-    // surface over it), as Moho's camera keeps it.
-    if (!ground_) return;
-    f32 y = ground_->get_height(camera_.target_x(), camera_.target_z());
-    if (ground_has_water_) y = std::max(y, ground_water_);
-    camera_.set_target_y(y);
 }
 
 // --- Vulkan validation messages ---

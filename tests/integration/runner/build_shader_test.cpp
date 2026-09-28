@@ -206,7 +206,7 @@ void test_build_shaders(TestContext& ctx) {
         const renderer::Camera& cam = r.camera();
         f32 ex = 0, ey = 0, ez = 0;
         cam.eye_position(ex, ey, ez);
-        std::array<f32, 3> v = {ex - cam.target_x(), ey - cam.target_y(), ez - cam.target_z()};
+        std::array<f32, 3> v = {ex - cam.focus_x(), ey - cam.focus_y(), ez - cam.focus_z()};
         const f32 n = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         for (f32& c : v) c /= n;
         return v;
