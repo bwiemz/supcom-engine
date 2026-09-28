@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/decal.hpp"
 #include "sim/entity.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -131,6 +133,15 @@ public:
         frame_rotation_ = rotation;
     }
 
+    /// A decal's or splat's record (M212c; null for other effects), shared
+    /// with the snapshots: it never changes once made.
+    const std::shared_ptr<const DecalSpec>& decal() const { return decal_; }
+    void set_decal(std::shared_ptr<const DecalSpec> spec) { decal_ = std::move(spec); }
+    /// The armies that see it (a bit per army; CDecalBuffer's flags): only
+    /// ever set.
+    u32 seen_by() const { return seen_by_; }
+    void set_seen_by(u32 armies) { seen_by_ = armies; }
+
     /// Light particle specific fields.
     f32 light_size() const { return light_size_; }
     void set_light_size(f32 s) { light_size_ = s; }
@@ -164,6 +175,9 @@ private:
     bool has_frame_ = false;
     Vector3 frame_position_;
     Quaternion frame_rotation_;
+
+    std::shared_ptr<const DecalSpec> decal_;
+    u32 seen_by_ = 0;
 
     // Light particle fields
     f32 light_size_ = 0;

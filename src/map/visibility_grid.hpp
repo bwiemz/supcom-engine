@@ -79,6 +79,10 @@ public:
     bool has_sonar(f32 wx, f32 wz, u32 army) const;
     bool has_omni(f32 wx, f32 wz, u32 army) const;
     bool ever_seen(f32 wx, f32 wz, u32 army) const;
+    /// Whether `army` has Vision in any cell of the world rectangle from
+    /// (floor min_x, floor min_z) to (ceil max_x, ceil max_z), as Moho's
+    /// CIntelGrid::IsVisible scans a rectangle (M212c: who sees a decal).
+    bool any_vision(f32 min_x, f32 min_z, f32 max_x, f32 max_z, u32 army) const;
 
     /// Raw flag query at grid coordinates.
     VisFlag get(u32 gx, u32 gz, u32 army) const;

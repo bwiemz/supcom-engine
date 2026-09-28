@@ -37,6 +37,7 @@ add_executable(osc_tests
     test_ui_layout.cpp
     test_world_view.cpp
     test_ui_controls.cpp
+    test_key_codes.cpp
     test_overlay_filters.cpp
     test_font_cache.cpp
     test_minimap_area.cpp
@@ -45,13 +46,15 @@ add_executable(osc_tests
     test_thread_wait.cpp
     test_economy_event.cpp
     test_dds_decode.cpp
-    test_normal_overlay.cpp
     test_frustum.cpp
     test_light_view.cpp
     test_camera_ground.cpp
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
     test_recon_view.cpp
+    test_decal.cpp
+    test_runtime_decals.cpp
+    test_terrain_normal_maps.cpp
     test_dds_parser.cpp
     test_color.cpp
     test_lod.cpp
@@ -104,6 +107,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::sim
     osc::renderer
     osc::video
+    glfw # key codes (test_key_codes)
 )
 
 target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

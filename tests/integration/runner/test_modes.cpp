@@ -140,6 +140,9 @@ constexpr Mode kModesBefore[] = {
     {"--water-render-test", test_water_render, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
+    {"--decal-render-test", test_decal_render, false},
+    {"--runtime-decal-test", test_runtime_decal, false},
+    {"--terrain-normal-render-test", test_terrain_normal_render, false},
     {"--colors-test", test_colors, true},
     {"--army-colors-test", test_army_colors, false},
     {"--terrain-normal-test", test_terrain_normal, false},
@@ -315,6 +318,9 @@ void IntegrationModes::print_usage() const {
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
+              << "  --decal-render-test The map's decals: projected by the corner, lit, masked, faded\n"
+              << "  --runtime-decal-test Scripts' decals and splats: centred, seen, faded\n"
+              << "  --terrain-normal-render-test Moho's normal pass: the map's normals, strata, normal decals\n"
               << "  --colors-test      UI colours decode as Moho's (names, 6/8 hex, errors)\n"
               << "  --army-colors-test Armies take FA's GameColors by their colour index\n"
               << "  --decal-test       Terrain decals (SCMAP parsing, textured quads, LOD culling)\n"

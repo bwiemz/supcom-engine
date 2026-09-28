@@ -7,6 +7,7 @@
 #include "sim/unit_command.hpp"
 
 #include <array>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -152,6 +153,9 @@ struct EffectRecord {
     bool framed = false;
     Vector3 frame_position;
     Quaternion frame_rotation;
+    /// A decal's or splat's record, and the armies that see it (M212c).
+    std::shared_ptr<const DecalSpec> decal;
+    u32 seen_by = 0;
 };
 
 struct ResourceRecord {

@@ -9,6 +9,7 @@
 #include "sim/bone_cache.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
+#include "sim/decal.hpp"
 #include "sim/entity.hpp"
 #include "sim/economy_event.hpp"
 #include "sim/ieffect.hpp"
@@ -30,6 +31,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -2987,104 +2989,110 @@ static int l_CreateLightParticle(lua_State* L) {
     return 0;
 }
 
-// CreateDecal(position, heading, tex1, tex2, shaderType, sizeX, sizeZ, lod, duration, army, fidelity)
+// Runtime decals and splats (M212c), as faf-re's cfunc_CreateDecalL,
+// cfunc_CreateSplatL and cfunc_CreateSplatOnBoneL make them: each a record
+// placed from its transform (sim::make_decal_spec), which armies see it
+// (CDecalBuffer::CreateHandle), and its end at its removal tick.
+
+/// A vector argument ({x, y, z} at [1..3]), or the origin.
+static sim::Vector3 decal_vector_arg(lua_State* L, int idx) {
+    if (!lua_istable(L, idx)) return {};
+    lua_rawgeti(L, idx, 1);
+    lua_rawgeti(L, idx, 2);
+    lua_rawgeti(L, idx, 3);
+    const sim::Vector3 v{static_cast<f32>(lua_tonumber(L, -3)),
+                         static_cast<f32>(lua_tonumber(L, -2)),
+                         static_cast<f32>(lua_tonumber(L, -1))};
+    lua_pop(L, 3);
+    return v;
+}
+
+/// The effect that holds a decal or splat.
+static sim::IEffect* make_decal_effect(sim::SimState& sim, sim::EffectType type,
+                                       sim::DecalSpec spec) {
+    auto* fx = sim.effect_registry().create();
+    fx->set_type(type);
+    fx->set_army(spec.army);
+    fx->set_blueprint_path(spec.texture1);
+    fx->set_created_tick(sim.tick_count());
+    if (spec.remove_tick != 0)
+        fx->set_ends_at(static_cast<f64>(spec.remove_tick) * sim::SimState::SECONDS_PER_TICK);
+    fx->set_seen_by(sim.decal_sight(spec));
+    fx->set_decal(std::make_shared<const sim::DecalSpec>(std::move(spec)));
+    return fx;
+}
+
+/// An optional fidelity argument: 1 when nil.
+static u32 decal_fidelity_arg(lua_State* L, int idx) {
+    return lua_isnil(L, idx) || lua_isnone(L, idx) ? 1u : static_cast<u32>(lua_tonumber(L, idx));
+}
+
+// CreateDecal(position, heading, tex1, tex2, type, sizeX, sizeZ, lod,
+// duration, army[, fidelity]) -> its handle
 static int l_CreateDecal(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
-    auto* fx = sim->effect_registry().create();
-    fx->set_type(sim::EffectType::DECAL);
-    // position at arg 1 (table with [1],[2],[3])
-    if (lua_istable(L, 1)) {
-        lua_rawgeti(L, 1, 1); lua_rawgeti(L, 1, 2); lua_rawgeti(L, 1, 3);
-        fx->set_offset(
-            static_cast<f32>(lua_tonumber(L, -3)),
-            static_cast<f32>(lua_tonumber(L, -2)),
-            static_cast<f32>(lua_tonumber(L, -1)));
-        lua_pop(L, 3);
-    }
-    fx->set_param("ROTATION", luaL_optnumber(L, 2, 0));
-    fx->set_blueprint_path(luaL_optstring(L, 3, ""));     // tex1 (albedo)
-    fx->set_glow_texture(luaL_optstring(L, 4, ""));       // tex2 (normals)
-    fx->set_ramp_texture(luaL_optstring(L, 5, "Albedo")); // shader type
-    fx->set_param("WIDTH", luaL_optnumber(L, 6, 1));
-    fx->set_param("HEIGHT", luaL_optnumber(L, 7, 1));
-    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 8, 200));
-    f64 lifetime = luaL_optnumber(L, 9, 0);
-    fx->set_param("LIFETIME", lifetime);
-    if (lifetime > 0) fx->set_birth_time(sim->game_time());
-    fx->set_army(static_cast<i32>(luaL_optnumber(L, 10, -1)));
-    fx->set_param("FIDELITY", luaL_optnumber(L, 11, 0));
-    // Return CDecalHandle (for TrashBag)
-    push_ieffect_table(L, fx);
+    sim::DecalSpec spec = sim::make_decal_spec(
+        decal_vector_arg(L, 1), sim::heading_quaternion(static_cast<f32>(luaL_optnumber(L, 2, 0))),
+        static_cast<f32>(luaL_optnumber(L, 6, 1)), static_cast<f32>(luaL_optnumber(L, 7, 1)),
+        static_cast<f32>(luaL_optnumber(L, 9, 0)), sim->tick_count());
+    spec.texture1 = luaL_optstring(L, 3, "");
+    spec.texture2 = luaL_optstring(L, 4, "");
+    spec.type = luaL_optstring(L, 5, "");
+    spec.lod = static_cast<f32>(luaL_optnumber(L, 8, 0));
+    spec.army = resolve_army(L, 10, sim);
+    spec.fidelity = decal_fidelity_arg(L, 11);
+    push_ieffect_table(L, make_decal_effect(*sim, sim::EffectType::DECAL, std::move(spec)));
     return 1;
 }
 
-// CreateSplat(position, heading, texture, sizeX, sizeZ, lod, duration, army, fidelity)
+// CreateSplat(position, heading, texture, sizeX, sizeZ, lod, duration,
+// army[, fidelity]): returns nothing
 static int l_CreateSplat(lua_State* L) {
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
-    auto* fx = sim->effect_registry().create();
-    fx->set_type(sim::EffectType::SPLAT);
-    if (lua_istable(L, 1)) {
-        lua_rawgeti(L, 1, 1); lua_rawgeti(L, 1, 2); lua_rawgeti(L, 1, 3);
-        fx->set_offset(
-            static_cast<f32>(lua_tonumber(L, -3)),
-            static_cast<f32>(lua_tonumber(L, -2)),
-            static_cast<f32>(lua_tonumber(L, -1)));
-        lua_pop(L, 3);
-    }
-    fx->set_param("ROTATION", luaL_optnumber(L, 2, 0));
-    fx->set_blueprint_path(luaL_optstring(L, 3, ""));
-    fx->set_param("WIDTH", luaL_optnumber(L, 4, 1));
-    fx->set_param("HEIGHT", luaL_optnumber(L, 5, 1));
-    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 6, 200));
-    f64 lifetime = luaL_optnumber(L, 7, 0);
-    fx->set_param("LIFETIME", lifetime);
-    if (lifetime > 0) fx->set_birth_time(sim->game_time());
-    fx->set_army(static_cast<i32>(luaL_optnumber(L, 8, -1)));
-    fx->set_param("FIDELITY", luaL_optnumber(L, 9, 0));
-    push_ieffect_table(L, fx);
-    return 1;
+    if (!sim) return 0;
+    sim::DecalSpec spec = sim::make_decal_spec(
+        decal_vector_arg(L, 1), sim::heading_quaternion(static_cast<f32>(luaL_optnumber(L, 2, 0))),
+        static_cast<f32>(luaL_optnumber(L, 4, 1)), static_cast<f32>(luaL_optnumber(L, 5, 1)),
+        static_cast<f32>(luaL_optnumber(L, 7, 0)), sim->tick_count());
+    spec.splat = true;
+    spec.texture1 = luaL_optstring(L, 3, "");
+    spec.lod = static_cast<f32>(luaL_optnumber(L, 6, 0));
+    spec.army = resolve_army(L, 8, sim);
+    spec.fidelity = decal_fidelity_arg(L, 9);
+    (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
+    return 0;
 }
 
-// CreateSplatOnBone(entity, offset, bone, texture, sizeX, sizeZ, lod, duration, army)
+// CreateSplatOnBone(entity, offset, bone, texture, sizeX, sizeZ, lod,
+// duration, army): at the bone's world transform, the offset turned by the
+// bone (a tank's tread marks); returns nothing
 static int l_CreateSplatOnBone(lua_State* L) {
     auto* sim = get_sim(L);
-    if (!sim) { lua_pushnil(L); return 1; }
-
-    // arg1 = entity table, arg2 = offset vector, arg3 = bone index
+    if (!sim) return 0;
     auto* entity = effect_check_entity(L, 1);
-    f32 ox = 0, oy = 0, oz = 0;
-    if (lua_istable(L, 2)) {
-        lua_rawgeti(L, 2, 1); lua_rawgeti(L, 2, 2); lua_rawgeti(L, 2, 3);
-        ox = static_cast<f32>(lua_tonumber(L, -3));
-        oy = static_cast<f32>(lua_tonumber(L, -2));
-        oz = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 3);
+    if (!entity) return 0;
+    const sim::Vector3 offset = decal_vector_arg(L, 2);
+    const i32 bone = effect_bone_arg(L, 3, entity, 0);
+    sim::Vector3 position = entity->position();
+    sim::Quaternion rotation = entity->orientation();
+    if (entity->is_unit()) {
+        const auto& unit = static_cast<const sim::Unit&>(*entity);
+        position = unit.bone_world_position(bone);
+        rotation = unit.bone_world_rotation(bone);
     }
-    i32 bone = effect_bone_arg(L, 3, entity, 0);
-
-    auto* fx = sim->effect_registry().create();
-    fx->set_type(sim::EffectType::SPLAT);
-    if (entity) {
-        fx->set_entity_id(entity->entity_id());
-        // Use entity position + offset as splat position
-        const auto& pos = entity->position();
-        fx->set_offset(pos.x + ox, pos.y + oy, pos.z + oz);
-    } else {
-        fx->set_offset(ox, oy, oz);
-    }
-    fx->set_bone_index(bone);
-    fx->set_blueprint_path(luaL_optstring(L, 4, ""));
-    fx->set_param("WIDTH", luaL_optnumber(L, 5, 1));
-    fx->set_param("HEIGHT", luaL_optnumber(L, 6, 1));
-    fx->set_param("LOD_CUTOFF", luaL_optnumber(L, 7, 200));
-    f64 lifetime = luaL_optnumber(L, 8, 0);
-    fx->set_param("LIFETIME", lifetime);
-    if (lifetime > 0) fx->set_birth_time(sim->game_time());
-    fx->set_army(static_cast<i32>(luaL_optnumber(L, 9, -1)));
-    push_ieffect_table(L, fx);
-    return 1;
+    const sim::Vector3 turned = sim::quat_rotate(rotation, offset);
+    const sim::Vector3 centre{position.x + turned.x, position.y + turned.y, position.z + turned.z};
+    sim::DecalSpec spec =
+        sim::make_decal_spec(centre, rotation, static_cast<f32>(luaL_optnumber(L, 5, 1)),
+                             static_cast<f32>(luaL_optnumber(L, 6, 1)),
+                             static_cast<f32>(luaL_optnumber(L, 8, 0)), sim->tick_count());
+    spec.splat = true;
+    spec.texture1 = luaL_optstring(L, 4, "");
+    spec.lod = static_cast<f32>(luaL_optnumber(L, 7, 0));
+    spec.army = resolve_army(L, 9, sim);
+    (void)make_decal_effect(*sim, sim::EffectType::SPLAT, std::move(spec));
+    return 0;
 }
 
 // ====================================================================

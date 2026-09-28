@@ -22,12 +22,13 @@
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/particle_renderer.hpp"
+#include "renderer/decal_math.hpp"
+#include "renderer/runtime_decal_renderer.hpp"
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/beam_renderer.hpp"
 #include "renderer/trail_blueprint.hpp"
 #include "renderer/trail_renderer.hpp"
 #include "renderer/emitter_blueprint.hpp"
-#include "renderer/normal_overlay.hpp"
 #include "renderer/vk_types.hpp"
 #include "core/image.hpp"
 #include "core/types.hpp"
@@ -171,6 +172,8 @@ public:
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     bool bloom_enabled() const { return bloom_enabled_; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
+    /// The runtime decals and splats (M212c), as the last frame drew them.
+    const RuntimeDecalRenderer& runtime_decals() const { return runtime_decals_; }
     /// The unit meshes the last frame drew, and the cubes drawn for those
     /// with none.
     u32 mesh_instance_count() const;
@@ -201,6 +204,19 @@ public:
     /// swapchain cannot be read back on this driver (no TRANSFER_SRC usage).
     bool request_capture(CaptureCallback on_captured);
 
+    /// The scene as drawn, before the bloom and the UI: its colour and, in
+    /// alpha, what glows (M211e), as floats.
+    struct SceneImage {
+        u32 width = 0, height = 0;
+        std::vector<f32> rgba; ///< width*height*4, row-major from the top
+    };
+    using SceneCallback = std::function<void(SceneImage)>;
+    /// Capture the next render() frame's scene (tests of what glows; M212d).
+    /// The callback runs on this thread once the GPU has finished it.
+    void request_scene_capture(SceneCallback on_captured) {
+        pending_scene_capture_ = std::move(on_captured);
+    }
+
     /// Vulkan validation errors reported so far (0 when validation is off).
     /// Screenshot / golden runs fail if this is non-zero.
     static u32 validation_error_count() { return validation_errors_.load(); }
@@ -228,6 +244,13 @@ private:
     void deliver_capture();
 
     CaptureCallback pending_capture_;
+    /// A requested scene capture (request_scene_capture): recorded after the
+    /// scene pass, before the bloom reads it.
+    bool record_scene_capture(VkCommandBuffer cmd);
+    void deliver_scene_capture();
+    SceneCallback pending_scene_capture_;
+    AllocatedBuffer scene_capture_buf_{};
+    VkDeviceSize scene_capture_buf_size_ = 0;
     f32 fixed_frame_dt_ = 0.0f;
     bool capture_supported_ = false;
     AllocatedBuffer capture_buf_{};
@@ -302,6 +325,23 @@ private:
     VkPipelineLayout mesh_cube_layout_ = VK_NULL_HANDLE;
     VkPipeline decal_pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout decal_layout_ = VK_NULL_HANDLE;
+    // The glowing and glow-mask decals' (M212d): decal_layout_'s sets and push
+    // block, each with a layout of its own that matches it.
+    VkPipeline decal_glow_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_glow_layout_ = VK_NULL_HANDLE;
+    VkPipeline decal_glow_mask_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_glow_mask_layout_ = VK_NULL_HANDLE;
+    // The normal pass (M212e): the terrain's normals and the normal decals,
+    // into the normal target the scene then reads.
+    VkPipeline terrain_normal_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout terrain_normal_layout_ = VK_NULL_HANDLE;
+    VkPipeline decal_normal_pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout decal_normal_layout_ = VK_NULL_HANDLE;
+    AllocatedImage terrain_normal_image_{};
+    VkFramebuffer terrain_normal_framebuffer_ = VK_NULL_HANDLE;
+    /// Point the terrain set's binding 26 at the normal target (a new scene,
+    /// or a new target after a resize).
+    void bind_normal_target();
 
     // Texture infrastructure
     VkDescriptorSetLayout texture_ds_layout_ = VK_NULL_HANDLE;
@@ -328,7 +368,8 @@ private:
     static constexpr u32 kTerrainStrataBinding = 23;
     AllocatedBuffer terrain_strata_ubo_{};
     /// Made per scene, with the terrain's descriptor set.
-    void create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata);
+    void create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata, u32 normal_tile_w,
+                                   u32 normal_tile_h);
     void destroy_terrain_strata_ubo();
 
     // Sub-renderers
@@ -358,31 +399,51 @@ private:
     bool decals_enabled_ = true;
     bool b_key_was_pressed_ = false;
 
-    // Decal rendering
-    AllocatedBuffer decal_quad_verts_{};
-    AllocatedBuffer decal_quad_indices_{};
-    AllocatedBuffer decal_instance_buf_[FRAMES_IN_FLIGHT] = {};
-    void* decal_instance_mapped_[FRAMES_IN_FLIGHT] = {};
-    /// Free the decal quad and instance buffers (build_scene makes them for a
-    /// map with decals). The device must be idle.
-    void destroy_decal_buffers();
-
+    // The map's decals, projected and lit (M212b): each draws the terrain's
+    // own triangles under it, a range of decal_indices_ over the terrain's
+    // vertices, projected by its texture matrix.
     struct StoredDecal {
-        std::string texture_path;
-        f32 model[16];
-        f32 position_x, position_y, position_z;
-        f32 cut_off_lod;
+        std::string albedo_path;
+        std::string spec_path; ///< empty: none (no specular)
+        DecalTechnique technique = DecalTechnique::Albedo;
+        f32 rotation_y = 0; ///< its turn, which turns a normal decal's normals (M212e)
+        f32 u[4] = {};      ///< the texture matrix's u column (DecalsVS)
+        f32 v[4] = {};      ///< its v (world z) column
+        f32 mid_x = 0, mid_z = 0;
+        f32 radius = 0; ///< its bounds' half diagonal, for the view's cull
+        f32 cut_off_lod = 1000.0f;
+        f32 near_cut_off_lod = 0.0f;
+        u32 first_index = 0, index_count = 0;
     };
     std::vector<StoredDecal> stored_decals_;
-
-    struct DecalDrawGroup {
-        VkDescriptorSet texture_ds = VK_NULL_HANDLE;
-        u32 instance_offset = 0;
-        u32 instance_count = 0;
+    /// A decal this frame draws: the map's or a script's, its technique,
+    /// textures, matrix, alpha (its LOD fade times its own), turn and
+    /// triangles, from the map's index buffer or the scripts'.
+    struct FrameDecal {
+        DecalTechnique technique = DecalTechnique::Albedo;
+        const std::string* albedo = nullptr;
+        const std::string* spec = nullptr;
+        const f32* u = nullptr;
+        const f32* v = nullptr;
+        f32 alpha = 1, rotation_y = 0;
+        u32 first_index = 0, index_count = 0;
+        bool runtime = false;
     };
-    std::vector<DecalDrawGroup> decal_groups_;
-
-    static constexpr u32 MAX_DECALS = 4096;
+    std::vector<FrameDecal> frame_decals_;
+    /// This frame's decals, the map's then the scripts', seen and not faded
+    /// out (M212e: the normal pass and the colour passes both draw them).
+    void collect_frame_decals(const Frustum& frustum);
+    /// Draw this frame's decals of `technique` with `pipeline`, over the
+    /// terrain's vertices, in the render pass open (the normal pass, or the
+    /// scene's).
+    void record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique technique, VkPipeline pipeline,
+                       const std::array<f32, 16>& view_proj);
+    AllocatedBuffer decal_indices_{};
+    /// Retail's mask, which every decal's alpha takes (TerrainCommon).
+    VkDescriptorSet decal_mask_ds_ = VK_NULL_HANDLE;
+    /// Free the decals' index buffer (build_scene makes it for a map with
+    /// decals). The device must be idle.
+    void destroy_decal_buffers();
 
     // UI 2D pipeline
     VkPipeline ui_pipeline_ = VK_NULL_HANDLE;
@@ -436,6 +497,7 @@ private:
     // Particle system
     ParticleSystem particle_system_;
     ParticleRenderer particle_renderer_;
+    RuntimeDecalRenderer runtime_decals_; // scripts' decals and splats (M212c)
     EmitterBlueprintCache emitter_bp_cache_;
     /// The map build_scene drew (its water, for particles; M214c).
     const map::Terrain* terrain_ = nullptr;

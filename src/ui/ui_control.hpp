@@ -442,10 +442,24 @@ public:
     UIControl* keyboard_focus() const { return keyboard_focus_; }
     void set_keyboard_focus(UIControl* c) { keyboard_focus_ = c; }
 
+    /// Moho's input-capture stack (AddInputCapture). The top control is
+    /// where the mouse hit-tests from, in place of the root frame, and it
+    /// takes the keys when no control has focus. A destroyed control drops
+    /// out of it.
+    void push_input_capture(UIControl* c);
+    /// Remove `c`'s last entry (RemoveInputCapture).
+    void remove_input_capture(UIControl* c);
+    /// The top live control on the stack, or null.
+    UIControl* input_capture();
+    void clear_input_capture() { input_capture_.clear(); }
+
 private:
     std::vector<std::unique_ptr<UIControl>> controls_;
     u32 next_id_ = 1;
     UIControl* keyboard_focus_ = nullptr;
+    std::vector<UIControl*> input_capture_;
+    /// Drop the destroyed controls' entries (Moho's are weak links).
+    void compact_input_capture();
 };
 
 } // namespace osc::ui

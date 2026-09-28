@@ -16,8 +16,9 @@ extern "C" {
 #include "sim/scm_parser.hpp"
 #include "sim/world_snapshot.hpp"
 #include "map/terrain.hpp"
-#include "renderer/normal_overlay.hpp"
+#include "renderer/terrain_normal_maps.hpp"
 #include "renderer/frustum.hpp"
+#include "renderer/decal_math.hpp"
 #include "map/pathfinding_grid.hpp"
 #include "map/visibility_grid.hpp"
 
@@ -30,6 +31,7 @@ extern "C" {
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <ostream>
 #include <unordered_map>
 
@@ -295,13 +297,14 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     }
 
     // Terrain texture descriptor set layout (set=0): bindings 0-1: blend maps,
-    // 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: normal
-    // overlay, 22: the upper stratum's albedo (all combined image samplers),
-    // 23: the strata's sizes (a uniform buffer, M212a).
+    // 2-10: stratum albedo, 11-19: stratum normal, 20: fog of war, 21: the
+    // map's normal maps (M212e), 22: the upper stratum's albedo (all combined
+    // image samplers), 23: the strata's sizes (a uniform buffer, M212a).
     {
-        // 24 and 25: the water ramp and the water map (M213a).
-        std::array<VkDescriptorSetLayoutBinding, 26> terrain_bindings{};
-        for (u32 i = 0; i < 26; i++) {
+        // 24 and 25: the water ramp and the water map (M213a); 26: the normal
+        // target (M212e).
+        std::array<VkDescriptorSetLayoutBinding, 27> terrain_bindings{};
+        for (u32 i = 0; i < 27; i++) {
             terrain_bindings[i].binding = i;
             terrain_bindings[i].descriptorType = i == kTerrainStrataBinding
                                                      ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
@@ -364,6 +367,9 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // FA's particles, in the scene pass (M214c)
     particle_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
+    // Scripts' decals and splats, in the scene pass (M212c)
+    runtime_decals_.init(device_, allocator_, scene_render_pass_, terrain_tex_ds_layout_,
+                         shadow_ds_layout_, texture_ds_layout_);
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
@@ -829,13 +835,13 @@ std::array<f32, 16> Renderer::compute_light_vp() const {
 void Renderer::create_pipelines() {
     // Compile shaders from embedded GLSL
     auto tv = compile_glsl(device_, shaders::terrain_vert, "terrain.vert", true);
-    auto tf = compile_glsl(device_, shaders::terrain_frag, "terrain.frag", false);
+    auto tf = compile_glsl(device_, shaders::terrain_frag(), "terrain.frag", false);
     auto uv = compile_glsl(device_, shaders::unit_vert, "unit.vert", true);
     auto uf = compile_glsl(device_, shaders::unit_frag, "unit.frag", false);
     auto mv = compile_glsl(device_, shaders::mesh_vert, "mesh.vert", true);
     auto mf = compile_glsl(device_, shaders::mesh_frag, "mesh.frag", false);
-    auto dv = compile_glsl(device_, shaders::decal_vert, "decal.vert", true);
-    auto df = compile_glsl(device_, shaders::decal_frag, "decal.frag", false);
+    auto dv = compile_glsl(device_, shaders::decal_lit_vert, "decal_lit.vert", true);
+    auto df = compile_glsl(device_, shaders::decal_lit_frag(), "decal_lit.frag", false);
 
     // Abort if any shader failed to compile
     if (!tv || !tf || !uv || !uf || !mv || !mf || !dv || !df) {
@@ -873,6 +879,33 @@ void Renderer::create_pipelines() {
                 .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
                 .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow
                 .build(device_, scene_render_pass_, &terrain_layout_);
+    }
+
+    // --- The terrain in the normal pass (M212e): its normals into the
+    // normal target, depth-tested and written, as TTerrainNormals draws. ---
+    {
+        VkShaderModule nf =
+            compile_glsl(device_, shaders::terrain_normal_frag(), "terrain_normal.frag", false);
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(TerrainVertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::array<VkVertexInputAttributeDescription, 2> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
+        if (nf)
+            terrain_normal_pipeline_ =
+                PipelineBuilder()
+                    .set_shaders(tv, nf)
+                    .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                    .set_depth_test(true, true)
+                    .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                    .set_push_constant(92,
+                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
+                    .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: terrain textures
+                    .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: its light
+                    .build(device_, scene_render_pass_, &terrain_normal_layout_);
+        if (nf) vkDestroyShaderModule(device_, nf, nullptr);
     }
 
     // --- Unit pipeline (instanced cubes — fallback) ---
@@ -981,40 +1014,70 @@ void Renderer::create_pipelines() {
         mesh_cube_pipeline_ = build_mesh(Blend::FadeNoDepthWrite, &mesh_cube_layout_);
     }
 
-    // --- Decal pipeline (textured quads on terrain, alpha-blended, depth-biased) ---
+    // --- The map's decals (M212b): the terrain's vertices, lit as the
+    // terrain is, blended over it (TDecals / TDecalsXP: SrcAlpha /
+    // InvSrcAlpha, RGB, depth LessEqual unwritten, FA's bias in the shader).
     {
-        std::array<VkVertexInputBindingDescription, 2> bindings{};
-        // Binding 0: per-vertex quad data (pos3 + uv2 = 20 bytes)
-        bindings[0].binding = 0;
-        bindings[0].stride = sizeof(f32) * 5;
-        bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        // Binding 1: per-instance model matrix (mat4 = 64 bytes)
-        bindings[1].binding = 1;
-        bindings[1].stride = sizeof(f32) * 16;
-        bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+        VkVertexInputBindingDescription binding{};
+        binding.binding = 0;
+        binding.stride = sizeof(TerrainVertex);
+        binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        std::array<VkVertexInputAttributeDescription, 2> attrs{};
+        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};               // position
+        attrs[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(f32) * 3}; // normal
 
-        std::array<VkVertexInputAttributeDescription, 6> attrs{};
-        attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0};                              // position
-        attrs[1] = {1, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(f32) * 3};                   // UV
-        attrs[2] = {2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0};                            // model col0
-        attrs[3] = {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 4};              // model col1
-        attrs[4] = {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 8};              // model col2
-        attrs[5] = {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, sizeof(f32) * 12};             // model col3
-
-        decal_pipeline_ =
-            PipelineBuilder()
-                .set_shaders(dv, df)
-                .set_vertex_input(bindings.data(), static_cast<u32>(bindings.size()), attrs.data(),
-                                  static_cast<u32>(attrs.size()))
-                .set_depth_test(true, false) // test ON, write OFF
-                .set_blend(true)
-                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-                .set_depth_bias(-1.0f, -1.0f)
-                .set_push_constant(sizeof(f32) * 16,
+        // Push constant: viewProj (64) + u, v, map/alpha/XP, eye (4 vec4s) = 128B.
+        // Every decal technique's pipeline takes these sets and this block.
+        const auto decal_builder = [&](VkShaderModule frag) {
+            PipelineBuilder b;
+            b.set_shaders(dv, frag)
+                .set_vertex_input(&binding, 1, attrs.data(), static_cast<u32>(attrs.size()))
+                .set_depth_test(true, false)
+                .set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+                .set_push_constant(sizeof(f32) * 32,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT)
-                .set_descriptor_set_layout(texture_ds_layout_)
-                .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
-                .build(device_, scene_render_pass_, &decal_layout_);
+                .set_descriptor_set_layout(terrain_tex_ds_layout_) // set=0: the terrain's
+                .add_descriptor_set_layout(shadow_ds_layout_)      // set=1: shadow and light
+                .add_descriptor_set_layout(texture_ds_layout_)     // set=2: albedo
+                .add_descriptor_set_layout(texture_ds_layout_)     // set=3: specular
+                .add_descriptor_set_layout(texture_ds_layout_);    // set=4: the mask
+            return b;
+        };
+        decal_pipeline_ = decal_builder(df)
+                              .set_blend(true)
+                              .set_color_write_mask(kColorOnly) // the glow in alpha stays (M211e)
+                              .build(device_, scene_render_pass_, &decal_layout_);
+        // The glowing decals (M212d; TDecalsGlow): One/One into alpha alone,
+        // the frame's glow. The glow masks (TDecalGlowMask): no blending,
+        // colour and glow both written.
+        VkShaderModule glow =
+            compile_glsl(device_, shaders::decal_glow_frag(), "decal_glow.frag", false);
+        VkShaderModule glow_mask =
+            compile_glsl(device_, shaders::decal_glow_mask_frag(), "decal_glow_mask.frag", false);
+        if (glow)
+            decal_glow_pipeline_ = decal_builder(glow)
+                                       .set_blend(true)
+                                       .set_alpha_blend(VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE)
+                                       .set_color_write_mask(VK_COLOR_COMPONENT_A_BIT)
+                                       .build(device_, scene_render_pass_, &decal_glow_layout_);
+        if (glow_mask)
+            decal_glow_mask_pipeline_ =
+                decal_builder(glow_mask)
+                    .set_color_write_mask(kColorAndGlow)
+                    .build(device_, scene_render_pass_, &decal_glow_mask_layout_);
+        // The normal decals (M212e; TDecalsNormals): into the normal
+        // target's RG, SrcAlpha / InvSrcAlpha.
+        VkShaderModule normals =
+            compile_glsl(device_, shaders::decal_normal_frag(), "decal_normal.frag", false);
+        if (normals)
+            decal_normal_pipeline_ =
+                decal_builder(normals)
+                    .set_blend(true)
+                    .set_color_write_mask(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT)
+                    .build(device_, scene_render_pass_, &decal_normal_layout_);
+        if (glow) vkDestroyShaderModule(device_, glow, nullptr);
+        if (glow_mask) vkDestroyShaderModule(device_, glow_mask, nullptr);
+        if (normals) vkDestroyShaderModule(device_, normals, nullptr);
     }
 
     // --- UI 2D pipeline (screen-space textured quads, no depth, alpha blend) ---
@@ -1225,6 +1288,8 @@ void Renderer::create_bloom_resources() {
     create_hdr_image(refraction_image_, w, h);
     // The units reflected in the water (M213b).
     create_hdr_image(reflection_image_, w, h);
+    // The normal target (M212e): the normal pass's, which the scene reads.
+    create_hdr_image(terrain_normal_image_, w, h);
     create_hdr_image(bloom_bright_image_, half_w, half_h);
     create_hdr_image(bloom_blur_h_image_, half_w, half_h);
     create_hdr_image(bloom_blur_v_image_, half_w, half_h);
@@ -1346,6 +1411,9 @@ void Renderer::create_bloom_resources() {
         // again after.
         views[0] = reflection_image_.view;
         VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &reflection_framebuffer_));
+        // The normal pass's (M212e), likewise on the scene's depth.
+        views[0] = terrain_normal_image_.view;
+        VK_CHECK(vkCreateFramebuffer(device_, &fb_ci, nullptr, &terrain_normal_framebuffer_));
     }
 
     // Bloom render pass (single color, no depth)
@@ -1460,6 +1528,7 @@ void Renderer::create_bloom_resources() {
 
     water_renderer_.set_refraction(refraction_image_.view);
     water_renderer_.set_reflection(reflection_image_.view);
+    bind_normal_target(); // the terrain reads the new one (M212e)
     // The refracting particles bend the same copy, made again for them.
     particle_renderer_.set_background(refraction_image_.view);
     spdlog::info("Bloom resources created ({}x{}, half {}x{})", w, h, half_w, half_h);
@@ -1487,6 +1556,9 @@ void Renderer::destroy_bloom_resources() {
     if (scene_framebuffer_) vkDestroyFramebuffer(device_, scene_framebuffer_, nullptr);
     if (reflection_framebuffer_) vkDestroyFramebuffer(device_, reflection_framebuffer_, nullptr);
     reflection_framebuffer_ = VK_NULL_HANDLE;
+    if (terrain_normal_framebuffer_)
+        vkDestroyFramebuffer(device_, terrain_normal_framebuffer_, nullptr);
+    terrain_normal_framebuffer_ = VK_NULL_HANDLE;
 
     // Render passes
     if (bloom_render_pass_) vkDestroyRenderPass(device_, bloom_render_pass_, nullptr);
@@ -1507,6 +1579,7 @@ void Renderer::destroy_bloom_resources() {
     destroy_img(scene_color_image_);
     destroy_img(refraction_image_);
     destroy_img(reflection_image_);
+    destroy_img(terrain_normal_image_);
     destroy_img(bloom_bright_image_);
     destroy_img(bloom_blur_h_image_);
     destroy_img(bloom_blur_v_image_);
@@ -1590,12 +1663,7 @@ void Renderer::destroy_decal_buffers() {
         if (b.buffer) vmaDestroyBuffer(allocator_, b.buffer, b.allocation);
         b = {};
     };
-    destroy(decal_quad_verts_);
-    destroy(decal_quad_indices_);
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-        destroy(decal_instance_buf_[i]);
-        decal_instance_mapped_[i] = nullptr;
-    }
+    destroy(decal_indices_);
 }
 
 void Renderer::clear_scene() {
@@ -1620,7 +1688,7 @@ void Renderer::clear_scene() {
     }
 
     stored_decals_.clear();
-    decal_groups_.clear();
+    decal_mask_ds_ = VK_NULL_HANDLE;
     // build_scene makes them again for the next map: a game started from
     // another leaked the last one's otherwise.
     destroy_decal_buffers();
@@ -1630,11 +1698,12 @@ void Renderer::clear_scene() {
     // destroyed texture.
     minimap_renderer_.forget_terrain();
     if (caches_initialized_) {
-        for (const char* key : {"__terrain_blend0", "__terrain_blend1", "__normal_overlay__",
+        for (const char* key : {"__terrain_blend0", "__terrain_blend1", "__terrain_normal_maps",
                                 "__osc_minimap_terrain", "__water_map", "__water_fresnel"})
             texture_cache_.evict(key);
     }
     particle_system_.clear();
+    runtime_decals_.clear();
     emitter_bp_cache_.clear();
     terrain_ = nullptr;
     beam_bp_cache_.clear();
@@ -1650,7 +1719,8 @@ void Renderer::clear_scene() {
     camera_.set_target_y(0.0f);
 }
 
-void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata) {
+void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& strata,
+                                         u32 normal_tile_w, u32 normal_tile_h) {
     destroy_terrain_strata_ubo();
     // A stratum's texture repeats every `size` world units (FA's tile is the
     // map's size over it). An unset or zero size stands at 1.
@@ -1661,6 +1731,10 @@ void Renderer::create_terrain_strata_ubo(const std::vector<map::StratumInfo>& st
         d.albedo_size[i] = size(have ? strata[i].albedo_scale : 1.0f);
         if (i < 9) d.normal_size[i] = size(have ? strata[i].normal_scale : 1.0f);
     }
+    // normalSize8.yz: a normal-map tile's size, in texels a world unit each
+    // (M212e).
+    d.normal_size[9] = static_cast<f32>(std::max(1u, normal_tile_w));
+    d.normal_size[10] = static_cast<f32>(std::max(1u, normal_tile_h));
 
     VkBufferCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1779,6 +1853,9 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     // before the terrain, which is tinted under it by the water map.
     water_renderer_.build(*terrain, texture_cache_);
 
+    // The map's normal maps (M212e), whose tile size the strata's block holds.
+    const TerrainNormalMaps normal_maps = terrain_normal_maps(*terrain);
+
     // Load terrain stratum textures and create terrain descriptor set
     // Requires texture_cache_ to be initialized (needs VFS for albedo textures)
     if (terrain_tex_ds_layout_ && !terrain->strata().empty() &&
@@ -1794,7 +1871,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
                          strata[i].albedo_path, strata[i].albedo_scale, strata[i].normal_path,
                          strata[i].normal_scale);
         }
-        create_terrain_strata_ubo(strata);
+        create_terrain_strata_ubo(strata, normal_maps.tile_width, normal_maps.tile_height);
 
         // Collect 20 image views:
         // [blend0, blend1, stratum0..8 albedo, stratum0..8 normal]
@@ -1861,7 +1938,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         // Create descriptor pool and set
         std::array<VkDescriptorPoolSize, 2> pool_sizes{};
         pool_sizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        pool_sizes[0].descriptorCount = 25;
+        pool_sizes[0].descriptorCount = 26;
         pool_sizes[1].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         pool_sizes[1].descriptorCount = 1;
 
@@ -1983,196 +2060,74 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
         }
     }
 
-    // Bake and upload normal overlay from type-2 decals
-    {
-        auto& nd = terrain->normal_decals();
-        u32 ow = terrain->map_width();
-        u32 oh = terrain->map_height();
-
-        if (nd.empty()) {
-            // No normal decals — upload 1x1 neutral fallback directly
-            if (terrain_tex_ds_) {
-                u8 neutral[] = {128, 128, 0, 255};
-                auto* fb = texture_cache_.upload_rgba("__normal_overlay__",
-                                                      neutral, 1, 1);
-                if (fb) {
-                    VkDescriptorImageInfo info{};
-                    info.sampler = texture_sampler_;
-                    info.imageView = fb->image.view;
-                    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-                    VkWriteDescriptorSet write{};
-                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                    write.dstSet = terrain_tex_ds_;
-                    write.dstBinding = 21;
-                    write.descriptorCount = 1;
-                    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                    write.pImageInfo = &info;
-                    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-                }
-            }
-            spdlog::info("Normal overlay: no decals, using neutral fallback");
-        } else {
-
-        auto overlay = bake_normal_overlay(nd, ow, oh, vfs);
-
-        // Encode float perturbations to RGBA8: R = nx*0.5+0.5, G = ny*0.5+0.5
-        // Neutral = (128, 128, 0, 255)
-        std::vector<u8> rgba(ow * oh * 4);
-        for (u32 i = 0; i < ow * oh; i++) {
-            f32 nx = overlay.pixels[i * 2 + 0];
-            f32 ny = overlay.pixels[i * 2 + 1];
-            rgba[i * 4 + 0] = static_cast<u8>(
-                std::clamp((nx * 0.5f + 0.5f) * 255.0f, 0.0f, 255.0f));
-            rgba[i * 4 + 1] = static_cast<u8>(
-                std::clamp((ny * 0.5f + 0.5f) * 255.0f, 0.0f, 255.0f));
-            rgba[i * 4 + 2] = 0;
-            rgba[i * 4 + 3] = 255;
-        }
-
-        // Use texture_cache to upload as RGBA texture
-        auto* tex = texture_cache_.upload_rgba("__normal_overlay__",
-                                               rgba.data(), ow, oh);
-
-        // Write binding 21 of terrain descriptor set
-        if (tex && terrain_tex_ds_) {
-            VkDescriptorImageInfo info{};
-            info.sampler = texture_sampler_;
-            info.imageView = tex->image.view;
-            info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            VkWriteDescriptorSet write{};
-            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            write.dstSet = terrain_tex_ds_;
-            write.dstBinding = 21;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            write.pImageInfo = &info;
-            vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-        } else if (terrain_tex_ds_) {
-            // No normal decals or upload failed — bind fallback (neutral)
-            u8 neutral[] = {128, 128, 0, 255};
-            auto* fb = texture_cache_.upload_rgba("__normal_overlay__",
-                                                  neutral, 1, 1);
-            if (fb) {
-                VkDescriptorImageInfo info{};
-                info.sampler = texture_sampler_;
-                info.imageView = fb->image.view;
-                info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-                VkWriteDescriptorSet write{};
-                write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                write.dstSet = terrain_tex_ds_;
-                write.dstBinding = 21;
-                write.descriptorCount = 1;
-                write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                write.pImageInfo = &info;
-                vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
-            }
-        }
-
-        spdlog::info("Normal overlay: {}x{} ({} decals baked)", ow, oh, nd.size());
-        } // else (non-empty decals)
+    // The map's normal maps (M212e; binding 21), which the normal pass's
+    // basis samples, and the normal target it draws (binding 26).
+    if (terrain_tex_ds_) {
+        const GPUTexture* maps =
+            normal_maps.dds.empty()
+                ? texture_cache_.upload_rgba("__terrain_normal_maps", normal_maps.rgba.data(),
+                                             normal_maps.width, normal_maps.height)
+                : texture_cache_.get_raw("__terrain_normal_maps", normal_maps.dds);
+        VkDescriptorImageInfo info{};
+        info.sampler = water_renderer_.clamp_sampler();
+        info.imageView = maps ? maps->image.view : texture_cache_.normal_fallback_view();
+        info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = terrain_tex_ds_;
+        write.dstBinding = 21;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+        bind_normal_target();
+        spdlog::info("Normal maps: {}x{} in tiles of {}x{}{}", normal_maps.width,
+                     normal_maps.height, normal_maps.tile_width, normal_maps.tile_height,
+                     normal_maps.dds.empty() ? " (made from the heights)" : "");
     }
 
-    // Build decal quad mesh + instance buffer + populate stored decals
+    // The map's lit decals (M212b): each the terrain's triangles under its
+    // footprint, projected by its texture matrix (CWldTerrainDecal::Update).
     if (!terrain->decals().empty() && decal_pipeline_) {
-        // Unit quad: (-0.5, 0, -0.5) to (0.5, 0, 0.5) with UV
-        // Each vertex: pos(3) + uv(2)
-        const f32 quad_verts[] = {
-            -0.5f, 0.0f, -0.5f, 0.0f, 0.0f,
-             0.5f, 0.0f, -0.5f, 1.0f, 0.0f,
-             0.5f, 0.0f,  0.5f, 1.0f, 1.0f,
-            -0.5f, 0.0f,  0.5f, 0.0f, 1.0f,
-        };
-        const u32 quad_indices[] = {0, 1, 2, 0, 2, 3};
-
-        decal_quad_verts_ = upload_buffer(
-            device_, allocator_, cmd_pool_, graphics_queue_,
-            quad_verts, sizeof(quad_verts),
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-        decal_quad_indices_ = upload_buffer(
-            device_, allocator_, cmd_pool_, graphics_queue_,
-            quad_indices, sizeof(quad_indices),
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-
-        // Host-visible, persistently-mapped instance buffers (per-frame for FIF safety)
-        VkDeviceSize inst_size = MAX_DECALS * sizeof(f32) * 16;
-        bool decal_alloc_ok = true;
-        for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-            VkBufferCreateInfo buf_ci{};
-            buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-            buf_ci.size = inst_size;
-            buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
-            VmaAllocationCreateInfo alloc_ci{};
-            alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
-            alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-            VmaAllocationInfo alloc_info{};
-            VkResult vma_res = vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci,
-                            &decal_instance_buf_[i].buffer,
-                            &decal_instance_buf_[i].allocation, &alloc_info);
-            if (vma_res != VK_SUCCESS || !alloc_info.pMappedData) {
-                spdlog::error("Decal: failed to allocate instance buffer {}", i);
-                decal_alloc_ok = false;
-                break;
-            }
-            decal_instance_mapped_[i] = alloc_info.pMappedData;
-        }
-        if (!decal_alloc_ok) {
-            spdlog::error("Decal: instance buffer allocation failed");
-        } else {
-
-        // Build model matrix helper (same as unit_renderer.cpp)
-        auto build_mat = [](f32* out, f32 px, f32 py, f32 pz,
-                            const sim::Quaternion& q,
-                            f32 sx, f32 sy, f32 sz) {
-            f32 xx = q.x*q.x, yy = q.y*q.y, zz = q.z*q.z;
-            f32 xy = q.x*q.y, xz = q.x*q.z, yz = q.y*q.z;
-            f32 wx = q.w*q.x, wy = q.w*q.y, wz = q.w*q.z;
-            out[0]  = (1.f - 2.f*(yy+zz))*sx; out[1]  = (2.f*(xy+wz))*sx;
-            out[2]  = (2.f*(xz-wy))*sx;        out[3]  = 0.f;
-            out[4]  = (2.f*(xy-wz))*sy;         out[5]  = (1.f - 2.f*(xx+zz))*sy;
-            out[6]  = (2.f*(yz+wx))*sy;          out[7]  = 0.f;
-            out[8]  = (2.f*(xz+wy))*sz;         out[9]  = (2.f*(yz-wx))*sz;
-            out[10] = (1.f - 2.f*(xx+yy))*sz;   out[11] = 0.f;
-            out[12] = px; out[13] = py; out[14] = pz; out[15] = 1.f;
-        };
-
-        // Populate stored decals and preload textures
-        stored_decals_.reserve(terrain->decals().size());
-        for (auto& d : terrain->decals()) {
+        std::vector<u32> indices;
+        for (const map::DecalInfo& d : terrain->decals()) {
+            const std::optional<DecalTechnique> technique = decal_technique(d.type);
+            if (!technique) continue; // the water decals (normals bake apart)
+            if (d.scale_x == 0.0f || d.scale_y == 0.0f || d.scale_z == 0.0f) continue;
             StoredDecal sd;
-            sd.texture_path = d.texture_path;
-            sd.position_x = d.position_x;
-            sd.position_y = d.position_y;
-            sd.position_z = d.position_z;
+            sd.albedo_path = d.texture_path;
+            sd.spec_path = d.texture2_path;
+            sd.technique = *technique;
+            sd.rotation_y = d.rotation_y;
+            decal_texture_matrix(d, sd.u, sd.v);
+            f32 min_x = 0, min_z = 0, max_x = 0, max_z = 0;
+            decal_bounds(d, min_x, min_z, max_x, max_z);
+            sd.mid_x = (min_x + max_x) * 0.5f;
+            sd.mid_z = (min_z + max_z) * 0.5f;
+            sd.radius = 0.5f * std::hypot(max_x - min_x, max_z - min_z);
             sd.cut_off_lod = d.cut_off_lod;
-
-            auto q = sim::euler_to_quat(d.rotation_y, d.rotation_x, d.rotation_z);
-            build_mat(sd.model, d.position_x, d.position_y, d.position_z,
-                      q, d.scale_x, d.scale_y, d.scale_z);
+            sd.near_cut_off_lod = d.near_cut_off_lod;
+            sd.first_index = static_cast<u32>(indices.size());
+            terrain_mesh_.collect_indices(min_x, min_z, max_x, max_z, indices);
+            sd.index_count = static_cast<u32>(indices.size()) - sd.first_index;
+            if (sd.index_count == 0) continue;
+            // Loaded with the map, as Moho loads a map's decal textures: the
+            // first frame shows them.
+            (void)texture_cache_.get_blocking(sd.albedo_path);
+            if (!sd.spec_path.empty()) (void)texture_cache_.get_blocking(sd.spec_path);
             stored_decals_.push_back(std::move(sd));
         }
-
-        // Preload all unique decal textures into texture_cache_
-        std::unordered_map<std::string, VkDescriptorSet> preloaded;
-        for (auto& sd : stored_decals_) {
-            if (preloaded.count(sd.texture_path)) continue;
-            auto* tex = texture_cache_.get(sd.texture_path);
-            preloaded[sd.texture_path] = tex ? tex->descriptor_set : VK_NULL_HANDLE;
-        }
-
-        // Sort stored_decals_ by texture_path for efficient per-frame grouping
-        std::sort(stored_decals_.begin(), stored_decals_.end(),
-                  [](const StoredDecal& a, const StoredDecal& b) {
-                      return a.texture_path < b.texture_path;
-                  });
-
-        spdlog::info("Decals: {} stored for rendering ({} unique textures)",
-                     stored_decals_.size(), preloaded.size());
-        } // else (vma success)
+        if (!indices.empty())
+            decal_indices_ =
+                upload_buffer(device_, allocator_, cmd_pool_, graphics_queue_, indices.data(),
+                              indices.size() * sizeof(u32), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+        spdlog::info("Decals: {} lit, over {} of the terrain's indices", stored_decals_.size(),
+                     indices.size());
+    }
+    // Retail's mask, every decal's: the map's and the runtime ones (M212c).
+    if (decal_pipeline_) {
+        const GPUTexture* mask = texture_cache_.get_blocking("/textures/engine/decalMask.dds");
+        decal_mask_ds_ = mask ? mask->descriptor_set : texture_cache_.fallback_descriptor();
     }
 
     // Build minimap terrain texture
@@ -2391,6 +2346,19 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
 
+    // Scripts' decals and splats: this tick's, as the player's army sees
+    // them (M212c)
+    if (terrain_) {
+        PROFILE_ZONE("Render::runtime_decals");
+        f32 ex = 0;
+        f32 ey = 0;
+        f32 ez = 0;
+        camera_.eye_position(ex, ey, ez);
+        runtime_decals_.update(view.cur(), fog_enabled_ ? player_army_ : -1, *terrain_,
+                               terrain_mesh_, camera_.view(), {ex, ey, ez}, aspect, frustum,
+                               texture_cache_, fi);
+    }
+
     // Update minimap (terrain bg, unit dots, camera frustum box)
     if (legacy_hud_active_)
         minimap_renderer_.update(view, camera_, texture_cache_, selected_ids,
@@ -2556,6 +2524,67 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdEndRenderPass(cmd_buf_[fi]);
     }
 
+    // ==================== NORMALS ====================
+    // Moho's DrawTerrainNormal (M212e): the terrain's normals into the
+    // normal target (its strata's in RG, the map's normal maps' in BA), then
+    // the normal decals blended into RG, which the scene then reads at each
+    // pixel. The scene's pass and depth draw it; the scene clears the depth
+    // again after.
+    collect_frame_decals(frustum);
+    if (terrain_normal_framebuffer_ && terrain_normal_pipeline_ && terrain_tex_ds_ &&
+        shadow_ds_[fi] && terrain_mesh_.index_count() > 0) {
+        PROFILE_ZONE("Render::normals");
+        std::array<VkClearValue, 2> cleared{};
+        cleared[0].color = {{0.5f, 0.5f, 0.5f, 0.5f}}; // no terrain: zero normals
+        cleared[1].depthStencil = {1.0f, 0};
+        VkRenderPassBeginInfo begin{};
+        begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        begin.renderPass = scene_render_pass_;
+        begin.framebuffer = terrain_normal_framebuffer_;
+        begin.renderArea.extent = {window_width_, window_height_};
+        begin.clearValueCount = static_cast<u32>(cleared.size());
+        begin.pClearValues = cleared.data();
+        vkCmdBeginRenderPass(cmd_buf_[fi], &begin, VK_SUBPASS_CONTENTS_INLINE);
+        VkViewport normal_vp{};
+        normal_vp.width = static_cast<f32>(window_width_);
+        normal_vp.height = static_cast<f32>(window_height_);
+        normal_vp.maxDepth = 1.0f;
+        vkCmdSetViewport(cmd_buf_[fi], 0, 1, &normal_vp);
+        VkRect2D normal_scissor{};
+        normal_scissor.extent = {window_width_, window_height_};
+        vkCmdSetScissor(cmd_buf_[fi], 0, 1, &normal_scissor);
+
+        vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS, terrain_normal_pipeline_);
+        struct TerrainPC {
+            f32 viewProj[16];
+            f32 mapWidth;
+            f32 mapHeight;
+            f32 _pad0, _pad1;
+            f32 eyeX, eyeY, eyeZ;
+        } tpc{};
+        static_assert(sizeof(TerrainPC) == 92, "matches terrain_vert's push block");
+        std::memcpy(tpc.viewProj, vp.data(), sizeof(f32) * 16);
+        tpc.mapWidth = terrain_map_width_;
+        tpc.mapHeight = terrain_map_height_;
+        camera_.eye_position(tpc.eyeX, tpc.eyeY, tpc.eyeZ);
+        vkCmdPushConstants(cmd_buf_[fi], terrain_normal_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                           sizeof(tpc), &tpc);
+        const std::array<VkDescriptorSet, 2> sets = {terrain_tex_ds_, shadow_ds_[fi]};
+        vkCmdBindDescriptorSets(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                terrain_normal_layout_, 0, static_cast<u32>(sets.size()),
+                                sets.data(), 0, nullptr);
+        VkBuffer vertices = terrain_mesh_.vertex_buffer();
+        const VkDeviceSize no_offset = 0;
+        vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 1, &vertices, &no_offset);
+        vkCmdBindIndexBuffer(cmd_buf_[fi], terrain_mesh_.index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
+
+        // The normal decals (OverDrawDecals: TDecalsNormals, ...Alpha).
+        record_decals(cmd_buf_[fi], fi, DecalTechnique::Normals, decal_normal_pipeline_, vp);
+        vkCmdEndRenderPass(cmd_buf_[fi]);
+    }
+
     // ==================== REFLECTION ====================
     // Moho's RenderReflections (M213b): the units, mirrored in the water's
     // plane, into a target of their own cleared to transparent black, which
@@ -2672,74 +2701,25 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdDrawIndexed(cmd_buf_[fi], terrain_mesh_.index_count(), 1, 0, 0, 0);
     }
 
-    // 2. Draw decals (textured quads on terrain)
-    // stored_decals_ is pre-sorted by texture_path (in build_scene) for
-    // allocation-free per-frame grouping via linear scan.
-    if (decals_enabled_ && !stored_decals_.empty() && decal_pipeline_ && decal_instance_mapped_[fi]) {
-        f32 cam_x, cam_y, cam_z;
-        camera_.eye_position(cam_x, cam_y, cam_z);
-
-        // Linear scan over pre-sorted decals: distance-cull + group by texture
-        decal_groups_.clear();
-        u32 total_instances = 0;
-        auto* dst = static_cast<f32*>(decal_instance_mapped_[fi]);
-        const std::string* cur_path = nullptr;
-        VkDescriptorSet cur_ds = VK_NULL_HANDLE;
-
-        for (auto& sd : stored_decals_) {
-            if (total_instances >= MAX_DECALS) break;
-
-            // Distance cull
-            f32 dx = sd.position_x - cam_x;
-            f32 dz = sd.position_z - cam_z;
-            if (dx * dx + dz * dz > sd.cut_off_lod * sd.cut_off_lod) continue;
-
-            // New texture group?
-            if (!cur_path || *cur_path != sd.texture_path) {
-                cur_path = &sd.texture_path;
-                auto* tex = texture_cache_.get(sd.texture_path);
-                cur_ds = tex ? tex->descriptor_set : VK_NULL_HANDLE;
-                if (cur_ds) {
-                    decal_groups_.push_back({cur_ds, total_instances, 0});
-                }
-            }
-
-            if (!cur_ds) continue;
-
-            std::memcpy(dst + total_instances * 16, sd.model, sizeof(f32) * 16);
-            total_instances++;
-            decal_groups_.back().instance_count++;
-        }
-
-        if (total_instances > 0) {
-            vkCmdBindPipeline(cmd_buf_[fi], VK_PIPELINE_BIND_POINT_GRAPHICS,
-                              decal_pipeline_);
-            vkCmdPushConstants(cmd_buf_[fi], decal_layout_,
-                               VK_SHADER_STAGE_VERTEX_BIT |
-                                   VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(f32) * 16, vp.data());
-
-            VkBuffer quad_buf = decal_quad_verts_.buffer;
-            VkBuffer inst_buf = decal_instance_buf_[fi].buffer;
-
-            for (auto& group : decal_groups_) {
-                vkCmdBindDescriptorSets(cmd_buf_[fi],
-                                        VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        decal_layout_, 0, 1,
-                                        &group.texture_ds, 0, nullptr);
-
-                VkBuffer vbufs[] = {quad_buf, inst_buf};
-                VkDeviceSize buf_offsets[] = {
-                    0,
-                    static_cast<VkDeviceSize>(group.instance_offset) *
-                        sizeof(f32) * 16};
-                vkCmdBindVertexBuffers(cmd_buf_[fi], 0, 2, vbufs, buf_offsets);
-                vkCmdBindIndexBuffer(cmd_buf_[fi], decal_quad_indices_.buffer, 0,
-                                     VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd_buf_[fi], 6, group.instance_count, 0, 0, 0);
-            }
-        }
+    // 2. The decals, as HighFidelityTerrain's DrawNormals draws them: the
+    // glow masks, the Albedo and the AlbedoXP passes (DrawDecalPass), the
+    // splats (DrawSplatComposite), then the glowing decals
+    // (DrawGlowingDecals). Each pass the map's decals (M212b) and then the
+    // scripts' (M212c), faded by their LOD (GetLODAlpha). The normal decals
+    // drew in the normal pass (M212e).
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::GlowMask, decal_glow_mask_pipeline_, vp);
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::Albedo, decal_pipeline_, vp);
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::AlbedoXP, decal_pipeline_, vp);
+    if (decals_enabled_ && terrain_ && terrain_tex_ds_ && shadow_ds_[fi]) {
+        f32 ex = 0;
+        f32 ey = 0;
+        f32 ez = 0;
+        camera_.eye_position(ex, ey, ez);
+        runtime_decals_.draw_splats(
+            cmd_buf_[fi], fi, vp, {ex, ey, ez}, static_cast<f32>(terrain_->map_width()),
+            static_cast<f32>(terrain_->map_height()), terrain_tex_ds_, shadow_ds_[fi]);
     }
+    record_decals(cmd_buf_[fi], fi, DecalTechnique::Glow, decal_glow_pipeline_, vp);
 
     // 3. The meshes (real SCM models with GPU skinning): on a map with water,
     // those Moho draws before it (M213b)
@@ -2817,6 +2797,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // Scene always renders to offscreen HDR. End scene pass, optionally run
     // bloom bright extract + blur, then composite scene (+bloom) onto swapchain.
     vkCmdEndRenderPass(cmd_buf_[fi]);
+    const bool scene_capturing = record_scene_capture(cmd_buf_[fi]);
 
     if (do_bloom) {
         u32 half_w = std::max(window_width_ / 2, 1u);
@@ -2985,6 +2966,7 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     present.pImageIndices = &image_index;
     VkResult pres_result = vkQueuePresentKHR(graphics_queue_, &present);
     if (capturing) deliver_capture();
+    if (scene_capturing) deliver_scene_capture();
 
     if (pres_result == VK_ERROR_OUT_OF_DATE_KHR ||
         pres_result == VK_SUBOPTIMAL_KHR) {
@@ -3425,6 +3407,107 @@ void Renderer::render_ui_only(lua_State* L, ui::UIControlRegistry* ui_registry) 
     frame_index_ = (frame_index_ + 1) % FRAMES_IN_FLIGHT;
 }
 
+void Renderer::collect_frame_decals(const Frustum& frustum) {
+    frame_decals_.clear();
+    if (!decals_enabled_ || !terrain_) return;
+    const f32 aspect = static_cast<f32>(window_width_) / static_cast<f32>(window_height_);
+    f32 ex = 0;
+    f32 ey = 0;
+    f32 ez = 0;
+    camera_.eye_position(ex, ey, ez);
+    const std::array<f32, 3> eye = {ex, ey, ez};
+    const std::array<f32, 16> view = camera_.view();
+    for (const StoredDecal& sd : stored_decals_) {
+        const f32 ground = terrain_->get_terrain_height(sd.mid_x, sd.mid_z);
+        if (!frustum.is_sphere_visible(sd.mid_x, ground, sd.mid_z, sd.radius + 64.0f)) continue;
+        const f32 alpha =
+            decal_lod_alpha(sd.cut_off_lod, sd.near_cut_off_lod,
+                            decal_lod_metric(view, eye, aspect, sd.mid_x, ground, sd.mid_z));
+        if (alpha < 1.0f / 255.0f) continue;
+        frame_decals_.push_back({sd.technique, &sd.albedo_path, &sd.spec_path, sd.u, sd.v, alpha,
+                                 sd.rotation_y, sd.first_index, sd.index_count, false});
+    }
+    for (const auto& d : runtime_decals_.decal_draws())
+        frame_decals_.push_back({d.technique, &d.decal->info.texture_path,
+                                 &d.decal->info.texture2_path, d.u, d.v, d.alpha,
+                                 d.decal->info.rotation_y, d.first_index, d.index_count, true});
+}
+
+void Renderer::record_decals(VkCommandBuffer cmd, u32 fi, DecalTechnique technique,
+                             VkPipeline pipeline, const std::array<f32, 16>& view_proj) {
+    if (!pipeline || !terrain_ || !decal_mask_ds_ || !terrain_tex_ds_ || !shadow_ds_[fi]) return;
+    const bool any = std::any_of(frame_decals_.begin(), frame_decals_.end(),
+                                 [&](const FrameDecal& d) { return d.technique == technique; });
+    if (!any) return;
+    // Every decal technique's pipeline shares decal_layout_'s sets and push
+    // block.
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    const std::array<VkDescriptorSet, 2> shared = {terrain_tex_ds_, shadow_ds_[fi]};
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 0,
+                            static_cast<u32>(shared.size()), shared.data(), 0, nullptr);
+    VkBuffer vertices = terrain_mesh_.vertex_buffer();
+    const VkDeviceSize no_offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertices, &no_offset);
+    struct DecalPC {
+        f32 view_proj[16];
+        f32 u[4];
+        f32 v[4];
+        f32 map_alpha[4]; // the map's size, DecalAlpha, 1 for AlbedoXP
+        f32 eye[4];       // the camera; a normal decal's turn (cos, sin)
+    } pc{};
+    static_assert(sizeof(DecalPC) == 128, "matches decal_lit's push block");
+    std::memcpy(pc.view_proj, view_proj.data(), sizeof(pc.view_proj));
+    pc.map_alpha[0] = static_cast<f32>(terrain_->map_width());
+    pc.map_alpha[1] = static_cast<f32>(terrain_->map_height());
+    pc.map_alpha[3] = technique == DecalTechnique::AlbedoXP ? 1.0f : 0.0f;
+    camera_.eye_position(pc.eye[0], pc.eye[1], pc.eye[2]);
+    VkDescriptorSet no_spec = texture_cache_.specteam_fallback_descriptor();
+    std::optional<bool> bound_runtime;
+    for (const FrameDecal& d : frame_decals_) {
+        if (d.technique != technique) continue;
+        VkBuffer indices = d.runtime ? runtime_decals_.index_buffer(fi) : decal_indices_.buffer;
+        if (!indices) continue;
+        if (bound_runtime != d.runtime) {
+            vkCmdBindIndexBuffer(cmd, indices, 0, VK_INDEX_TYPE_UINT32);
+            bound_runtime = d.runtime;
+        }
+        const GPUTexture* albedo = texture_cache_.get(*d.albedo);
+        if (!albedo) continue; // still loading
+        const GPUTexture* spec = d.spec->empty() ? nullptr : texture_cache_.get(*d.spec);
+        const std::array<VkDescriptorSet, 3> own = {
+            albedo->descriptor_set, spec ? spec->descriptor_set : no_spec, decal_mask_ds_};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, decal_layout_, 2,
+                                static_cast<u32>(own.size()), own.data(), 0, nullptr);
+        std::memcpy(pc.u, d.u, sizeof(pc.u));
+        std::memcpy(pc.v, d.v, sizeof(pc.v));
+        pc.map_alpha[2] = d.alpha;
+        if (technique == DecalTechnique::Normals) {
+            pc.eye[0] = std::cos(d.rotation_y);
+            pc.eye[1] = std::sin(d.rotation_y);
+        }
+        vkCmdPushConstants(cmd, decal_layout_,
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
+                           &pc);
+        vkCmdDrawIndexed(cmd, d.index_count, 1, d.first_index, 0, 0);
+    }
+}
+
+void Renderer::bind_normal_target() {
+    if (!terrain_tex_ds_ || !terrain_normal_image_.view) return;
+    VkDescriptorImageInfo info{};
+    info.sampler = water_renderer_.clamp_sampler(); // read with texelFetch
+    info.imageView = terrain_normal_image_.view;
+    info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = terrain_tex_ds_;
+    write.dstBinding = 26;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &info;
+    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+}
+
 u32 Renderer::mesh_instance_count() const {
     u32 n = 0;
     for (const MeshDrawGroup& g : unit_renderer_.mesh_groups()) n += g.instance_count;
@@ -3667,6 +3750,96 @@ void Renderer::deliver_capture() {
     callback(std::move(image));
 }
 
+bool Renderer::record_scene_capture(VkCommandBuffer cmd) {
+    if (!pending_scene_capture_ || !scene_color_image_.image) return false;
+    const VkDeviceSize size = static_cast<VkDeviceSize>(window_width_) * window_height_ * 8;
+    if (scene_capture_buf_size_ != size) {
+        if (scene_capture_buf_.buffer)
+            vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
+        scene_capture_buf_ = {};
+        scene_capture_buf_size_ = 0;
+        VkBufferCreateInfo buf_ci{};
+        buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buf_ci.size = size;
+        buf_ci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo alloc_ci{};
+        alloc_ci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+        if (vmaCreateBuffer(allocator_, &buf_ci, &alloc_ci, &scene_capture_buf_.buffer,
+                            &scene_capture_buf_.allocation, nullptr) != VK_SUCCESS) {
+            spdlog::error("Scene capture: failed to create readback buffer");
+            pending_scene_capture_ = nullptr;
+            return false;
+        }
+        scene_capture_buf_size_ = size;
+    }
+    // The finished scene (SHADER_READ_ONLY, as the bloom and the composite
+    // read it) copied out, and back for them.
+    VkImageMemoryBarrier to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_src.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = scene_color_image_.image;
+    to_src.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &to_src);
+    VkBufferImageCopy region{};
+    region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.imageExtent = {window_width_, window_height_, 1};
+    vkCmdCopyImageToBuffer(cmd, scene_color_image_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           scene_capture_buf_.buffer, 1, &region);
+    VkImageMemoryBarrier back = to_src;
+    back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    back.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    back.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &back);
+    return true;
+}
+
+void Renderer::deliver_scene_capture() {
+    // A test path: stalling the queue keeps it simple.
+    vkQueueWaitIdle(graphics_queue_);
+    SceneImage image;
+    image.width = window_width_;
+    image.height = window_height_;
+    const size_t count = static_cast<size_t>(window_width_) * window_height_ * 4;
+    image.rgba.resize(count);
+    void* mapped = nullptr;
+    if (vmaMapMemory(allocator_, scene_capture_buf_.allocation, &mapped) != VK_SUCCESS) {
+        spdlog::error("Scene capture: failed to map readback buffer");
+        pending_scene_capture_ = nullptr;
+        return;
+    }
+    vmaInvalidateAllocation(allocator_, scene_capture_buf_.allocation, 0, VK_WHOLE_SIZE);
+    // R16G16B16A16_SFLOAT: each half widened to a float.
+    const auto* halves = static_cast<const u16*>(mapped);
+    for (size_t i = 0; i < count; ++i) {
+        const u32 h = halves[i];
+        const u32 exponent = (h >> 10) & 0x1Fu;
+        const u32 mantissa = h & 0x3FFu;
+        f32 value = 0.0f;
+        if (exponent == 0) {
+            value = std::ldexp(static_cast<f32>(mantissa), -24); // subnormal
+        } else if (exponent == 31) {
+            value = mantissa != 0 ? std::numeric_limits<f32>::quiet_NaN()
+                                  : std::numeric_limits<f32>::infinity();
+        } else {
+            value =
+                std::ldexp(static_cast<f32>(mantissa | 0x400u), static_cast<int>(exponent) - 25);
+        }
+        image.rgba[i] = (h & 0x8000u) != 0 ? -value : value;
+    }
+    vmaUnmapMemory(allocator_, scene_capture_buf_.allocation);
+    auto callback = std::move(pending_scene_capture_);
+    pending_scene_capture_ = nullptr;
+    callback(std::move(image));
+}
+
 void Renderer::recreate_swapchain() {
     // Handle minimize
     int w = 0, h = 0;
@@ -3733,6 +3906,7 @@ void Renderer::shutdown() {
     ui_renderer_.destroy(device_, allocator_);
     overlay_renderer_.destroy(device_, allocator_);
     particle_renderer_.destroy(device_, allocator_);
+    runtime_decals_.destroy(device_, allocator_);
     beam_renderer_.destroy(device_, allocator_);
     trail_renderer_.destroy(device_, allocator_);
     minimap_renderer_.destroy(device_, allocator_);
@@ -3798,6 +3972,12 @@ void Renderer::shutdown() {
     vkDestroyPipelineLayout(device_, mesh_cube_layout_, nullptr);
     vkDestroyPipeline(device_, decal_pipeline_, nullptr);
     vkDestroyPipelineLayout(device_, decal_layout_, nullptr);
+    for (VkPipeline pipeline : {decal_glow_pipeline_, decal_glow_mask_pipeline_,
+                                decal_normal_pipeline_, terrain_normal_pipeline_})
+        if (pipeline) vkDestroyPipeline(device_, pipeline, nullptr);
+    for (VkPipelineLayout layout : {decal_glow_layout_, decal_glow_mask_layout_,
+                                    decal_normal_layout_, terrain_normal_layout_})
+        if (layout) vkDestroyPipelineLayout(device_, layout, nullptr);
     if (ui_pipeline_) vkDestroyPipeline(device_, ui_pipeline_, nullptr);
     if (ui_layout_) vkDestroyPipelineLayout(device_, ui_layout_, nullptr);
 
@@ -3830,6 +4010,10 @@ void Renderer::shutdown() {
     // Swapchain
     vkDestroySwapchainKHR(device_, swapchain_, nullptr);
 
+    if (scene_capture_buf_.buffer) {
+        vmaDestroyBuffer(allocator_, scene_capture_buf_.buffer, scene_capture_buf_.allocation);
+        scene_capture_buf_ = {};
+    }
     if (capture_buf_.buffer) {
         vmaDestroyBuffer(allocator_, capture_buf_.buffer, capture_buf_.allocation);
         capture_buf_ = {};

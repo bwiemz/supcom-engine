@@ -33,7 +33,7 @@ set(OSC_DATA_TESTS_GATE
     beam-render-test beam-test beam-weapon-test bitmap-test blend-test bone-test border-render-test build-test
     camera-test
     canpath-test capture-test colors-test carrier-land-test carrier-test chain-test change-army-test charge-test cmd-test collide-test crowd-test collision-test combat-test
-    construction-test controls-test counter-intel-test cursor-render-test damage-test decal-test
+    construction-test controls-test counter-intel-test decal-render-test cursor-render-test damage-test decal-test
     death-test decalsplat-test defence-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
@@ -46,6 +46,7 @@ set(OSC_DATA_TESTS_GATE
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
     onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test refract-render-test
+    runtime-decal-test terrain-normal-render-test
     repair-test right-click-test scale-test scissor-test scrollbar-render-test shadow-test
     shield-render-test shield-test silo-test smoke-test spatial-test strata-test
     specular-test stall-test stats-test steer-test strategic-icon-test stress-test stub-test targeting-test

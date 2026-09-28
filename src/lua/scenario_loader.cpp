@@ -9,6 +9,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <array>
+
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -223,6 +226,10 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
     terrain->set_terrain_types(std::move(scmap.terrain_types));
     terrain->set_lighting(scmap.lighting, std::move(scmap.environment));
     terrain->set_water(scmap.water, std::move(scmap.water_masks), scmap.water_abyss_elevation);
+    terrain->set_normal_maps(
+        {scmap.normal_map_width, scmap.normal_map_height, std::move(scmap.normal_maps)});
+    spdlog::info("  Normal maps: {} of {}x{}", terrain->normal_maps().tiles.size(),
+                 scmap.normal_map_width, scmap.normal_map_height);
     spdlog::info("  Lighting: {} sun ({:.2f}, {:.2f}, {:.2f}) x{:.2f}",
                  terrain->environment().terrain_shader, scmap.lighting.sun_direction[0],
                  scmap.lighting.sun_direction[1], scmap.lighting.sun_direction[2],
@@ -243,37 +250,37 @@ Result<ScenarioMetadata> ScenarioLoader::load_scenario(
                      terrain->blend_dds_1().size());
     }
 
-    // Pass decal data for rendering
+    // Pass decal data for rendering: every type, as Moho keeps them (the
+    // renderer draws each by its technique: the normal decals into the
+    // normal pass, M212e).
     if (!scmap.decals.empty()) {
-        std::vector<map::DecalInfo> albedo_decals;
-        std::vector<map::NormalDecalInfo> normal_decals;
-        albedo_decals.reserve(scmap.decals.size());
-
+        std::vector<map::DecalInfo> decals;
+        decals.reserve(scmap.decals.size());
+        std::array<u32, 10> by_type{};
         for (auto& d : scmap.decals) {
             if (d.texture1_path.empty()) continue;
-
-            if (d.decal_type == 2) {
-                normal_decals.push_back({
-                    d.texture1_path,
-                    d.position_x, d.position_z,
-                    d.scale_x, d.scale_z,
-                    d.rotation_y
-                });
-            } else {
-                albedo_decals.push_back({
-                    d.texture1_path,
-                    d.position_x, d.position_y, d.position_z,
-                    d.scale_x, d.scale_y, d.scale_z,
-                    d.rotation_x, d.rotation_y, d.rotation_z,
-                    d.cut_off_lod
-                });
-            }
+            ++by_type[std::min<u32>(d.decal_type, 9)];
+            map::DecalInfo info;
+            info.type = static_cast<map::DecalType>(std::min<u32>(d.decal_type, 9));
+            info.texture_path = d.texture1_path;
+            info.texture2_path = d.texture2_path;
+            info.position_x = d.position_x;
+            info.position_y = d.position_y;
+            info.position_z = d.position_z;
+            info.scale_x = d.scale_x;
+            info.scale_y = d.scale_y;
+            info.scale_z = d.scale_z;
+            info.rotation_x = d.rotation_x;
+            info.rotation_y = d.rotation_y;
+            info.rotation_z = d.rotation_z;
+            info.cut_off_lod = d.cut_off_lod;
+            info.near_cut_off_lod = d.near_cut_off_lod;
+            decals.push_back(std::move(info));
         }
-
-        terrain->set_decals(std::move(albedo_decals));
-        terrain->set_normal_decals(std::move(normal_decals));
-        spdlog::info("  Terrain decals: {} albedo, {} normal",
-                     terrain->decals().size(), terrain->normal_decals().size());
+        terrain->set_decals(std::move(decals));
+        spdlog::info("  Terrain decals: {} (by type 1-9: {} {} {} {} {} {} {} {} {})",
+                     terrain->decals().size(), by_type[1], by_type[2], by_type[3], by_type[4],
+                     by_type[5], by_type[6], by_type[7], by_type[8], by_type[9]);
     }
 
     sim.set_terrain(std::move(terrain));

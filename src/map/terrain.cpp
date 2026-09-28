@@ -59,8 +59,4 @@ void Terrain::set_decals(std::vector<DecalInfo> decals) {
     decals_ = std::move(decals);
 }
 
-void Terrain::set_normal_decals(std::vector<NormalDecalInfo> decals) {
-    normal_decals_ = std::move(decals);
-}
-
 } // namespace osc::map
