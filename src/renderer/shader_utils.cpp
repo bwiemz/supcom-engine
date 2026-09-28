@@ -783,7 +783,8 @@ vec4 fallOffAt(float across) {
     ivec2 at = clamp(ivec2(vec2(across, fragColorLookup) * vec2(size)), ivec2(0), size - 1);
     return texelFetch(texLookup, at, 0);
 }
-
+)glsl" // split in two: MSVC caps one string literal at 16380 bytes (C2026)
+                        R"glsl(
 // FA's build techniques (mesh.fx, M211f), for an instance f built, `age`
 // ticks after its mesh instance was made. `alpha` is what the pass blends
 // by. The overlays' texture coordinates are FA's vertex shaders' (scaled
