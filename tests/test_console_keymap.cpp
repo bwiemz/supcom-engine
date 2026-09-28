@@ -37,20 +37,29 @@ Tokens tokens_of(std::string_view line, std::string* rest = nullptr) {
 } // namespace
 
 TEST_CASE("Console lines parse as Moho's CON_ParseCommand", "[ui][console]") {
+    // The lines as constants: MSVC's preprocessor mangles raw strings with
+    // escapes inside a macro's arguments.
     // Retail's key actions: a quote mid-token is a character.
-    CHECK(tokens_of(R"(UI_Lua import("/lua/ui/uimain.lua").EscapeHandler())") ==
-          Tokens{"UI_Lua", R"(import("/lua/ui/uimain.lua").EscapeHandler())"});
+    const std::string retail_action = R"(UI_Lua import("/lua/ui/uimain.lua").EscapeHandler())";
+    const std::string retail_code = R"(import("/lua/ui/uimain.lua").EscapeHandler())";
+    CHECK(tokens_of(retail_action) == Tokens{"UI_Lua", retail_code});
     CHECK(tokens_of("  foo   bar\tbaz ") == Tokens{"foo", "bar", "baz"});
     // A token opened by a quote runs to the next one, with escapes.
-    CHECK(tokens_of(R"(say "hello world" x)") == Tokens{"say", "hello world", "x"});
-    CHECK(tokens_of(R"(a "b \"c\" \\d" e)") == Tokens{"a", R"(b "c" \d)", "e"});
-    CHECK(tokens_of(R"("unclosed to the end)") == Tokens{"unclosed to the end"});
-    CHECK(tokens_of(R"(\"x y)") == Tokens{"\"x", "y"});
+    const std::string quoted = R"(say "hello world" x)";
+    const std::string escaped = R"(a "b \"c\" \\d" e)";
+    const std::string unescaped = R"(b "c" \d)";
+    const std::string unclosed = R"("unclosed to the end)";
+    const std::string leading_quote = R"(\"x y)";
+    CHECK(tokens_of(quoted) == Tokens{"say", "hello world", "x"});
+    CHECK(tokens_of(escaped) == Tokens{"a", unescaped, "e"});
+    CHECK(tokens_of(unclosed) == Tokens{"unclosed to the end"});
+    CHECK(tokens_of(leading_quote) == Tokens{"\"x", "y"});
     // `;` ends a command; `#` and `//` end the line (a lone `/` doesn't).
     std::string rest;
     CHECK(tokens_of("a 1; b 2", &rest) == Tokens{"a", "1"});
     CHECK(rest == " b 2");
-    CHECK(tokens_of(R"(a "x;y" z)") == Tokens{"a", "x;y", "z"});
+    const std::string quoted_semicolon = R"(a "x;y" z)";
+    CHECK(tokens_of(quoted_semicolon) == Tokens{"a", "x;y", "z"});
     CHECK(tokens_of("a # b") == Tokens{"a"});
     CHECK(tokens_of("a // b") == Tokens{"a"});
     CHECK(tokens_of("a/b /c") == Tokens{"a/b", "/c"});
