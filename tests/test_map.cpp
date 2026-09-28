@@ -6,6 +6,7 @@
 #include "map/terrain.hpp"
 
 #include <array>
+#include <cstring>
 #include <initializer_list>
 #include <limits>
 #include <vector>
@@ -198,10 +199,14 @@ TEST_CASE("Terrain blocks a shot as CheckBlockingTerrain says", "[map]") {
 
 namespace {
 /// Build a minimal synthetic .scmap file for testing.
+/// With `waves`, the water block follows the elevations (whether the water
+/// is on or not, as in retail's maps), its generators written at `version`'s
+/// layout; the file ends there.
 std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
-                                  const std::vector<u16>& heights,
-                                  bool has_water = false,
-                                  f32 water_elev = 0.0f) {
+                                 const std::vector<u16>& heights, bool has_water = false,
+                                 f32 water_elev = 0.0f,
+                                 const std::vector<ScmapWaveGenerator>* waves = nullptr,
+                                 i32 version = 56) {
     std::vector<u8> buf;
     auto write_u8 = [&](u8 v) { buf.push_back(v); };
     auto write_i16 = [&](i16 v) {
@@ -248,7 +253,7 @@ std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
     write_i32(0);
 
     // Version minor
-    write_i32(56);
+    write_i32(version);
 
     // Dimensions
     write_i32(static_cast<i32>(map_w));
@@ -276,14 +281,41 @@ std::vector<u8> build_test_scmap(u32 map_w, u32 map_h, f32 height_scale,
         write_f32(1.0f + 0.1f * static_cast<f32>(i));
     }
 
-    // Water
+    // Water: the flag, then the elevations either way (-10000 on a dry map)
     write_u8(has_water ? 1 : 0);
-    if (has_water) {
-        write_f32(water_elev);
-        write_f32(water_elev - 5.0f); // deep
-        write_f32(water_elev - 10.0f); // abyss
-    }
+    write_f32(has_water ? water_elev : -10000.0f);
+    write_f32(has_water ? water_elev - 5.0f : -10000.0f);  // deep
+    write_f32(has_water ? water_elev - 10.0f : -10000.0f); // abyss
+    if (!waves) return buf;
 
+    // The water's properties: 20 floats, two textures, four repeats, four
+    // normal layers
+    for (int i = 0; i < 20; i++) write_f32(0.5f);
+    write_cstring("/textures/cube.dds");
+    write_cstring("/textures/ramp.dds");
+    for (int i = 0; i < 4; i++) write_f32(0.01f);
+    for (int i = 0; i < 4; i++) {
+        write_f32(0.1f);
+        write_f32(0.2f);
+        write_cstring("/textures/waves.dds");
+    }
+    write_i32(static_cast<i32>(waves->size()));
+    for (const ScmapWaveGenerator& g : *waves) {
+        write_cstring(g.texture.c_str());
+        write_cstring(g.ramp.c_str());
+        for (f32 v : g.position) write_f32(v);
+        write_f32(g.angle);
+        for (f32 v : g.direction) write_f32(v);
+        for (f32 v : g.lifetime) write_f32(v);
+        for (f32 v : g.interval) write_f32(v);
+        write_f32(g.begin_size);
+        write_f32(g.end_size);
+        if (version > 51) {
+            write_f32(g.frame_count);
+            for (f32 v : g.frame_rate) write_f32(v);
+            write_f32(g.strip_count);
+        }
+    }
     return buf;
 }
 } // namespace
@@ -358,6 +390,112 @@ TEST_CASE("SCMAP parser reads the map's lighting and environment (M210a)", "[map
     // What follows still parses: the water after the block.
     CHECK(d.has_water);
     CHECK_THAT(d.water_elevation, WithinAbs(25.0, 0.01));
+}
+
+namespace {
+ScmapWaveGenerator sample_wave(f32 x) {
+    ScmapWaveGenerator g;
+    g.texture = "/env/common/decals/shoreline/turbulance02_albedo.dds";
+    g.ramp = "/env/common/decals/shoreline/waveramptest.dds";
+    g.position[0] = x;
+    g.position[1] = 17.5f;
+    g.position[2] = 40.0f;
+    g.angle = 1.25f;
+    g.direction[0] = 0.1f;
+    g.direction[2] = -0.2f;
+    g.lifetime[0] = 30.0f;
+    g.lifetime[1] = 45.0f;
+    g.interval[0] = 2.0f;
+    g.interval[1] = 5.0f;
+    g.begin_size = 3.0f;
+    g.end_size = 6.0f;
+    g.frame_count = 4.0f;
+    g.frame_rate[0] = 0.5f;
+    g.frame_rate[1] = 0.75f;
+    g.strip_count = 3.0f;
+    return g;
+}
+} // namespace
+
+TEST_CASE("SCMAP parser reads the water's wave generators (M213c)", "[map]") {
+    const std::vector<ScmapWaveGenerator> waves = {sample_wave(10.0f), sample_wave(20.0f)};
+    std::vector<u16> heights(9, 100);
+    auto result = parse_scmap(build_test_scmap(2, 2, 1.0f, heights, true, 25.0f, &waves));
+    REQUIRE(result.ok());
+    const auto& d = result.value();
+    REQUIRE(d.waves.size() == 2);
+    const ScmapWaveGenerator& g = d.waves[1];
+    CHECK(g.texture == waves[1].texture);
+    CHECK(g.ramp == waves[1].ramp);
+    CHECK(g.position[0] == 20.0f);
+    CHECK(g.position[1] == 17.5f);
+    CHECK(g.position[2] == 40.0f);
+    CHECK(g.angle == 1.25f);
+    CHECK(g.direction[0] == 0.1f);
+    CHECK(g.direction[2] == -0.2f);
+    CHECK(g.lifetime[0] == 30.0f);
+    CHECK(g.lifetime[1] == 45.0f);
+    CHECK(g.interval[0] == 2.0f);
+    CHECK(g.interval[1] == 5.0f);
+    CHECK(g.begin_size == 3.0f);
+    CHECK(g.end_size == 6.0f);
+    CHECK(g.frame_count == 4.0f);
+    CHECK(g.frame_rate[0] == 0.5f);
+    CHECK(g.frame_rate[1] == 0.75f);
+    CHECK(g.strip_count == 3.0f);
+    // The file ends after them: read short, not whole
+    CHECK_FALSE(d.read_whole);
+}
+
+TEST_CASE("A map before v52 has no wave frames: Moho's defaults", "[map]") {
+    const std::vector<ScmapWaveGenerator> waves = {sample_wave(10.0f), sample_wave(20.0f)};
+    std::vector<u16> heights(9, 100);
+    auto result = parse_scmap(build_test_scmap(2, 2, 1.0f, heights, true, 25.0f, &waves, 51));
+    REQUIRE(result.ok());
+    const auto& d = result.value();
+    REQUIRE(d.waves.size() == 2);
+    // Each read in step: the first's strings and defaults, the second's
+    // strings and fields
+    CHECK(d.waves[0].frame_count == 1.0f);
+    CHECK(d.waves[0].strip_count == 1.0f);
+    CHECK(d.waves[1].texture == waves[1].texture);
+    CHECK(d.waves[1].ramp == waves[1].ramp);
+    CHECK(d.waves[1].position[0] == 20.0f);
+    CHECK(d.waves[1].end_size == 6.0f);
+    CHECK(d.waves[1].frame_count == 1.0f);
+    CHECK(d.waves[1].frame_rate[0] == 1.0f);
+    CHECK(d.waves[1].frame_rate[1] == 0.0f);
+    CHECK(d.waves[1].strip_count == 1.0f);
+}
+
+TEST_CASE("A dry map's water block is read all the same", "[map]") {
+    // Retail's dry maps (water flag off) still hold the elevations, the
+    // water's properties and its waves: the parser had skipped them and read
+    // everything after from the wrong place
+    const std::vector<ScmapWaveGenerator> waves = {sample_wave(10.0f)};
+    std::vector<u16> heights(9, 100);
+    auto result = parse_scmap(build_test_scmap(2, 2, 1.0f, heights, false, 0.0f, &waves));
+    REQUIRE(result.ok());
+    const auto& d = result.value();
+    CHECK_FALSE(d.has_water);
+    CHECK(d.water_elevation == 0.0f); // the -10000 isn't kept
+    REQUIRE(d.waves.size() == 1);
+    CHECK(d.waves[0].texture == waves[0].texture);
+    CHECK(d.waves[0].strip_count == 3.0f);
+}
+
+TEST_CASE("A wave count the file can't hold is refused", "[map]") {
+    std::vector<ScmapWaveGenerator> waves = {sample_wave(10.0f)};
+    std::vector<u16> heights(9, 100);
+    std::vector<u8> bytes = build_test_scmap(2, 2, 1.0f, heights, true, 25.0f, &waves);
+    // The count sits before the one generator's two strings and 17 floats
+    const size_t record = waves[0].texture.size() + 1 + waves[0].ramp.size() + 1 + 17 * 4;
+    const size_t at = bytes.size() - record - 4;
+    const u32 huge = 20000000;
+    std::memcpy(bytes.data() + at, &huge, 4);
+    auto result = parse_scmap(bytes);
+    REQUIRE(result.ok()); // the header still loads
+    CHECK(result.value().waves.empty());
 }
 
 TEST_CASE("SCMAP parser gives an older map SetupHorizonAndCirrus's sky (M210b)", "[map]") {

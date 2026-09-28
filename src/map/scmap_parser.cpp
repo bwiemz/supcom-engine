@@ -182,9 +182,10 @@ bool skip_cartographic_decals(BinaryReader& r, i32 version_minor) {
 /// capturing stratum metadata and blend DDS along the way.
 /// Returns true if successful, false if data is truncated/malformed.
 bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_height,
-                   bool has_water, ScmapData& result) {
-    // --- Water properties (only present when has_water is true) ---
-    if (has_water) {
+                   ScmapData& result) {
+    // --- Water properties (CWaterShaderProperties::Load), with the water
+    // on or off ---
+    {
         // 20 floats: surfaceColor(3), colorLerp(2), refractionScale,
         // fresnelBias, fresnelPower, unitReflection, skyReflection,
         // sunShininess, sunStrength, sunDirection(3), sunColor(3),
@@ -221,16 +222,32 @@ bool skip_to_props(BinaryReader& r, i32 version_minor, u32 map_width, u32 map_he
             w.normal_texture[i] = r.read_cstring();
         }
 
-        // --- Wave generators ---
+        // --- Wave generators (WaveGenerator::LoadSerializedState) ---
         if (!r.has_remaining(4)) return false;
-        u32 wave_gen_count = r.read_u32();
-        if (wave_gen_count > 10000) return false; // sanity
-        for (u32 i = 0; i < wave_gen_count; i++) {
-            r.read_cstring(); // texture name
-            r.read_cstring(); // ramp name
-            // position(3f) + rotation(f) + velocity(3f) + 10 floats
-            if (!r.has_remaining(68)) return false;
-            r.skip(68);
+        const u32 wave_count = r.read_u32();
+        // Each is two strings and at least 13 floats: a count the file can't
+        // hold is corrupt (SCMP_030 has some 34,000)
+        constexpr size_t kLeastWave = 2 + 13 * 4;
+        if (!r.has_remaining(static_cast<size_t>(wave_count) * kLeastWave)) return false;
+        result.waves.resize(wave_count);
+        for (ScmapWaveGenerator& g : result.waves) {
+            g.texture = r.read_cstring();
+            g.ramp = r.read_cstring();
+            if (!r.has_remaining(13 * 4)) return false;
+            for (f32& v : g.position) v = r.read_f32();
+            g.angle = r.read_f32();
+            for (f32& v : g.direction) v = r.read_f32();
+            for (f32& v : g.lifetime) v = r.read_f32();
+            for (f32& v : g.interval) v = r.read_f32();
+            g.begin_size = r.read_f32();
+            g.end_size = r.read_f32();
+            // Older maps have no frames: one frame, rate 1 to 0, one strip
+            if (version_minor > 51) {
+                if (!r.has_remaining(4 * 4)) return false;
+                g.frame_count = r.read_f32();
+                for (f32& v : g.frame_rate) v = r.read_f32();
+                g.strip_count = r.read_f32();
+            }
         }
     }
 
@@ -573,10 +590,19 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
     if (r.has_remaining(1)) {
         has_water = r.read_u8() != 0;
     }
-    if (has_water && r.has_remaining(12)) {
-        water_elevation = r.read_f32();
-        water_deep_elevation = r.read_f32();
-        water_abyss_elevation = r.read_f32();
+    // The elevations are there with the water off too (-10000 on retail's
+    // dry maps), as are the water's properties and waves after them:
+    // CWldMap's load reads them all whatever the flag. Kept only for a map
+    // with water.
+    if (r.has_remaining(12)) {
+        const f32 elevation = r.read_f32();
+        const f32 deep = r.read_f32();
+        const f32 abyss = r.read_f32();
+        if (has_water) {
+            water_elevation = elevation;
+            water_deep_elevation = deep;
+            water_abyss_elevation = abyss;
+        }
     }
 
     // --- Build result with heightmap + water (always available) ---
@@ -604,7 +630,7 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
 
     // --- Skip intermediate sections to reach props ---
     // Graceful degradation: if skip fails, return result without props
-    if (!skip_to_props(r, version_minor, map_width, map_height, has_water, result)) {
+    if (!skip_to_props(r, version_minor, map_width, map_height, result)) {
         spdlog::warn("SCMAP: failed to skip to props section at offset {} "
                      "(remaining {} bytes) — props not loaded",
                      r.position(), r.remaining());
@@ -640,7 +666,8 @@ Result<ScmapData> parse_scmap(const std::vector<u8>& file_data) {
         result.props.push_back(std::move(p));
     }
 
-    spdlog::info("SCMAP: parsed {} props", result.props.size());
+    result.read_whole = result.props.size() == prop_count && r.remaining() == 0;
+    spdlog::info("SCMAP: parsed {} props, {} bytes left", result.props.size(), r.remaining());
     return result;
 }
 
