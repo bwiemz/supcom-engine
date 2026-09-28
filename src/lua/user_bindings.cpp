@@ -6,6 +6,7 @@
 #include "lua/user_bindings.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/order_helpers.hpp"
 #include "map/scmap_parser.hpp"
@@ -19,8 +20,10 @@
 #include "sim/sim_callback_queue.hpp"
 #include "sim/script_class.hpp"
 #include "sim/sim_state.hpp"
+#include "sim/thread_manager.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
+#include "sim/waitable.hpp"
 #include "ui/console.hpp"
 #include "ui/ui_control.hpp"
 #include "ui/world_view.hpp"
@@ -35,6 +38,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -396,13 +400,14 @@ static int camera_RestoreSettings(lua_State* L) {
 }
 
 /// camera:SetZoom(zoom, seconds): TargetManual at the target, heading and
-/// pitch (the move is at once until M217g's timed moves)
+/// pitch, over the seconds
 static int camera_SetZoom(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
     auto& cam = r->camera();
     cam.target_manual(cam.target_x(), cam.target_y(), cam.target_z(), cam.heading(), cam.pitch(),
-                      static_cast<f32>(luaL_checknumber(L, 2)));
+                      static_cast<f32>(luaL_checknumber(L, 2)),
+                      static_cast<f32>(lua_tonumber(L, 3)));
     return 0;
 }
 
@@ -453,8 +458,8 @@ static int camera_Reset(lua_State* L) {
 }
 
 /// camera:MoveTo(position, orientationHPR, zoom, seconds) and
-/// camera:SnapTo(position, orientationHPR, zoom): TargetManual (heading and
-/// pitch from the orientation), at once until M217g's timed moves.
+/// camera:SnapTo(position, orientationHPR, zoom): TargetManual, heading and
+/// pitch from the orientation, over the seconds (SnapTo's none)
 static int camera_MoveTo(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r) return 0;
@@ -464,13 +469,14 @@ static int camera_MoveTo(lua_State* L) {
     f32 hpr[3] = {cam.heading(), cam.pitch(), 0.0f};
     (void)read_vec3(L, 3, hpr);
     const f32 zoom = lua_isnumber(L, 4) ? static_cast<f32>(lua_tonumber(L, 4)) : cam.zoom();
-    cam.target_manual(pos[0], pos[1], pos[2], hpr[0], hpr[1], zoom);
+    cam.target_manual(pos[0], pos[1], pos[2], hpr[0], hpr[1], zoom,
+                      static_cast<f32>(lua_tonumber(L, 5)));
     return 0;
 }
 
-/// camera:MoveToRegion(rect, seconds): centre on the rect ({x0, y0, x1, y1}
-/// or a Rect with x0/y0/x1/y1 fields, y being map z) and zoom to fit it.
-/// (Moho's TargetBox frames it; M217g.)
+/// camera:MoveToRegion(rect, [seconds]): TargetBox over the rect ({x0, y0,
+/// x1, y1} or a Rect's fields, y being map z), its corners on their cells'
+/// middles at the ground's height there (cfunc_CameraImplMoveToRegionL)
 static int camera_MoveToRegion(lua_State* L) {
     auto* r = get_renderer(L);
     if (!r || !lua_istable(L, 2)) return 0;
@@ -486,9 +492,148 @@ static int camera_MoveToRegion(lua_State* L) {
         v[i] = static_cast<f32>(lua_tonumber(L, -1));
         lua_pop(L, 1);
     }
-    auto& cam = r->camera();
-    cam.set_target((v[0] + v[2]) * 0.5f, (v[1] + v[3]) * 0.5f);
-    cam.set_zoom(std::max(std::abs(v[2] - v[0]), std::abs(v[3] - v[1])));
+    const auto cell = [](f32 x) { return static_cast<f32>(static_cast<int>(x - 0.5f)) + 0.5f; };
+    const f32 x0 = cell(v[0]);
+    const f32 z0 = cell(v[1]);
+    const f32 x1 = cell(v[2]);
+    const f32 z1 = cell(v[3]);
+    const auto height = [&](f32 x, f32 z) {
+        auto* sim = get_sim(L);
+        return sim && sim->terrain() ? sim->terrain()->get_terrain_height(x, z) : 0.0f;
+    };
+    r->camera().target_box({x0, height(x0, z0), z0}, {x1, height(x1, z1), z1},
+                           static_cast<f32>(lua_tonumber(L, 3)));
+    return 0;
+}
+
+/// A table of entity ids (strings, as retail passes them, or numbers), or a
+/// single one.
+static std::vector<u32> read_entity_ids(lua_State* L, int idx) {
+    std::vector<u32> ids;
+    const auto one = [&](int at) {
+        if (lua_type(L, at) == LUA_TSTRING || lua_type(L, at) == LUA_TNUMBER)
+            ids.push_back(static_cast<u32>(std::strtoul(lua_tostring(L, at), nullptr, 10)));
+    };
+    if (!lua_istable(L, idx)) {
+        one(idx);
+        return ids;
+    }
+    const int n = luaL_getn(L, idx);
+    for (int i = 1; i <= n; ++i) {
+        lua_rawgeti(L, idx, i);
+        one(lua_gettop(L));
+        lua_pop(L, 1);
+    }
+    return ids;
+}
+
+/// A camera's move as a UI thread waits on it.
+struct CameraWait : sim::Waitable {
+    bool done = false;
+    bool is_done() const override { return done; }
+    bool is_cancelled() const override { return false; }
+};
+
+/// WaitFor(camera) in a UI thread (the UI's WaitFor hook): parks the thread
+/// until the camera's event is signalled, as Moho's CScriptEvent does when a
+/// move ends; at once when none is under way. usercamera.lua waits so on the
+/// sim's camera requests before calling it back.
+static int ui_wait_camera(lua_State* L) {
+    auto* r = get_renderer(L);
+    lua_pushstring(L, "_c_object");
+    lua_rawget(L, 1);
+    const bool camera = r && lua_touserdata(L, -1) == r;
+    lua_pop(L, 1);
+    lua_pushstring(L, "__osc_ui_thread_manager");
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    auto* threads = static_cast<sim::ThreadManager*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!camera || !threads || r->camera().signaled()) return 0;
+    // The thread manager keeps the waitable only while the thread waits;
+    // the camera's waiter keeps it alive until the wake
+    auto wait = std::make_shared<CameraWait>();
+    r->camera().on_signal([wait, threads] {
+        wait->done = true;
+        threads->wake(*wait, 0); // only the thread that waited, if it still lives
+    });
+    lua_pushlightuserdata(L, static_cast<sim::Waitable*>(wait.get()));
+    return lua_yield(L, 1);
+}
+
+/// camera:TargetEntities(ids, zoom, seconds): to the first, not followed
+static int camera_TargetEntities(lua_State* L) {
+    if (auto* r = get_renderer(L)) {
+        r->camera().target_entities(read_entity_ids(L, 2), false,
+                                    static_cast<f32>(lua_tonumber(L, 3)),
+                                    static_cast<f32>(lua_tonumber(L, 4)));
+    }
+    return 0;
+}
+
+/// camera:TrackEntities(ids, zoom, seconds): to the first, followed
+static int camera_TrackEntities(lua_State* L) {
+    if (auto* r = get_renderer(L)) {
+        r->camera().target_entities(read_entity_ids(L, 2), true,
+                                    static_cast<f32>(lua_tonumber(L, 3)),
+                                    static_cast<f32>(lua_tonumber(L, 4)));
+    }
+    return 0;
+}
+
+/// camera:NoseCam(id, pitchAdjust, zoom, seconds, transition)
+static int camera_NoseCam(lua_State* L) {
+    if (auto* r = get_renderer(L)) {
+        r->camera().target_nose_cam(read_entity_ids(L, 2), static_cast<f32>(lua_tonumber(L, 3)),
+                                    static_cast<f32>(lua_tonumber(L, 4)),
+                                    static_cast<f32>(lua_tonumber(L, 5)),
+                                    static_cast<f32>(lua_tonumber(L, 6)));
+    }
+    return 0;
+}
+
+/// camera:Spin(headingRate, [zoomRate]): revolutions and zoom a second
+static int camera_Spin(lua_State* L) {
+    if (auto* r = get_renderer(L)) {
+        r->camera().spin_rates(static_cast<f32>(lua_tonumber(L, 2)),
+                               static_cast<f32>(lua_tonumber(L, 3)));
+    }
+    return 0;
+}
+
+/// camera:SetAccMode(name): Linear, FastInSlowOut or SlowInOut
+static int camera_SetAccMode(lua_State* L) {
+    auto* r = get_renderer(L);
+    if (r && lua_type(L, 2) == LUA_TSTRING) (void)r->camera().set_acc_mode(lua_tostring(L, 2));
+    return 0;
+}
+
+static int camera_EnableEaseInOut(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().set_ease_in_out(true);
+    return 0;
+}
+
+static int camera_DisableEaseInOut(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().set_ease_in_out(false);
+    return 0;
+}
+
+static int camera_HoldRotation(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().hold_rotation();
+    return 0;
+}
+
+static int camera_RevertRotation(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().revert_rotation();
+    return 0;
+}
+
+static int camera_UseGameClock(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().use_game_clock(true);
+    return 0;
+}
+
+static int camera_UseSystemClock(lua_State* L) {
+    if (auto* r = get_renderer(L)) r->camera().use_game_clock(false);
     return 0;
 }
 
@@ -518,49 +663,68 @@ static int camera_GetPitch(lua_State* L) {
     return 1;
 }
 
-/// UISelectAndZoomTo(unit [, seconds]): select that unit alone and bring the
-/// world camera to it -- the idle-engineer and commander avatars' click.
-/// (Moho frames the unit's box over `seconds`; the camera here recentres,
-/// as UIZoomTo does.)
-static int l_UIZoomTo(lua_State* L);
+/// UISelectAndZoomTo(unit [, seconds]): select that unit alone and frame it
+/// (TargetEntityBox): its box, 20 wider each way on x and z, over the
+/// seconds; at once, the camera then follows nothing. The unit's box here is
+/// its footprint (the engine has no mesh box on the UI's side).
 static int l_SelectUnits(lua_State* L);
 static int l_UISelectAndZoomTo(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
+    const f32 seconds = static_cast<f32>(lua_tonumber(L, 2));
+    auto* e = check_entity(L, 1);
     lua_newtable(L);
     lua_pushvalue(L, 1);
     lua_rawseti(L, -2, 1);
     lua_replace(L, 1); // arg 1 = {unit}
     lua_settop(L, 1);
     l_SelectUnits(L);
-    lua_settop(L, 1);
-    l_UIZoomTo(L);
+    auto* r = get_renderer(L);
+    if (!r || !e || e->destroyed()) return 0;
+    constexpr f32 kExpand = 20.0f; // cam_EntityBoxExpand
+    const auto pos = e->position();
+    const f32 hx = e->footprint_size_x() * 0.5f + kExpand;
+    const f32 hz = e->footprint_size_z() * 0.5f + kExpand;
+    r->camera().target_box({pos.x - hx, pos.y, pos.z - hz}, {pos.x + hx, pos.y, pos.z + hz},
+                           seconds);
+    if (seconds == 0.0f) r->camera().target_nothing();
     return 0;
 }
 
-/// UIZoomTo(units, duration) — animate camera to center on units.
-/// units is a Lua array of unit objects with _c_object lightuserdata.
+/// UIZoomTo(units, [seconds]): frame the units (cfunc_UIZoomToL): their box
+/// padded 20 each way, its height their mean height give or take half its
+/// wider side; TargetBox over the seconds, then the camera follows nothing.
 static int l_UIZoomTo(lua_State* L) {
     if (!lua_istable(L, 1)) return 0;
     auto* r = get_renderer(L);
     if (!r) return 0;
-
-    f32 sum_x = 0, sum_z = 0;
+    constexpr f32 kMargin = 20.0f;
+    f32 min_x = std::numeric_limits<f32>::infinity();
+    f32 min_z = min_x;
+    f32 max_x = -min_x;
+    f32 max_z = -min_x;
+    f32 sum_y = 0.0f;
     int count = 0;
-    int n = luaL_getn(L, 1);
+    const int n = luaL_getn(L, 1);
     for (int i = 1; i <= n; ++i) {
         lua_rawgeti(L, 1, i);
         if (auto* e = check_entity(L, lua_gettop(L)); e && !e->destroyed()) {
-            auto pos = e->position();
-            sum_x += pos.x;
-            sum_z += pos.z;
+            const auto pos = e->position();
+            min_x = std::min(min_x, pos.x);
+            max_x = std::max(max_x, pos.x);
+            min_z = std::min(min_z, pos.z);
+            max_z = std::max(max_z, pos.z);
+            sum_y += pos.y;
             ++count;
         }
         lua_pop(L, 1); // array element
     }
-
-    if (count > 0) {
-        r->camera().set_target(sum_x / count, sum_z / count);
-    }
+    if (count == 0) return 0;
+    const f32 mean_y = sum_y / static_cast<f32>(count);
+    const f32 half = std::max(max_x - min_x, max_z - min_z) * 0.5f;
+    r->camera().target_box({min_x - kMargin, mean_y - half - kMargin, min_z - kMargin},
+                           {max_x + kMargin, mean_y + half + kMargin, max_z + kMargin},
+                           static_cast<f32>(lua_tonumber(L, 2)));
+    r->camera().target_nothing();
     return 0;
 }
 
@@ -1196,6 +1360,7 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
+    set_ui_wait_hook(L, ui_wait_camera); // WaitFor(camera) (M217g)
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
     state.register_function("SelectUnits", l_SelectUnits);
     state.register_function("AddSelectUnits", l_AddSelectUnits);
@@ -1241,6 +1406,17 @@ void register_user_bindings(LuaState& state) {
                           {"GetFocusPosition", camera_GetFocusPosition},
                           {"GetHeading", camera_GetHeading},
                           {"GetPitch", camera_GetPitch},
+                          {"TargetEntities", camera_TargetEntities},
+                          {"TrackEntities", camera_TrackEntities},
+                          {"NoseCam", camera_NoseCam},
+                          {"Spin", camera_Spin},
+                          {"SetAccMode", camera_SetAccMode},
+                          {"EnableEaseInOut", camera_EnableEaseInOut},
+                          {"DisableEaseInOut", camera_DisableEaseInOut},
+                          {"HoldRotation", camera_HoldRotation},
+                          {"RevertRotation", camera_RevertRotation},
+                          {"UseGameClock", camera_UseGameClock},
+                          {"UseSystemClock", camera_UseSystemClock},
                       });
 }
 

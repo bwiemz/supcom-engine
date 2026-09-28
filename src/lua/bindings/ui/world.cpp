@@ -408,26 +408,12 @@ const MethodEntry ui_worldview_methods[] = {
 // --- Camera methods (M136a) ---
 
 
-static int camera_RevertRotation(lua_State* /*L*/) { return 0; }
-
-
-// Camera behaviours the orbit camera doesn't model yet: accepted and ignored
-// (spin, rotation hold, clock source, acceleration mode, easing, entity
-// tracking, locking, the playable-rect sync).
+// Camera calls Moho's camera doesn't have: accepted and ignored (the camera's
+// own methods are the UI bindings', M217f/g)
 static int camera_Ignored(lua_State* /*L*/) { return 0; }
 
 // clang-format off
 const MethodEntry camera_methods[] = {
-    {"RevertRotation", camera_RevertRotation},
-    {"Spin", camera_Ignored},
-    {"HoldRotation", camera_Ignored},
-    {"UseSystemClock", camera_Ignored},
-    {"UseGameClock", camera_Ignored},
-    {"SetAccMode", camera_Ignored},
-    {"EnableEaseInOut", camera_Ignored},
-    {"TrackEntities", camera_Ignored},
-    {"TargetEntities", camera_Ignored},
-    {"NoseCam", camera_Ignored},
     {"Lock", camera_Ignored},
     {"Unlock", camera_Ignored},
     {"SyncPlayableRect", camera_Ignored},

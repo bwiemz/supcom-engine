@@ -484,6 +484,12 @@ private:
     };
     /// The scene's ground, for the camera's focus (M217a).
     std::optional<map::Heightmap> ground_;
+    /// The last frame's view of the world, whose entities the camera's
+    /// targets follow (M217g): the app's history outlives it; a test drawing
+    /// from its own snapshots must keep them while it polls.
+    sim::FrameView camera_view_;
+    /// Its game time, (tick + interpolant) x 0.1: the camera's game clock.
+    f64 camera_game_time_ = 0.0;
     /// Bind the map's environment cubes and FA's lookups for meshes (M211a/b).
     void bind_mesh_environment(const map::ScmapEnvironment& environment);
     /// Clamped, for FA's lookup textures.

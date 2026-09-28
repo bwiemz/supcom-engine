@@ -30,6 +30,10 @@ void advance_ui_clock(lua_State* L, double dt);
 /// Must be called before globalInit.lua executes.
 void register_moho_bindings(LuaState& state, sim::SimState& sim);
 
+/// The UI's WaitFor hands a table it is given (another binding's waitable:
+/// the camera's move, M217g) to `hook`, which parks the thread or returns.
+void set_ui_wait_hook(lua_State* L, int (*hook)(lua_State*));
+
 /// Register UI global functions (InternalCreateGroup, InternalCreateFrame, etc.)
 /// and store the UIControlRegistry pointer in Lua registry.
 /// Must be called after register_moho_bindings.

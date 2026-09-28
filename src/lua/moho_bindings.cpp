@@ -3683,6 +3683,14 @@ struct SoundWait : sim::Waitable {
 /// WaitFor(handle) in the UI state: suspend the calling thread until the
 /// sound ends (retail's music thread waits out a fade this way).
 static int l_ui_WaitFor(lua_State* L) {
+    // Another binding's waitable (the camera's move; M217g)
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "__osc_ui_wait_hook");
+        lua_rawget(L, LUA_REGISTRYINDEX);
+        const lua_CFunction hook = lua_tocfunction(L, -1);
+        lua_pop(L, 1);
+        return hook ? hook(L) : 0;
+    }
     auto* mgr = get_sound_mgr(L);
     auto* threads = get_ui_threads(L);
     if (!mgr || !threads || lua_type(L, 1) != LUA_TNUMBER) return 0;
@@ -3697,6 +3705,12 @@ static int l_ui_WaitFor(lua_State* L) {
     });
     lua_pushlightuserdata(L, static_cast<sim::Waitable*>(wait.get()));
     return lua_yield(L, 1);
+}
+
+void set_ui_wait_hook(lua_State* L, int (*hook)(lua_State*)) {
+    lua_pushstring(L, "__osc_ui_wait_hook");
+    lua_pushcfunction(L, hook);
+    lua_rawset(L, LUA_REGISTRYINDEX);
 }
 
 // ====================================================================
