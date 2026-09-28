@@ -5,85 +5,21 @@
 
 #include <spdlog/spdlog.h>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-using socket_t = SOCKET;
-static constexpr socket_t kInvalidSocket = INVALID_SOCKET;
-#else
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
-using socket_t = int;
-static constexpr socket_t kInvalidSocket = -1;
-#endif
+#include "sim/socket_platform.hpp"
 
 namespace osc::sim {
+
+using net::close_socket;
+using net::configure_stream;
+using net::frame_message;
+using net::kInvalidSocket;
+using net::send_all;
+using net::socket_t;
 
 namespace {
 
 void net_startup() {
-#ifdef _WIN32
-    static bool started = false;
-    if (!started) {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-        started = true; // process-lifetime; matched by no explicit cleanup
-    }
-#endif
-}
-
-void close_socket(socket_t s) {
-    if (s == kInvalidSocket) return;
-#ifdef _WIN32
-    closesocket(s);
-#else
-    ::close(s);
-#endif
-}
-
-// Writing to a socket whose peer has reset raises SIGPIPE on POSIX, which
-// kills the process by default. Suppress it per call (Linux) or per socket
-// (macOS/BSD) so a vanished peer is just a failed send.
-#ifdef MSG_NOSIGNAL
-constexpr int kSendFlags = MSG_NOSIGNAL;
-#else
-constexpr int kSendFlags = 0;
-#endif
-
-void configure_stream(socket_t s) {
-    int one = 1;
-    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&one),
-               sizeof(one));
-#ifdef SO_NOSIGPIPE
-    setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#endif
-}
-
-// Blocking send of the whole buffer; returns false on error.
-bool send_all(socket_t s, const u8* data, size_t len) {
-    size_t sent = 0;
-    while (sent < len) {
-        int n = static_cast<int>(
-            send(s, reinterpret_cast<const char*>(data + sent),
-                 static_cast<int>(len - sent), kSendFlags));
-        if (n <= 0) return false;
-        sent += static_cast<size_t>(n);
-    }
-    return true;
-}
-
-void frame_message(std::vector<u8>& out, const std::vector<u8>& msg) {
-    u32 len = static_cast<u32>(msg.size());
-    out.push_back(static_cast<u8>(len & 0xFF));
-    out.push_back(static_cast<u8>((len >> 8) & 0xFF));
-    out.push_back(static_cast<u8>((len >> 16) & 0xFF));
-    out.push_back(static_cast<u8>((len >> 24) & 0xFF));
-    out.insert(out.end(), msg.begin(), msg.end());
+    net::startup();
 }
 
 } // namespace
