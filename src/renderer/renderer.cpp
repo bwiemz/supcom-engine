@@ -2728,8 +2728,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     scissor.extent = {window_width_, window_height_};
     vkCmdSetScissor(cmd_buf_[fi], 0, 1, &scissor);
 
-    // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b)
-    sky_renderer_.record(cmd_buf_[fi], fi);
+    // 0. The sky dome, before the terrain (WRenViewport::RenderSkyDome; M210b),
+    // unless ren_SkyDome is off (the render_skydome option): the clear shows
+    if (video_options_.skydome) sky_renderer_.record(cmd_buf_[fi], fi);
 
     // 1. Draw terrain
     if (terrain_mesh_.index_count() > 0 && terrain_pipeline_) {
