@@ -615,8 +615,9 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
             while (lua_next(L, t) != 0) {
                 if (lua_istable(L, -1)) {
                     Entry e;
-                    e.key = lua_type(L, -2) == LUA_TNUMBER ? lua_tonumber(L, -2)
-                                                           : std::numeric_limits<double>::max();
+                    e.key = lua_type(L, -2) == LUA_TNUMBER
+                                ? lua_tonumber(L, -2)
+                                : std::numeric_limits<double>::infinity();
                     lua_pushstring(L, "Human");
                     lua_gettable(L, -2);
                     e.human = lua_toboolean(L, -1) != 0;
@@ -650,7 +651,7 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
     // and 5 play armies 0 and 1); a slot that is no number plays none
     i32 army = 0;
     for (const Entry& e : players) {
-        const bool slot = e.key != std::numeric_limits<double>::max();
+        const bool slot = e.key != std::numeric_limits<double>::infinity();
         if (e.human && e.owned) add(e.owner, slot ? army : -1);
         if (slot) ++army;
     }

@@ -287,8 +287,11 @@ TEST_CASE("Once the game starts the host takes no more joins (M218c)", "[lobby]"
     host.net.stop_joining();
     CHECK(host.net.hosting()); // still the host of those joined
     Side late("Late");
+    // (Windows retries a refused connect before it says so)
     if (late.net.join("127.0.0.1", host.net.port()))
-        REQUIRE(pump({&host, &a, &late}, [&] { return late.saw(Kind::ConnectionFailed, 0); }));
+        REQUIRE(pump(
+            {&host, &a, &late}, [&] { return late.saw(Kind::ConnectionFailed, 0); },
+            LobbyNet::kJoinTimeoutMs + 2000));
     CHECK_FALSE(late.net.joined());
     CHECK(host.net.peers().size() == 1);
     // Those joined play on
