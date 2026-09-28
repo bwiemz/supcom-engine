@@ -3,184 +3,148 @@
 #include "renderer/shader_utils.hpp"
 #include "renderer/texture_cache.hpp"
 
-#include <cstring>
 #include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <cstring>
 
 namespace osc::renderer {
 
-// Push constants: mat4 viewProj (64B) + vec3 camRight + pad + vec3 camUp + pad = 96B
-struct ParticlePushConstants {
-    f32 view_proj[16];
-    f32 cam_right[3];
-    f32 _pad0;
-    f32 cam_up[3];
-    f32 _pad1;
+namespace {
+
+/// particle.fx's TRamp blends (REFRACT is drawn apart): all write RGB only,
+/// as the trails' do.
+struct Blend {
+    VkBlendFactor src, dst;
 };
-static_assert(sizeof(ParticlePushConstants) == 96);
+constexpr std::array<Blend, 5> kBlends = {{
+    {VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA},           // ALPHABLEND
+    {VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR},                // MODULATEINVERSE
+    {VK_BLEND_FACTOR_ONE_MINUS_DST_COLOR, VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR}, // MODULATE2XINVERSE
+    {VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE},                           // ADD
+    {VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA},                 // PREMODALPHA
+}};
 
-void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
-                            VkRenderPass render_pass,
-                            VkDescriptorSetLayout texture_ds_layout,
-                            VkSampler /*sampler*/) {
-    device_ = device;
+} // namespace
 
-    // Instance buffer (per-frame, persistently mapped)
+void ParticleRenderer::init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
+                            VkDescriptorSetLayout texture_ds_layout) {
     for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
         VkBufferCreateInfo buf_ci{};
         buf_ci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         buf_ci.size = sizeof(ParticleInstance) * MAX_PARTICLES;
         buf_ci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-
         VmaAllocationCreateInfo alloc_ci{};
         alloc_ci.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
         alloc_ci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
         alloc_ci.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
         VmaAllocationInfo info{};
-        vmaCreateBuffer(allocator, &buf_ci, &alloc_ci,
-                        &instance_buf_[i].buffer,
+        vmaCreateBuffer(allocator, &buf_ci, &alloc_ci, &instance_buf_[i].buffer,
                         &instance_buf_[i].allocation, &info);
         instance_mapped_[i] = info.pMappedData;
     }
 
-    // Pipeline layout (push constants + 1 texture descriptor set)
-    VkPushConstantRange push_range{};
-    push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push_range.offset = 0;
-    push_range.size = sizeof(ParticlePushConstants);
-
-    // Set 0: the particle texture; set 1: its ramp (same layout).
-    const VkDescriptorSetLayout set_layouts[2] = {texture_ds_layout, texture_ds_layout};
+    // Set 0 the particle texture, set 1 its ramp.
+    const std::array<VkDescriptorSetLayout, 2> set_layouts = {texture_ds_layout, texture_ds_layout};
+    VkPushConstantRange push{};
+    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push.size = sizeof(f32) * 16;
     VkPipelineLayoutCreateInfo layout_ci{};
     layout_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layout_ci.setLayoutCount = 2;
-    layout_ci.pSetLayouts = set_layouts;
+    layout_ci.setLayoutCount = static_cast<u32>(set_layouts.size());
+    layout_ci.pSetLayouts = set_layouts.data();
     layout_ci.pushConstantRangeCount = 1;
-    layout_ci.pPushConstantRanges = &push_range;
+    layout_ci.pPushConstantRanges = &push;
     vkCreatePipelineLayout(device, &layout_ci, nullptr, &layout_);
 
-    // Compile shaders
-    VkShaderModule vert_mod = compile_glsl(device, shaders::particle_vert,
-                                           "particle_vert", true);
-    VkShaderModule frag_mod = compile_glsl(device, shaders::particle_frag,
-                                           "particle_frag", false);
-    if (!vert_mod || !frag_mod) {
+    VkShaderModule vert = compile_glsl(device, shaders::particle_vert, "particle_vert", true);
+    VkShaderModule frag = compile_glsl(device, shaders::particle_frag, "particle_frag", false);
+    if (!vert || !frag) {
         spdlog::error("ParticleRenderer: shader compilation failed");
-        if (vert_mod) vkDestroyShaderModule(device, vert_mod, nullptr);
-        if (frag_mod) vkDestroyShaderModule(device, frag_mod, nullptr);
+        if (vert) vkDestroyShaderModule(device, vert, nullptr);
+        if (frag) vkDestroyShaderModule(device, frag, nullptr);
         return;
     }
 
-    // Vertex input: no per-vertex data, all per-instance
-    // ParticleInstance layout: pos(3f) + size(1f) + rotation(1f) + alpha(1f)
-    //                        + uvOffset(2f) + uvSize(2f) + color(3f) + rampU(1f)
-    //                        = 14 floats = 56B
+    // All per instance: the quad's corners come from gl_VertexIndex.
     VkVertexInputBindingDescription bind{};
-    bind.binding = 0;
     bind.stride = sizeof(ParticleInstance);
     bind.inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+    const std::array<VkVertexInputAttributeDescription, 5> attrs = {{
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, center)},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, axis_x)},
+        {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, axis_y)},
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(ParticleInstance, uv)},
+        {4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ParticleInstance, ramp)},
+    }};
+    VkPipelineVertexInputStateCreateInfo vi{};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &bind;
+    vi.vertexAttributeDescriptionCount = static_cast<u32>(attrs.size());
+    vi.pVertexAttributeDescriptions = attrs.data();
 
-    VkVertexInputAttributeDescription attrs[8] = {};
-    // location 0: pos (vec3)
-    attrs[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, pos_x)};
-    // location 1: size (float)
-    attrs[1] = {1, 0, VK_FORMAT_R32_SFLOAT, offsetof(ParticleInstance, size)};
-    // location 2: rotation (float)
-    attrs[2] = {2, 0, VK_FORMAT_R32_SFLOAT, offsetof(ParticleInstance, rotation)};
-    // location 3: alpha (float)
-    attrs[3] = {3, 0, VK_FORMAT_R32_SFLOAT, offsetof(ParticleInstance, alpha)};
-    // location 4: uvOffset (vec2)
-    attrs[4] = {4, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ParticleInstance, uv_x)};
-    // location 5: uvSize (vec2)
-    attrs[5] = {5, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(ParticleInstance, uv_w)};
-    // location 6: color (vec3)
-    attrs[6] = {6, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ParticleInstance, r)};
-    // location 7: ramp u (float)
-    attrs[7] = {7, 0, VK_FORMAT_R32_SFLOAT, offsetof(ParticleInstance, ramp_u)};
-
-    VkPipelineVertexInputStateCreateInfo vertex_input{};
-    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input.vertexBindingDescriptionCount = 1;
-    vertex_input.pVertexBindingDescriptions = &bind;
-    vertex_input.vertexAttributeDescriptionCount = 8;
-    vertex_input.pVertexAttributeDescriptions = attrs;
-
-    // Input assembly
     VkPipelineInputAssemblyStateCreateInfo ia{};
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    // Viewport/scissor (dynamic)
-    VkPipelineViewportStateCreateInfo vp_state{};
-    vp_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    vp_state.viewportCount = 1;
-    vp_state.scissorCount = 1;
-
-    VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineViewportStateCreateInfo vp{};
+    vp.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vp.viewportCount = 1;
+    vp.scissorCount = 1;
+    const std::array<VkDynamicState, 2> dyn_states = {VK_DYNAMIC_STATE_VIEWPORT,
+                                                      VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dyn{};
     dyn.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dyn.dynamicStateCount = 2;
-    dyn.pDynamicStates = dyn_states;
-
-    // Rasterizer
+    dyn.dynamicStateCount = static_cast<u32>(dyn_states.size());
+    dyn.pDynamicStates = dyn_states.data();
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_NONE; // billboards are double-sided
-    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.cullMode = VK_CULL_MODE_NONE; // Rasterizer_Cull_None
     raster.lineWidth = 1.0f;
-
-    // Multisampling
     VkPipelineMultisampleStateCreateInfo ms{};
     ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    // Depth — read but don't write (particles behind terrain are culled,
-    // but particles don't occlude each other)
+    // Depth_Enable_Less_Write_None
     VkPipelineDepthStencilStateCreateInfo depth{};
     depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_FALSE;
-    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    // Shader stages
-    VkPipelineShaderStageCreateInfo stages[2] = {};
+    depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
     stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vert_mod;
+    stages[0].module = vert;
     stages[0].pName = "main";
     stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = frag_mod;
+    stages[1].module = frag;
     stages[1].pName = "main";
 
-    // Alpha blend pipeline
-    {
-        VkPipelineColorBlendAttachmentState blend_att{};
-        blend_att.blendEnable = VK_TRUE;
-        blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        blend_att.colorBlendOp = VK_BLEND_OP_ADD;
-        blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
-        // FA's particle blends write colour only (ColorWriteEnable 0x07):
-        // the frame's alpha is its glow (M211e).
-        blend_att.colorWriteMask =
+    for (size_t i = 0; i < kBlends.size(); ++i) {
+        VkPipelineColorBlendAttachmentState att{};
+        att.blendEnable = VK_TRUE;
+        att.srcColorBlendFactor = kBlends[i].src;
+        att.dstColorBlendFactor = kBlends[i].dst;
+        att.colorBlendOp = VK_BLEND_OP_ADD;
+        att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        att.alphaBlendOp = VK_BLEND_OP_ADD;
+        // The frame's alpha is its glow (M211e): particles leave it be.
+        att.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
-
         VkPipelineColorBlendStateCreateInfo blend{};
         blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
         blend.attachmentCount = 1;
-        blend.pAttachments = &blend_att;
+        blend.pAttachments = &att;
 
         VkGraphicsPipelineCreateInfo ci{};
         ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        ci.stageCount = 2;
-        ci.pStages = stages;
-        ci.pVertexInputState = &vertex_input;
+        ci.stageCount = static_cast<u32>(stages.size());
+        ci.pStages = stages.data();
+        ci.pVertexInputState = &vi;
         ci.pInputAssemblyState = &ia;
-        ci.pViewportState = &vp_state;
+        ci.pViewportState = &vp;
         ci.pRasterizationState = &raster;
         ci.pMultisampleState = &ms;
         ci.pDepthStencilState = &depth;
@@ -188,163 +152,84 @@ void ParticleRenderer::init(VkDevice device, VmaAllocator allocator,
         ci.pDynamicState = &dyn;
         ci.layout = layout_;
         ci.renderPass = render_pass;
-        ci.subpass = 0;
-
-        VkResult res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
-                                                   &ci, nullptr, &alpha_pipeline_);
-        if (res != VK_SUCCESS) {
-            spdlog::error("ParticleRenderer: alpha pipeline creation failed");
-        }
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipelines_[i]) !=
+            VK_SUCCESS)
+            spdlog::error("ParticleRenderer: pipeline {} creation failed", i);
     }
-
-    // Additive blend pipeline (same but dst += src * alpha)
-    {
-        VkPipelineColorBlendAttachmentState blend_att{};
-        blend_att.blendEnable = VK_TRUE;
-        blend_att.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        blend_att.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend_att.colorBlendOp = VK_BLEND_OP_ADD;
-        blend_att.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend_att.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        blend_att.alphaBlendOp = VK_BLEND_OP_ADD;
-        // FA's particle blends write colour only (ColorWriteEnable 0x07):
-        // the frame's alpha is its glow (M211e).
-        blend_att.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
-
-        VkPipelineColorBlendStateCreateInfo blend{};
-        blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        blend.attachmentCount = 1;
-        blend.pAttachments = &blend_att;
-
-        VkGraphicsPipelineCreateInfo ci{};
-        ci.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        ci.stageCount = 2;
-        ci.pStages = stages;
-        ci.pVertexInputState = &vertex_input;
-        ci.pInputAssemblyState = &ia;
-        ci.pViewportState = &vp_state;
-        ci.pRasterizationState = &raster;
-        ci.pMultisampleState = &ms;
-        ci.pDepthStencilState = &depth;
-        ci.pColorBlendState = &blend;
-        ci.pDynamicState = &dyn;
-        ci.layout = layout_;
-        ci.renderPass = render_pass;
-        ci.subpass = 0;
-
-        VkResult res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
-                                                   &ci, nullptr, &additive_pipeline_);
-        if (res != VK_SUCCESS) {
-            spdlog::error("ParticleRenderer: additive pipeline creation failed");
-        }
-    }
-
-    vkDestroyShaderModule(device, vert_mod, nullptr);
-    vkDestroyShaderModule(device, frag_mod, nullptr);
-
-    spdlog::debug("ParticleRenderer: initialized (max {} particles)",
-                  MAX_PARTICLES);
+    vkDestroyShaderModule(device, vert, nullptr);
+    vkDestroyShaderModule(device, frag, nullptr);
 }
 
-void ParticleRenderer::update(const std::vector<ParticleInstance>& instances,
-                              const ParticleSystem& psys, TextureCache& tex_cache, u32 fi) {
-    instance_count_ = static_cast<u32>(instances.size());
-    if (instance_count_ == 0) {
-        groups_.clear();
-        draw_count_ = 0;
-        return;
-    }
-
-    // Cap to MAX_PARTICLES
-    if (instance_count_ > MAX_PARTICLES) {
-        instance_count_ = MAX_PARTICLES;
-    }
-
-    // Upload instance data
-    if (instance_mapped_[fi]) {
-        std::memcpy(instance_mapped_[fi], instances.data(),
-                    instance_count_ * sizeof(ParticleInstance));
-    }
-
-    // One draw per texture run. A texture still loading skips its particles
-    // this frame (rather than flashing them as white squares); an emitter
-    // that names no texture keeps the white fallback.
+void ParticleRenderer::update(const ParticleSystem& particles, TextureCache& tex_cache, u32 fi) {
     groups_.clear();
     draw_count_ = 0;
-    for (const auto& run : psys.texture_groups()) {
-        if (run.offset >= instance_count_) break;
-        DrawGroup group;
-        if (run.texture.empty()) {
-            group.texture_ds = tex_cache.fallback_descriptor();
-        } else {
-            const GPUTexture* tex = tex_cache.get(run.texture);
-            if (!tex) continue;
-            group.texture_ds = tex->descriptor_set;
-        }
-        // No ramp: white, so the texture's own colour shows.
-        if (run.ramp.empty()) {
-            group.ramp_ds = tex_cache.fallback_descriptor();
-        } else {
-            const GPUTexture* ramp = tex_cache.get(run.ramp);
-            if (!ramp) continue;
-            group.ramp_ds = ramp->descriptor_set;
-        }
-        group.instance_offset = run.offset;
-        group.instance_count = std::min(run.count, instance_count_ - run.offset);
-        group.additive = run.additive;
-        groups_.push_back(group);
-        draw_count_ += group.instance_count;
+    const auto& instances = particles.instances();
+    const auto count = static_cast<u32>(std::min<size_t>(instances.size(), MAX_PARTICLES));
+    if (count == 0 || !instance_mapped_[fi]) return;
+    std::memcpy(instance_mapped_[fi], instances.data(), sizeof(ParticleInstance) * count);
+
+    // A texture still loading skips its run this frame; an emitter that
+    // names none draws with white.
+    const auto set_of = [&](const std::string& path) -> VkDescriptorSet {
+        if (path.empty()) return tex_cache.fallback_descriptor();
+        const GPUTexture* tex = tex_cache.get(path);
+        return tex ? tex->descriptor_set : VK_NULL_HANDLE;
+    };
+    for (const ParticleSystem::Group& run : particles.groups()) {
+        if (run.offset >= count) break;
+        VkDescriptorSet texture = set_of(run.texture);
+        VkDescriptorSet ramp = set_of(run.ramp);
+        if (!texture || !ramp) continue;
+        const u32 n = std::min(run.count, count - run.offset);
+        groups_.push_back({run.under_water, run.blendmode, texture, ramp, run.offset, n});
+        draw_count_ += n;
     }
 }
 
-void ParticleRenderer::render(VkCommandBuffer cmd,
-                              u32 /*viewport_w*/, u32 /*viewport_h*/,
-                              const f32* view_proj,
-                              const f32* cam_right, const f32* cam_up,
-                              u32 fi) {
-    if (instance_count_ == 0 || groups_.empty()) return;
-    if (!alpha_pipeline_) return;
-
-    // Push constants
-    ParticlePushConstants pc{};
-    std::memcpy(pc.view_proj, view_proj, 64);
-    std::memcpy(pc.cam_right, cam_right, 12);
-    std::memcpy(pc.cam_up, cam_up, 12);
-
-    VkBuffer vbufs[] = {instance_buf_[fi].buffer};
-    VkDeviceSize offsets[] = {0};
-
-    for (const auto& group : groups_) {
-        // Bind appropriate pipeline
-        VkPipeline pipeline = group.additive ? additive_pipeline_ : alpha_pipeline_;
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-        vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT,
-                           0, sizeof(ParticlePushConstants), &pc);
-
-        const VkDescriptorSet sets[2] = {group.texture_ds, group.ramp_ds};
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 2, sets, 0,
-                                nullptr);
-
-        vkCmdBindVertexBuffers(cmd, 0, 1, vbufs, offsets);
-
-        // 6 vertices per quad (generated in shader), instanced
-        vkCmdDraw(cmd, 6, group.instance_count, 0, group.instance_offset);
+void ParticleRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
+                              const f32* view_proj, bool under_water, u32 fi) const {
+    if (groups_.empty() || !instance_buf_[fi].buffer) return;
+    VkViewport viewport{};
+    viewport.width = static_cast<f32>(viewport_w);
+    viewport.height = static_cast<f32>(viewport_h);
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.extent = {viewport_w, viewport_h};
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &instance_buf_[fi].buffer, &offset);
+    i32 bound = -1;
+    for (const Group& g : groups_) {
+        if (g.under_water != under_water) continue;
+        const auto blend = static_cast<size_t>(g.blendmode);
+        if (blend >= pipelines_.size() || !pipelines_[blend]) continue;
+        if (g.blendmode != bound) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines_[blend]);
+            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(f32) * 16,
+                               view_proj);
+            bound = g.blendmode;
+        }
+        const std::array<VkDescriptorSet, 2> sets = {g.texture, g.ramp};
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0,
+                                static_cast<u32>(sets.size()), sets.data(), 0, nullptr);
+        vkCmdDraw(cmd, 6, g.count, 0, g.offset);
     }
 }
 
 void ParticleRenderer::destroy(VkDevice device, VmaAllocator allocator) {
-    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
-        if (instance_buf_[i].buffer) {
-            vmaDestroyBuffer(allocator, instance_buf_[i].buffer,
-                             instance_buf_[i].allocation);
-        }
+    for (VkPipeline& p : pipelines_) {
+        if (p) vkDestroyPipeline(device, p, nullptr);
+        p = VK_NULL_HANDLE;
     }
-
-    if (alpha_pipeline_) vkDestroyPipeline(device, alpha_pipeline_, nullptr);
-    if (additive_pipeline_) vkDestroyPipeline(device, additive_pipeline_, nullptr);
     if (layout_) vkDestroyPipelineLayout(device, layout_, nullptr);
+    layout_ = VK_NULL_HANDLE;
+    for (u32 i = 0; i < FRAMES_IN_FLIGHT; ++i) {
+        if (instance_buf_[i].buffer)
+            vmaDestroyBuffer(allocator, instance_buf_[i].buffer, instance_buf_[i].allocation);
+        instance_buf_[i] = {};
+        instance_mapped_[i] = nullptr;
+    }
 }
 
 } // namespace osc::renderer

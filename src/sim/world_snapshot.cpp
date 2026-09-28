@@ -119,6 +119,38 @@ void capture_anchor(const SimState& sim, const IEffect& fx, EffectRecord& r) {
     r.anchor = {e->position().x + turned.x, e->position().y + turned.y, e->position().z + turned.z};
 }
 
+/// A particle emitter's frame at capture (M214c), as Moho's
+/// CEfxEmitter::InterpolatePosition finds it: an attached emitter's bone (its
+/// entity's own frame for a bone it lacks), an At-emitter's matrix from when
+/// it was made; with neither, the world's.
+void capture_frame(const SimState& sim, const IEffect& fx, EffectRecord& r) {
+    const EffectType t = fx.type();
+    if (t != EffectType::EMITTER_AT_ENTITY && t != EffectType::EMITTER_AT_BONE &&
+        t != EffectType::ATTACHED_EMITTER)
+        return;
+    if (fx.has_frame()) {
+        r.framed = true;
+        r.frame_position = fx.frame_position();
+        r.frame_rotation = fx.frame_rotation();
+        return;
+    }
+    if (!fx.entity_id()) {
+        r.framed = true; // the offset is its place in the world
+        return;
+    }
+    const Entity* e = sim.entity_registry().find(fx.entity_id());
+    if (!e || e->destroyed()) return;
+    r.framed = true;
+    if (e->is_unit()) {
+        const auto& u = static_cast<const Unit&>(*e);
+        r.frame_position = u.bone_world_position(fx.bone_index());
+        r.frame_rotation = u.bone_world_rotation(fx.bone_index());
+        return;
+    }
+    r.frame_position = e->position();
+    r.frame_rotation = e->orientation();
+}
+
 /// Each army's recon of `u` (M215d): the sim's (cloak and stealth counted),
 /// less what the unit's layer hides from a sense, as Moho's GetNewReconFor
 /// asks radar only above the water and sonar only in or under it.
@@ -306,6 +338,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.length = static_cast<f32>(fx->get_param("LENGTH"));
         capture_beam(sim, *fx, r);
         capture_anchor(sim, *fx, r);
+        capture_frame(sim, *fx, r);
     }
 
     for (size_t i = 0; i < sim.army_count(); ++i) {

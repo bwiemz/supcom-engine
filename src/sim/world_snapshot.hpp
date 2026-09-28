@@ -146,6 +146,12 @@ struct EffectRecord {
     /// has no entity.
     bool anchored = false;
     Vector3 anchor;
+    /// A particle emitter's frame this tick (M214c): an attached one's bone
+    /// as posed, an At-emitter's from when it was made, or the world's for
+    /// one with no entity (its offset then is where it is).
+    bool framed = false;
+    Vector3 frame_position;
+    Quaternion frame_rotation;
 };
 
 struct ResourceRecord {

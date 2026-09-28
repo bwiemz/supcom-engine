@@ -2,6 +2,7 @@
 
 #include "core/types.hpp"
 
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -9,94 +10,129 @@
 
 struct lua_State;
 
-namespace osc::vfs { class VirtualFileSystem; }
+namespace osc::vfs {
+class VirtualFileSystem;
+}
 
 namespace osc::renderer {
 
-/// A single key in an emitter curve: time (x), value (y), variance (z).
+/// One key of an emitter curve: at tick x, value y, spread z (the full
+/// width of the random range about y).
 struct CurveKey {
-    f32 x = 0; // time along curve
-    f32 y = 0; // value at this point
-    f32 z = 0; // random variance (+/-)
+    f32 x = 0;
+    f32 y = 0;
+    f32 z = 0;
 };
 
-/// A time-parameterized curve from an EmitterBlueprint.
+/// An EmitterBlueprint curve, as Moho's SEfxCurve reads it (M214c): keys in
+/// ticks, in order.
 struct EmitterCurve {
-    f32 x_range = 0;              // total time range
     std::vector<CurveKey> keys;
 
-    /// Sample the curve at time t (linearly interpolated between keys).
-    /// Returns the y value (no randomness applied).
-    f32 sample(f32 t) const;
+    /// SEfxCurve::GetValue at tick `x`: the first key past x (before the
+    /// first key, or past the last, that key; between two, y and z
+    /// interpolated), its y plus (random - 0.5) times its z. `random` is a
+    /// uniform [0, 1) draw; empty, the value is 0.
+    template <typename Random> f32 value(f32 x, Random&& random) const {
+        if (keys.empty()) return 0.0f;
+        size_t i = 0;
+        while (i < keys.size() && keys[i].x <= x) ++i;
+        f32 y = 0;
+        f32 z = 0;
+        if (i == keys.size() || i == 0) {
+            const CurveKey& k = i == 0 ? keys.front() : keys.back();
+            y = k.y;
+            z = k.z;
+        } else {
+            const CurveKey& a = keys[i - 1];
+            const CurveKey& b = keys[i];
+            const f32 f = (x - a.x) / (b.x - a.x);
+            y = a.y + (b.y - a.y) * f;
+            z = a.z + (b.z - a.z) * f;
+        }
+        return (random() - 0.5f) * z + y;
+    }
 
-    /// Sample with random variance: y + random(-z, +z).
-    f32 sample_random(f32 t) const;
+    /// Its greatest reach, max(y + z / 2) over its keys (UpdateCurve's
+    /// "peak lifetime"); -infinity when empty.
+    f32 peak() const;
 };
 
-/// Parsed emitter blueprint data — cached per blueprint path.
-struct EmitterBlueprintData {
-    std::string blueprint_id;
-    f32 lifetime = 1.0f;
-    f32 repeattime =
-        0.0f; // ticks: the emission curves' period in Moho (not a pause between bursts)
-    u32 texture_frame_count = 1;
-    u32 texture_strip_count = 1;
-    u32 blendmode = 0; // FA's Blendmode: 3 is additive (glows, sparks, mist)
-    f32 lod_cutoff = 300.0f;
-    f32 sort_order = 0;
+/// The curves of an emitter blueprint, in Moho's EEmitterCurve order.
+enum EmitterCurveId : u8 {
+    kXDirection,
+    kYDirection,
+    kZDirection,
+    kEmitRate,
+    kLifetime,
+    kVelocity,
+    kXAccel,
+    kYAccel,
+    kZAccel,
+    kResistance,
+    kSize,
+    kXPosition,
+    kYPosition,
+    kZPosition,
+    kStartSize,
+    kEndSize,
+    kInitialRotation,
+    kRotationRate,
+    kFrameRate,
+    kTextureSelection,
+    kRampSelection,
+    kEmitterCurveCount
+};
 
-    bool local_velocity = false;
+/// An `EmitterBlueprint { ... }` (M214c), with Moho's defaults
+/// (REmitterBlueprint) for what it leaves out.
+struct EmitterBlueprintData {
+    std::string blueprint_id; ///< its VFS path
+    f32 lifetime = 0.0f;      ///< ticks it emits (negative: until its effect ends)
+    f32 repeattime = 0.0f;    ///< ticks: the period its curves are read over
+    f32 frame_count = 0.0f;   ///< TextureFramecount: frames across its texture
+    f32 strip_count = 1.0f;   ///< TextureStripcount: strips down it
+    i32 blendmode = 0;        ///< particle.fx's TRamp suffix (5: REFRACT)
+    f32 lod_cutoff = 100.0f;  ///< emits within this of the camera
+    f32 sort_order = 0.0f;    ///< below 0, drawn under the water
+    bool local_velocity = true;
     bool local_acceleration = false;
     bool gravity = false;
     bool align_rotation = false;
     bool align_to_bone = false;
     bool flat = false;
-    bool emit_if_visible = true;    ///< emits only while the player's army sees it
-    bool create_if_visible = false; ///< made only if the player's army sees it then
+    bool emit_if_visible = true; ///< emits only while the player could see it
     bool catchup_emit = true;
-    bool snap_to_waterline = false;
-    bool only_emit_on_water = false;
+    bool create_if_visible = false; ///< made only if the player could see it then
+    bool particle_resistance = false;
     bool interpolate_emission = true;
+    bool snap_to_waterline = true;
+    bool only_emit_on_water = false;
+    std::string texture;      ///< Texture
+    std::string ramp_texture; ///< RampTexture: colour over a particle's life
+    std::array<EmitterCurve, kEmitterCurveCount> curves;
+    /// UpdateCurve's mMaxLifetime: the longest a particle lives, in whole
+    /// ticks, which bounds how far back it catches up.
+    i32 max_lifetime = 0;
 
-    std::string texture_path;
-    std::string ramp_texture_path;
-
-    // Emitter-level curves (parameterize emission over emitter lifetime)
-    EmitterCurve emit_rate;
-    EmitterCurve x_direction, y_direction, z_direction;
-    EmitterCurve velocity;
-    EmitterCurve x_accel, y_accel, z_accel;
-    EmitterCurve x_pos, y_pos, z_pos;
-
-    // Per-particle curves (parameterize particle properties at spawn)
-    EmitterCurve lifetime_curve; // particle lifetime
-    EmitterCurve start_size, end_size, size_curve;
-    EmitterCurve initial_rotation, rotation_rate;
-    EmitterCurve frame_rate;
-    EmitterCurve texture_selection, ramp_selection;
+    const EmitterCurve& curve(EmitterCurveId id) const { return curves[id]; }
+    /// Its texture has frames or strips to pick from (TRampAnimate*).
+    bool animated() const { return frame_count > 1.0f || strip_count > 1.0f; }
 };
 
-/// Cache of parsed EmitterBlueprintData, keyed by VFS path.
+/// Emitter blueprints by VFS path, read as the beam and trail caches read
+/// theirs. Null for a path that isn't an emitter's; a failed path is
+/// remembered.
 class EmitterBlueprintCache {
 public:
-    /// Emitter blueprints are read through the game's VFS (they live in
-    /// effects.scd); without one every lookup fails.
     void set_vfs(const vfs::VirtualFileSystem* vfs) { vfs_ = vfs; }
-
-    /// The emitter blueprint at `bp_path` (a VFS path), loaded on first use:
-    /// the file is run in `L` with EmitterBlueprint capturing the table it
-    /// is called with (FA .bp files are `EmitterBlueprint { ... }`
-    /// statements, not returns). Null if it can't be loaded; a failed path
-    /// is remembered and not retried.
-    const EmitterBlueprintData* get(const std::string& bp_path, lua_State* L);
-
-    void clear() { cache_.clear(); failed_.clear(); }
+    const EmitterBlueprintData* get(const std::string& path, lua_State* L);
+    void clear() {
+        cache_.clear();
+        failed_.clear();
+    }
 
 private:
-    static EmitterBlueprintData parse_from_lua(lua_State* L, int table_idx);
-    static EmitterCurve parse_curve(lua_State* L, int table_idx, const char* field_name);
-    bool load(const std::string& bp_path, lua_State* L, EmitterBlueprintData& out) const;
-
     const vfs::VirtualFileSystem* vfs_ = nullptr;
     std::unordered_map<std::string, EmitterBlueprintData> cache_;
     std::unordered_set<std::string> failed_;

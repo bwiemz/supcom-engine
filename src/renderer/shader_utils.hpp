@@ -30,8 +30,8 @@ extern const char* shadow_frag;       // empty (depth-only write)
 extern const char* shadow_mesh_frag;  // mesh shadows, cut by the albedo's alpha (M211j)
 extern const char* ui_vert;           // 2D UI quad (pixel coords → NDC)
 extern const char* ui_frag;           // 2D UI quad (texture * color)
-extern const char* particle_vert;     // 3D billboard particle (instanced)
-extern const char* particle_frag;     // textured particle with alpha/additive
+extern const char* particle_vert;     // FA's particle quad (M214c: WorldVS)
+extern const char* particle_frag;     // particle.fx's WorldPS: texture × ramp
 extern const char* beam_vert;         // FA's beam strip (M214a)
 extern const char* beam_frag;         // particle.fx's BeamPS: texture × colour
 extern const char* trail_vert;        // FA's trail ribbon (M214b)

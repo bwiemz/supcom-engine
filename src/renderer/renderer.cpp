@@ -349,9 +349,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Overlay renderer (health bars, selection, command lines)
     overlay_renderer_.init(device_, allocator_);
 
-    // Particle renderer (emitter-driven billboard particles — scene render pass)
-    particle_renderer_.init(device_, allocator_, scene_render_pass_,
-                            texture_ds_layout_, texture_sampler_);
+    // FA's particles, in the scene pass (M214c)
+    particle_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's beams, in the scene pass too (M214a)
     beam_renderer_.init(device_, allocator_, scene_render_pass_, texture_ds_layout_);
     // FA's trails, likewise (M214b)
@@ -371,6 +370,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     particle_system_.set_recon(&recon_);
     overlay_renderer_.set_beams(&beam_renderer_);
     overlay_renderer_.set_trails(&trail_renderer_);
+    overlay_renderer_.set_particles(&particle_system_);
 
     // HUD renderer (economy bars)
     hud_renderer_.init(device_, allocator_);
@@ -1589,6 +1589,7 @@ void Renderer::clear_scene() {
     }
     particle_system_.clear();
     emitter_bp_cache_.clear();
+    terrain_ = nullptr;
     beam_bp_cache_.clear();
     // The trails' segments point into their blueprint cache (M214b).
     trail_renderer_.clear();
@@ -1641,6 +1642,7 @@ void Renderer::build_scene(const map::Terrain* terrain, blueprints::BlueprintSto
     emitter_bp_cache_.set_vfs(vfs);
     beam_bp_cache_.set_vfs(vfs);
     trail_bp_cache_.set_vfs(vfs);
+    terrain_ = terrain; // the water particles snap to (M214c)
     if (!terrain) {
         spdlog::warn("No terrain loaded — skipping scene build");
         return;
@@ -2311,17 +2313,12 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                                  frame_dt_, &frustum);
     }
 
-    // Update particle system (sync effects, step physics, build GPU data)
+    // FA's particles: a new tick's emission, then this frame's quads (M214c)
     {
         PROFILE_ZONE("Render::particle_update");
-        particle_system_.sync_effects(view, emitter_bp_cache_, L);
-        particle_system_.update(frame_dt_);
+        particle_system_.update(view, camera_, &frustum, emitter_bp_cache_, L, terrain_);
+        particle_renderer_.update(particle_system_, texture_cache_, fi);
     }
-    f32 p_eye_x, p_eye_y, p_eye_z;
-    camera_.eye_position(p_eye_x, p_eye_y, p_eye_z);
-    const auto& particle_instances = particle_system_.build_instances(
-        p_eye_x, p_eye_y, p_eye_z, &frustum);
-    particle_renderer_.update(particle_instances, particle_system_, texture_cache_, fi);
 
     // Update minimap (terrain bg, unit dots, camera frustum box)
     if (legacy_hud_active_)
@@ -2820,7 +2817,9 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
                          unit_renderer_.cube_instance_count(), 0, 0, 0);
     }
 
-    // 4b. FA's trails under the water, a negative SortOrder's (M214b)
+    // 4b. FA's particles and trails under the water, a negative SortOrder's
+    // (M214b-c)
+    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
     trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), true, fi);
 
     // 5. Draw water (tessellated grid with wave animation, depth coloring)
@@ -2847,25 +2846,10 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
         vkCmdDrawIndexed(cmd_buf_[fi], water_renderer_.index_count(), 1, 0, 0, 0);
     }
 
-    // 5b. Draw particles (billboard emitter effects)
-    if (particle_renderer_.draw_count() > 0) {
-        // Extract camera right and up vectors from the view matrix
-        // View matrix row 0 = right, row 1 = up (transposed from columns)
-        auto view = camera_.view();
-        // Column-major layout: row 0 = right, row 1 = up
-        // Row i elements are at indices [i], [i+4], [i+8] in column-major
-        f32 cam_right[3] = {view[0], view[4], view[8]};
-        f32 cam_up[3] = {view[1], view[5], view[9]};
-
-        particle_renderer_.render(cmd_buf_[fi],
-                                  window_width_, window_height_,
-                                  vp.data(), cam_right, cam_up, fi);
-    }
-
-    // 5c. FA's beams (M214a)
+    // 5b. FA's beams (M214a), then particles (M214c) and trails (M214b), as
+    // Moho's CWorldParticles::RenderEffects draws them
     beam_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), fi);
-
-    // 5d. And the other trails (M214b)
+    particle_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
     trail_renderer_.render(cmd_buf_[fi], window_width_, window_height_, vp.data(), false, fi);
 
     // ==================== COMPOSITE + BLOOM ====================
@@ -3121,9 +3105,10 @@ void Renderer::dump_frame(std::ostream& out) const {
     }
     std::vector<std::string> emitters;
     for (const auto& e : particle_system_.emitters()) {
-        emitters.push_back(fmt::format("{} {} {:.4f} {:.4f} {:.4f}", e.effect_id,
-                                       e.active ? "on" : "off", e.origin_x, e.origin_y,
-                                       e.origin_z));
+        emitters.push_back(fmt::format("{} {} | {:.4f} {:.4f} {:.4f} | clock {:.0f} missed {} {}",
+                                       e.effect_id, e.blueprint, e.position.x, e.position.y,
+                                       e.position.z, e.clock, e.missed,
+                                       e.seen ? "seen" : "unseen"));
     }
     section("emitters", std::move(emitters));
 }

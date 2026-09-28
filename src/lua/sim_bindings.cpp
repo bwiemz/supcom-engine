@@ -2760,6 +2760,19 @@ static void time_emitter(lua_State* L, sim::SimState& sim, sim::IEffect& fx) {
 
 // CreateEmitterAtEntity(entity, army, blueprintPath): an emitter where the
 // entity is, not attached to it.
+// Where an At-emitter is made: its entity's bone as it is now (M214c; the
+// entity itself for a bone it doesn't have, or one that isn't a unit). It
+// stays there, as Moho's emitter keeps the matrix it was made with.
+static void frame_at(sim::IEffect& fx, const sim::Entity* entity, i32 bone) {
+    if (!entity) return;
+    if (entity->is_unit()) {
+        const auto& unit = static_cast<const sim::Unit&>(*entity);
+        fx.set_frame(unit.bone_world_position(bone), unit.bone_world_rotation(bone));
+        return;
+    }
+    fx.set_frame(entity->position(), entity->orientation());
+}
+
 static int l_CreateEmitterAtEntity(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
@@ -2771,6 +2784,7 @@ static int l_CreateEmitterAtEntity(lua_State* L) {
     fx->set_entity_id(entity ? entity->entity_id() : 0);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
+    frame_at(*fx, entity, -1);
     time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;
@@ -2813,6 +2827,7 @@ static int l_CreateEmitterAtBone(lua_State* L) {
     fx->set_bone_index(bone);
     fx->set_army(army);
     fx->set_blueprint_path(bp);
+    frame_at(*fx, entity, bone);
     time_emitter(L, *sim, *fx);
     push_ieffect_table(L, fx);
     return 1;

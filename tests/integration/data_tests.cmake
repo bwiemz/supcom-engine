@@ -44,7 +44,7 @@ set(OSC_DATA_TESTS_GATE
     jammer-test
     layercap-test lighting-test los-test material-test bloom-test build-shader-test effect-mesh-test skinning-test prop-material-test clipped-shadow-test lowstub-test manip-test massstub-test massstub2-test missile-test
     massstub3-test massstub4-test medstub-test meshless-test move-test naval-depth-test normal-test
-    onframe-test path-test phase2-test phase3-test phase4-test phase5-test
+    onframe-test particle-render-test path-test phase2-test phase3-test phase4-test phase5-test
     platoon-test prebuilt-test profile-test projectile-test prop-test range-test reclaim-test
     repair-test right-click-test scale-test scissor-test scrollbar-render-test shadow-test
     shield-render-test shield-test silo-test smoke-test spatial-test strata-test

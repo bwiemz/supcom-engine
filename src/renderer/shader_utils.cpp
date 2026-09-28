@@ -1357,80 +1357,53 @@ void main() {
 const char* particle_vert = R"glsl(
 #version 450
 
+// FA's particles (M214c): particle.fx's WorldVS, its motion found on the
+// CPU; each instance is a quad's centre and the axes its corners span.
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
-    vec3 camRight;
-    float _pad0;
-    vec3 camUp;
-    float _pad1;
 } pc;
 
-// Per-instance data (binding 0, instance rate)
-layout(location = 0) in vec3 inPos;       // world position
-layout(location = 1) in float inSize;     // billboard half-extent
-layout(location = 2) in float inRotation; // rotation in radians
-layout(location = 3) in float inAlpha;
-layout(location = 4) in vec2 inUVOffset;  // texture frame offset
-layout(location = 5) in vec2 inUVSize;    // texture frame size
-layout(location = 6) in vec3 inColor;     // tint
-layout(location = 7) in float inRampU;    // life fraction
+layout(location = 0) in vec3 inCenter;
+layout(location = 1) in vec3 inAxisX;
+layout(location = 2) in vec3 inAxisY;
+layout(location = 3) in vec4 inUV;   // u offset, u span, v offset, v span
+layout(location = 4) in vec2 inRamp; // age / lifetime, ramp selection
 
 layout(location = 0) out vec2 fragUV;
-layout(location = 1) out vec4 fragColor;
-layout(location = 2) out float fragRampU;
+layout(location = 1) out vec2 fragRamp;
 
 void main() {
-    // 6 vertices per quad (2 triangles)
-    vec2 corner;
-    int idx = gl_VertexIndex;
-    if (idx == 0)      corner = vec2(-1, -1);
-    else if (idx == 1) corner = vec2( 1, -1);
-    else if (idx == 2) corner = vec2( 1,  1);
-    else if (idx == 3) corner = vec2(-1, -1);
-    else if (idx == 4) corner = vec2( 1,  1);
-    else               corner = vec2(-1,  1);
-
-    // Apply rotation
-    float c = cos(inRotation);
-    float s = sin(inRotation);
-    vec2 rotated = vec2(
-        corner.x * c - corner.y * s,
-        corner.x * s + corner.y * c
-    );
-
-    // Billboard offset in world space
-    vec3 worldPos = inPos
-        + pc.camRight * rotated.x * inSize
-        + pc.camUp    * rotated.y * inSize;
-
-    gl_Position = pc.viewProj * vec4(worldPos, 1.0);
-
-    // UV: map corner [-1,1] to [0,1] then scale to frame
-    vec2 uv01 = corner * 0.5 + 0.5;
-    fragUV = inUVOffset + uv01 * inUVSize;
-
-    fragColor = vec4(inColor, inAlpha);
-    fragRampU = inRampU;
+    // 6 vertices per quad (2 triangles), corners at (+-1, +-1).
+    const vec2 corners[6] = vec2[](vec2(-1, -1), vec2(1, -1), vec2(1, 1),
+                                   vec2(-1, -1), vec2(1, 1), vec2(-1, 1));
+    vec2 corner = corners[gl_VertexIndex];
+    gl_Position = pc.viewProj * vec4(inCenter + corner.x * inAxisX + corner.y * inAxisY, 1.0);
+    // WorldVS: (corner + 1) / 2, in the frame and strip it shows.
+    fragUV = vec2((corner.x + 1.0) * 0.5 * inUV.y + inUV.x, (corner.y + 1.0) * 0.5 * inUV.w + inUV.z);
+    fragRamp = inRamp;
 }
 )glsl";
 
 const char* particle_frag = R"glsl(
 #version 450
 
-layout(set = 0, binding = 0) uniform sampler2D texSampler;
-layout(set = 1, binding = 0) uniform sampler2D rampSampler; // colour over life
+layout(set = 0, binding = 0) uniform sampler2D texParticle; // ParticleSampler0: U wraps, V clamps
+layout(set = 1, binding = 0) uniform sampler2D texRamp;     // ParticleSampler1: clamps
 
 layout(location = 0) in vec2 fragUV;
-layout(location = 1) in vec4 fragColor;
-layout(location = 2) in float fragRampU;
+layout(location = 1) in vec2 fragRamp;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec4 texColor = texture(texSampler, fragUV);
-    vec4 ramp = texture(rampSampler, vec2(clamp(fragRampU, 0.0, 1.0), 0.5));
-    outColor = texColor * fragColor * ramp;
-    if (outColor.a < 0.01) discard;
+    // The cache's sampler repeats: clamp by keeping lookups within the edge
+    // texels' centres.
+    vec2 texHalf = 0.5 / vec2(textureSize(texParticle, 0));
+    vec2 uv = vec2(fragUV.x, clamp(fragUV.y, texHalf.y, 1.0 - texHalf.y));
+    vec2 rampHalf = 0.5 / vec2(textureSize(texRamp, 0));
+    vec2 rampUV = clamp(fragRamp, rampHalf, 1.0 - rampHalf);
+    // WorldPS: the texture times its ramp.
+    outColor = texture(texParticle, uv) * texture(texRamp, rampUV);
 }
 )glsl";
 

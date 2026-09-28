@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "sim/entity.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -118,6 +119,18 @@ public:
     f64 lifetime() const { return lifetime_; }
     void set_birth_time(f64 t) { birth_time_ = t; }
 
+    /// Where an At-emitter was made (CreateEmitterAtEntity/AtBone: its
+    /// entity's bone as it was then; M214c). It stays there: only attached
+    /// emitters follow their bone.
+    bool has_frame() const { return has_frame_; }
+    const Vector3& frame_position() const { return frame_position_; }
+    const Quaternion& frame_rotation() const { return frame_rotation_; }
+    void set_frame(const Vector3& position, const Quaternion& rotation) {
+        has_frame_ = true;
+        frame_position_ = position;
+        frame_rotation_ = rotation;
+    }
+
     /// Light particle specific fields.
     f32 light_size() const { return light_size_; }
     void set_light_size(f32 s) { light_size_ = s; }
@@ -148,6 +161,9 @@ private:
     f64 ends_at_ = -1.0;    // an emitter's end (see ends_at)
     u32 created_tick_ = 0;
     bool has_emitter_blueprint_ = false;
+    bool has_frame_ = false;
+    Vector3 frame_position_;
+    Quaternion frame_rotation_;
 
     // Light particle fields
     f32 light_size_ = 0;

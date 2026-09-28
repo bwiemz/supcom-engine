@@ -434,8 +434,8 @@ void test_effect_intel(TestContext& ctx) {
 
     std::vector<Spot> scry = {seen_at};
     sim::WorldHistory seen;
-    // The world `ticks` on, each drawn for its 6 frames (particles emit as
-    // frames pass: a sixth of a tick each at 60 a second).
+    // The world `ticks` on, each drawn for its 6 frames (particles emit
+    // once a tick, M214c).
     const auto next = [&](int ticks = 1) {
         for (int i = 0; i < ticks; ++i) {
             for (const Spot& at : scry)
@@ -448,15 +448,14 @@ void test_effect_intel(TestContext& ctx) {
         seen.capture(ctx.sim);
         return drawn(r);
     };
-    // The emitter the renderer made for unit `id`'s effect of blueprint
-    // `bp`, or null (none made, or no such effect).
-    const auto emitter_of = [&](u32 id, const std::string& bp) -> const renderer::EmitterState* {
+    // The effect id of the emitter the renderer made for unit `id`'s effect
+    // of blueprint `bp`, or 0 (none made, or no such effect).
+    const auto emitter_of = [&](u32 id, const std::string& bp) -> u32 {
         for (const sim::EffectRecord& fx : seen.cur().effects) {
             if (fx.entity_id != id || fx.blueprint_path != bp) continue;
-            for (const auto& es : r.particle_system().emitters())
-                if (es.effect_id == fx.id) return &es;
+            if (r.particle_system().draws_effect(fx.id)) return fx.id;
         }
-        return nullptr;
+        return 0;
     };
     const auto has_effect = [&](u32 id, const std::string& bp) {
         return std::any_of(seen.cur().effects.begin(), seen.cur().effects.end(),
@@ -464,8 +463,15 @@ void test_effect_intel(TestContext& ctx) {
                                return fx.entity_id == id && fx.blueprint_path == bp;
                            });
     };
-    const auto particles = [](const renderer::EmitterState* es) {
-        return es ? es->particles.size() : size_t{0};
+    // The particles effect `fx` has out this frame.
+    const auto particles = [&](u32 fx) {
+        const auto& all = r.particle_system().drawn();
+        return fx ? static_cast<size_t>(
+                        std::count_if(all.begin(), all.end(),
+                                      [fx](const renderer::ParticleSystem::Drawn& d) {
+                                          return d.effect_id == fx;
+                                      }))
+                  : size_t{0};
     };
     // The overlay's dot for an effect on unit `id` (4 across, where it is).
     const auto dot_on = [&](const Frame& f, u32 id) {
@@ -476,12 +482,18 @@ void test_effect_intel(TestContext& ctx) {
 
     // Test 1: the steady emitter emits where the player's army sees it,
     // not in the fog; the CreateIfVisible one is made only in sight.
+    // (And one of a blueprint it can't read, which the overlay marks.)
     run_lua(ctx, fmt::format("for _, u in {{__osc_fx_seen, __osc_fx_fog}} do\n"
                              "  CreateEmitterOnEntity(u, 2, '{}')\n"
                              "  CreateEmitterOnEntity(u, 2, '{}')\n"
+                             "  CreateEmitterOnEntity(u, 2, '{}/no_such_emit.bp')\n"
                              "end\n",
-                             steady, create));
+                             steady, create, kRoot));
     (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 20, 150.0f);
+    // The emitters emit only within their LODCutoff (100) of the camera
+    // (M214c): look from 80, between the two units.
+    r.camera().set_target(sx + 20, sz);
+    r.camera().set_distance(80.0f);
     Frame f = next(3);
     const bool made = has_effect(seen_id, steady) && has_effect(fog_id, steady) &&
                       has_effect(seen_id, create) && has_effect(fog_id, create);
@@ -496,7 +508,8 @@ void test_effect_intel(TestContext& ctx) {
                         emitter_of(seen_id, create) ? "made" : "not made",
                         emitter_of(fog_id, create) ? "made" : "not made"));
     t.check(dot_on(f, seen_id) && !dot_on(f, fog_id),
-            fmt::format("Test 3: the overlay marks the effect in sight ({}), not in the fog ({})",
+            fmt::format("Test 3: the overlay marks an effect it can't draw in sight ({}), not "
+                        "in the fog ({})",
                         dot_on(f, seen_id) ? "marked" : "not",
                         dot_on(f, fog_id) ? "marked" : "not"));
 
@@ -511,6 +524,8 @@ void test_effect_intel(TestContext& ctx) {
                         particles(emitter_of(fog_id, steady)),
                         emitter_of(fog_id, create) ? "made" : "not made"));
     scry.pop_back();
+    r.camera().set_target(sx, sz + 20);
+    r.camera().set_distance(150.0f);
 
     // Test 5: a beam between two of ARMY_2's in the fog doesn't draw; one
     // with an end in sight does: as FA draws it (a BeamBlueprint's, M214a)

@@ -856,6 +856,9 @@ public:
     /// world as the sim poses it: an effect's offset from its bone (the
     /// unit's own frame if the bone doesn't exist).
     Vector3 bone_world_point(i32 bone, const Vector3& local) const;
+    /// A bone's rotation in the world as the sim poses it (the unit's own if
+    /// the bone doesn't exist).
+    Quaternion bone_world_rotation(i32 bone) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
     void release_manipulators(lua_State* L);

@@ -433,6 +433,8 @@ private:
     ParticleSystem particle_system_;
     ParticleRenderer particle_renderer_;
     EmitterBlueprintCache emitter_bp_cache_;
+    /// The map build_scene drew (its water, for particles; M214c).
+    const map::Terrain* terrain_ = nullptr;
     BeamRenderer beam_renderer_;
     BeamBlueprintCache beam_bp_cache_;
     TrailRenderer trail_renderer_;

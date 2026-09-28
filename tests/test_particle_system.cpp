@@ -1,96 +1,139 @@
-// The renderer runs an emitter as long as Moho does: its Lifetime in ticks,
-// rounded up, however long its Repeattime; a negative Lifetime emits on.
+// FA's particles (M214c), as Moho's CEfxEmitter emits them and particle.fx's
+// WorldVS moves them: curves read in ticks (SEfxCurve::GetValue), at the
+// emitter's clock modulo its Repeattime; the emit rate's fraction carried
+// from tick to tick; each particle moving by itself from its spawn state.
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "lua/lua_state.hpp"
+#include "renderer/camera.hpp"
 #include "renderer/emitter_blueprint.hpp"
 #include "renderer/particle_system.hpp"
 #include "sim/world_snapshot.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/virtual_file_system.hpp"
 
-#include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
 namespace fs = std::filesystem;
 
-// An emitter that emits 10 particles a tick, each living 50 ticks.
-void write_emitter(const fs::path& dir, const std::string& name, const std::string& timing) {
-    std::ofstream(dir / (name + "_emit.bp"))
-        << "EmitterBlueprint {\n"
-        << timing
-        << "    EmitRateCurve = { XRange = 1, Keys = { { x = 0, y = 10, z = 0 } } },\n"
-           "    LifetimeCurve = { XRange = 1, Keys = { { x = 0, y = 50, z = 0 } } },\n"
-           "}\n";
+/// A curve of constant keys (no spread).
+osc::renderer::EmitterCurve keys(std::vector<osc::renderer::CurveKey> k) {
+    return osc::renderer::EmitterCurve{std::move(k)};
 }
 
 } // namespace
 
-TEST_CASE("Emitters emit for their Lifetime in whole ticks, not their Repeattime",
+TEST_CASE("Emitter curves read as Moho's SEfxCurve::GetValue", "[renderer][emitter]") {
+    const auto half = [] { return 0.5f; }; // no spread's worth of randomness
+    const auto c = keys({{2, 10, 0}, {6, 30, 0}});
+    CHECK(c.value(0, half) == 10.0f); // before the first key: that key
+    CHECK(c.value(2, half) == 10.0f); // at a key: interpolated from it
+    CHECK(c.value(4, half) == 20.0f); // between two: interpolated
+    CHECK(c.value(9, half) == 30.0f); // past the last: that key
+    CHECK(keys({}).value(3, half) == 0.0f);
+    CHECK(c.value(std::nanf(""), half) == 10.0f); // Repeattime 0's NaN: the first key
+
+    // Its spread z is the whole width of the random range about y.
+    const auto spread = keys({{0, 5, 4}});
+    CHECK(spread.value(0, [] { return 0.0f; }) == 3.0f);
+    CHECK(spread.value(0, [] { return 1.0f; }) == 7.0f);
+    CHECK(spread.peak() == 7.0f); // y + z/2, the longest life it gives
+}
+
+TEST_CASE("Emitters emit their rate's whole part each tick, curves read at their clock",
           "[renderer][emitter]") {
     const fs::path root = fs::temp_directory_path() / "osc_particle_system_test";
     fs::remove_all(root);
     const fs::path dir = root / "effects" / "Emitters";
     fs::create_directories(dir);
-    write_emitter(dir, "flash", "    Lifetime = 0.1,\n    Repeattime = 0.1,\n");
-    write_emitter(dir, "plume", "    Lifetime = 2,\n    Repeattime = 6,\n");
-    write_emitter(dir, "smoke", "    Lifetime = -1,\n    Repeattime = 50,\n");
-    write_emitter(dir, "none", "    Lifetime = 0,\n");
+    // 2.5 a tick; and one whose rate is 1 for phases 0-2 and 5 at phase 3,
+    // over a Repeattime of 4. Both emit straight along their frame's +X at 2
+    // a tick, falling 1 a tick², living 50 ticks, emitting at the tick's
+    // start (no interpolation), seen or not.
+    const std::string common = "    Lifetime = -1,\n    InterpolateEmission = false,\n"
+                               "    EmitIfVisible = false,\n"
+                               "    SnapToWaterline = false,\n"
+                               "    LifetimeCurve = { Keys = { { x = 0, y = 50, z = 0 } } },\n"
+                               "    XDirectionCurve = { Keys = { { x = 0, y = 1, z = 0 } } },\n"
+                               "    VelocityCurve = { Keys = { { x = 0, y = 2, z = 0 } } },\n"
+                               "    YAccelCurve = { Keys = { { x = 0, y = -1, z = 0 } } },\n";
+    std::ofstream(dir / "steady_emit.bp")
+        << "EmitterBlueprint {\n"
+        << common << "    Repeattime = 10,\n"
+        << "    EmitRateCurve = { Keys = { { x = 0, y = 2.5, z = 0 } } },\n}\n";
+    std::ofstream(dir / "pulse_emit.bp")
+        << "EmitterBlueprint {\n"
+        << common << "    Repeattime = 4,\n"
+        << "    EmitRateCurve = { Keys = { { x = 0, y = 1, z = 0 }, { x = 2, y = 1, z = 0 }, "
+           "{ x = 2.001, y = 5, z = 0 } } },\n}\n";
 
     osc::vfs::VirtualFileSystem vfs;
     vfs.mount("/", std::make_unique<osc::vfs::DirectoryMount>(root));
     osc::lua::LuaState lua;
     osc::renderer::EmitterBlueprintCache cache;
     cache.set_vfs(&vfs);
-
-    osc::sim::WorldSnapshot snap;
-    const std::array<const char*, 4> names = {"flash", "plume", "smoke", "none"};
-    for (size_t i = 0; i < names.size(); ++i) {
-        osc::sim::EffectRecord fx;
-        fx.id = static_cast<osc::u32>(i + 1);
-        fx.blueprint_path = std::string("/effects/emitters/") + names[i] + "_emit.bp";
-        snap.effects.push_back(fx);
-    }
+    osc::renderer::Camera camera;
     osc::renderer::ParticleSystem ps;
-    ps.sync_effects(osc::sim::FrameView(&snap, &snap, 1.0f), cache, lua.raw());
-    REQUIRE(ps.emitter_count() == 4);
 
-    const auto find = [&](osc::u32 id) -> const osc::renderer::EmitterState* {
-        for (const auto& es : ps.emitters())
-            if (es.effect_id == id) return &es;
-        return nullptr; // done, and its particles gone
+    const auto emitter = [](osc::u32 id, const char* name, osc::sim::Quaternion turn) {
+        osc::sim::EffectRecord fx;
+        fx.id = id;
+        fx.type = osc::sim::EffectType::EMITTER_AT_ENTITY;
+        fx.blueprint_path = std::string("/effects/emitters/") + name + "_emit.bp";
+        fx.framed = true;
+        fx.frame_position = {10, 20, 30};
+        fx.frame_rotation = turn;
+        return fx;
     };
-    const auto active = [&](osc::u32 id) {
-        const auto* es = find(id);
-        return es && es->active;
+    // The pulse's frame turned a quarter about Y: its +X is the world's -Z.
+    const osc::sim::Quaternion quarter{0, std::sqrt(0.5f), 0, std::sqrt(0.5f)};
+    std::vector<osc::sim::WorldSnapshot> ticks(9);
+    for (osc::u32 t = 0; t < ticks.size(); ++t) {
+        ticks[t].tick = t + 1;
+        ticks[t].effects = {emitter(1, "steady", {}), emitter(2, "pulse", quarter)};
+    }
+    const auto count = [&](osc::u32 id) {
+        size_t n = 0;
+        for (const auto& d : ps.drawn()) n += d.effect_id == id ? 1 : 0;
+        return n;
     };
-    const auto particles = [&](osc::u32 id) {
-        const auto* es = find(id);
-        return es ? es->particles.size() : 0;
-    };
+    std::vector<size_t> steady;
+    std::vector<size_t> pulse;
+    for (size_t t = 0; t < ticks.size(); ++t) {
+        const osc::sim::WorldSnapshot& prev = ticks[t == 0 ? 0 : t - 1];
+        ps.update(osc::sim::FrameView(&prev, &ticks[t], 1.0f), camera, nullptr, cache, lua.raw(),
+                  nullptr);
+        steady.push_back(count(1));
+        pulse.push_back(count(2));
+    }
+    // 2.5 a tick: 2, 3, 2, 3 ... (the half carried).
+    CHECK(steady == std::vector<size_t>{2, 5, 7, 10, 12, 15, 17, 20, 22});
+    // 1, 1, 1, 5 over each Repeattime of 4.
+    CHECK(pulse == std::vector<size_t>{1, 2, 3, 8, 9, 10, 11, 16, 17});
 
-    ps.update(0.05f); // half a tick
-    CHECK(active(1));
-    CHECK(particles(1) > 0); // a muzzle flash emits in its one tick
-    CHECK_FALSE(active(4));  // Lifetime 0 ends before it emits
-    CHECK(particles(4) == 0);
-
-    ps.update(0.06f); // just past one tick
-    CHECK_FALSE(active(1));
-    CHECK(particles(1) > 0); // what it emitted fades out
-    CHECK(active(2));
-
-    ps.update(0.1f); // just past two ticks
-    CHECK_FALSE(active(2));
-    ps.update(1.0f); // past its Repeattime of 6: it does not come back
-    CHECK_FALSE(active(2));
-    CHECK(active(3)); // negative Lifetime: emits on
-
+    // Each moves by itself: born at its tick, drawn a tick on (the frame's
+    // interpolant 1) and each tick after, P + V·t + ½A·t².
+    bool steady_moves = false;
+    bool pulse_turned = false;
+    for (const auto& d : ps.drawn()) {
+        const float t = d.age;
+        if (d.effect_id == 1 && std::abs(t - 3.0f) < 1e-4f)
+            steady_moves = std::abs(d.center.x - (10 + 2 * t)) < 1e-3f &&
+                           std::abs(d.center.y - (20 - 0.5f * t * t)) < 1e-3f &&
+                           std::abs(d.center.z - 30) < 1e-3f;
+        if (d.effect_id == 2 && std::abs(t - 3.0f) < 1e-4f)
+            pulse_turned = std::abs(d.center.x - 10) < 1e-3f &&
+                           std::abs(d.center.z - (30 - 2 * t)) < 1e-3f; // LocalVelocity
+    }
+    CHECK(steady_moves);
+    CHECK(pulse_turned);
     fs::remove_all(root);
 }
