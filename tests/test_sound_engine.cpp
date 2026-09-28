@@ -5,6 +5,8 @@
 #include "xact_fixtures.hpp"
 
 #include <filesystem>
+#include <random>
+#include <string>
 
 using namespace osc;
 using namespace osc::test::xact_fixtures;
@@ -19,14 +21,17 @@ namespace fs = std::filesystem;
 /// A sounds directory with the fixture banks: "Click" (0.1 s one-shot,
 /// Global) and "Shot" (Music: loops forever from 150 ms, cue limit 2, a
 /// 300 ms fade-out, a Distance falloff to -2000 mB at 1000 units). Music
-/// allows one instance and replaces the oldest.
+/// allows one instance and replaces the oldest. Each case gets its own
+/// directory, as ctest runs them in parallel.
 struct Sounds {
-    fs::path dir = fs::temp_directory_path() / "osc_sound_engine_test";
+    fs::path dir;
     /// Optionally: Music's limit and behaviour, and Click's category and
     /// priority (Shot's priority is 7).
     explicit Sounds(u8 music_limit = 1, u8 music_behavior = 2, u16 click_category = 0,
                     u8 click_priority = 0) {
-        fs::remove_all(dir);
+        std::random_device rd;
+        dir = fs::temp_directory_path() /
+              ("osc_sound_engine_test_" + std::to_string(rd()) + std::to_string(rd()));
         fs::create_directories(dir);
         u32 rpc = 0;
         write(dir / "Game.xgs", make_xgs(&rpc, music_limit, music_behavior));
