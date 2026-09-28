@@ -360,6 +360,22 @@ TEST_CASE("SCMAP parser reads the map's lighting and environment (M210a)", "[map
     CHECK_THAT(d.water_elevation, WithinAbs(25.0, 0.01));
 }
 
+TEST_CASE("SCMAP parser gives an older map SetupHorizonAndCirrus's sky (M210b)", "[map]") {
+    // Version 56 has no sky block: the dome is over the map's centre, from
+    // the water or else the terrain's floor.
+    std::vector<u16> heights(9, 512);
+    heights[4] = 256; // the floor: 256 / 128 = 2
+    auto wet = parse_scmap(build_test_scmap(2, 2, 1.0f / 128.0f, heights, true, 25.0f));
+    REQUIRE(wet.ok());
+    CHECK_THAT(wet.value().sky.elevation, WithinAbs(25.0, 1e-5));
+    CHECK_THAT(wet.value().sky.origin[0], WithinAbs(1.0, 1e-5));
+    CHECK_THAT(wet.value().sky.origin[2], WithinAbs(1.0, 1e-5));
+    CHECK(wet.value().sky.cirrus_texture == "/textures/environment/cirrus001_512.dds");
+    auto dry = parse_scmap(build_test_scmap(2, 2, 1.0f / 128.0f, heights));
+    REQUIRE(dry.ok());
+    CHECK_THAT(dry.value().sky.elevation, WithinAbs(2.0, 1e-5));
+}
+
 TEST_CASE("SCMAP parser rejects invalid magic", "[map]") {
     std::vector<u8> bad_data = {'N', 'O', 'T', 'M'};
     bad_data.resize(100, 0);

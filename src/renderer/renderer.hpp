@@ -19,6 +19,7 @@
 #include "ui/ui_dispatch.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
+#include "renderer/sky_renderer.hpp"
 #include "renderer/water_renderer.hpp"
 #include "renderer/fog_renderer.hpp"
 #include "renderer/particle_system.hpp"
@@ -168,6 +169,7 @@ public:
     const TrailRenderer& trail_renderer() const { return trail_renderer_; }
     /// The map's water (tests read its water map and Fresnel table; M213a).
     const WaterRenderer& water_renderer() const { return water_renderer_; }
+    const SkyRenderer& sky_renderer() const { return sky_renderer_; }
     /// Off, the fog of war neither dims the world nor hides what's in it.
     void set_fog_enabled(bool enabled) { fog_enabled_ = enabled; }
     bool fog_enabled() const { return fog_enabled_; }
@@ -175,6 +177,10 @@ public:
     bool decals_enabled() const { return decals_enabled_; }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     bool bloom_enabled() const { return bloom_enabled_; }
+    /// What the scene clears to: Moho's black, with no glow (M210b). The sky
+    /// dome draws over it; a test's own scenery may set another backdrop.
+    static constexpr std::array<f32, 4> kClearColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    void set_clear_color(const std::array<f32, 4>& rgba) { clear_color_ = rgba; }
     u32 stored_decal_count() const { return static_cast<u32>(stored_decals_.size()); }
     /// The runtime decals and splats (M212c), as the last frame drew them.
     const RuntimeDecalRenderer& runtime_decals() const { return runtime_decals_; }
@@ -380,6 +386,7 @@ private:
     TerrainMesh terrain_mesh_;
     UnitRenderer unit_renderer_;
     WaterRenderer water_renderer_;
+    SkyRenderer sky_renderer_; // the map's sky dome (M210b)
     FogRenderer fog_renderer_;
     UIRenderer ui_renderer_;
     MovieTextures movie_textures_; ///< Movie controls' frames (M216a)
@@ -508,6 +515,7 @@ private:
 
     // Bloom post-processing
     bool bloom_enabled_ = true;
+    std::array<f32, 4> clear_color_ = kClearColor;
     bool legacy_hud_ = false;        // --legacy-hud
     bool legacy_hud_active_ = true;  // this frame (no FA game UI, or legacy_hud_)
 

@@ -112,6 +112,10 @@ public:
     const ScmapWaterMasks& water_masks() const { return water_masks_; }
     f32 water_abyss_elevation() const { return water_abyss_elevation_; }
 
+    /// The map's sky (M210b): its dome, horizon, decals and cirrus.
+    void set_sky(ScmapSky sky) { sky_ = std::move(sky); }
+    const ScmapSky& sky() const { return sky_; }
+
     /// The map's terrain types, one TypeCode per map cell, row by row.
     void set_terrain_types(std::vector<u8> types);
     /// The terrain type at a world position: its TypeCode in
@@ -134,6 +138,7 @@ private:
     ScmapWater water_;
     ScmapWaterMasks water_masks_;
     f32 water_abyss_elevation_ = 0.0f;
+    ScmapSky sky_;
 };
 
 } // namespace osc::map

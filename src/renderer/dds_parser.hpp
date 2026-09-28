@@ -29,6 +29,9 @@ struct DDSTexture {
     /// faces * mip_count levels, face by face: face f's mip m is
     /// mips[f * mip_count + m].
     std::vector<DDSMipLevel> mips;
+    /// An alpha-only texture (D3D's A8): an R8 image, whose view reads it as
+    /// (0, 0, 0, R) as D3D samples A8.
+    bool alpha_only = false;
 };
 
 /// Parse a DDS file (BC1/BC2/BC3 compressed).

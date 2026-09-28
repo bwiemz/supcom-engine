@@ -44,6 +44,7 @@ static constexpr u32 DDSCAPS2_CUBEMAP = 0x200;
 static constexpr u32 DDSCAPS2_CUBEMAP_ALLFACES = 0xFC00;
 
 // Pixel format flags
+static constexpr u32 DDPF_ALPHA = 0x2;
 static constexpr u32 DDPF_FOURCC = 0x4;
 static constexpr u32 DDPF_RGB    = 0x40;
 
@@ -78,6 +79,7 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
     VkFormat format = VK_FORMAT_UNDEFINED;
     u32 bytes_per_block = 0;
     bool compressed = false;
+    bool alpha_only = false;
 
     if (pf_flags & DDPF_FOURCC) {
         compressed = true;
@@ -129,6 +131,11 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
             spdlog::debug("DDS: unsupported uncompressed bpp={}", bpp);
             return std::nullopt;
         }
+    } else if ((pf_flags & DDPF_ALPHA) && read_u32(raw, OFF_RGBBITCNT) == 8) {
+        // A8: the sky's horizon lookup (M210b)
+        format = VK_FORMAT_R8_UNORM;
+        bytes_per_block = 1;
+        alpha_only = true;
     } else {
         spdlog::debug("DDS: unsupported pixel format flags 0x{:08X}", pf_flags);
         return std::nullopt;
@@ -156,6 +163,7 @@ std::optional<DDSTexture> parse_dds(const std::vector<char>& file_data) {
     tex.height = height;
     tex.mip_count = mip_count;
     tex.faces = cube ? 6 : 1;
+    tex.alpha_only = alpha_only;
     tex.mips.reserve(static_cast<size_t>(mip_count) * tex.faces);
 
     size_t offset = HEADER_SIZE;

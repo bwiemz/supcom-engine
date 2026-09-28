@@ -75,6 +75,9 @@ OffscreenShots::OffscreenShots(TestContext& ctx) : ctx_(ctx) {
     // followed Moho's; a test may pitch it otherwise
     renderer_.camera().set_free(true);
     renderer_.camera().set_pitch(kPitch);
+    // The backdrop the tests' scenery stands against, past its ground: the
+    // blue-grey the engine cleared to until the sky dome (M210b), with no glow
+    renderer_.set_clear_color(kBackdrop);
     history_.capture(ctx_.sim);
     history_.capture(ctx_.sim);
 }
