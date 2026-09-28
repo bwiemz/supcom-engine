@@ -63,6 +63,18 @@ if(OSC_BUILD_TESTS)
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_link_cycles.py
                          ${CMAKE_BINARY_DIR}/osc_link_graph.txt)
         set_tests_properties(arch.link_layers PROPERTIES LABELS "arch" TIMEOUT 60)
+
+        # No string literal outgrows MSVC's caps (16,380 bytes a literal,
+        # C2026): GCC and Clang take one, so a shader grown on another
+        # platform breaks only the Windows build.
+        add_test(NAME arch.literal_size
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_literal_size.py
+                         ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/tests)
+        add_test(NAME arch.literal_size_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_literal_size.py
+                         --self-test)
+        set_tests_properties(arch.literal_size arch.literal_size_self_test
+                             PROPERTIES LABELS "arch" TIMEOUT 60)
     endif()
 endif()
 
