@@ -225,17 +225,18 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
     VkDescriptorSet bg_ds = terrain_ds_ ? terrain_ds_ : white_ds_;
     emit_quad(ax, ay, aw, ah, 1.0f, 1.0f, 1.0f, 1.0f, bg_ds);
 
-    // --- Unit dots ---
-    for (const sim::EntityRecord& entity : view.entities()) {
-        if (!entity.is_unit) continue;
+    // --- Unit dots: the world's units, then the player's remembered
+    // structures gone from it unseen (MaybeDead, darkened; M215d) ---
+    const auto dot = [&](const sim::EntityRecord& entity) {
+        if (!entity.is_unit) return;
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
-        if (!shows_icon(sight)) continue;
+        if (!shows_icon(sight)) return;
 
         auto pos = view.position(entity);
         // Map world position to minimap pixel position
         f32 nx = pos.x / map_w_; // normalized [0,1]
         f32 nz = pos.z / map_h_;
-        if (nx < 0 || nx > 1 || nz < 0 || nz > 1) continue;
+        if (nx < 0 || nx > 1 || nz < 0 || nz > 1) return;
 
         f32 dot_x = ax + nx * aw;
         f32 dot_y = ay + nz * ah;
@@ -249,11 +250,19 @@ void MinimapRenderer::build(const sim::FrameView& view, const Camera& camera,
         } else {
             get_army_color_simple(entity, view, r, g, b);
         }
+        if (recon_ && recon_->maybe_dead(entity.id)) {
+            r *= 0.5f;
+            g *= 0.5f;
+            b *= 0.5f;
+        }
 
         constexpr f32 DOT_SIZE = 3.0f;
         emit_quad(dot_x - DOT_SIZE * 0.5f, dot_y - DOT_SIZE * 0.5f,
                   DOT_SIZE, DOT_SIZE, r, g, b, 1.0f, white_ds_);
-    }
+    };
+    for (const sim::EntityRecord& entity : view.entities()) dot(entity);
+    if (recon_)
+        for (const sim::EntityRecord& ghost : recon_->ghosts()) dot(ghost);
 
     // --- Camera frustum box ---
     // Unproject the 4 screen corners to world XZ to get the camera view area

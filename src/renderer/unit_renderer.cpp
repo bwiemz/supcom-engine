@@ -259,8 +259,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
     ++frame_;
     const u32 now = view.cur() ? view.cur()->tick : 0;
     shader_time_ = std::fmod(static_cast<f32>(now) + view.alpha(), kShaderTimeWrap);
-    for (const sim::EntityRecord& entity : view.entities()) {
-        if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) continue;
+    // One entity's mesh instance (or cube): the world's, then the player's
+    // remembered structures gone from it unseen (MaybeDead; M215d).
+    const auto draw = [&](const sim::EntityRecord& entity) {
+        if (!entity.is_unit && !entity.is_prop && !entity.is_projectile) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view).
@@ -275,11 +277,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
 
         // What the player's intel doesn't show, it doesn't draw (M215a).
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
-        if (!shows_mesh(sight)) continue;
+        if (!shows_mesh(sight)) return;
         const bool remembered = sight == Sight::Remembered;
 
-        if (cube_count + mesh_count >= MAX_INSTANCES)
-            continue;
+        if (cube_count + mesh_count >= MAX_INSTANCES) return;
 
         const sim::Vector3 pos = view.position(entity);
 
@@ -292,7 +293,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
                 bound_radius = std::max(entity.scale_x * 2.0f, 2.0f);
             }
             if (!frustum->is_sphere_visible(pos.x, pos.y, pos.z, bound_radius)) {
-                continue;
+                return;
             }
         }
 
@@ -325,7 +326,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         }
 
         if (gpu) {
-            if (mesh_count >= MAX_INSTANCES) continue;
+            if (mesh_count >= MAX_INSTANCES) return;
             MeshInstance inst{};
             f32 sx = entity.scale_x * mesh_scale;
             f32 sy = entity.scale_y * mesh_scale;
@@ -384,7 +385,7 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             // only carry effects (NullShell, the ACU's warp-in) and markers.
             // A unit without one is a gap worth seeing, so it stands in as a
             // cube in its army's colour.
-            if (cube_count >= MAX_INSTANCES) continue;
+            if (cube_count >= MAX_INSTANCES) return;
             auto& inst = cube_instances[cube_count];
             inst.x = pos.x;
             inst.y = pos.y;
@@ -396,7 +397,10 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
             inst.a = a;
             cube_count++;
         }
-    }
+    };
+    for (const sim::EntityRecord& entity : view.entities()) draw(entity);
+    if (recon_)
+        for (const sim::EntityRecord& ghost : recon_->ghosts()) draw(ghost);
 
     cube_instance_count_ = cube_count;
 

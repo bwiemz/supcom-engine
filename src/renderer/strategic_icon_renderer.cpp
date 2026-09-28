@@ -464,25 +464,27 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     // selected.
     std::array<std::vector<Icon>, 4> runs;
 
-    for (const sim::EntityRecord& entity : view.entities()) {
-        if (!entity.is_unit || entity.is_being_built) continue;
+    // One unit's icon, into its run: the world's units, then the
+    // player's remembered structures gone from it unseen (M215d).
+    const auto collect = [&](const sim::EntityRecord& entity) {
+        if (!entity.is_unit || entity.is_being_built) return;
         const Sight sight = recon_ ? recon_->sight(entity) : Sight::Seen;
-        if (!shows_icon(sight)) continue;
+        if (!shows_icon(sight)) return;
 
         const IconBlueprint& bp = icon_blueprint(entity.blueprint_id, L);
         // A blip never seen has a generic icon; anything identified, its own.
         const bool identified = sight != Sight::Blip;
-        if (identified && bp.rest.empty()) continue;
+        if (identified && bp.rest.empty()) return;
         // A drawn mesh keeps its icon until the camera is out past the
         // mesh's IconFadeInZoom; a blip, having none, shows its icon at
         // any zoom.
-        if (shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) continue;
+        if (shows_mesh(sight) && cam_dist < std::min(bp.fade_in_zoom, fade_cap)) return;
 
         const sim::Vector3 pos = view.position(entity);
         f32 sx = 0;
         f32 sy = 0;
-        if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy)) continue;
-        if (sx < -32.0f || sx > sw + 32.0f || sy < -32.0f || sy > sh + 32.0f) continue;
+        if (!world_to_screen(pos.x, pos.y, pos.z, vp_matrix, sw, sh, sx, sy)) return;
+        if (sx < -32.0f || sx > sw + 32.0f || sy < -32.0f || sy > sh + 32.0f) return;
 
         const bool selected = selected_ids && selected_ids->count(entity.id) > 0;
         const std::string* path = &bp.rest;
@@ -497,7 +499,7 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
             path = &bp.selected;
         }
         const GPUTexture* tex = tex_cache.get(*path);
-        if (!tex || tex->width == 0) continue; // loading, or not there
+        if (!tex || tex->width == 0) return; // loading, or not there
 
         Icon icon;
         icon.x = std::floor(sx);
@@ -517,8 +519,18 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
                            : bp.sort_priority < static_cast<u8>('A') ? 2
                            : bp.can_fly                              ? 1
                                                                      : 0;
+        // A remembered structure maybe dead: its tint halved
+        // (DarkenRgbPreserveAlpha, for intel's MaybeDead; M215d).
+        if (recon_ && recon_->maybe_dead(entity.id)) {
+            icon.r *= 0.5f;
+            icon.g *= 0.5f;
+            icon.b *= 0.5f;
+        }
         runs[run].push_back(icon);
-    }
+    };
+    for (const sim::EntityRecord& entity : view.entities()) collect(entity);
+    if (recon_)
+        for (const sim::EntityRecord& ghost : recon_->ghosts()) collect(ghost);
 
     // The base icon tinted; the stunned badge over it at its own colour.
     const GPUTexture* stunned = tex_cache.get(stunned_);

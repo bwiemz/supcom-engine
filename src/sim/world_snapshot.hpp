@@ -72,7 +72,12 @@ struct EntityRecord {
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;
     bool is_being_built = false;
-    bool is_mobile = false;     ///< Unit::is_mobile: its blueprint's motion type (M215a)
+    bool is_mobile = false; ///< Unit::is_mobile: its blueprint's motion type (M215a)
+    /// Each army's recon of it (bit per army; M215d): in its line of sight
+    /// now (a cloak defeats vision, omni the cloak), and detected by any
+    /// sense (stealth defeats radar and sonar; radar reaches it only above
+    /// the water, sonar only in or under it).
+    u32 los_now = 0, detected = 0;
     u32 build_target_id = 0;    ///< building when non-zero
     u32 reclaim_target_id = 0;
     u32 repair_target_id = 0;

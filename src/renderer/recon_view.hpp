@@ -67,6 +67,13 @@ public:
     /// for any other entity.
     f32 frozen_fraction(u32 id, f32 live) const;
 
+    /// Remembered structures gone from the world while out of the player's
+    /// sight: Moho's MaybeDead, drawn as last seen until it sees the spot
+    /// (their records as last seen, in id order; M215d).
+    const std::vector<sim::EntityRecord>& ghosts() const { return ghosts_; }
+    /// Whether `id` is one of them (its icon is drawn darkened).
+    bool maybe_dead(u32 id) const;
+
     /// Whether it sees everything (an observer, or no grid).
     bool sees_everything() const { return everything_; }
 
@@ -91,6 +98,8 @@ private:
         bool seen_ever = false;            ///< Moho's LOSEver
         std::vector<sim::BoneMatrix> pose; ///< a structure's, as last seen
         f32 fraction = 1.0f;               ///< likewise
+        sim::EntityRecord last;            ///< likewise, the record (id 0: none)
+        bool ghost = false;                ///< gone from the world, unseen
         u64 touched = 0;                   ///< the update that last found it
     };
 
@@ -106,6 +115,7 @@ private:
     u64 update_count_ = 0;
     u32 unidentified_color_ = 0xFF808080u;
     std::unordered_map<u32, Memory> memory_;
+    std::vector<sim::EntityRecord> ghosts_;
 };
 
 } // namespace osc::renderer

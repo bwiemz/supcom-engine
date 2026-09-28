@@ -5,6 +5,7 @@
 #include "lua/lua_state.hpp"
 #include "map/terrain.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/minimap_renderer.hpp"
 #include "renderer/renderer.hpp"
 #include "sim/sim_state.hpp"
 
@@ -176,6 +177,16 @@ const Quad* quad_at(const std::vector<Quad>& quads, f32 x, f32 y, f32 w, f32 h) 
 
 bool same_colour(const Quad& q, f32 r, f32 g, f32 b) {
     return std::abs(q.r - r) < 0.01f && std::abs(q.g - g) < 0.01f && std::abs(q.b - b) < 0.01f;
+}
+
+const Quad* minimap_dot(const Frame& frame, renderer::Renderer& r, f32 map_w, f32 map_h,
+                        const sim::Vector3& p) {
+    const f32 size = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_SIZE);
+    const f32 margin = static_cast<f32>(renderer::MinimapRenderer::MINIMAP_MARGIN);
+    const renderer::MapArea area = renderer::fit_map_area(
+        margin, static_cast<f32>(r.height()) - size - margin, size, size, map_w, map_h);
+    return quad_at(frame.minimap, area.x + p.x / map_w * area.w, area.y + p.z / map_h * area.h,
+                   3.0f, 3.0f);
 }
 
 } // namespace osc::test
