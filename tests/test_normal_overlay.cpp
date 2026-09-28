@@ -100,3 +100,47 @@ TEST_CASE("bake_normal_overlay: decal outside map bounds causes no crash", "[nor
         CHECK(overlay.pixels[i] == 0.0f);
     }
 }
+
+TEST_CASE("bake_normal_overlay: a decal is placed by its corner, as Moho places it",
+          "[normal_overlay]") {
+    // CWldTerrainDecal: the footprint runs from the position along the
+    // decal's x axis (sx·cos, sx·sin) and z axis (−sz·sin, sz·cos).
+    const std::string tex_path = "/textures/corner_normal.dds";
+    auto pd = make_uniform_normal_texture(tex_path, 200, 180);
+    const auto at = [](const NormalOverlay& o, u32 x, u32 z) {
+        const u32 i = (z * o.width + x) * 2;
+        return std::abs(o.pixels[i]) + std::abs(o.pixels[i + 1]);
+    };
+
+    NormalDecalInfo decal;
+    decal.texture_path = tex_path;
+    decal.position_x = 8.0f;
+    decal.position_z = 8.0f;
+    decal.scale_x = 4.0f;
+    decal.scale_z = 4.0f;
+    decal.rotation_y = 0.0f;
+
+    // Unturned: [8, 12] on both axes. A centred decal would cover [6, 10].
+    auto square = bake_normal_overlay_with_predecoded({decal}, 16, 16, {pd});
+    CHECK(at(square, 11, 11) > 0.1f);
+    CHECK(at(square, 7, 7) == 0.0f);
+
+    // Turned a quarter: its x axis runs along +z, its z axis along -x, so
+    // it covers x in [4, 8] and z in [8, 12].
+    decal.rotation_y = 1.5707964f;
+    auto turned = bake_normal_overlay_with_predecoded({decal}, 16, 16, {pd});
+    CHECK(at(turned, 6, 9) > 0.1f);
+    CHECK(at(turned, 9, 9) == 0.0f);
+    CHECK(at(turned, 6, 7) == 0.0f);
+}
+
+TEST_CASE("decal types: which draw into the normals and which lit", "[normal_overlay]") {
+    // CWldTerrainDecal's types: Normals and Alpha Normals go to the normals
+    // (TDecalsNormals, TDecalsNormalsAlpha); Albedo and AlbedoXP draw lit
+    // (TDecals, TDecalsXP); the water and glow types do neither.
+    for (u32 raw = 0; raw <= 9; ++raw) {
+        const auto t = static_cast<DecalType>(raw);
+        CHECK(normal_decal(t) == (raw == 2 || raw == 7));
+        CHECK(lit_decal(t) == (raw == 1 || raw == 9));
+    }
+}

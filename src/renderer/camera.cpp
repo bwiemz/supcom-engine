@@ -138,7 +138,7 @@ std::array<f32, 16> Camera::view_proj(f32 aspect) const {
     f32 eye_z = tz + distance_ * std::cos(yaw_) * std::cos(pitch_);
 
     auto view = math::look_at(eye_x, eye_y, eye_z, tx, target_y_, tz, 0.0f, 1.0f, 0.0f);
-    auto proj = math::perspective(0.785f, aspect, 1.0f, 5000.0f); // 45 deg FOV
+    auto proj = math::perspective(kFovY, aspect, 1.0f, 5000.0f);
 
     return math::mat4_mul(proj, view);
 }
@@ -272,8 +272,7 @@ bool Camera::screen_ray(f32 screen_x, f32 screen_y, f32 window_w, f32 window_h, 
     f32 fx = -v[2], fy = -v[6], fz = -v[10]; // forward (negated -Z)
 
     // Half-angles from perspective
-    f32 fov = 0.785f; // 45 deg
-    f32 tan_half = std::tan(fov * 0.5f);
+    f32 tan_half = std::tan(kFovY * 0.5f);
 
     // Direction in world space
     f32 dx = fx + ndc_x * aspect * tan_half * rx + ndc_y * tan_half * ux;

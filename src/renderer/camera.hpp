@@ -16,6 +16,9 @@ namespace osc::renderer {
 /// Produces a combined view-projection matrix as push constant data.
 class Camera {
 public:
+    /// The vertical field of view (radians): 45 degrees.
+    static constexpr f32 kFovY = 0.785f;
+
     /// Initialize camera centered on map.
     void init(f32 map_width, f32 map_height);
 

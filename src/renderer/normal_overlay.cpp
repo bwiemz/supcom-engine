@@ -54,25 +54,26 @@ NormalOverlay bake_impl(
             continue;
         }
 
-        const f32 half_sx = decal.scale_x * 0.5f;
-        const f32 half_sz = decal.scale_z * 0.5f;
+        // Placed by its corner, as Moho places a decal (CWldTerrainDecal,
+        // M212b): its footprint runs from its position along its x axis
+        // (sx·cos, sx·sin) and its z axis (−sz·sin, sz·cos).
         const f32 cos_r = std::cos(decal.rotation_y);
         const f32 sin_r = std::sin(decal.rotation_y);
+        const f32 x_axis_x = decal.scale_x * cos_r;
+        const f32 x_axis_z = decal.scale_x * sin_r;
+        const f32 z_axis_x = -decal.scale_z * sin_r;
+        const f32 z_axis_z = decal.scale_z * cos_r;
 
-        // Compute axis-aligned bounding box of rotated decal in world space.
-        // The four corners in local space are (±half_sx, ±half_sz).
-        // After rotation: wx = lx*cos - lz*sin, wz = lx*sin + lz*cos.
-        const f32 abs_cos = std::abs(cos_r);
-        const f32 abs_sin = std::abs(sin_r);
-        const f32 extent_x = half_sx * abs_cos + half_sz * abs_sin;
-        const f32 extent_z = half_sx * abs_sin + half_sz * abs_cos;
-
-        // Bounding box in overlay texel coordinates.
-        // Overlay maps 1:1 with world-space XZ (texel i covers world x in [i, i+1]).
-        const f32 min_wx = decal.position_x - extent_x;
-        const f32 max_wx = decal.position_x + extent_x;
-        const f32 min_wz = decal.position_z - extent_z;
-        const f32 max_wz = decal.position_z + extent_z;
+        // Its bounds (ProjectDecalBoundsXZ), in overlay texels: the overlay
+        // maps 1:1 with world XZ (texel i covers world x in [i, i+1]).
+        const f32 min_wx =
+            decal.position_x + std::min({0.0f, x_axis_x, z_axis_x, x_axis_x + z_axis_x});
+        const f32 max_wx =
+            decal.position_x + std::max({0.0f, x_axis_x, z_axis_x, x_axis_x + z_axis_x});
+        const f32 min_wz =
+            decal.position_z + std::min({0.0f, x_axis_z, z_axis_z, x_axis_z + z_axis_z});
+        const f32 max_wz =
+            decal.position_z + std::max({0.0f, x_axis_z, z_axis_z, x_axis_z + z_axis_z});
 
         const i32 tx_min = std::max(0, static_cast<i32>(std::floor(min_wx)));
         const i32 tx_max = std::min(static_cast<i32>(overlay_w) - 1,
@@ -87,20 +88,15 @@ NormalOverlay bake_impl(
                 const f32 wx = static_cast<f32>(tx) + 0.5f;
                 const f32 wz = static_cast<f32>(tz) + 0.5f;
 
-                // Transform to decal local space (inverse rotation).
+                // Its UV: the decal's texture matrix (the corner taken
+                // away, turned by D3DX's RotationY, over the scale).
                 const f32 dx = wx - decal.position_x;
                 const f32 dz = wz - decal.position_z;
-                const f32 lx = dx * cos_r + dz * sin_r;
-                const f32 lz = -dx * sin_r + dz * cos_r;
-
-                // Check if inside decal footprint.
-                if (std::abs(lx) > half_sx || std::abs(lz) > half_sz) {
+                const f32 u = (dx * cos_r + dz * sin_r) / decal.scale_x;
+                const f32 v = (-dx * sin_r + dz * cos_r) / decal.scale_z;
+                if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) {
                     continue;
                 }
-
-                // Compute UV in decal texture [0, 1].
-                const f32 u = (lx / half_sx) * 0.5f + 0.5f;
-                const f32 v = (lz / half_sz) * 0.5f + 0.5f;
 
                 // Nearest-neighbor sample.
                 const u32 px = std::min(static_cast<u32>(u * static_cast<f32>(tex.width)),
