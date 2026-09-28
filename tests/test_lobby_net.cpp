@@ -41,10 +41,11 @@ osc::i64 now_ms() {
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-/// Poll every side until `done` holds, or two seconds pass (loopback is
+/// Poll every side until `done` holds, or `wait_ms` pass (loopback is
 /// quick, but a loaded machine schedules late).
-bool pump(const std::vector<Side*>& sides, const std::function<bool()>& done) {
-    const osc::i64 deadline = now_ms() + 2000;
+bool pump(const std::vector<Side*>& sides, const std::function<bool()>& done,
+          osc::i64 wait_ms = 2000) {
+    const osc::i64 deadline = now_ms() + wait_ms;
     while (now_ms() < deadline) {
         for (Side* s : sides) {
             auto events = s->net.poll(now_ms());
@@ -194,7 +195,11 @@ TEST_CASE("Joining nowhere fails; pings measure the host (M218a)", "[lobby]") {
     dead.reset();
     Side lost("Lost");
     REQUIRE(lost.net.join("127.0.0.1", dead_port));
-    REQUIRE(pump({&lost}, [&] { return lost.last(Kind::ConnectionFailed) != nullptr; }));
+    // Windows retries a refused connect (its SYN retransmits, about two
+    // seconds) before it says so; the join's own limit is the most it takes
+    REQUIRE(pump(
+        {&lost}, [&] { return lost.last(Kind::ConnectionFailed) != nullptr; },
+        LobbyNet::kJoinTimeoutMs + 2000));
     CHECK(lost.last(Kind::ConnectionFailed)->reason == "HostLeft");
 
     // A joined player hears from the host at least once a second, and the
