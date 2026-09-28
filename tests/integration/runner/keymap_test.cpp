@@ -137,4 +137,140 @@ void test_keymap(TestContext& ctx, ui::UIControlRegistry& registry, GameStateMan
     spdlog::info("Key map test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
+void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
+                           const std::function<void(int)>& pump_frames,
+                           const std::function<void(int)>& play,
+                           const std::function<bool(const char*)>& sim_lua) {
+    spdlog::info("=== Session command test (M217d) ===");
+    Tally t;
+    lua_State* L = ctx.L;
+    ui::UIDispatch dispatch;
+    const auto run = [&](const std::string& code) {
+        auto r = ctx.lua_state.do_string(code);
+        if (!r) osc::test_status::fail("[FAIL] session-command-test Lua: {}", r.error().message);
+        return static_cast<bool>(r);
+    };
+    const auto text = [&](const std::string& expr) {
+        if (!run("__session_value = " + expr)) return std::string("<error>");
+        lua_getglobal(L, "__session_value");
+        std::string v = lua_isstring(L, -1) ? lua_tostring(L, -1) : "<nil>";
+        lua_pop(L, 1);
+        return v;
+    };
+    const auto press = [&](int key, int mods = 0) {
+        dispatch.on_key(key, GLFW_PRESS, mods);
+        dispatch.on_key(key, GLFW_RELEASE, mods);
+        dispatch.dispatch_events(L, registry);
+        pump_frames(1);
+    };
+    // What is selected: "acu" for a commander, else the blueprint, sorted.
+    run(R"(
+        function selection_text()
+            local names = {}
+            for _, u in GetSelectedUnits() or {} do
+                if u:IsInCategory('COMMAND') then table.insert(names, 'acu')
+                else table.insert(names, u:GetBlueprint().BlueprintId) end
+            end
+            table.sort(names)
+            return table.concat(names, ',')
+        end
+        function select_by(expr)
+            ConExecute('UI_SelectByCategory ' .. expr)
+            return selection_text()
+        end
+        function mode_text()
+            local m = import('/lua/ui/game/commandmode.lua').GetCommandMode()
+            if not m or not m[1] then return 'none' end
+            return m[1] .. ':' .. ((m[2] and m[2].name) or '')
+        end
+    )");
+
+    // Two engineers and a tank beside the commander, and an enemy engineer.
+    sim_lua(R"(
+        local acu = GetArmyBrain('ARMY_1'):GetListOfUnits(categories.COMMAND, false)[1]
+        local p = acu:GetPosition()
+        session_eng1 = CreateUnitHPR('uel0105', 'ARMY_1', p[1] + 6, p[2], p[3], 0, 0, 0)
+        session_eng2 = CreateUnitHPR('uel0105', 'ARMY_1', p[1] - 6, p[2], p[3], 0, 0, 0)
+        session_tank = CreateUnitHPR('uel0201', 'ARMY_1', p[1], p[2], p[3] + 6, 0, 0, 0)
+        session_enemy = CreateUnitHPR('uel0105', 'ARMY_2', p[1], p[2], p[3] - 6, 0, 0, 0)
+    )");
+    play(1);
+
+    // FA's commanders are engineers too; TECH1 ENGINEER is an intersection.
+    const std::string engineers = text("select_by('ENGINEER')");
+    const std::string tech1 = text("select_by('ENGINEER TECH1')");
+    t.check(engineers == "acu,uel0105,uel0105" && tech1 == "uel0105,uel0105",
+            fmt::format("Test 1: UI_SelectByCategory selects the army's own units in the category "
+                        "expression, never the enemy's ({}; {})",
+                        engineers, tech1));
+    const std::string land = text("select_by('+excludeengineers LAND MOBILE')");
+    const std::string added = text("select_by('+add COMMAND')");
+    t.check(land == "uel0201" && added == "acu,uel0201",
+            fmt::format("Test 2: +excludeengineers leaves out engineers and commanders ({}); +add "
+                        "adds to the selection ({})",
+                        land, added));
+    const std::string all = text("select_by('ALLUNITS')");
+    const std::string union_of = text("select_by('COMMAND, DIRECTFIRE TECH1')");
+    const std::string one = text("select_by('+nearest ENGINEER')");
+    t.check(all == "acu,uel0105,uel0105,uel0201" && union_of == "acu,uel0201" &&
+                (one == "acu" || one == "uel0105"),
+            fmt::format("Test 3: ALLUNITS takes every unit of the army ({}), a comma unites ({}), "
+                        "+nearest takes one ({})",
+                        all, union_of, one));
+
+    // A busy engineer isn't idle; an unselectable one isn't selected.
+    sim_lua(R"(
+        local p = session_eng1:GetPosition()
+        IssueMove({session_eng1}, {p[1] + 40, p[2], p[3]})
+    )");
+    play(1);
+    const std::string idle = text("select_by('+idle ENGINEER TECH1')");
+    sim_lua("session_eng2:SetUnSelectable(true)");
+    play(1);
+    const std::string selectable = text("select_by('ENGINEER TECH1')");
+    sim_lua("session_eng2:SetUnSelectable(false)");
+    play(1);
+    t.check(idle == "uel0105" && selectable == "uel0105",
+            fmt::format("Test 4: +idle skips an engineer on its way ({}); an unselectable one is "
+                        "never selected ({})",
+                        idle, selectable));
+
+    // StartCommandMode: started for a selection with the cap, ended by the
+    // same command again, refused without the cap.
+    run("select_by('ENGINEER TECH1')");
+    run("ConExecute('StartCommandMode order RULEUCC_Move')");
+    const std::string started = text("mode_text()");
+    run("ConExecute('StartCommandMode order RULEUCC_Move')");
+    const std::string toggled = text("mode_text()");
+    run("ConExecute('StartCommandMode order RULEUCC_Nuke')");
+    const std::string refused = text("mode_text()");
+    t.check(started == "order:RULEUCC_Move" && toggled == "none" && refused == "none",
+            fmt::format("Test 5: StartCommandMode starts a mode the selection can take ({}), the "
+                        "same again ends it ({}), and one it can't take never starts ({})",
+                        started, toggled, refused));
+
+    // The hotkeys reach them: M (move), Ctrl-B (engineers), S (stop).
+    int frames = 0;
+    while (registry.input_capture() && frames < 600) {
+        pump_frames(1);
+        ++frames;
+    }
+    run("SelectUnits({})");
+    press(GLFW_KEY_B, GLFW_MOD_CONTROL);
+    const std::string by_key = text("selection_text()");
+    press(GLFW_KEY_M);
+    const std::string move_mode = text("mode_text()");
+    run("import('/lua/ui/game/commandmode.lua').EndCommandMode()");
+    press(GLFW_KEY_S);
+    play(2);
+    const std::string stopped = text("select_by('+idle ENGINEER TECH1')");
+    t.check(by_key == "acu,uel0105,uel0105" && move_mode == "order:RULEUCC_Move" &&
+                stopped == "uel0105,uel0105",
+            fmt::format("Test 6: Ctrl-B selects the engineers ({}), M starts the move mode ({}), S "
+                        "stops them (idle: {})",
+                        by_key, move_mode, stopped));
+
+    spdlog::info("Session command test: {}/{} passed", t.pass, t.pass + t.fail);
+}
+
 } // namespace osc::test
