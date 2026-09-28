@@ -28,8 +28,16 @@ EmitterBlueprint {
     Repeattime = 120.00,
     Blendmode = 3.00,
     LODCutoff = 100.00,
+    TextureFramecount = 4.00,
     Texture = [[/textures/particles/cloud_smoke_alpha_10.dds]],
     RampTexture = [[/textures/particles/ramp_white_02.dds]],
+    LifetimeCurve = {
+        XRange = 100.00,
+        Keys = {
+            { x=60.000,y=12.000,z=2.000 },
+            { x=10.000,y=20.000,z=6.000 },
+        },
+    },
 }
 )";
         // Some of retail's blueprints spell it BlendMode.
@@ -60,15 +68,31 @@ EmitterBlueprint {
         REQUIRE(bp != nullptr);
         CHECK(bp->lifetime == 80.0f);
         CHECK(bp->repeattime == 120.0f); // Moho's spelling
-        CHECK(bp->blendmode == 3u);
+        CHECK(bp->blendmode == 3);
         CHECK(bp->lod_cutoff == 100.0f);
-        CHECK(bp->texture_path == "/textures/particles/cloud_smoke_alpha_10.dds");
-        CHECK(bp->ramp_texture_path == "/textures/particles/ramp_white_02.dds");
+        CHECK(bp->frame_count == 4.0f); // TextureFramecount, as retail spells it
+        CHECK(bp->animated());
+        CHECK(bp->texture == "/textures/particles/cloud_smoke_alpha_10.dds");
+        CHECK(bp->ramp_texture == "/textures/particles/ramp_white_02.dds");
+        // Keys in order of x, however written; the longest life their peak.
+        const auto& life = bp->curve(osc::renderer::kLifetime).keys;
+        REQUIRE(life.size() == 2);
+        CHECK(life[0].x == 10.0f);
+        CHECK(life[1].x == 60.0f);
+        CHECK(bp->max_lifetime == 23); // ceil(20 + 6/2)
         const auto* spark = cache.get("/effects/emitters/spark_emit.bp", L);
         REQUIRE(spark != nullptr);
-        CHECK(spark->blendmode == 3u);
+        CHECK(spark->blendmode == 3);
         CHECK(spark->lifetime == -1.0f);
-        CHECK(spark->repeattime == 0.0f);                            // Moho's default
+        // Moho's defaults (REmitterBlueprint).
+        CHECK(spark->repeattime == 0.0f);
+        CHECK(spark->lod_cutoff == 100.0f);
+        CHECK(spark->local_velocity);
+        CHECK(spark->snap_to_waterline);
+        CHECK(spark->interpolate_emission);
+        CHECK_FALSE(spark->flat);
+        CHECK(spark->strip_count == 1.0f);
+        CHECK_FALSE(spark->animated());
         CHECK(cache.get("/effects/emitters/mist_emit.bp", L) == bp); // cached
         CHECK(lua_gettop(L) == top);
         lua_getglobal(L, "EmitterBlueprint");

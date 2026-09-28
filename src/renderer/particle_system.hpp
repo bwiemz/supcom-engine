@@ -2,128 +2,167 @@
 
 #include "core/types.hpp"
 #include "renderer/emitter_blueprint.hpp"
-#include "renderer/frustum.hpp"
+#include "sim/entity.hpp"
 
+#include <array>
+#include <deque>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+struct lua_State;
+
+namespace osc::map {
+class Terrain;
+}
+
 namespace osc::sim {
 class FrameView;
-} // namespace osc::sim
+}
 
 namespace osc::renderer {
 
+class Camera;
+class Frustum;
 class ReconView;
 
-/// A single live particle in the CPU simulation.
-struct Particle {
-    f32 pos_x = 0, pos_y = 0, pos_z = 0;
-    f32 vel_x = 0, vel_y = 0, vel_z = 0;
-    f32 accel_x = 0, accel_y = 0, accel_z = 0;
-    f32 size_start = 1.0f;
-    f32 size_end = 1.0f;
-    f32 rotation = 0;       // radians
-    f32 rotation_rate = 0;  // radians/sec
-    f32 lifetime = 1.0f;    // total lifetime
-    f32 age = 0;            // seconds alive
-    f32 frame_rate = 0;     // texture animation frame rate
-    u32 texture_frame = 0;  // starting texture frame
-    u32 ramp_frame = 0;     // ramp texture frame
-};
-
-/// Per-emitter runtime state: tracks one IEffect's emitter instance.
-struct EmitterState {
-    const EmitterBlueprintData* blueprint = nullptr;
-    u32 effect_id = 0;          // IEffect::id()
-    f32 emitter_time = 0;       // time along emitter lifetime
-    f32 emit_accumulator = 0;   // fractional particles to emit
-    f32 origin_x = 0, origin_y = 0, origin_z = 0; // world position
-    bool active = true;
-    bool visible = true; // the player's army sees its origin (M215b)
-
-    std::vector<Particle> particles;
-};
-
-/// GPU-ready particle instance data (one per live particle).
-/// Matches vertex shader input for instanced billboard rendering.
+/// One particle's quad for the GPU this frame: its centre, the two axes a
+/// corner (±1, ±1) spans, its texture rectangle and its ramp coordinate.
 struct ParticleInstance {
-    f32 pos_x, pos_y, pos_z;   // world position
-    f32 size;                   // current billboard half-extent
-    f32 rotation;               // billboard rotation (radians)
-    f32 alpha;                  // opacity (0..1), from size curve or age fade
-    f32 uv_x, uv_y;            // texture frame offset
-    f32 uv_w, uv_h;            // texture frame size
-    f32 r, g, b;                // tint color (1,1,1 default)
-    f32 ramp_u;                 // life fraction: where the ramp texture is read
+    f32 center[3];
+    f32 axis_x[3];
+    f32 axis_y[3];
+    f32 uv[4];   ///< u offset, u span, v offset, v span
+    f32 ramp[2]; ///< age / lifetime, ramp selection
+    f32 pad = 0;
 };
 
-/// CPU particle simulation. Manages emitter state and particle physics.
-/// Each frame, call update() then read instances() for GPU upload.
+/// FA's particles (M214c), as Moho's CEfxEmitter emits them and particle.fx's
+/// WorldVS moves and draws them. Once a sim tick each emitter it can see
+/// emits into the world's particles, reading its blueprint's curves at its
+/// clock (modulo Repeattime); each particle then moves by itself from its
+/// spawn state (velocity, acceleration, drag) and ages through its ramp.
 class ParticleSystem {
 public:
     /// The player's intel: an EmitIfVisible emitter emits only where the
-    /// player's army sees, and a CreateIfVisible one out of its sight is
-    /// never made, as Moho's CEfxEmitter (null: everything seen; M215b).
+    /// player's army sees, and a CreateIfVisible one it doesn't see made is
+    /// never made (null: everything seen; M215b).
     void set_recon(const ReconView* recon) { recon_ = recon; }
 
-    /// Live emitters (the render-state dump reads their origins).
-    const std::vector<EmitterState>& emitters() const { return emitters_; }
+    /// Emit what a tick `view` hasn't shown before brings, then place this
+    /// frame's particles. `terrain` (may be null) is the water they snap to.
+    void update(const sim::FrameView& view, const Camera& camera, const Frustum* frustum,
+                EmitterBlueprintCache& blueprints, lua_State* L, const map::Terrain* terrain);
 
-    /// Sync emitters with the world's effects — create new emitters,
-    /// retire those whose effect is gone, place attached ones where `view`
-    /// draws their entity.
-    void sync_effects(const sim::FrameView& view,
-                      EmitterBlueprintCache& bp_cache,
-                      struct lua_State* L);
-
-    /// Advance simulation by `dt_seconds`: emit new particles, step physics,
-    /// kill expired.
-    void update(f32 dt_seconds);
-
-    /// Build GPU instance buffer data from live particles.
-    /// Call after update(). Returns the instance array for upload.
-    const std::vector<ParticleInstance>& build_instances(
-        f32 cam_x, f32 cam_y, f32 cam_z,
-        const Frustum* frustum = nullptr);
-
-    /// The instances of build_instances(), in runs that share a texture and
-    /// blend: each emitter's particles use its blueprint's `Texture` and
-    /// `Blendmode` (alpha-blended runs first, then additive).
-    struct TextureGroup {
-        std::string texture;   // VFS path; empty for an emitter that names none
-        std::string ramp;      // its RampTexture: colour over a particle's life
-        bool additive = false; // FA Blendmode 3
-        u32 offset = 0;
-        u32 count = 0;
+    /// This frame's quads, in draw order.
+    const std::vector<ParticleInstance>& instances() const { return instances_; }
+    /// Runs of instances that draw alike: a pass (under the water or not),
+    /// a blend, and textures (Moho's particle buckets, by SortOrder).
+    struct Group {
+        bool under_water = false;
+        i32 blendmode = 0;
+        std::string texture, ramp;
+        u32 offset = 0, count = 0;
     };
-    const std::vector<TextureGroup>& texture_groups() const { return groups_; }
+    const std::vector<Group>& groups() const { return groups_; }
 
-    u32 emitter_count() const { return static_cast<u32>(emitters_.size()); }
-    u32 particle_count() const;
+    /// A particle drawn this frame (tests read them).
+    struct Drawn {
+        u32 effect_id = 0;
+        sim::Vector3 center, axis_x, axis_y;
+        f32 age = 0, lifetime = 0;
+        std::array<f32, 4> uv{};
+        f32 ramp_v = 0;
+        i32 blendmode = 0;
+        bool under_water = false;
+    };
+    const std::vector<Drawn>& drawn() const { return drawn_; }
 
-    /// Remove all emitters and particles (for scene teardown).
-    void clear() {
-        emitters_.clear();
-        unseen_.clear();
-        instances_.clear();
-        groups_.clear();
-    }
+    /// A live emitter (the render-state dump and tests read them).
+    struct EmitterView {
+        u32 effect_id = 0;
+        std::string blueprint;
+        sim::Vector3 position; ///< where its visibility is judged (mPos)
+        f32 clock = 0;         ///< its TICKCOUNT
+        u32 missed = 0;        ///< ticks it didn't emit, to catch up
+        bool seen = false;     ///< its last look found the player's army sees it
+    };
+    std::vector<EmitterView> emitters() const;
+
+    /// Whether effect `id` is an emitter it draws (the overlay leaves those
+    /// to it).
+    bool draws_effect(u32 id) const { return emitters_.count(id) > 0; }
+    /// Whether effect `id` is a CreateIfVisible emitter the player didn't
+    /// see made, which it never draws: the overlay leaves those be too.
+    bool unmade(u32 id) const { return unmade_.count(id) > 0; }
+
+    u32 particle_count() const { return static_cast<u32>(particles_.size()); }
+
+    /// Forget every emitter and particle (a new game).
+    void clear();
 
     static constexpr u32 MAX_PARTICLES = 16384;
-    /// Sim ticks per second: emitter blueprints' unit of time.
-    static constexpr f32 kTicksPerSecond = 10.0f;
+    /// Most ticks an emitter catches up (CEfxEmitter::OnTick).
+    static constexpr u32 MAX_CATCHUP = 24;
 
 private:
-    void emit_particles(EmitterState& es, f32 dt, u32& running_total);
-    void step_particles(EmitterState& es, f32 dt);
+    struct Frame {
+        sim::Vector3 position;
+        sim::Quaternion rotation;
+    };
+    /// One emitter effect (CEfxEmitter).
+    struct Emitter {
+        const EmitterBlueprintData* bp = nullptr;
+        std::deque<Frame> frames; ///< its last frames, newest last
+        sim::Vector3 offset;      ///< its POSITION params (OffsetEmitter)
+        f32 scale = 1.0f;         ///< EFFECT_SCALE (ScaleEmitter)
+        f32 clock = 0;            ///< TICKCOUNT
+        f32 emissions = 0;        ///< mTotalEmissions: the fraction owed
+        u32 missed = 0;           ///< mLife
+        sim::Vector3 position;    ///< mPos
+        std::optional<u32> first_look;
+        bool seen = false;
+    };
+    /// One particle in the world (SWorldParticle).
+    struct Particle {
+        const EmitterBlueprintData* bp = nullptr;
+        u32 effect_id = 0;
+        f64 born = 0; ///< on the render clock
+        f32 lifetime = 0;
+        sim::Vector3 position, velocity, acceleration;
+        f32 begin_size = 0, end_size = 0;
+        f32 angle = 0, spin = 0; ///< radians, radians a tick
+        f32 resistance = 0;
+        f32 framerate = 0, texture_selection = 0, ramp_selection = 0;
+    };
 
-    std::vector<EmitterState> emitters_;
-    std::vector<ParticleInstance> instances_;
-    std::vector<TextureGroup> groups_;
+    void advance(const sim::FrameView& view, const sim::Vector3& eye, const Frustum* frustum,
+                 EmitterBlueprintCache& blueprints, lua_State* L, const map::Terrain* terrain);
+    /// CanSeeCam: in its LODCutoff, in view, and in the player's LOS by a
+    /// look every fifth tick.
+    bool can_see(Emitter& e, const sim::FrameView& view, u32 tick, const sim::Vector3& eye,
+                 const Frustum* frustum) const;
+    /// Its frame `ticks` back, `cursor` of the way into that tick
+    /// (InterpolatePosition).
+    Frame frame_at(const Emitter& e, u32 ticks, f32 cursor) const;
+    /// Emit one tick's particles, `ticks` back (Tick).
+    void emit(u32 id, Emitter& e, u32 ticks, u32 now_tick, const map::Terrain* terrain);
+    /// A uniform [0, 1) draw from the renderer's own stream (splitmix64),
+    /// apart from the sim's and seeded alike each run, so frames reproduce.
+    f32 random();
+
     const ReconView* recon_ = nullptr;
-    /// CreateIfVisible effects the player's army didn't see made: never shown.
-    std::unordered_set<u32> unseen_;
+    std::unordered_map<u32, Emitter> emitters_;
+    std::unordered_set<u32> unknown_; ///< effects with no emitter blueprint
+    std::unordered_set<u32> unmade_;  ///< CreateIfVisible ones the player didn't see made
+    std::vector<Particle> particles_;
+    std::optional<u32> last_tick_;
+    u64 random_state_ = 0x2545F4914F6CDD1Dull;
+    std::vector<ParticleInstance> instances_;
+    std::vector<Group> groups_;
+    std::vector<Drawn> drawn_;
 };
 
 } // namespace osc::renderer

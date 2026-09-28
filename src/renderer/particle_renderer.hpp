@@ -1,37 +1,33 @@
 #pragma once
 
+#include "core/types.hpp"
 #include "renderer/particle_system.hpp"
 #include "renderer/vk_types.hpp"
-#include "core/types.hpp"
 
 #include <vulkan/vulkan.h>
 
+#include <array>
 #include <vector>
 
 namespace osc::renderer {
 
 class TextureCache;
-class EmitterBlueprintCache;
 
-/// GPU particle renderer: uploads ParticleInstance data, issues instanced
-/// billboard draw calls grouped by texture (blend mode).
+/// Draws FA's particles (M214c): each particle's quad, as ParticleSystem
+/// placed it, its texture times its ramp (particle.fx's WorldPS), blended
+/// by its emitter's TRamp technique.
 class ParticleRenderer {
 public:
-    void init(VkDevice device, VmaAllocator allocator,
-              VkRenderPass render_pass,
-              VkDescriptorSetLayout texture_ds_layout,
-              VkSampler sampler);
+    void init(VkDevice device, VmaAllocator allocator, VkRenderPass render_pass,
+              VkDescriptorSetLayout texture_ds_layout);
 
-    /// Upload instance data and build draw groups by texture.
-    void update(const std::vector<ParticleInstance>& instances,
-                const ParticleSystem& psys,
-                TextureCache& tex_cache, u32 fi);
+    /// Upload this frame's quads and runs.
+    void update(const ParticleSystem& particles, TextureCache& tex_cache, u32 fi);
 
-    /// Record draw commands. Caller must NOT have any pipeline bound —
-    /// this binds its own pipeline.
-    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
-                const f32* view_proj, const f32* cam_right, const f32* cam_up,
-                u32 fi);
+    /// Draw the particles under the water (a negative SortOrder's) or the
+    /// others; the scene pass must be open.
+    void render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h, const f32* view_proj,
+                bool under_water, u32 fi) const;
 
     void destroy(VkDevice device, VmaAllocator allocator);
 
@@ -41,26 +37,19 @@ public:
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
 
 private:
-    struct DrawGroup {
-        VkDescriptorSet texture_ds = VK_NULL_HANDLE;
-        VkDescriptorSet ramp_ds = VK_NULL_HANDLE;
-        u32 instance_offset = 0;
-        u32 instance_count = 0;
-        bool additive = false;
+    struct Group {
+        bool under_water = false;
+        i32 blendmode = 0;
+        VkDescriptorSet texture = VK_NULL_HANDLE, ramp = VK_NULL_HANDLE;
+        u32 offset = 0, count = 0;
     };
 
-    VkPipeline alpha_pipeline_ = VK_NULL_HANDLE;
-    VkPipeline additive_pipeline_ = VK_NULL_HANDLE;
+    std::array<VkPipeline, 5> pipelines_{};
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
-
     AllocatedBuffer instance_buf_[FRAMES_IN_FLIGHT] = {};
     void* instance_mapped_[FRAMES_IN_FLIGHT] = {};
-
-    std::vector<DrawGroup> groups_;
+    std::vector<Group> groups_;
     u32 draw_count_ = 0;
-    u32 instance_count_ = 0;
-
-    VkDevice device_ = VK_NULL_HANDLE;
 };
 
 } // namespace osc::renderer
