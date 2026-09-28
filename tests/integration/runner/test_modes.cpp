@@ -142,6 +142,7 @@ constexpr Mode kModesBefore[] = {
     {"--trail-render-test", test_trail_render, false},
     {"--particle-render-test", test_particle_render, false},
     {"--water-render-test", test_water_render, false},
+    {"--sky-test", test_sky, false},
     {"--water-reflection-test", test_water_reflection, false},
     {"--refract-render-test", test_refract_render, false},
     {"--decal-render-test", test_decal_render, false},
@@ -321,6 +322,7 @@ void IntegrationModes::print_usage() const {
               << "  --trail-render-test FA's trails: segments, ages, offsets, intel catch-up, blends\n"
               << "  --particle-render-test FA's particles: emission, motion, quads, water, intel\n"
               << "  --water-render-test FA's water: water map, Fresnel table, refraction, waves\n"
+              << "  --sky-test         FA's sky dome: the map's block, atmosphere, cull, decals, cirrus\n"
               << "  --water-reflection-test Units reflected in the water; meshes drawn after it\n"
               << "  --refract-render-test FA's refracting particles: the frame behind, displaced\n"
               << "  --decal-render-test The map's decals: projected by the corner, lit, masked, faded\n"
