@@ -697,6 +697,7 @@ std::optional<int> App::start() {
     // Moho's IN_InitKeyHandler: retail's key names and default mappings,
     // once; the key map outlives each UI state.
     osc::lua::register_console_commands(console);
+    osc::lua::register_session_console_commands(console);
     osc::lua::load_key_mappings(ui_lua_state.raw(), keymap_registry);
     // SetupUI already ran during the UI state's boot above; the initial
     // transitions pass nullptr so it does not run a second time.

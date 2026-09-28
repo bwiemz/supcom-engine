@@ -21,4 +21,13 @@ struct TestContext;
 void test_keymap(TestContext& ctx, ui::UIControlRegistry& registry, GameStateManager& game,
                  const std::function<void(int)>& pump_frames);
 
+/// --session-command-test (M217d), in a game with FA's interface: the
+/// console's session commands -- UI_SelectByCategory's filters,
+/// StartCommandMode's toggle and cap check, IssueCommand Stop -- and the
+/// hotkeys that reach them. `ctx` is the UI state's; `sim_lua` runs sim Lua.
+void test_session_commands(TestContext& ctx, ui::UIControlRegistry& registry,
+                           const std::function<void(int)>& pump_frames,
+                           const std::function<void(int)>& play,
+                           const std::function<bool(const char*)>& sim_lua);
+
 } // namespace osc::test
