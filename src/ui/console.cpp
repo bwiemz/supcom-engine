@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 namespace osc::ui {
 
@@ -103,6 +104,129 @@ void Console::execute(lua_State* L, std::string_view line) {
         if (tokens.empty() && remainder == pending) break;
         pending = remainder;
     }
+}
+
+namespace {
+
+bool same_no_case(const std::string& a, std::string_view b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+               return std::tolower(static_cast<unsigned char>(x)) ==
+                      std::tolower(static_cast<unsigned char>(y));
+           });
+}
+
+/// The command's operator and its value (TConVar's `op` and `rhs`).
+const std::string* arg(const std::vector<std::string>& args, size_t i) {
+    return i < args.size() ? &args[i] : nullptr;
+}
+
+// atoi and atof, as Moho parses (junk is 0), by strtol and strtof
+int to_int(const std::string* s) {
+    return s ? static_cast<int>(std::strtol(s->c_str(), nullptr, 10)) : 0;
+}
+
+float to_float(const std::string* s) {
+    return s ? std::strtof(s->c_str(), nullptr) : 0.0f;
+}
+
+} // namespace
+
+bool convar_bool(const std::vector<std::string>& args, bool value, bool& shown) {
+    shown = false;
+    const std::string* op = arg(args, 1);
+    const std::string* rhs = arg(args, 2);
+    if (!op) return !value; // no argument: toggled
+    if (*op == "=" && rhs) return to_int(rhs) != 0;
+    if (same_no_case(*op, "on") || same_no_case(*op, "true")) return true;
+    if (same_no_case(*op, "off") || same_no_case(*op, "false")) return false;
+    if (same_no_case(*op, "show")) {
+        shown = true;
+        return value;
+    }
+    if (same_no_case(*op, "tog")) return !value;
+    return to_int(op) != 0;
+}
+
+int convar_int(const std::vector<std::string>& args, int value, bool& shown) {
+    shown = false;
+    const std::string* op = arg(args, 1);
+    const std::string* rhs = arg(args, 2);
+    if (!op) {
+        shown = true;
+        return value;
+    }
+    if (rhs) {
+        const int v = to_int(rhs);
+        if (*op == "=") return v;
+        if (*op == "+=") return value + v;
+        if (*op == "-=") return value - v;
+        if (*op == "*=") return value * v;
+        if (*op == "/=") return v == 0 ? value : value / v;
+        if (*op == "%=") return v == 0 ? value : value % v;
+        if (*op == "&=") return value & v;
+        if (*op == "|=") return value | v;
+        if (*op == "^=") return value ^ v;
+    }
+    if (same_no_case(*op, "on") || same_no_case(*op, "true")) return 1;
+    if (same_no_case(*op, "off") || same_no_case(*op, "false")) return 0;
+    if (same_no_case(*op, "tog")) return value == 0 ? 1 : 0;
+    return to_int(op);
+}
+
+float convar_float(const std::vector<std::string>& args, float value, bool& shown) {
+    shown = false;
+    const std::string* op = arg(args, 1);
+    const std::string* rhs = arg(args, 2);
+    if (!op) {
+        shown = true;
+        return value;
+    }
+    if (rhs) {
+        const float v = to_float(rhs);
+        if (*op == "=") return v;
+        if (*op == "+=") return value + v;
+        if (*op == "-=") return value - v;
+        if (*op == "*=") return value * v;
+        if (*op == "/=") return v == 0.0f ? value : value / v;
+    }
+    return to_float(op);
+}
+
+void add_bool_var(Console& console, const std::string& name, std::function<bool(lua_State*)> get,
+                  std::function<void(lua_State*, bool)> set) {
+    console.add(name, [name, get = std::move(get),
+                       set = std::move(set)](lua_State* L, const std::vector<std::string>& args) {
+        bool shown = false;
+        const bool v = convar_bool(args, get(L), shown);
+        if (shown) {
+            spdlog::info("bool {} is {}", name, v ? "on" : "off");
+            return;
+        }
+        set(L, v);
+        if (args.size() < 2) spdlog::info("toggled {} is now {}", name, v ? "on" : "off");
+    });
+}
+
+void add_int_var(Console& console, const std::string& name, std::function<int(lua_State*)> get,
+                 std::function<void(lua_State*, int)> set) {
+    console.add(name, [name, get = std::move(get),
+                       set = std::move(set)](lua_State* L, const std::vector<std::string>& args) {
+        bool shown = false;
+        const int v = convar_int(args, get(L), shown);
+        if (shown) spdlog::info("int {} == {}", name, v);
+        else set(L, v);
+    });
+}
+
+void add_float_var(Console& console, const std::string& name, std::function<float(lua_State*)> get,
+                   std::function<void(lua_State*, float)> set) {
+    console.add(name, [name, get = std::move(get),
+                       set = std::move(set)](lua_State* L, const std::vector<std::string>& args) {
+        bool shown = false;
+        const float v = convar_float(args, get(L), shown);
+        if (shown) spdlog::info("float {} == {:.4f}", name, v);
+        else set(L, v);
+    });
 }
 
 } // namespace osc::ui

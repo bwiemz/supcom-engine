@@ -54,6 +54,7 @@ add_executable(osc_tests
     test_camera_basis.cpp
     test_camera_moves.cpp
     test_window_mode.cpp
+    test_console_vars.cpp
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
     test_recon_view.cpp
