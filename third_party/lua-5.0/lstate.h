@@ -113,6 +113,16 @@ typedef struct global_State {
   GCObject *rootgc;  /* list of (almost) all collectable objects */
   GCObject *rootudata;   /* (separated) list of all userdata */
   GCObject *tmudata;  /* list of userdata to be GC */
+  /* OpenSupCom (M224g): a lazy sweep -- the objects of the last collection
+     still to be swept, a slice at a time, and where it is in them */
+  GCObject *sweepgc;
+  GCObject **sweeppos;  /* NULL: no sweep under way */
+  lu_mem sweepdead;  /* the collection's dead memory, for its threshold */
+  lu_byte lazysweep;  /* sweep `rootgc' lazily (lua_setlazysweep) */
+  GCObject *frozengc;  /* frozen tables (lua_freeze): never swept */
+  struct Table **frozenroots;  /* frozen tables the mark traverses */
+  int nfrozenroots;
+  int sizefrozenroots;
   Mbuffer buff;  /* temporary buffer for string concatentation */
   lu_mem GCthreshold;
   lu_mem nblocks;  /* number of `bytes' currently allocated */

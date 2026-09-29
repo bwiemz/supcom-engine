@@ -485,6 +485,7 @@ const TObject *luaH_get (Table *t, const TObject *key) {
 
 
 TObject *luaH_set (lua_State *L, Table *t, const TObject *key) {
+  luaC_frozenbarrier(L, t);  /* OpenSupCom (M224g): lgc.h */
   const TObject *p = luaH_get(t, key);
   t->flags = 0;
   if (p != &luaO_nilobject)
@@ -499,6 +500,7 @@ TObject *luaH_set (lua_State *L, Table *t, const TObject *key) {
 
 
 TObject *luaH_setnum (lua_State *L, Table *t, int key) {
+  luaC_frozenbarrier(L, t);  /* OpenSupCom (M224g): lgc.h */
   const TObject *p = luaH_getnum(t, key);
   if (p != &luaO_nilobject)
     return cast(TObject *, p);

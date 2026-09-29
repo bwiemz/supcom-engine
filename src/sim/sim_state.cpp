@@ -998,6 +998,22 @@ void SimState::tick() {
         sim_random_.set_draw_hook(on ? &SimState::trace_rng_draw : nullptr, this);
     }
 
+    // Lua collections (M224g), from the first tick on (loading, which runs
+    // no ticks, collects as it did):
+    // - the blueprints, loaded and modded by now, freeze: half the live heap,
+    //   which each collection would mark and sweep again;
+    // - the last collection's sweep runs a slice a tick.
+    if (L_) {
+        if (tick_count_ == 1) {
+            lua_pushstring(L_, "__blueprints");
+            lua_rawget(L_, LUA_GLOBALSINDEX);
+            if (lua_istable(L_, -1)) lua_freeze(L_, -1);
+            lua_pop(L_, 1);
+            lua_setlazysweep(L_, 1);
+        }
+        lua_sweepstep(L_, LUA_SWEEP_SLICE);
+    }
+
     // Apply the commands scheduled for this tick before anything simulates,
     // so orders take effect deterministically at the start of the frame.
     dispatch_due_commands();
