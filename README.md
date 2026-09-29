@@ -355,6 +355,7 @@ Adding `--ticks N` runs the simulation headlessly for N ticks with no window:
 | Two-process multiplayer (lockstep sync, desync detection, LAN lobby, peer drop) | `ctest --preset linux-debug -L mp` | No |
 | Data-backed regression gate | `ctest --preset linux-debug -L gate` | Yes |
 | All data-backed modes, including known retail gaps | `ctest --preset linux-debug -L data` | Yes |
+| Sim benchmark: a pinned four-AI game held to this machine's baseline (Release; `tools/bench.py`) | `ctest --test-dir build/linux-release -L bench` | Yes |
 
 CI (GitHub Actions) builds on GCC, Clang, ASan+UBSan and MSVC and runs every
 data-free test. The `--<name>-test` integration modes are in the integration

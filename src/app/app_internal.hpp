@@ -4,6 +4,7 @@
 // the files split from it. Not for the tests, which use support.hpp.
 
 #include "app/app.hpp"
+#include "app/bench.hpp"
 #include "app/support.hpp"
 #include "audio/sound_manager.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -60,6 +61,7 @@ struct Options {
     std::string save_path; ///< --save <file>: the game, saved at --save-at's tick
     u32 save_at = 0;       ///< --save-at <tick>
     bool scripted_orders = false;
+    std::string bench_report; ///< --bench <file>: the headless run's tick times (M223)
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
     bool load_flow_test = false;
@@ -222,6 +224,8 @@ private:
 
     // headless.cpp
     int run_headless();
+    /// One headless tick, timed for --bench.
+    void tick_headless();
     /// After a headless tick: a loaded game (--load) is checked against its
     /// save until the player's turn, and --save-at's tick saves the game.
     /// False once a loaded game stops matching its save.
@@ -262,6 +266,8 @@ private:
     /// up with it: checked tick by tick until the player takes over.
     std::optional<sim::ReplayPlayback> catch_up;
     bool save_written = false; ///< --save's file, once written
+    /// --bench: each headless tick's time, from the run's start (M223).
+    std::optional<BenchRecorder> bench;
     /// --record: the last game's replay is written as the run ends, however
     /// it ends (the normal end writes it before logging shuts down).
     struct RecordingWriter {

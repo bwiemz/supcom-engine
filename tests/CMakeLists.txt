@@ -6,6 +6,7 @@ add_executable(osc_tests
     test_game_install.cpp
     test_first_run.cpp
     test_logs.cpp
+    test_bench.cpp
     test_script_hooks.cpp
     test_lua_bytes.cpp
     test_game_mods.cpp

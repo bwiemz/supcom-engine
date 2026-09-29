@@ -53,3 +53,6 @@ Everything so far: there has been no release yet. The first will be 0.1.0.
 - **Bug reports (M228b):** a player's game logs to the user's state folder
   (the last five runs kept), crashes leave a report there, and
   `opensupcom --collect-logs` zips them with a description of the system.
+- **Benchmark (M223a):** `--bench` times a headless game tick by tick, and
+  `tools/bench.py` holds a pinned four-AI game to a recorded baseline
+  (`ctest -L bench`).

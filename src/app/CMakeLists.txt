@@ -3,6 +3,7 @@
 # runs it as it is; the integration runner adds its test modes.
 add_library(osc_app STATIC
     app.cpp
+    bench.cpp
     boot.cpp
     cli.cpp
     frames.cpp

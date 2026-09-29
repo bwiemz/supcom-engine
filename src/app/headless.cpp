@@ -27,6 +27,12 @@ bool App::after_headless_tick() {
     return true;
 }
 
+void App::tick_headless() {
+    const auto start = BenchRecorder::Clock::now();
+    sim_state->tick();
+    if (bench) bench->record(BenchRecorder::Clock::now() - start);
+}
+
 int App::run_headless() {
     if (tests) {
         if (auto code = tests->headless_first(engine)) return *code;
@@ -45,7 +51,7 @@ int App::run_headless() {
         osc::sim::SimRandom script_rng(0x5C817ED0);
         for (osc::u32 i = 0; i < max_ticks; i++) {
             if (opt.scripted_orders) issue_scripted_orders(*sim_state, script_rng, i);
-            sim_state->tick();
+            tick_headless();
             ticks_run++;
             if (!after_headless_tick()) break;
 
@@ -120,7 +126,7 @@ int App::run_headless() {
                      opt.tick_count * osc::sim::SimState::SECONDS_PER_TICK);
         for (osc::u32 i = 0; i < opt.tick_count; i++) {
             osc::Profiler::instance().begin_frame();
-            sim_state->tick();
+            tick_headless();
             osc::Profiler::instance().end_frame();
             if (!after_headless_tick()) break;
         }
@@ -143,6 +149,15 @@ int App::run_headless() {
                      sim_state->army_count(), sim_state->entity_registry().count(),
                      sim_state->thread_manager().active_count(), sim_state->tick_count(),
                      sim_state->game_time());
+    }
+
+    // --bench's report (M223)
+    if (bench && sim_state) {
+        if (bench->tick_ms().empty())
+            spdlog::warn("--bench: no headless ticks ran (it times --ticks and --ai-skirmish)");
+        else if (bench->write(*sim_state))
+            spdlog::info("Bench report: {} ({} ticks)", opt.bench_report, bench->tick_ms().size());
+        else osc::test_status::fail("[FAIL] --bench: cannot write {}", opt.bench_report);
     }
 
     // Print profiling summary if enabled

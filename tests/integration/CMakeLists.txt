@@ -267,6 +267,23 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)
+
+    # M223: the sim benchmark. A pinned four-AI game on Seton's Clutch, timed
+    # tick by tick (--bench) and held to this machine's baseline in
+    # the goldens' folder, bench/ (recorded on the first run): sim time, the mean
+    # and p99 tick and peak memory within 15%, the same game (checksum).
+    # Label `bench` alone (not `data`): timing wants a quiet machine, so they
+    # run one at a time, and a Release build (`ctest -L bench`).
+    foreach(_scenario early late)
+        add_test(NAME bench.${_scenario}
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bench.py
+                         check $<TARGET_FILE:opensupcom> --scenario ${_scenario})
+        set_tests_properties(bench.${_scenario} PROPERTIES
+            LABELS "bench"
+            SKIP_RETURN_CODE 77
+            RUN_SERIAL TRUE
+            TIMEOUT 3600)
+    endforeach()
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
