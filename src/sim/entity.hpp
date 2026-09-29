@@ -216,6 +216,12 @@ public:
     const std::string& custom_name() const { return custom_name_; }
     void set_custom_name(const std::string& name) { custom_name_ = name; }
 
+    /// The strategic icon underlay a script set (Unit:SetStrategicUnderlay):
+    /// an icon's name under the strategic icons' directory, drawn beneath
+    /// the unit's icon (the objectives' rings); empty for none.
+    const std::string& strategic_underlay() const { return strategic_underlay_; }
+    void set_strategic_underlay(std::string name) { strategic_underlay_ = std::move(name); }
+
     f32 scale_x() const { return scale_x_; }
     f32 scale_y() const { return scale_y_; }
     f32 scale_z() const { return scale_z_; }
@@ -356,6 +362,7 @@ private:
     bool do_not_target_ = false;
     bool reclaimable_ = true;
     std::string custom_name_;
+    std::string strategic_underlay_;
     f32 scale_x_ = 1.0f;
     f32 scale_y_ = 1.0f;
     f32 scale_z_ = 1.0f;

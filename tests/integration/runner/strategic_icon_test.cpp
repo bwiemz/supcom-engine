@@ -250,6 +250,26 @@ void test_strategic_icons(TestContext& ctx) {
             fmt::format("Test 9: zoomed in, the tank has no icon ({}), the blip has ({})",
                         icons_at(f, tank).size(), icons_at(f, e_eng).size()));
 
+    // Test 10: an objective's underlay (Unit:SetStrategicUnderlay) beneath
+    // the tank's icon, at its own colour; "" takes it away.
+    const std::string ring = dir + "icon_objective_primary_rest.dds";
+    (void)r.texture_cache().get_blocking(ring);
+    run_lua(ctx, "__osc_ic_tank:SetStrategicUnderlay('ICON_Objective_Primary')\n");
+    (void)shots.shoot(*ctx.sim.terrain(), sx, sz + 30, 300.0f);
+    f = next();
+    {
+        const auto at = icons_at(f, tank);
+        t.check(at.size() == 2 && at[1] == at[0] + 1 && f.icons[at[0]].texture == ring &&
+                    same_colour(f.icons[at[0]], 1.0f, 1.0f, 1.0f) &&
+                    f.icons[at[1]].texture == icon_texture(ctx, "uel0201", "rest") &&
+                    same_colour(f.icons[at[1]], blue[0], blue[1], blue[2]),
+                fmt::format("Test 10: the objective ring beneath the tank's icon ({} there)",
+                            at.size()));
+    }
+    run_lua(ctx, "__osc_ic_tank:SetStrategicUnderlay('')\n");
+    f = next();
+    t.check(icons_at(f, tank).size() == 1, "Test 11: SetStrategicUnderlay('') takes it away");
+
     spdlog::info("Strategic icon test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 

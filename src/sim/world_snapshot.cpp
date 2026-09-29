@@ -293,6 +293,7 @@ void capture_world(const SimState& sim, WorldSnapshot& out) {
         r.health = e.health();
         r.max_health = e.max_health();
         r.custom_name = e.custom_name();
+        r.strategic_underlay = e.strategic_underlay();
         if (e.is_unit()) {
             capture_unit(static_cast<const Unit&>(e), r, out);
             capture_recon(sim, static_cast<const Unit&>(e), r);

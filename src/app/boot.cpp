@@ -27,6 +27,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <charconv>
 #include <memory>
 #include <random>
 #include <spdlog/spdlog.h>
@@ -174,6 +175,36 @@ std::optional<int> App::boot_game() {
             if (opt.ai_skirmish && !opt.replay_to_play && !opt.save_to_load) {
                 for (size_t a = 0; a < sim_state->army_count(); ++a)
                     game_setup.ai_armies.push_back(static_cast<int>(a));
+            }
+            // A campaign operation, as retail's SetupCampaignSession starts
+            // one (M209): the first army the player's, every other the AI's
+            // (personality ""), and the campaign's options. Its script ends
+            // the game (ScenarioFramework), so no victory condition.
+            if (scenario_meta.type == "campaign" && !opt.ai_skirmish && !opt.replay_to_play &&
+                !opt.save_to_load && game_setup.ai_armies.empty()) {
+                for (size_t a = 1; a < sim_state->army_count(); ++a)
+                    game_setup.ai_armies.push_back(static_cast<int>(a));
+                game_setup.ai_personality.clear();
+                const auto difficulty_arg = parse_string_arg(argc, argv, "--difficulty", "2");
+                int difficulty = 2;
+                const auto [end, ec] =
+                    std::from_chars(difficulty_arg.data(),
+                                    difficulty_arg.data() + difficulty_arg.size(), difficulty);
+                if (ec != std::errc{} || end != difficulty_arg.data() + difficulty_arg.size() ||
+                    difficulty < 1 || difficulty > 3) {
+                    spdlog::warn("--difficulty expects 1, 2 or 3, got '{}': playing 2",
+                                 difficulty_arg);
+                    difficulty = 2;
+                }
+                auto& options = game_setup.options;
+                options.configured = true;
+                options.set_string("FogOfWar", "explored");
+                options.set_number("Difficulty", difficulty);
+                options.set_bool("DoNotShareUnitCap", true);
+                options.set_number("Timeouts", -1);
+                options.set_string("GameSpeed", "normal");
+                options.set_string("FACampaignFaction", "uef");
+                options.set_string("Victory", "sandbox");
             }
         }
 

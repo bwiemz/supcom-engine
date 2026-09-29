@@ -18,6 +18,7 @@
 #include "sim/entity.hpp"
 #include "sim/projectile.hpp"
 #include "sim/prop.hpp"
+#include "sim/script_class.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 
@@ -324,6 +325,18 @@ void SimState::set_fog_of_war(const std::string& mode) {
 void SimState::set_no_rush(f32 seconds, f32 radius) {
     no_rush_seconds_ = seconds > 0.0f ? seconds : 0.0f;
     if (radius > 0.0f) no_rush_radius_ = radius;
+}
+
+Vector3 SimState::clamp_to_playable(const Vector3& pos, i32 army) const {
+    const ArmyBrain* brain = army >= 0 ? army_at(static_cast<size_t>(army)) : nullptr;
+    if (!brain || !brain->use_whole_map()) return clamp_to_playable(pos);
+    if (!terrain_) return pos;
+    Vector3 clamped = pos;
+    const auto width = static_cast<f32>(terrain_->map_width());
+    const auto height = static_cast<f32>(terrain_->map_height());
+    clamped.x = std::clamp(clamped.x, 0.0f, width);
+    clamped.z = std::clamp(clamped.z, 0.0f, height);
+    return clamped;
 }
 
 bool SimState::is_valid_teleport_destination(
@@ -1574,7 +1587,7 @@ void SimState::separate_ground_units() {
         }
         // On the surface as it drives; a submarine keeps its depth.
         if (terrain_ && !bodies[i].sub) p.y = terrain_->get_surface_height(p.x, p.z);
-        u.set_position(clamp_to_playable(p));
+        u.set_position(clamp_to_playable(p, u.army()));
         u.set_jostled(true);
     }
 }
@@ -1799,7 +1812,9 @@ void SimState::update_visibility() {
         }
     }
 
-    // 3.5. Update blip cache (dead-reckoning positions)
+    // 3.5. Update blip cache (dead-reckoning positions). An army's first
+    // blip of a unit is its detection (OnDetectedBy, after the pass).
+    std::vector<std::pair<u32, u32>> detected;
     entity_registry_.for_each_unit([&](Entity& e) {
         if (e.destroyed() || !e.is_unit()) return;
         u32 eid = e.entity_id();
@@ -1815,6 +1830,7 @@ void SimState::update_visibility() {
                                      cloaked)) {
                 // Army can see entity — update cached snapshot
                 auto& snap = blip_cache_[eid][a];
+                if (snap.entity_army < 0) detected.emplace_back(eid, a);
                 snap.last_known_position = e.position();
                 snap.blueprint_id = e.blueprint_id();
                 snap.entity_army = e.army();
@@ -1837,6 +1853,8 @@ void SimState::update_visibility() {
             ++it;
         }
     }
+    destroy_gone_blips();
+    for (const auto& [eid, a] : detected) fire_on_detected_by(eid, a);
 
     // 4. Detect changes and fire OnIntelChange (stealth-aware)
     std::vector<u32> ids;
@@ -1939,26 +1957,8 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
 
     lua_pushvalue(L_, brain_tbl); // self (brain)
 
-    // Build blip table: {_c_entity_id, _c_req_army}. No pointer to the unit,
-    // as unit:GetBlip's blips: AI scripts keep the blips they're told of past
-    // their unit, and its memory with it; every use resolves the id.
-    lua_newtable(L_);
-    int blip_tbl = lua_gettop(L_);
-    lua_pushstring(L_, "_c_entity_id");
-    lua_pushnumber(L_, entity->entity_id());
-    lua_rawset(L_, blip_tbl);
-    lua_pushstring(L_, "_c_req_army");
-    lua_pushnumber(L_, static_cast<lua_Number>(army_idx));
-    lua_rawset(L_, blip_tbl);
-
-    // Set __osc_blip_mt metatable (lazy-build, same pattern as unit_GetBlip)
-    lua_pushstring(L_, "__osc_blip_mt");
-    lua_rawget(L_, LUA_REGISTRYINDEX);
-    if (lua_istable(L_, -1)) {
-        lua_setmetatable(L_, blip_tbl);
-    } else {
-        lua_pop(L_, 1); // no metatable cached yet — skip
-    }
+    // The army's blip of the unit (push_blip)
+    push_blip(L_, entity->entity_id(), static_cast<i32>(army_idx));
 
     lua_pushstring(L_, recon_type);
     lua_pushboolean(L_, val ? 1 : 0);
@@ -1969,6 +1969,172 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
     }
 
     lua_pop(L_, 1); // pop brain_tbl
+}
+
+void SimState::fire_on_detected_by(u32 entity_id, u32 army_idx) {
+    auto* entity = entity_registry_.find(entity_id);
+    if (!L_ || !entity || entity->destroyed() || entity->lua_table_ref() < 0) return;
+    lua_rawgeti(L_, LUA_REGISTRYINDEX, entity->lua_table_ref());
+    const int unit_tbl = lua_gettop(L_);
+    lua_pushstring(L_, "OnDetectedBy");
+    lua_gettable(L_, unit_tbl);
+    if (lua_isfunction(L_, -1)) {
+        lua_pushvalue(L_, unit_tbl);
+        lua_pushnumber(L_, static_cast<lua_Number>(army_idx + 1));
+        if (lua_pcall(L_, 2, 0, 0) != 0) {
+            spdlog::warn("OnDetectedBy error: {}", lua_tostring(L_, -1));
+            lua_pop(L_, 1);
+        }
+    } else {
+        lua_pop(L_, 1);
+    }
+    lua_pop(L_, 1); // unit_tbl
+}
+
+namespace {
+
+constexpr const char* kBlipsKey = "__osc_blips";
+constexpr const char* kBlipClassKey = "__osc_blip_class";
+
+/// Push the class blips are made of: /lua/sim/Blip.lua's Blip, as Moho's
+/// ReconBlip imports it, else a class of moho.blip_methods alone. Resolved
+/// once, then kept in the registry.
+void push_blip_class(lua_State* L) {
+    lua_pushstring(L, kBlipClassKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) return;
+    lua_pop(L, 1);
+    const int top = lua_gettop(L);
+    bool found = false;
+    lua_pushstring(L, "import");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_isfunction(L, -1)) {
+        lua_pushstring(L, "/lua/sim/Blip.lua");
+        if (lua_pcall(L, 1, 1, 0) != 0) {
+            spdlog::warn("/lua/sim/Blip.lua: {}", lua_tostring(L, -1));
+        } else if (lua_istable(L, -1)) {
+            lua_pushstring(L, "Blip");
+            lua_rawget(L, -2);
+            found = lua_istable(L, -1);
+        }
+    }
+    if (found) {
+        lua_replace(L, top + 1); // the class, over the module
+        lua_settop(L, top + 1);
+    } else {
+        lua_settop(L, top);
+        lua_newtable(L); // {__index = moho.blip_methods}
+        lua_pushstring(L, "__index");
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "blip_methods");
+            lua_rawget(L, -2);
+            lua_remove(L, -2);
+        } else {
+            lua_pop(L, 1);
+            lua_pushnil(L);
+        }
+        lua_rawset(L, -3);
+    }
+    lua_pushstring(L, kBlipClassKey);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+/// Push the registry's blip store (entity id -> army + 1 -> blip), made if
+/// missing.
+void push_blip_store(lua_State* L) {
+    lua_pushstring(L, kBlipsKey);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (lua_istable(L, -1)) return;
+    lua_pop(L, 1);
+    lua_newtable(L);
+    lua_pushstring(L, kBlipsKey);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+}
+
+} // namespace
+
+void SimState::push_blip(lua_State* L, u32 entity_id, i32 army) {
+    const auto make = [&] {
+        push_blip_class(L);
+        push_new_script_object(L, "Blip");
+        const int blip = lua_gettop(L);
+        lua_pushstring(L, "_c_entity_id");
+        lua_pushnumber(L, static_cast<lua_Number>(entity_id));
+        lua_rawset(L, blip);
+        lua_pushstring(L, "_c_req_army");
+        lua_pushnumber(L, static_cast<lua_Number>(army));
+        lua_rawset(L, blip);
+    };
+    if (army < 0) {
+        make();
+        return;
+    }
+    push_blip_store(L);
+    const int store = lua_gettop(L);
+    lua_rawgeti(L, store, static_cast<int>(entity_id));
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, store, static_cast<int>(entity_id));
+    }
+    const int per_entity = lua_gettop(L);
+    lua_rawgeti(L, per_entity, army + 1);
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        make();
+        lua_pushvalue(L, -1);
+        lua_rawseti(L, per_entity, army + 1);
+        blip_objects_.insert(entity_id);
+    }
+    lua_replace(L, store);
+    lua_settop(L, store);
+}
+
+void SimState::destroy_gone_blips() {
+    if (!L_ || blip_objects_.empty()) return;
+    std::vector<u32> gone;
+    for (const u32 id : blip_objects_) {
+        const Entity* e = entity_registry_.find(id);
+        if (!e || e->destroyed()) gone.push_back(id);
+    }
+    if (gone.empty()) return;
+    push_blip_store(L_);
+    const int store = lua_gettop(L_);
+    for (const u32 id : gone) {
+        blip_objects_.erase(id);
+        lua_rawgeti(L_, store, static_cast<int>(id));
+        const int per_entity = lua_gettop(L_);
+        // Forgotten first: a hook asking for it again doesn't get it back.
+        lua_pushnil(L_);
+        lua_rawseti(L_, store, static_cast<int>(id));
+        if (lua_istable(L_, per_entity)) {
+            for (u32 a = 1; a <= MAX_VIS_ARMIES; ++a) {
+                lua_rawgeti(L_, per_entity, static_cast<int>(a));
+                const int blip = lua_gettop(L_);
+                if (lua_istable(L_, blip)) {
+                    lua_pushstring(L_, "OnDestroy");
+                    lua_gettable(L_, blip);
+                    if (lua_isfunction(L_, -1)) {
+                        lua_pushvalue(L_, blip);
+                        if (lua_pcall(L_, 1, 0, 0) != 0) {
+                            spdlog::warn("Blip OnDestroy error: {}", lua_tostring(L_, -1));
+                            lua_pop(L_, 1);
+                        }
+                    } else {
+                        lua_pop(L_, 1);
+                    }
+                }
+                lua_settop(L_, per_entity);
+            }
+        }
+        lua_settop(L_, store);
+    }
+    lua_pop(L_, 1); // store
 }
 
 namespace {

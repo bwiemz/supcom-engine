@@ -417,6 +417,7 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
 
     // What the player's intel shows, for everything that draws units (M215a)
     unit_renderer_.set_recon(&recon_);
+    unit_renderer_.set_playable_rect(&playable_rect_);
     strategic_icon_renderer_.set_recon(&recon_);
     overlay_renderer_.set_recon(&recon_);
     minimap_renderer_.set_recon(&recon_);
@@ -1746,6 +1747,7 @@ void Renderer::clear_scene() {
     vkDeviceWaitIdle(device_);
     minimap_renderer_.begin_frame(); // no minimap (or its clicks) until drawn again
     recon_.clear();                  // a new world: nothing seen of it yet
+    playable_rect_.clear();          // nor hidden
 
     terrain_mesh_.destroy(device_, allocator_);
     unit_renderer_.destroy(device_, allocator_);
@@ -2346,6 +2348,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
     recon_.update(view);
+    // A playable rect the scripts synced since: what's outside it now hides
+    playable_rect_.apply(view);
 
     // Update unit instances (mesh + cube fallback + texture resolution + frustum culling)
     {

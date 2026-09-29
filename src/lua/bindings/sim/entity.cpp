@@ -122,6 +122,25 @@ static int entity_SetAmbientSound(lua_State* L) {
 
 // --- Bone query functions ---
 
+/// GetCollisionExtents(): {Min, Max}, the world box around the entity's
+/// collision shape (objective arrows sit on its top); nil without one.
+static int entity_GetCollisionExtents(lua_State* L) {
+    const auto* e = check_entity(L);
+    const auto bounds = e ? sim::collision_bounds(*e) : std::nullopt;
+    if (!bounds) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_newtable(L);
+    lua_pushstring(L, "Min");
+    push_vector3(L, bounds->first);
+    lua_rawset(L, -3);
+    lua_pushstring(L, "Max");
+    push_vector3(L, bounds->second);
+    lua_rawset(L, -3);
+    return 1;
+}
+
 static int entity_GetBoneCount(lua_State* L) {
     auto* e = check_entity(L);
     if (!e) { lua_pushnumber(L, 1); return 1; }
@@ -1045,6 +1064,7 @@ const MethodEntry entity_methods[] = {
     // helper entities (Unit.PlayUnitAmbientSound).
     {"SetAmbientSound",     entity_SetAmbientSound},
     {"GetBoneCount",        entity_GetBoneCount},
+    {"GetCollisionExtents", entity_GetCollisionExtents},
     {"GetBoneName",         entity_GetBoneName},
     {"IsValidBone",         entity_IsValidBone},
     // M65: real implementations
@@ -1271,6 +1291,7 @@ const MethodEntry prop_methods[] = {
     {"BeenDestroyed",               entity_BeenDestroyed},
     {"AddBoundedProp",              stub_return_nil},
     {"SetCollisionShape",           entity_SetCollisionShape},
+    {"GetCollisionExtents",         entity_GetCollisionExtents},
     {"SetMesh",                     entity_SetMesh},
     {"SetScale",                    entity_SetScale},
     {"SetDrawScale",                entity_SetScale},

@@ -1401,6 +1401,38 @@ void test_platoon(TestContext& ctx) {
     reap_check("Platoon test: its AI thread no longer runs", R"(
         if __osc_doomed_ticks ~= __osc_doomed_seen then error('its thread still runs') end
     )");
+
+    // Templates may name a squad's units by blueprint id, in any case, as
+    // the campaign's base managers do (Moho's CanFormPlatoon/FormPlatoon).
+    reap_check("Platoon test: a template squad names its units by blueprint id", R"(
+        local brain = ArmyBrains[2]
+        local pool = brain:GetPlatoonUniquelyNamed('ArmyPool')
+        for i = 1, 2 do
+            CreateUnitHPR('uel0101', 'ARMY_2', 600 + 6 * i, GetTerrainHeight(600 + 6 * i, 150), 150, 0, 0, 0)
+        end
+        local two = {'Scouts', 'none', {'UEL0101', 2, 2, 'Scout', 'None'}}
+        if not pool:CanFormPlatoon(two, 1) then error('two scouts, named in capitals: not formable') end
+        if pool:CanFormPlatoon({'Scouts', 'none', {'uel0101', 3, 3, 'Scout', 'None'}}, 1) then
+            error('three scouts formable from two')
+        end
+        local scouts = pool:FormPlatoon(two, 1)
+        local units = scouts:GetPlatoonUnits()
+        if table.getn(units) ~= 2 then error('formed with ' .. table.getn(units) .. ' units') end
+        for _, u in units do
+            if u:GetBlueprint().BlueprintId ~= 'uel0101' then error('took a ' .. u:GetBlueprint().BlueprintId) end
+        end
+    )");
+    reap_check("Platoon test: a template that would take no unit is not formable", R"(
+        local pool = ArmyBrains[2]:GetPlatoonUniquelyNamed('ArmyPool')
+        -- The scouts are gone from the pool; a squad of at least none finds none.
+        if pool:CanFormPlatoon({'Scouts', 'none', {'uel0101', 0, 1, 'Scout', 'None'}}, 1) then
+            error('formable with no unit to take')
+        end
+        -- A category squad still counts.
+        if not pool:CanFormPlatoon({'Boss', 'none', {categories.COMMAND, 1, 1, 'Attack', 'None'}}, 1) then
+            error('the ACU, by category: not formable')
+        end
+    )");
 }
 
 // Repair test: ACU builds pgen, damage it, repair it
@@ -2711,6 +2743,17 @@ void test_fow(TestContext& ctx) {
                 end
             end
 
+            -- Test 8b: a blip is an Entity in Moho: its id (Cinematics
+            -- hands it to the camera, which follows the unit)
+            if blip1 then
+                if blip1:GetEntityId() == enemy:GetEntityId() then
+                    LOG('FOW TEST 8b PASSED: GetEntityId=' .. blip1:GetEntityId())
+                else
+                    LOG('FOW TEST 8b FAILED: GetEntityId=' .. tostring(blip1:GetEntityId()) ..
+                        ' expected ' .. enemy:GetEntityId())
+                end
+            end
+
             -- Test 9: Move enemy far away, GetBlip returns nil
             -- (entity left our vision; no dead-reckoning yet)
             enemy:SetPosition({pos[1] + 500, pos[2], pos[3] + 500}, true)
@@ -2746,6 +2789,39 @@ void test_fow(TestContext& ctx) {
                 else
                     LOG('FOW TEST 11 INFO: IsOnRadar=true (unexpected but not fatal)')
                 end
+            end
+
+            -- Test 12: Moho's blip lifecycle (M209). An army's blip of a
+            -- unit is one object, of /lua/sim/Blip.lua's class; making it
+            -- calls the unit's OnDetectedBy(army); the unit's death calls
+            -- the blip's OnDestroy (its destroy hooks). Campaign objectives
+            -- follow their targets this way.
+            local scout = CreateUnit('uel0101', 2, pos[1] - 15, pos[2], pos[3], 0, 0, 0)
+            local detectedBy = {}
+            scout:AddDetectedByHook(function(unit, army) table.insert(detectedBy, army) end)
+            WaitTicks(3)
+            local sb = scout:GetBlip(myArmy)
+            local sawMe = false
+            for _, a in detectedBy do
+                if a == myArmy then sawMe = true end
+            end
+            if sb and sb == scout:GetBlip(myArmy) and sb.AddDestroyHook and sawMe then
+                LOG('FOW TEST 12a PASSED: one Blip object per army, detected by ' .. myArmy)
+            else
+                LOG('FOW TEST 12a FAILED: blip ' .. tostring(sb) .. ', same ' ..
+                    tostring(sb and sb == scout:GetBlip(myArmy)) .. ', hooks ' ..
+                    tostring(sb and sb.AddDestroyHook) .. ', detected by ' .. table.getn(detectedBy))
+            end
+            local destroyedWith
+            if sb and sb.AddDestroyHook then
+                sb:AddDestroyHook(function(b) destroyedWith = b end)
+            end
+            scout:Destroy()
+            WaitTicks(2)
+            if sb and destroyedWith == sb and sb:BeenDestroyed() then
+                LOG('FOW TEST 12b PASSED: the unit gone, its blip OnDestroy ran its hooks')
+            else
+                LOG('FOW TEST 12b FAILED: destroy hook got ' .. tostring(destroyedWith))
             end
 
             LOG('FOW TEST: ALL TESTS COMPLETE')
@@ -3389,6 +3465,42 @@ void test_stub(TestContext& ctx) {
             else
                 LOG('STUB TEST 9 FAILED: CreateProjectile returned nil')
             end
+
+            -- Test 10: GetUnitsInRect reads a Rect by its x0/y0/x1/y1 fields,
+            -- as Moho does (campaign scripts pass ScenarioUtils.AreaToRect's)
+            local ap = acu:GetPosition()
+            local function has_acu(units)
+                for _, u in units or {} do
+                    if u == acu then return true end
+                end
+                return false
+            end
+            local around = Rect(ap[1] - 5, ap[3] - 5, ap[1] + 5, ap[3] + 5)
+            local away = Rect(ap[1] + 50, ap[3] + 50, ap[1] + 60, ap[3] + 60)
+            if has_acu(GetUnitsInRect(around)) and not has_acu(GetUnitsInRect(away))
+                and has_acu(GetUnitsInRect(ap[1] - 5, ap[3] - 5, ap[1] + 5, ap[3] + 5)) then
+                LOG('STUB TEST 10 PASSED: GetUnitsInRect finds the ACU in a Rect around it, not in one away')
+            else
+                LOG('STUB TEST 10 FAILED: GetUnitsInRect with a Rect')
+            end
+
+            -- Test 11: GetCollisionExtents, the world box around a shape
+            -- (objective arrows sit on its top)
+            local tank = CreateUnitHPR('uel0201', 'ARMY_1', ap[1] + 20, ap[2], ap[3], 0, 0, 0)
+            local tp = tank:GetPosition()
+            local ext = tank:GetCollisionExtents()
+            tank:SetCollisionShape('Sphere', 0, 1, 0, 2)
+            local ball = tank:GetCollisionExtents()
+            tank:SetCollisionShape('None')
+            local none = tank:GetCollisionExtents()
+            if ext and ext.Min.x < tp[1] and ext.Max.x > tp[1] and ext.Max.y > tp[2]
+                and ball and math.abs(ball.Max.y - (tp[2] + 3)) < 1e-3 and math.abs(ball.Min.x - (tp[1] - 2)) < 1e-3
+                and none == nil then
+                LOG('STUB TEST 11 PASSED: GetCollisionExtents: a box around the tank, a sphere, nil for none')
+            else
+                LOG('STUB TEST 11 FAILED: GetCollisionExtents ' .. tostring(ext) .. ' ' .. tostring(ball) .. ' ' .. tostring(none))
+            end
+            tank:Destroy()
 
             LOG('STUB TEST: all tests complete')
         end)
@@ -5987,6 +6099,29 @@ void test_prop(TestContext& ctx) {
         rock:Kill()
         if not rock:BeenDestroyed() then error('it survived') end
     )");
+    // Moho's: a Rect or four numbers, units and props, nil when there are
+    // none (retail's AI reclaim conditions pass AIUtils' Rect).
+    lua_check("Test 10b: GetReclaimablesInRect takes a Rect, finds units and props, nil for none",
+              R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local a = acu:GetPosition()
+        local rock = CreatePropHPR('/env/evergreen/props/rocks/rock01_prop.bp', a[1] + 3, a[2], a[3], 0, 0, 0)
+        local function holds(list, x)
+            for _, e in list or {} do
+                if e == x then return true end
+            end
+            return false
+        end
+        local near = GetReclaimablesInRect(Rect(a[1] - 6, a[3] - 6, a[1] + 6, a[3] + 6))
+        if not holds(near, rock) or not holds(near, acu) then error('the rock or the ACU missing') end
+        if not holds(GetReclaimablesInRect(a[1] - 6, a[3] - 6, a[1] + 6, a[3] + 6), rock) then
+            error('four numbers: no rock')
+        end
+        -- Off the map's edge: nothing, so nil
+        local none = GetReclaimablesInRect(Rect(-40, -40, -30, -30))
+        if none ~= nil then error('an empty rect gave ' .. tostring(none)) end
+        rock:Destroy()
+    )");
     // The commanders' warp-in keeps blasting its surroundings (DamageRing,
     // Force) for several seconds; let it finish before reclaiming beside one.
     for (int i = 0; i < 100; ++i) ctx.sim.tick();
@@ -6552,20 +6687,36 @@ void test_projectile(TestContext& ctx) {
         Damage(nil, tank:GetPosition(), tank, 50, 'Normal')
         if tank:GetHealth() >= before then error('health ' .. tank:GetHealth()) end
     )");
+    // Moho's OnDamage vector is a vector (shield.lua's impact effect reads
+    // its .x/.y/.z), from the origin to the target.
+    lua_check("Test 7: the hit's vector is a vector, from the origin to the target", R"(
+        local tank = __osc_test_tank
+        local seen
+        tank.OnDamage = function(self, instigator, amount, vector, type) seen = vector end
+        local p = tank:GetPosition()
+        Damage(nil, {p[1] - 3, p[2], p[3] + 4}, tank, 1, 'Normal')
+        tank.OnDamage = nil
+        if not seen then error('no vector') end
+        if math.abs(seen.x - 3) > 1e-3 or math.abs(seen.y) > 1e-3 or math.abs(seen.z + 4) > 1e-3 then
+            error(string.format('vector (%s, %s, %s)', tostring(seen.x), tostring(seen.y), tostring(seen.z)))
+        end
+        local length = import('/lua/utilities.lua').GetVectorLength(seen)
+        if math.abs(length - 5) > 1e-3 then error('length ' .. length) end
+    )");
     // A commander's death weapon fires a script projectile and passes it its
     // damage (it errored while projectiles had no class). Its errors would
     // be script errors, which fail the run.
     const int failures_before = osc::test_status::failure_count();
-    lua_check("Test 7: a commander dies (its death weapon fires)", R"(
+    lua_check("Test 8: a commander dies (its death weapon fires)", R"(
         ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]:Kill()
     )");
     for (int i = 0; i < 20; ++i) ctx.sim.tick();
     if (osc::test_status::failure_count() == failures_before) {
         pass++;
-        spdlog::info("[PASS] Test 8: the death weapon ran without script errors");
+        spdlog::info("[PASS] Test 9: the death weapon ran without script errors");
     } else {
         fail++;
-        osc::test_status::fail("[FAIL] Test 8: script errors after the commander died");
+        osc::test_status::fail("[FAIL] Test 9: script errors after the commander died");
     }
 
     spdlog::info("Projectile test: {}/{} passed", pass, pass + fail);

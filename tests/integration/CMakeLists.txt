@@ -10,6 +10,7 @@ add_executable(osc_integration
     runner/audio_data_test.cpp
     runner/map_parse_test.cpp
     runner/terrain_glow_test.cpp
+    runner/campaign_test.cpp
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/keymap_test.cpp
@@ -121,6 +122,13 @@ endforeach()
 add_test(NAME data.terrain-glow-test
          COMMAND osc_integration --map /maps/SCMP_023/SCMP_023_scenario.lua --terrain-glow-test)
 set_tests_properties(data.terrain-glow-test PROPERTIES
+    LABELS "data;gate"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 900)
+# M209: FA's campaign, its first operation
+add_test(NAME data.campaign-test
+         COMMAND osc_integration --map /maps/X1CA_001/X1CA_001_scenario.lua --campaign-test)
+set_tests_properties(data.campaign-test PROPERTIES
     LABELS "data;gate"
     SKIP_RETURN_CODE 77
     TIMEOUT 900)

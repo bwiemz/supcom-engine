@@ -508,6 +508,9 @@ void SessionManager::setup_army_info(lua_State* L, const std::vector<std::string
     set_opt_str("ShareUnitCap", "none");
     set_opt_str("TeamShareOverflow", "none");
     set_opt_str("CommonArmy", "Off");
+    // A campaign's: its scripts read it (Difficulty = ScenarioInfo.Options.
+    // Difficulty); 2, medium, is SinglePlayerLaunch's default (M209)
+    set_opt_num("Difficulty", 2);
 
     // Cheat multipliers (used by SetupCheat when personality ends with "cheat")
     set_opt_num("CheatMult", cheat_mult_);

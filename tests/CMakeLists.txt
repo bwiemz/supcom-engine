@@ -66,6 +66,7 @@ add_executable(osc_tests
     test_console_vars.cpp
     test_team_color_lookup.cpp
     test_mesh_technique.cpp
+    test_playable_rect.cpp
     test_recon_view.cpp
     test_decal.cpp
     test_runtime_decals.cpp

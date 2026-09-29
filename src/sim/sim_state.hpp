@@ -14,6 +14,7 @@
 #include <functional>
 #include <iosfwd>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -683,6 +684,17 @@ public:
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
 
+    /// `pos` kept to where a unit of `army` may go: the playable area, or
+    /// the whole map for an army that ignores it (M209,
+    /// SetIgnorePlayableRect). No army (-1): the playable area.
+    Vector3 clamp_to_playable(const Vector3& pos, i32 army) const;
+
+    bool is_valid_teleport_destination(const Unit& unit,
+                                       const Vector3& destination) const;
+
+private:
+    /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
+    /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {
         if (!has_playable_rect_) return pos;
         Vector3 clamped = pos;
@@ -693,10 +705,6 @@ public:
         return clamped;
     }
 
-    bool is_valid_teleport_destination(const Unit& unit,
-                                       const Vector3& destination) const;
-
-private:
     void update_economies();
     /// Pool mass/energy across allied teams (Common Army). No-op unless enabled.
     void share_team_economy();
@@ -745,6 +753,12 @@ private:
     void tick_economy_events();
     void fire_on_intel_change(u32 entity_id, u32 army_idx,
                               const char* recon_type, bool val);
+    /// unit:OnDetectedBy(army), 1-based: `army_idx` has just made its first
+    /// blip of the unit (Moho calls it as its recon makes the blip).
+    void fire_on_detected_by(u32 entity_id, u32 army_idx);
+    /// The blip objects of entities now gone: each one's OnDestroy (its
+    /// destroy hooks), in entity then army order, and forgotten.
+    void destroy_gone_blips();
 
     // Stealth-aware intel helpers with pre-cached stealth flags to avoid
     // redundant per-army is_intel_enabled string lookups in inner loops.
@@ -869,6 +883,9 @@ private:
     std::unordered_map<u32, std::array<BlipSnapshot, MAX_VIS_ARMIES>>
         blip_cache_;
 
+    // Entities that have blip objects in Lua (push_blip), in id order.
+    std::set<u32> blip_objects_;
+
 public:
     // Build preview ghost (set by UI, consumed by renderer)
     void set_build_ghost(const std::string& bp_id, f32 foot_x, f32 foot_z) {
@@ -883,6 +900,15 @@ public:
 
     /// Look up cached blip snapshot for a specific entity+army pair.
     const BlipSnapshot* get_blip_snapshot(u32 entity_id, u32 army) const;
+
+    /// Push `army`'s blip of entity `entity_id` (armies 0-based): Moho's
+    /// ReconBlip, one Lua object per entity and army, made on first use as
+    /// an instance of /lua/sim/Blip.lua's Blip (the moho.blip_methods class
+    /// whose destroy hooks the campaign's objectives use; the bare methods
+    /// when that module won't load). It holds the entity's id and the army,
+    /// never a pointer. Once its entity is gone the sim calls its OnDestroy
+    /// and forgets it. A negative army's blip is a fresh one, kept nowhere.
+    void push_blip(lua_State* L, u32 entity_id, i32 army);
 
     /// Stealth-aware intel queries (check RadarStealth/SonarStealth).
     bool has_effective_radar(const Entity* entity, u32 req_army) const;

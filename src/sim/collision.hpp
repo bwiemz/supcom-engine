@@ -38,6 +38,12 @@ std::optional<f32> segment_enters(const CollisionShape& shape, const Vector3& po
 /// The centre of `e`'s collision shape in the world (its position without one).
 Vector3 collision_centre(const Entity& e);
 
+/// The world box around `e`'s collision shape (Moho's GetBoundingBox, which
+/// Entity:GetCollisionExtents gives scripts): a sphere's centre plus and
+/// minus its radius, a box's corners as its orientation turns them. None
+/// without a shape.
+std::optional<std::pair<Vector3, Vector3>> collision_bounds(const Entity& e);
+
 /// How far `point` lies outside `shape` (worn at `position`, facing
 /// `orientation`): negative inside, by the depth to its nearest face. None
 /// is infinitely far.

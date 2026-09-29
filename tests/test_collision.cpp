@@ -132,6 +132,45 @@ TEST_CASE("a segment enters a sphere at its surface", "[collision]") {
     CHECK_FALSE(osc::sim::segment_enters(s, {10, 0, 0}, level, {13, 0, 0}, {20, 0, 0}));
 }
 
+TEST_CASE("a shape's world box: a sphere's radius, a box as it is turned", "[collision]") {
+    Unit ball;
+    ball.set_position({10, 2, 20});
+    CollisionShape s = sphere(1.5f);
+    s.cy = 1; // its centre above the entity's position
+    ball.set_default_collision_shape(s);
+    const auto b = osc::sim::collision_bounds(ball);
+    REQUIRE(b);
+    CHECK(b->first.x == Approx(8.5f));
+    CHECK(b->first.y == Approx(1.5f));
+    CHECK(b->second.y == Approx(4.5f));
+    CHECK(b->second.z == Approx(21.5f));
+
+    // Long along its own z (half 3), turned 90 degrees about y: long along x.
+    Unit brick;
+    brick.set_position({0, 0, 0});
+    brick.set_orientation(osc::sim::euler_to_quat(3.14159265f * 0.5f, 0, 0));
+    brick.set_default_collision_shape(box(0.25f, 1, 3, 1));
+    const auto t = osc::sim::collision_bounds(brick);
+    REQUIRE(t);
+    CHECK(t->first.x == Approx(-3).margin(1e-4));
+    CHECK(t->second.x == Approx(3).margin(1e-4));
+    CHECK(t->second.z == Approx(0.25f).margin(1e-4));
+    CHECK(t->first.y == Approx(0).margin(1e-4));
+    CHECK(t->second.y == Approx(2).margin(1e-4));
+
+    // Turned 45 degrees, a square's box grows to its diagonal.
+    Unit crate;
+    crate.set_orientation(osc::sim::euler_to_quat(3.14159265f * 0.25f, 0, 0));
+    crate.set_default_collision_shape(box(1, 1, 1));
+    const auto d = osc::sim::collision_bounds(crate);
+    REQUIRE(d);
+    CHECK(d->second.x == Approx(std::sqrt(2.0f)).margin(1e-4));
+    CHECK(d->second.y == Approx(1).margin(1e-4));
+
+    Unit bare;
+    CHECK_FALSE(osc::sim::collision_bounds(bare));
+}
+
 TEST_CASE("the collider query finds shapes near a path, large ones from afar", "[collision]") {
     EntityRegistry reg;
     reg.init_spatial_grid(512, 512);

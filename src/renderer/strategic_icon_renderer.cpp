@@ -387,6 +387,12 @@ StrategicIconRenderer::icon_blueprint(const std::string& id, lua_State* L) {
     return out;
 }
 
+const std::string& StrategicIconRenderer::underlay_texture(const std::string& name) {
+    auto [it, made] = underlay_textures_.try_emplace(name);
+    if (made) it->second = (name.front() == '/' ? name : kIconDirectory + name) + "_rest.dds";
+    return it->second;
+}
+
 void StrategicIconRenderer::load_generic_icons(lua_State* L) {
     if (generic_loaded_) return;
     generic_loaded_ = true;
@@ -459,6 +465,8 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         const GPUTexture* tex = nullptr;
         f32 r = 1, g = 1, b = 1;
         bool stunned = false;
+        const std::string* underlay_path = nullptr;
+        const GPUTexture* underlay = nullptr;
     };
     // Moho's four runs, drawn in this order: ground, air, high-priority,
     // selected.
@@ -507,6 +515,11 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
         icon.path = path;
         icon.tex = tex;
         icon.stunned = entity.stunned;
+        // An identified unit's underlay (the objectives' rings), beneath it
+        if (identified && !entity.strategic_underlay.empty()) {
+            icon.underlay_path = &underlay_texture(entity.strategic_underlay);
+            icon.underlay = tex_cache.get(*icon.underlay_path);
+        }
         if (identified) {
             get_army_color(entity, view, icon.r, icon.g, icon.b);
         } else {
@@ -532,10 +545,13 @@ bool StrategicIconRenderer::update(const sim::FrameView& view, const Camera& cam
     if (recon_)
         for (const sim::EntityRecord& ghost : recon_->ghosts()) collect(ghost);
 
-    // The base icon tinted; the stunned badge over it at its own colour.
+    // The underlay at its own colour, the base icon tinted over it, the
+    // stunned badge over that at its own colour (Moho's RenderUnitIcon).
     const GPUTexture* stunned = tex_cache.get(stunned_);
     for (const auto& run : runs)
         for (const Icon& icon : run) {
+            if (icon.underlay && icon.underlay->width > 0)
+                emit_icon(icon.x, icon.y, *icon.underlay_path, *icon.underlay, 1.0f, 1.0f, 1.0f);
             emit_icon(icon.x, icon.y, *icon.path, *icon.tex, icon.r, icon.g, icon.b);
             if (icon.stunned && stunned && stunned->width > 0)
                 emit_icon(icon.x, icon.y, stunned_, *stunned, 1.0f, 1.0f, 1.0f);

@@ -69,6 +69,7 @@ struct EntityRecord {
     // Units
     std::string unit_id;
     std::string custom_name;
+    std::string strategic_underlay; ///< Unit:SetStrategicUnderlay's icon name
     IconClass icon = IconClass::Generic;
     f32 footprint_size_x = 1;
     f32 footprint_size_z = 1;

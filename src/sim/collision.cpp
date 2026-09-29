@@ -132,6 +132,24 @@ Vector3 collision_centre(const Entity& e) {
     return {p.x + c.x, p.y + c.y, p.z + c.z};
 }
 
+std::optional<std::pair<Vector3, Vector3>> collision_bounds(const Entity& e) {
+    const CollisionShape& s = e.collision_shape();
+    if (s.type == CollisionShapeType::NONE) return std::nullopt;
+    const Vector3 c = collision_centre(e);
+    Vector3 half{s.sx, s.sx, s.sx};
+    if (s.type == CollisionShapeType::BOX) {
+        // Each world axis spans the box's turned half-extents along it.
+        const Vector3 ax = quat_rotate(e.orientation(), {s.sx, 0, 0});
+        const Vector3 ay = quat_rotate(e.orientation(), {0, s.sy, 0});
+        const Vector3 az = quat_rotate(e.orientation(), {0, 0, s.sz});
+        half = {std::abs(ax.x) + std::abs(ay.x) + std::abs(az.x),
+                std::abs(ax.y) + std::abs(ay.y) + std::abs(az.y),
+                std::abs(ax.z) + std::abs(ay.z) + std::abs(az.z)};
+    }
+    return std::pair{Vector3{c.x - half.x, c.y - half.y, c.z - half.z},
+                     Vector3{c.x + half.x, c.y + half.y, c.z + half.z}};
+}
+
 f32 shape_distance(const CollisionShape& shape, const Vector3& position,
                    const Quaternion& orientation, const Vector3& point) {
     if (shape.type == CollisionShapeType::NONE) return std::numeric_limits<f32>::infinity();

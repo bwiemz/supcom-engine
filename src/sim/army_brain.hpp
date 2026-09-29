@@ -59,6 +59,11 @@ public:
 
     i32 faction() const { return faction_; }
     void set_faction(i32 f) { faction_ = f; }
+    /// Whether the army's units may go anywhere on the map, not only in the
+    /// playable area (SetIgnorePlayableRect; Moho's CArmyImpl::UseWholeMap):
+    /// a campaign's reinforcements come in from off the playable area.
+    bool use_whole_map() const { return use_whole_map_; }
+    void set_use_whole_map(bool on) { use_whole_map_ = on; }
 
     bool is_human() const { return is_human_; }
     void set_human(bool h) { is_human_ = h; }
@@ -240,6 +245,7 @@ private:
     std::string name_;
     std::string nickname_;
     i32 faction_ = 1;
+    bool use_whole_map_ = false;
     bool is_human_ = true;
     bool is_civilian_ = false;
 

@@ -1,6 +1,8 @@
 #include "video/movie_player.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <cmath>
 #include <cstring>
 #include <string_view>
@@ -37,6 +39,22 @@ i32 sofdec_frame_count(const u8* data, size_t size) {
         }
     }
     return -1;
+}
+
+f32 sofdec_duration(const u8* data, size_t size) {
+    const i32 frames = sofdec_frame_count(data, size);
+    if (frames <= 0) return 0.0f;
+    // The MPEG-1 sequence header: its start code, 12 bits each of width and
+    // height, then the aspect ratio and frame rate codes. Sofdec keeps the
+    // rate x 1000.
+    constexpr u8 kSequenceHeader[] = {0x00, 0x00, 0x01, 0xB3};
+    constexpr i32 kRateTimes1000[] = {0, 23976, 24000, 25000, 29970, 30000, 50000, 59940, 60000};
+    const u8* const end = data + size;
+    const u8* at = std::search(data, end, std::begin(kSequenceHeader), std::end(kSequenceHeader));
+    if (end - at < 8) return 0.0f;
+    const u32 code = at[7] & 0x0Fu;
+    if (code == 0 || code >= std::size(kRateTimes1000)) return 0.0f;
+    return static_cast<f32>(frames) / (static_cast<f32>(kRateTimes1000[code]) * 0.001f);
 }
 
 bool MoviePlayer::open(std::vector<char> file) {

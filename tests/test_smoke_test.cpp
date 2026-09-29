@@ -520,6 +520,28 @@ TEST_CASE("SimState playable rect stores and returns bounds", "[m154]") {
     REQUIRE(sim.playable_z1() == 480.0f);
 }
 
+TEST_CASE("An army that ignores the playable rect keeps to the map", "[m209]") {
+    osc::lua::LuaState state;
+    osc::sim::SimState sim(state.raw(), nullptr);
+    sim.add_army("PLAYER", "Player");
+    sim.add_army("ENEMY", "Enemy");
+    sim.set_playable_rect(100.0f, 100.0f, 300.0f, 300.0f);
+    // SetIgnorePlayableRect(2, true): the campaign's other armies
+    sim.army_at(1)->set_use_whole_map(true);
+
+    const osc::sim::Vector3 outside{50.0f, 0.0f, 400.0f};
+    const auto kept = sim.clamp_to_playable(outside, 0);
+    CHECK(kept.x == 100.0f);
+    CHECK(kept.z == 300.0f);
+    // No terrain: nothing bounds the whole map, so it stays where it is.
+    const auto free = sim.clamp_to_playable(outside, 1);
+    CHECK(free.x == 50.0f);
+    CHECK(free.z == 400.0f);
+    // No army (-1) or one that isn't: the playable rect.
+    CHECK(sim.clamp_to_playable(outside, -1).x == 100.0f);
+    CHECK(sim.clamp_to_playable(outside, 7).z == 300.0f);
+}
+
 TEST_CASE("Navigator::update_air moves unit along heading", "[m157]") {
     osc::sim::Unit unit;
     unit.set_layer("Air");
