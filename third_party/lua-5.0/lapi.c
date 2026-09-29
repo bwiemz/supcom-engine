@@ -803,6 +803,16 @@ LUA_API void lua_setlazysweep (lua_State *L, int on) {
   lua_unlock(L);
 }
 
+LUA_API void lua_setmanualgc (lua_State *L, int on) {
+  global_State *g;
+  lua_lock(L);
+  g = G(L);
+  g->manualgc = cast(lu_byte, on != 0);
+  if (g->sweeppos == NULL)  /* (a sweep under way sets it as it ends) */
+    g->GCthreshold = on ? MAX_LUMEM : 2*g->nblocks;
+  lua_unlock(L);
+}
+
 LUA_API void lua_freeze (lua_State *L, int idx) {
   StkId t;
   lua_lock(L);

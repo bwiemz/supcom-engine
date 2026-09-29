@@ -86,6 +86,8 @@ void test_lighting(TestContext& ctx);
 void test_map_parse(TestContext& ctx);
 void test_terrain_glow(TestContext& ctx);
 void test_campaign(TestContext& ctx);
+/// --persist-test (M208c-a), in persist_test.cpp.
+void test_persist(TestContext& ctx);
 void test_waves(TestContext& ctx);
 /// --strata-test (M212a), in strata_test.cpp.
 void test_strata(TestContext& ctx);

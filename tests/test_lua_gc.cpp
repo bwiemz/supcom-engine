@@ -130,6 +130,37 @@ TEST_CASE("Closing a state in the middle of a lazy sweep frees everything", "[lu
     lua_close(L);
 }
 
+TEST_CASE("A state that collects only when told never collects on its own", "[lua_gc]") {
+    Lua lua;
+    lua_setmanualgc(lua.L, 1);
+    const int before = lua.kb();
+    REQUIRE(lua.run(kGarbage).empty());
+    const int one = lua.kb() - before;
+    for (int i = 0; i < 4; ++i) REQUIRE(lua.run(kGarbage).empty());
+    // Lua would have collected each time its heap doubled
+    CHECK(lua.kb() - before >= 4 * one);
+    lua.collect(); // when told, it does
+    CHECK(lua.kb() - before < one);
+    // So too after a lazily swept collection
+    lua_setlazysweep(lua.L, 1);
+    REQUIRE(lua.run(kGarbage).empty());
+    lua.collect();
+    lua.sweep_all(1000);
+    const int swept = lua.kb();
+    for (int i = 0; i < 4; ++i) REQUIRE(lua.run(kGarbage).empty());
+    CHECK(lua.kb() - swept >= 3 * one);
+    // Turned off, it collects on its own again
+    lua_setmanualgc(lua.L, 0);
+    lua.collect();
+    lua.sweep_all(1 << 20);
+    const int off = lua.kb();
+    for (int i = 0; i < 4; ++i) {
+        REQUIRE(lua.run(kGarbage).empty());
+        lua.sweep_all(1 << 20);
+    }
+    CHECK(lua.kb() - off < 3 * one);
+}
+
 TEST_CASE("Weak tables clear at the collection, however the sweep is spread", "[lua_gc]") {
     Lua lua;
     lua_setlazysweep(lua.L, 1);

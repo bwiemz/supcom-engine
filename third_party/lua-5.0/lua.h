@@ -215,6 +215,9 @@ LUA_API void  lua_setgcthreshold (lua_State *L, int newthreshold);
 /* OpenSupCom (M224g): sweep a collection's objects over time (lgc.c) */
 LUA_API void  lua_setlazysweep (lua_State *L, int on);
 LUA_API int   lua_sweepstep (lua_State *L, int work);
+/* OpenSupCom (M208c): collect only when told (lua_setgcthreshold(L, 0)),
+   never when the heap reaches a threshold */
+LUA_API void  lua_setmanualgc (lua_State *L, int on);
 /* OpenSupCom (M224g): make the plain tables reachable from the table at
    `idx' (and their strings) permanent, skipped by the collector (lgc.h) */
 LUA_API void  lua_freeze (lua_State *L, int idx);

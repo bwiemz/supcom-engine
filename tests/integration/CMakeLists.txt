@@ -11,6 +11,7 @@ add_executable(osc_integration
     runner/map_parse_test.cpp
     runner/terrain_glow_test.cpp
     runner/campaign_test.cpp
+    runner/persist_test.cpp
     runner/wave_test.cpp
     runner/movie_test.cpp
     runner/keymap_test.cpp

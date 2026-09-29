@@ -30,6 +30,7 @@ add_library(lua50 STATIC
     lundump.c
     lvm.c
     lzio.c
+    lpersist.cpp
 )
 
 # Compile Lua as C++ so lua_error unwinds C++ binding frames with exceptions

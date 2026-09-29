@@ -411,9 +411,16 @@ static void checkbuffers (lua_State *L) {
 }
 
 
+/* the threshold a collection leaves: none in a state that collects only
+   when told (OpenSupCom, M208c) */
+static lu_mem nextthreshold (global_State *g, lu_mem deadmem) {
+  return g->manualgc ? MAX_LUMEM : 2*g->nblocks - deadmem;
+}
+
+
 static void checkSizes (lua_State *L, size_t deadmem) {
   checkbuffers(L);
-  G(L)->GCthreshold = 2*G(L)->nblocks - deadmem;  /* new threshold */
+  G(L)->GCthreshold = nextthreshold(G(L), deadmem);  /* new threshold */
 }
 
 
@@ -553,7 +560,7 @@ int luaC_sweepstep (lua_State *L, int work) {
   g->rootgc = g->sweepgc;
   g->sweepgc = NULL;
   g->sweeppos = NULL;
-  g->GCthreshold = 2*g->nblocks - g->sweepdead;  /* as checkSizes sets it */
+  g->GCthreshold = nextthreshold(g, g->sweepdead);  /* as checkSizes sets it */
   return 1;
 }
 
