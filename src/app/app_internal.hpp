@@ -70,6 +70,12 @@ struct Options {
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
+    /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
+    /// link to, instead of the front end (M220a).
+    std::string gpgnet_endpoint;
+    /// --gpgnet-scripted: that link's run is a test's: offscreen, counting
+    /// script errors, and over once the client closes the link.
+    bool gpgnet_scripted = false;
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;

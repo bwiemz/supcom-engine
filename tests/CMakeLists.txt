@@ -97,6 +97,7 @@ add_executable(osc_tests
     test_team_share_overflow.cpp
     test_lockstep.cpp
     test_wire_framing.cpp
+    test_gpgnet.cpp
     test_lobby_net.cpp
     test_lan_discovery.cpp
     test_lobby_wire.cpp

@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "app/lan_game_test.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "app/window_commands.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
@@ -406,8 +407,12 @@ std::optional<int> App::run_window() {
                 osc::test_status::fail("[FAIL] load-flow: a save was written outside its folder");
         };
 
+        // The matchmaking client closed its link while no game plays: without
+        // it the game has nothing to do (M220a)
+        bool gpgnet_done = false;
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
-               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done())) {
+               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
+               !gpgnet_done) {
             osc::Profiler::instance().begin_frame();
             // A resized window: the UI's root frame follows it (M217h)
             if (renderer.take_resized()) {
@@ -660,6 +665,10 @@ std::optional<int> App::run_window() {
             // The lobbies' networks: what has come, into their callbacks
             // (M218a)
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+            // The matchmaking client's commands (M220a)
+            osc::lua::pump_gpgnet(ui_lua_state.raw());
+            if (osc::lua::gpgnet_state() == osc::lua::GpgNetState::Closed && !sim_state)
+                gpgnet_done = true;
             osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
             if (sim_state) {
                 osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
@@ -1029,6 +1038,7 @@ std::optional<int> App::run_window() {
             lan_game->finish(sim_state.get());
             return finish_test_run("lan-game-test");
         }
+        if (opt.gpgnet_scripted) return finish_test_run("gpgnet");
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(
                 "if not SessionIsReplay() then error('SessionIsReplay() is false') end");

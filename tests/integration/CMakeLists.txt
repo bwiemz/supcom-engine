@@ -223,6 +223,16 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # M220a: a matchmaking client (this script, standing in for FAF's)
+    # launches the game over GPGNet: Idle, CreateLobby to a lobby, HostGame
+    # hosting it on the next port, and the game ending with the link.
+    add_test(NAME data.gpgnet_lobby
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_lobby.py
+                     $<TARGET_FILE:opensupcom> 29751)
+    set_tests_properties(data.gpgnet_lobby PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
