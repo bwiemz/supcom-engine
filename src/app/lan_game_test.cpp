@@ -24,6 +24,8 @@ namespace {
 
 /// Frames the flow may take in all before it counts as stuck.
 constexpr u32 kMaxFrames = 30000;
+/// Frames the joiner waits for its host to listen.
+constexpr u32 kMaxHostWaitFrames = 6000;
 /// Frames between presses of Launch, while no countdown runs.
 constexpr u32 kPressInterval = 600;
 /// Frames after the check that a side waits for kEndTick at most.
@@ -100,8 +102,8 @@ constexpr const char* kPressLaunch = R"(
 
 } // namespace
 
-LanGameTest::LanGameTest(bool host, std::string address, u16 port)
-    : host_(host), address_(std::move(address)), port_(port) {}
+LanGameTest::LanGameTest(bool host, std::string address, u16 port, u32 quit_at)
+    : host_(host), address_(std::move(address)), port_(port), quit_at_(quit_at) {}
 
 bool LanGameTest::start(lua::LuaState& ui) {
     spdlog::info("=== LAN game test ({}): retail's lobby to a game on port {} ===",
@@ -140,28 +142,69 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         return;
     }
     if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
+    // --lan-game-quit-at: the joiner leaves here; the host plays on
+    if (!host_ && quit_at_ > 0 && checked_at_ && sim->tick_count() >= quit_at_) {
+        spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
+        check_chat(ui);
+        left_ = true;
+        done_ = true;
+        return;
+    }
+    if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) dialog_seen_ = true;
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
     }
-    if (checked_at_ &&
-        (sim->tick_count() >= kEndTick || frames_ - *checked_at_ > kWindDownFrames)) {
+    const bool over =
+        checked_at_ && (sim->tick_count() >= kEndTick || frames_ - *checked_at_ > kWindDownFrames);
+    if (over && !over_at_) over_at_ = frames_;
+    // A frame or two more, so the frame's pumps (the disconnect dialog's
+    // update) see what the lockstep did this frame
+    if (over && frames_ >= *over_at_ + 2) {
         // Both play to the end together: the lockstep lets neither stop
         // short (a player who paused alone would stall the other, and be
         // dropped)
         if (sim->tick_count() < kEndTick)
             fail(fmt::format("stalled at tick {}, short of {}", sim->tick_count(), kEndTick));
+        // No one dropped; or, the joiner having left, it alone: its army
+        // defeated, and retail's disconnect dialog shown and closed
         const auto& mp = lua::mp_net_state();
-        for (const u32 source : mp.all_sources)
-            if (mp.session && mp.session->has_dropped(source))
-                fail(fmt::format("the lockstep dropped source {}", source));
+        for (const u32 source : mp.all_sources) {
+            const bool dropped = mp.session && mp.session->has_dropped(source);
+            const bool left = quit_at_ > 0 && source == 1;
+            if (dropped != left)
+                fail(dropped ? fmt::format("the lockstep dropped source {}", source)
+                             : fmt::format("source {}, which left, wasn't dropped", source));
+        }
+        if (host_ && quit_at_ > 0) {
+            const i32 army = mp.army_of(1);
+            const sim::ArmyBrain* gone =
+                army >= 0 ? sim->army_at(static_cast<size_t>(army)) : nullptr;
+            if (!gone || !gone->is_defeated())
+                fail(fmt::format("the joiner's army {} wasn't defeated", army));
+            if (!dialog_seen_) fail("retail's disconnect dialog never opened");
+            if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
+        }
         check_chat(ui);
         done_ = true;
     }
 }
 
+bool LanGameTest::disconnect_dialog_open(lua::LuaState& ui) {
+    auto r = ui.do_string(R"(
+        local module = __modules and __modules['/lua/ui/dialogs/disconnect.lua']
+        __osc_lan_dialog = module and __osc_upvalue(module.Update, 'parent') and 1 or 0
+    )");
+    return r && number_global(ui.raw(), "__osc_lan_dialog") != 0;
+}
+
 void LanGameTest::listen_for_chat(lua::LuaState& ui) {
     listening_ = true;
+    // The game's UI state is a fresh one: the upvalue reader again
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_upvalue");
+    lua_pushcfunction(L, l_upvalue);
+    lua_rawset(L, LUA_GLOBALSINDEX);
     auto r = ui.do_string(R"(
         import('/lua/ui/game/gamemain.lua').RegisterChatFunc(function(sender, data)
             __osc_lan_chat = sender .. ': ' .. tostring(data.text)
@@ -183,6 +226,11 @@ void LanGameTest::check_chat(lua::LuaState& ui) {
 
 void LanGameTest::lobby_frame(lua::LuaState& ui) {
     if (!host_ && !joined_) {
+        if (frames_ > kMaxHostWaitFrames) {
+            fail(fmt::format("no host listened on port {}", port_));
+            done_ = true;
+            return;
+        }
         if (frames_ % 30 != 0 || !listening(address_, port_)) return;
         auto r = ui.do_string(fmt::format(R"(
             local lobby = import('/lua/ui/lobby/lobby.lua')
@@ -298,10 +346,14 @@ void LanGameTest::finish(const sim::SimState* sim) const {
     } else if (!checked_at_) {
         test_status::fail("[FAIL] lan-game ({}): the window closed at tick {}, before the check",
                           host_ ? "host" : "joiner", sim ? sim->tick_count() : 0);
+    } else if (test_status::failure_count() == 0 && left_) {
+        spdlog::info("[PASS] lan-game (joiner): played in lockstep, then left at tick {}",
+                     sim ? sim->tick_count() : 0);
     } else if (test_status::failure_count() == 0) {
         spdlog::info("[PASS] lan-game ({}): retail's lobby launched a game played in lockstep to "
-                     "tick {}, as army {}",
-                     host_ ? "host" : "joiner", sim ? sim->tick_count() : 0, host_ ? 1 : 2);
+                     "tick {}, as army {}{}",
+                     host_ ? "host" : "joiner", sim ? sim->tick_count() : 0, host_ ? 1 : 2,
+                     quit_at_ > 0 ? ", the joiner dropped when it left" : "");
     }
 }
 

@@ -68,6 +68,7 @@ struct Options {
     bool lan_game_host = false;
     std::string lan_game_join;
     u16 lan_game_port = 47624;
+    u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;

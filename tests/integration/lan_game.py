@@ -18,9 +18,11 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 TIMEOUT_SECONDS = 600
+PARTNER_GRACE_SECONDS = 30
 SKIPPED = 77
 
 
@@ -34,6 +36,28 @@ def report(name: str, log: Path, code: int | None) -> None:
         print(f"  --- the last lines of its log ---")
         for line in lines[-40:]:
             print(f"  {line}")
+
+
+def wait_for(procs: dict[str, subprocess.Popen[bytes]]) -> dict[str, int | None]:
+    """Each process's exit code. One that fails stops the other soon after
+    (it would wait out its own limit for a partner that's gone)."""
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    failed_at: float | None = None
+    while time.monotonic() < deadline:
+        codes = {name: proc.poll() for name, proc in procs.items()}
+        if all(code is not None for code in codes.values()):
+            return codes
+        if failed_at is None and any(code not in (None, 0) for code in codes.values()):
+            failed_at = time.monotonic()
+        if failed_at is not None and time.monotonic() - failed_at > PARTNER_GRACE_SECONDS:
+            break
+        time.sleep(0.5)
+    else:
+        print(f"lan_game: timed out after {TIMEOUT_SECONDS}s")
+    for proc in procs.values():
+        if proc.poll() is None:
+            proc.kill()
+    return {name: proc.wait() for name, proc in procs.items()}
 
 
 def main(argv: list[str]) -> int:
@@ -60,15 +84,7 @@ def main(argv: list[str]) -> int:
                     stdout=out,
                     stderr=subprocess.STDOUT,
                 )
-        codes: dict[str, int | None] = {}
-        try:
-            for name, proc in procs.items():
-                codes[name] = proc.wait(timeout=TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            print(f"lan_game: timed out after {TIMEOUT_SECONDS}s")
-            for name, proc in procs.items():
-                proc.kill()
-                codes[name] = proc.wait()
+        codes = wait_for(procs)
         if all(code == SKIPPED for code in codes.values()):
             print("no game data: skipped")
             return SKIPPED
