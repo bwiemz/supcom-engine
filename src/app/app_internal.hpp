@@ -63,6 +63,8 @@ struct Options {
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
     bool load_flow_test = false;
+    bool mods_flow_test = false;
+    bool mods_flow_lobby = false;
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
     /// LAN lobby played to a game by two processes, offscreen (M218c).
     bool lan_game_host = false;
@@ -70,6 +72,12 @@ struct Options {
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
+    /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
+    /// link to, instead of the front end (M220a).
+    std::string gpgnet_endpoint;
+    /// --gpgnet-scripted: that link's run is a test's: offscreen, counting
+    /// script errors, and over once the client closes the link.
+    bool gpgnet_scripted = false;
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;
@@ -81,7 +89,8 @@ struct Options {
     bool builder_debug = false;
     std::string ai_personality;
     size_t ai_army_count = 2;           ///< --ai-armies
-    std::set<std::string> cmdline_args; ///< for HasCommandLineArg
+    /// The command line, in order, for HasCommandLineArg and GetCommandLineArg
+    std::vector<std::string> cmdline_args;
     /// A checked run: headless, and its exit code is the checks' result.
     bool any_test = false;
     bool headless = false;
@@ -164,7 +173,6 @@ struct WorldInterp {
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
 void cancel_command_mode(lua_State* uiL);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);
-void lan_launch_session(lua_State* uL, const std::string& scenario);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on
@@ -194,15 +202,18 @@ private:
     std::optional<int> boot_game();
     /// The UI state, up to the game's interface or the front end.
     std::optional<int> boot_ui();
-    /// A UI state's own setup: bindings, the App's objects, userInit.lua.
-    std::optional<int> init_ui_state();
+    /// A UI state's own setup: bindings, the App's objects, userInit.lua --
+    /// or, for a game's (`game_mods`: its mods, as sim::GameSetup::mods),
+    /// SessionInit.lua.
+    std::optional<int> init_ui_state(const std::string* game_mods = nullptr);
     /// start()'s part of it: the registries and managers the bindings use.
     void publish_session_objects();
     /// Replace the UI state with a fresh one, as Moho starts the front end
     /// and each game in a state of its own (M191 step 4). The old state's
     /// controls, threads, beat functions and key maps go with it; the
-    /// caller then runs SetupUI and the front end's or game's UI.
-    void reset_ui_state();
+    /// caller then runs SetupUI and the front end's or game's UI. A game's
+    /// state (`game_mods` given) is init_ui_state's for a game.
+    void reset_ui_state(const std::string* game_mods = nullptr);
     /// The session, the UI's registries, and the test modes' front end.
     std::optional<int> start();
 

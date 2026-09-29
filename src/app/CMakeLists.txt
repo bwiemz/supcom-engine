@@ -9,6 +9,7 @@ add_library(osc_app STATIC
     headless.cpp
     lan_game_test.cpp
     log_bundle.cpp
+    mods_flow_test.cpp
     reload.cpp
     session.cpp
     ui_globals.cpp

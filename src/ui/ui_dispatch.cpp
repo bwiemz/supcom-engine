@@ -383,7 +383,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
                     lua_pushnumber(L, ev.mouse_y);
-                    if (lua_pcall(L, 3, 0, 0) != 0) lua_pop(L, 1);
+                    if (lua_pcall(L, 3, 0, 0) != 0) {
+                        report_ui_callback_error(
+                            fmt::format("Dragger OnMove error: {}", lua_tostring(L, -1)));
+                        lua_pop(L, 1);
+                    }
                 } else {
                     lua_pop(L, 1);
                 }
@@ -395,7 +399,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                     lua_pushvalue(L, dragger_idx);
                     lua_pushnumber(L, ev.mouse_x);
                     lua_pushnumber(L, ev.mouse_y);
-                    if (lua_pcall(L, 3, 0, 0) != 0) lua_pop(L, 1);
+                    if (lua_pcall(L, 3, 0, 0) != 0) {
+                        report_ui_callback_error(
+                            fmt::format("Dragger OnRelease error: {}", lua_tostring(L, -1)));
+                        lua_pop(L, 1);
+                    }
                 } else {
                     lua_pop(L, 1);
                 }
@@ -410,7 +418,11 @@ void UIDispatch::dispatch_events(lua_State* L, UIControlRegistry& registry) {
                 lua_rawget(L, dragger_idx);
                 if (lua_isfunction(L, -1)) {
                     lua_pushvalue(L, dragger_idx);
-                    if (lua_pcall(L, 1, 0, 0) != 0) lua_pop(L, 1);
+                    if (lua_pcall(L, 1, 0, 0) != 0) {
+                        report_ui_callback_error(
+                            fmt::format("Dragger OnCancel error: {}", lua_tostring(L, -1)));
+                        lua_pop(L, 1);
+                    }
                 } else {
                     lua_pop(L, 1);
                 }

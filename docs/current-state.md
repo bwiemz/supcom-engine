@@ -22,8 +22,8 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 |---|---|
 | Linux | GCC 16 and Clang 22, Ninja + vcpkg presets `linux-debug` / `linux-release` / `linux-asan`. Warning-clean with `-Wall -Wextra`: CI's Linux jobs (GCC 14, Clang 18) build first-party code with `-Werror` (`OSC_WERROR`). |
 | Windows | MSVC presets unchanged. CI builds and tests them; not re-verified by hand since the Linux work. |
-| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. Retail's own front end boots and reaches a hosted skirmish lobby. In a windowed game, retail's own game interface runs and draws: economy, score, avatars, unit view, orders and construction panels, command-mode clicks and the minimap window. The C++ HUD placeholders remain behind `--legacy-hud`. Preferences are retail's Lua `Game.prefs` (profiles, options, window positions) in `<config>/opensupcom/`; tests and captures keep them in memory. Audio plays FA's own XACT data through an app-owned cue engine: interface sounds, retail's music thread, unit and weapon sounds with FA's categories, falloff curves and limits. It has been checked headless only; a listening pass is still to do. The world is drawn between the sim's last two ticks (M190a): the sim still ticks at 10 Hz, but units, walk cycles, projectiles and overlays move every frame. |
-| Gameplay fidelity (Phase E, M200–M206) | The engine provides the machinery retail's own scripts expect, rather than parallel C++ behaviour:<br>• **Weapons:** retail's weapon state machines (targets, racks and salvos, priorities, restrictions, turret slew and firing tolerance, posed muzzles).<br>• **Projectiles:** script classes with `OnImpact`, and ballistic arcs. Swept collision against terrain, water, units, props, shields and projectiles, filtered by scripts.<br>• **Props and wreckage:** script classes. Trees split, fall and sink; wrecks are made by retail's scripts.<br>• **Movement:** acceleration, braking, turning and reversing; collision separation; retail's `formations.lua`.<br>• **Pathfinding:** cheaper after M205.<br>• **Missiles:** silo missile builds and launches, and anti-missile weapons.<br>• **Beams:** collision beams.<br>• **Economy events:** their resources are drawn (teleport, OverCharge).<br>• **Work ranges:** build, repair, reclaim and capture reach, measured by Moho's footprint gap.<br>• **Orders:** `Issue*` appends to the queue.<br>• **Ferries:** a transport's route carries units from its beacon to the last point and back.<br>• **Unloads:** `IssueTransportUnloadSpecific` drops only the cargo in its category, chosen when it is given.<br>• **Factory assist:** a factory guarding a factory builds units from the guarded factory's queue.<br>Where the scripts left Moho's rules unclear, they come from the decompiled engine ([faf-re](https://github.com/Draiget/faf-re)). |
+| Retail FA 3599 (Steam) | Found automatically through the Steam libraries. Boots via retail `bin/SupComDataPath.lua`: glob mounts, `/schook` hooks, LuaPlus `#` comments and size hints, and the plain `Categories` lists. Headless SCMP_009 runs 100 ticks with 0 Lua errors. Units run their own retail script classes. 4 retail AIs play 10 game-minutes with 0 Lua errors and about 100 units, fighting (`--ai-skirmish --ai-armies 4 --ticks 6000`). An ASan build of the same run is clean. Retail's own front end boots and reaches a hosted skirmish lobby. In a windowed game, retail's own game interface runs and draws: economy, score, avatars, unit view, orders and construction panels, command-mode clicks and the minimap window. The C++ HUD placeholders remain behind `--legacy-hud`. Preferences are retail's Lua `Game.prefs` (profiles, options, window positions) in `<config>/opensupcom/`; tests and captures keep them in memory. Audio plays FA's own XACT data through an app-owned cue engine: interface sounds, retail's music thread, unit and weapon sounds with FA's categories, falloff curves and limits. It has been checked headless only; a listening pass is still to do. The world is drawn between the sim's last two ticks (M190a): the sim still ticks at 10 Hz, but units, walk cycles, projectiles and overlays move every frame. Mods (M221) work as in Moho. `doscript` loads a script and its hooks, `/schook`'s and each active mod's, as one chunk. A game's mods (the lobby's `GameMods`) reach its sim and UI states before their blueprints load, and its replay carries them. The player's mods folder is found (a mod may be a `.zip`), and so are their own maps. Retail's lobby and mod manager pick a game's mods. |
+| Gameplay fidelity (Phase E, M200–M206) | The engine provides the machinery retail's own scripts expect, rather than parallel C++ behaviour:<br>• **Weapons:** retail's weapon state machines (targets, racks and salvos, priorities, restrictions, turret slew and firing tolerance, posed muzzles).<br>• **Projectiles:** script classes with `OnImpact`, and ballistic arcs. Swept collision against terrain, water, units, props, shields and projectiles, filtered by scripts.<br>• **Props and wreckage:** script classes. Trees split, fall and sink; wrecks are made by retail's scripts.<br>• **Movement:** acceleration, braking, turning and reversing; collision separation; retail's `formations.lua`.<br>• **Pathfinding:** cheaper after M205.<br>• **Missiles:** silo missile builds and launches, and anti-missile weapons.<br>• **Beams:** collision beams.<br>• **Economy events:** their resources are drawn (teleport, OverCharge).<br>• **Work ranges:** build, repair, reclaim and capture reach, measured by Moho's footprint gap.<br>• **Orders:** `Issue*` appends to the queue.<br>• **Ferries:** a transport's route carries units from its beacon to the last point and back.<br>• **Unloads:** `IssueTransportUnloadSpecific` drops only the cargo in its category, chosen when it is given.<br>• **Factory assist:** a factory guarding a factory builds units from the guarded factory's queue.<br>• **Script orders:** retail's Lua tasks run as Moho runs them. `EnhanceTask` handles upgrades from the panel or the AI, and `TargetLocation` handles abilities such as the Eye of Rhianne's scry.<br>Where the scripts left Moho's rules unclear, they come from the decompiled engine ([faf-re](https://github.com/Draiget/faf-re)). |
 | Presentation fidelity (Phase F, M210–M217) | The world draws as FA's own shaders draw it, ported by hand from its `.fx` files, with Moho's order and rules from faf-re:<br>• **Map lighting and sky:** each map's sun, fill, multiplier and specular in FA's light formula; the map's sky dome (atmosphere, sky decals, cirrus).<br>• **Materials:** the four factions' unit materials, Seraphim's falloff, wrecks, FA's bloom from the glow in alpha, the build shaders and build-effect meshes, rigid skinning and hidden bones, the props' materials and clipped shadows.<br>• **Terrain:** the strata blend, projected and lit decals, scripts' decals and splats, glowing decals, Moho's screen-space terrain normals, and TTerrainGlow's lava.<br>• **Water:** FA's surface (four wave layers, Fresnel, the ramp), reflections of units, and the shoreline's waves; every retail map is read to its last byte.<br>• **Effects:** FA's beams, trails, particles (emission once a tick, analytic motion, five blends) and refracting particles.<br>• **Fog of war and icons:** units, projectiles and effects seen through the player's intel, blips and remembered structures, FA's strategic icons, counter-intel.<br>• **Media:** movies on their own clock, their sounds, the splash screens.<br>• **Input and camera:** wx key codes and input capture, retail's key map and console, the console's session commands, Moho's camera (log zoom, zoom-driven pitch and FOV, timed moves, SimCamera waits), the window as FA's video options set it (windowed, full screen, vsync, HiDPI), and the options applied through their console variables.<br>No FA reference captures exist on this machine: the looks are checked against the shaders' formulas and by eye, not against the game. |
 | FAForever data | Still supported through `--init`/`--faf-data` or `~/.faforever`. Not re-verified: this machine has no FAF install. |
 
@@ -40,47 +40,32 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 ## Verified Locally
 
 - `build/linux-debug/tests/osc_tests` passes (see the metrics above); `build/linux-debug/opensupcom --help` lists the CLI surface, including every `--*-test` mode.
+- **Launched by a matchmaking client (GPGNet, M220a):** `opensupcom /gpgnet 127.0.0.1:<port>` connects to the client and carries out its commands (`CreateLobby` through retail's `onlineprovider.lua`, `HostGame`, `JoinGame`, `ConnectToPeer`...), telling it `GameState Idle` and `Lobby`; `data.gpgnet_lobby` checks it against a stand-in client, and `data.gpgnet_game` has the stand-in drive two games through retail's auto-lobby, as FAF's matchmaker does, to a launched game both play in lockstep; `data.gpgnet_game_relayed` does it with the two reaching each other through a UDP relay standing in for FAF's ICE adapter, losing 5% of what it carries. FAF's own client and ICE adapter aren't tested here (none is installed).
+- **Windows and Linux in one game (CI):** the `cross-os-play` job plays the data-free lockstep pairs with the Linux build hosting the Windows build under Wine and the other way round (`tests/integration/cross_os_pairs.py`): in sync, a divergence caught, a vanished joiner dropped, a slow joiner setting the pace.
 - **Cross-OS determinism on real data:** `tools/cross_os_replay.py --run-id <CI run>` plays a recorded four-AI game with the CI's Windows build (under Wine) and a Linux build; each Phase E PR has matched at every tick.
-- **Multiplayer (LAN lockstep), verified across two OS processes over localhost TCP:**
-  `opensupcom.exe --mp-host` + `opensupcom.exe --mp-join 127.0.0.1` reach identical
-  sync checksums with `desynced=0` through scripted player orders (incl. a mid-move
-  Stop); adding `--mp-desync` makes both peers correctly report `desynced=1` for an
-  injected divergence. Command routing (`SimState::route_command`) sends local human
-  orders to the `LockstepSession` in multiplayer and applies them directly in
-  single-player (unchanged). See `docs/plans/2026-07-03-multiplayer-networking-design.md`.
-- **LAN lobby lifecycle, verified across two OS processes:** `opensupcom.exe
-  --lan-host` + `opensupcom.exe --lan-join 127.0.0.1` run the real lobby handshake
-  (host advertises scenario + RNG seed, client applies + readies, host fires the
-  launch barrier) over a `MuxTransport` that carries both the lobby channel and the
-  lockstep channel on one connection, then play a synced lockstep match. Both print
-  matching scenario, seed, an RNG probe (proving the shared seed reached each sim —
-  the fix for `weapon.cpp`'s previously non-deterministic firing randomness), and
-  final checksum with `desynced=0`. Windowed reachability: `--lan-window-host` /
-  `--lan-window-join <ip>` create the transport at startup and the game loop drives
-  the same handshake to launch (a two-window play verified only by logic-equivalence
-  to the headless run). See
-  `docs/superpowers/specs/2026-07-04-windowed-lan-lobby-design.md`.
-- **Player-drop / timeout handling, verified across two OS processes:** if a peer
-  disconnects or freezes, `LockstepSession` declares it dropped after ~3s (30
-  command frames) of missing confirmations, removes it from the scheduler gate so
-  the survivor un-stalls, and reports it; the game loop defeats the dropped army
-  (`SimState::defeat_army`, reusing the share-rule dispose path) so the match
-  resolves instead of hanging. Verified: `--lan-join ... --mp-drop-at 20` makes the
-  client leave mid-match; the host logs `peer source 1 timed out (31 frames behind)
-  — dropped`, continues to completion (`stalled=0 dropped=1`), while a normal
-  no-drop match still syncs (`dropped=0`). Once the game has ended a quiet peer
-  is only a player leaving the score screen (`SessionEndGame` stops that
-  client's sim), so `defeat_army` leaves the result alone. See
-  `docs/superpowers/specs/2026-07-04-mp-player-drop-design.md`.
-- **LAN IP-entry UI:** a front-end "LAN Game" button opens a dialog (host-IP field +
-  Host/Join/Close + status) that calls the `LanHost([port])` / `LanJoin(ip[, port])` /
-  `LanNetStatus()` engine globals over the LAN lifecycle above. `--lan-ui-test`
-  verifies the globals headlessly (`LanHost` creates a listening transport,
-  `LanJoin("")` is rejected) and that the dialog Lua snippet parses + `pcall`-degrades
-  gracefully. The dialog is built with FA `maui`/`UIUtil`; its actual rendering/click
-  is verified only in a live window (no GUI automation in CI) and is fully
-  `pcall`-guarded so any UI mismatch logs a warning rather than breaking the menu.
-  See `docs/superpowers/specs/2026-07-04-lan-ip-entry-ui-design.md`.
+- **Multiplayer (LAN), retail's own screens to a game:** Multiplayer → LAN finds
+  games (UDP discovery on port 15000), and retail's `lobby.lua` hosts, joins and
+  launches over the engine's `CLobby` (`sim::LobbyNet`, through the host; Moho's "UDP" lobby over reliable UDP streams since M220c, "TCP" over TCP).
+  `LaunchGame` hands the lobby's connections to the game, which plays in lockstep
+  over them: pause (with the lobby's timeouts), the game's speed (as the lobby
+  sets it, and players agree it), chat, `GetSessionClients`,
+  `EjectSessionClient` and retail's disconnect dialog work as Moho's. See
+  `docs/plans/2026-09-28-m218-lan-lobby-design.md`.
+  - `data.lan_game` and `data.lan_game_quit` (need FA data) play retail's lobby
+    in two processes from hosting to a game of 150 ticks: in step, pausing and
+    resuming, chatting, the joiner raising the game's speed (adjustable in the
+    lobby) and both following; and with the joiner leaving at tick 120, dropped
+    by agreement, its army defeated, the dialog shown and closed.
+  - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`,
+    `mp.lockstep_peer_drop` and `mp.lockstep_slow_peer` host and join a lobby
+    over UDP, launch, and play minimal sims in lockstep through the game's own
+    `route_command` path: in sync; an injected local divergence reported by
+    both; a joiner that vanishes at round 20 dropped (after ~3 s, 30 rounds,
+    without a word from it) while the host plays on; a joiner taking 200 ms a
+    round setting the game's pace, with no one dropped (a peer runs at most two
+    seconds of frames ahead of its sim, then waits). Once the game has ended a
+    quiet peer is only a player leaving the score screen (`SessionEndGame` stops
+    that client's sim), so `defeat_army` leaves the result alone.
 - `osc_integration --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `osc_integration --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.

@@ -193,8 +193,59 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     timeoutsRemaining)` and `OnResume()` as the pause starts and ends
     (Moho's `Sync.PausedBy`), `OnUserPause(bool)` at once for the player
     who asked, and `SessionIsPaused` true while it holds.
-- **M218g:** `LanHost`/`LanJoin` and their dialog go (the peer-drop CI
-  test moves to the lobby's path).
+- **M218g:** the fixed LAN handshake goes, now that retail's own screens
+  host, find, join and launch games: the engine's "LAN Game" button and
+  dialog on the main menu, the `LanHost`/`LanJoin`/`LanNetStatus` globals,
+  `--lan-window-host`/`--lan-window-join`, and beneath them `LanLobby`, the
+  `MuxTransport` it shared a connection with, and `TcpTransport`. A game's
+  network is its lobby's connections, and nothing else.
+  - The data-free CI pairs (`mp.*`) play over the lobby's connections: each
+    hosts a lobby, joins it, launches as `LaunchGame` does
+    (`mp_begin_lobby_game`, `mp_attach_session`) and plays minimal sims in
+    lockstep: in sync, a divergence caught, a player gone mid-game dropped.
+
+- **M218h:** a network game's pace. The roadmap's "RTT-adaptive command
+  delay" turns out to be the lockstep's own shape: a peer sends a frame a
+  round (a tick's time) and runs a tick once every peer's frame for it is
+  in, so its frames lead its sim by the network's latency, and a local
+  order, going into the frame being sent, waits just that long. What was
+  missing is Moho's bound on it: its issue thread runs at most two
+  seconds' worth of beats ahead of the one executed. Without it a peer
+  whose sim can't keep 10 Hz fell further behind every second, and the
+  others, whose drop timer counted how far their frames ran past its,
+  dropped it after 30; so did a player who raised the game speed, whose
+  rounds ran faster than everyone else's.
+  - A peer sends at most 20 frames (`kMaxLead`, two seconds) past its sim;
+    held there, it waits for the others, and the game runs at the slowest
+    peer's pace. Held, it still sends a word each round (an alive message),
+    so a slow peer held at the cap isn't taken for a dead one.
+  - The drop timer counts rounds without a word from a peer (a frame or an
+    alive message), not frames: held at the cap, frames stop, and a dead
+    peer must still drop.
+  - A round is a tick's time, whatever this player's speed: a network game
+    runs at normal speed until the game's speed is negotiated (Moho's
+    `CLIMSG_AdjustSimSpeed`, not done yet).
+  - As before, the timer is armed by a peer's first frame: peers load the
+    game at their own speed, and one slower to load mustn't drop. A peer
+    that never sends one (it died loading) is left to the players, as in
+    Moho: the disconnect dialog shows it, and they eject it.
+
+- **M218i:** a network game's speed, as Moho's client manager negotiates
+  it. The lobby's `GameSpeed` fixes it (`normal` +0, `fast` +4) or lets
+  the players change it (`adjustable`). A player's `SetGameSpeed`,
+  `WLD_GameSpeed` or `WLD_Increase/Decrease/ResetSimRate` goes to every
+  peer as a message with a clock (Moho's `CLIMSG_AdjustSimSpeed`); each
+  applies the newest, a tie going to the lower source, so all come to the
+  same speed. An observer can't (Moho's `WLD_CanAdjustSimRate`). Each change
+  reaches `uimain.NoteGameSpeedChanged(client, speed)` on every machine.
+  - A round is a tick's time at that speed, so the lead cap and the drop
+    timeout are counted in rounds scaled to it (their scale held to 0.1–10:
+    the frame loop runs a few rounds a frame at most), keeping two and three
+    seconds.
+  - Not done: Moho also caps the speed at the slowest client's measured
+    rate (`maxSP`); here the lead cap does the same work, waiting for it.
+  - Single-player keeps its own speed, adjustable whatever the option
+    (retail fixes it at `normal` unless the lobby says `adjustable`).
 
 Two fixes the launch found go separately, since single-player has them
 too:
@@ -319,3 +370,52 @@ too:
   `OnPause` (the host's source, 2 of the lobby's 3 timeouts left) and
   `OnResume`; both still reach tick 150 in step. `data.lan_game_quit` too,
   before the joiner leaves.
+
+## Tests (M218g)
+- **`mp.lockstep_sync`, `mp.lockstep_desync_detected`,
+  `mp.lockstep_peer_drop`** (two processes, no game data, CI): a lobby
+  hosted and joined over TCP, the joiner seeded by the host's time from its
+  welcome, launched, then 60 rounds in lockstep with the host's scripted
+  orders. In sync, both reach the same checksum; with a local-only order on
+  the host, both report the desync; with the joiner gone at round 20
+  without a word, the host drops it (exactly one) and plays on.
+- **Unit (`test_lobby_net`):** the host survives sending to a player gone
+  without a goodbye (POSIX's SIGPIPE), and loses it. This was
+  `TcpTransport`'s test; the lobby's connections share its send path.
+- **Unit (`test_wire_framing`):** the framing tests, kept from
+  `test_tcp_transport`.
+
+## Tests (M218h)
+- **Unit (`test_lockstep`, `[pace]`):**
+  - a peer whose other has gone silent sends 20 frames past its sim, then
+    only alive messages; the silent one still drops after the timeout;
+  - over a line 4 rounds long, a local order waits 5 ticks (the latency
+    and the frame it goes in) and the game still runs a tick a round; over
+    one 30 rounds long (past the cap), the game slows, and no one drops;
+  - a peer running a round in three of the other's sets the pace: the fast
+    one reaches the cap, neither drops, and they end in step;
+  - three peers, C sending a frame every 29 of A's rounds and B a round in
+    seven: held at the cap, B would go quiet for 35 of A's rounds between
+    frames; its alive messages keep it in, and no one drops.
+- **`mp.lockstep_slow_peer`** (two processes, CI): the joiner takes 200 ms
+  a round; the host, twice as fast, waits for it, drops no one, and both
+  end in sync. The pairs' processes now answer for a second after their
+  last round before closing: a socket closed with data unread resets the
+  connection, and the other side lost its last frame.
+
+## Tests (M218i)
+- **Unit (`test_lockstep`, `[speed]`):** a fixed speed refuses a change; an
+  adjustable one: a request applies at once for its asker and on the other
+  once the message comes, both hearing it; two at the same clock settle on
+  the lower source's, a newer one wins, one out of range is held to
+  -10..+50, and one older than the applied (delayed on its way) changes
+  nothing; at +10 a peer runs 200 frames ahead and drops a silent one after
+  300 rounds, at -10 after 2 and 3.
+- **Unit (`test_net_lobby`):** a lobby's game at `fast` is at +4 and
+  refuses `SetGameSpeed`; at `Adjustable` (any case) a player's
+  `SetGameSpeed(3)` is its speed and reaches `NoteGameSpeedChanged(1, 3)`;
+  an observer's changes nothing.
+- **`data.lan_game`, `data.lan_game_quit`:** the host's lobby makes the
+  speed adjustable (retail's `SetGameOption`); the joiner, resuming the
+  pause, asks for +2; both machines hear it (retail prints "LanJoiner:
+  adjusting game speed to +2") and end at +2.

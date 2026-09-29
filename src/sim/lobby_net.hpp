@@ -41,6 +41,7 @@ struct LobbyEvent {
         PeerJoined,       ///< uid, name
         PeerLeft,         ///< uid, name
         Data,             ///< from uid (and name): payload
+        PeerEstablished,  ///< the host's: player uid reaches everyone it knows of
     };
     Kind kind{};
     u32 uid = 0;
@@ -48,6 +49,10 @@ struct LobbyEvent {
     std::string reason;
     std::vector<u8> payload;
 };
+
+/// What a lobby's connections run over: TCP, or reliable streams over UDP
+/// (M220c: FAF's ICE adapter relays UDP only, and Moho's "UDP" lobby is UDP).
+enum class LobbyTransport : u8 { Tcp, Udp };
 
 class LobbyNet {
 public:
@@ -60,19 +65,28 @@ public:
 
     /// `max_connections`: the players who may join (Moho's maxConnections;
     /// one more is refused with "LobbyFull").
-    LobbyNet(std::string local_name, u32 max_connections);
+    LobbyNet(std::string local_name, u32 max_connections,
+             LobbyTransport transport = LobbyTransport::Tcp);
     ~LobbyNet();
     LobbyNet(const LobbyNet&) = delete;
     LobbyNet& operator=(const LobbyNet&) = delete;
 
-    /// Listen on `port` (0: any free one) as the host, uid 0. `hosted_time`
+    /// The uid a matchmaking client gave this player (GPGNet, M220b), before
+    /// hosting or joining: the host takes it as its own, and a joiner asks
+    /// the host for it (one taken is refused, "UidTaken"). Without it, the
+    /// host is 0 and numbers the players who join 1, 2, ...
+    void set_local_uid(u32 uid);
+
+    /// Listen on `port` (0: any free one) as the host (uid 0, or the one
+    /// set). `hosted_time`
     /// goes to each player in their welcome (FA seeds the game with it).
     /// False if the port can't be listened on.
     bool host(u16 port, u64 hosted_time);
     /// Join the host at `address` (dotted IPv4) and `port`. The connection
     /// completes, and the welcome comes, through poll(). False if `address`
-    /// is no address or no socket can be made.
-    bool join(const std::string& address, u16 port);
+    /// is no address or no socket can be made. Over UDP the lobby's own
+    /// port is `local_port` (0: any), where an ICE adapter sends to it.
+    bool join(const std::string& address, u16 port, u16 local_port = 0);
 
     /// Send `payload` to one peer, or to kEveryone.
     void send(u32 to, const std::vector<u8>& payload);
@@ -80,6 +94,13 @@ public:
     /// The host: remove a player, telling them `reason`. False for no such
     /// player, or not hosting.
     bool eject(u32 uid, const std::string& reason);
+
+    /// A client, once its own part of joining is done (the scripts have had
+    /// its ConnectionToHostEstablished, and sent what they send then): it
+    /// tells the host it reaches everyone it knows of, as Moho's clients
+    /// report the peers they have established (M220b). The host hears it
+    /// after the client's data.
+    void report_established();
 
     /// A launched game's lockstep frames (M218c), apart from the scripts'
     /// data: to every other player (the host relays a client's).

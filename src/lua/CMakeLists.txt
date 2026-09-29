@@ -13,6 +13,7 @@ add_library(osc_lua STATIC
     bindings/sim/navigator.cpp
     bindings/sim/platoon.cpp
     bindings/sim/projectile.cpp
+    bindings/sim/script_task.cpp
     bindings/sim/shield.cpp
     bindings/sim/unit.cpp
     bindings/sim/weapon.cpp
@@ -22,8 +23,8 @@ add_library(osc_lua STATIC
     bindings/ui/text.cpp
     bindings/ui/user_unit.cpp
     bindings/ui/world.cpp
+    gpgnet_session.cpp
     mp_net_state.cpp
-    lan_lobby.cpp
     lobby_wire.cpp
     net_lobby.cpp
     session_clients.cpp
@@ -31,6 +32,7 @@ add_library(osc_lua STATIC
     sim_loader.cpp
     sim_sync.cpp
     script_loader.cpp
+    game_mods.cpp
     scenario_loader.cpp
     session_manager.cpp
     special_files.cpp

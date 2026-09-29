@@ -41,6 +41,10 @@ enum class CommandType : u8 {
     // (the orders panel's Dock; Moho's UNITCOMMAND_Dock, M206r). target_id =
     // the platform. A TransportLoad onto a platform docks the same way.
     Dock = 79,
+    // A Lua task order (Moho's UNITCOMMAND_Script, M206w): the class its
+    // script_args' TaskName names runs it (retail's EnhanceTask,
+    // TargetLocation).
+    Script = 80,
 };
 
 /// Where a refuel order is (Moho's CUnitRefuel task states, M206r).
@@ -73,6 +77,12 @@ struct UnitCommand {
     /// UNITCOMMAND_TransportUnloadSpecificUnits carries its unit set). The
     /// rest stays aboard. Empty: all of it.
     std::vector<u32> unload_ids;
+    /// A Script order's Lua table (TaskName and its task's data), as
+    /// lua_to_bytes wrote it.
+    std::string script_args;
+    /// Which script task runs this order (runtime state; 0 until one
+    /// starts): the unit's task serial.
+    u32 task_serial = 0;
     /// A factory command (Moho's IssueFactoryCommand, M206k): it goes to the
     /// units' rally orders, not their queues, and a fresh one clears those.
     /// A player's move, patrol or transport call to a selected factory.

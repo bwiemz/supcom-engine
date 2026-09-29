@@ -145,6 +145,7 @@ void test_projectile(TestContext& ctx);
 void test_weapon(TestContext& ctx);
 void test_targeting(TestContext& ctx);
 void test_aim(TestContext& ctx);
+void test_script_orders(TestContext& ctx);
 void test_death(TestContext& ctx);
 void test_impact(TestContext& ctx);
 void test_arc(TestContext& ctx);

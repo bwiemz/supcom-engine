@@ -415,6 +415,17 @@ std::optional<IssuedCommand> InputHandler::click_in_command_mode(
         cmd.blueprint_id = mode.name;
         out.type = "BuildMobile";
         out.blueprint = mode.name;
+    } else if (mode.mode == "order" && mode.name == "RULEUCC_Script") {
+        // An ability (M206w): the orders panel's button names its task. The
+        // units it is for take it (ABILITYBUTTON, the category the panel
+        // shows abilities for; they have no RULEUCC_Script cap), the click
+        // as its Location.
+        if (!mode.script_args_at) return std::nullopt;
+        cmd.type = sim::CommandType::Script;
+        cmd.script_args = mode.script_args_at({wx, surface_y(wx, wz), wz});
+        if (cmd.script_args.empty()) return std::nullopt;
+        out.type = "Script";
+        live_selected([](const sim::Unit& u) { return u.has_category("ABILITYBUTTON"); });
     } else if (mode.mode == "order") {
         const OrderSpec* spec = nullptr;
         for (const auto& o : kOrders)

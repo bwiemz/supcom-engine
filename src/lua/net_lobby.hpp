@@ -10,6 +10,7 @@
 
 #include "core/types.hpp"
 
+#include <optional>
 #include <string>
 
 struct lua_State;
@@ -23,9 +24,11 @@ NetLobby* net_lobby_of(lua_State* L, int idx);
 
 /// Make the object at `idx` a networked lobby: its protocol ("UDP" or
 /// "TCP"), `port` to host on (0: any), `max_connections` players who may
-/// join, and its player's name.
+/// join, its player's name, and the uid a matchmaking client gave the
+/// player, if one did (M220b).
 void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port,
-                    u32 max_connections, const std::string& player_name);
+                    u32 max_connections, const std::string& player_name,
+                    std::optional<u32> player_uid = std::nullopt);
 
 // The methods, for a networked lobby object at 1 (its arguments after it).
 int net_lobby_HostGame(lua_State* L, NetLobby& lobby);
@@ -39,6 +42,7 @@ int net_lobby_GetLocalPlayerName(lua_State* L, NetLobby& lobby);
 int net_lobby_GetLocalPort(lua_State* L, NetLobby& lobby);
 int net_lobby_IsHost(lua_State* L, NetLobby& lobby);
 int net_lobby_EjectPeer(lua_State* L, NetLobby& lobby);
+int net_lobby_DisconnectFromPeer(lua_State* L, NetLobby& lobby);
 int net_lobby_MakeValidPlayerName(lua_State* L, NetLobby& lobby);
 int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby);
 int net_lobby_Destroy(lua_State* L, NetLobby& lobby);

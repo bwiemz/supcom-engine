@@ -7,6 +7,9 @@ add_executable(osc_tests
     test_first_run.cpp
     test_logs.cpp
     test_script_hooks.cpp
+    test_lua_bytes.cpp
+    test_game_mods.cpp
+    test_script_orders.cpp
     test_blueprint_categories.cpp
     test_category_expr.cpp
     test_scm_bones.cpp
@@ -98,15 +101,15 @@ add_executable(osc_tests
     test_handicap.cpp
     test_team_share_overflow.cpp
     test_lockstep.cpp
-    test_tcp_transport.cpp
+    test_wire_framing.cpp
+    test_gpgnet.cpp
+    test_reliable_udp.cpp
     test_lobby_net.cpp
     test_lan_discovery.cpp
     test_lobby_wire.cpp
     test_net_lobby.cpp
     test_command_routing.cpp
     test_sim_rand.cpp
-    test_mux_transport.cpp
-    test_lan_lobby.cpp
     test_video_decoder.cpp
 )
 

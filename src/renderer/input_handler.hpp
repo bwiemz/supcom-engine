@@ -30,6 +30,10 @@ struct CommandMode {
     std::string name; ///< blueprint id (build) or order cap, e.g. RULEUCC_Attack
     f32 footprint_x = 1.0f; ///< build: the structure's footprint
     f32 footprint_z = 1.0f;
+    /// An ability's order (RULEUCC_Script, M206w): the Script order's table
+    /// for a click at a point -- the mode's own (TaskName, AbilityName) with
+    /// the point as Location -- as sim::lua_to_bytes writes it.
+    std::function<std::string(const sim::Vector3&)> script_args_at{};
 };
 
 /// A command a command-mode click issued, as FA's OnCommandIssued sees it.
