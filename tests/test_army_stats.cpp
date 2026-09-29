@@ -84,10 +84,11 @@ TEST_CASE("Army economy stats: totals, rates and waste", "[army][stats][economy]
     registry.register_entity(std::move(spender));
 
     for (int i = 0; i < 10; ++i) brain.update_economy(registry, 0.1); // 1 s
-    CHECK(brain.get_stat("Economy_Income_Mass") == 10.0);
+    // The rates are a tick's worth, as Moho's: 10/s and 4/s, 0.1 s a tick.
+    CHECK(std::abs(brain.get_stat("Economy_Income_Mass") - 1.0) < 1e-9);
     CHECK(std::abs(brain.get_stat("Economy_TotalProduced_Mass") - 10.0) < 1e-9);
     CHECK(std::abs(brain.get_stat("Economy_TotalConsumed_Mass") - 4.0) < 1e-9);
-    CHECK(std::abs(brain.get_stat("Economy_Output_Mass") - 4.0) < 1e-9);
+    CHECK(std::abs(brain.get_stat("Economy_Output_Mass") - 0.4) < 1e-9);
     CHECK(brain.get_stat("UnitCap_Current") == 2.0);
     CHECK(brain.get_stat("UnitCap_MaxCap") == 500.0);
 

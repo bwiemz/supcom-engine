@@ -95,11 +95,8 @@ f64 ArmyBrain::get_economy_usage(const std::string& resource_type) const {
 }
 
 f64 ArmyBrain::get_economy_trend(const std::string& resource_type) const {
-    if (resource_type == "MASS")
-        return economy_.mass.income - economy_.mass.requested;
-    if (resource_type == "ENERGY")
-        return economy_.energy.income - economy_.energy.requested;
-    return 0.0;
+    if (resource_type != "MASS" && resource_type != "ENERGY") return 0.0;
+    return get_economy_income(resource_type) - get_economy_usage(resource_type);
 }
 
 i32 ArmyBrain::get_unit_cost_total(const EntityRegistry& registry) const {
@@ -260,7 +257,8 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     }
 
     // Moho's economy stats (the score reads them): totals produced and spent,
-    // the current rates per second, and what full storage wasted.
+    // this tick's income and spending (Moho's are a tick's amounts, like its
+    // other economy figures), and what full storage wasted.
     if (economy_.mass.income > 0) {
         stats_["Economy_TotalProduced_Mass"] += economy_.mass.income * dt;
     }
@@ -269,10 +267,10 @@ void ArmyBrain::update_economy(const EntityRegistry& registry, f64 dt) {
     }
     stats_["Economy_TotalConsumed_Mass"] += mass_consumed;
     stats_["Economy_TotalConsumed_Energy"] += energy_consumed;
-    stats_["Economy_Income_Mass"] = mass_income;
-    stats_["Economy_Income_Energy"] = energy_income;
-    stats_["Economy_Output_Mass"] = dt > 0 ? mass_consumed / dt : 0.0;
-    stats_["Economy_Output_Energy"] = dt > 0 ? energy_consumed / dt : 0.0;
+    stats_["Economy_Income_Mass"] = mass_income * dt;
+    stats_["Economy_Income_Energy"] = energy_income * dt;
+    stats_["Economy_Output_Mass"] = mass_consumed;
+    stats_["Economy_Output_Energy"] = energy_consumed;
     stats_["Economy_AccumExcess_Mass"] += economy_.mass.overflow;
     stats_["Economy_AccumExcess_Energy"] += economy_.energy.overflow;
     stats_["Units_Active"] = static_cast<f64>(active_units);
