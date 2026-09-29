@@ -150,6 +150,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
         check_chat(ui);
         check_pause(ui);
+        check_speed(ui);
         left_ = true;
         done_ = true;
         return;
@@ -196,6 +197,7 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         }
         check_chat(ui);
         check_pause(ui);
+        check_speed(ui);
         done_ = true;
     }
 }
@@ -215,6 +217,26 @@ void LanGameTest::check_pause(lua::LuaState& ui) {
     if (number_global(L, "__osc_lan_resumed") < 1) fail("OnResume never came");
 }
 
+void LanGameTest::check_speed(lua::LuaState& ui) {
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_lan_speed");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string heard = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    // The joiner's client (its source's place, by slot) asked for +2
+    const auto& mp = lua::mp_net_state();
+    const auto joiner = std::find_if(mp.clients.begin(), mp.clients.end(),
+                                     [](const lua::SessionClient& c) { return c.uid == 1; });
+    const std::string want = fmt::format("{}:2", joiner - mp.clients.begin() + 1);
+    if (heard != want)
+        fail(fmt::format("NoteGameSpeedChanged heard '{}', not '{}'",
+                         heard.empty() ? "nothing" : heard, want));
+    auto r = ui.do_string("__osc_lan_game_speed = GetGameSpeed()");
+    if (!r || number_global(L, "__osc_lan_game_speed") != 2)
+        fail(fmt::format("the game's speed is {}, not +2",
+                         number_global(L, "__osc_lan_game_speed")));
+}
+
 void LanGameTest::pause_frame(lua::LuaState& ui, const sim::SimState& sim) {
     // The host paused at the check: while it holds, no tick runs here; the
     // joiner resumes it after a while (any player may)
@@ -231,7 +253,8 @@ void LanGameTest::pause_frame(lua::LuaState& ui, const sim::SimState& sim) {
         fail(fmt::format("ticked from {} to {} while paused", *paused_tick_, sim.tick_count()));
     }
     if (!host_ && ++paused_frames_ == kResumeAfterFrames) {
-        if (auto s = ui.do_string("SessionResume()"); !s) fail("resuming: " + s.error().message);
+        if (auto s = ui.do_string("SessionResume() SetGameSpeed(2)"); !s)
+            fail("resuming: " + s.error().message);
     }
 }
 
@@ -266,8 +289,15 @@ void LanGameTest::listen_for_chat(lua::LuaState& ui) {
             __osc_lan_resumed = __osc_lan_resumed + 1
             return onResume()
         end
+        -- And of the game's speed (M218i)
+        local uimain = import('/lua/ui/uimain.lua')
+        local noteSpeed = uimain.NoteGameSpeedChanged
+        uimain.NoteGameSpeedChanged = function(client, speed)
+            __osc_lan_speed = tostring(client) .. ':' .. tostring(speed)
+            return noteSpeed(client, speed)
+        end
     )");
-    if (!r) fail("hearing chat and pauses: " + r.error().message);
+    if (!r) fail("hearing chat, pauses and speed: " + r.error().message);
 }
 
 void LanGameTest::check_chat(lua::LuaState& ui) {
@@ -309,6 +339,19 @@ void LanGameTest::lobby_frame(lua::LuaState& ui) {
         return;
     }
     if (!host_) return;
+    // The game's speed, adjustable (M218i): retail's lobby option
+    if (auto o = ui.do_string(R"(
+            local lobby = import('/lua/ui/lobby/lobby.lua')
+            local info = __osc_upvalue(lobby.IsLocallyOwned, 'gameInfo')
+            if info and info.GameOptions.GameSpeed ~= 'adjustable' then
+                lobby.SetGameOption('GameSpeed', 'adjustable')
+            end
+        )");
+        !o) {
+        fail("making the speed adjustable: " + o.error().message);
+        done_ = true;
+        return;
+    }
     lua_State* L = ui.raw();
     const bool everyone_ready =
         number_global(L, "__osc_lan_humans") == 2 && number_global(L, "__osc_lan_ready") == 2;
