@@ -23,7 +23,9 @@ bool App::after_headless_tick() {
     if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
         if (opt.scripted_orders) issue_order_before_save(*sim_state);
         const auto start = std::chrono::steady_clock::now();
-        const auto save = osc::sim::save_game(*sim_state, "headless");
+        auto save = osc::sim::save_game(*sim_state, "headless");
+        if (auto key = special_files ? special_files->snapshot_key() : std::nullopt)
+            osc::sim::sign_snapshot(save, *key);
         if (osc::lua::write_saved_game(save, opt.save_path)) {
             save_written = true;
             spdlog::info(

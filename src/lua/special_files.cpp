@@ -3,6 +3,7 @@
 #include "lua/lua_state.hpp"
 #include "lua/mp_net_state.hpp"
 #include "platform/paths.hpp"
+#include "platform/secrets.hpp"
 #include "sim/build_info.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
@@ -216,7 +217,9 @@ int l_InternalSaveGame(lua_State* L) {
     if (refused) {
         spdlog::warn("InternalSaveGame({}): {}", file, refused);
     } else {
-        worked = write_saved_game(sim::save_game(*sim, name), file);
+        sim::SavedGame save = sim::save_game(*sim, name);
+        if (auto key = files->snapshot_key()) sim::sign_snapshot(save, *key);
+        worked = write_saved_game(save, file);
         errmsg = worked ? name : "nowrite"; // retail's dialog words "nowrite"
     }
     lua_pushvalue(L, 3);
@@ -303,6 +306,30 @@ bool SpecialFiles::holds(const Type& type, const fs::path& file) const {
     const std::string base = f.stem().string();
     const fs::path own = path(type, profile, base);
     return !own.empty() && own.lexically_normal() == f;
+}
+
+std::optional<sim::SnapshotKey> SpecialFiles::snapshot_key() const {
+    const fs::path file = root_ / "opensupcom-snapshot.key";
+    const auto read = [&]() -> std::optional<sim::SnapshotKey> {
+        sim::SnapshotKey key{};
+        std::ifstream in(file, std::ios::binary);
+        if (!in.read(reinterpret_cast<char*>(key.data()), static_cast<std::streamsize>(key.size())))
+            return std::nullopt;
+        return key;
+    };
+    if (auto key = read()) return key;
+    // None yet (a new installation, or a new folder): one from the OS's
+    // random source, kept where only its owner reads it. Another process
+    // making one meanwhile wins or loses the rename; what the file then
+    // holds is the key.
+    sim::SnapshotKey key{};
+    if (!platform::secure_random(key.data(), key.size())) return std::nullopt;
+    std::error_code ec;
+    fs::create_directories(root_, ec);
+    // (If another process is writing one this moment, ours may fail: its
+    // key, once in place, is the one.)
+    (void)platform::write_private_file(file, key.data(), key.size());
+    return read();
 }
 
 SpecialFiles* get_special_files(lua_State* L) {

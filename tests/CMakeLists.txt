@@ -101,6 +101,8 @@ add_executable(osc_tests
     test_effect_expiry.cpp
     test_sim_lua_gc.cpp
     test_saved_game.cpp
+    test_sha256.cpp
+    test_platform_secrets.cpp
     test_common_army.cpp
     test_handicap.cpp
     test_team_share_overflow.cpp
