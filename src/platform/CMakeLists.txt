@@ -8,6 +8,7 @@ add_library(osc_platform STATIC
     game_install.cpp
     native_prompter.cpp
     paths.cpp
+    secrets.cpp
     steam_library.cpp
     system_info.cpp
 )
@@ -25,5 +26,5 @@ find_path(OSC_PFD_INCLUDE_DIR portable-file-dialogs.h REQUIRED)
 target_include_directories(osc_platform SYSTEM PRIVATE ${OSC_PFD_INCLUDE_DIR})
 
 if(WIN32)
-    target_link_libraries(osc_platform PRIVATE shell32 ole32 advapi32 comdlg32 user32)
+    target_link_libraries(osc_platform PRIVATE shell32 ole32 advapi32 comdlg32 user32 bcrypt)
 endif()
