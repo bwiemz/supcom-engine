@@ -52,14 +52,16 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
     in two processes from hosting to a game of 150 ticks: in step, pausing and
     resuming, chatting; and with the joiner leaving at tick 120, dropped by
     agreement, its army defeated, the dialog shown and closed.
-  - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`
-    and `mp.lockstep_peer_drop` host and join a lobby over TCP, launch, and play
-    minimal sims in lockstep through the game's own `route_command` path: in
-    sync; an injected local divergence reported by both; a joiner that vanishes
-    at round 20 dropped (after ~3 s, 30 command frames, of missing
-    confirmations) while the host plays on. Once the game has ended a quiet
-    peer is only a player leaving the score screen (`SessionEndGame` stops that
-    client's sim), so `defeat_army` leaves the result alone.
+  - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`,
+    `mp.lockstep_peer_drop` and `mp.lockstep_slow_peer` host and join a lobby
+    over TCP, launch, and play minimal sims in lockstep through the game's own
+    `route_command` path: in sync; an injected local divergence reported by
+    both; a joiner that vanishes at round 20 dropped (after ~3 s, 30 rounds,
+    without a word from it) while the host plays on; a joiner taking 200 ms a
+    round setting the game's pace, with no one dropped (a peer runs at most two
+    seconds of frames ahead of its sim, then waits). Once the game has ended a
+    quiet peer is only a player leaving the score screen (`SessionEndGame` stops
+    that client's sim), so `defeat_army` leaves the result alone.
 - `osc_integration --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `osc_integration --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.

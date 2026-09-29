@@ -204,6 +204,32 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     (`mp_begin_lobby_game`, `mp_attach_session`) and plays minimal sims in
     lockstep: in sync, a divergence caught, a player gone mid-game dropped.
 
+- **M218h:** a network game's pace. The roadmap's "RTT-adaptive command
+  delay" turns out to be the lockstep's own shape: a peer sends a frame a
+  round (a tick's time) and runs a tick once every peer's frame for it is
+  in, so its frames lead its sim by the network's latency, and a local
+  order, going into the frame being sent, waits just that long. What was
+  missing is Moho's bound on it: its issue thread runs at most two
+  seconds' worth of beats ahead of the one executed. Without it a peer
+  whose sim can't keep 10 Hz fell further behind every second, and the
+  others, whose drop timer counted how far their frames ran past its,
+  dropped it after 30; so did a player who raised the game speed, whose
+  rounds ran faster than everyone else's.
+  - A peer sends at most 20 frames (`kMaxLead`, two seconds) past its sim;
+    held there, it waits for the others, and the game runs at the slowest
+    peer's pace. Held, it still sends a word each round (an alive message),
+    so a slow peer held at the cap isn't taken for a dead one.
+  - The drop timer counts rounds without a word from a peer (a frame or an
+    alive message), not frames: held at the cap, frames stop, and a dead
+    peer must still drop.
+  - A round is a tick's time, whatever this player's speed: a network game
+    runs at normal speed until the game's speed is negotiated (Moho's
+    `CLIMSG_AdjustSimSpeed`, not done yet).
+  - As before, the timer is armed by a peer's first frame: peers load the
+    game at their own speed, and one slower to load mustn't drop. A peer
+    that never sends one (it died loading) is left to the players, as in
+    Moho: the disconnect dialog shows it, and they eject it.
+
 Two fixes the launch found go separately, since single-player has them
 too:
 - random spawn (FA's default) leaves the slots sparse (players in 1 and 5,
@@ -341,3 +367,21 @@ too:
   `TcpTransport`'s test; the lobby's connections share its send path.
 - **Unit (`test_wire_framing`):** the framing tests, kept from
   `test_tcp_transport`.
+
+## Tests (M218h)
+- **Unit (`test_lockstep`, `[pace]`):**
+  - a peer whose other has gone silent sends 20 frames past its sim, then
+    only alive messages; the silent one still drops after the timeout;
+  - over a line 4 rounds long, a local order waits 5 ticks (the latency
+    and the frame it goes in) and the game still runs a tick a round; over
+    one 30 rounds long (past the cap), the game slows, and no one drops;
+  - a peer running a round in three of the other's sets the pace: the fast
+    one reaches the cap, neither drops, and they end in step;
+  - three peers, C sending a frame every 29 of A's rounds and B a round in
+    seven: held at the cap, B would go quiet for 35 of A's rounds between
+    frames; its alive messages keep it in, and no one drops.
+- **`mp.lockstep_slow_peer`** (two processes, CI): the joiner takes 200 ms
+  a round; the host, twice as fast, waits for it, drops no one, and both
+  end in sync. The pairs' processes now answer for a second after their
+  last round before closing: a socket closed with data unread resets the
+  connection, and the other side lost its last frame.
