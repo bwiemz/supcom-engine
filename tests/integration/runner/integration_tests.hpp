@@ -117,6 +117,8 @@ void test_effect_intel(TestContext& ctx);
 void test_strategic_icons(TestContext& ctx);
 /// --counter-intel-test (M215d), in counter_intel_test.cpp.
 void test_counter_intel(TestContext& ctx);
+/// --binding-tail-test (M184's tail), in binding_tail_test.cpp.
+void test_binding_tail(TestContext& ctx);
 /// --beam-render-test (M214a), in beam_render_test.cpp.
 void test_beam_render(TestContext& ctx);
 /// --trail-render-test (M214b), in trail_render_test.cpp.
