@@ -240,6 +240,16 @@ private:
     /// and let catch_up go once the player has the game. False (logged) on
     /// the first tick that differs.
     bool check_catch_up();
+    /// A saved game restored from its snapshot into the sim just booted for
+    /// it (M208c): its history becomes the recording, and its checksum must
+    /// be the one the history holds for the saved tick. Only a snapshot this
+    /// installation signed is restored. `why` says why not.
+    enum class Restore {
+        Done,
+        Skipped, ///< no snapshot, or not this installation's: the sim is untouched
+        Failed,  ///< the sim is spoiled: boot it again to catch up
+    };
+    Restore restore_save(const sim::SavedGame& save, std::string& why);
 
     /// FA's LastGame: the game just left, as recorded, in the current
     /// profile's replays -- when a new game starts, on the way back to the
@@ -271,6 +281,8 @@ private:
     /// A loaded game's save (--load, LoadSavedGame), while the game catches
     /// up with it: checked tick by tick until the player takes over.
     std::optional<sim::ReplayPlayback> catch_up;
+    /// The tick a loaded game was restored at (M208c), until the next launch.
+    std::optional<u32> restored_at;
     bool save_written = false; ///< --save's file, once written
     /// --bench: each headless tick's time, from the run's start (M223).
     std::optional<BenchRecorder> bench;

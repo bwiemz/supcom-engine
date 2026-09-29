@@ -10,6 +10,7 @@ add_library(osc_core STATIC
     dmath.cpp
     color.cpp
     version.cpp
+    sha256.cpp
 )
 add_library(osc::core ALIAS osc_core)
 

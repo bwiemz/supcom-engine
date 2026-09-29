@@ -146,6 +146,20 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.state_io arch.state_io_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # The docs' status numbers are this build's (tools/status_metrics.py):
+        # a change that adds tests updates docs/current-state.md with them.
+        # Not on Windows, whose build leaves out some POSIX-only tests.
+        if(UNIX)
+            add_test(NAME arch.status_metrics
+                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/status_metrics.py
+                             check --build-dir ${CMAKE_BINARY_DIR})
+            add_test(NAME arch.status_metrics_self_test
+                     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/status_metrics.py
+                             --self-test)
+            set_tests_properties(arch.status_metrics arch.status_metrics_self_test
+                                 PROPERTIES LABELS "arch" TIMEOUT 120)
+        endif()
+
         # The version is written in CMake, vcpkg.json and CHANGELOG.md, and
         # they agree; an install of this build runs on its own (M227a).
         add_test(NAME arch.version

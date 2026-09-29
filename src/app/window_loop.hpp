@@ -101,6 +101,9 @@ private:
     void save_last_game() { app.save_last_game(); }
     void reset_ui_state(const std::string* game_mods = nullptr) { app.reset_ui_state(game_mods); }
     bool check_catch_up() { return app.check_catch_up(); }
+    Restore restore_save(const sim::SavedGame& save, std::string& why) {
+        return app.restore_save(save, why);
+    }
 
     static constexpr double kScreenshotFrameDt = 1.0 / 60.0;
     /// Scripted windowed runs (a test mode's, --replay-flow-test): four
@@ -125,6 +128,7 @@ private:
     std::unique_ptr<sim::SimState>& sim_state = app.sim_state;
     lua::ScenarioMetadata& scenario_meta = app.scenario_meta;
     std::optional<sim::ReplayPlayback>& catch_up = app.catch_up;
+    std::optional<u32>& restored_at = app.restored_at;
     lua::LuaState& ui_lua_state = app.ui_lua_state;
     blueprints::BlueprintStore& ui_store = app.ui_store;
     core::Preferences& prefs = app.prefs;

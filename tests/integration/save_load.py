@@ -7,6 +7,8 @@ Three processes, each writing `--checksum-trace`:
   B  loads A's save (`--load`), plays on, and saves again after tick SAVE_2:
      a save made in a loaded game.
   C  loads B's save and plays on.
+  D  loads A's save as another installation would (its own user folder):
+     A's snapshot isn't its own, so it catches up instead (not --by-replay).
 
 A load restores the save's snapshot (M208c), whose checksum must be the one
 the save's history holds for its tick; with `--by-replay` it catches up from
@@ -79,7 +81,7 @@ def compare(diff_tool: Path, a: Path, b: Path, what: str) -> bool:
     return diff.returncode == 0
 
 
-def loaded(proc: subprocess.CompletedProcess[str], name: str, tick: int) -> bool:
+def loaded(proc: subprocess.CompletedProcess[str], name: str, tick: int, by_replay: bool) -> bool:
     lines = [line for line in proc.stdout.splitlines() if line.startswith("LOAD")]
     for line in lines:
         print(f"{name}: {line}")
@@ -88,6 +90,11 @@ def loaded(proc: subprocess.CompletedProcess[str], name: str, tick: int) -> bool
         return False
     if f"LOAD resumed tick={tick}" not in lines:
         print(f"{name} never took over the game at tick {tick}")
+        return False
+    # By the way asked for: restored at once, or caught up
+    how = f"catching up to tick {tick}" if by_replay else f"restored at tick {tick}"
+    if how not in proc.stdout:
+        print(f"{name} wasn't {how.split(' at ')[0].split(' to ')[0]}")
         return False
     return True
 
@@ -106,11 +113,14 @@ def main(argv: list[str]) -> int:
         d = Path(tmp)
         save_1, save_2 = d / "one.oscsave", d / "two.oscsave"
         trace = {name: d / f"{name}.txt" for name in "abc"}
+        # One installation: its key signs the snapshots it restores
+        user = ["--user-dir", str(d / "user")]
 
         a = run(
             [
                 str(exe),
                 *game_args,
+                *user,
                 "--save",
                 str(save_1),
                 "--save-at",
@@ -132,6 +142,7 @@ def main(argv: list[str]) -> int:
                 "--load",
                 str(save_1),
                 *load_mode,
+                *user,
                 *load_args(game_args),
                 "--save",
                 str(save_2),
@@ -141,7 +152,7 @@ def main(argv: list[str]) -> int:
                 str(trace["b"]),
             ]
         )
-        if not loaded(b, "B", SAVE_1) or not save_2.exists():
+        if not loaded(b, "B", SAVE_1, by_replay) or not save_2.exists():
             return 1
         c = run(
             [
@@ -149,12 +160,13 @@ def main(argv: list[str]) -> int:
                 "--load",
                 str(save_2),
                 *load_mode,
+                *user,
                 *load_args(game_args),
                 "--checksum-trace",
                 str(trace["c"]),
             ]
         )
-        if not loaded(c, "C", SAVE_2):
+        if not loaded(c, "C", SAVE_2, by_replay):
             return 1
 
         end = 1 << 31
@@ -173,6 +185,34 @@ def main(argv: list[str]) -> int:
             )
             and same
         )
+        if not by_replay:
+            # Another installation (its own user folder, its own key) doesn't
+            # trust A's snapshot: it catches up from the history instead, to
+            # the same game.
+            d_trace = d / "d.txt"
+            other = run(
+                [
+                    str(exe),
+                    "--load",
+                    str(save_1),
+                    *load_args(game_args),
+                    "--user-dir",
+                    str(d / "other"),
+                    "--checksum-trace",
+                    str(d_trace),
+                ]
+            )
+            if not loaded(other, "D", SAVE_1, by_replay=True):
+                return 1
+            same = (
+                compare(
+                    diff_tool,
+                    between(trace["b"], SAVE_1 + 1, SAVE_2, d / "b_part2.txt"),
+                    between(d_trace, SAVE_1 + 1, SAVE_2, d / "d_part.txt"),
+                    "B and D (another installation's load, caught up)",
+                )
+                and same
+            )
         return 0 if same else 1
 
 
