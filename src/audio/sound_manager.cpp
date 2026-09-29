@@ -52,6 +52,9 @@ struct SoundManager::Voice {
     bool decoder_init = false;
     bool sound_init = false;
     u32 loops_left = 0; ///< plays after this one (kForever: until stopped)
+    /// Its event picks a new wave for each loop: it doesn't loop itself,
+    /// a fresh voice takes over.
+    const xact::PlayEvent* repick = nullptr;
     f64 ends = 0;       ///< headless: when this play ends
     f32 variation_mb = 0;
     f32 variation_cents = 0;
@@ -196,7 +199,44 @@ static std::vector<u8> build_wav(const WaveInfo& info, const std::vector<u8>& ra
     return wav;
 }
 
+namespace {
+
+using xact::child_any_case;
+
+fs::path voice_dir(const fs::path& sounds_dir, std::string_view la) {
+    if (la.empty()) return {};
+    const fs::path voice = child_any_case(sounds_dir, "voice");
+    return voice.empty() ? fs::path{} : child_any_case(voice, la);
+}
+
+} // namespace
+
 // ---- SoundManager implementation ----
+
+bool SoundManager::has_voice_language(std::string_view la) const {
+    std::error_code ec;
+    const fs::path dir = voice_dir(sounds_dir_, la);
+    return !dir.empty() && fs::is_directory(dir, ec);
+}
+
+bool SoundManager::set_voice_language(std::string_view la) {
+    std::string wanted(la);
+    std::transform(wanted.begin(), wanted.end(), wanted.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (!registry_ || !has_voice_language(wanted)) return false;
+    if (!voice_language_.empty()) {
+        if (voice_language_ != wanted)
+            spdlog::warn("Audio: voice language stays '{}' (asked for '{}')", voice_language_,
+                         wanted);
+        return voice_language_ == wanted;
+    }
+    const fs::path dir = voice_dir(sounds_dir_, wanted);
+    registry_->add_directory(dir);
+    if (const fs::path tutorials = child_any_case(dir, "tutorials"); !tutorials.empty())
+        registry_->add_directory(tutorials);
+    voice_language_ = std::move(wanted);
+    return true;
+}
 
 SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
     : sounds_dir_(sounds_dir), engine_(std::make_unique<AudioEngine>()) {
@@ -295,25 +335,29 @@ u32 SoundManager::pick_wave(const xact::PlayEvent& ev) {
     case xact::VariationMode::Random:
     case xact::VariationMode::RandomNoImmediateRepeat:
     default: {
-        // Weighted by each wave's weight range (all zero: even).
+        // Weighted by each wave's weight range (all zero: even). Without an
+        // immediate repeat the last pick is left out, as FAudio excludes it.
+        const bool exclude =
+            ev.variation == xact::VariationMode::RandomNoImmediateRepeat && st.last < n;
+        const auto weight = [&](u32 i) -> u32 {
+            if (exclude && i == st.last) return 0;
+            const auto& w = ev.waves[i];
+            return static_cast<u32>(w.weight_max - std::min(w.weight_min, w.weight_max));
+        };
         u32 total = 0;
-        for (const auto& w : ev.waves) total += static_cast<u32>(w.weight_max - std::min(w.weight_min, w.weight_max));
-        for (int attempt = 0; attempt < 8; ++attempt) {
-            if (total == 0) {
-                pick = any(rng_);
-            } else {
-                u32 roll = std::uniform_int_distribution<u32>(0, total - 1)(rng_);
-                for (u32 i = 0; i < n; ++i) {
-                    const u32 w = static_cast<u32>(ev.waves[i].weight_max -
-                                                   std::min(ev.waves[i].weight_min, ev.waves[i].weight_max));
-                    if (roll < w) {
-                        pick = i;
-                        break;
-                    }
-                    roll -= w;
+        for (u32 i = 0; i < n; ++i) total += weight(i);
+        if (total == 0) {
+            pick = std::uniform_int_distribution<u32>(0, exclude ? n - 2 : n - 1)(rng_);
+            if (exclude && pick >= st.last) ++pick;
+        } else {
+            u32 roll = std::uniform_int_distribution<u32>(0, total - 1)(rng_);
+            for (u32 i = 0; i < n; ++i) {
+                if (roll < weight(i)) {
+                    pick = i;
+                    break;
                 }
+                roll -= weight(i);
             }
-            if (ev.variation != xact::VariationMode::RandomNoImmediateRepeat || pick != st.last) break;
         }
         break;
     }
@@ -537,25 +581,32 @@ SoundHandle SoundManager::play_loop(const std::string& bank, const std::string& 
     return h;
 }
 
-void SoundManager::start_event(CueInstance& inst, size_t track, const xact::PlayEvent& ev) {
-    if (ev.waves.empty()) return;
+SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
+                                               const xact::PlayEvent& ev) {
+    if (ev.waves.empty()) return nullptr;
     const auto& choice = ev.waves[pick_wave(ev)];
     const auto wave = registry_->resolve(*inst.bank, choice);
-    if (!wave) return;
+    if (!wave) return nullptr;
     auto data = wave_data(*wave->bank, wave->index);
-    if (!data) return;
+    if (!data) return nullptr;
 
     auto v = std::make_unique<Voice>();
     v->data = std::move(data);
     v->loops_left = (inst.force_loop || ev.loop_count == xact::PlayEvent::kLoopForever)
                         ? kForever
                         : ev.loop_count;
-    if (ev.vary_pitch && ev.pitch_max > ev.pitch_min)
+    if (ev.new_variation_on_loop && ev.waves.size() > 1 && v->loops_left > 0) v->repick = &ev;
+    // A range of one value is a fixed offset: retail's pitched UI stacks
+    // (UI_Menu_Rollover's tracks at +800 and +1200 cents) are authored so.
+    if (ev.vary_pitch && ev.pitch_max >= ev.pitch_min)
         v->variation_cents = static_cast<f32>(
             std::uniform_int_distribution<int>(ev.pitch_min, ev.pitch_max)(rng_));
-    if (ev.vary_volume && ev.volume_max_mb > ev.volume_min_mb) {
+    if (ev.vary_volume && ev.volume_max_mb >= ev.volume_min_mb) {
         // Relative to unity: the event's range is in the same millibels.
-        v->variation_mb = std::uniform_real_distribution<f32>(ev.volume_min_mb, ev.volume_max_mb)(rng_);
+        v->variation_mb =
+            ev.volume_max_mb > ev.volume_min_mb
+                ? std::uniform_real_distribution<f32>(ev.volume_min_mb, ev.volume_max_mb)(rng_)
+                : ev.volume_min_mb;
     }
     const f32 cents = pitch_cents(inst, track) + v->variation_cents;
     v->ends = clock_ + v->seconds_at(cents);
@@ -572,17 +623,20 @@ void SoundManager::start_event(CueInstance& inst, size_t track, const xact::Play
                 // XACT's RPC curves do distance attenuation; miniaudio pans.
                 ma_sound_set_attenuation_model(&v->sound, ma_attenuation_model_none);
                 if (inst.positional) ma_sound_set_position(&v->sound, inst.pos.x, inst.pos.y, inst.pos.z);
-                ma_sound_set_looping(&v->sound, v->loops_left == kForever ? MA_TRUE : MA_FALSE);
+                ma_sound_set_looping(&v->sound,
+                                     v->loops_left == kForever && !v->repick ? MA_TRUE : MA_FALSE);
                 ma_sound_set_pitch(&v->sound, static_cast<float>(std::pow(2.0, cents / 1200.0)));
                 ma_sound_set_volume(&v->sound, 0.0f); // apply() sets it before the start
             }
         }
     }
+    Voice* started = v.get();
     inst.tracks[track].voices.push_back(std::move(v));
-    if (output_ && inst.tracks[track].voices.back()->sound_init) {
+    if (output_ && started->sound_init) {
         apply(inst);
-        ma_sound_start(&inst.tracks[track].voices.back()->sound);
+        ma_sound_start(&started->sound);
     }
+    return started;
 }
 
 void SoundManager::apply(CueInstance& inst) {
@@ -756,15 +810,22 @@ void SoundManager::update(f32 dt) {
                    inst.state == CueInstance::State::Playing)
                 start_event(inst, t, inst.sound->tracks[t].plays[ts.next++]);
             if (ts.next < ts.fire_at.size() && inst.state == CueInstance::State::Playing) pending = true;
+            // Loops that pick a new wave: (event, plays left after the next).
+            std::vector<std::pair<const xact::PlayEvent*, u32>> repicks;
             for (auto& v : ts.voices) {
+                const bool counts_end = v->loops_left != kForever || v->repick;
                 bool at_end;
                 if (v->sound_init) {
-                    at_end = v->loops_left != kForever && ma_sound_at_end(&v->sound);
+                    at_end = counts_end && ma_sound_at_end(&v->sound);
                 } else {
-                    at_end = v->loops_left != kForever && clock_ >= v->ends;
+                    at_end = counts_end && clock_ >= v->ends;
                 }
                 if (!at_end) continue;
-                if (v->loops_left > 0) {
+                if (v->repick && v->loops_left > 0) {
+                    repicks.emplace_back(v->repick,
+                                         v->loops_left == kForever ? kForever : v->loops_left - 1);
+                    v->done = true;
+                } else if (v->loops_left > 0) {
                     --v->loops_left;
                     v->ends += v->seconds_at(pitch_cents(inst, t) + v->variation_cents);
                     if (v->sound_init) {
@@ -776,6 +837,13 @@ void SoundManager::update(f32 dt) {
                 }
             }
             std::erase_if(ts.voices, [](const std::unique_ptr<Voice>& v) { return v->done; });
+            // A loop goes on through a fade or release, as a native one does;
+            // the stop's end ends it.
+            for (const auto& [ev, left] : repicks)
+                if (Voice* next = start_event(inst, t, *ev)) {
+                    next->loops_left = left;
+                    if (left == 0) next->repick = nullptr;
+                }
             if (!ts.voices.empty()) pending = true;
         }
         const bool stop_over = inst.state != CueInstance::State::Playing &&

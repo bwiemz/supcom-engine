@@ -45,11 +45,13 @@ void read_effect_variation(ByteReader& r, u16 content, PlayEvent& e) {
     e.volume_min_mb = volume_byte_to_millibels(r.read_u8());
     e.volume_max_mb = volume_byte_to_millibels(r.read_u8());
     if (content == kContent30) {
-        // 3.0: one flag byte, no filter variation (0x80 pitch, 0x40 volume;
-        // every retail event with a flag has a real range for it).
+        // 3.0: one flag byte, no filter variation: 0x40 pitch, 0x80 volume
+        // (FAudio's variation_flags_from_3_0). Retail bears it out: its 129
+        // events flagged 0x40 alone keep the tool's default volume range,
+        // its 100 flagged 0x80 alone the default pitch range.
         const u8 flags = r.read_u8();
-        e.vary_pitch = (flags & 0x80) != 0;
-        e.vary_volume = (flags & 0x40) != 0;
+        e.vary_pitch = (flags & 0x40) != 0;
+        e.vary_volume = (flags & 0x80) != 0;
     } else {
         r.skip(4 * 4); // filter frequency and Q ranges
         const u16 flags = r.read_u16();
@@ -63,6 +65,7 @@ void read_track_variation(ByteReader& r, PlayEvent& e) {
     const u32 info = r.read_u32();
     const u16 count = static_cast<u16>(info & 0xFFFF);
     e.variation = static_cast<VariationMode>((info >> 16) & 0x7);
+    e.new_variation_on_loop = ((info >> 16) & 0x40) != 0;
     r.skip(4); // unknown
     e.waves.resize(count);
     for (auto& w : e.waves) {

@@ -26,14 +26,33 @@ std::vector<u8> read_file(const fs::path& path) {
 
 } // namespace
 
-BankRegistry::BankRegistry(fs::path sounds_dir) : dir_(std::move(sounds_dir)) {
+fs::path child_any_case(const fs::path& dir, std::string_view name) {
+    const std::string wanted = lower(name);
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(dir_, ec)) {
+    for (const auto& entry : fs::directory_iterator(dir, ec))
+        if (lower(entry.path().filename().string()) == wanted) return entry.path();
+    return {};
+}
+
+BankRegistry::BankRegistry(fs::path sounds_dir) : dir_(std::move(sounds_dir)) {
+    add_directory(dir_);
+}
+
+void BankRegistry::add_directory(const fs::path& dir) {
+    std::error_code ec;
+    size_t sound_banks = 0;
+    const size_t wave_banks = wave_banks_.size();
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (!entry.is_regular_file(ec)) continue;
         const fs::path& p = entry.path();
         const std::string ext = lower(p.extension().string());
         if (ext == ".xsb") {
-            sound_bank_files_.emplace(lower(p.stem().string()), p);
+            const std::string name = lower(p.stem().string());
+            if (!sound_bank_files_.emplace(name, p).second) continue;
+            ++sound_banks;
+            // A miss cached before this directory came is one no longer.
+            if (auto it = sound_banks_.find(name); it != sound_banks_.end() && !it->second)
+                sound_banks_.erase(it);
         } else if (ext == ".xwb") {
             auto wb = std::make_unique<XwbParser>();
             if (auto r = wb->parse(p); !r) {
@@ -41,7 +60,7 @@ BankRegistry::BankRegistry(fs::path sounds_dir) : dir_(std::move(sounds_dir)) {
                 continue;
             }
             const std::string name = lower(wb->bank_name());
-            wave_banks_.emplace(name, std::move(wb));
+            wave_banks_.try_emplace(name, std::move(wb));
         } else if (ext == ".xgs" && !settings_) {
             const auto bytes = read_file(p);
             if (auto r = GlobalSettings::parse(bytes)) {
@@ -51,10 +70,10 @@ BankRegistry::BankRegistry(fs::path sounds_dir) : dir_(std::move(sounds_dir)) {
             }
         }
     }
-    if (!sound_bank_files_.empty()) {
-        spdlog::info("Audio: {} sound banks, {} wave banks, {} categories in {}",
-                     sound_bank_files_.size(), wave_banks_.size(),
-                     settings_ ? settings_->categories.size() : 0, dir_.string());
+    if (sound_banks != 0) {
+        spdlog::info("Audio: {} sound banks, {} wave banks, {} categories in {}", sound_banks,
+                     wave_banks_.size() - wave_banks, settings_ ? settings_->categories.size() : 0,
+                     dir.string());
     }
 }
 

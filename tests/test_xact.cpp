@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace osc;
@@ -115,6 +116,34 @@ TEST_CASE("XACT: an XACT 3.0 sound bank", "[audio][xact]") {
     CHECK(e.pitch_min == -200);
     CHECK(e.pitch_max == 200);
     CHECK(sb.find_cue("Nope") == nullptr);
+}
+
+TEST_CASE("XACT: a 3.0 effect variation's 0x40 varies pitch, 0x80 volume", "[audio][xact]") {
+    // FAudio's variation_flags_from_3_0; retail's 0x40-only events keep the
+    // tool's default volume range and its 0x80-only ones the default pitch.
+    for (const auto& [flags, pitch, volume] :
+         {std::tuple{u8{0x40}, true, false}, std::tuple{u8{0x80}, false, true},
+          std::tuple{u8{0xC0}, true, true}}) {
+        const auto parsed = SoundBank::parse(make_xsb("Waves", 1234, 0, 0, flags));
+        REQUIRE(parsed);
+        const SoundBank& sb = parsed.value();
+        const Cue* shot = sb.find_cue("Shot");
+        REQUIRE(shot);
+        const PlayEvent& e = sb.sounds[shot->sound].tracks[0].plays[0];
+        CHECK(e.vary_pitch == pitch);
+        CHECK(e.vary_volume == volume);
+    }
+}
+
+TEST_CASE("XACT: a track variation's 0x40 picks a new wave for each loop", "[audio][xact]") {
+    for (const bool repick : {false, true}) {
+        const auto parsed = SoundBank::parse(make_xsb("Waves", 1234, 0, 0, 0x40, repick));
+        REQUIRE(parsed);
+        const SoundBank& sb = parsed.value();
+        const PlayEvent& e = sb.sounds[sb.find_cue("Shot")->sound].tracks[0].plays[0];
+        CHECK(e.new_variation_on_loop == repick);
+        CHECK(e.variation == VariationMode::RandomNoImmediateRepeat);
+    }
 }
 
 TEST_CASE("XACT: a damaged sound bank fails to parse", "[audio][xact]") {
