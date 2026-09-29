@@ -5,7 +5,9 @@
 #include "sim/sim_state.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <utility>
 
 #include <spdlog/spdlog.h>
 
@@ -44,6 +46,56 @@ bool LockstepSession::request_resume() {
     return true;
 }
 
+void LockstepSession::set_speed_option(i32 rate, bool adjustable) {
+    speed_ = rate;
+    adjustable_speed_ = adjustable;
+}
+
+bool LockstepSession::request_speed(i32 rate) {
+    if (!adjustable_speed_) return false;
+    const u32 clock = speed_clock_ + 1;
+    std::vector<u8> msg;
+    ByteWriter w(msg);
+    w.u8v(kSpeedMessage);
+    w.u32v(local_source_);
+    w.u32v(clock);
+    w.u32v(static_cast<u32>(rate));
+    transport_.broadcast(msg);
+    apply_speed(clock, local_source_, rate); // as Moho's, which hears its own
+    return true;
+}
+
+void LockstepSession::apply_speed(u32 clock, u32 source, i32 rate) {
+    if (clock < speed_clock_ || (clock == speed_clock_ && source >= speed_requester_)) return;
+    speed_clock_ = clock;
+    speed_requester_ = source;
+    speed_ = std::clamp(rate, -10, 50); // whoever asked (a peer's message too)
+    speed_changes_.push_back({source, speed_});
+}
+
+std::vector<LockstepSession::SpeedChange> LockstepSession::take_speed_changes() {
+    return std::exchange(speed_changes_, {});
+}
+
+namespace {
+
+/// How many rounds `normal` of them at normal speed are, at `speed` (its
+/// scale held to 0.1..10: the frame loop runs a few rounds a frame at most)
+u32 scaled_rounds(u32 normal, i32 speed) {
+    const double scale = std::pow(10.0, std::clamp(speed, -10, 10) * 0.1);
+    return std::max<u32>(1, static_cast<u32>(std::lround(normal * scale)));
+}
+
+} // namespace
+
+u32 LockstepSession::lead_cap() const {
+    return scaled_rounds(kMaxLead, speed_);
+}
+
+u32 LockstepSession::drop_timeout() const {
+    return drop_timeout_rounds_ == 0 ? 0 : scaled_rounds(drop_timeout_rounds_, speed_);
+}
+
 void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
                                    const UnitCommand& cmd, bool clear_existing) {
     ScheduledCommand sc;
@@ -74,7 +126,7 @@ void LockstepSession::send_frame() {
     ByteWriter w(msg);
     // As far ahead of the sim as a peer runs: it waits for the others (its
     // orders wait in pending_), saying only that it is still there
-    if (next_frame_ > sim_.tick_count() + kMaxLead) {
+    if (next_frame_ > sim_.tick_count() + lead_cap()) {
         w.u8v(kAliveMessage);
         w.u32v(local_source_);
         transport_.broadcast(msg);
@@ -120,6 +172,14 @@ void LockstepSession::receive_and_advance() {
             const u32 serial = r.u32v();
             if (r.ok() && source != local_source_ && !has_dropped(source))
                 sim_.resume_pause(serial);
+            continue;
+        }
+        if (type == kSpeedMessage) {
+            const u32 source = r.u32v();
+            const u32 clock = r.u32v();
+            const auto rate = static_cast<i32>(r.u32v());
+            if (r.ok() && source != local_source_ && !has_dropped(source))
+                apply_speed(clock, source, rate);
             continue;
         }
         if (type == kAliveMessage) {
@@ -178,11 +238,11 @@ void LockstepSession::receive_and_advance() {
     // their own speed, so a slow first frame at session start can't
     // false-drop. One that never sends one is left to the players, as
     // Moho's: the disconnect dialog shows it, and they eject it.
-    if (drop_timeout_rounds_ > 0) {
+    if (const u32 timeout = drop_timeout(); timeout > 0) {
         std::vector<u32> late;
         for (const auto& [src, heard] : peer_heard_round_) {
             if (src == local_source_ || has_dropped(src) || dropping(src)) continue;
-            if (round_ - heard > drop_timeout_rounds_) late.push_back(src);
+            if (round_ - heard > timeout) late.push_back(src);
         }
         std::sort(late.begin(), late.end());
         for (u32 src : late) {

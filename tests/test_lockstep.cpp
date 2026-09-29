@@ -875,3 +875,103 @@ TEST_CASE("A peer held at the cap still says it's there, so a slow one isn't dro
     CHECK_FALSE(sa.desynced());
     CHECK_FALSE(sb.desynced());
 }
+
+// ── Game speed (M218i) ────────────────────────────────────────────────────
+
+TEST_CASE("A fixed game speed can't be changed (M218i)", "[lockstep][speed]") {
+    PausePair g;
+    g.sa.set_speed_option(4, false); // the lobby's 'fast'
+    g.sb.set_speed_option(4, false);
+    CHECK_FALSE(g.sa.request_speed(7));
+    g.round();
+    CHECK(g.sa.speed() == 4);
+    CHECK(g.sb.speed() == 4);
+    CHECK(g.sa.take_speed_changes().empty());
+    CHECK(g.sb.take_speed_changes().empty());
+}
+
+TEST_CASE("A speed change reaches every peer; the newest wins, a tie the lower source (M218i)",
+          "[lockstep][speed]") {
+    PausePair g;
+    g.sa.set_speed_option(0, true);
+    g.sb.set_speed_option(0, true);
+    for (int i = 0; i < 3; ++i) g.round();
+
+    // A asks: it has it at once, B once the message comes
+    REQUIRE(g.sa.request_speed(5));
+    CHECK(g.sa.speed() == 5);
+    g.round();
+    CHECK(g.sb.speed() == 5);
+    for (auto* s : {&g.sa, &g.sb}) {
+        const auto changes = s->take_speed_changes();
+        REQUIRE(changes.size() == 1);
+        CHECK(changes[0].source == 0);
+        CHECK(changes[0].rate == 5);
+    }
+
+    // Both ask at once (the same clock): source 0's stands on both
+    REQUIRE(g.sb.request_speed(7));
+    REQUIRE(g.sa.request_speed(3));
+    g.round();
+    CHECK(g.sa.speed() == 3);
+    CHECK(g.sb.speed() == 3);
+
+    // A newer request wins, whoever asks; out of range is held to -10..+50
+    REQUIRE(g.sb.request_speed(99));
+    g.round();
+    CHECK(g.sa.speed() == 50);
+    CHECK(g.sb.speed() == 50);
+    REQUIRE(g.sb.request_speed(-2));
+    g.round();
+    CHECK(g.sa.speed() == -2);
+    CHECK(g.sb.speed() == -2);
+    g.sa.take_speed_changes();
+
+    // A request older than the one applied (delayed on its way) changes nothing
+    std::vector<osc::u8> stale;
+    osc::sim::ByteWriter w(stale);
+    w.u8v(4);  // a speed request
+    w.u32v(1); // from B
+    w.u32v(1); // its clock: the first
+    w.u32v(9);
+    g.tb.broadcast(stale);
+    g.round();
+    CHECK(g.sa.speed() == -2);
+    CHECK(g.sa.take_speed_changes().empty());
+    CHECK_FALSE(g.sa.desynced());
+}
+
+TEST_CASE("At speed, the lead cap and the drop timeout keep their times (M218i)",
+          "[lockstep][speed]") {
+    for (const osc::i32 speed : {10, -10}) {
+        DYNAMIC_SECTION("at " << speed) {
+            LoopbackHub hub;
+            LuaGuard ga, gb;
+            SimState a(ga.L, nullptr), b(gb.L, nullptr);
+            LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint());
+            LockstepSession sa(a, ta, 0, {0, 1});
+            LockstepSession sb(b, tb, 1, {0, 1});
+            sa.set_speed_option(speed, false);
+            for (int r = 0; r < 3; ++r) {
+                sa.send_frame();
+                sb.send_frame();
+                sa.receive_and_advance();
+                sb.receive_and_advance();
+            }
+            // B goes silent: A runs ahead two seconds' worth of rounds at
+            // this speed, and drops B after three seconds' worth
+            const osc::u32 cap = speed > 0 ? 200 : 2;
+            const int timeout = speed > 0 ? 300 : 3;
+            int rounds = 0;
+            osc::u32 most = 0;
+            while (!sa.has_dropped(1) && rounds < 1000) {
+                sa.send_frame();
+                sa.receive_and_advance();
+                ++rounds;
+                most = std::max(most, lead(sa, a));
+            }
+            CHECK(most == cap);
+            CHECK(rounds == timeout + 1);
+        }
+    }
+}

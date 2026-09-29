@@ -13,6 +13,9 @@ extern "C" {
 
 #include <spdlog/spdlog.h>
 
+#include <cctype>
+#include <string>
+
 namespace osc::lua {
 
 void MpNetState::reset() {
@@ -59,29 +62,57 @@ void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport
 
 namespace {
 
-/// The game's Timeouts option (ScenarioInfo.Options.Timeouts, a string in
-/// the lobby's): -1 (unlimited) without it.
-osc::i32 game_timeouts(osc::sim::SimState& sim) {
-    lua_State* L = sim.lua_state();
-    if (!L) return -1;
-    const int top = lua_gettop(L);
-    osc::i32 out = -1;
+/// Push the game's option `key` (ScenarioInfo.Options[key]), or nil.
+void push_game_option(lua_State* L, const char* key) {
     lua_pushstring(L, "ScenarioInfo"); // raw: the sim's globals are strict
     lua_rawget(L, LUA_GLOBALSINDEX);
     if (lua_istable(L, -1)) {
         lua_pushstring(L, "Options");
         lua_rawget(L, -2);
+        lua_remove(L, -2);
         if (lua_istable(L, -1)) {
-            lua_pushstring(L, "Timeouts");
+            lua_pushstring(L, key);
             lua_rawget(L, -2);
-            if (lua_isnumber(L, -1)) { // a number, or a string of one
-                const double t = lua_tonumber(L, -1);
-                out = t < 0 ? -1 : t > 1000 ? 1000 : static_cast<osc::i32>(t);
-            }
+            lua_remove(L, -2);
+            return;
         }
     }
-    lua_settop(L, top);
+    lua_pop(L, 1);
+    lua_pushnil(L);
+}
+
+/// The game's Timeouts option (a string in the lobby's): -1 (unlimited)
+/// without it.
+osc::i32 game_timeouts(osc::sim::SimState& sim) {
+    lua_State* L = sim.lua_state();
+    if (!L) return -1;
+    push_game_option(L, "Timeouts");
+    osc::i32 out = -1;
+    if (lua_isnumber(L, -1)) { // a number, or a string of one
+        const double t = lua_tonumber(L, -1);
+        out = t < 0 ? -1 : t > 1000 ? 1000 : static_cast<osc::i32>(t);
+    }
+    lua_pop(L, 1);
     return out;
+}
+
+/// The game's GameSpeed option, as Moho's LaunchGame reads it: 'fast' is
+/// +4, 'adjustable' lets the players change it, anything else is 'normal'.
+void set_game_speed(osc::sim::SimState& sim, osc::sim::LockstepSession& session) {
+    lua_State* L = sim.lua_state();
+    osc::i32 rate = 0;
+    bool adjustable = false;
+    if (L) {
+        push_game_option(L, "GameSpeed");
+        if (lua_type(L, -1) == LUA_TSTRING) {
+            std::string name = lua_tostring(L, -1);
+            for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (name == "fast") rate = 4;
+            adjustable = name == "adjustable";
+        }
+        lua_pop(L, 1);
+    }
+    session.set_speed_option(rate, adjustable);
 }
 
 } // namespace
@@ -102,6 +133,7 @@ bool mp_attach_session(osc::sim::SimState& sim) {
         sim.set_pause_timeouts(source, s.army_of(source) >= 0 ? timeouts : 0);
     sim.set_source_army(s.local_source, s.local_army());
     auto* session = s.session.get();
+    set_game_speed(sim, *session);
     // Route local human orders through the session (broadcast + schedule).
     sim.set_local_command_sink(
         [session](const std::vector<osc::u32>& ids,
