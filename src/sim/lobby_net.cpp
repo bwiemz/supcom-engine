@@ -19,16 +19,17 @@ using net::socket_t;
 
 // The messages, by their first byte.
 enum class Msg : u8 {
-    Join = 1,       ///< client: name
-    Welcome = 2,    ///< host: host uid, host name, your uid, your name, hosted time, peers
-    Rejected = 3,   ///< host: reason (the lobby is full)
-    PeerJoined = 4, ///< host: uid, name
-    PeerLeft = 5,   ///< host: uid
-    Data = 6,       ///< from, to, payload (the host relays what isn't its own)
-    Ping = 7,       ///< stamp
-    Pong = 8,       ///< the stamp pinged
-    Kick = 9,       ///< host: reason
-    Game = 10,      ///< from, payload: a launched game's frame (the host relays a client's)
+    Join = 1,         ///< client: name, whether a uid is asked for, the uid
+    Welcome = 2,      ///< host: host uid, host name, your uid, your name, hosted time, peers
+    Rejected = 3,     ///< host: reason (the lobby is full)
+    PeerJoined = 4,   ///< host: uid, name
+    PeerLeft = 5,     ///< host: uid
+    Data = 6,         ///< from, to, payload (the host relays what isn't its own)
+    Ping = 7,         ///< stamp
+    Pong = 8,         ///< the stamp pinged
+    Kick = 9,         ///< host: reason
+    Game = 10,        ///< from, payload: a launched game's frame (the host relays a client's)
+    Established = 11, ///< client: it reaches everyone it knows of (after its own data)
 };
 
 /// Moho caps a player's name at 24 characters.
@@ -37,6 +38,10 @@ constexpr size_t kMaxNameLength = 24;
 class Writer {
 public:
     explicit Writer(Msg type) { bytes_.push_back(static_cast<u8>(type)); }
+    Writer& u8v(u8 v) {
+        bytes_.push_back(v);
+        return *this;
+    }
     Writer& u32v(u32 v) {
         for (int i = 0; i < 4; ++i) bytes_.push_back(static_cast<u8>(v >> (8 * i)));
         return *this;
@@ -209,6 +214,7 @@ struct LobbyNet::Impl {
     u32 max_connections = 0;
     u32 local_uid = 0;
     u32 host_uid = 0;
+    std::optional<u32> wanted_uid; ///< set_local_uid's
     u16 port = 0;
     u64 hosted_time = 0;
     bool is_host = false;
@@ -276,6 +282,10 @@ LobbyNet::LobbyNet(std::string local_name, u32 max_connections) : impl_(std::mak
 
 LobbyNet::~LobbyNet() = default;
 
+void LobbyNet::set_local_uid(u32 uid) {
+    impl_->wanted_uid = uid;
+}
+
 bool LobbyNet::host(u16 port, u64 hosted_time) {
     net::startup();
     socket_t s = socket(AF_INET, SOCK_STREAM, 0);
@@ -295,10 +305,10 @@ bool LobbyNet::host(u16 port, u64 hosted_time) {
         impl_->port = ntohs(addr.sin_port);
     impl_->listen_fd = s;
     impl_->is_host = true;
-    impl_->local_uid = 0;
-    impl_->host_uid = 0;
+    impl_->local_uid = impl_->wanted_uid.value_or(0);
+    impl_->host_uid = impl_->local_uid;
     impl_->hosted_time = hosted_time;
-    impl_->local_name = valid_player_name(0, impl_->local_name);
+    impl_->local_name = valid_player_name(impl_->local_uid, impl_->local_name);
     return true;
 }
 
@@ -348,6 +358,11 @@ bool LobbyNet::eject(u32 uid, const std::string& reason) {
     impl_->tell_others(uid, Writer(Msg::PeerLeft).u32v(uid).out());
     impl_->remove_peer(uid, impl_->pending);
     return true;
+}
+
+void LobbyNet::report_established() {
+    if (!impl_->is_host && impl_->welcomed && !impl_->conns.empty())
+        impl_->conns.front().send(Writer(Msg::Established).out());
 }
 
 void LobbyNet::send_game(const std::vector<u8>& payload) {
@@ -437,13 +452,25 @@ void LobbyNet::Impl::host_frame(Conn& c, const std::vector<u8>& f, i64 now,
     switch (static_cast<Msg>(*type)) {
     case Msg::Join: {
         const auto name = r.str();
-        if (!name || c.uid != kEveryone) return;
+        // The uid a matchmaking client gave the player, if it has one
+        const auto has_uid = r.u8v();
+        const auto wanted = r.u32v();
+        if (!name || !has_uid || !wanted || c.uid != kEveryone) return;
         if (joined_count() >= max_connections) {
             c.send(Writer(Msg::Rejected).str("LobbyFull").out());
             c.close();
             return;
         }
-        const u32 uid = next_uid++;
+        const auto taken = [&](u32 uid) {
+            return uid == local_uid || uid == kEveryone || find_peer(uid) != nullptr;
+        };
+        if (*has_uid && taken(*wanted)) {
+            c.send(Writer(Msg::Rejected).str("UidTaken").out());
+            c.close();
+            return;
+        }
+        while (taken(next_uid)) ++next_uid;
+        const u32 uid = *has_uid ? *wanted : next_uid++;
         // Made unique against everyone here
         const std::string valid = unique_name(*name, [&](const std::string& n) {
             return same_no_case(n, local_name) ||
@@ -453,7 +480,7 @@ void LobbyNet::Impl::host_frame(Conn& c, const std::vector<u8>& f, i64 now,
         c.uid = uid;
         c.name = valid;
         Writer w(Msg::Welcome);
-        w.u32v(0).str(local_name).u32v(uid).str(valid).u64v(hosted_time);
+        w.u32v(local_uid).str(local_name).u32v(uid).str(valid).u64v(hosted_time);
         w.u32v(static_cast<u32>(peers.size()));
         for (const LobbyPeer& p : peers) w.u32v(p.uid).str(p.name);
         c.send(w.out());
@@ -472,14 +499,18 @@ void LobbyNet::Impl::host_frame(Conn& c, const std::vector<u8>& f, i64 now,
         const auto payload = r.bytes();
         if (!to || !payload || c.uid == kEveryone) return;
         const u32 from = c.uid;
-        if (*to == 0 || *to == kEveryone)
+        if (*to == local_uid || *to == kEveryone)
             events.push_back({LobbyEvent::Kind::Data, from, c.name, {}, *payload});
         const std::vector<u8> relay = Writer(Msg::Data).u32v(from).u32v(*to).bytes(*payload).out();
         if (*to == kEveryone) tell_others(from, relay);
-        else if (*to != 0)
+        else if (*to != local_uid)
             if (Conn* target = conn_of(*to)) target->send(relay);
         return;
     }
+    case Msg::Established:
+        if (c.uid != kEveryone)
+            events.push_back({LobbyEvent::Kind::PeerEstablished, c.uid, c.name, {}, {}});
+        return;
     case Msg::Game: {
         (void)r.u32v(); // as Data: the connection says who
         const auto payload = r.bytes();
@@ -529,7 +560,11 @@ void LobbyNet::Impl::client_poll(i64 now, std::vector<LobbyEvent>& events) {
                 net::set_blocking(host.fd, true);
                 net::configure_stream(host.fd);
                 host.last_heard = now;
-                host.send(Writer(Msg::Join).str(local_name).out());
+                host.send(Writer(Msg::Join)
+                              .str(local_name)
+                              .u8v(wanted_uid ? 1 : 0)
+                              .u32v(wanted_uid.value_or(0))
+                              .out());
             }
         }
         if (host.open() && host.connecting && now - join_started > kJoinTimeoutMs) host.close();

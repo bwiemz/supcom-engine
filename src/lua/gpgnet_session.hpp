@@ -12,6 +12,10 @@
 
 struct lua_State;
 
+namespace osc::sim {
+class LockstepSession;
+}
+
 namespace osc::lua {
 
 class LuaState;
@@ -37,6 +41,11 @@ void pump_gpgnet(lua_State* L);
 /// Send the client a command from the engine (a desync, the game's state),
 /// if linked.
 void gpgnet_send(const sim::GpgNetCommand& command);
+
+/// What a network game's first desync tells the client (Moho's
+/// GPGNET_ReportDesync, M220b): Desync(tick, `army`, this side's checksum,
+/// the peer's), each checksum its domains folded, in hex.
+sim::GpgNetCommand gpgnet_desync_report(const sim::LockstepSession& session, i32 army);
 
 /// GpgNetActive() and GpgNetSend(cmd, args...) in the UI state.
 void register_gpgnet_bindings(LuaState& state);

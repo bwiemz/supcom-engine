@@ -462,6 +462,12 @@ void LockstepSession::compare_checksums(u32 tick, const Parts& mine, const Parts
     if (mine == theirs || desynced_) return;
     desynced_ = true;
     desync_tick_ = tick;
+    const auto fold = [](const Parts& parts) {
+        u64 h = 0xcbf29ce484222325ull;
+        for (const u64 part : parts) h = (h ^ part) * 0x100000001b3ull;
+        return h;
+    };
+    desync_hashes_ = {fold(mine), fold(theirs)};
     std::string names;
     for (size_t i = 0; i < mine.size(); ++i) {
         if (mine[i] == theirs[i]) continue;

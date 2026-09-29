@@ -87,7 +87,8 @@ struct Options {
     bool builder_debug = false;
     std::string ai_personality;
     size_t ai_army_count = 2;           ///< --ai-armies
-    std::set<std::string> cmdline_args; ///< for HasCommandLineArg
+    /// The command line, in order, for HasCommandLineArg and GetCommandLineArg
+    std::vector<std::string> cmdline_args;
     /// A checked run: headless, and its exit code is the checks' result.
     bool any_test = false;
     bool headless = false;

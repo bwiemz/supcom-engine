@@ -38,6 +38,8 @@ struct NetLobby {
     u16 port = 0;
     u32 max_connections = 8;
     std::string player_name;
+    /// The uid a matchmaking client gave this player (GPGNet, M220b)
+    std::optional<u32> player_uid;
     u8 protocol = 2; ///< Moho's: 1 TCP, 2 UDP (what discovery tells)
     std::unique_ptr<sim::LobbyNet> net;
     /// A host's: answers the LAN's discovery (M218b)
@@ -215,10 +217,16 @@ void dispatch(NetLobby& lobby, const sim::LobbyEvent& e) {
             lua_pushstring(L, host.c_str());
             return 3;
         });
-        if (alive(&lobby) && lobby.net) announce_established(lobby);
+        if (alive(&lobby) && lobby.net) {
+            announce_established(lobby);
+            // What the scripts sent on joining goes first (retail's auto-lobby
+            // sends its player, then the host counts who is established)
+            if (alive(&lobby) && lobby.net) lobby.net->report_established();
+        }
         return;
     }
     case Kind::PeerJoined: announce_established(lobby); return;
+    case Kind::PeerEstablished: announce_established(lobby); return;
     case Kind::PeerLeft:
         // (name, id): the scripts' order, where faf-re's recovery has the other
         callback(lobby, "PeerDisconnected", [&](lua_State* L) {
@@ -354,7 +362,8 @@ NetLobby* net_lobby_of(lua_State* L, int idx) {
 }
 
 void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port,
-                    u32 max_connections, const std::string& player_name) {
+                    u32 max_connections, const std::string& player_name,
+                    std::optional<u32> player_uid) {
     if (idx < 0) idx = lua_gettop(L) + idx + 1;
     auto lobby = std::make_unique<NetLobby>();
     lobby->state = state_of(L);
@@ -364,6 +373,7 @@ void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port
     lobby->max_connections = max_connections;
     lobby->player_name = player_name.substr(0, kMaxPlayerName);
     if (lobby->player_name.empty()) lobby->player_name = "Player";
+    lobby->player_uid = player_uid;
     lua_pushvalue(L, idx);
     lobby->self_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_pushstring(L, "_c_object");
@@ -379,6 +389,7 @@ int net_lobby_HostGame(lua_State* L, NetLobby& lobby) {
                              std::chrono::system_clock::now().time_since_epoch())
                              .count());
     auto net = std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections);
+    if (lobby.player_uid) net->set_local_uid(*lobby.player_uid);
     if (!net->host(lobby.port, hosted_time))
         return luaL_error(L, "HostGame: can't listen on port %d", static_cast<int>(lobby.port));
     lobby.net = std::move(net);
@@ -400,10 +411,10 @@ int net_lobby_HostGame(lua_State* L, NetLobby& lobby) {
 
 int net_lobby_JoinGame(lua_State* L, NetLobby& lobby) {
     if (lobby.net) return 0;
+    // JoinGame(address, remotePlayerName, remotePlayerUID): the host's name
+    // and uid (a matchmaking client knows them), not this player's; the
+    // host's welcome brings them anyway (M220b)
     const std::string address = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : "";
-    if (lua_type(L, 3) == LUA_TSTRING) {
-        lobby.player_name = std::string(lua_tostring(L, 3)).substr(0, kMaxPlayerName);
-    }
     // "a.b.c.d:port"
     const size_t colon = address.rfind(':');
     std::string host = colon == std::string::npos ? address : address.substr(0, colon);
@@ -413,6 +424,7 @@ int net_lobby_JoinGame(lua_State* L, NetLobby& lobby) {
                          port_text.find_first_not_of("0123456789") == std::string::npos &&
                          port_text.size() <= 5 && std::stoul(port_text) <= 65535;
     auto net = std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections);
+    if (lobby.player_uid) net->set_local_uid(*lobby.player_uid);
     if (!port_ok || !net->join(host, static_cast<u16>(std::stoul(port_ok ? port_text : "0")))) {
         spdlog::warn("lobby: can't join '{}'", address);
         lobby.join_failed = true; // ConnectionFailed at the next pump
@@ -486,6 +498,16 @@ int net_lobby_EjectPeer(lua_State* L, NetLobby& lobby) {
     if (!lobby.net || !lobby.net->hosting() || !parse_uid(L, 2, uid)) return 0;
     const std::string reason = lua_type(L, 3) == LUA_TSTRING ? lua_tostring(L, 3) : "KickedByHost";
     lobby.net->eject(uid, reason);
+    return 0;
+}
+
+int net_lobby_DisconnectFromPeer(lua_State* L, NetLobby& lobby) {
+    // Every peer is reached through the host (M218a): the host closes the
+    // peer's connection, as a matchmaking client asks when one leaves
+    // (M220b); a client has only the host's
+    u32 uid = 0;
+    if (!lobby.net || !lobby.net->hosting() || !parse_uid(L, 2, uid)) return 0;
+    lobby.net->eject(uid, "Disconnected");
     return 0;
 }
 

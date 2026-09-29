@@ -269,8 +269,7 @@ static int lobby_Destroy(lua_State* L) {
 }
 
 static int lobby_DisconnectFromPeer(lua_State* L) {
-    // Networked: every peer is reached through the host (M218a)
-    if (net_lobby_of(L, 1)) return 0;
+    if (NetLobby* nl = net_lobby_of(L, 1)) return net_lobby_DisconnectFromPeer(L, *nl);
     if (!lua_istable(L, 1)) {
         lua_pushboolean(L, 0);
         return 1;

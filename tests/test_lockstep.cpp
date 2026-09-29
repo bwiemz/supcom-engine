@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/gpgnet_session.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lockstep_session.hpp"
@@ -140,6 +141,18 @@ TEST_CASE("Exchanged checksums flag a desync", "[lockstep]") {
     // ...and named: an extra entity.
     const auto& domains = sa.desynced() ? sa.desync_domains() : sb.desync_domains();
     CHECK(std::find(domains.begin(), domains.end(), "entities") != domains.end());
+
+    // What a matchmaking client is told of it (GPGNet, M220b): the tick, the
+    // army, and the two sides' checksums, which differ
+    const LockstepSession& seen = sa.desynced() ? sa : sb;
+    const auto report = osc::lua::gpgnet_desync_report(seen, 1);
+    CHECK(report.name == "Desync");
+    REQUIRE(report.args.size() == 4);
+    CHECK(report.args[0].num == static_cast<osc::i32>(seen.desync_tick()));
+    CHECK(report.args[0].num > 0);
+    CHECK(report.args[1].num == 1);
+    CHECK(report.args[2].str.size() == 16);
+    CHECK(report.args[2].str != report.args[3].str);
 }
 
 TEST_CASE("A desync names the domain that diverged", "[lockstep]") {

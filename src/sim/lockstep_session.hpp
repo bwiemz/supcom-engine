@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -56,6 +57,10 @@ public:
     /// differed (SimState::ChecksumParts::kNames), which say where to look.
     u32 desync_tick() const { return desync_tick_; }
     const std::vector<std::string>& desync_domains() const { return desync_domains_; }
+    /// The first desync's tick checksums, each domain's folded into one:
+    /// this peer's, then the peer's that differed (reported to a matchmaking
+    /// client, as Moho's GPGNET_ReportDesync).
+    std::pair<u64, u64> desync_hashes() const { return desync_hashes_; }
 
     // --- Pace (M218h) ---
     /// How many frames a peer runs ahead of its sim: two seconds' worth, as
@@ -155,6 +160,7 @@ private:
     std::unordered_map<u32, Parts> peer_checksums_; // tick -> a peer's reported one
     u32 desync_tick_ = 0;
     std::vector<std::string> desync_domains_;
+    std::pair<u64, u64> desync_hashes_{};
     bool desynced_ = false;
     u32 drop_timeout_rounds_ = 30;
     u32 round_ = 0;                                 // send_frame calls, while not paused
