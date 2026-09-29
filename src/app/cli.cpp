@@ -2,7 +2,9 @@
 // step 2, moved from app.cpp).
 
 #include "app/app_internal.hpp"
+#include "core/log.hpp"
 #include "core/version.hpp"
+#include "platform/crash_handler.hpp"
 #include "platform/engine_settings.hpp"
 #include "platform/first_run.hpp"
 #include "platform/game_install.hpp"
@@ -14,6 +16,13 @@
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
+
+namespace {
+
+/// How many earlier runs' logs a player's game keeps (M228b).
+constexpr int kKeptLogs = 5;
+
+} // namespace
 
 void print_usage() {
     // The option table is laid out by hand.
@@ -74,6 +83,11 @@ void print_usage() {
               << "                     more just before --save-at's save\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
+              << "  --log <file>       Write the log there (default: a player's game logs to\n"
+              << "                     the user's state folder, anything else to ./opensupcom.log)\n"
+              << "  --collect-logs [zip]  Zip the logs, crash reports and settings for a bug\n"
+              << "                     report, and exit\n"
+              << "  --simulate-crash   Crash on purpose, to check crash reports\n"
               << "  --version          Print the version and exit\n"
               << "  --help             Show this help message\n";
     // clang-format on
@@ -145,6 +159,25 @@ osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
 
 bool may_ask_player(const Options& opt) {
     return opt.interactive && !opt.scripted_window;
+}
+
+void open_run_log(const Options& opt) {
+    if (osc::log::file_open()) return;
+    if (may_ask_player(opt)) {
+        const auto env = osc::platform::system_env();
+        const auto file = osc::platform::engine_log_file(env);
+        std::error_code ec;
+        fs::create_directories(file.parent_path(), ec);
+        osc::log::rotate(file, kKeptLogs);
+        if (osc::log::open_file(file)) {
+            spdlog::info("Log: {}", file.string());
+            osc::platform::set_crash_report_dir(osc::platform::engine_crash_dir(env),
+                                                std::string(osc::core::version_line()) +
+                                                    "\nLog: " + file.string());
+            return;
+        }
+    }
+    osc::log::open_file("opensupcom.log");
 }
 
 std::optional<fs::path> first_run_find_fa() {

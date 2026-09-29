@@ -50,3 +50,6 @@ Everything so far: there has been no release yet. The first will be 0.1.0.
   runtime). A `v*` tag builds and runs them in CI and drafts a GitHub release.
 - **First run (M228a):** when the game can't find Forged Alliance, it asks where
   it is (native dialogs) and remembers the answer in its own settings file.
+- **Bug reports (M228b):** a player's game logs to the user's state folder
+  (the last five runs kept), crashes leave a report there, and
+  `opensupcom --collect-logs` zips them with a description of the system.

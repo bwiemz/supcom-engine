@@ -1,4 +1,5 @@
 #include "app/app_internal.hpp"
+#include "app/log_bundle.hpp"
 #include "core/log.hpp"
 #include "core/test_status.hpp"
 #include "core/version.hpp"
@@ -13,15 +14,26 @@
 namespace osc::app {
 
 int run(int argc, char* argv[], TestModes* tests) {
-    // Before the log starts, so the one line is all a script reads
+    // Before the log starts: --version's one line is all a script reads,
+    // and --collect-logs must not rotate the last game's log away
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0) {
             std::printf("%s\n", osc::core::version_line());
             return 0;
         }
+        if (std::strcmp(argv[i], "--collect-logs") == 0) {
+            const bool named = i + 1 < argc && std::strncmp(argv[i + 1], "--", 2) != 0;
+            return collect_logs(named ? argv[i + 1] : "");
+        }
     }
     osc::log::init();
     osc::platform::install_crash_handler();
+    // The log's file (M228b): --log's, or the integration runner's (its
+    // working directory's), at once; the game's once its options say whose
+    // game this is (open_run_log, below). Until then the lines are held.
+    if (const auto file = parse_string_arg(argc, argv, "--log", ""); !file.empty())
+        osc::log::open_file(file);
+    else if (tests) osc::log::open_file("opensupcom.log");
 
     auto config = parse_args(argc, argv, tests);
 
@@ -37,6 +49,11 @@ int run(int argc, char* argv[], TestModes* tests) {
 
     auto opt = parse_options(argc, argv, request);
     if (!opt) return 1;
+    open_run_log(*opt);
+    if (parse_flag(argc, argv, "--simulate-crash")) {
+        spdlog::warn("--simulate-crash: crashing on purpose");
+        osc::platform::crash_for_test();
+    }
     g_record_path = parse_string_arg(argc, argv, "--record", "");
     // (A scripted windowed test mode counts its script errors if it says
     // so, in parse.)

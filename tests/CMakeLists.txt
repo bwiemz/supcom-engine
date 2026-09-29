@@ -5,6 +5,7 @@ add_executable(osc_tests
     test_platform_crash.cpp
     test_game_install.cpp
     test_first_run.cpp
+    test_logs.cpp
     test_script_hooks.cpp
     test_lua_bytes.cpp
     test_game_mods.cpp
@@ -126,6 +127,7 @@ target_link_libraries(osc_tests PRIVATE
     osc::video
     osc::app # the window's modes (test_window_mode)
     glfw # key codes (test_key_codes)
+    unofficial::minizip::minizip # reads --collect-logs's zip (test_logs)
 )
 
 target_include_directories(osc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

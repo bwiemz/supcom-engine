@@ -124,6 +124,11 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
 /// run's FA folder, M228a): interactive, and not a scripted window (the
 /// replay/load flow tests and LAN games, which run the game binary itself).
 bool may_ask_player(const Options& opt);
+/// Give the log its file, if --log or the integration runner hasn't (M228b):
+/// a player's game logs to the State folder, the last five runs kept, and
+/// its crash reports go beside it; any other run logs to opensupcom.log
+/// in the working directory, as tests and scripts expect.
+void open_run_log(const Options& opt);
 
 // session.cpp
 void attach_sound(lua::LuaState& sim_lua, sim::SimState& sim, audio::SoundManager* sound);

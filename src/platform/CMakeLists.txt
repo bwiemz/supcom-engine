@@ -9,6 +9,7 @@ add_library(osc_platform STATIC
     native_prompter.cpp
     paths.cpp
     steam_library.cpp
+    system_info.cpp
 )
 add_library(osc::platform ALIAS osc_platform)
 

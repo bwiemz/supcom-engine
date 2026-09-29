@@ -2,30 +2,106 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <system_error>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <cstdio>
+#include <ctime>
+#include <cwchar>
+#include <iterator>
 #else
 #include <csignal>
-#include <cstring>
+#include <ctime>
 #include <execinfo.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
 namespace osc::platform {
 
+namespace {
+
+// Kept ready for the handler, which must not allocate (M228b): the report
+// folder (with its separator) and the header, as NUL-terminated text.
+// Empty: no file.
+char g_report_dir[4096];
+char g_report_header[1024];
+#ifdef _WIN32
+// The folder as Windows names it (UTF-16): a narrow copy would lose a
+// profile path outside the system code page
+wchar_t g_report_dir_w[4096];
+#endif
+
+/// Copy `text` into `out` (NUL-terminated); false if it doesn't fit.
+bool copy_text(char* out, size_t size, const std::string& text) {
+    if (text.size() + 1 > size) return false;
+    std::memcpy(out, text.c_str(), text.size() + 1);
+    return true;
+}
+
+} // namespace
+
+void set_crash_report_dir(const std::filesystem::path& dir, const std::string& header) {
+    g_report_dir[0] = '\0';
+    g_report_header[0] = '\0';
+    if (dir.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+#ifdef _WIN32
+    g_report_dir_w[0] = L'\0';
+    const std::wstring wide = (dir / "").wstring(); // with its separator
+    if (wide.size() + 1 > std::size(g_report_dir_w)) return;
+    std::wmemcpy(g_report_dir_w, wide.c_str(), wide.size() + 1);
+#else
+    const std::string folder = (dir / "").string(); // with its separator
+    if (!copy_text(g_report_dir, sizeof(g_report_dir), folder)) return;
+#endif
+    if (!copy_text(g_report_header, sizeof(g_report_header), header + "\n"))
+        copy_text(g_report_header, sizeof(g_report_header), "\n");
+}
+
 #ifdef _WIN32
 
 namespace {
 
+/// The report's text, into `out`.
+int format_report(char* out, size_t size, EXCEPTION_POINTERS* ep) {
+    return std::snprintf(out, size, "\n*** OpenSupCom crashed: exception 0x%08lx at %p ***\n",
+                         static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode),
+                         ep->ExceptionRecord->ExceptionAddress);
+}
+
+/// The report into the report folder, if there is one; the file's path to
+/// `path`.
+bool write_report_file(const char* report, wchar_t* path, size_t path_size) {
+    if (g_report_dir_w[0] == L'\0') return false;
+    std::swprintf(path, path_size, L"%lscrash-%lld-%lu.txt", g_report_dir_w,
+                  static_cast<long long>(std::time(nullptr)),
+                  static_cast<unsigned long>(GetCurrentProcessId()));
+    const HANDLE file =
+        CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    WriteFile(file, g_report_header, static_cast<DWORD>(std::strlen(g_report_header)), &written,
+              nullptr);
+    WriteFile(file, report, static_cast<DWORD>(std::strlen(report)), &written, nullptr);
+    CloseHandle(file);
+    return true;
+}
+
 LONG WINAPI unhandled_exception_filter(EXCEPTION_POINTERS* ep) {
-    std::fprintf(stderr,
-                 "\n*** OpenSupCom crashed: exception 0x%08lx at %p ***\n",
-                 static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode),
-                 ep->ExceptionRecord->ExceptionAddress);
+    char report[256];
+    format_report(report, sizeof(report), ep);
+    std::fputs(report, stderr);
+    // (static: a stack overflow leaves the filter little stack)
+    static wchar_t path[std::size(g_report_dir_w) + 64];
+    if (write_report_file(report, path, std::size(path)))
+        std::fprintf(stderr, "Crash report: %ls\n", path);
     std::fflush(stderr);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -36,29 +112,38 @@ void install_crash_handler() {
     SetUnhandledExceptionFilter(unhandled_exception_filter);
 }
 
+void crash_for_test() {
+    RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+    std::abort();
+}
+
 #else
 
 namespace {
 
 // Everything below runs inside a signal handler: only async-signal-safe
-// calls (write, backtrace_symbols_fd, signal, raise), no allocation.
+// calls (open, write, close, clock_gettime, getpid, backtrace_symbols_fd,
+// signal, raise), no allocation.
 
-void write_str(const char* s) {
-    ssize_t ignored = write(STDERR_FILENO, s, std::strlen(s));
+void write_str(int fd, const char* s) {
+    ssize_t ignored = write(fd, s, std::strlen(s));
     static_cast<void>(ignored);
 }
 
-void write_hex(std::uintptr_t value) {
-    char buf[2 + sizeof(value) * 2 + 1];
+/// `value` in `base` (10 or 16, with 0x) into `out` (at least 24 bytes).
+void format_number(char* out, std::uintmax_t value, unsigned base) {
+    char buf[24];
     char* p = buf + sizeof(buf) - 1;
     *p = '\0';
     do {
-        *--p = "0123456789abcdef"[value & 0xF];
-        value >>= 4;
+        *--p = "0123456789abcdef"[value % base];
+        value /= base;
     } while (value != 0);
-    *--p = 'x';
-    *--p = '0';
-    write_str(p);
+    if (base == 16) {
+        *--p = 'x';
+        *--p = '0';
+    }
+    std::memcpy(out, p, static_cast<size_t>(buf + sizeof(buf) - p));
 }
 
 const char* signal_name(int sig) {
@@ -76,6 +161,43 @@ constexpr int kFatalSignals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT};
 
 std::atomic<bool> g_in_handler{false};
 
+/// The report (the signal, where, the backtrace) to `fd`.
+void write_report(int fd, int sig, const siginfo_t* info, void* const* frames, int count) {
+    write_str(fd, "\n*** OpenSupCom crashed: ");
+    write_str(fd, signal_name(sig));
+    // (A real fault's: a signal sent by raise or kill, si_code <= 0, has none)
+    if (info && info->si_code > 0 && (sig == SIGSEGV || sig == SIGBUS)) {
+        char address[24];
+        format_number(address, reinterpret_cast<std::uintptr_t>(info->si_addr), 16);
+        write_str(fd, ", fault address ");
+        write_str(fd, address);
+    }
+    write_str(fd, " ***\nBacktrace (resolve offsets with addr2line -e <binary>):\n");
+    backtrace_symbols_fd(frames, count, fd);
+}
+
+/// Open crash-<time>-<pid>.txt in the report folder, its path into `path`;
+/// -1 when there is no folder or it can't be made.
+int open_report_file(char* path, size_t size) {
+    if (g_report_dir[0] == '\0') return -1;
+    timespec now{};
+    clock_gettime(CLOCK_REALTIME, &now);
+    char seconds[24];
+    char pid[24];
+    format_number(seconds, static_cast<std::uintmax_t>(now.tv_sec), 10);
+    format_number(pid, static_cast<std::uintmax_t>(getpid()), 10);
+    const char* parts[] = {g_report_dir, "crash-", seconds, "-", pid, ".txt"};
+    size_t used = 0;
+    for (const char* part : parts) {
+        const size_t n = std::strlen(part);
+        if (used + n + 1 > size) return -1;
+        std::memcpy(path + used, part, n);
+        used += n;
+    }
+    path[used] = '\0';
+    return open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+}
+
 void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
     // A second fault while reporting (or a fault on another thread) goes
     // straight to the default action.
@@ -85,17 +207,19 @@ void fatal_signal_handler(int sig, siginfo_t* info, void* /*context*/) {
         return;
     }
 
-    write_str("\n*** OpenSupCom crashed: ");
-    write_str(signal_name(sig));
-    if (info && (sig == SIGSEGV || sig == SIGBUS)) {
-        write_str(", fault address ");
-        write_hex(reinterpret_cast<std::uintptr_t>(info->si_addr));
-    }
-    write_str(" ***\nBacktrace (resolve offsets with addr2line -e <binary>):\n");
-
     void* frames[64];
-    int count = backtrace(frames, 64);
-    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    const int count = backtrace(frames, 64);
+    write_report(STDERR_FILENO, sig, info, frames, count);
+
+    char path[sizeof(g_report_dir) + 64];
+    if (const int fd = open_report_file(path, sizeof(path)); fd >= 0) {
+        write_str(fd, g_report_header);
+        write_report(fd, sig, info, frames, count);
+        close(fd);
+        write_str(STDERR_FILENO, "Crash report: ");
+        write_str(STDERR_FILENO, path);
+        write_str(STDERR_FILENO, "\n");
+    }
 
     // SA_RESETHAND already restored the default action; re-raise so the
     // process still dies by this signal (core dump, correct exit status).
@@ -130,6 +254,11 @@ void install_crash_handler() {
     }
 
     signal(SIGPIPE, SIG_IGN);
+}
+
+void crash_for_test() {
+    std::raise(SIGSEGV);
+    std::abort(); // (the handler re-raises; this is never reached)
 }
 
 #endif

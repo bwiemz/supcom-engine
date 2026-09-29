@@ -18,6 +18,13 @@ struct EngineSettings {
 /// Where the settings live: <Config>/opensupcom/settings.json.
 std::filesystem::path engine_settings_path(const EnvLookup& env);
 
+/// A player's game's log (M228b): <State>/opensupcom/logs/opensupcom.log,
+/// the last runs' beside it (opensupcom.1.log, ...).
+std::filesystem::path engine_log_file(const EnvLookup& env);
+
+/// Where crash reports go: <State>/opensupcom/crashes.
+std::filesystem::path engine_crash_dir(const EnvLookup& env);
+
 /// The settings in `file`: defaults when it is missing or can't be read.
 EngineSettings load_engine_settings(const std::filesystem::path& file);
 
