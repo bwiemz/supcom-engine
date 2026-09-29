@@ -16,6 +16,9 @@ add_library(osc_app STATIC
     ui_globals.cpp
     window.cpp
     window_commands.cpp
+    window_frame.cpp
+    window_load_flow.cpp
+    window_session.cpp
     window_mode.cpp
 )
 add_library(osc::app ALIAS osc_app)

@@ -90,7 +90,26 @@ The tests use nothing else. Nothing in `integration_tests.cpp` refers to `main.c
     - The bodies were moved by a script that checks the text of every line it deletes or rewrites, and prefixes the `Options` names with `opt.` only in code.
     - A token diff of the old `run()` against the new code (with `opt.` ignored) shows only the moved declarations, the method frames and `parse_options`.
     - The four-AI checksum trace is byte-identical over 3,000 ticks.
-  - **Next (2c):** the windowed loop is still one 770-line method. Break its frame into handlers (keys, the sim's advance, the UI frame, a launch, the return to the lobby).
+- **2c (done):** the windowed loop is `App::Window` (`window_loop.hpp`), and its frame is a sequence of named phases.
+  - **Phases:**
+    - `begin_frame`, `update_audio`, `count_fps`;
+    - `advance_sim` (a loaded game catching up, lockstep rounds, or the local clock) and `run_beats`;
+    - `run_flows` (the scripted flows' frame);
+    - `update_ui` (the camera's input, events, the networks, the UI's threads and beats);
+    - `update_input`, `render`, `update_title`;
+    - `exit_requested`, `handle_launch`, `handle_return_to_lobby`.
+  - **Around the frames:** `set_up`, `open_replay`, `open_saved_game`, `start_flows`, `finish` and `run_without_renderer`.
+  - **Files:**
+    - `window_frame.cpp`: the frame's phases.
+    - `window_session.cpp`: exit, a launch, and the return to the lobby.
+    - `window_load_flow.cpp`: `--load-flow-test`'s frame and verdict.
+  - **How the move stays verbatim:**
+    - `App::Window` sees the App's state through references named as the App names it, so each phase's body is the loop's text, moved.
+    - The loop's locals are its members, declared in the order the loop made them.
+    - The three lambdas became methods, and the frame's `static bool first_update_fired` a member.
+  - **Proof:**
+    - A multiset diff of the lines finds only the moved declarations, the method frames and calls, the includes, and the loop's `break` turned `return`.
+    - A recorded four-AI game watched in the window (`--watch`, 4,000 captured frames on the fixed clock) gives a byte-identical checksum trace and capture before and after.
 
 ## Proof
 
