@@ -99,6 +99,7 @@ constexpr Mode kModesBefore[] = {
     {"--path-test", test_path, false},
     {"--toggle-test", test_toggle, false},
     {"--enhance-test", test_enhance, false},
+    {"--script-order-test", test_script_orders, false},
     {"--intel-test", test_intel, false},
     {"--shield-test", test_shield, false},
     {"--transport-test", test_transport, false},
@@ -283,6 +284,8 @@ void IntegrationModes::print_usage() const {
               << "  --path-test        A* pathfinding around obstacles + terrain height\n"
               << "  --toggle-test      Script bits, toggle caps, and dive command\n"
               << "  --enhance-test     ACU enhancement (AdvancedEngineering)\n"
+              << "  --script-order-test  Script orders run retail's tasks (EnhanceTask,\n"
+              << "                     the Eye of Rhianne's TargetLocation)\n"
               << "  --intel-test       Intel system (InitIntel/Enable/Disable/Radius)\n"
               << "  --shield-test      Shield system (create, health, regen, toggle)\n"
               << "  --transport-test   Transport load/unload, cargo tracking, speed mult\n"

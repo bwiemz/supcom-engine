@@ -143,6 +143,7 @@ extern const MethodEntry platoon_methods[];
 extern const MethodEntry projectile_methods[];
 extern const MethodEntry prop_methods[];
 extern const MethodEntry rotate_manipulator_methods[];
+extern const MethodEntry script_task_methods[];
 extern const MethodEntry shield_methods[];
 extern const MethodEntry slide_manipulator_methods[];
 extern const MethodEntry ui_bitmap_methods[];

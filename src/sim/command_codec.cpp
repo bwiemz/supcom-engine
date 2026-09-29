@@ -115,6 +115,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
     w.u32v(static_cast<u32>(c.command.unload_ids.size()));
     for (u32 id : c.command.unload_ids) w.u32v(id);
     w.u8v(c.command.factory ? 1 : 0);
+    w.str(c.command.script_args);
     w.u32v(static_cast<u32>(c.unit_ids.size()));
     for (u32 id : c.unit_ids) w.u32v(id);
 
@@ -134,7 +135,7 @@ void write_command(ByteWriter& w, const ScheduledCommand& c) {
 }
 
 bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool with_formation,
-                  bool with_unload, bool with_factory, bool with_value) {
+                  bool with_unload, bool with_factory, bool with_value, bool with_script) {
     c = ScheduledCommand{};
     c.exec_tick = r.u32v();
     c.source = r.u32v();
@@ -156,6 +157,7 @@ bool read_command(ByteReader& r, ScheduledCommand& c, bool with_callback, bool w
         for (u32 i = 0; i < unloads && r.ok(); ++i) c.command.unload_ids.push_back(r.u32v());
     }
     if (with_factory) c.command.factory = r.u8v() != 0;
+    if (with_script) c.command.script_args = r.str();
     const u32 n = r.u32v();
     for (u32 i = 0; i < n && r.ok(); ++i) c.unit_ids.push_back(r.u32v());
 

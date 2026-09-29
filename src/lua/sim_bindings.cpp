@@ -3,6 +3,7 @@
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "lua/game_mods.hpp"
+#include "sim/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "core/game_state.hpp"
 #include "map/terrain.hpp"
@@ -5076,7 +5077,21 @@ static int l_IssueUpgrade(lua_State* L) {
     return push_command_handle(L, route_units_command(L, 1, cmd, false));
 }
 
-// IssueEnhancement(units_table, enhancementName)
+// IssueScript(units, args): a Script order (M206w) after what each unit
+// has, its task the class args.TaskName names (retail's AI enhances its
+// commander so: {TaskName = 'EnhanceTask', Enhancement = ...}).
+static int l_IssueScript(lua_State* L) {
+    luaL_checktype(L, 2, LUA_TTABLE);
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::Script;
+    auto bytes = sim::lua_to_bytes(L, 2);
+    if (!bytes) return luaL_error(L, "IssueScript: its table can't be carried (nested too deep)");
+    cmd.script_args = std::move(*bytes);
+    return push_command_handle(L, route_units_command(L, 1, cmd, false));
+}
+
+// IssueEnhancement(units_table, enhancementName): the engine's own (retail
+// enhances through IssueScript's EnhanceTask).
 static int l_IssueEnhancement(lua_State* L) {
     const char* enh_name = luaL_checkstring(L, 2);
 
@@ -5923,7 +5938,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
     state.register_function("IssueUpgrade", l_IssueUpgrade);
     state.register_function("IssueKillSelf", l_IssueKillSelf);
     state.register_function("IssuePause", stub_noop);  // unused in FA
-    state.register_function("IssueScript", stub_noop);  // EnhanceTask uses IssueEnhancement
+    state.register_function("IssueScript", l_IssueScript);
     state.register_function("IssueDive", l_IssueDive);
     state.register_function("IssueEnhancement", l_IssueEnhancement);
 

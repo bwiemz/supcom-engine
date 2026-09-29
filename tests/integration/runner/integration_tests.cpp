@@ -16514,19 +16514,22 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
     )");
     play(1);
     {
+        // Retail's EnhanceTask runs it, and marks the commander Enhancing
         const auto* acu = army1_unit("uel0001");
-        if (acu && acu->is_enhancing()) spdlog::info("[PASS] Test 10u: the commander is enhancing");
+        if (acu && acu->has_script_task() && acu->has_unit_state("Enhancing"))
+            spdlog::info("[PASS] Test 10u: the commander is enhancing");
         else osc::test_status::fail("[FAIL] Test 10u: the enhancement order did nothing");
     }
     lua_ok("Test 10v: Stop", "IssueCommand('UNITCOMMAND_Stop')");
     play(1);
     {
         const auto* acu = army1_unit("uel0001");
-        if (acu && !acu->is_enhancing() && acu->command_queue().empty())
+        if (acu && !acu->has_script_task() && !acu->has_unit_state("Enhancing") &&
+            acu->command_queue().empty())
             spdlog::info("[PASS] Test 10w: Stop cancelled the enhancement");
         else
             osc::test_status::fail("[FAIL] Test 10w: after Stop the commander is {}",
-                                   acu && acu->is_enhancing() ? "still enhancing" : "not idle");
+                                   acu && acu->has_script_task() ? "still enhancing" : "not idle");
     }
     // The sim's enhancement table reaches the UI (retail SimSync's
     // SyncUnitEnhancements -> Sync.UserUnitEnhancements -> UserSync), keyed

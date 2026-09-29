@@ -18,6 +18,7 @@ add_library(osc_sim STATIC
     sca_parser.cpp
     scm_parser.cpp
     unit.cpp
+    unit_script_task.cpp
     lua_bytes.cpp
     unit_orders.cpp
     unit_staging.cpp

@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "core/game_state.hpp"
 #include "lua/game_mods.hpp"
+#include "sim/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -65,6 +66,39 @@ static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
 /// game UI has loaded the module. Build mode carries the footprint (for
 /// the ghost and the snap).
+/// An ability's order at a point (M206w): the command mode's table as it
+/// is now, with the point as its Location, as bytes. Moho's click gives the
+/// task its target so (TargetLocation reads commandData.Location).
+static std::function<std::string(const osc::sim::Vector3&)> script_order_at(lua_State* uiL) {
+    std::string mode_data;
+    osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
+    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) == 0 && lua_istable(uiL, -1)) {
+        lua_rawgeti(uiL, -1, 2);
+        if (lua_istable(uiL, -1))
+            if (auto bytes = osc::sim::lua_to_bytes(uiL, -1)) mode_data = std::move(*bytes);
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1); // the mode, the error or the non-function
+    return [uiL, mode_data](const osc::sim::Vector3& at) -> std::string {
+        const int top = lua_gettop(uiL);
+        if (!osc::sim::push_lua_bytes(uiL, mode_data) || !lua_istable(uiL, -1)) {
+            lua_settop(uiL, top);
+            return {};
+        }
+        lua_pushstring(uiL, "Location");
+        lua_newtable(uiL);
+        const float xyz[] = {at.x, at.y, at.z};
+        for (int i = 0; i < 3; ++i) {
+            lua_pushnumber(uiL, xyz[i]);
+            lua_rawseti(uiL, -2, i + 1);
+        }
+        lua_rawset(uiL, -3);
+        auto bytes = osc::sim::lua_to_bytes(uiL, -1);
+        lua_settop(uiL, top);
+        return bytes ? std::move(*bytes) : std::string();
+    };
+}
+
 osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     osc::renderer::CommandMode m;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
@@ -93,6 +127,7 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     lua_pop(uiL, 1);
     if (m.mode == "build" && !m.name.empty())
         blueprint_footprint(uiL, m.name, m.footprint_x, m.footprint_z);
+    if (m.mode == "order" && m.name == "RULEUCC_Script") m.script_args_at = script_order_at(uiL);
     return m;
 }
 

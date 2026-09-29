@@ -33,12 +33,10 @@ G _c_CreatePathDebugger
 G errro
 M AddOnKilledCallback
 M GetCollisionExtents
-M GetUnit
 M GiveUnitOrder
 M OnApplyBuff
 M PickBestAttackVector
 M RecoilImpulse
-M SetAIResult
 M SetDamageRadius
 M SetStrategicUnderlay
 M SetWeaponDisableByLabel
