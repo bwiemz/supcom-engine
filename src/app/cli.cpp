@@ -3,6 +3,8 @@
 
 #include "app/app_internal.hpp"
 #include "core/version.hpp"
+#include "platform/engine_settings.hpp"
+#include "platform/first_run.hpp"
 #include "platform/game_install.hpp"
 
 #include <algorithm>
@@ -73,7 +75,8 @@ void print_usage() {
     // clang-format on
 }
 
-osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests) {
+osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
+                                const std::optional<fs::path>& chosen) {
     osc::platform::GameInstallHints hints;
     bool print_install = false;
 
@@ -97,8 +100,14 @@ osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests) 
         }
     }
 
-    auto search = osc::platform::locate_game_install(
-        hints, osc::platform::system_env());
+    // The folder the player chose when nothing was found (M228a): the last
+    // place looked
+    const auto env = osc::platform::system_env();
+    hints.chosen_fa_path =
+        chosen
+            ? chosen
+            : osc::platform::load_engine_settings(osc::platform::engine_settings_path(env)).fa_path;
+    auto search = osc::platform::locate_game_install(hints, env);
 
     if (print_install) {
         if (search.install) {
@@ -128,6 +137,27 @@ osc::lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests) 
         }
     }
     return config;
+}
+
+bool may_ask_player(const Options& opt) {
+    return opt.interactive && !opt.scripted_window;
+}
+
+std::optional<fs::path> first_run_find_fa() {
+    auto prompter = osc::platform::make_native_prompter();
+    if (!prompter) {
+        spdlog::warn("No dialog to ask where FA is with (Linux: install zenity or kdialog)");
+        return std::nullopt;
+    }
+    const auto env = osc::platform::system_env();
+    const auto settings = osc::platform::engine_settings_path(env);
+    const auto result =
+        osc::platform::ask_for_fa_install(*prompter, settings, osc::platform::home_dir(env));
+    if (!result.fa_path) return std::nullopt;
+    spdlog::info("FA folder chosen: {}", result.fa_path->string());
+    if (!result.saved)
+        spdlog::warn("Couldn't save it in {}: the next start will ask again", settings.string());
+    return result.fa_path;
 }
 
 osc::u32 parse_ticks_arg(int argc, char* argv[]) {

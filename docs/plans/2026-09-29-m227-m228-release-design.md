@@ -91,23 +91,38 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
 
 ## M228a — First run: finding FA
 
-- The engine's own settings: `<Config>/opensupcom/settings.json`, holding for now
-  `fa_path`. `locate_game_install` gains one step, after the environment and before
-  auto-detection: the folder the player chose.
-- A windowed start that finds no FA asks, instead of exiting:
-  - a native message box ("OpenSupCom needs Supreme Commander: Forged Alliance
-    installed…"), then a folder picker;
-  - the choice is checked (`gamedata/` holds FA's `.scd` archives, `bin/` has
-    `SupComDataPath.lua`). A wrong folder says what's missing and asks again, and
-    Cancel exits;
-  - the answer is saved, so the next start is silent.
-- Native dialogs come from `tinyfiledialogs` (vcpkg, zlib licence): Win32 dialogs on
-  Windows, zenity or kdialog on Linux, which covers GNOME, KDE and SteamOS's desktop
-  mode. With neither available, it falls back to the current console message.
-- The dialogs sit behind a small interface, so tests drive the flow with scripted
-  answers: not found → wrong folder → right folder → saved → found silently on the
-  next search.
-- Headless and CLI runs never prompt.
+- The engine's own settings: `<Config>/opensupcom/settings.json` (`platform/engine_settings`),
+  holding for now `fa_path`. Keys another version wrote are kept when it saves, and
+  the file is replaced whole (a temporary file, then a rename).
+- `locate_game_install` gains a last step: the folder the player chose. It is last,
+  not first, because it is only ever asked for when nothing was found, and an install
+  found later (FAF, or Steam after a reinstall) should take over. `--fa-path` and
+  `OSC_FA_PATH` still win over everything, and `--print-install` lists it.
+- A player's windowed start that finds no FA asks, instead of exiting:
+  - a question ("OpenSupCom plays Supreme Commander: Forged Alliance from your own
+    copy…"), then a folder picker;
+  - the choice is checked (`fa_install_problem`: `bin/SupComDataPath.lua` and
+    `gamedata/lua.scd`, in any case). FA's own `bin` or `gamedata` folder counts as
+    FA. A wrong folder says what it lacks and offers another try; Cancel exits with
+    the old message;
+  - the answer is saved, so the next start is silent. When the save fails, the game
+    still plays and says so, and the next start asks again.
+- Native dialogs come from `portable-file-dialogs` (vcpkg, one header, fetched from
+  GitHub). `tinyfiledialogs`' port downloads from SourceForge, a flakier dependency
+  for CI. pfd uses Windows' own dialogs, and on Linux zenity, matedialog, qarma or
+  kdialog, which covers GNOME, KDE and SteamOS's desktop mode.
+  - With none of those installed, pfd 0.1.0 "shows" a dialog by running `echo`, and
+    a folder pick would return echo's arguments as the folder. So the engine checks
+    for a helper on `PATH` and a display itself, and without them keeps the console
+    message.
+  - kdialog waits forever for an X server that isn't there. Only a broken display
+    reaches that, and the game can't run there anyway.
+- The dialogs sit behind `platform::Prompter`, so tests drive the flow with scripted
+  answers: cancel at each step; wrong folder, then FA's bin folder → FA, saved;
+  broken or foreign settings files. It was also run end to end with a scripted
+  `zenity`/`kdialog` on `PATH` and an empty `HOME`: question → folder → saved → the
+  search finds it as `chosen` → the next start asks nothing.
+- Headless runs, test modes and captures never ask.
 
 ## M228b — Logs and bug reports
 

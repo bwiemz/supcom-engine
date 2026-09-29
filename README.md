@@ -290,6 +290,9 @@ The engine needs FA game data and finds it on its own. The search order is:
 3. A FAForever data directory (`%ProgramData%/FAForever` or `~/.faforever`)
 4. Steam app 9420, in any Steam library, using the retail
    `bin/SupComDataPath.lua` init script
+5. The folder you chose: when nothing else is found, the game asks where FA is
+   installed (native dialogs; on Linux through zenity or kdialog) and keeps the
+   answer in `~/.config/opensupcom/settings.json` (`%LOCALAPPDATA%` on Windows)
 
 To see what it picked and everything it checked, run:
 

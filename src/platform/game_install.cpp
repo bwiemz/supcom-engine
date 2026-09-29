@@ -41,7 +41,8 @@ std::optional<fs::path> find_file_ci(const fs::path& dir, std::string_view name)
 }
 
 std::optional<fs::path> retail_init(const fs::path& fa_path) {
-    return find_file_ci(fa_path / "bin", "SupComDataPath.lua");
+    const auto bin = find_file_ci(fa_path, "bin");
+    return bin ? find_file_ci(*bin, "SupComDataPath.lua") : std::nullopt;
 }
 
 fs::path default_faf_dir(const EnvLookup& env) {
@@ -174,12 +175,44 @@ GameInstallSearch locate_game_install(const GameInstallHints& hints,
             install.fa_path = *fa;
             install.init_file = *init;
             search.install = std::move(install);
-        } else {
-            search.searched.push_back("steam: " + fa->string() +
-                                      " has no bin/SupComDataPath.lua");
+            return search;
+        }
+        search.searched.push_back("steam: " + fa->string() + " has no bin/SupComDataPath.lua");
+    }
+
+    // 5. The folder the player chose when nothing was found.
+    if (hints.chosen_fa_path) {
+        search.searched.push_back("chosen: " + hints.chosen_fa_path->string());
+        if (auto init = retail_init(*hints.chosen_fa_path)) {
+            GameInstall install;
+            install.source = "chosen";
+            install.fa_path = *hints.chosen_fa_path;
+            install.init_file = *init;
+            search.install = std::move(install);
         }
     }
     return search;
+}
+
+std::optional<std::string> fa_install_problem(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return "it isn't a folder";
+    if (!retail_init(dir)) return "it has no bin/SupComDataPath.lua";
+    const auto gamedata = find_file_ci(dir, "gamedata");
+    if (!gamedata || !find_file_ci(*gamedata, "lua.scd")) return "it has no gamedata/lua.scd";
+    return std::nullopt;
+}
+
+std::optional<fs::path> resolve_fa_folder(const fs::path& picked) {
+    if (!fa_install_problem(picked)) return picked;
+    // FA's own bin or gamedata folder, picked instead of FA's
+    const fs::path trimmed = picked.has_filename() ? picked : picked.parent_path();
+    std::string name = trimmed.filename().string();
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if ((name == "bin" || name == "gamedata") && !fa_install_problem(trimmed.parent_path()))
+        return trimmed.parent_path();
+    return std::nullopt;
 }
 
 } // namespace osc::platform
