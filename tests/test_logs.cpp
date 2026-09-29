@@ -137,7 +137,7 @@ TEST_CASE("Earlier runs' logs are kept, the oldest dropped", "[logs]") {
     CHECK(read_file(tmp.path / "opensupcom.2.log") == "run 2");
 }
 
-TEST_CASE("--collect-logs's zip holds the logs, crash reports and settings", "[logs]") {
+TEST_CASE("The --collect-logs zip holds the logs, crash reports and settings", "[logs]") {
     TempDir tmp;
     osc::app::LogBundleSources sources;
     sources.logs_dir = tmp.path / "state" / "logs";
