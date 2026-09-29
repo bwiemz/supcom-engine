@@ -58,6 +58,8 @@ void print_usage() {
               << "                     Load dialog does, play on, and save it again\n"
               << "  --mods-flow-test   Offscreen: a skirmish with the player's mods, launched\n"
               << "                     as retail's lobby launches one, reporting what they did\n"
+              << "  --mods-flow-lobby  ...through retail's lobby, picking Resource Rich in its\n"
+              << "                     mod manager with a player's clicks\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
@@ -192,6 +194,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
     // --mods-flow-test: a skirmish with the player's mods (M221b).
     o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
+    o.mods_flow_lobby = parse_flag(argc, argv, "--mods-flow-lobby"); // (M221c)
     // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
     // processes play retail's LAN lobby to a game.
     o.lan_game_host = parse_flag(argc, argv, "--lan-game-host");

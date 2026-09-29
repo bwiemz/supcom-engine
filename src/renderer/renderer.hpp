@@ -107,6 +107,9 @@ public:
         ui_dispatch_.forget_controls();
         movie_textures_.forget();
     }
+    /// The UI's input, as the window's callbacks feed it (a scripted test
+    /// clicks through it as a player would).
+    ui::UIDispatch& ui_dispatch() { return ui_dispatch_; }
 
     /// Render one frame from the world as `view` draws it, between the
     /// sim's last two ticks. It shows (and takes) the death flashes and
