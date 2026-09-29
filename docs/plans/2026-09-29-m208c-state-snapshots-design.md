@@ -1,7 +1,7 @@
 # M208c: State Snapshots — Design
 
-**Status:** 2026-09-29. M208c-a (Lua persistence) and M208c-b (the C++ sim, headless loads)
-implemented; M208c-c (the game's own load, its fallback) to come.
+**Status:** 2026-09-29. Implemented: M208c-a (Lua persistence), M208c-b (the C++ sim,
+headless loads) and M208c-c (the game's own load, its fallback, signed snapshots).
 Roadmap Phase E (M208, save/load).
 
 ## Why
@@ -218,9 +218,22 @@ written in declaration order; the snapshot as a whole carries a version and a ha
 - **The restored game adopts the save's history as its recording** (`adopt_history`), so a
   later save carries the whole game. The history drops the orders still to run: they're in
   the restored scheduler, and are recorded again as they run.
-- **Headless loads restore since M208c-b.** `--load-by-replay` forces the catch-up, the
-  oracle a restore is checked against. The game's own load (the Load dialog, then a
-  relaunch) still catches up until M208c-c.
+- **Every load restores** (headless since M208c-b, the Load dialog's relaunch since M208c-c).
+  `--load-by-replay` forces the catch-up, the oracle a restore is checked against.
+- **Only this installation's snapshots are restored** (M208c-c). A snapshot names C
+  functions by their place in the binary, so a crafted one could aim a call anywhere.
+  - Each save signs its snapshot with HMAC-SHA256. The key comes from the OS's cryptographic
+    random source (getentropy, BCryptGenRandom), and is kept in the user folder
+    (`opensupcom-snapshot.key`) in a file only its owner can read (0600 on POSIX).
+  - A load restores only a snapshot its own key signed. Any other save, such as one a
+    player was sent, catches up from its history. That runs only the local game's scripts
+    and the recorded orders, as a replay does.
+  - A list of the C functions a build can register was measured and rejected. A late game's
+    heap holds functions its freshly booted one doesn't: the AI personality's lambdas and
+    the falling-tree motor, bound on first use.
+- **A restore that fails** reboots the game and catches up, in the game's own load. "Fails"
+  means a damaged snapshot, or one that isn't the saved game by its checksum. A headless
+  load exits instead, since it is a test.
 - **Loading.**
   - Restore, then compare the restored state's checksum parts with the history's for the
     saved tick.
@@ -295,11 +308,19 @@ on a short game.
    snapshot in the save file, and headless loads that restore it. Proved by the A/B oracle:
    saves loaded both ways (`--load`, `--load-by-replay`).
 3. **M208c-c, the game's loads.**
-   - The Load dialog's relaunch restores too.
-   - A failed restore reboots and catches up rather than exiting.
-   - Loaded C functions are checked against this build's (for shared saves).
-   - Ambient sounds restart, and the per-client registry values (the focus army) are
-     the loading client's.
+   - The Load dialog's relaunch restores.
+   - A failed restore reboots and catches up.
+   - Snapshots are signed by their installation, and only its own are restored.
+   - Proved by `data.load_flow`:
+     - three loads restore;
+     - the same flow on a save whose snapshot was damaged under a valid signature
+       falls back and passes;
+     - `data.save_load`'s fourth process, another installation, catches up to the same
+       game.
+   - Left for later:
+     - ambient sound loops restart only when their scripts next play them (M216b);
+     - the focus army in the sim's registry is the saving client's, which a
+       single-player load shares.
 
 ## Risks
 
@@ -313,12 +334,14 @@ on a short game.
   measures it.
 - **Engine versions.** A snapshot is tied to its build, like the save's history gate: C
   functions are offsets into it. A mismatch falls back to catching up.
-- **A damaged or crafted snapshot.** The loader bounds every size by the input left and checks
-  every reference's kind, and a hash over the snapshot fails a corrupted one before anything
-  is made. A unit test loads hundreds of damaged snapshots. A *crafted* snapshot is another
-  matter: its C function offsets could name any address in the binary. Before M208c-c loads
-  snapshots from save files, which players share, a load must check each offset against the
-  C functions this build registers, and fail otherwise.
+- **A damaged or crafted snapshot.**
+  - The loader bounds every size by the input left and checks every reference's kind.
+  - A hash over the snapshot fails a corrupted one before anything is made. A unit test
+    loads hundreds of damaged snapshots.
+  - A *crafted* snapshot could name any address in the binary as a C function. So since
+    M208c-c only a snapshot signed with the loading installation's own key is restored,
+    and any other save catches up.
+  - The key is only as safe as the user folder it's kept in.
 - **Loading still collects on Lua's threshold.** Manual collection starts at tick 1, so the
   collections during a load fall where the byte count puts them. A restore replaces the heap
   whole, so that doesn't reach snapshots. Across OSes it is an existing, untested case.
