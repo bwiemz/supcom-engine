@@ -3,6 +3,8 @@
 
 #include "app/app_internal.hpp"
 #include "core/game_state.hpp"
+#include "lua/game_mods.hpp"
+#include "sim/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -64,6 +66,39 @@ static void blueprint_footprint(lua_State* uiL, const std::string& bp_id, osc::f
 /// FA's current command mode: GetCommandMode() -> {mode, data}, once the
 /// game UI has loaded the module. Build mode carries the footprint (for
 /// the ghost and the snap).
+/// An ability's order at a point (M206w): the command mode's table as it
+/// is now, with the point as its Location, as bytes. Moho's click gives the
+/// task its target so (TargetLocation reads commandData.Location).
+static std::function<std::string(const osc::sim::Vector3&)> script_order_at(lua_State* uiL) {
+    std::string mode_data;
+    osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
+    if (lua_isfunction(uiL, -1) && lua_pcall(uiL, 0, 1, 0) == 0 && lua_istable(uiL, -1)) {
+        lua_rawgeti(uiL, -1, 2);
+        if (lua_istable(uiL, -1))
+            if (auto bytes = osc::sim::lua_to_bytes(uiL, -1)) mode_data = std::move(*bytes);
+        lua_pop(uiL, 1);
+    }
+    lua_pop(uiL, 1); // the mode, the error or the non-function
+    return [uiL, mode_data](const osc::sim::Vector3& at) -> std::string {
+        const int top = lua_gettop(uiL);
+        if (!osc::sim::push_lua_bytes(uiL, mode_data) || !lua_istable(uiL, -1)) {
+            lua_settop(uiL, top);
+            return {};
+        }
+        lua_pushstring(uiL, "Location");
+        lua_newtable(uiL);
+        const float xyz[] = {at.x, at.y, at.z};
+        for (int i = 0; i < 3; ++i) {
+            lua_pushnumber(uiL, xyz[i]);
+            lua_rawseti(uiL, -2, i + 1);
+        }
+        lua_rawset(uiL, -3);
+        auto bytes = osc::sim::lua_to_bytes(uiL, -1);
+        lua_settop(uiL, top);
+        return bytes ? std::move(*bytes) : std::string();
+    };
+}
+
 osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     osc::renderer::CommandMode m;
     osc::core::push_loaded_module_function(uiL, kCommandModeModule, "GetCommandMode");
@@ -92,6 +127,7 @@ osc::renderer::CommandMode read_command_mode(lua_State* uiL) {
     lua_pop(uiL, 1);
     if (m.mode == "build" && !m.name.empty())
         blueprint_footprint(uiL, m.name, m.footprint_x, m.footprint_z);
+    if (m.mode == "order" && m.name == "RULEUCC_Script") m.script_args_at = script_order_at(uiL);
     return m;
 }
 
@@ -207,11 +243,14 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev
 
 /// Moho's world-UI start (see ui::WldUIProvider): the user side of the
 /// sync channel (/lua/UserSync.lua and its hooks: OnSync, a fresh Sync and
-/// UnitData) is loaded for the new session, then uimain.StartGameUI makes the
-/// Lua provider, whose loading dialog shows while the world loads.
+/// UnitData) is loaded for the new session -- by its SessionInit.lua, when
+/// the state ran that -- then uimain.StartGameUI makes the Lua provider,
+/// whose loading dialog shows while the world loads.
 void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
-    if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
-        spdlog::warn("UserSync.lua: {}", r.error().message);
+    if (!osc::lua::session_init_ran(uiL)) {
+        if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
+            spdlog::warn("UserSync.lua: {}", r.error().message);
+    }
     osc::core::call_start_game_ui(uiL);
     wld.start_loading_dialog(uiL);
 }
@@ -276,49 +315,6 @@ void pump_ui_frames_with_controls(osc::lua::LuaState& ui_lua_state,
         dispatch.dispatch_events(uL, ui_registry);
         osc::core::call_on_beat(uL, 1.0 / 30.0);
         beat_registry.fire_all(uL);
-    }
-}
-
-// Build a fixed 1v1 human-vs-human sessionConfig for `scenario` and launch it via
-// the existing LaunchSinglePlayerSession global. Both LAN peers build the same
-// config (they differ only in which army is locally focused, decided by role).
-void lan_launch_session(lua_State* uL, const std::string& scenario) {
-    lua_pushstring(uL, "LaunchSinglePlayerSession");
-    lua_rawget(uL, LUA_GLOBALSINDEX);
-    if (!lua_isfunction(uL, -1)) {
-        lua_pop(uL, 1);
-        spdlog::warn("[lan] LaunchSinglePlayerSession not available");
-        return;
-    }
-    lua_newtable(uL); // config
-    lua_pushstring(uL, "ScenarioFile");
-    lua_pushstring(uL, scenario.c_str());
-    lua_rawset(uL, -3);
-    lua_pushstring(uL, "GameOptions");
-    lua_newtable(uL);
-    lua_pushstring(uL, "ScenarioFile");
-    lua_pushstring(uL, scenario.c_str());
-    lua_rawset(uL, -3);
-    lua_rawset(uL, -3);
-    lua_pushstring(uL, "PlayerOptions");
-    lua_newtable(uL);
-    auto push_slot = [&](int idx, const char* name, int faction, int team) {
-        lua_pushnumber(uL, idx);
-        lua_newtable(uL);
-        lua_pushstring(uL, "Human"); lua_pushboolean(uL, 1); lua_rawset(uL, -3);
-        lua_pushstring(uL, "PlayerName"); lua_pushstring(uL, name); lua_rawset(uL, -3);
-        lua_pushstring(uL, "Faction"); lua_pushnumber(uL, faction); lua_rawset(uL, -3);
-        lua_pushstring(uL, "Team"); lua_pushnumber(uL, team); lua_rawset(uL, -3);
-        lua_pushstring(uL, "StartSpot"); lua_pushnumber(uL, idx); lua_rawset(uL, -3);
-        lua_rawset(uL, -3);
-    };
-    push_slot(1, "Host", 1, 1);
-    push_slot(2, "Client", 2, 2);
-    lua_rawset(uL, -3); // config.PlayerOptions
-    if (lua_pcall(uL, 1, 0, 0) != 0) {
-        spdlog::warn("[lan] LaunchSinglePlayerSession error: {}",
-                     lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)");
-        lua_pop(uL, 1);
     }
 }
 

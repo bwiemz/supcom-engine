@@ -92,6 +92,11 @@ struct GameSetup {
     std::string ai_personality = "adaptive";
     double cheat_mult = 1.0;
     double build_mult = 1.0;
+    /// The game's mods, Moho's GameMods: the launch's list of mod_info
+    /// tables (retail's lobby: Mods.GetGameMods), as sim::lua_to_bytes wrote
+    /// it. The game's Lua states read it back as their __active_mods.
+    /// Empty: none.
+    std::string mods;
 };
 
 /// The game's armies, by name, in order: a lobby's (`setup.slots`) each

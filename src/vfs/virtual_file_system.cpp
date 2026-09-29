@@ -63,6 +63,13 @@ std::string VirtualFileSystem::normalize(std::string_view path) {
     return result;
 }
 
+bool VirtualFileSystem::mounted_below(std::string_view mountpoint, std::string_view directory) {
+    if (directory == "/") return mountpoint != "/";
+    return mountpoint.size() > directory.size() &&
+           mountpoint.compare(0, directory.size(), directory) == 0 &&
+           mountpoint[directory.size()] == '/';
+}
+
 std::optional<std::string> VirtualFileSystem::strip_mountpoint(
     std::string_view path, std::string_view mountpoint) {
     // Root mount matches everything
@@ -130,6 +137,10 @@ std::vector<std::string> VirtualFileSystem::find_files(
     // Search all mounts; first-mounted entries take priority for dedup
     for (const auto& entry : mounts_) {
         auto remainder = strip_mountpoint(norm_dir, entry.mountpoint);
+        // A mount below the directory is in it whole: retail's init file
+        // mounts each of the player's mods and maps at /mods/<name> and
+        // /maps/<name>, which DiskFindFiles('/mods', ...) must find.
+        if (!remainder && mounted_below(entry.mountpoint, norm_dir)) remainder = "/";
         if (!remainder) continue;
 
         auto found = entry.source->find_files(*remainder, pattern);

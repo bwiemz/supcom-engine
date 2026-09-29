@@ -122,8 +122,7 @@ std::vector<size_t> chosen_clients(lua_State* L, int idx, size_t count) {
 } // namespace
 
 bool session_is_multiplayer() {
-    const auto& mp = mp_net_state();
-    return mp.active() || mp.lobby_transport != nullptr;
+    return mp_net_state().lobby_transport != nullptr;
 }
 
 size_t session_client_count(lua_State* L) {
@@ -249,6 +248,18 @@ void eject_session_client(lua_State* L) {
     if (mp.session) mp.session->eject(static_cast<u32>(index));
 }
 
+EjectByUid eject_session_uid(u32 uid) {
+    auto& mp = mp_net_state();
+    if (!mp.session) return EjectByUid::NoGame;
+    for (size_t i = 0; i < mp.clients.size(); ++i) {
+        if (mp.clients[i].uid != uid) continue;
+        if (i == mp.local_source) return EjectByUid::Local;
+        mp.session->eject(static_cast<u32>(i));
+        return EjectByUid::Ejected;
+    }
+    return EjectByUid::NoSuchClient;
+}
+
 void pump_disconnect_dialog(lua_State* L) {
     if (!session_is_multiplayer()) return; // one local client: never shown
     const int top = lua_gettop(L);
@@ -297,6 +308,32 @@ bool session_is_paused(lua_State* L, bool& paused) {
     const sim::SimState* sim = sim_of(L);
     paused = sim && sim->network_paused();
     return true;
+}
+
+bool session_request_speed(i32 rate) {
+    if (!session_is_multiplayer()) return false;
+    // A player may, an observer not (Moho's WLD_CanAdjustSimRate); the
+    // lockstep takes it only if the lobby made the speed adjustable
+    const auto& mp = mp_net_state();
+    if (mp.session && mp.local_army() >= 0) mp.session->request_speed(rate);
+    return true;
+}
+
+bool session_speed(i32& rate) {
+    if (!session_is_multiplayer()) return false;
+    const auto& mp = mp_net_state();
+    rate = mp.session ? mp.session->speed() : 0;
+    return true;
+}
+
+void pump_speed_changes(lua_State* L) {
+    auto* session = mp_net_state().session.get();
+    if (!session_is_multiplayer() || !session) return;
+    for (const sim::LockstepSession::SpeedChange& change : session->take_speed_changes()) {
+        lua_pushnumber(L, static_cast<double>(change.source + 1)); // its client
+        lua_pushnumber(L, static_cast<double>(change.rate));
+        core::call_ui_callback(L, core::kUiMainModule, "NoteGameSpeedChanged", 2);
+    }
 }
 
 void pump_pause_state(lua_State* L) {

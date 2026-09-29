@@ -37,6 +37,7 @@ set(OSC_DATA_TESTS_GATE
     death-test decalsplat-test defence-test drive-test deposit-test drag-render-test draw-test
     dualstate-test
     economy-test edit-render-test edit-test effect-intel-test emitter-test enhance-test
+    script-order-test
     gameui-test impact-test influence-test issue-handles-test
     enhance-wreck-test factory-assist-test factory-rally-test ferry-test fire-test flags-test formation-test font-test fow-test
     full-smoke-test

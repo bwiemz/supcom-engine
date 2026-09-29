@@ -18,6 +18,8 @@ add_library(osc_sim STATIC
     sca_parser.cpp
     scm_parser.cpp
     unit.cpp
+    unit_script_task.cpp
+    lua_bytes.cpp
     unit_orders.cpp
     unit_staging.cpp
     unit_storage.cpp
@@ -34,6 +36,8 @@ add_library(osc_sim STATIC
     saved_game.cpp
     lockstep_session.cpp
     net_transport.cpp
+    gpgnet.cpp
+    reliable_udp.cpp
     lobby_net.cpp
     lan_discovery.cpp
     sim_state.cpp

@@ -24,7 +24,6 @@
 #include "lua/scenario_loader.hpp"
 #include "lua/sim_bindings.hpp"
 #include "blueprints/blueprint_store.hpp"
-#include "lua/lan_dialog_ui.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/smoke_test.hpp"
@@ -99,6 +98,7 @@ constexpr Mode kModesBefore[] = {
     {"--path-test", test_path, false},
     {"--toggle-test", test_toggle, false},
     {"--enhance-test", test_enhance, false},
+    {"--script-order-test", test_script_orders, false},
     {"--intel-test", test_intel, false},
     {"--shield-test", test_shield, false},
     {"--transport-test", test_transport, false},
@@ -283,6 +283,8 @@ void IntegrationModes::print_usage() const {
               << "  --path-test        A* pathfinding around obstacles + terrain height\n"
               << "  --toggle-test      Script bits, toggle caps, and dive command\n"
               << "  --enhance-test     ACU enhancement (AdvancedEngineering)\n"
+              << "  --script-order-test  Script orders run retail's tasks (EnhanceTask,\n"
+              << "                     the Eye of Rhianne's TargetLocation)\n"
               << "  --intel-test       Intel system (InitIntel/Enable/Disable/Radius)\n"
               << "  --shield-test      Shield system (create, health, regen, toggle)\n"
               << "  --transport-test   Transport load/unload, cargo tracking, speed mult\n"
@@ -446,90 +448,24 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
 }
 
 std::optional<int> IntegrationModes::before_boot(int argc, char* argv[]) {
-    // Multiplayer LAN verification: two processes (host + join) run a real
-    // TCP lockstep match and self-report sync. Handled before any engine init
-    // since it needs no FA data / window.
+    // Multiplayer: two processes (host + join) play a lockstep game over a
+    // lobby's real TCP connections and self-report sync. Handled before any
+    // engine init since it needs no FA data / window.
     {
         bool mp_host = parse_flag(argc, argv, "--mp-host");
         std::string mp_join = parse_string_arg(argc, argv, "--mp-join", "");
         if (mp_host || !mp_join.empty()) {
             std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
             std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "60");
+            std::string drop_s = parse_string_arg(argc, argv, "--mp-drop-at", "0");
+            std::string slow_s = parse_string_arg(argc, argv, "--mp-slow", "0");
             bool inject_desync = parse_flag(argc, argv, "--mp-desync");
             auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
-            return run_mp_lan_test(mp_host, mp_join, port, frames, inject_desync);
-        }
-
-        // Headless LAN lobby lifecycle verification (host + client processes).
-        bool lan_host = parse_flag(argc, argv, "--lan-host");
-        std::string lan_join = parse_string_arg(argc, argv, "--lan-join", "");
-        if (lan_host || !lan_join.empty()) {
-            std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
-            std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "40");
-            std::string drop_s = parse_string_arg(argc, argv, "--mp-drop-at", "0");
-            auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
-            auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
             auto drop_at = static_cast<osc::u32>(std::strtoul(drop_s.c_str(), nullptr, 10));
-            return run_lan_lobby_test(lan_host, lan_join, port, frames, drop_at);
-        }
-
-        // Headless check of the LAN UI engine globals (LanHost/LanJoin bindings).
-        if (parse_flag(argc, argv, "--lan-ui-test")) {
-            osc::lua::LuaState uiL;
-            osc::lua::register_lan_ui_bindings(uiL);
-            auto& mp = osc::lua::mp_net_state();
-            mp.reset();
-            int fails = 0;
-            uiL.do_string("__r_host = LanHost()");
-            if (!mp.transport_ready) {
-                spdlog::error("[lan-ui] LanHost did not create a transport");
-                fails++;
-            } else {
-                spdlog::info("[lan-ui] LanHost OK (listening on port {})", mp.port);
-            }
-            osc::lua::mp_teardown();
-            uiL.do_string("__r_join = LanJoin('')");
-            bool rj = false;
-            {
-                lua_State* L = uiL.raw();
-                lua_pushstring(L, "__r_join");
-                lua_rawget(L, LUA_GLOBALSINDEX);
-                rj = lua_toboolean(L, -1) != 0;
-                lua_pop(L, 1);
-            }
-            if (rj || mp.transport_ready) {
-                spdlog::error("[lan-ui] LanJoin(empty) was not rejected");
-                fails++;
-            } else {
-                spdlog::info("[lan-ui] LanJoin(empty) correctly rejected");
-            }
-            osc::lua::mp_teardown();
-            // The LAN dialog snippet must be syntactically valid and pcall-safe:
-            // on a bare state (no maui/UIUtil) it runs its guard, fails to build
-            // the UI, catches that in its pcall, and returns cleanly.
-            uiL.do_string("function LOG(s) end"); // stub the FA logger
-            {
-                auto lr = uiL.do_string(osc::lua::kLanDialogLua);
-                if (!lr) {
-                    spdlog::error("[lan-ui] dialog snippet errored: {}", lr.error().message);
-                    fails++;
-                }
-                lua_State* L = uiL.raw();
-                lua_pushstring(L, "__osc_lan_dialog_built");
-                lua_rawget(L, LUA_GLOBALSINDEX);
-                bool built_flag = lua_toboolean(L, -1) != 0;
-                lua_pop(L, 1);
-                if (!built_flag) {
-                    spdlog::error("[lan-ui] dialog snippet did not execute");
-                    fails++;
-                } else {
-                    spdlog::info("[lan-ui] dialog snippet parses + degrades gracefully");
-                }
-            }
-            std::printf("LAN_UI_TEST fails=%d\n", fails);
-            std::fflush(stdout);
-            return fails == 0 ? 0 : 1;
+            auto slow_ms = static_cast<osc::u32>(std::strtoul(slow_s.c_str(), nullptr, 10));
+            return run_mp_lobby_test(mp_host, mp_join, port, frames, inject_desync, drop_at,
+                                     slow_ms);
         }
     }
     return std::nullopt;

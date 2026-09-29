@@ -867,6 +867,16 @@ public:
     BonePose bone_world_transform(i32 bone) const;
     /// Free every manipulator, first detaching their Lua tables (see
     /// Manipulator::lua_table_ref). Called when the unit leaves the sim.
+    /// A Script order's Lua task (Moho's CUnitScriptTask, M206w): whether one
+    /// runs, and its end -- OnDestroy runs and its object goes -- when its
+    /// order is gone, done, or the unit dies or is destroyed.
+    bool has_script_task() const { return script_task_.object_ref >= 0; }
+    u32 script_task_serial() const { return script_task_.serial; }
+    void end_script_task(lua_State* L);
+    /// The last AI result a task of the unit's gave (SetAIResult; 0 unknown).
+    i32 script_task_result() const { return script_task_result_; }
+    void set_script_task_result(i32 result) { script_task_result_ = result; }
+
     void release_manipulators(lua_State* L);
     /// Detach the weapons' Lua tables (null _c_object and _c_unit) and drop
     /// every Lua ref the weapons and the on-given callbacks hold. Idempotent;
@@ -995,6 +1005,14 @@ private:
     /// (OnMotionVertEventChange(new, old)).
     void set_vert_event(const char* event, lua_State* L);
     OrderStep order_enhance(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_eff);
+    /// A Script order (M206w): its task made at the front of the queue, then
+    /// its TaskTick each tick it asks for, its status deciding what follows.
+    OrderStep order_script(UnitCommand& cmd, SimContext& ctx);
+    /// Make `cmd`'s task: its class, its object, OnCreate(args). False if
+    /// the scripts destroyed the unit.
+    bool start_script_task(UnitCommand& cmd, lua_State* L);
+    /// One TaskTick: its status (an error, or no number: done).
+    int tick_script_task(lua_State* L);
     /// A load order (M206m, Moho's shared TransportLoadUnits): the transport
     /// it targets runs the pickup, and the units it carries call it.
     OrderStep order_transport_load(UnitCommand& cmd, f64 dt, SimContext& ctx);
@@ -1123,6 +1141,16 @@ private:
     f32 air_threat_ = 0;
     f32 sub_threat_ = 0;
     f32 economy_threat_ = 0;
+    /// The running Script order's task (M206w).
+    struct ScriptTaskRun {
+        u32 serial = 0;         ///< its order's task_serial
+        int object_ref = -2;    ///< its Lua object (LUA_NOREF: none runs)
+        u32 wait = 0;           ///< ticks to skip before its next TaskTick
+        bool suspended = false; ///< asleep until its order goes (Suspend)
+    };
+    ScriptTaskRun script_task_;
+    u32 next_task_serial_ = 0;
+    i32 script_task_result_ = 0;
     // Enhancement system
     std::map<std::string, std::string> enhancements_; // slot → enh name
     bool enhancing_ = false;

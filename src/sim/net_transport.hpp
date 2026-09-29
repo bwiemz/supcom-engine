@@ -2,16 +2,13 @@
 
 #include "core/types.hpp"
 
-#include <memory>
-#include <string>
-#include <utility>
 #include <set>
 #include <utility>
 #include <vector>
 
 namespace osc::sim {
 
-/// Wire framing for the TCP transport: each message is a little-endian u32
+/// Wire framing for the lobby's TCP connections: each message is a little-endian u32
 /// length, then that many bytes. Lockstep frames and drop reports are far
 /// smaller than this; a peer that announces more is malformed or hostile (it
 /// would have us buffer gigabytes waiting for the rest), and its connection
@@ -24,9 +21,9 @@ inline constexpr u32 kMaxWireMessage = 4u << 20;
 bool extract_wire_frames(std::vector<u8>& buf, std::vector<std::vector<u8>>& out);
 
 /// Abstract message transport for lockstep multiplayer. Messages are opaque
-/// byte buffers broadcast to all other peers. A real implementation wraps
-/// UDP/TCP/ICE; the loopback implementation below drives in-process peers for
-/// tests and single-machine play.
+/// byte buffers broadcast to all other peers. The game's is the lobby's
+/// connections (LobbyGameTransport); the loopback implementation below drives
+/// in-process peers for tests.
 class INetTransport {
 public:
     virtual ~INetTransport() = default;
@@ -79,38 +76,6 @@ public:
 private:
     LoopbackHub* hub_;
     int id_;
-};
-
-/// Cross-platform (POSIX + Winsock) TCP transport. A host binds/listens and
-/// relays each received message to the other peers (star topology, matching the
-/// loopback broadcast semantics); clients connect to the host. Length-prefixed
-/// framing; sends block, receive is non-blocking (select with zero timeout).
-/// TCP's reliable, ordered delivery suits latency-tolerant lockstep; a
-/// UDP+reliability transport is a possible performance follow-up.
-class TcpTransport : public INetTransport {
-public:
-    /// Bind + listen on the given port (0 = ephemeral; see port()).
-    static std::unique_ptr<TcpTransport> host(u16 port);
-    /// Connect to a host at address:port.
-    static std::unique_ptr<TcpTransport> join(const std::string& address, u16 port);
-
-    ~TcpTransport() override;
-    TcpTransport(const TcpTransport&) = delete;
-    TcpTransport& operator=(const TcpTransport&) = delete;
-
-    void broadcast(const std::vector<u8>& msg) override;
-    std::vector<std::vector<u8>> receive() override;
-
-    /// Host: accept any pending peer connections. Returns peers connected now.
-    int poll_connections();
-    int peer_count() const;
-    u16 port() const;   // actual bound port (useful when host(0))
-    bool ok() const;    // false if the socket setup failed
-
-private:
-    struct Impl;
-    explicit TcpTransport(std::unique_ptr<Impl> impl);
-    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace osc::sim

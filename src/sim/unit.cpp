@@ -357,6 +357,14 @@ void Unit::update(f64 dt, SimContext& ctx) {
         }
         if (has_unit_state("WaitForFerry") && !(head && head->type == CommandType::WaitForFerry))
             set_unit_state("WaitForFerry", false);
+        // A Script order's task whose order is gone -- cleared, replaced --
+        // ends (M206w): its OnDestroy runs.
+        if (has_script_task() && !(head && head->type == CommandType::Script &&
+                                   head->task_serial == script_task_serial())) {
+            end_script_task(ctx.L);
+            if (destroyed() || !in_registry()) return;
+            head = command_queue_.empty() ? nullptr : &command_queue_.front(); // scripts ran
+        }
         // A carrier's retrieve, or a landing on one (M206s), whose order is
         // gone.
         if (retrieve_phase_ != RetrievePhase::None &&
@@ -404,6 +412,8 @@ bool Unit::tick_lifecycle(f64 dt, SimContext& ctx) {
 
     // Dying units only tick manipulators (for death animation) — skip everything else
     if (dying_) {
+        end_script_task(ctx.L); // its order went with the others (M206w)
+        if (destroyed()) return false;
         tick_dying(static_cast<f32>(dt), ctx.terrain);
         tick_manipulators(static_cast<f32>(dt), ctx.L);
         return false;

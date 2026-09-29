@@ -294,6 +294,7 @@ OrderStep Unit::run_order(UnitCommand& cmd, f64 dt, SimContext& ctx, f32 econ_ef
     case CommandType::Guard: return order_guard(cmd, dt, ctx, econ_eff);
     case CommandType::Dive: return order_dive(ctx.L);
     case CommandType::Enhance: return order_enhance(cmd, dt, ctx, econ_eff);
+    case CommandType::Script: return order_script(cmd, ctx);
     case CommandType::TransportLoad:
     case CommandType::Dock: return order_transport_load(cmd, dt, ctx);
     case CommandType::TransportUnload: return order_transport_unload(cmd, dt, ctx);

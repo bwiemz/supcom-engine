@@ -107,6 +107,21 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --preset ${{ matrix.preset }} -LE "data|lint" --output-on-failure
 
+      # For the cross-OS play check (M219): this build's integration runner,
+      # without its debug info (400 MB with it).
+      - name: Strip the integration runner
+        if: matrix.name == 'gcc'
+        run: strip -o osc_integration "build/${{ matrix.preset }}/osc_integration"
+
+      - name: Upload the integration runner
+        if: matrix.name == 'gcc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: osc-integration-linux
+          path: osc_integration
+          retention-days: 14
+          if-no-files-found: error
+
       - name: Lint (clang-tidy ratchet)
         if: matrix.lint
         run: ctest --preset ${{ matrix.preset }} -L lint --output-on-failure
@@ -161,3 +176,50 @@ jobs:
             build/Release/*.dll
           retention-days: 14
           if-no-files-found: error
+
+  cross-os:
+    # Windows and Linux in one game (M219): the data-free lockstep pairs
+    # (run_pair.py), one side the Linux build's runner and the other the
+    # Windows build's under Wine, each way round. The sims must agree tick
+    # for tick across the two compilers and C runtimes.
+    name: cross-os-play
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Wine and the Vulkan loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine64 libvulkan1
+
+      - name: Fetch the Linux build
+        uses: actions/download-artifact@v4
+        with:
+          name: osc-integration-linux
+          path: linux
+
+      - name: Fetch the Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: opensupcom-windows
+          path: windows
+
+      - name: Prepare Wine
+        env:
+          WINEDEBUG: -all
+          # No Mono or Gecko prompt: the runner needs neither
+          WINEDLLOVERRIDES: mscoree,mshtml=
+        run: |
+          chmod +x linux/osc_integration
+          # Every library the Linux runner links is here (a missing one would
+          # fail each pair alike, looking like eight desyncs)
+          ldd linux/osc_integration
+          if ldd linux/osc_integration | grep "not found"; then exit 1; fi
+          wineboot --init
+          wineserver --wait
+
+      - name: Play Linux against Windows
+        env:
+          WINEDEBUG: -all
+        run: python3 tests/integration/cross_os_pairs.py linux/osc_integration windows/osc_integration.exe
