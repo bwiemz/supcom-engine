@@ -105,7 +105,14 @@ struct Options {
 
 // cli.cpp
 void print_usage();
-lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests);
+/// The install to play from: the command line's, else the search's
+/// (platform::locate_game_install), with `chosen` as the folder the player
+/// chose (else the engine settings').
+lua::InitConfig parse_args(int argc, char* argv[], const TestModes* tests,
+                           const std::optional<fs::path>& chosen = std::nullopt);
+/// The first run (M228a): ask the player where FA is, with native dialogs,
+/// and save it. The folder, or nullopt (cancelled, or no dialogs to ask with).
+std::optional<fs::path> first_run_find_fa();
 u32 parse_ticks_arg(int argc, char* argv[]);
 std::string parse_map_arg(int argc, char* argv[]);
 /// The test mode flag on the command line, if any.
@@ -113,6 +120,10 @@ const char* test_mode_flag(int argc, char* argv[]);
 /// The run's options, or null (logged) when the --replay or --load file
 /// can't be read, or --save can't be done.
 std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& request);
+/// A player's own game, which may stop to ask them something (the first
+/// run's FA folder, M228a): interactive, and not a scripted window (the
+/// replay/load flow tests and LAN games, which run the game binary itself).
+bool may_ask_player(const Options& opt);
 
 // session.cpp
 void attach_sound(lua::LuaState& sim_lua, sim::SimState& sim, audio::SoundManager* sound);

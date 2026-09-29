@@ -34,7 +34,8 @@
       "name": "catch2",
       "version>=": "3.0.1"
     },
-    "nlohmann-json"
+    "nlohmann-json",
+    "portable-file-dialogs"
   ],
   "features": {
     "vulkan-validation": {

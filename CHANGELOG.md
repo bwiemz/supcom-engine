@@ -48,3 +48,5 @@ Everything so far: there has been no release yet. The first will be 0.1.0.
 - **Packages (M227b):** a Linux AppImage and tarball (the C++ runtime linked in,
   glibc 2.35 and later) and a Windows zip (with its DLLs and the Visual C++
   runtime). A `v*` tag builds and runs them in CI and drafts a GitHub release.
+- **First run (M228a):** when the game can't find Forged Alliance, it asks where
+  it is (native dialogs) and remembers the answer in its own settings file.

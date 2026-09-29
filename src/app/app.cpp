@@ -44,6 +44,12 @@ int run(int argc, char* argv[], TestModes* tests) {
         opt->lan_game_test() || opt->gpgnet_scripted)
         osc::test_status::set_count_lua_failures(true);
 
+    // The first run (M228a): a player's game that found no FA asks where it
+    // is, then looks again (never a test: nothing would answer)
+    if ((config.fa_path.empty() || config.init_file.empty()) && may_ask_player(*opt) && !tests) {
+        if (auto chosen = first_run_find_fa()) config = parse_args(argc, argv, tests, chosen);
+    }
+
     if (config.fa_path.empty() || config.init_file.empty()) {
         spdlog::error("Supreme Commander: Forged Alliance not found. Pass "
                       "--fa-path <dir>, set OSC_FA_PATH, or run --print-install "
