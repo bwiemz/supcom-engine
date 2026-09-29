@@ -1,5 +1,6 @@
 #include "lua/session_clients.hpp"
 
+#include "core/game_state.hpp"
 #include "lua/lobby_wire.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
@@ -264,6 +265,68 @@ void pump_disconnect_dialog(lua_State* L) {
         }
     }
     lua_settop(L, top);
+}
+
+namespace {
+
+/// gamemain.OnUserPause(pause): this player asked (Moho calls it at once,
+/// on the asker's machine alone).
+void on_user_pause(lua_State* L, bool pause) {
+    lua_pushboolean(L, pause ? 1 : 0);
+    core::call_ui_callback(L, core::kGameMainModule, "OnUserPause", 1);
+}
+
+} // namespace
+
+bool session_request_pause(lua_State* L) {
+    if (!session_is_multiplayer()) return false;
+    if (auto* session = mp_net_state().session.get()) session->request_pause();
+    on_user_pause(L, true);
+    return true;
+}
+
+bool session_resume(lua_State* L) {
+    if (!session_is_multiplayer()) return false;
+    if (auto* session = mp_net_state().session.get()) session->request_resume();
+    on_user_pause(L, false);
+    return true;
+}
+
+bool session_is_paused(lua_State* L, bool& paused) {
+    if (!session_is_multiplayer()) return false;
+    const sim::SimState* sim = sim_of(L);
+    paused = sim && sim->network_paused();
+    return true;
+}
+
+void pump_pause_state(lua_State* L) {
+    // What the UI was last told, for the game it was told of: known by the
+    // sim's generation (each new game's sim has its own), not its address,
+    // which the next game's may reuse
+    static u32 game = 0;
+    static bool shown = false;
+    static u32 shown_serial = 0;
+    const sim::SimState* sim = sim_of(L);
+    if (!session_is_multiplayer() || !sim) return;
+    if (game != sim::SimState::sim_generation()) {
+        game = sim::SimState::sim_generation();
+        shown = false;
+        shown_serial = 0;
+    }
+    const bool paused = sim->network_paused();
+    // Resumed, or resumed and paused again since the last frame
+    if (shown && (!paused || sim->pause_serial() != shown_serial)) {
+        shown = false;
+        core::call_ui_callback(L, core::kGameMainModule, "OnResume", 0);
+    }
+    if (paused && !shown) {
+        shown = true;
+        shown_serial = sim->pause_serial();
+        const i32 by = sim->paused_by();
+        lua_pushnumber(L, static_cast<double>(by + 1));
+        lua_pushnumber(L, static_cast<double>(sim->pause_timeouts(static_cast<u32>(by))));
+        core::call_ui_callback(L, core::kGameMainModule, "OnPause", 2);
+    }
 }
 
 void reset_session_chat() {

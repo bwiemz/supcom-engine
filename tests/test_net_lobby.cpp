@@ -547,7 +547,8 @@ TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[
         assert(type(clients[2].ping) == 'number' and type(clients[2].quiet) == 'number')
         local names = SessionGetCommandSourceNames()
         assert(names[1] == 'Host' and names[2] == 'Alice')
-        -- A network game doesn't pause alone (its frames would stop)
+        -- A network game pauses through the lockstep (M218f): with no
+        -- session attached here, the ask goes nowhere
         SessionRequestPause()
         -- To Alice alone, and to everyone (the host too)
         SessionSendChatMessage({2}, {Chat = true, text = 'to alice'})

@@ -675,7 +675,10 @@ std::optional<int> App::run_window() {
             // (M218a)
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
             osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
-            if (sim_state) osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
+            if (sim_state) {
+                osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
+                osc::lua::pump_pause_state(ui_lua_state.raw());       // M218f
+            }
 
             // Resume UI coroutines
             ++ui_frame_count;

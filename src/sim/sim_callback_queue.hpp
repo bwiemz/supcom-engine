@@ -31,6 +31,10 @@ inline constexpr const char* kIncreaseBuildCountCallback = "__osc_IncreaseBuildC
 /// game loop decides between ticks and the sim applies in the next one.
 inline constexpr const char* kDefeatArmyCallback = "__osc_DefeatArmy";
 
+/// Func name of a network game's pause request (M218f): its command's
+/// source asks (Moho's CMDST_RequestPause).
+inline constexpr const char* kRequestPauseCallback = "__osc_RequestPause";
+
 /// A SimCallback argument: FA's callbacks carry strings, numbers and bools.
 using SimCallbackArg = std::variant<std::string, f64, bool>;
 

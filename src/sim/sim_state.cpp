@@ -851,6 +851,30 @@ void SimState::stop_unit(Unit& unit) {
     if (!unit.destroyed() && unit.is_enhancing()) unit.cancel_enhance(L_);
 }
 
+void SimState::request_pause(u32 source) {
+    if (paused_by_ >= 0) return; // paused already
+    i32 left = pause_timeouts(source);
+    if (left == 0) {
+        spdlog::info("[pause] source {} has no timeouts left", source);
+        return;
+    }
+    if (left > 0) set_pause_timeouts(source, --left);
+    paused_by_ = static_cast<i32>(source);
+    ++pause_serial_;
+    spdlog::info("[pause] source {} paused at tick {} ({} timeouts left)", source, tick_count_,
+                 left);
+    // Nothing will resume it (a replay), or its resume came already
+    if (!pause_holds_ || resumed_serial_ >= pause_serial_) paused_by_ = -1;
+}
+
+void SimState::resume_pause(u32 serial) {
+    resumed_serial_ = std::max(resumed_serial_, serial);
+    if (paused_by_ >= 0 && resumed_serial_ >= pause_serial_) {
+        spdlog::info("[pause] resumed at tick {}", tick_count_);
+        paused_by_ = -1;
+    }
+}
+
 void SimState::dispatch_due_commands() {
     PROFILE_ZONE("Sim::commands");
     const bool no_rush = no_rush_active();
@@ -879,6 +903,10 @@ void SimState::dispatch_due_commands() {
         if (recording_) {
             recorded_replay_.commands.push_back(sc);
             recorded_replay_.commands.back().exec_tick = tick_count_;
+        }
+        if (sc.callback && sc.callback->func_name == kRequestPauseCallback) {
+            request_pause(sc.source); // (a callback doesn't know its source)
+            return;
         }
         if (sc.callback) {
             run_sim_callback(*sc.callback);

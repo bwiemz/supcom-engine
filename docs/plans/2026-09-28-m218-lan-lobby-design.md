@@ -144,7 +144,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     starts). Each frame's pump calls `gamemain.ReceiveChat(sender, msg)`.
   - A network game's pause is refused (as Moho's with no timeouts left):
     pausing alone would stop this player's frames and drop them.
-- **M218e (this PR):** ejecting players, and retail's disconnect dialog:
+- **M218e (#195):** ejecting players, and retail's disconnect dialog:
   - `EjectSessionClient(i)` (Moho's errors: an index the game hasn't, the
     local client) starts the lockstep's drop of the client's source, the
     one a timeout starts: the survivors agree its last frame and defeat
@@ -170,11 +170,31 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - The two-process tests' ports (29741, 29742) sit below the OSes'
     ephemeral ranges: in them, another test's socket took one and the host
     couldn't listen. When one process fails, `lan_game.py` stops the other.
-- **M218f:** pause by source through the lockstep (timeouts,
-  `Sync.PausedBy`, `OnPause`/`OnResume`): frames must be able to carry
-  commands without advancing the sim, else resuming fast-forwards;
-  `LanHost`/`LanJoin` and their dialog go (the peer-drop CI test moves to
-  the lobby's path).
+- **M218f (this PR):** a network game's pause, by source, as Moho's:
+  - The lockstep's frames are its ticks' (frame F confirms tick F), so a
+    pause can't be frames that don't tick: resuming would run every tick
+    they confirmed at once. Instead:
+  - **Pausing** is a command (`SessionRequestPause` submits it, from the
+    local source): every peer runs it on the same tick T, as Moho's sim
+    runs `CMDST_RequestPause`. It is taken unless the game is paused
+    already or its source's timeouts are spent; a taken one spends one
+    (Moho's: players have the lobby's `Timeouts`, '0', '3' or '-1'
+    unlimited; observers none). The sim finishes tick T and holds.
+  - **While paused**, peers send no frames, tick no further and drop no
+    one (no frames flow), but read what comes.
+  - **Resuming** is a session message carrying the pause's serial
+    (`SessionResume`, from any source, as Moho's): it can't be a command,
+    since no tick runs to carry it. Every peer is held between T and T+1,
+    so each resumes at the same place. A peer still on its way to T when
+    the resume comes resumes the moment it pauses.
+  - Outside a lockstep game (a replay playing one back) a pause resumes
+    at once: no message would come.
+  - The UI hears it as Moho's does: `gamemain.OnPause(pausedBy,
+    timeoutsRemaining)` and `OnResume()` as the pause starts and ends
+    (Moho's `Sync.PausedBy`), `OnUserPause(bool)` at once for the player
+    who asked, and `SessionIsPaused` true while it holds.
+- **M218g:** `LanHost`/`LanJoin` and their dialog go (the peer-drop CI
+  test moves to the lobby's path).
 
 Two fixes the launch found go separately, since single-player has them
 too:
@@ -280,3 +300,22 @@ too:
 - **`data.lan_game_quit` (gate):** the joiner leaves at tick 120; the host
   drops it by agreement, defeats its army, shows retail's disconnect dialog
   and closes it, and plays on alone to tick 150 with no script error.
+
+## Tests (M218f)
+- **Unit (`test_lockstep`):**
+  - a pause holds both peers on the tick it was taken, however long, with
+    no one dropped (no frames flow); asking again while paused does
+    nothing; the other player resumes it and both go on together, a tick a
+    round (no burst), in sync;
+  - a pause holds on its own tick though later frames are in;
+  - a source's timeouts run out (spent on every peer) and its pause is then
+    refused while the game plays on; another source's are unlimited;
+  - a resume that reaches a peer before it has reached the pause releases
+    it there, in sync;
+  - outside a lockstep game (a replay) a pause resumes at once, its
+    timeouts spent as in the game.
+- **`data.lan_game`:** the host pauses at tick 100; no tick runs on either
+  side while it holds; the joiner resumes it after 60 frames; each UI hears
+  `OnPause` (the host's source, 2 of the lobby's 3 timeouts left) and
+  `OnResume`; both still reach tick 150 in step. `data.lan_game_quit` too,
+  before the joiner leaves.
