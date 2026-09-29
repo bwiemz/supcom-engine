@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 struct lua_State;
@@ -693,6 +694,24 @@ public:
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
 
+    /// FlushIntelInRect(x0, z0, x1, z1): every army forgets its blips of
+    /// units within the rect (edges in), as Moho's
+    /// CAiReconDBImpl::ReconFlushBlipsInRect (faf-re) -- what it saw there,
+    /// ever or now, lost with OnIntelChange for each sense, but for blips
+    /// under the water (layer Sub or None), which stay. Units still sensed
+    /// get new blips on the next recon pass. Retail's campaign clears what a
+    /// scripted reveal showed with it (ScenarioFramework.ClearIntel).
+    void flush_intel_in_rect(i32 x0, i32 z0, i32 x1, i32 z1);
+    /// A flush raised this tick, for the renderer's memory of the world:
+    /// the rect (which also takes the structures it remembers that are
+    /// gone), and each unit whose blips were lost, with a bit per army that
+    /// lost one, in id order.
+    struct IntelFlushEvent {
+        i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+        std::vector<std::pair<u32, u32>> forgotten;
+    };
+    const std::vector<IntelFlushEvent>& intel_flush_events() const { return intel_flush_events_; }
+
     /// `pos` kept to where a unit of `army` may go: the playable area, or
     /// the whole map for an army that ignores it (M209,
     /// SetIgnorePlayableRect). No army (-1): the playable area.
@@ -870,6 +889,7 @@ private:
     std::vector<CameraShakeEvent> camera_shake_events_;
     std::vector<ResourceDeposit> resource_deposits_;
     std::vector<DeathEvent> death_events_;
+    std::vector<IntelFlushEvent> intel_flush_events_;
     std::string build_ghost_bp_;
     f32 build_ghost_foot_x_ = 1.0f;
     f32 build_ghost_foot_z_ = 1.0f;

@@ -8,33 +8,32 @@
 #
 # Regenerate: opensupcom --map /maps/SCMP_009/SCMP_009_scenario.lua \
 #   --binding-coverage out.txt   (then strip the "# first call site" comments)
+#
+# A name marked "not Moho's" has no binding in the retail engine either
+# (faf-re, the decompiled Moho, has none): the scripts' call is a slip or
+# a dead path, and the gap stays.
 
-G BaseManagerReclaimThread
-G ClearQueueGrid
+G BaseManagerReclaimThread  # not Moho's: a BaseManager method called bare
+G ClearQueueGrid            # not Moho's
 G ConTextMatches
-G ERROR
+G ERROR                     # not Moho's: a retail typo (error)
 G ExecLuaInSim
-G FlushIntelInRect
 G GenerateBuildTemplateFromSelection
-G GetArmy
+G GetArmy                   # not Moho's as a global (a method of units and brains)
 G IN_ClearKeyMap
 G InternalCreateMesh
-G IssueEnhance
+G IssueEnhance              # not Moho's
 G RemoveProfileDirectories
-G SetQueueGrid
-G SetQueueState
+G SetQueueGrid              # not Moho's
+G SetQueueState             # not Moho's
 G SetUIControlsAlpha
 G _c_CreateDecal
 G _c_CreatePathDebugger
-G errro
-M AddOnKilledCallback
-M GiveUnitOrder
-M OnApplyBuff
-M PickBestAttackVector
+G errro                     # not Moho's: a retail typo (error)
+M AddOnKilledCallback       # not Moho's
+M GiveUnitOrder             # not Moho's: a TriggerManager method it never defines
+M OnApplyBuff               # not Moho's: a buff definition's own hook
 M RecoilImpulse
-M SetDamageRadius
-M SetWeaponDisableByLabel
-M UnloadAllAtLocation
-M UseFerryBeacon
-M Whack
+M SetDamageRadius           # not Moho's: retail's Buff.lua asks for it; Moho has ChangeDamageRadius
+M SetWeaponDisableByLabel   # not Moho's
 M write

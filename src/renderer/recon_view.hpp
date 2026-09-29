@@ -4,6 +4,7 @@
 #include "sim/world_snapshot.hpp"
 
 #include <array>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -42,8 +43,10 @@ public:
     i32 focus_army() const { return focus_; }
 
     /// Bring the sights up to the view's newest tick (a tick seen already is
-    /// skipped).
-    void update(const sim::FrameView& view);
+    /// skipped). `flushes`, the FlushIntelInRects since the last update:
+    /// what they took from the player's army is forgotten -- the units whose
+    /// blips it lost, and the structures gone unseen within their rects.
+    void update(const sim::FrameView& view, std::span<const sim::IntelFlushRecord> flushes = {});
 
     /// How the player's army sees `e` (as of the last update).
     Sight sight(const sim::EntityRecord& e) const;

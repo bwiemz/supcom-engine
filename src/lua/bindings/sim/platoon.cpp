@@ -164,7 +164,7 @@ static int platoon_GetSquadPosition(lua_State* L) {
         for (u32 id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed()) continue;
-            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
             sum.x += e->position().x;
             sum.y += e->position().y;
             sum.z += e->position().z;
@@ -192,7 +192,7 @@ static int platoon_CanAttackTarget(lua_State* L) {
         const u8 target_bit =
             sim::layer_to_bit(static_cast<sim::Unit*>(target)->layer());
         for (u32 id : platoon->unit_ids()) {
-            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             for (const auto& w : static_cast<sim::Unit*>(e)->weapons()) {
@@ -231,7 +231,7 @@ static int platoon_GetSquadUnits(lua_State* L) {
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+        if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
         lua_pushnumber(L, idx++);
         lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
         lua_rawset(L, result);
@@ -716,6 +716,94 @@ static int platoon_IsCommandsActive(lua_State* L) {
     }
 
     lua_pushboolean(L, 0);
+    return 1;
+}
+
+/// The platoon's live, finished units of squads Attack to Scout, squad by
+/// squad, that `keep` accepts. Moho's platoon transport orders take these:
+/// the Unassigned squad is left out.
+template <typename Keep>
+static std::vector<u32> squad_units_for_order(const sim::SimState& sim, const sim::Platoon& platoon,
+                                              Keep keep) {
+    std::vector<u32> ids;
+    for (int squad = 1; squad <= 5; ++squad) {
+        for (u32 id : platoon.unit_ids()) {
+            if (sim::Platoon::squad_class(platoon.get_unit_squad(id)) != squad) continue;
+            const auto* e = sim.entity_registry().find(id);
+            if (!e || e->destroyed() || !e->is_unit()) continue;
+            const auto& u = static_cast<const sim::Unit&>(*e);
+            if (!u.is_dying() && !u.is_being_built() && keep(u)) ids.push_back(id);
+        }
+    }
+    return ids;
+}
+
+// platoon:UnloadAllAtLocation(position) -> command: the platoon's transports
+// and carriers unload everything aboard at the position -- one order, as
+// Moho's CPlatoon::UnloadAllAtLocation gives (faf-re). Retail's landing
+// assaults wait on it with IsCommandsActive. Nil when there is none to go.
+static int platoon_UnloadAllAtLocation(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 2)
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "CPlatoon:UnloadAllAtLocation(location)", 2, n);
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    sim::Vector3 pos{};
+    bool valid = lua_istable(L, 2);
+    for (int i = 1; valid && i <= 3; ++i) {
+        lua_rawgeti(L, 2, i);
+        const lua_Number v = lua_tonumber(L, -1);
+        valid = lua_isnumber(L, -1) && std::isfinite(v);
+        lua_pop(L, 1);
+        (i == 1 ? pos.x : i == 2 ? pos.y : pos.z) = static_cast<f32>(v);
+    }
+    if (!valid)
+        return luaL_error(L, "Platoon:UnloadAllAtLocation Passed in an invalid target point");
+    if (!platoon || !sim) return 0;
+    const auto carriers = squad_units_for_order(*sim, *platoon, [](const sim::Unit& u) {
+        return u.has_category("TRANSPORTATION") || u.has_category("CARRIER");
+    });
+    if (carriers.empty()) return 0;
+    sim::UnitCommand cmd;
+    cmd.type = sim::CommandType::TransportUnload;
+    cmd.target_pos = pos;
+    const u32 id = sim->route_command(carriers, cmd, false);
+    if (id == 0) return 0;
+    lua_pushnumber(L, id);
+    return 1;
+}
+
+// platoon:UseFerryBeacon(category, beacon) -> command: the platoon's mobile
+// units in the category go to the beacon to be ferried -- one load order at
+// it, as Moho's CPlatoon::UseFerryBeacon gives (faf-re), which at a
+// FERRYBEACON waits for a ferry (IssueTransportLoad's rule). Nil when there
+// is none to go.
+static int platoon_UseFerryBeacon(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 3)
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "CPlatoon:UseFerryBeacon(category, beacon)", 3, n);
+    auto* platoon = check_platoon(L);
+    auto* sim = get_sim(L);
+    auto* beacon = check_entity(L, 3);
+    if (!platoon || !sim || !lua_istable(L, 2) || !beacon || beacon->destroyed() ||
+        !beacon->is_unit())
+        return 0;
+    const CategoryMatcher category(L, 2);
+    const auto riders = squad_units_for_order(*sim, *platoon, [&](const sim::Unit& u) {
+        return u.is_mobile() && category.matches(u.category_bits());
+    });
+    if (riders.empty()) return 0;
+    const auto& target = static_cast<const sim::Unit&>(*beacon);
+    sim::UnitCommand cmd;
+    cmd.type = target.has_category("FERRYBEACON") ? sim::CommandType::WaitForFerry
+                                                  : sim::CommandType::TransportLoad;
+    cmd.target_id = target.entity_id();
+    cmd.target_pos = target.position();
+    const u32 id = sim->route_command(riders, cmd, false);
+    if (id == 0) return 0;
+    lua_pushnumber(L, id);
     return 1;
 }
 
@@ -1208,6 +1296,8 @@ const MethodEntry platoon_methods[] = {
     {"FindPrioritizedUnit",         platoon_FindPrioritizedUnit},
     {"SetPrioritizedTargetList",    platoon_SetPrioritizedTargetList},
     {"IsCommandsActive",            platoon_IsCommandsActive},
+    {"UnloadAllAtLocation",         platoon_UnloadAllAtLocation},
+    {"UseFerryBeacon",              platoon_UseFerryBeacon},
     {"CalculatePlatoonThreat",      platoon_CalculatePlatoonThreat},
     {"GetPlatoonThreat",                        platoon_CalculatePlatoonThreat},
     {"CalculatePlatoonThreatAroundPosition",    platoon_CalculatePlatoonThreatAroundPosition},

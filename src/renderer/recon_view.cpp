@@ -26,7 +26,7 @@ bool ReconView::judged(const sim::EntityRecord& e) const {
     return e.army >= 32 || (allies_ >> e.army & 1u) == 0;
 }
 
-void ReconView::update(const sim::FrameView& view) {
+void ReconView::update(const sim::FrameView& view, std::span<const sim::IntelFlushRecord> flushes) {
     const sim::WorldSnapshot* cur = view.cur();
     if (!cur) return;
     if (updated_ && cur->tick == last_tick_) return;
@@ -45,6 +45,20 @@ void ReconView::update(const sim::FrameView& view) {
     const sim::ArmyRecord* army = cur->army(focus_);
     allies_ = army ? army->allies : 0;
 
+    // What FlushIntelInRect took from the player's army: its blips of these
+    // units, and anything it remembers in the rects that is gone.
+    std::vector<u32> forgotten;
+    for (const auto& f : flushes)
+        for (const auto& [id, armies] : f.forgotten)
+            if ((armies >> static_cast<u32>(focus_) & 1u) != 0) forgotten.push_back(id);
+    std::sort(forgotten.begin(), forgotten.end());
+    const auto flushed_at = [&](const sim::Vector3& p) {
+        return std::any_of(flushes.begin(), flushes.end(), [&](const sim::IntelFlushRecord& f) {
+            return p.x >= static_cast<f32>(f.x0) && p.x <= static_cast<f32>(f.x1) &&
+                   p.z >= static_cast<f32>(f.z0) && p.z <= static_cast<f32>(f.z1);
+        });
+    };
+
     using map::VisFlag;
     for (const sim::EntityRecord& e : cur->entities) {
         if (!judged(e)) continue;
@@ -60,6 +74,12 @@ void ReconView::update(const sim::FrameView& view) {
             const VisFlag here = grid->get(gx, gz, static_cast<u32>(focus_));
             m.sight = map::has_flag(here, VisFlag::Vision) ? Sight::Seen : Sight::Hidden;
             continue;
+        }
+        if (std::binary_search(forgotten.begin(), forgotten.end(), e.id)) {
+            m.seen_ever = false;
+            m.pose.clear();
+            m.fraction = 1.0f;
+            m.last = {};
         }
         // A unit: the sim's recon of it, cloak, stealth and layer counted
         // (M215d).
@@ -101,7 +121,7 @@ void ReconView::update(const sim::FrameView& view) {
         Memory& m = it->second;
         if (m.touched != update_count_) {
             const bool remembered = m.ghost || (m.seen_ever && m.last.id != 0);
-            if (!remembered || seen_there(m.last.position)) {
+            if (!remembered || seen_there(m.last.position) || flushed_at(m.last.position)) {
                 it = memory_.erase(it);
                 continue;
             }

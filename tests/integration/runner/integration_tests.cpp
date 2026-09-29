@@ -940,8 +940,10 @@ void test_threat(TestContext& ctx) {
         ctx.sim.tick();
     }
 
-    // Attack vectors: the AI groups an army's structures (its own, to find
-    // its bases) with SetUpAttackVectorsToArmy and reads GetAttackVectors.
+    // Attack vectors (Moho's ProcessAttackVectors): the map in 32-unit
+    // cells, those with the enemy's units in the category marked, and an
+    // arrow from the middle of each unmarked cell to each marked one about
+    // it. The AI sets itself as the enemy to find its own bases.
     {
         auto r = ctx.lua_state.do_string(R"(
             local brain = ArmyBrains[2]
@@ -949,26 +951,34 @@ void test_threat(TestContext& ctx) {
                 return CreateUnitHPR('ueb1101', 'ARMY_2', x, GetTerrainHeight(x, z), z, 0, 0, 0)
             end
             build(300, 700)
-            build(304, 700)   -- the same group
+            build(304, 700)   -- the same cell
             build(420, 700)   -- another
             local enemy = brain:GetCurrentEnemy()
             brain:SetCurrentEnemy(brain)
             brain:SetUpAttackVectorsToArmy(categories.STRUCTURE - categories.MASSEXTRACTION)
             local vecs = brain:GetAttackVectors()
             brain:SetCurrentEnemy(enemy)
-            local near = {}
+            if not vecs then error('no attack vectors') end
+            local into = {}
             for _, v in vecs do
-                if math.abs(v.pz - 700) < 16 and (math.abs(v.px - 302) < 16 or math.abs(v.px - 420) < 16) then
-                    table.insert(near, v)
+                if math.mod(v.px, 32) ~= 16 or math.mod(v.pz, 32) ~= 16 or v.py ~= 0 or v.vy ~= 0 then
+                    error('an arrow not from a cell middle at height 0')
                 end
                 local len = math.sqrt(v.vx * v.vx + v.vz * v.vz)
-                if math.abs(len - 1) > 1e-3 or v.vy ~= 0 then error('heading not level and unit') end
+                if math.abs(len - 32) > 1e-3 and math.abs(len - 32 * math.sqrt(2)) > 1e-3 then
+                    error('an arrow not to a neighbouring cell: ' .. len)
+                end
+                into[(v.px + v.vx) .. ',' .. (v.pz + v.vz)] = true
+                if (v.px == 304 or v.px == 432) and v.pz == 688 then
+                    error('an arrow from a cell the generators stand in')
+                end
             end
-            if table.getn(near) ~= 2 then
-                error(table.getn(near) .. ' groups near the three generators, of ' .. table.getn(vecs))
+            -- The generators' cells, (288-320, 672-704) and (416-448, ...).
+            if not into['304,688'] or not into['432,688'] then
+                error('no arrow into the generators\' cells')
             end
         )");
-        if (r) spdlog::info("[PASS] Threat test: attack vectors group an army's structures");
+        if (r) spdlog::info("[PASS] Threat test: attack vectors point into the army's cells");
         else osc::test_status::fail("[FAIL] Threat test: attack vectors: {}", r.error().message);
     }
 

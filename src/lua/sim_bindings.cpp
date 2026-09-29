@@ -4807,6 +4807,24 @@ static int push_command_handle(lua_State* L, u32 command_id) {
     return 1;
 }
 
+// FlushIntelInRect(minX, minZ, maxX, maxZ): every army forgets what its
+// intel found of the units there (SimState::flush_intel_in_rect). Moho reads
+// the corners as integers, in reverse (faf-re cfunc_FlushIntelInRectL).
+static int l_FlushIntelInRect(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n != 4)
+        return luaL_error(L, "%s\n  expected %d args, but got %d",
+                          "FlushIntelInRect( minX, minZ, maxX, maxZ )", 4, n);
+    std::array<i32, 4> corner{};
+    for (int i = 4; i >= 1; --i) {
+        if (lua_type(L, i) != LUA_TNUMBER) return luaL_typerror(L, i, "integer");
+        corner[static_cast<size_t>(i - 1)] = static_cast<i32>(lua_tonumber(L, i));
+    }
+    if (auto* sim = get_sim(L))
+        sim->flush_intel_in_rect(corner[0], corner[1], corner[2], corner[3]);
+    return 0;
+}
+
 // IsCommandDone(command): whether an Issue*'s command is finished -- no live
 // unit still has it queued. Moho's is done once the CUnitCommand is gone
 // (faf-re cfunc_IsCommandDoneL); retail's factories wait on it for a new
@@ -5806,6 +5824,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         return 0;
     });
     state.register_function("FlattenMapRect", stub_noop);
+    state.register_function("FlushIntelInRect", l_FlushIntelInRect);
 
     // Categories
     setup_categories(L);

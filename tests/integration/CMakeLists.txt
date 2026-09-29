@@ -34,6 +34,7 @@ add_executable(osc_integration
     runner/intel_probe.cpp
     runner/strategic_icon_test.cpp
     runner/counter_intel_test.cpp
+    runner/binding_tail_test.cpp
     runner/beam_render_test.cpp
     runner/trail_render_test.cpp
     runner/particle_render_test.cpp

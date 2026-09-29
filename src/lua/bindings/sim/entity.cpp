@@ -1247,7 +1247,8 @@ static int falldown_Whack(lua_State* L) {
     return 0;
 }
 
-// prop:FallDown() -> motor: whacking it topples the tree.
+// prop:FallDown() -> motor: whacking it topples the tree. The motor is a
+// moho.MotorFallDown, as Moho's is.
 static int prop_FallDown(lua_State* L) {
     auto* e = check_entity(L);
     lua_newtable(L);
@@ -1260,10 +1261,20 @@ static int prop_FallDown(lua_State* L) {
         lua_pop(L, 1);
         lua_newtable(L);
         lua_pushstring(L, "__index");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, -3);
-        lua_pushstring(L, "Whack");
-        lua_pushcfunction(L, falldown_Whack);
+        lua_pushstring(L, "moho");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "MotorFallDown");
+            lua_rawget(L, -2);
+            lua_remove(L, -2);
+        }
+        if (!lua_istable(L, -1)) { // (no moho table: the method alone)
+            lua_pop(L, 1);
+            lua_newtable(L);
+            lua_pushstring(L, "Whack");
+            lua_pushcfunction(L, falldown_Whack);
+            lua_rawset(L, -3);
+        }
         lua_rawset(L, -3);
         lua_pushstring(L, "__osc_falldown_mt");
         lua_pushvalue(L, -2);
@@ -1272,6 +1283,13 @@ static int prop_FallDown(lua_State* L) {
     lua_setmetatable(L, -2);
     return 1;
 }
+
+// clang-format off
+const MethodEntry motor_falldown_methods[] = {
+    {"Whack",                        falldown_Whack},
+    {nullptr, nullptr}
+};
+// clang-format on
 
 // clang-format off
 const MethodEntry prop_methods[] = {
