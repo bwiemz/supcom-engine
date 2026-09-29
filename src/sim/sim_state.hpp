@@ -280,6 +280,12 @@ public:
     /// frame is checked only against its sender). Unmapped sources (the
     /// single-player player, the engine) are not limited.
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+    /// The army `source` plays (-1: none, an observer's); unmapped, the
+    /// army numbered as it.
+    i32 army_of_source(u32 source) const {
+        const auto it = source_armies_.find(source);
+        return it == source_armies_.end() ? static_cast<i32>(source) : it->second;
+    }
 
     /// Whether the next tick may run yet (always true in single-player; in
     /// lockstep, false until every peer has confirmed its command frame).

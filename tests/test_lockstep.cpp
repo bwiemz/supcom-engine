@@ -327,6 +327,54 @@ TEST_CASE("Survivors agree on a dropped peer's last frame", "[lockstep][drop]") 
     CHECK(relayed);
 }
 
+TEST_CASE("A dropped player's own army is defeated, not the one numbered as its source",
+          "[lockstep][drop]") {
+    // A lobby's game: player A (source 0) plays army 0, an AI army 1, player
+    // B (source 1) army 2, and C (source 2) watches. B goes silent, then C.
+    LuaGuard ga, gb, gc;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
+    for (SimState* s : {&a, &b, &c}) {
+        s->set_victory_condition("sandbox");
+        for (const char* army : {"ARMY_1", "ARMY_2", "ARMY_3"}) s->add_army(army, army);
+        s->set_source_army(0, 0);
+        s->set_source_army(1, 2);
+        s->set_source_army(2, -1);
+    }
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint()),
+        tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+    LockstepSession sb(b, tb, 1, {0, 1, 2});
+    LockstepSession sc(c, tc, 2, {0, 1, 2});
+    sa.set_drop_timeout(5);
+    sc.set_drop_timeout(5);
+    for (int round = 0; round < 5; ++round) {
+        for (LockstepSession* s : {&sa, &sb, &sc}) s->send_frame();
+        for (LockstepSession* s : {&sa, &sb, &sc}) s->receive_and_advance();
+    }
+    // B goes silent: A and C drop it, and its army 2 goes, not army 1
+    for (int round = 0; round < 30; ++round) {
+        sa.send_frame();
+        sc.send_frame();
+        sa.receive_and_advance();
+        sc.receive_and_advance();
+    }
+    REQUIRE(sa.has_dropped(1));
+    REQUIRE(sc.has_dropped(1));
+    CHECK(a.army_at(2)->is_defeated());
+    CHECK_FALSE(a.army_at(1)->is_defeated());
+    CHECK(c.army_at(2)->is_defeated());
+    // The watcher goes silent too: A drops it, and no army goes with it
+    for (int round = 0; round < 30; ++round) {
+        sa.send_frame();
+        sa.receive_and_advance();
+    }
+    REQUIRE(sa.has_dropped(2));
+    CHECK_FALSE(a.army_at(0)->is_defeated());
+    CHECK_FALSE(a.army_at(1)->is_defeated());
+    CHECK(a.tick_count() > 30); // A plays on alone
+}
+
 TEST_CASE("A drop report fits one wire message, keeping the newest frames", "[lockstep][drop]") {
     // The dropped peer's last frames each name 600,000 units (2.4 MB): all
     // three would make a report over the wire limit, and a survivor that
