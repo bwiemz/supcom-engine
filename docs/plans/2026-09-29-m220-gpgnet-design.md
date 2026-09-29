@@ -76,3 +76,45 @@ and bytes), 2 data (the same). Little-endian throughout.
   a fake client (Python) reaches `GameState Idle`; `CreateLobby` makes a
   lobby through retail's `onlineprovider.lua` and `GameState Lobby` comes
   back; `HostGame` hosts it.
+
+## M220b, as built
+- **Uids:** a lobby made with a player uid (`InternalCreateLobby`'s sixth
+  argument, the client's `CreateLobby`) uses it: the host as its own, a
+  joiner asking the host for it (a taken one refused, `UidTaken`); without
+  one the host still numbers its players, past any taken.
+- **`JoinGame(address, remotePlayerName, remotePlayerUID)`** names the
+  host, as Moho's `CLobby.JoinGame` reads it; the lobby had taken the name
+  as this player's (retail's LAN screens pass none, so it never showed).
+- **Established after joining:** a joiner tells the host it reaches
+  everyone once its `ConnectionToHostEstablished` has run, so the host's
+  `EstablishedPeers` for it comes after what it sent on joining. Retail's
+  auto-lobby sends its player then, and launches on `EstablishedPeers`
+  once every player is in: fired on the joiner's arrival, as it had been,
+  the host never launched.
+- **`GetCommandLineArg(option, count)`** is Moho's `CFG_GetArgOption`: the
+  `count` arguments after the option (case aside), or false; the auto-lobby
+  reads `/players` and `/team` with it, FAF's lobby many more.
+  `HasCommandLineArg` is case-blind too.
+- **`DisconnectFromPeer`** on the host closes that player's connection.
+- **`EjectPlayer(uid)`** ejects the game's client with that uid, as
+  `EjectSessionClient` does; this client can't eject itself (Moho's leaves
+  the game; logged here).
+- **`Desync`:** a network game's first desync is told the client once:
+  its tick, this player's army, and the two sides' checksums (each folded
+  from its domains).
+- **A test's run** (`--gpgnet-scripted`) ends with the link even in a game,
+  failing if the game desynced, and logs its tick every 50.
+
+## Tests (M220b)
+- **Unit (`test_net_lobby`):** a client's uids (the host's, a joiner's; a
+  taken one refused; one without numbered past them), JoinGame naming the
+  host, data by uid, DisconnectFromPeer; the host's `EstablishedPeers` for
+  a joiner after the data it sent on joining; the command line (case aside,
+  counts, false when missing); EjectPlayer by uid (this client's refused,
+  none with it, one ejected: this client reports its source).
+- **`data.gpgnet_game` (gate):** the stand-in client drives two games
+  through retail's auto-lobby, as FAF's matchmaker does (uids, `/players 2`,
+  `/team`, a faction each: the auto-lobby leaves a random one unresolved):
+  host, join, `ConnectToPeer` both ways, both `Launching`, both play to
+  tick 100 in lockstep; closing the links ends each with no desync or
+  script error.
