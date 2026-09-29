@@ -45,6 +45,32 @@ target_link_libraries(opensupcom PRIVATE osc::warnings osc::app)
 # Export symbols from the executable so crash backtraces show function names.
 set_target_properties(opensupcom PROPERTIES ENABLE_EXPORTS ON)
 
+# Installation (M227a): the game and its documents; on Linux, its desktop
+# entry and icon too. The test runners and tools stay in the build tree.
+# Windows lays the game out flat, as its zip carries it, and vcpkg installs
+# the DLLs it links beside it.
+include(GNUInstallDirs)
+if(WIN32)
+    set(OSC_INSTALL_BINDIR .)
+    set(OSC_INSTALL_DOCDIR .)
+else()
+    set(OSC_INSTALL_BINDIR ${CMAKE_INSTALL_BINDIR})
+    set(OSC_INSTALL_DOCDIR ${CMAKE_INSTALL_DATADIR}/doc/opensupcom)
+endif()
+# (ENABLE_EXPORTS gives the game an import library on Windows: not shipped)
+install(TARGETS opensupcom RUNTIME DESTINATION ${OSC_INSTALL_BINDIR}
+                           ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} EXCLUDE_FROM_ALL)
+if(COMMAND x_vcpkg_install_local_dependencies) # the vcpkg toolchain's; Windows only
+    x_vcpkg_install_local_dependencies(TARGETS opensupcom DESTINATION ${OSC_INSTALL_BINDIR})
+endif()
+install(FILES README.md LICENSE CHANGELOG.md DESTINATION ${OSC_INSTALL_DOCDIR})
+if(UNIX AND NOT APPLE)
+    install(FILES packaging/linux/opensupcom.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES packaging/opensupcom.svg
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
+
 # Tests
 option(OSC_BUILD_TESTS "Build unit tests" ON)
 if(OSC_BUILD_TESTS)
@@ -75,6 +101,20 @@ if(OSC_BUILD_TESTS)
                          --self-test)
         set_tests_properties(arch.literal_size arch.literal_size_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
+
+        # The version is written in CMake, vcpkg.json and CHANGELOG.md, and
+        # they agree; an install of this build runs on its own (M227a).
+        add_test(NAME arch.version
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_version.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.version_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_version.py
+                         --self-test)
+        add_test(NAME arch.install
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_install.py
+                         ${CMAKE_BINARY_DIR} $<CONFIG> ${PROJECT_VERSION})
+        set_tests_properties(arch.version arch.version_self_test arch.install
+                             PROPERTIES LABELS "arch" TIMEOUT 120)
     endif()
 endif()
 

@@ -228,6 +228,17 @@ cmake --build build --config Debug
 # -> build/Debug/opensupcom.exe, build/tests/Debug/osc_tests.exe
 ```
 
+**Installing** lays out the game and its documents under a prefix (on Linux,
+with a desktop entry and icon; on Windows flat, with the DLLs it needs), and
+`--version` says which build it is:
+
+```bash
+cmake --install build/linux-release --prefix ~/.local
+opensupcom --version                 # OpenSupCom 0.1.0 (<git revision>)
+```
+
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ### Dependencies (managed by vcpkg)
 
 | Package | Purpose |

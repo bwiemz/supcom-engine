@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=OpenSupCom
+GenericName=Real-time strategy engine
+Comment=Open-source engine for Supreme Commander: Forged Alliance (needs the game installed)
+Exec=opensupcom
+Icon=opensupcom
+Terminal=false
+Categories=Game;StrategyGame;
+Keywords=rts;strategy;supreme;commander;forged;alliance;

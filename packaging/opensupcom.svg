@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- OpenSupCom's icon: an original, abstract mark (a ringed hexagon over
+     three rising chevrons). Nothing in it is taken from the game's art. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2a3a"/>
+      <stop offset="1" stop-color="#0c131c"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#9fd8ff"/>
+      <stop offset="1" stop-color="#3f95d4"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="url(#bg)"/>
+  <circle cx="128" cy="128" r="92" fill="none" stroke="#3f95d4" stroke-opacity="0.45" stroke-width="6"/>
+  <polygon points="128,52 194,90 194,166 128,204 62,166 62,90"
+           fill="none" stroke="url(#mark)" stroke-width="12" stroke-linejoin="round"/>
+  <g fill="none" stroke="url(#mark)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="96,120 128,100 160,120"/>
+    <polyline points="96,146 128,126 160,146"/>
+    <polyline points="96,172 128,152 160,172"/>
+  </g>
+</svg>
