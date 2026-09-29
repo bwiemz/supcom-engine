@@ -612,6 +612,7 @@ LUA_API int lua_setmetatable (lua_State *L, int objindex) {
   api_check(L, ttistable(mt));
   switch (ttype(obj)) {
     case LUA_TTABLE: {
+      luaC_frozenbarrier(L, hvalue(obj));  /* OpenSupCom (M224g) */
       hvalue(obj)->metatable = hvalue(mt);  /* write barrier */
       break;
     }
@@ -792,6 +793,31 @@ LUA_API void lua_setgcthreshold (lua_State *L, int newthreshold) {
     G(L)->GCthreshold = GCunscale(newthreshold);
   luaC_checkGC(L);
   lua_unlock(L);
+}
+
+
+LUA_API void lua_setlazysweep (lua_State *L, int on) {
+  lua_lock(L);
+  if (!on) luaC_endsweep(L);
+  G(L)->lazysweep = cast(lu_byte, on != 0);
+  lua_unlock(L);
+}
+
+LUA_API void lua_freeze (lua_State *L, int idx) {
+  StkId t;
+  lua_lock(L);
+  t = luaA_index(L, idx);
+  api_check(L, ttistable(t));
+  luaC_freeze(L, hvalue(t));
+  lua_unlock(L);
+}
+
+LUA_API int lua_sweepstep (lua_State *L, int work) {
+  int ended;
+  lua_lock(L);
+  ended = luaC_sweepstep(L, work);
+  lua_unlock(L);
+  return ended;
 }
 
 

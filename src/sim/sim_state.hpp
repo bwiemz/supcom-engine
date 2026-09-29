@@ -574,9 +574,15 @@ public:
     /// Every this many ticks the sim forces a full collection of its Lua
     /// state, as Moho's Sim::AdvanceBeat does (faf-re Sim.cpp); between,
     /// Lua 5.0 collects when its heap doubles. The heap is mostly live
-    /// (about 150 MB late in a four-AI game, 10% garbage), so each full
-    /// collection costs 60-90 ms there.
+    /// (about 150 MB late in a four-AI game), and half of it is the
+    /// blueprints: frozen (lua_freeze) and swept lazily, a collection costs
+    /// about 30 ms there, not 70 (M224g).
     static constexpr u32 LUA_GC_PERIOD_TICKS = 70;
+    /// A collection marks at once and sweeps its objects a slice a tick
+    /// after it (M224g: lua_sweepstep): this much work, a live object 1 and a
+    /// freed one 8. So its pause is the mark alone, and no tick frees more
+    /// than 10,000 objects.
+    static constexpr int LUA_SWEEP_SLICE = 80'000;
 
     /// Global sim generation — incremented each time a SimState is constructed.
     /// Used by entity handle safety to detect stale references across reloads.

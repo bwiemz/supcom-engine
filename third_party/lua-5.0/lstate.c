@@ -105,6 +105,14 @@ static void f_luaopen (lua_State *L, void *ud) {
   g->rootgc = NULL;
   g->rootudata = NULL;
   g->tmudata = NULL;
+  g->sweepgc = NULL;
+  g->sweeppos = NULL;
+  g->sweepdead = 0;
+  g->lazysweep = 0;
+  g->frozengc = NULL;
+  g->frozenroots = NULL;
+  g->nfrozenroots = 0;
+  g->sizefrozenroots = 0;
   memset(g->mt, 0, sizeof(g->mt));  /* LuaPlus: init per-type metatables */
   setnilvalue(gkey(g->dummynode));
   setnilvalue(gval(g->dummynode));

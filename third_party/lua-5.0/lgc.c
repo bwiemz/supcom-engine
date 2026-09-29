@@ -301,7 +301,8 @@ static lu_mem propagatemarks (GCState *st) {
 static int valismarked (const TObject *o) {
   if (ttisstring(o))
     stringmark(tsvalue(o));  /* strings are `values', so are never weak */
-  return !iscollectable(o) || testbit(o->value.gc->gch.marked, 0);
+  /* (fixed -- a frozen table -- counts as marked: it is never collected) */
+  return !iscollectable(o) || ismarked(o->value.gc);
 }
 
 
@@ -397,7 +398,7 @@ static void sweepstrings (lua_State *L, int all) {
 }
 
 
-static void checkSizes (lua_State *L, size_t deadmem) {
+static void checkbuffers (lua_State *L) {
   /* check size of string hash */
   if (G(L)->strt.nuse < cast(ls_nstr, G(L)->strt.size/4) &&
       G(L)->strt.size > MINSTRTABSIZE*2)
@@ -407,6 +408,11 @@ static void checkSizes (lua_State *L, size_t deadmem) {
     size_t newsize = luaZ_sizebuffer(&G(L)->buff) / 2;
     luaZ_resizebuffer(L, &G(L)->buff, newsize);
   }
+}
+
+
+static void checkSizes (lua_State *L, size_t deadmem) {
+  checkbuffers(L);
   G(L)->GCthreshold = 2*G(L)->nblocks - deadmem;  /* new threshold */
 }
 
@@ -443,10 +449,18 @@ void luaC_callGCTM (lua_State *L) {
 
 
 void luaC_sweep (lua_State *L, int all) {
+  global_State *g = G(L);
+  luaC_endsweep(L);  /* (lua_close: the last collection's sweep, first) */
   if (all) all = 256;  /* larger than any mark */
-  sweeplist(L, &G(L)->rootudata, all);
+  sweeplist(L, &g->rootudata, all);
   sweepstrings(L, all);
-  sweeplist(L, &G(L)->rootgc, all);
+  sweeplist(L, &g->rootgc, all);
+  if (all) {  /* lua_close: the frozen tables go too */
+    sweeplist(L, &g->frozengc, all);
+    luaM_freearray(L, g->frozenroots, g->sizefrozenroots, Table *);
+    g->frozenroots = NULL;
+    g->nfrozenroots = g->sizefrozenroots = 0;
+  }
 }
 
 
@@ -463,6 +477,13 @@ static void markroot (GCState *st, lua_State *L) {
   traversestack(st, g->mainthread);
   if (L != g->mainthread)  /* another thread is running? */
     markvalue(st, L);  /* cannot collect it */
+  /* OpenSupCom (M224g): frozen roots, traversed though fixed (a frozen
+     table is `marked', so markobject would pass it by) */
+  for (i = 0; i < g->nfrozenroots; i++) {
+    Table *h = g->frozenroots[i];
+    h->gclist = st->tmark;
+    st->tmark = valtogco(h);
+  }
 }
 
 
@@ -493,11 +514,157 @@ static size_t mark (lua_State *L) {
 }
 
 
+/*
+** OpenSupCom (M224g): a lazy sweep. A collection marks everything at once,
+** as Lua 5.0 does, and sweeps userdata and strings at once too (interning
+** can hand the program a string that is still garbage). The other objects
+** it leaves for `luaC_sweepstep', a slice at a time: garbage is unreachable,
+** so freeing it later changes nothing the program can see. Objects made
+** meanwhile go to a fresh `rootgc', which this sweep never visits; the
+** swept survivors join them when it ends. What scripts observe -- weak
+** entries cleared, finalizers run -- still happens in the collection.
+*/
+
+/* what freeing an object costs, against stepping over a live one: a slice
+   is a budget of work, not of objects, since the newest objects -- the first
+   swept -- are mostly garbage, and freeing is most of a sweep's time */
+#define SWEEPFREECOST	8
+
+/* sweep `work' units of the sweep under way: 1 when none is */
+int luaC_sweepstep (lua_State *L, int work) {
+  global_State *g = G(L);
+  GCObject *curr;
+  if (g->sweeppos == NULL) return 1;
+  while (work > 0 && (curr = *g->sweeppos) != NULL) {
+    if ((curr->gch.marked & ~(KEYWEAK | VALUEWEAK)) > 0) {  /* alive */
+      unmark(curr);
+      g->sweeppos = &curr->gch.next;
+      work -= 1;
+    }
+    else {  /* garbage */
+      *g->sweeppos = curr->gch.next;
+      freeobj(L, curr);
+      work -= SWEEPFREECOST;
+    }
+  }
+  if (*g->sweeppos != NULL) return 0;
+  /* ended: the survivors lead, the objects made meanwhile follow */
+  *g->sweeppos = g->rootgc;
+  g->rootgc = g->sweepgc;
+  g->sweepgc = NULL;
+  g->sweeppos = NULL;
+  g->GCthreshold = 2*g->nblocks - g->sweepdead;  /* as checkSizes sets it */
+  return 1;
+}
+
+
+void luaC_endsweep (lua_State *L) {
+  while (!luaC_sweepstep(L, MAX_INT)) {}
+}
+
+
 void luaC_collectgarbage (lua_State *L) {
-  size_t deadmem = mark(L);
-  luaC_sweep(L, 0);
-  checkSizes(L, deadmem);
+  global_State *g = G(L);
+  size_t deadmem;
+  luaC_endsweep(L);  /* the last collection's sweep ends before this one */
+  deadmem = mark(L);
+  sweeplist(L, &g->rootudata, 0);
+  sweepstrings(L, 0);
+  if (g->lazysweep) {
+    g->sweepgc = g->rootgc;
+    g->rootgc = NULL;
+    g->sweeppos = &g->sweepgc;
+    g->sweepdead = deadmem;
+    checkbuffers(L);
+    g->GCthreshold = MAX_LUMEM;  /* no collection until this sweep ends */
+  }
+  else {
+    sweeplist(L, &g->rootgc, 0);
+    checkSizes(L, deadmem);
+  }
   luaC_callGCTM(L);
+}
+
+
+/*
+** OpenSupCom (M224g): lua_freeze. Static data -- the blueprints -- is most
+** of the live heap, and a Lua 5.0 collection marks and sweeps all of it
+** every time. Freezing takes it out of both: a frozen table is fixed (its
+** mark bit is `on' for good, so the mark passes it by and weak tables keep
+** it) and moves off `rootgc' to `frozengc', which only lua_close sweeps.
+** Its strings are fixed too. Only plain tables freeze (no metatable, so not
+** weak either); a frozen table holding anything else -- a function, a
+** userdata, a table that can't freeze -- is a frozen root, which the mark
+** still traverses, so what it holds lives. The write barrier (luaH_set,
+** luaH_setnum, lua_setmetatable) makes a frozen table written to a root
+** too: what it is given is marked through it from then on.
+*/
+
+void luaC_frozenwrite (lua_State *L, Table *t) {
+  global_State *g = G(L);
+  if (testbit(t->marked, FROZENROOTBIT)) return;
+  luaM_growvector(L, g->frozenroots, g->nfrozenroots, g->sizefrozenroots,
+                  Table *, MAX_INT, "frozen roots");
+  g->frozenroots[g->nfrozenroots++] = t;
+  setbit(t->marked, FROZENROOTBIT);
+}
+
+
+static int freezable (lua_State *L, const Table *t) {
+  return t->metatable == hvalue(defaultmeta(L));
+}
+
+
+void luaC_freeze (lua_State *L, Table *root) {
+  global_State *g = G(L);
+  Table **stack = NULL;
+  int n = 0, size = 0;
+  GCObject **p, *curr;
+  if (isfrozen(root) || !freezable(L, root)) return;
+  luaC_endsweep(L);  /* every object on `rootgc' */
+  root->marked |= cast(lu_byte, (1<<FROZENBIT) | (1<<4));
+  luaM_growvector(L, stack, n, size, Table *, MAX_INT, "freeze");
+  stack[n++] = root;
+  while (n > 0) {
+    Table *t = stack[--n];
+    int holdsother = 0;
+    int i = t->sizearray + sizenode(t) * 2;
+    while (i--) {
+      const TObject *o;
+      if (i < t->sizearray) o = &t->array[i];
+      else {
+        Node *nd = gnode(t, (i - t->sizearray) / 2);
+        if (ttisnil(gval(nd))) continue;
+        o = ((i - t->sizearray) % 2) ? gkey(nd) : gval(nd);
+      }
+      if (!iscollectable(o)) continue;
+      if (ttisstring(o)) {
+        luaS_fix(tsvalue(o));
+      }
+      else if (ttistable(o) && isfrozen(hvalue(o))) {
+        /* already frozen */
+      }
+      else if (ttistable(o) && freezable(L, hvalue(o))) {
+        Table *c = hvalue(o);
+        c->marked |= cast(lu_byte, (1<<FROZENBIT) | (1<<4));
+        luaM_growvector(L, stack, n, size, Table *, MAX_INT, "freeze");
+        stack[n++] = c;
+      }
+      else holdsother = 1;
+    }
+    if (holdsother) luaC_frozenwrite(L, t);
+  }
+  luaM_freearray(L, stack, size, Table *);
+  /* the frozen tables leave `rootgc' */
+  p = &g->rootgc;
+  while ((curr = *p) != NULL) {
+    if (curr->gch.tt == LUA_TTABLE && testbit(curr->gch.marked, FROZENBIT)) {
+      *p = curr->gch.next;
+      curr->gch.next = g->frozengc;
+      g->frozengc = curr;
+    }
+    else p = &curr->gch.next;
+  }
 }
 
 
