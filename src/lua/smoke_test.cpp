@@ -260,7 +260,6 @@ void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
     static const MtEntry entries[] = {
         {"__osc_proj_mt",      "Projectile"},
         {"__osc_nav_mt",       "Navigator"},
-        {"__osc_blip_mt",      "Blip"},
         {"__osc_weapon_mt",    "Weapon"},
         {"__osc_platoon_mt",   "Platoon"},
         {"__osc_ui_unit_mt",   "UIUnit"},
@@ -288,9 +287,10 @@ void SmokeTestHarness::install_all_method_interceptors(lua_State* L) {
     if (lua_istable(L, -1)) {
         struct MohoEntry { const char* field; const char* name; };
         static const MohoEntry moho_entries[] = {
-            {"unit_methods",   "Unit"},
+            {"unit_methods", "Unit"},
             {"entity_methods", "Entity"},
-            {"army_methods",   "ArmyBrain"},
+            {"army_methods", "ArmyBrain"},
+            {"blip_methods", "Blip"}, // blips are /lua/sim/Blip.lua's class of it
         };
         int moho_idx = lua_gettop(L);
         for (auto& me : moho_entries) {

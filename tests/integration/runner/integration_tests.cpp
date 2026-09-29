@@ -2743,6 +2743,17 @@ void test_fow(TestContext& ctx) {
                 end
             end
 
+            -- Test 8b: a blip is an Entity in Moho: its id (Cinematics
+            -- hands it to the camera, which follows the unit)
+            if blip1 then
+                if blip1:GetEntityId() == enemy:GetEntityId() then
+                    LOG('FOW TEST 8b PASSED: GetEntityId=' .. blip1:GetEntityId())
+                else
+                    LOG('FOW TEST 8b FAILED: GetEntityId=' .. tostring(blip1:GetEntityId()) ..
+                        ' expected ' .. enemy:GetEntityId())
+                end
+            end
+
             -- Test 9: Move enemy far away, GetBlip returns nil
             -- (entity left our vision; no dead-reckoning yet)
             enemy:SetPosition({pos[1] + 500, pos[2], pos[3] + 500}, true)
@@ -2778,6 +2789,39 @@ void test_fow(TestContext& ctx) {
                 else
                     LOG('FOW TEST 11 INFO: IsOnRadar=true (unexpected but not fatal)')
                 end
+            end
+
+            -- Test 12: Moho's blip lifecycle (M209). An army's blip of a
+            -- unit is one object, of /lua/sim/Blip.lua's class; making it
+            -- calls the unit's OnDetectedBy(army); the unit's death calls
+            -- the blip's OnDestroy (its destroy hooks). Campaign objectives
+            -- follow their targets this way.
+            local scout = CreateUnit('uel0101', 2, pos[1] - 15, pos[2], pos[3], 0, 0, 0)
+            local detectedBy = {}
+            scout:AddDetectedByHook(function(unit, army) table.insert(detectedBy, army) end)
+            WaitTicks(3)
+            local sb = scout:GetBlip(myArmy)
+            local sawMe = false
+            for _, a in detectedBy do
+                if a == myArmy then sawMe = true end
+            end
+            if sb and sb == scout:GetBlip(myArmy) and sb.AddDestroyHook and sawMe then
+                LOG('FOW TEST 12a PASSED: one Blip object per army, detected by ' .. myArmy)
+            else
+                LOG('FOW TEST 12a FAILED: blip ' .. tostring(sb) .. ', same ' ..
+                    tostring(sb and sb == scout:GetBlip(myArmy)) .. ', hooks ' ..
+                    tostring(sb and sb.AddDestroyHook) .. ', detected by ' .. table.getn(detectedBy))
+            end
+            local destroyedWith
+            if sb and sb.AddDestroyHook then
+                sb:AddDestroyHook(function(b) destroyedWith = b end)
+            end
+            scout:Destroy()
+            WaitTicks(2)
+            if sb and destroyedWith == sb and sb:BeenDestroyed() then
+                LOG('FOW TEST 12b PASSED: the unit gone, its blip OnDestroy ran its hooks')
+            else
+                LOG('FOW TEST 12b FAILED: destroy hook got ' .. tostring(destroyedWith))
             end
 
             LOG('FOW TEST: ALL TESTS COMPLETE')

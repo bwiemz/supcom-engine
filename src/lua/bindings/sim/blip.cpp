@@ -6,6 +6,7 @@
 #include "lua/moho_bindings_internal.hpp"
 #include "lua/lua_stubs.hpp"
 #include "core/dmath.hpp"
+#include "sim/script_class.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
 #include "video/video_decoder.hpp"
@@ -315,6 +316,15 @@ static int blip_GetSource(lua_State* L) {
     return 1;
 }
 
+/// GetEntityId(): a ReconBlip is an Entity in Moho, and scripts hand its id
+/// to the UI (Cinematics' camera tracks an enemy's unit by its blip). The
+/// engine's blip is its unit as an army sees it, so the id is the unit's,
+/// as Moho gives ids ("%d").
+static int blip_GetEntityId(lua_State* L) {
+    sim::push_entity_id(L, get_blip_entity_id(L));
+    return 1;
+}
+
 static int blip_GetBlueprint(lua_State* L) {
     auto* e = check_blip_entity(L);
     std::string bp_id;
@@ -390,28 +400,18 @@ static int blip_GetAIBrain(lua_State* L) {
     return 1;
 }
 
+/// BeenDestroyed(): the blip goes with its unit (SimState::push_blip's
+/// objects, whose OnDestroy runs then), so it has once the unit has.
 static int blip_BeenDestroyed(lua_State* L) {
-    auto* e = check_blip_entity(L);
-    if (e && !e->destroyed()) {
-        lua_pushboolean(L, 0);
-        return 1;
-    }
-    // Entity pointer gone — check blip cache
-    u32 eid = get_blip_entity_id(L);
-    i32 req_army = get_blip_req_army(L);
-    auto* sim = get_sim(L);
-    if (sim && req_army >= 0) {
-        auto* snap = sim->get_blip_snapshot(eid, static_cast<u32>(req_army));
-        lua_pushboolean(L, (snap && snap->entity_dead) ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 1); // no data → assume dead
-    }
+    const auto* e = check_blip_entity(L);
+    lua_pushboolean(L, e && !e->destroyed() ? 0 : 1);
     return 1;
 }
 
 // clang-format off
 const MethodEntry blip_methods[] = {
     {"GetSource",        blip_GetSource},
+    {"GetEntityId",      blip_GetEntityId},
     {"IsOnRadar",        blip_IsOnRadar},
     {"IsOnSonar",        blip_IsOnSonar},
     {"IsOnOmni",         blip_IsOnOmni},

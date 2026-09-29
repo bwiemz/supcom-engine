@@ -757,51 +757,15 @@ static int unit_GetCommandQueue(lua_State* L) {
 
 // unit:GetBlip(armyIndex) → blip table or nil
 // Returns nil if the entity has never been seen by the requesting army.
-/// Helper: set cached __osc_blip_mt metatable on a blip table at stack top.
-static void set_blip_metatable(lua_State* L, int blip_tbl) {
-    lua_pushstring(L, "__osc_blip_mt");
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    if (!lua_istable(L, -1)) {
-        lua_pop(L, 1);
-        // Build it: { __index = methods_table }
-        lua_newtable(L); // metatable
-        lua_pushstring(L, "__index");
-        // Get moho.blip_methods
-        lua_pushstring(L, "moho");
-        lua_rawget(L, LUA_GLOBALSINDEX);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "blip_methods");
-            lua_rawget(L, -2);
-            lua_remove(L, -2); // remove moho table
-        } else {
-            lua_pop(L, 1);     // pop the non-table
-            lua_pushnil(L);    // explicit nil — no methods
-        }
-        lua_settable(L, -3); // metatable.__index = blip_methods
-        // Cache it
-        lua_pushstring(L, "__osc_blip_mt");
-        lua_pushvalue(L, -2);
-        lua_rawset(L, LUA_REGISTRYINDEX);
-    }
-    lua_setmetatable(L, blip_tbl);
-}
-
-/// Helper: build a blip table: its unit's id (_c_entity_id) and the army
-/// that sees it (_c_req_army). No pointer to the unit: AI scripts keep blips
-/// after their unit is gone, and its memory with it, so every use resolves
-/// the id (check_entity, collect_unit_ids).
+/// Push `req_army`'s blip of the entity (SimState::push_blip): the army's
+/// one blip object of it, its id and the army, no pointer to the unit (AI
+/// scripts keep blips after their unit is gone; every use resolves the id).
 static void push_blip_table(lua_State* L, osc::u32 entity_id, osc::i32 req_army) {
-    lua_newtable(L);
-    int blip_tbl = lua_gettop(L);
-
-    lua_pushstring(L, "_c_entity_id");
-    lua_pushnumber(L, static_cast<lua_Number>(entity_id));
-    lua_rawset(L, blip_tbl);
-    lua_pushstring(L, "_c_req_army");
-    lua_pushnumber(L, static_cast<lua_Number>(req_army));
-    lua_rawset(L, blip_tbl);
-
-    set_blip_metatable(L, blip_tbl);
+    if (auto* sim = get_sim(L)) {
+        sim->push_blip(L, entity_id, req_army);
+    } else {
+        lua_pushnil(L);
+    }
 }
 
 static int unit_GetBlip(lua_State* L) {
