@@ -21,11 +21,12 @@ void App::Window::load_flow_globals() {
 }
 
 void App::Window::load_flow_frame() {
-    // --load-flow-test: the saved game catches up -- never a replay
-    // meanwhile -- then plays on a little and is saved again.
+    // --load-flow-test: the saved game is restored, or catches up --
+    // never a replay meanwhile -- then plays on a little and is saved
+    // again.
     if (opt.load_flow_test && !load_flow_done) {
         ++load_flow_frames;
-        if (sim_state && sim_state->resuming() && !load_flow_saw_catch_up) {
+        if (sim_state && (sim_state->resuming() || restored_at) && !load_flow_saw_catch_up) {
             load_flow_saw_catch_up = true;
             auto r = ui_lua_state.do_string(
                 "if SessionIsReplay() then error('SessionIsReplay() is true while a "
@@ -33,7 +34,9 @@ void App::Window::load_flow_frame() {
             if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
         }
         if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at) {
-            load_flow_resumed_at = sim_state->tick_count();
+            // (a restore resumes at its saved tick, whatever the
+            // frame has run since)
+            load_flow_resumed_at = restored_at ? *restored_at : sim_state->tick_count();
             load_flow_resumes.push_back(*load_flow_resumed_at);
         }
         const bool played_on = sim_state && load_flow_resumed_at &&

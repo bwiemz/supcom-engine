@@ -277,3 +277,24 @@ TEST_CASE("A damaged snapshot is refused before anything loads", "[savegame]") {
     c.tick();
     CHECK_FALSE(osc::sim::load_snapshot(c, snap).empty()); // only into a sim that hasn't run
 }
+
+TEST_CASE("Only its own installation's snapshot is trusted", "[savegame]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    setup(a);
+    a.set_recording(true);
+    a.tick();
+    SavedGame save = osc::sim::save_game(a, "signed");
+    REQUIRE_FALSE(save.snapshot.empty());
+    osc::sim::SnapshotKey mine{}, theirs{};
+    mine.fill(7);
+    theirs.fill(9);
+    CHECK_FALSE(osc::sim::snapshot_signed(save, mine)); // not signed yet
+    osc::sim::sign_snapshot(save, mine);
+    SavedGame loaded;
+    REQUIRE(SavedGame::deserialize(save.serialize(), loaded) == SaveLoadError::None);
+    CHECK(osc::sim::snapshot_signed(loaded, mine));
+    CHECK_FALSE(osc::sim::snapshot_signed(loaded, theirs));
+    loaded.snapshot[loaded.snapshot.size() / 2] ^= 1; // changed after signing
+    CHECK_FALSE(osc::sim::snapshot_signed(loaded, mine));
+}

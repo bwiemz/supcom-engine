@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 #include <zlib.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <utility>
@@ -54,6 +55,7 @@ std::vector<u8> SavedGame::serialize() const {
     w.u64v(packed.empty() ? 0 : snapshot.size());
     w.u64v(packed.size());
     b.insert(b.end(), packed.begin(), packed.end());
+    b.insert(b.end(), snapshot_mac.begin(), snapshot_mac.end());
     const std::vector<u8> recording = game.serialize();
     b.insert(b.end(), recording.begin(), recording.end());
     return b;
@@ -88,13 +90,29 @@ SaveLoadError SavedGame::deserialize(const std::vector<u8>& bytes, SavedGame& ou
             size != snapshot_size)
             return SaveLoadError::InvalidFormat;
     }
-    const std::vector<u8> recording(packed_at + static_cast<std::ptrdiff_t>(packed_size),
+    const auto mac_at = packed_at + static_cast<std::ptrdiff_t>(packed_size);
+    if (bytes.end() - mac_at < static_cast<std::ptrdiff_t>(save.snapshot_mac.size()))
+        return SaveLoadError::InvalidFormat;
+    std::copy_n(mac_at, save.snapshot_mac.size(), save.snapshot_mac.begin());
+    const std::vector<u8> recording(mac_at + static_cast<std::ptrdiff_t>(save.snapshot_mac.size()),
                                     bytes.end());
     if (!Replay::deserialize(recording, save.game) || !save.game.has_setup ||
         save.game.final_tick != save.tick)
         return SaveLoadError::InvalidFormat;
     out = std::move(save);
     return SaveLoadError::None;
+}
+
+void sign_snapshot(SavedGame& save, const SnapshotKey& key) {
+    save.snapshot_mac =
+        core::hmac_sha256(key.data(), key.size(), save.snapshot.data(), save.snapshot.size());
+}
+
+bool snapshot_signed(const SavedGame& save, const SnapshotKey& key) {
+    return !save.snapshot.empty() &&
+           core::digest_equal(save.snapshot_mac,
+                              core::hmac_sha256(key.data(), key.size(), save.snapshot.data(),
+                                                save.snapshot.size()));
 }
 
 SavedGame save_game(SimState& sim, std::string name, bool snapshot) {

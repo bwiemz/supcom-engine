@@ -51,6 +51,10 @@ public:
     /// Whether `file` is one path() names: a file of this type, in a
     /// profile's folder. The engine writes a file a script names only there.
     bool holds(const Type& type, const std::filesystem::path& file) const;
+    /// The key this installation signs its saves' snapshots with (M208c):
+    /// made at random the first time, and kept in the folder. None when it
+    /// can't be read or made: snapshots are then neither signed nor trusted.
+    std::optional<sim::SnapshotKey> snapshot_key() const;
 
 private:
     std::filesystem::path root_;
