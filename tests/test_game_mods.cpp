@@ -2,9 +2,9 @@
 
 #include "lua/engine_bindings.hpp"
 #include "lua/game_mods.hpp"
-#include "lua/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/session_manager.hpp"
+#include "sim/lua_bytes.hpp"
 
 #include <string>
 
@@ -70,7 +70,7 @@ TEST_CASE("set_active_mods: the game's list, or an empty one", "[lua][mods]") {
     // Bytes that hold no list, or nothing at all: no mods, never a crash
     REQUIRE(state.do_string("__value = 'a string'").ok());
     lua_getglobal(state.raw(), "__value");
-    const auto not_a_list = lua_to_bytes(state.raw(), -1);
+    const auto not_a_list = osc::sim::lua_to_bytes(state.raw(), -1);
     lua_pop(state.raw(), 1);
     REQUIRE(not_a_list);
     const int top = lua_gettop(state.raw());

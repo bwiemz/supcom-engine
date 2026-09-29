@@ -1,8 +1,10 @@
 #pragma once
 
 // Plain Lua data as bytes (M221b), as Moho's SCR_ToString / SCR_FromString
-// keep a launch's mod list: the launch and the replay carry it, and each
-// game's Lua states read it back as their `__active_mods`.
+// keep Lua values in its launch info, its commands and its replays: a
+// launch's mod list, which each game's Lua states read back as their
+// `__active_mods`, and a Script order's table (M206w). It sits with the
+// sim's byte codec, which both the sim and the Lua bindings use.
 
 #include <cstddef>
 #include <optional>
@@ -11,7 +13,7 @@
 
 struct lua_State;
 
-namespace osc::lua {
+namespace osc::sim {
 
 /// How deep tables may nest, written or read.
 inline constexpr int kLuaBytesMaxDepth = 32;
@@ -33,4 +35,4 @@ std::optional<std::string> lua_to_bytes(lua_State* L, int idx);
 /// nothing pushed, when they aren't exactly one such value.
 bool push_lua_bytes(lua_State* L, std::string_view bytes);
 
-} // namespace osc::lua
+} // namespace osc::sim

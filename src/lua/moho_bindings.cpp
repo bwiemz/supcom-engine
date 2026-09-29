@@ -16,6 +16,7 @@
 #include "sim/build_placement.hpp"
 #include "sim/bone_data.hpp"
 #include "sim/collision.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/entity.hpp"
 #include "sim/entity_registry.hpp"
 #include "sim/ieffect.hpp"
@@ -1623,7 +1624,7 @@ static const MohoClassDef moho_classes[] = {
     {"navigator_methods",       navigator_methods,       nullptr},
     {"aipersonality_methods",   empty_methods,           nullptr},
     {"CAiAttackerImpl_methods", empty_methods,           nullptr},
-    {"ScriptTask_Methods",      empty_methods,           nullptr},
+    {"ScriptTask_Methods",      script_task_methods,     nullptr},
     {"sound_methods",           empty_methods,           nullptr},
     {"CDamage",                 empty_methods,           nullptr},
     {"CDecalHandle",            decal_handle_methods,    nullptr},
@@ -2645,8 +2646,8 @@ std::string ui_command_name(const char* name) {
 }
 
 /// An order with no target: Stop, Dive, a silo build, or a Script order
-/// whose task is an enhancement (the construction panel's). `data` is the
-/// order's table.
+/// (M206w: the construction panel's enhancements, as EnhanceTask). `data`
+/// is the order's table.
 void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std::string& name,
                             int data, bool clear) {
     sim::UnitCommand cmd;
@@ -2660,22 +2661,13 @@ void issue_targetless_order(lua_State* L, const std::vector<u32>& ids, const std
         cmd.type = name == "BuildSiloNuke" ? sim::CommandType::SiloBuildNuke
                                            : sim::CommandType::SiloBuildTactical;
     } else if (name == "Script" && lua_istable(L, data)) {
-        lua_pushstring(L, "TaskName");
-        lua_gettable(L, data);
-        const bool enhance = lua_type(L, -1) == LUA_TSTRING &&
-                             std::string_view(lua_tostring(L, -1)) == "EnhanceTask";
-        lua_pop(L, 1);
-        lua_pushstring(L, "Enhancement");
-        lua_gettable(L, data);
-        if (enhance && lua_type(L, -1) == LUA_TSTRING) {
-            cmd.type = sim::CommandType::Enhance;
-            cmd.blueprint_id = lua_tostring(L, -1);
-        }
-        lua_pop(L, 1);
-        if (cmd.type != sim::CommandType::Enhance) {
-            spdlog::warn("IssueCommand: unsupported Script order");
+        auto bytes = sim::lua_to_bytes(L, data);
+        if (!bytes) {
+            spdlog::warn("IssueCommand: a Script order's table can't be carried");
             return;
         }
+        cmd.type = sim::CommandType::Script;
+        cmd.script_args = std::move(*bytes);
     } else {
         spdlog::warn("IssueCommand: unsupported order '{}'", name);
         return;

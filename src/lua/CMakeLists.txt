@@ -13,6 +13,7 @@ add_library(osc_lua STATIC
     bindings/sim/navigator.cpp
     bindings/sim/platoon.cpp
     bindings/sim/projectile.cpp
+    bindings/sim/script_task.cpp
     bindings/sim/shield.cpp
     bindings/sim/unit.cpp
     bindings/sim/weapon.cpp
@@ -31,7 +32,6 @@ add_library(osc_lua STATIC
     sim_loader.cpp
     sim_sync.cpp
     script_loader.cpp
-    lua_bytes.cpp
     game_mods.cpp
     scenario_loader.cpp
     session_manager.cpp

@@ -1,4 +1,4 @@
-#include "lua/lua_bytes.hpp"
+#include "sim/lua_bytes.hpp"
 
 #include "core/types.hpp"
 #include "sim/command_codec.hpp"
@@ -12,7 +12,7 @@ extern "C" {
 #include <lua.h>
 }
 
-namespace osc::lua {
+namespace osc::sim {
 
 namespace {
 
@@ -125,7 +125,7 @@ private:
 
     lua_State* L_;
     const std::vector<u8>& out_;
-    sim::ByteWriter w_;
+    ByteWriter w_;
 };
 
 class Decoder {
@@ -177,11 +177,11 @@ public:
         }
     }
 
-    const sim::ByteReader& reader() const { return r_; }
+    const ByteReader& reader() const { return r_; }
 
 private:
     lua_State* L_;
-    sim::ByteReader r_;
+    ByteReader r_;
 };
 
 } // namespace
@@ -207,4 +207,4 @@ bool push_lua_bytes(lua_State* L, std::string_view bytes) {
     return false;
 }
 
-} // namespace osc::lua
+} // namespace osc::sim
