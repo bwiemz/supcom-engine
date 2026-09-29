@@ -5,7 +5,9 @@
 #include "sim/sim_state.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <utility>
 
 #include <spdlog/spdlog.h>
 
@@ -44,6 +46,56 @@ bool LockstepSession::request_resume() {
     return true;
 }
 
+void LockstepSession::set_speed_option(i32 rate, bool adjustable) {
+    speed_ = rate;
+    adjustable_speed_ = adjustable;
+}
+
+bool LockstepSession::request_speed(i32 rate) {
+    if (!adjustable_speed_) return false;
+    const u32 clock = speed_clock_ + 1;
+    std::vector<u8> msg;
+    ByteWriter w(msg);
+    w.u8v(kSpeedMessage);
+    w.u32v(local_source_);
+    w.u32v(clock);
+    w.u32v(static_cast<u32>(rate));
+    transport_.broadcast(msg);
+    apply_speed(clock, local_source_, rate); // as Moho's, which hears its own
+    return true;
+}
+
+void LockstepSession::apply_speed(u32 clock, u32 source, i32 rate) {
+    if (clock < speed_clock_ || (clock == speed_clock_ && source >= speed_requester_)) return;
+    speed_clock_ = clock;
+    speed_requester_ = source;
+    speed_ = std::clamp(rate, -10, 50); // whoever asked (a peer's message too)
+    speed_changes_.push_back({source, speed_});
+}
+
+std::vector<LockstepSession::SpeedChange> LockstepSession::take_speed_changes() {
+    return std::exchange(speed_changes_, {});
+}
+
+namespace {
+
+/// How many rounds `normal` of them at normal speed are, at `speed` (its
+/// scale held to 0.1..10: the frame loop runs a few rounds a frame at most)
+u32 scaled_rounds(u32 normal, i32 speed) {
+    const double scale = std::pow(10.0, std::clamp(speed, -10, 10) * 0.1);
+    return std::max<u32>(1, static_cast<u32>(std::lround(normal * scale)));
+}
+
+} // namespace
+
+u32 LockstepSession::lead_cap() const {
+    return scaled_rounds(kMaxLead, speed_);
+}
+
+u32 LockstepSession::drop_timeout() const {
+    return drop_timeout_rounds_ == 0 ? 0 : scaled_rounds(drop_timeout_rounds_, speed_);
+}
+
 void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
                                    const UnitCommand& cmd, bool clear_existing) {
     ScheduledCommand sc;
@@ -69,8 +121,17 @@ void LockstepSession::send_frame() {
     // Paused, no frames: each confirms a tick, and would run at once on
     // resuming (its commands wait in pending_)
     if (sim_.network_paused()) return;
+    ++round_;
     std::vector<u8> msg;
     ByteWriter w(msg);
+    // As far ahead of the sim as a peer runs: it waits for the others (its
+    // orders wait in pending_), saying only that it is still there
+    if (next_frame_ > sim_.tick_count() + lead_cap()) {
+        w.u8v(kAliveMessage);
+        w.u32v(local_source_);
+        transport_.broadcast(msg);
+        return;
+    }
     w.u8v(kFrameMessage);
     w.u32v(local_source_);
     w.u32v(next_frame_);
@@ -113,6 +174,20 @@ void LockstepSession::receive_and_advance() {
                 sim_.resume_pause(serial);
             continue;
         }
+        if (type == kSpeedMessage) {
+            const u32 source = r.u32v();
+            const u32 clock = r.u32v();
+            const auto rate = static_cast<i32>(r.u32v());
+            if (r.ok() && source != local_source_ && !has_dropped(source))
+                apply_speed(clock, source, rate);
+            continue;
+        }
+        if (type == kAliveMessage) {
+            const u32 source = r.u32v();
+            auto heard = peer_heard_round_.find(source);
+            if (r.ok() && heard != peer_heard_round_.end()) heard->second = round_;
+            continue;
+        }
         if (type != kFrameMessage) continue;
         u32 source = r.u32v();
         // Ignore a source that is dropped or being dropped: late frames must
@@ -139,7 +214,8 @@ void LockstepSession::receive_and_advance() {
         for (const auto& c : commands) sim_.command_scheduler().submit(c);
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
-        if (frame > pc) pc = frame; // arms the drop timer after first contact
+        if (frame > pc) pc = frame;
+        peer_heard_round_[source] = round_; // arms the drop timer after first contact
         if (has_cs) note_peer_checksum(cs_tick, cs_parts);
         // Kept to relay, should this peer drop before every survivor has it.
         auto& kept = recent_frames_[source];
@@ -155,22 +231,23 @@ void LockstepSession::receive_and_advance() {
     // Paused: no frames flow, so none is late; nothing ticks
     if (sim_.network_paused()) return;
 
-    // A peer that has gone silent falls further behind each round (next_frame_
-    // keeps advancing while its confirmed frame is frozen). Past the timeout,
-    // this survivor reports it; the drop happens once every survivor has.
-    // Only sources that have confirmed at least one frame are armed, so a slow
-    // first frame at session start can't false-drop.
-    if (drop_timeout_frames_ > 0) {
+    // A peer silent for longer than the timeout, in rounds (each a tick's
+    // time: a peer held at kMaxLead still has them, with no frames), is
+    // reported by this survivor; the drop happens once every survivor has.
+    // Only sources that have sent a frame are armed: peers load the game at
+    // their own speed, so a slow first frame at session start can't
+    // false-drop. One that never sends one is left to the players, as
+    // Moho's: the disconnect dialog shows it, and they eject it.
+    if (const u32 timeout = drop_timeout(); timeout > 0) {
         std::vector<u32> late;
-        for (const auto& [src, confirmed] : peer_confirmed_) {
+        for (const auto& [src, heard] : peer_heard_round_) {
             if (src == local_source_ || has_dropped(src) || dropping(src)) continue;
-            const u32 behind = next_frame_ > confirmed ? next_frame_ - confirmed : 0;
-            if (behind > drop_timeout_frames_) late.push_back(src);
+            if (round_ - heard > timeout) late.push_back(src);
         }
         std::sort(late.begin(), late.end());
         for (u32 src : late) {
-            spdlog::warn("[lockstep] peer source {} timed out ({} frames behind)", src,
-                         next_frame_ - peer_confirmed_[src]);
+            spdlog::warn("[lockstep] peer source {} timed out ({} rounds without a word)", src,
+                         round_ - peer_heard_round_[src]);
             begin_drop(src);
         }
     }
@@ -385,6 +462,12 @@ void LockstepSession::compare_checksums(u32 tick, const Parts& mine, const Parts
     if (mine == theirs || desynced_) return;
     desynced_ = true;
     desync_tick_ = tick;
+    const auto fold = [](const Parts& parts) {
+        u64 h = 0xcbf29ce484222325ull;
+        for (const u64 part : parts) h = (h ^ part) * 0x100000001b3ull;
+        return h;
+    };
+    desync_hashes_ = {fold(mine), fold(theirs)};
     std::string names;
     for (size_t i = 0; i < mine.size(); ++i) {
         if (mine[i] == theirs[i]) continue;

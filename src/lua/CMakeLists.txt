@@ -22,8 +22,8 @@ add_library(osc_lua STATIC
     bindings/ui/text.cpp
     bindings/ui/user_unit.cpp
     bindings/ui/world.cpp
+    gpgnet_session.cpp
     mp_net_state.cpp
-    lan_lobby.cpp
     lobby_wire.cpp
     net_lobby.cpp
     session_clients.cpp
