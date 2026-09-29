@@ -7,7 +7,7 @@ adapter's, part): it listens, starts the game with `/gpgnet 127.0.0.1:<port>`
 - the game connects and says it is Idle;
 - CreateLobby makes a lobby through retail's onlineprovider.lua, and the
   game says it is in the Lobby state;
-- HostGame hosts it on the lobby's port, which then takes a connection;
+- HostGame hosts it on the lobby's port (over UDP, as Moho's "UDP" lobby);
 - the client closes the link, and the game, with nothing to do, ends.
 
 Any script error fails it (the game's exit code).
@@ -117,9 +117,14 @@ class Link:
 
 
 def listening(port: int) -> bool:
-    with socket.socket() as probe:
-        probe.settimeout(1)
-        return probe.connect_ex(("127.0.0.1", port)) == 0
+    """Whether a game's lobby is up on `port`: it is over UDP (M220c), and
+    the lobby's socket holds the port, so binding it fails."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+        return False
 
 
 def run(exe: str, port: int, user_dir: Path) -> int:

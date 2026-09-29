@@ -382,13 +382,23 @@ void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port
     lobbies().push_back(std::move(lobby));
 }
 
+namespace {
+
+/// A lobby's connections: Moho's "UDP" over UDP (M220c), "TCP" over TCP.
+sim::LobbyTransport transport(const NetLobby& lobby) {
+    return lobby.protocol == 1 ? sim::LobbyTransport::Tcp : sim::LobbyTransport::Udp;
+}
+
+} // namespace
+
 int net_lobby_HostGame(lua_State* L, NetLobby& lobby) {
     if (lobby.net) return 0; // already hosting or joined
     const auto hosted_time =
         static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
                              std::chrono::system_clock::now().time_since_epoch())
                              .count());
-    auto net = std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections);
+    auto net =
+        std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections, transport(lobby));
     if (lobby.player_uid) net->set_local_uid(*lobby.player_uid);
     if (!net->host(lobby.port, hosted_time))
         return luaL_error(L, "HostGame: can't listen on port %d", static_cast<int>(lobby.port));
@@ -423,9 +433,12 @@ int net_lobby_JoinGame(lua_State* L, NetLobby& lobby) {
     const bool port_ok = !port_text.empty() &&
                          port_text.find_first_not_of("0123456789") == std::string::npos &&
                          port_text.size() <= 5 && std::stoul(port_text) <= 65535;
-    auto net = std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections);
+    auto net =
+        std::make_unique<sim::LobbyNet>(lobby.player_name, lobby.max_connections, transport(lobby));
     if (lobby.player_uid) net->set_local_uid(*lobby.player_uid);
-    if (!port_ok || !net->join(host, static_cast<u16>(std::stoul(port_ok ? port_text : "0")))) {
+    // Over UDP the lobby's own port too: an ICE adapter sends to it (M220c)
+    if (!port_ok ||
+        !net->join(host, static_cast<u16>(std::stoul(port_ok ? port_text : "0")), lobby.port)) {
         spdlog::warn("lobby: can't join '{}'", address);
         lobby.join_failed = true; // ConnectionFailed at the next pump
         return 0;
