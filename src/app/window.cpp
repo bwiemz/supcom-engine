@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "app/lan_game_test.hpp"
+#include "app/mods_flow_test.hpp"
 #include "app/window_commands.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
@@ -375,6 +376,16 @@ std::optional<int> App::run_window() {
             }
         }
 
+        // --mods-flow-test: a skirmish with the player's mods (M221b)
+        std::optional<osc::app::ModsFlowTest> mods_flow;
+        if (opt.mods_flow_test) {
+            mods_flow.emplace();
+            if (!mods_flow->start(ui_lua_state, opt.watch_path.empty())) {
+                mods_flow->finish();
+                return finish_test_run("mods-flow-test");
+            }
+        }
+
         // --load-flow-test, once the loaded game has played on: save it again
         // as retail's Save dialog does, and check what saving refuses.
         auto save_again_in_load_flow = [&] {
@@ -424,7 +435,8 @@ std::optional<int> App::run_window() {
         };
 
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
-               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done())) {
+               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
+               !(mods_flow && mods_flow->done())) {
             osc::Profiler::instance().begin_frame();
             // A resized window: the UI's root frame follows it (M217h)
             if (renderer.take_resized()) {
@@ -582,6 +594,7 @@ std::optional<int> App::run_window() {
             }
 
             if (lan_game) lan_game->frame(ui_lua_state, sim_state.get());
+            if (mods_flow) mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get());
 
             // --load-flow-test: the saved game catches up -- never a replay
             // meanwhile -- then plays on a little and is saved again.
@@ -884,7 +897,10 @@ std::optional<int> App::run_window() {
                         // game's, goes with its controls and threads.
                         wld_provider.destroy_game_interface(uiL);
                         renderer.forget_ui_controls();
-                        reset_ui_state();
+                        // (with the game's mods, as its sim will have them)
+                        const std::string game_mods =
+                            launch_setup(uiL, recorded, launch_scenario, 0).mods;
+                        reset_ui_state(&game_mods);
                         uiL = ui_lua_state.raw();
                         publish_window_objects();
                         // The new state's loading screen has no game yet, even
@@ -1067,6 +1083,10 @@ std::optional<int> App::run_window() {
         if (lan_game) {
             lan_game->finish(sim_state.get());
             return finish_test_run("lan-game-test");
+        }
+        if (mods_flow) {
+            mods_flow->finish();
+            return finish_test_run("mods-flow-test");
         }
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(

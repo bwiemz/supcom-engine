@@ -4,6 +4,7 @@
 #include "app/app_internal.hpp"
 #include "core/front_end_data.hpp"
 #include "core/game_state.hpp"
+#include "lua/game_mods.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/session_manager.hpp"
 #include "lua/sim_loader.hpp"
@@ -15,6 +16,25 @@
 #include "lua/mp_net_state.hpp"
 
 namespace osc::app {
+
+osc::sim::GameSetup launch_setup(lua_State* uiL, const osc::sim::Replay* replay,
+                                 const std::string& scenario, osc::u64 seed) {
+    if (replay) return replay->setup; // the recorded game's own
+    osc::sim::GameSetup setup;
+    lua_pushstring(uiL, "__osc_front_end_data");
+    lua_rawget(uiL, LUA_REGISTRYINDEX);
+    auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
+    lua_pop(uiL, 1);
+    if (fed) {
+        const int top = lua_gettop(uiL);
+        fed->get(uiL, "sessionConfig");
+        if (lua_istable(uiL, -1)) setup = osc::lua::read_session_config(uiL, lua_gettop(uiL));
+        lua_settop(uiL, top);
+    }
+    setup.scenario = scenario;
+    setup.seed = seed;
+    return setup;
+}
 
 // ── Reload sequence: tears down old sim, creates fresh Lua VM + SimState,
 //    reloads blueprints/scenario, boots sim, rebuilds renderer scene. ──
@@ -61,7 +81,16 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         return false;
     }
 
-    // 5. Rebind BlueprintStore to new Lua state and reload blueprints
+    // The game's setup. Moho creates only the filled slots' armies, and
+    // retail InitializeArmies spawns an ACU for every army ListArmies()
+    // returns -- an army without a brain then runs its commander's scripts
+    // against no brain at all.
+    if (replay) seed = replay->setup.seed;
+    osc::sim::GameSetup setup = launch_setup(uiL, replay, launch_scenario, seed);
+
+    // 5. Rebind BlueprintStore to new Lua state and reload blueprints, with
+    // the game's mods (theirs, and their hooks of Blueprints.lua)
+    osc::lua::set_active_mods(sim_lua_state->raw(), setup.mods);
     store.rebind(sim_lua_state->raw());
     auto rebp_result = loader.load_blueprints(*sim_lua_state, vfs, store);
     if (!rebp_result) {
@@ -71,7 +100,6 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
 
     // 6. Create fresh SimState
     sim_state = std::make_unique<osc::sim::SimState>(sim_lua_state->raw(), &store);
-    if (replay) seed = replay->setup.seed;
     sim_state->set_seed(seed);
     sim_state->set_checksum_trace(g_checksum_trace);
     sim_state->set_entity_trace(g_entity_trace, g_entity_trace_from, g_entity_trace_to);
@@ -92,31 +120,6 @@ bool execute_reload_sequence(std::unique_ptr<osc::lua::LuaState>& sim_lua_state,
         std::make_unique<osc::sim::BoneCache>(&vfs, &store));
     sim_state->set_anim_cache(
         std::make_unique<osc::sim::AnimCache>(&vfs));
-
-    // The game's setup: the lobby's sessionConfig (which of the scenario's
-    // armies play, who plays each, the options), the scenario and the seed.
-    // Moho creates only the filled slots' armies, and retail InitializeArmies
-    // spawns an ACU for every army ListArmies() returns -- an army without a
-    // brain then runs its commander's scripts against no brain at all.
-    osc::sim::GameSetup setup;
-    if (replay) {
-        setup = replay->setup; // the recorded game's own
-    } else {
-        lua_pushstring(uiL, "__osc_front_end_data");
-        lua_rawget(uiL, LUA_REGISTRYINDEX);
-        auto* fed = static_cast<osc::FrontEndData*>(lua_touserdata(uiL, -1));
-        lua_pop(uiL, 1);
-        if (fed) {
-            const int top = lua_gettop(uiL);
-            fed->get(uiL, "sessionConfig");
-            if (lua_istable(uiL, -1)) setup = osc::lua::read_session_config(uiL, lua_gettop(uiL));
-            lua_settop(uiL, top);
-        }
-    }
-    if (!replay) {
-        setup.scenario = launch_scenario;
-        setup.seed = seed;
-    }
 
     // 8. Load scenario from selected map
     osc::lua::ScenarioLoader new_scenario_loader;

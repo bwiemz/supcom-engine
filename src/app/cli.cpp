@@ -56,6 +56,8 @@ void print_usage() {
               << "                     replay dialog does, and watch it to its end\n"
               << "  --load-flow-test   Offscreen: load the first listed saved game as retail's\n"
               << "                     Load dialog does, play on, and save it again\n"
+              << "  --mods-flow-test   Offscreen: a skirmish with the player's mods, launched\n"
+              << "                     as retail's lobby launches one, reporting what they did\n"
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
@@ -188,6 +190,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     // --load-flow-test: the Load dialog's path (the first saved game
     // GetSpecialFiles lists), caught up and saved again, offscreen.
     o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
+    // --mods-flow-test: a skirmish with the player's mods (M221b).
+    o.mods_flow_test = parse_flag(argc, argv, "--mods-flow-test");
     // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
     // processes play retail's LAN lobby to a game.
     o.lan_game_host = parse_flag(argc, argv, "--lan-game-host");
@@ -201,8 +205,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !quit.empty() && quit.size() <= 6 &&
         quit.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_quit_at = static_cast<u32>(std::stoi(quit));
-    o.scripted_window =
-        request.windowed || o.replay_flow_test || o.load_flow_test || o.lan_game_test();
+    o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
+                        o.mods_flow_test || o.lan_game_test();
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -263,7 +267,8 @@ const char* test_mode_flag(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
-                          arg != "--replay-flow-test" && arg != "--load-flow-test";
+                          arg != "--replay-flow-test" && arg != "--load-flow-test" &&
+                          arg != "--mods-flow-test";
         if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
             arg == "--lan-host" || arg == "--lan-join")
             return argv[i];

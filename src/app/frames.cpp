@@ -3,6 +3,7 @@
 
 #include "app/app_internal.hpp"
 #include "core/game_state.hpp"
+#include "lua/game_mods.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/script_loader.hpp"
 #include "blueprints/blueprint_store.hpp"
@@ -207,11 +208,14 @@ void dispatch_selection_change(lua_State* uL, std::unordered_set<osc::u32>& prev
 
 /// Moho's world-UI start (see ui::WldUIProvider): the user side of the
 /// sync channel (/lua/UserSync.lua and its hooks: OnSync, a fresh Sync and
-/// UnitData) is loaded for the new session, then uimain.StartGameUI makes the
-/// Lua provider, whose loading dialog shows while the world loads.
+/// UnitData) is loaded for the new session -- by its SessionInit.lua, when
+/// the state ran that -- then uimain.StartGameUI makes the Lua provider,
+/// whose loading dialog shows while the world loads.
 void begin_world_ui(lua_State* uiL, osc::ui::WldUIProvider& wld) {
-    if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
-        spdlog::warn("UserSync.lua: {}", r.error().message);
+    if (!osc::lua::session_init_ran(uiL)) {
+        if (auto r = osc::lua::run_vfs_script(uiL, "/lua/UserSync.lua"); !r)
+            spdlog::warn("UserSync.lua: {}", r.error().message);
+    }
     osc::core::call_start_game_ui(uiL);
     wld.start_loading_dialog(uiL);
 }

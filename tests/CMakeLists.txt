@@ -6,6 +6,7 @@ add_executable(osc_tests
     test_game_install.cpp
     test_script_hooks.cpp
     test_lua_bytes.cpp
+    test_game_mods.cpp
     test_blueprint_categories.cpp
     test_category_expr.cpp
     test_scm_bones.cpp
