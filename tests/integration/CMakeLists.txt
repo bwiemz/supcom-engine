@@ -243,6 +243,16 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 600)
+    # M220c: the same, each game reaching the other as through FAF's ICE
+    # adapter: a UDP relay standing for each player, losing 5% of what it
+    # carries. Ports 29771-29776.
+    add_test(NAME data.gpgnet_game_relayed
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_game.py
+                     $<TARGET_FILE:opensupcom> 29771 --relay-loss 0.05)
+    set_tests_properties(data.gpgnet_game_relayed PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────

@@ -53,7 +53,7 @@ template <typename Seen> bool poll_until(sim::LobbyNet& net, i64 wait_ms, Seen s
 std::unique_ptr<sim::LobbyNet> lobby_to_launch(bool is_host, const std::string& address, u16 port,
                                                u32& joiner_uid) {
     if (is_host) {
-        auto net = std::make_unique<sim::LobbyNet>("Host", 1);
+        auto net = std::make_unique<sim::LobbyNet>("Host", 1, sim::LobbyTransport::Udp);
         if (!net->host(port, kHostedTime)) {
             spdlog::error("[mp] host: can't listen on port {}", port);
             return nullptr;
@@ -75,7 +75,7 @@ std::unique_ptr<sim::LobbyNet> lobby_to_launch(bool is_host, const std::string& 
 
     const i64 deadline = lua::net_lobby_clock_ms() + 30000;
     while (lua::net_lobby_clock_ms() < deadline) {
-        auto net = std::make_unique<sim::LobbyNet>("Joiner", 1);
+        auto net = std::make_unique<sim::LobbyNet>("Joiner", 1, sim::LobbyTransport::Udp);
         if (!net->join(address, port)) {
             spdlog::error("[mp] joiner: {} is no address", address);
             return nullptr;
@@ -101,11 +101,11 @@ std::unique_ptr<sim::LobbyNet> lobby_to_launch(bool is_host, const std::string& 
 
 // ── Two processes in lockstep over a lobby's connections (M218g) ──
 // One process runs `--mp-host`, another `--mp-join <addr>`: a lobby hosted and
-// joined over real TCP, launched as a lobby's LaunchGame launches (its
-// connections become the game's: mp_begin_lobby_game, mp_attach_session), then
-// identical minimal sims in lockstep. The host issues scripted player orders
-// through the same route_command path the game uses. Each side reports its
-// final tick and checksum; desynced=0 on both processes is a synced match.
+// joined over real UDP (the reliable streams games play over, M220c), launched as a lobby's
+// LaunchGame launches (its connections become the game's: mp_begin_lobby_game, mp_attach_session),
+// then identical minimal sims in lockstep. The host issues scripted player orders through the same
+// route_command path the game uses. Each side reports its final tick and checksum; desynced=0 on
+// both processes is a synced match.
 // --mp-slow <ms>: the joiner takes that long a round, and must set the
 // game's pace rather than be dropped (M218h).
 int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, osc::u32 frames,

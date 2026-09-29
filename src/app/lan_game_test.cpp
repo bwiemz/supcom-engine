@@ -62,20 +62,20 @@ double number_global(lua_State* L, const char* name) {
     return v;
 }
 
-/// Whether something listens at `address`:`port` (a loopback connect
-/// answers at once).
-bool listening(const std::string& address, u16 port) {
+/// Whether the host's lobby is up on `port`: retail's LAN lobby is over UDP
+/// (M220c), and the host's socket holds the port, so binding it fails.
+bool listening(u16 port) {
     namespace net = sim::net;
     net::startup();
-    const net::socket_t s = socket(AF_INET, SOCK_STREAM, 0);
+    const net::socket_t s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s == net::kInvalidSocket) return false;
-    sockaddr_in to{};
-    to.sin_family = AF_INET;
-    to.sin_port = htons(port);
-    const bool ok = inet_pton(AF_INET, address.c_str(), &to.sin_addr) == 1 &&
-                    connect(s, reinterpret_cast<const sockaddr*>(&to), sizeof(to)) == 0;
+    sockaddr_in at{};
+    at.sin_family = AF_INET;
+    at.sin_addr.s_addr = htonl(INADDR_ANY);
+    at.sin_port = htons(port);
+    const bool taken = bind(s, reinterpret_cast<const sockaddr*>(&at), sizeof(at)) != 0;
     net::close_socket(s);
-    return ok;
+    return taken;
 }
 
 /// This player's slot readied; the humans and how many are ready counted,
@@ -318,7 +318,7 @@ void LanGameTest::lobby_frame(lua::LuaState& ui) {
             done_ = true;
             return;
         }
-        if (frames_ % 30 != 0 || !listening(address_, port_)) return;
+        if (frames_ % 30 != 0 || !listening(port_)) return;
         auto r = ui.do_string(fmt::format(R"(
             local lobby = import('/lua/ui/lobby/lobby.lua')
             lobby.CreateLobby('UDP', 0, 'LanJoiner', nil, nil, GetFrame(0), function() end)

@@ -1,6 +1,7 @@
 #include "sim/lobby_net.hpp"
 
 #include "sim/net_transport.hpp" // extract_wire_frames, kMaxWireMessage
+#include "sim/reliable_udp.hpp"
 #include "sim/socket_platform.hpp"
 
 #include <spdlog/spdlog.h>
@@ -132,9 +133,14 @@ template <typename Taken> std::string unique_name(const std::string& name, const
     return valid;
 }
 
-/// One TCP connection, framed.
+/// One connection, framed: a TCP socket's, or a reliable stream over UDP's.
 struct Conn {
     socket_t fd = kInvalidSocket;
+    /// Over UDP (M220c): the lobby's streams, and this one's id (0: a
+    /// joiner's, to be opened to `to` at the next poll)
+    ReliableUdp* udp = nullptr;
+    u32 stream = 0;
+    UdpAddress to;
     std::vector<u8> rbuf;
     std::vector<std::vector<u8>> frames;
     bool connecting = false;       ///< a client's non-blocking connect, not yet done
@@ -144,15 +150,29 @@ struct Conn {
     u32 ping_ms = 0;
     i64 last_ping = -1;
 
-    bool open() const { return fd != kInvalidSocket; }
+    bool open() const {
+        if (!udp) return fd != kInvalidSocket;
+        if (stream == 0) return true;
+        const auto state = udp->state(stream);
+        return state == ReliableUdp::State::Connecting || state == ReliableUdp::State::Open;
+    }
+    bool is_connecting() const {
+        if (!udp) return connecting;
+        return stream == 0 || udp->state(stream) == ReliableUdp::State::Connecting;
+    }
     void close() {
+        if (udp) {
+            if (stream != 0) udp->close(stream); // what was sent still goes
+            udp = nullptr;
+            stream = 0;
+        }
         net::close_socket(fd);
         fd = kInvalidSocket;
         rbuf.clear();
     }
     /// Send one message; closes the connection if it fails.
     bool send(const std::vector<u8>& msg) {
-        if (!open() || connecting) return false;
+        if (!open() || is_connecting()) return false;
         if (msg.size() > kMaxWireMessage) {
             spdlog::error("[lobby] not sending a {}-byte message: over the {}-byte limit",
                           msg.size(), kMaxWireMessage);
@@ -160,7 +180,9 @@ struct Conn {
         }
         std::vector<u8> framed;
         net::frame_message(framed, msg);
-        if (!net::send_all(fd, framed.data(), framed.size())) {
+        const bool sent = udp ? udp->send(stream, framed.data(), framed.size())
+                              : net::send_all(fd, framed.data(), framed.size());
+        if (!sent) {
             close();
             return false;
         }
@@ -171,13 +193,27 @@ struct Conn {
 /// Read whatever the open connections have, into their frames; a closed or
 /// misbehaving connection is closed.
 void read_all(std::vector<Conn*>& conns) {
+    // Streams over UDP: what came in order (the lobby's pump read the port);
+    // what came before a goodbye counts
+    for (Conn* c : conns) {
+        if (!c->udp || c->stream == 0) continue;
+        const auto got = c->udp->take_received(c->stream);
+        c->rbuf.insert(c->rbuf.end(), got.begin(), got.end());
+        if (!extract_wire_frames(c->rbuf, c->frames)) {
+            spdlog::warn("[lobby] a peer announced a message over {} bytes; dropping it",
+                         kMaxWireMessage);
+            c->close();
+        } else if (c->udp->state(c->stream) == ReliableUdp::State::Closed) {
+            c->close();
+        }
+    }
     for (;;) {
         fd_set fds;
         FD_ZERO(&fds);
         socket_t maxfd = 0;
         bool any = false;
         for (Conn* c : conns) {
-            if (!c->open() || c->connecting) continue;
+            if (c->udp || !c->open() || c->connecting) continue;
             FD_SET(c->fd, &fds);
             maxfd = std::max(maxfd, c->fd);
             any = true;
@@ -187,7 +223,7 @@ void read_all(std::vector<Conn*>& conns) {
         if (select(static_cast<int>(maxfd) + 1, &fds, nullptr, nullptr, &tv) <= 0) return;
         bool progressed = false;
         for (Conn* c : conns) {
-            if (!c->open() || c->connecting || !FD_ISSET(c->fd, &fds)) continue;
+            if (c->udp || !c->open() || c->connecting || !FD_ISSET(c->fd, &fds)) continue;
             u8 tmp[4096];
             const int n =
                 static_cast<int>(recv(c->fd, reinterpret_cast<char*>(tmp), sizeof(tmp), 0));
@@ -220,7 +256,13 @@ struct LobbyNet::Impl {
     bool is_host = false;
     bool welcomed = false;
     bool done = false; ///< a client refused, kicked or cut off: nothing more comes
+    bool join_said = false; ///< a client over UDP: its Join has gone
     socket_t listen_fd = kInvalidSocket;
+    /// Over UDP (M220c): the lobby's port, and the streams over it (they
+    /// go first: the connections' streams say goodbye)
+    LobbyTransport transport = LobbyTransport::Tcp;
+    std::unique_ptr<UdpSocketPort> udp_port;
+    std::unique_ptr<ReliableUdp> udp;
     u32 next_uid = 1;
     // The host's: one per player (and not-yet-joined connection). A client's:
     // its one to the host.
@@ -275,9 +317,11 @@ struct LobbyNet::Impl {
     void host_frame(Conn& c, const std::vector<u8>& f, i64 now, std::vector<LobbyEvent>& events);
 };
 
-LobbyNet::LobbyNet(std::string local_name, u32 max_connections) : impl_(std::make_unique<Impl>()) {
+LobbyNet::LobbyNet(std::string local_name, u32 max_connections, LobbyTransport transport)
+    : impl_(std::make_unique<Impl>()) {
     impl_->local_name = std::move(local_name);
     impl_->max_connections = max_connections;
+    impl_->transport = transport;
 }
 
 LobbyNet::~LobbyNet() = default;
@@ -288,6 +332,24 @@ void LobbyNet::set_local_uid(u32 uid) {
 
 bool LobbyNet::host(u16 port, u64 hosted_time) {
     net::startup();
+    const auto hosting = [&](u16 bound) {
+        impl_->port = bound;
+        impl_->is_host = true;
+        impl_->local_uid = impl_->wanted_uid.value_or(0);
+        impl_->host_uid = impl_->local_uid;
+        impl_->hosted_time = hosted_time;
+        impl_->local_name = valid_player_name(impl_->local_uid, impl_->local_name);
+    };
+    if (impl_->transport == LobbyTransport::Udp) {
+        auto udp_port = std::make_unique<UdpSocketPort>();
+        if (!udp_port->open(port)) return false;
+        impl_->udp = std::make_unique<ReliableUdp>(*udp_port);
+        impl_->udp->listen(true);
+        impl_->udp->run_in_background(); // alive while the frame loads a map
+        hosting(udp_port->port());
+        impl_->udp_port = std::move(udp_port);
+        return true;
+    }
     socket_t s = socket(AF_INET, SOCK_STREAM, 0);
     if (s == kInvalidSocket) return false;
     int one = 1;
@@ -301,19 +363,31 @@ bool LobbyNet::host(u16 port, u64 hosted_time) {
         return false;
     }
     socklen_t alen = sizeof(addr);
+    u16 bound = port;
     if (getsockname(s, reinterpret_cast<sockaddr*>(&addr), &alen) == 0)
-        impl_->port = ntohs(addr.sin_port);
+        bound = ntohs(addr.sin_port);
     impl_->listen_fd = s;
-    impl_->is_host = true;
-    impl_->local_uid = impl_->wanted_uid.value_or(0);
-    impl_->host_uid = impl_->local_uid;
-    impl_->hosted_time = hosted_time;
-    impl_->local_name = valid_player_name(impl_->local_uid, impl_->local_name);
+    hosting(bound);
     return true;
 }
 
-bool LobbyNet::join(const std::string& address, u16 port) {
+bool LobbyNet::join(const std::string& address, u16 port, u16 local_port) {
     net::startup();
+    if (impl_->transport == LobbyTransport::Udp) {
+        const auto to = UdpAddress::parse(address, port);
+        auto udp_port = std::make_unique<UdpSocketPort>();
+        if (!to || !udp_port->open(local_port)) return false;
+        impl_->udp = std::make_unique<ReliableUdp>(*udp_port);
+        impl_->udp->run_in_background(); // alive while the frame loads a map
+        impl_->udp_port = std::move(udp_port);
+        Conn c;
+        c.udp = impl_->udp.get();
+        c.to = *to; // opened at the next poll, which has the clock
+        impl_->conns.push_back(std::move(c));
+        impl_->port = port;
+        impl_->is_host = false;
+        return true;
+    }
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -380,13 +454,18 @@ std::vector<std::vector<u8>> LobbyNet::take_game() {
 void LobbyNet::stop_joining() {
     net::close_socket(impl_->listen_fd);
     impl_->listen_fd = kInvalidSocket;
+    if (impl_->udp) impl_->udp->listen(false);
 }
 
 std::vector<LobbyEvent> LobbyNet::poll(i64 now_ms) {
     std::vector<LobbyEvent> events;
     std::swap(events, impl_->pending);
+    // Over UDP: what came, before the lobby reads it; and after, what the
+    // lobby answered goes at once
+    if (impl_->udp) impl_->udp->pump(now_ms);
     if (impl_->is_host) impl_->host_poll(now_ms, events);
     else if (!impl_->conns.empty()) impl_->client_poll(now_ms, events);
+    if (impl_->udp) impl_->udp->pump(now_ms);
     return events;
 }
 
@@ -405,6 +484,15 @@ void LobbyNet::Impl::host_poll(i64 now, std::vector<LobbyEvent>& events) {
         c.fd = s;
         c.last_heard = now;
         conns.push_back(std::move(c));
+    }
+    if (udp) {
+        for (const u32 id : udp->take_accepted()) {
+            Conn c;
+            c.udp = udp.get();
+            c.stream = id;
+            c.last_heard = now;
+            conns.push_back(std::move(c));
+        }
     }
     std::vector<Conn*> open;
     open.reserve(conns.size());
@@ -539,7 +627,33 @@ void LobbyNet::Impl::client_poll(i64 now, std::vector<LobbyEvent>& events) {
     if (done) return;
     if (join_started < 0) join_started = now;
     // The connection, completing
-    if (host.connecting) {
+    const auto say_join = [&] {
+        host.last_heard = now;
+        host.send(Writer(Msg::Join)
+                      .str(local_name)
+                      .u8v(wanted_uid ? 1 : 0)
+                      .u32v(wanted_uid.value_or(0))
+                      .out());
+    };
+    if (host.udp && !join_said) {
+        // Over UDP: a hello until the host answers (a pump may open the
+        // stream before this looks, so what is kept is whether Join went)
+        if (host.stream == 0) host.stream = udp->connect(host.to, now);
+        const auto state = udp->state(host.stream);
+        if (state == ReliableUdp::State::Open) {
+            say_join();
+            join_said = true;
+        } else if (state == ReliableUdp::State::Closed) {
+            host.close();
+        }
+        if (host.open() && !join_said && now - join_started > kJoinTimeoutMs) host.close();
+        if (!host.open()) {
+            done = true;
+            events.push_back({LobbyEvent::Kind::ConnectionFailed, 0, {}, "HostLeft", {}});
+            return;
+        }
+        if (!join_said) return;
+    } else if (!host.udp && host.connecting) {
         // Done, one way or the other: writable, or (Winsock reports a failed
         // connect only there) in the exception set
         fd_set wfds;
@@ -559,12 +673,7 @@ void LobbyNet::Impl::client_poll(i64 now, std::vector<LobbyEvent>& events) {
                 host.connecting = false;
                 net::set_blocking(host.fd, true);
                 net::configure_stream(host.fd);
-                host.last_heard = now;
-                host.send(Writer(Msg::Join)
-                              .str(local_name)
-                              .u8v(wanted_uid ? 1 : 0)
-                              .u32v(wanted_uid.value_or(0))
-                              .out());
+                say_join();
             }
         }
         if (host.open() && host.connecting && now - join_started > kJoinTimeoutMs) host.close();

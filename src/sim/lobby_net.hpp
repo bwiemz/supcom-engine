@@ -50,6 +50,10 @@ struct LobbyEvent {
     std::vector<u8> payload;
 };
 
+/// What a lobby's connections run over: TCP, or reliable streams over UDP
+/// (M220c: FAF's ICE adapter relays UDP only, and Moho's "UDP" lobby is UDP).
+enum class LobbyTransport : u8 { Tcp, Udp };
+
 class LobbyNet {
 public:
     /// Everyone: this uid (an addressed message's broadcast target).
@@ -61,7 +65,8 @@ public:
 
     /// `max_connections`: the players who may join (Moho's maxConnections;
     /// one more is refused with "LobbyFull").
-    LobbyNet(std::string local_name, u32 max_connections);
+    LobbyNet(std::string local_name, u32 max_connections,
+             LobbyTransport transport = LobbyTransport::Tcp);
     ~LobbyNet();
     LobbyNet(const LobbyNet&) = delete;
     LobbyNet& operator=(const LobbyNet&) = delete;
@@ -79,8 +84,9 @@ public:
     bool host(u16 port, u64 hosted_time);
     /// Join the host at `address` (dotted IPv4) and `port`. The connection
     /// completes, and the welcome comes, through poll(). False if `address`
-    /// is no address or no socket can be made.
-    bool join(const std::string& address, u16 port);
+    /// is no address or no socket can be made. Over UDP the lobby's own
+    /// port is `local_port` (0: any), where an ICE adapter sends to it.
+    bool join(const std::string& address, u16 port, u16 local_port = 0);
 
     /// Send `payload` to one peer, or to kEveryone.
     void send(u32 to, const std::vector<u8>& payload);

@@ -3,6 +3,7 @@
 // (M218c) the launched game's frames over the same connections.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "sim/lobby_net.hpp"
 #include "sim/lockstep_session.hpp"
@@ -31,11 +32,15 @@ namespace {
 
 using Kind = LobbyEvent::Kind;
 
+/// What the lobbies of the test running are over: each test runs over TCP,
+/// then over reliable UDP (M220c).
+osc::sim::LobbyTransport g_transport = osc::sim::LobbyTransport::Tcp;
+
 /// A lobby and everything it has reported.
 struct Side {
     LobbyNet net;
     std::vector<LobbyEvent> events;
-    Side(const std::string& name, osc::u32 max = 8) : net(name, max) {}
+    Side(const std::string& name, osc::u32 max = 8) : net(name, max, g_transport) {}
     bool saw(Kind kind, osc::u32 uid) const {
         for (const LobbyEvent& e : events)
             if (e.kind == kind && e.uid == uid) return true;
@@ -76,6 +81,7 @@ std::vector<osc::u8> bytes(const std::string& s) {
 } // namespace
 
 TEST_CASE("Players join a hosted lobby: uids, names and the peer lists (M218a)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host");
     REQUIRE(host.net.host(0, 1234567));
     REQUIRE(host.net.hosting());
@@ -109,6 +115,7 @@ TEST_CASE("Players join a hosted lobby: uids, names and the peer lists (M218a)",
 }
 
 TEST_CASE("Lobby data goes to one player or everyone, through the host (M218a)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host");
     REQUIRE(host.net.host(0, 1));
     Side a("A");
@@ -144,6 +151,7 @@ TEST_CASE("Lobby data goes to one player or everyone, through the host (M218a)",
 }
 
 TEST_CASE("A full lobby refuses; an ejected player and the others hear of it (M218a)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host", 1);
     REQUIRE(host.net.host(0, 1));
     Side a("A");
@@ -170,6 +178,7 @@ TEST_CASE("A full lobby refuses; an ejected player and the others hear of it (M2
 }
 
 TEST_CASE("A player leaving, and the host leaving (M218a)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     auto host = std::make_unique<Side>("Host");
     REQUIRE(host->net.host(0, 1));
     Side a("A");
@@ -196,6 +205,7 @@ TEST_CASE("A player leaving, and the host leaving (M218a)", "[lobby]") {
 }
 
 TEST_CASE("The host survives sending to a player gone without a goodbye", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host");
     REQUIRE(host.net.host(0, 1));
     auto a = std::make_unique<Side>("A");
@@ -220,6 +230,7 @@ TEST_CASE("The host survives sending to a player gone without a goodbye", "[lobb
 }
 
 TEST_CASE("Joining nowhere fails; pings measure the host (M218a)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     // No address at all: refused at once
     Side nowhere("Nowhere");
     REQUIRE_FALSE(nowhere.net.join("not an address", 1));
@@ -266,6 +277,7 @@ void take(Side& side, Frames& into) {
 
 TEST_CASE("A launched game's frames reach every other player, apart from the data (M218c)",
           "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host");
     REQUIRE(host.net.host(0, 1));
     Side a("Alice");
@@ -302,6 +314,7 @@ TEST_CASE("A launched game's frames reach every other player, apart from the dat
 }
 
 TEST_CASE("Once the game starts the host takes no more joins (M218c)", "[lobby]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     Side host("Host");
     REQUIRE(host.net.host(0, 1));
     Side a("Alice");
@@ -347,6 +360,7 @@ osc::u32 spawn_mover(osc::sim::SimState& sim) {
 } // namespace
 
 TEST_CASE("Three sims play in lockstep over the lobby's connections (M218c)", "[lobby][lockstep]") {
+    g_transport = GENERATE(osc::sim::LobbyTransport::Tcp, osc::sim::LobbyTransport::Udp);
     using osc::sim::LobbyGameTransport;
     using osc::sim::LockstepSession;
     using osc::sim::SimState;
