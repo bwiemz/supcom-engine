@@ -4,10 +4,12 @@
 #include "vfs/path_utils.hpp"
 #include "vfs/virtual_file_system.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace osc::vfs;
 namespace fs = std::filesystem;
@@ -153,4 +155,34 @@ TEST_CASE("VFS reads through a mixed-case directory mount", "[vfs][paths]") {
     auto data = vfs.read_file("/lua/system/config.lua");
     REQUIRE(data.has_value());
     CHECK(to_string(*data) == "cfg");
+}
+
+TEST_CASE("find_files searches mounts below the directory too", "[vfs][paths]") {
+    // Retail's init file mounts each of the player's mods at /mods/<name>
+    // (and maps at /maps/<name>); DiskFindFiles('/mods', '*mod_info.lua')
+    // must find them beside those an archive mounted at / holds.
+    TempDir tmp;
+    write_file(tmp.path / "base" / "mods" / "Shipped" / "mod_info.lua", "a");
+    write_file(tmp.path / "user" / "MyMod" / "mod_info.lua", "b");
+    write_file(tmp.path / "user" / "MyMod" / "hook" / "lua" / "x.lua", "c");
+    write_file(tmp.path / "modsextra" / "mod_info.lua", "d");
+
+    VirtualFileSystem vfs;
+    vfs.mount("/", std::make_unique<DirectoryMount>(tmp.path / "base"));
+    vfs.mount("/mods/mymod", std::make_unique<DirectoryMount>(tmp.path / "user" / "MyMod"));
+    // Not below /mods: /modsextra only shares its first letters
+    vfs.mount("/modsextra", std::make_unique<DirectoryMount>(tmp.path / "modsextra"));
+
+    auto found = vfs.find_files("/mods", "*mod_info.lua");
+    std::sort(found.begin(), found.end());
+    CHECK(found ==
+          std::vector<std::string>{"/mods/mymod/mod_info.lua", "/mods/shipped/mod_info.lua"});
+    // ...and from the root, every mount
+    auto all = vfs.find_files("/", "*.lua");
+    std::sort(all.begin(), all.end());
+    CHECK(all == std::vector<std::string>{"/mods/mymod/hook/lua/x.lua", "/mods/mymod/mod_info.lua",
+                                          "/mods/shipped/mod_info.lua", "/modsextra/mod_info.lua"});
+    // A directory inside the mount, as before
+    CHECK(vfs.find_files("/mods/mymod/hook", "*.lua") ==
+          std::vector<std::string>{"/mods/mymod/hook/lua/x.lua"});
 }
