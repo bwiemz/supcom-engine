@@ -601,11 +601,13 @@ std::optional<int> App::run_window() {
                 mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(),
                                  renderer.ui_dispatch(), ui_registry);
 
-            // --load-flow-test: the saved game catches up -- never a replay
-            // meanwhile -- then plays on a little and is saved again.
+            // --load-flow-test: the saved game is restored, or catches up --
+            // never a replay meanwhile -- then plays on a little and is saved
+            // again.
             if (opt.load_flow_test && !load_flow_done) {
                 ++load_flow_frames;
-                if (sim_state && sim_state->resuming() && !load_flow_saw_catch_up) {
+                if (sim_state && (sim_state->resuming() || restored_at) &&
+                    !load_flow_saw_catch_up) {
                     load_flow_saw_catch_up = true;
                     auto r = ui_lua_state.do_string(
                         "if SessionIsReplay() then error('SessionIsReplay() is true while a "
@@ -613,7 +615,9 @@ std::optional<int> App::run_window() {
                     if (!r) osc::test_status::fail("[FAIL] load-flow: {}", r.error().message);
                 }
                 if (sim_state && load_flow_saw_catch_up && !catch_up && !load_flow_resumed_at) {
-                    load_flow_resumed_at = sim_state->tick_count();
+                    // (a restore resumes at its saved tick, whatever the
+                    // frame has run since)
+                    load_flow_resumed_at = restored_at ? *restored_at : sim_state->tick_count();
                     load_flow_resumes.push_back(*load_flow_resumed_at);
                 }
                 const bool played_on = sim_state && load_flow_resumed_at &&
@@ -877,6 +881,7 @@ std::optional<int> App::run_window() {
                         save_last_game(); // the game being left, if any
                         active_playback.reset();
                         catch_up.reset();
+                        restored_at.reset();
 
                         // The game gets a fresh UI state, as Moho gives each
                         // game one (M191 step 4): the front end's, or the last
@@ -904,12 +909,15 @@ std::optional<int> App::run_window() {
                         renderer.render_ui_only(ui_lua_state.raw(), &ui_registry);
 
                         // Execute reload in stages, pumping UI frames between each
-                        execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs, store,
-                                                loader, config, scenario_meta, game_state_mgr,
-                                                &renderer, &ui_store, &input_handler,
-                                                &prev_selection, &world_interp,
-                                                launch_seed(opt.seed_arg, opt.reproducible_run),
-                                                sim_accumulator, launch_scenario, recorded);
+                        const auto reload = [&] {
+                            execute_reload_sequence(sim_lua_state, sim_state, ui_lua_state, vfs,
+                                                    store, loader, config, scenario_meta,
+                                                    game_state_mgr, &renderer, &ui_store,
+                                                    &input_handler, &prev_selection, &world_interp,
+                                                    launch_seed(opt.seed_arg, opt.reproducible_run),
+                                                    sim_accumulator, launch_scenario, recorded);
+                        };
+                        reload();
                         if (launch_replay && sim_state) {
                             // Watched as an observer, as the replay plays.
                             active_playback.emplace(std::move(*launch_replay));
@@ -919,14 +927,26 @@ std::optional<int> App::run_window() {
                             lua_rawset(uiL, LUA_REGISTRYINDEX);
                         }
                         if (launch_save && sim_state) {
-                            // The player's game, caught up first; recorded
-                            // from its start (once its orders and command
-                            // delay are queued), so it saves again whole.
-                            catch_up.emplace(std::move(launch_save->game));
-                            catch_up->resume(*sim_state);
-                            sim_state->set_recording(true);
-                            spdlog::info("Saved game '{}': catching up to tick {}",
-                                         launch_save->name, launch_save->tick);
+                            // The player's game, restored from its snapshot
+                            // (M208c). Without one, or if the restore fails
+                            // (the sim it spoiled booted again), caught up
+                            // from its history instead; recorded from its
+                            // start (once its orders and command delay are
+                            // queued), so it saves again whole.
+                            std::string why;
+                            const Restore result = restore_save(*launch_save, why);
+                            if (result == Restore::Failed) {
+                                spdlog::warn("Saved game '{}': not restored ({}); catching up",
+                                             launch_save->name, why);
+                                reload();
+                            }
+                            if (result != Restore::Done && sim_state) {
+                                catch_up.emplace(std::move(launch_save->game));
+                                catch_up->resume(*sim_state);
+                                sim_state->set_recording(true);
+                                spdlog::info("Saved game '{}': catching up to tick {} ({})",
+                                             launch_save->name, launch_save->tick, why);
+                            }
                         }
 
                         // Reset per-session state for the new game

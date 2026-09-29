@@ -6,6 +6,9 @@
 #include "lua/smoke_test.hpp"
 #include "platform/crash_handler.hpp"
 
+#include "sim/sim_snapshot.hpp"
+
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -141,6 +144,40 @@ int App::run() {
         if (auto code = run_window()) return *code;
     }
     return run_headless();
+}
+
+App::Restore App::restore_save(const sim::SavedGame& save, std::string& why) {
+    if (save.snapshot.empty()) {
+        why = "it has no snapshot";
+        return Restore::Skipped;
+    }
+    const auto key = special_files ? special_files->snapshot_key() : std::nullopt;
+    if (!key || !sim::snapshot_signed(save, *key)) {
+        why = "its snapshot isn't this installation's";
+        return Restore::Skipped;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    if (std::string err = sim::load_snapshot(*sim_state, save.snapshot); !err.empty()) {
+        why = err;
+        return Restore::Failed;
+    }
+    // The restored game is the saved one: its history is its recording
+    // (a later save carries the whole game), and its checksum is the one
+    // that history holds for the saved tick.
+    sim_state->set_recording(true);
+    sim_state->adopt_history(save.game);
+    const auto& sums = save.game.checksums;
+    const u64 at =
+        save.tick >= save.game.checksum_from ? save.tick - save.game.checksum_from : sums.size();
+    if (at >= sums.size() || sim_state->compute_sync_checksum() != sums[at]) {
+        why = "it isn't the saved game (its checksum at tick " + std::to_string(save.tick) + ")";
+        return Restore::Failed;
+    }
+    restored_at = save.tick;
+    spdlog::info("Saved game '{}': restored at tick {} in {:.0f} ms", save.name, save.tick,
+                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                     .count());
+    return Restore::Done;
 }
 
 bool App::check_catch_up() {
