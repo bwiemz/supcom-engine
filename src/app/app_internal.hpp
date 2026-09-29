@@ -224,6 +224,9 @@ private:
 
     // window.cpp. A value ends the run.
     std::optional<int> run_window();
+    /// The windowed run: its loop's state and its frame's phases
+    /// (window_loop.hpp, M192 step 2c).
+    class Window;
 
     // headless.cpp
     int run_headless();
