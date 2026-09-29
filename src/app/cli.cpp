@@ -220,10 +220,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.ai_army_count = static_cast<size_t>(std::max(1, std::atoi(n.c_str())));
     }
 
-    // Collect all command-line args for HasCommandLineArg (M147d)
-    for (int i = 1; i < argc; ++i) {
-        o.cmdline_args.insert(argv[i]);
-    }
+    // The command line, for HasCommandLineArg (M147d) and GetCommandLineArg
+    for (int i = 1; i < argc; ++i) o.cmdline_args.emplace_back(argv[i]);
 
     // A checked run: headless, and its exit code is the checks' result (a
     // test mode, or an AI game whose script errors count).

@@ -248,6 +248,18 @@ void eject_session_client(lua_State* L) {
     if (mp.session) mp.session->eject(static_cast<u32>(index));
 }
 
+EjectByUid eject_session_uid(u32 uid) {
+    auto& mp = mp_net_state();
+    if (!mp.session) return EjectByUid::NoGame;
+    for (size_t i = 0; i < mp.clients.size(); ++i) {
+        if (mp.clients[i].uid != uid) continue;
+        if (i == mp.local_source) return EjectByUid::Local;
+        mp.session->eject(static_cast<u32>(i));
+        return EjectByUid::Ejected;
+    }
+    return EjectByUid::NoSuchClient;
+}
+
 void pump_disconnect_dialog(lua_State* L) {
     if (!session_is_multiplayer()) return; // one local client: never shown
     const int top = lua_gettop(L);

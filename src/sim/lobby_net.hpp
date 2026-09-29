@@ -41,6 +41,7 @@ struct LobbyEvent {
         PeerJoined,       ///< uid, name
         PeerLeft,         ///< uid, name
         Data,             ///< from uid (and name): payload
+        PeerEstablished,  ///< the host's: player uid reaches everyone it knows of
     };
     Kind kind{};
     u32 uid = 0;
@@ -65,7 +66,14 @@ public:
     LobbyNet(const LobbyNet&) = delete;
     LobbyNet& operator=(const LobbyNet&) = delete;
 
-    /// Listen on `port` (0: any free one) as the host, uid 0. `hosted_time`
+    /// The uid a matchmaking client gave this player (GPGNet, M220b), before
+    /// hosting or joining: the host takes it as its own, and a joiner asks
+    /// the host for it (one taken is refused, "UidTaken"). Without it, the
+    /// host is 0 and numbers the players who join 1, 2, ...
+    void set_local_uid(u32 uid);
+
+    /// Listen on `port` (0: any free one) as the host (uid 0, or the one
+    /// set). `hosted_time`
     /// goes to each player in their welcome (FA seeds the game with it).
     /// False if the port can't be listened on.
     bool host(u16 port, u64 hosted_time);
@@ -80,6 +88,13 @@ public:
     /// The host: remove a player, telling them `reason`. False for no such
     /// player, or not hosting.
     bool eject(u32 uid, const std::string& reason);
+
+    /// A client, once its own part of joining is done (the scripts have had
+    /// its ConnectionToHostEstablished, and sent what they send then): it
+    /// tells the host it reaches everyone it knows of, as Moho's clients
+    /// report the peers they have established (M220b). The host hears it
+    /// after the client's data.
+    void report_established();
 
     /// A launched game's lockstep frames (M218c), apart from the scripts'
     /// data: to every other player (the host relays a client's).

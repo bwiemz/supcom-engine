@@ -1469,8 +1469,16 @@ static int l_InternalCreateLobby(lua_State* L) {
         const double port = lua_type(L, 3) == LUA_TNUMBER ? lua_tonumber(L, 3) : 0.0;
         const double max_connections = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 8.0;
         const std::string name = lua_type(L, 5) == LUA_TSTRING ? lua_tostring(L, 5) : "Player";
+        // The player's uid, a matchmaking client's (GPGNet: "42"); retail's
+        // LAN screens give none, and the host numbers its players (M220b)
+        std::optional<u32> uid;
+        if (lua_isnumber(L, 6)) { // a number, or a string of one
+            const double v = lua_tonumber(L, 6);
+            if (v >= 0 && v < 4294967295.0 && v == static_cast<double>(static_cast<u32>(v)))
+                uid = static_cast<u32>(v);
+        }
         make_net_lobby(L, -1, protocol, static_cast<u16>(std::clamp(port, 0.0, 65535.0)),
-                       static_cast<u32>(std::max(0.0, max_connections)), name);
+                       static_cast<u32>(std::max(0.0, max_connections)), name, uid);
     }
 
     spdlog::debug("InternalCreateLobby: created ({})", protocol);
@@ -3845,13 +3853,55 @@ static int l_SetFrontEndData(lua_State* L) {
 // ====================================================================
 
 /// HasCommandLineArg(arg) -> boolean
-static int l_HasCommandLineArg(lua_State* L) {
-    const char* arg = luaL_checkstring(L, 1);
+/// Moho's CFG_GetArgOption: the `count` arguments after `option` on the
+/// command line (the first time it is there, case aside, with that many
+/// after it), or nothing.
+static std::optional<std::vector<std::string>>
+command_line_option(lua_State* L, const std::string& option, size_t count) {
     lua_pushstring(L, "__osc_cmdline_args");
     lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* args = static_cast<std::set<std::string>*>(lua_touserdata(L, -1));
+    const auto* args = static_cast<const std::vector<std::string>*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    lua_pushboolean(L, args && args->count(arg) > 0 ? 1 : 0);
+    if (!args || option.empty()) return std::nullopt;
+    const auto same = [](const std::string& a, const std::string& b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    for (size_t i = 0; i < args->size(); ++i) {
+        if (!same((*args)[i], option) || args->size() - i - 1 < count) continue;
+        return std::vector<std::string>(args->begin() + static_cast<long>(i + 1),
+                                        args->begin() + static_cast<long>(i + 1 + count));
+    }
+    return std::nullopt;
+}
+
+/// HasCommandLineArg(option): whether it is on the command line (Moho's
+/// CFG_GetArgOption, case aside).
+static int l_HasCommandLineArg(lua_State* L) {
+    lua_pushboolean(L, command_line_option(L, luaL_checkstring(L, 1), 0) ? 1 : 0);
+    return 1;
+}
+
+/// GetCommandLineArg(option, count): the `count` arguments after it, as
+/// strings, or false (not there, or with fewer after it). FAF's client
+/// passes the lobby's /players, /team, /uef... this way (M220b).
+static int l_GetCommandLineArg(lua_State* L) {
+    const char* option = luaL_checkstring(L, 1);
+    const double count = luaL_checknumber(L, 2);
+    const auto values =
+        command_line_option(L, option, count > 0 && count < 1024 ? static_cast<size_t>(count) : 0);
+    if (!values) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_newtable(L);
+    for (size_t i = 0; i < values->size(); ++i) {
+        lua_pushstring(L, (*values)[i].c_str());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
     return 1;
 }
 
@@ -4459,11 +4509,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // HasCommandLineArg (M147d)
     state.register_function("HasCommandLineArg", l_HasCommandLineArg);
 
-    // GetCommandLineArg(name, count) → array of count values after the named arg, or nil
-    state.register_function("GetCommandLineArg", [](lua_State* L) -> int {
-        lua_pushnil(L); // no FA-style command line args in our engine
-        return 1;
-    });
+    state.register_function("GetCommandLineArg", l_GetCommandLineArg);
 
     // MATH_Lerp(t, t0, t1, v0, v1) → v0 + (v1-v0) * (t-t0) / (t1-t0)
     state.register_function("MATH_Lerp", [](lua_State* L) -> int {

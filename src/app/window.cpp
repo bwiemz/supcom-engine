@@ -410,6 +410,7 @@ std::optional<int> App::run_window() {
         // The matchmaking client closed its link while no game plays: without
         // it the game has nothing to do (M220a)
         bool gpgnet_done = false;
+        osc::u32 gpgnet_logged_tick = 0;
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
                !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
                !gpgnet_done) {
@@ -573,6 +574,13 @@ std::optional<int> App::run_window() {
             }
 
             if (lan_game) lan_game->frame(ui_lua_state, sim_state.get());
+            // A test's GPGNet game says how far it has got, for its client
+            // to see it play (M220b)
+            if (opt.gpgnet_scripted && sim_state && sim_state->tick_count() % 50 == 0 &&
+                sim_state->tick_count() != gpgnet_logged_tick) {
+                gpgnet_logged_tick = sim_state->tick_count();
+                spdlog::info("[gpgnet] tick {}", gpgnet_logged_tick);
+            }
 
             // --load-flow-test: the saved game catches up -- never a replay
             // meanwhile -- then plays on a little and is saved again.
@@ -667,7 +675,9 @@ std::optional<int> App::run_window() {
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
             // The matchmaking client's commands (M220a)
             osc::lua::pump_gpgnet(ui_lua_state.raw());
-            if (osc::lua::gpgnet_state() == osc::lua::GpgNetState::Closed && !sim_state)
+            // (A test's run ends with the link in a game too: its client is done)
+            if (osc::lua::gpgnet_state() == osc::lua::GpgNetState::Closed &&
+                (!sim_state || opt.gpgnet_scripted))
                 gpgnet_done = true;
             osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
             if (sim_state) {
@@ -1038,7 +1048,18 @@ std::optional<int> App::run_window() {
             lan_game->finish(sim_state.get());
             return finish_test_run("lan-game-test");
         }
-        if (opt.gpgnet_scripted) return finish_test_run("gpgnet");
+        if (opt.gpgnet_scripted) {
+            // A game the client launched must have played in step (M220b)
+            if (sim_state) {
+                const auto* session = osc::lua::mp_net_state().session.get();
+                spdlog::info("[gpgnet] the game reached tick {}{}", sim_state->tick_count(),
+                             session ? ", in lockstep" : "");
+                if (session && session->desynced())
+                    osc::test_status::fail("[FAIL] gpgnet: the game desynced at tick {}",
+                                           session->desync_tick());
+            }
+            return finish_test_run("gpgnet");
+        }
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(
                 "if not SessionIsReplay() then error('SessionIsReplay() is false') end");

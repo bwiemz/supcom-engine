@@ -1,7 +1,11 @@
 #include "lua/gpgnet_session.hpp"
 
 #include "lua/lua_state.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/session_clients.hpp"
+#include "sim/lockstep_session.hpp"
+#include "sim/sim_state.hpp"
 
 extern "C" {
 #include <lauxlib.h>
@@ -204,11 +208,39 @@ void carry_out(lua_State* L, const GpgNetCommand& c) {
         call_lobby(L, c.name == "HasSupcom" ? "SetHasSupcom" : "SetHasForgedAlliance", 1);
         return;
     }
-    if (c.name == "EjectPlayer" || c.name == "SendNatPacket") {
-        spdlog::warn("GPGNET: {} isn't supported yet", c.name); // M220b, M220c
+    if (c.name == "EjectPlayer") {
+        // EjectPlayer(uid): the client, from the game (M220b)
+        expect_args(c, 1);
+        const i32 uid = number_arg(c.args, 0);
+        switch (eject_session_uid(static_cast<u32>(uid))) {
+        case EjectByUid::Ejected:
+            spdlog::info("GPGNET: {} has been ejected due to connectivity issues.", uid);
+            return;
+        case EjectByUid::NoGame: throw Refused("No active session.");
+        case EjectByUid::NoSuchClient: throw Refused("No client with uid " + uid_text(uid));
+        case EjectByUid::Local:
+            // Moho disconnects this client; its peers drop it
+            throw Refused("this client can't eject itself");
+        }
+        return;
+    }
+    if (c.name == "SendNatPacket") {
+        spdlog::warn("GPGNET: {} isn't supported yet", c.name); // M220c
         return;
     }
     spdlog::warn("GPGNET: unknown command \"{}\"", c.name);
+}
+
+/// A network game's first desync, told the client once (Moho's
+/// GPGNET_ReportDesync): its tick, this player's army, and the two sides'
+/// checksums.
+void report_desync() {
+    static u32 reported = 0; // the game told of, by the sim's generation
+    const auto& mp = mp_net_state();
+    if (!mp.session || !mp.session->desynced()) return;
+    if (reported == sim::SimState::sim_generation()) return;
+    reported = sim::SimState::sim_generation();
+    gpgnet_send(gpgnet_desync_report(*mp.session, mp.local_army()));
 }
 
 // GpgNetActive() -> whether the game has a link to a client
@@ -243,6 +275,14 @@ int l_GpgNetSend(lua_State* L) {
 
 } // namespace
 
+sim::GpgNetCommand gpgnet_desync_report(const sim::LockstepSession& session, i32 army) {
+    const auto [mine, theirs] = session.desync_hashes();
+    return {"Desync",
+            {GpgNetArg::number(static_cast<i32>(session.desync_tick())), GpgNetArg::number(army),
+             GpgNetArg::string(fmt::format("{:016x}", mine)),
+             GpgNetArg::string(fmt::format("{:016x}", theirs))}};
+}
+
 bool gpgnet_attach(const std::string& endpoint) {
     const auto colon = endpoint.rfind(':');
     if (colon == std::string::npos || colon == 0 || colon + 1 >= endpoint.size()) return false;
@@ -270,6 +310,7 @@ GpgNetState gpgnet_state() {
 void pump_gpgnet(lua_State* L) {
     auto& g = gpgnet();
     if (!g.link) return;
+    report_desync();
     for (sim::GpgNetLink::Event& e : g.link->poll(net_lobby_clock_ms())) {
         switch (e.kind) {
         case sim::GpgNetLink::Event::Kind::Connected:

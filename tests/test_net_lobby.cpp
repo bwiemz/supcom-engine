@@ -118,9 +118,9 @@ TEST_CASE("A LAN lobby hosts and is joined, as the lobby scripts see it (M218a)"
         assert(type(p.ping) == 'number' and type(p.quiet) == 'number')
         assert(Has(p.establishedPeers, '0'), 'Alice reaches the host')
         assert(host:GetPeer('1').name == 'Alice' and host:GetPeer('7') == nil)
-        -- A second Alice is made unique
-        b = NewLobby('Bob')
-        b:JoinGame('localhost:' .. port, 'alice', nil)
+        -- A second Alice is made unique (JoinGame's name is the host's)
+        b = NewLobby('alice')
+        b:JoinGame('localhost:' .. port, 'Host', nil)
     )"));
     REQUIRE(w.until("b.me ~= nil and a.established and a.established['2'] ~= nil"));
     REQUIRE(w.run(R"(
@@ -639,8 +639,14 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
         a:LaunchGame(GameInfo())
     )"));
     auto alice = take_launched();
+    CHECK(osc::lua::eject_session_uid(1) == osc::lua::EjectByUid::NoGame);
     REQUIRE(w.run("host:LaunchGame(GameInfo())"));
     REQUIRE(osc::lua::mp_attach_session(w.sim));
+    // A matchmaking client's EjectPlayer names the client by uid (M220b):
+    // none has 99; the host's own (0) is this one's
+    CHECK(osc::lua::eject_session_uid(99) == osc::lua::EjectByUid::NoSuchClient);
+    CHECK(osc::lua::eject_session_uid(0) == osc::lua::EjectByUid::Local);
+    CHECK(osc::lua::mp_net_state().session->ejectors(1).empty());
     osc::lua::pump_disconnect_dialog(w.state.raw());
     REQUIRE(w.run(R"(
         assert(__dialog == 1, 'a network game updates it each frame')
@@ -732,4 +738,136 @@ TEST_CASE("A lobby's game has the speed its lobby set; players change it, observ
         SetGameSpeed(8)
         assert(GetGameSpeed() == 3, 'an observer asked')
     )"));
+}
+
+TEST_CASE("A matchmaking client's uids are the lobby's players' (M220b)", "[lobby][lua]") {
+    World w;
+    REQUIRE(w.run(R"(
+        function NewLobbyAs(name, uid)
+            return InternalCreateLobby(TestComm, 'UDP', 0, 8, name, uid, nil)
+        end
+        host = NewLobbyAs('Host', '10') host:HostGame()
+    )"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        assert(host:GetLocalPlayerID() == '10', host:GetLocalPlayerID())
+        port = host:GetLocalPort()
+        -- JoinGame names the host (a matchmaking client knows it); the
+        -- player keeps its own name and uid
+        a = NewLobbyAs('Alice', '42')
+        a:JoinGame('127.0.0.1:' .. port, 'Host', '10')
+        -- One whose uid is taken is refused; one with none is numbered,
+        -- past those taken
+        c = NewLobbyAs('Carol', '42')
+        c:JoinGame('127.0.0.1:' .. port, 'Host', '10')
+        d = NewLobby('Dave')
+        d:JoinGame('127.0.0.1:' .. port, 'Host', '10')
+    )"));
+    REQUIRE(w.until("a.me ~= nil and d.me ~= nil and c.ejected ~= nil"));
+    REQUIRE(w.run(R"(
+        assert(a.me == '42' and a.myname == 'Alice' and a.host == '10', a.me)
+        assert(c.ejected == 'UidTaken', c.ejected)
+        assert(d.me == '1', d.me)
+        assert(host:GetPeer('42').name == 'Alice')
+        -- Data finds the host by its uid, and a player by theirs
+        a:SendData('10', {Type = 'ToHost'})
+        host:SendData('42', {Type = 'ToAlice'})
+    )"));
+    REQUIRE(w.until("host.got ~= nil and a.got ~= nil"));
+    REQUIRE(w.run(R"(
+        assert(host.got[1].Type == 'ToHost' and host.got[1].SenderID == '42')
+        assert(a.got[1].Type == 'ToAlice' and a.got[1].SenderID == '10')
+        -- The client says Alice has gone: the host lets her go
+        host:DisconnectFromPeer('42')
+        a:DisconnectFromPeer('10') -- a client's: nothing
+    )"));
+    REQUIRE(w.until("a.ejected ~= nil and host.left ~= nil"));
+    REQUIRE(w.run(R"(
+        assert(a.ejected == 'Disconnected', a.ejected)
+        assert(host.left[2] == '42' and host:GetPeer('42') == nil)
+        assert(d.ejected == nil and host:GetPeer('1').name == 'Dave')
+    )"));
+}
+
+
+TEST_CASE("The command line, as Moho's scripts read it (M220b)", "[lobby][lua]") {
+    // FAF's client passes the lobby's options this way (/players, /team...)
+    std::vector<std::string> argv{"/gpgnet", "127.0.0.1:1", "/players", "2", "/TEAM", "3", "/last"};
+    World w;
+    lua_pushstring(w.state.raw(), "__osc_cmdline_args");
+    lua_pushlightuserdata(w.state.raw(), &argv);
+    lua_rawset(w.state.raw(), LUA_REGISTRYINDEX);
+    REQUIRE(w.run(R"(
+        assert(HasCommandLineArg('/players') and HasCommandLineArg('/Players'), 'case aside')
+        assert(not HasCommandLineArg('/nope'))
+        local p = GetCommandLineArg('/players', 1)
+        assert(type(p) == 'table' and table.getn(p) == 1 and p[1] == '2')
+        assert(GetCommandLineArg('/team', 1)[1] == '3', 'case aside')
+        -- Not there, or without as many after it: false
+        assert(GetCommandLineArg('/last', 1) == false)
+        assert(GetCommandLineArg('/nope', 0) == false)
+        assert(table.getn(GetCommandLineArg('/last', 0)) == 0)
+        -- What follows it, whatever it is
+        local g = GetCommandLineArg('/gpgnet', 2)
+        assert(g[1] == '127.0.0.1:1' and g[2] == '/players')
+    )"));
+}
+
+TEST_CASE("A joiner is established with the host after what it sent on joining (M220b)",
+          "[lobby][lua]") {
+    // Retail's auto-lobby: the joiner sends its player on connecting, and the
+    // host launches on EstablishedPeers once everyone's player is in. So the
+    // host must hear the joiner established after its data, as Moho's does.
+    World w;
+    REQUIRE(w.run(R"(
+        Order = {
+            Hosting = function(self) self.hosted = true end,
+            ConnectionToHostEstablished = function(self, me, name, host)
+                self.me = me
+                self:SendData(host, {Type = 'AddPlayer'})
+            end,
+            DataReceived = function(self, data)
+                self.log = self.log or {}
+                table.insert(self.log, 'data:' .. data.Type .. ':' .. data.SenderID)
+            end,
+            EstablishedPeers = function(self, uid, peers)
+                self.log = self.log or {}
+                table.insert(self.log, 'established:' .. uid)
+            end,
+        }
+        setmetatable(Order, {__index = moho.lobby_methods})
+        host = InternalCreateLobby(Order, 'UDP', 0, 8, 'Host', '10', nil)
+        host:HostGame()
+    )"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        a = InternalCreateLobby(Order, 'UDP', 0, 8, 'Alice', '42', nil)
+        a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Host', '10')
+    )"));
+    REQUIRE(w.until("host.log and table.getn(host.log) >= 3"));
+    REQUIRE(w.run(R"(
+        local data, last = nil, nil
+        for i, entry in host.log do
+            if entry == 'data:AddPlayer:42' then data = i end
+            if entry == 'established:42' then last = i end
+        end
+        assert(data and last and data < last, table.concat(host.log, ' '))
+    )"));
+}
+
+TEST_CASE("A matchmaking client's EjectPlayer ejects the client with that uid (M220b)",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    // A lobby's game of two: this client (uid 10) and one with uid 42
+    osc::lua::mp_begin_lobby_game(
+        std::make_unique<osc::sim::LobbyGameTransport>(
+            std::make_unique<osc::sim::LobbyNet>("Host", 1), osc::lua::net_lobby_clock_ms),
+        0, {0, 1}, {{10, "Host"}, {42, "Alice"}}, 1);
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    CHECK(osc::lua::eject_session_uid(10) == osc::lua::EjectByUid::Local);
+    CHECK(osc::lua::eject_session_uid(7) == osc::lua::EjectByUid::NoSuchClient);
+    CHECK(osc::lua::eject_session_uid(42) == osc::lua::EjectByUid::Ejected);
+    // This client reports Alice's source dropped, as EjectSessionClient does
+    CHECK(osc::lua::mp_net_state().session->ejectors(1) == std::vector<osc::u32>{0});
 }

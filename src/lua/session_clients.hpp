@@ -47,6 +47,16 @@ void pump_session_chat(lua_State* L);
 /// source, as the survivors agree.
 void eject_session_client(lua_State* L);
 
+/// A matchmaking client's EjectPlayer (GPGNet, M220b): the game's client
+/// whose lobby uid is `uid`, ejected as EjectSessionClient ejects one.
+enum class EjectByUid : u8 {
+    Ejected,
+    NoGame,       ///< no network game
+    NoSuchClient, ///< no client has that uid
+    Local,        ///< it is this client
+};
+EjectByUid eject_session_uid(u32 uid);
+
 /// Each frame of a network game: retail's disconnect dialog looks at the
 /// clients (uimain.UpdateDisconnectDialog, as Moho's session calls it).
 void pump_disconnect_dialog(lua_State* L);
