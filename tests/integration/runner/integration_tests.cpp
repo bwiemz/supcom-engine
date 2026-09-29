@@ -5987,6 +5987,29 @@ void test_prop(TestContext& ctx) {
         rock:Kill()
         if not rock:BeenDestroyed() then error('it survived') end
     )");
+    // Moho's: a Rect or four numbers, units and props, nil when there are
+    // none (retail's AI reclaim conditions pass AIUtils' Rect).
+    lua_check("Test 10b: GetReclaimablesInRect takes a Rect, finds units and props, nil for none",
+              R"(
+        local acu = GetEntityById(__osc_test_acu_id(1))
+        local a = acu:GetPosition()
+        local rock = CreatePropHPR('/env/evergreen/props/rocks/rock01_prop.bp', a[1] + 3, a[2], a[3], 0, 0, 0)
+        local function holds(list, x)
+            for _, e in list or {} do
+                if e == x then return true end
+            end
+            return false
+        end
+        local near = GetReclaimablesInRect(Rect(a[1] - 6, a[3] - 6, a[1] + 6, a[3] + 6))
+        if not holds(near, rock) or not holds(near, acu) then error('the rock or the ACU missing') end
+        if not holds(GetReclaimablesInRect(a[1] - 6, a[3] - 6, a[1] + 6, a[3] + 6), rock) then
+            error('four numbers: no rock')
+        end
+        -- Off the map's edge: nothing, so nil
+        local none = GetReclaimablesInRect(Rect(-40, -40, -30, -30))
+        if none ~= nil then error('an empty rect gave ' .. tostring(none)) end
+        rock:Destroy()
+    )");
     // The commanders' warp-in keeps blasting its surroundings (DamageRing,
     // Force) for several seconds; let it finish before reclaiming beside one.
     for (int i = 0; i < 100; ++i) ctx.sim.tick();

@@ -3881,17 +3881,35 @@ static int l_ParseEntityCategory(lua_State* L) {
 }
 
 // GetUnitsInRect(x1,z1,x2,z2) or GetUnitsInRect(rect) -> table of units or nil
+/// A Rect at `idx` as Moho reads one (SCR_FromLuaCopy<Rect2f>): its x0, y0,
+/// x1 and y1 fields, y being the map's z. A plain {x0, z0, x1, z1} array
+/// (the engine's own callers) is read too.
+static void read_rect(lua_State* L, int idx, f32& x0, f32& z0, f32& x1, f32& z1) {
+    f32* const out[4] = {&x0, &z0, &x1, &z1};
+    lua_pushstring(L, "x0");
+    lua_gettable(L, idx);
+    const bool named = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    static const char* const keys[4] = {"x0", "y0", "x1", "y1"};
+    for (int i = 0; i < 4; ++i) {
+        if (named) {
+            lua_pushstring(L, keys[i]);
+            lua_gettable(L, idx);
+        } else {
+            lua_rawgeti(L, idx, i + 1);
+        }
+        *out[i] = static_cast<f32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 static int l_GetUnitsInRect(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) { lua_pushnil(L); return 1; }
 
     f32 x0, z0, x1, z1;
     if (lua_istable(L, 1)) {
-        // Rect table: {x0, y0, x1, y1} where y = z coordinate
-        lua_rawgeti(L, 1, 1); x0 = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
-        lua_rawgeti(L, 1, 2); z0 = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
-        lua_rawgeti(L, 1, 3); x1 = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
-        lua_rawgeti(L, 1, 4); z1 = static_cast<f32>(lua_tonumber(L, -1)); lua_pop(L, 1);
+        read_rect(L, 1, x0, z0, x1, z1);
     } else {
         x0 = static_cast<f32>(lua_tonumber(L, 1));
         z0 = static_cast<f32>(lua_tonumber(L, 2));
@@ -5393,29 +5411,25 @@ static int l_SplitProp(lua_State* L) {
     return 1;
 }
 
-// GetReclaimablesInRect(rect) -> table of prop Lua tables
+// GetReclaimablesInRect(rect) or (x0, z0, x1, z1): the units and props in
+// it (Moho's cfunc_GetReclaimablesInRectL), nil when there are none. Retail's
+// AI reclaim conditions and engineers read it through
+// AIGetReclaimablesAroundLocation.
 static int l_GetReclaimablesInRect(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) {
-        lua_newtable(L);
+        lua_pushnil(L);
         return 1;
     }
 
-    // Read rect: can be {x0, z0, x1, z1} table or Rect(x0, z0, x1, z1)
     f32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
     if (lua_istable(L, 1)) {
-        lua_rawgeti(L, 1, 1);
-        if (lua_isnumber(L, -1)) x0 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 1, 2);
-        if (lua_isnumber(L, -1)) z0 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 1, 3);
-        if (lua_isnumber(L, -1)) x1 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
-        lua_rawgeti(L, 1, 4);
-        if (lua_isnumber(L, -1)) z1 = static_cast<f32>(lua_tonumber(L, -1));
-        lua_pop(L, 1);
+        read_rect(L, 1, x0, z0, x1, z1);
+    } else {
+        x0 = static_cast<f32>(luaL_checknumber(L, 1));
+        z0 = static_cast<f32>(luaL_checknumber(L, 2));
+        x1 = static_cast<f32>(luaL_checknumber(L, 3));
+        z1 = static_cast<f32>(luaL_checknumber(L, 4));
     }
 
     auto ids = sim->entity_registry().collect_in_rect(x0, z0, x1, z1);
@@ -5426,7 +5440,7 @@ static int l_GetReclaimablesInRect(lua_State* L) {
 
     for (u32 eid : ids) {
         auto* e = sim->entity_registry().find(eid);
-        if (!e || e->destroyed() || !e->is_prop()) continue;
+        if (!e || e->destroyed() || !(e->is_prop() || e->is_unit())) continue;
         if (e->lua_table_ref() < 0) continue;
 
         lua_pushnumber(L, idx++);
@@ -5434,6 +5448,10 @@ static int l_GetReclaimablesInRect(lua_State* L) {
         lua_rawset(L, result);
     }
 
+    if (idx == 1) {
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
     return 1;
 }
 
