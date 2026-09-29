@@ -83,8 +83,13 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME mp.lockstep_peer_drop
              COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29733
                      --client-may-fail -- --mp-drop-at 20)
+    # A joiner taking 200 ms a round (a slow machine) sets the game's pace:
+    # the host, twice as fast, waits for it rather than dropping it (M218h)
+    add_test(NAME mp.lockstep_slow_peer
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29734
+                     -- --mp-slow 200 --mp-frames 80)
     set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
-                         PROPERTIES LABELS mp TIMEOUT 240)
+                         mp.lockstep_slow_peer PROPERTIES LABELS mp TIMEOUT 240)
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()

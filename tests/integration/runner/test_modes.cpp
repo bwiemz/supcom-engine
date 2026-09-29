@@ -455,11 +455,14 @@ std::optional<int> IntegrationModes::before_boot(int argc, char* argv[]) {
             std::string port_s = parse_string_arg(argc, argv, "--mp-port", "47624");
             std::string frames_s = parse_string_arg(argc, argv, "--mp-frames", "60");
             std::string drop_s = parse_string_arg(argc, argv, "--mp-drop-at", "0");
+            std::string slow_s = parse_string_arg(argc, argv, "--mp-slow", "0");
             bool inject_desync = parse_flag(argc, argv, "--mp-desync");
             auto port = static_cast<osc::u16>(std::strtoul(port_s.c_str(), nullptr, 10));
             auto frames = static_cast<osc::u32>(std::strtoul(frames_s.c_str(), nullptr, 10));
             auto drop_at = static_cast<osc::u32>(std::strtoul(drop_s.c_str(), nullptr, 10));
-            return run_mp_lobby_test(mp_host, mp_join, port, frames, inject_desync, drop_at);
+            auto slow_ms = static_cast<osc::u32>(std::strtoul(slow_s.c_str(), nullptr, 10));
+            return run_mp_lobby_test(mp_host, mp_join, port, frames, inject_desync, drop_at,
+                                     slow_ms);
         }
     }
     return std::nullopt;

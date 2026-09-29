@@ -40,8 +40,8 @@ private:
 /// The two-process multiplayer harness (lan_modes.cpp): --mp-host/--mp-join
 /// host and join a lobby, launch, and play a lockstep match over its
 /// connections; --mp-desync diverges the host, --mp-drop-at N makes the
-/// joiner leave at round N.
+/// joiner leave at round N, --mp-slow MS makes each of its rounds take MS.
 int run_mp_lobby_test(bool is_host, const std::string& address, u16 port, u32 frames,
-                      bool inject_desync, u32 drop_at);
+                      bool inject_desync, u32 drop_at, u32 slow_ms);
 
 } // namespace osc::test
