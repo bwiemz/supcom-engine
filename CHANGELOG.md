@@ -45,3 +45,6 @@ Everything so far: there has been no release yet. The first will be 0.1.0.
 - **Release engineering (M227a):** `--version`; `cmake --install` lays out the
   game, its documents, and on Linux a desktop entry and icon; the build id that
   replays and saves carry is taken at every build.
+- **Packages (M227b):** a Linux AppImage and tarball (the C++ runtime linked in,
+  glibc 2.35 and later) and a Windows zip (with its DLLs and the Visual C++
+  runtime). A `v*` tag builds and runs them in CI and drafts a GitHub release.

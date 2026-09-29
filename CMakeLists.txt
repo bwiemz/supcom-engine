@@ -45,6 +45,14 @@ target_link_libraries(opensupcom PRIVATE osc::warnings osc::app)
 # Export symbols from the executable so crash backtraces show function names.
 set_target_properties(opensupcom PROPERTIES ENABLE_EXPORTS ON)
 
+# A self-contained game for the Linux packages (M227b): the C++ runtime
+# linked in, so a player's system needs only glibc and the Vulkan loader.
+# (Windows ships the Visual C++ runtime's DLLs beside the game instead.)
+option(OSC_STATIC_RUNTIME "Link the C++ runtime into the game (packages)" OFF)
+if(OSC_STATIC_RUNTIME AND NOT MSVC)
+    target_link_options(opensupcom PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+
 # Installation (M227a): the game and its documents; on Linux, its desktop
 # entry and icon too. The test runners and tools stay in the build tree.
 # Windows lays the game out flat, as its zip carries it, and vcpkg installs
@@ -70,6 +78,30 @@ if(UNIX AND NOT APPLE)
     install(FILES packaging/opensupcom.svg
             DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
 endif()
+if(MSVC)
+    # The Visual C++ runtime beside the game: no redistributable to install
+    # (Windows 10 and later carry the universal CRT)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${OSC_INSTALL_BINDIR})
+    include(InstallRequiredSystemLibraries)
+endif()
+
+# Packages (M227b): `cpack` zips the install (Windows) or tars it (Linux);
+# tools/package/appimage.sh makes the AppImage, and .github/workflows/
+# release.yml builds and runs all of them.
+set(CPACK_PACKAGE_NAME OpenSupCom)
+set(CPACK_PACKAGE_VENDOR OpenSupCom)
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "Open-source engine for Supreme Commander: Forged Alliance")
+set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_SOURCE_DIR}/LICENSE)
+if(WIN32)
+    set(CPACK_GENERATOR ZIP)
+    set(OSC_PACKAGE_SYSTEM win64)
+else()
+    set(CPACK_GENERATOR TGZ)
+    string(TOLOWER "${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}" OSC_PACKAGE_SYSTEM)
+endif()
+set(CPACK_PACKAGE_FILE_NAME OpenSupCom-${PROJECT_VERSION}-${OSC_PACKAGE_SYSTEM})
+include(CPack)
 
 # Tests
 option(OSC_BUILD_TESTS "Build unit tests" ON)

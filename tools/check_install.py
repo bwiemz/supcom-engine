@@ -21,7 +21,8 @@ from pathlib import Path
 
 def expected_files(windows: bool) -> list[str]:
     if windows:
-        return ["opensupcom.exe", "README.md", "LICENSE", "CHANGELOG.md"]
+        # (vcruntime140.dll: the Visual C++ runtime installed beside it)
+        return ["opensupcom.exe", "README.md", "LICENSE", "CHANGELOG.md", "vcruntime140.dll"]
     return [
         "bin/opensupcom",
         "share/doc/opensupcom/README.md",
