@@ -3,6 +3,8 @@
 
 #include "app/app_internal.hpp"
 #include "app/lan_game_test.hpp"
+#include "app/mods_flow_test.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "app/window_commands.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
@@ -11,7 +13,6 @@
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/factory_queue.hpp"
-#include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
@@ -156,22 +157,6 @@ std::optional<int> App::run_window() {
         int fps_frames = 0;
         double display_fps = 0.0;
         std::unordered_set<osc::u32> prev_selection;
-
-        // Windowed LAN entry: create the transport up front so the front-end
-        // can host/join while it renders; the game loop then drives the lobby
-        // handshake to launch. Same networking path as --lan-host/--lan-join
-        // (verified headless). Absent these flags, single-player is untouched.
-        bool lan_launch_fired = false;
-        bool lan_host_cfg_set = false;
-        {
-            std::string lwp = parse_string_arg(argc, argv, "--mp-port", "47624");
-            auto lport = static_cast<osc::u16>(std::strtoul(lwp.c_str(), nullptr, 10));
-            if (parse_flag(argc, argv, "--lan-window-host")) {
-                osc::lua::mp_begin_host(lport);
-            }
-            std::string lwj = parse_string_arg(argc, argv, "--lan-window-join", "");
-            if (!lwj.empty()) osc::lua::mp_begin_join(lwj, lport);
-        }
 
         // --screenshot <png> [--screenshot-frame N]: render N frames on a
         // fixed 60 Hz clock (so frame N is identical run to run), capture
@@ -375,6 +360,21 @@ std::optional<int> App::run_window() {
             }
         }
 
+        // --mods-flow-test: a skirmish with mods (M221b), launched from the
+        // front end, through retail's lobby and its mod manager (M221c), or
+        // a recorded one watched
+        std::optional<osc::app::ModsFlowTest> mods_flow;
+        if (opt.mods_flow_test) {
+            using Launch = osc::app::ModsFlowTest::Launch;
+            mods_flow.emplace(!opt.watch_path.empty() ? Launch::Watch
+                              : opt.mods_flow_lobby   ? Launch::Lobby
+                                                      : Launch::Direct);
+            if (!mods_flow->start(ui_lua_state)) {
+                mods_flow->finish();
+                return finish_test_run("mods-flow-test");
+            }
+        }
+
         // --load-flow-test, once the loaded game has played on: save it again
         // as retail's Save dialog does, and check what saving refuses.
         auto save_again_in_load_flow = [&] {
@@ -423,8 +423,13 @@ std::optional<int> App::run_window() {
                 osc::test_status::fail("[FAIL] load-flow: a save was written outside its folder");
         };
 
+        // The matchmaking client closed its link while no game plays: without
+        // it the game has nothing to do (M220a)
+        bool gpgnet_done = false;
+        osc::u32 gpgnet_logged_tick = 0;
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
-               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done())) {
+               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done()) &&
+               !gpgnet_done && !(mods_flow && mods_flow->done())) {
             osc::Profiler::instance().begin_frame();
             // A resized window: the UI's root frame follows it (M217h)
             if (renderer.take_resized()) {
@@ -508,12 +513,15 @@ std::optional<int> App::run_window() {
                     // at the sim tick rate; the session only advances the
                     // sim once every peer has confirmed the next frame
                     // (the classic "waiting for players" stall otherwise).
-                    sim_accumulator += dt * game_state_mgr.speed();
+                    // A round is a tick's time at the game's speed, which
+                    // is every peer's (M218i): the local speed follows it
                     auto* session = osc::lua::mp_net_state().session.get();
+                    if (game_state_mgr.sim_rate() != session->speed())
+                        game_state_mgr.set_sim_rate(session->speed());
+                    sim_accumulator += dt * game_state_mgr.speed();
                     int guard = 0;
                     while (sim_accumulator >= osc::sim::SimState::SECONDS_PER_TICK && guard++ < 4) {
                         sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                        osc::lua::mp_pump(); // drain mux game channel + peers
                         session->send_frame();
                         session->receive_and_advance();
                         // A timed-out peer is defeated so the match resolves
@@ -582,6 +590,16 @@ std::optional<int> App::run_window() {
             }
 
             if (lan_game) lan_game->frame(ui_lua_state, sim_state.get());
+            // A test's GPGNet game says how far it has got, for its client
+            // to see it play (M220b)
+            if (opt.gpgnet_scripted && sim_state && sim_state->tick_count() % 50 == 0 &&
+                sim_state->tick_count() != gpgnet_logged_tick) {
+                gpgnet_logged_tick = sim_state->tick_count();
+                spdlog::info("[gpgnet] tick {}", gpgnet_logged_tick);
+            }
+            if (mods_flow)
+                mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(),
+                                 renderer.ui_dispatch(), ui_registry);
 
             // --load-flow-test: the saved game catches up -- never a replay
             // meanwhile -- then plays on a little and is saved again.
@@ -674,10 +692,17 @@ std::optional<int> App::run_window() {
             // The lobbies' networks: what has come, into their callbacks
             // (M218a)
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+            // The matchmaking client's commands (M220a)
+            osc::lua::pump_gpgnet(ui_lua_state.raw());
+            // (A test's run ends with the link in a game too: its client is done)
+            if (osc::lua::gpgnet_state() == osc::lua::GpgNetState::Closed &&
+                (!sim_state || opt.gpgnet_scripted))
+                gpgnet_done = true;
             osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
             if (sim_state) {
                 osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
                 osc::lua::pump_pause_state(ui_lua_state.raw());       // M218f
+                osc::lua::pump_speed_changes(ui_lua_state.raw());     // M218i
             }
 
             // Resume UI coroutines
@@ -792,32 +817,6 @@ std::optional<int> App::run_window() {
                 lua_pop(uiL, 1);
             }
 
-            // LAN lobby: drive the host/client handshake during the
-            // front-end and fire the launch barrier. Inert unless a LAN
-            // transport exists (only when the LAN window flags were set).
-            {
-                auto& mpn = osc::lua::mp_net_state();
-                auto* lob = osc::lua::mp_lobby();
-                if (lob && !mpn.active() && !lan_launch_fired) {
-                    if (lob->role() == osc::lua::LanLobby::Role::Host && !lan_host_cfg_set) {
-                        lob->set_host_config(osc::lua::LanSessionConfig{
-                            "/maps/SCMP_009/SCMP_009_scenario.lua", mpn.seed});
-                        lan_host_cfg_set = true;
-                    }
-                    osc::lua::mp_pump();
-                    lob->poll();
-                    if (lob->role() == osc::lua::LanLobby::Role::Host &&
-                        lob->state() == osc::lua::LanLobby::State::Ready) {
-                        lob->request_launch();
-                    }
-                    if (lob->launch_ready()) {
-                        lan_launch_fired = true;
-                        mpn.seed = lob->config().seed;
-                        lan_launch_session(ui_lua_state.raw(), lob->config().scenario);
-                    }
-                }
-            }
-
             // Check for game launch request from lobby (M148a)
             {
                 lua_State* uiL = ui_lua_state.raw();
@@ -884,7 +883,10 @@ std::optional<int> App::run_window() {
                         // game's, goes with its controls and threads.
                         wld_provider.destroy_game_interface(uiL);
                         renderer.forget_ui_controls();
-                        reset_ui_state();
+                        // (with the game's mods, as its sim will have them)
+                        const std::string game_mods =
+                            launch_setup(uiL, recorded, launch_scenario, 0).mods;
+                        reset_ui_state(&game_mods);
                         uiL = ui_lua_state.raw();
                         publish_window_objects();
                         // The new state's loading screen has no game yet, even
@@ -1067,6 +1069,22 @@ std::optional<int> App::run_window() {
         if (lan_game) {
             lan_game->finish(sim_state.get());
             return finish_test_run("lan-game-test");
+        }
+        if (opt.gpgnet_scripted) {
+            // A game the client launched must have played in step (M220b)
+            if (sim_state) {
+                const auto* session = osc::lua::mp_net_state().session.get();
+                spdlog::info("[gpgnet] the game reached tick {}{}", sim_state->tick_count(),
+                             session ? ", in lockstep" : "");
+                if (session && session->desynced())
+                    osc::test_status::fail("[FAIL] gpgnet: the game desynced at tick {}",
+                                           session->desync_tick());
+            }
+            return finish_test_run("gpgnet");
+        }
+        if (mods_flow) {
+            mods_flow->finish();
+            return finish_test_run("mods-flow-test");
         }
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(

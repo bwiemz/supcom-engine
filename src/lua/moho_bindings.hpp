@@ -49,10 +49,6 @@ void register_console_commands(ui::Console& console);
 /// keyNames.lua, and keymapper.lua's GetKeyMappings() into the key map.
 void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map);
 
-/// Register the LAN multiplayer UI globals (LanHost/LanJoin/LanNetStatus).
-/// Called by register_ui_bindings; also usable standalone (e.g. --lan-ui-test).
-void register_lan_ui_bindings(LuaState& state);
-
 /// Register front-end bootstrap fallback globals that the FA UI import chain
 /// expects, without replacing globals already installed by real bindings.
 void register_front_end_fallback_bindings(LuaState& state);

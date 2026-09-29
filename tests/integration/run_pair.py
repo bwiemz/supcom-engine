@@ -1,18 +1,24 @@
 """Run a two-process opensupcom multiplayer check (host + joiner) for CTest.
 
-Both processes talk over localhost TCP and self-report their result through
-their exit code. No game data is needed, so these run in CI.
+Both processes talk over localhost TCP (a lobby, launched into a lockstep
+game) and self-report their result through their exit code. No game data is
+needed, so these run in CI.
 
 Usage:
-    run_pair.py <opensupcom> <mp|lan> <port> [--client-may-fail] [-- extra args...]
+    run_pair.py <osc_integration> <port> [--joiner-exe <exe>]
+                [--client-may-fail] [-- extra args...]
 
 Extra args after `--` go to both processes. With --client-may-fail only the
 host's exit code decides the result (used when the client deliberately
 leaves mid-match, e.g. --mp-drop-at).
+
+--joiner-exe runs the joiner from another build (the host's by default):
+Windows against Linux (M219). Off Windows, a `.exe` runs under Wine.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -21,21 +27,44 @@ from pathlib import Path
 TIMEOUT_SECONDS = 180
 
 
+def command(exe: Path) -> list[str]:
+    """How to run `exe`: a Windows build off Windows, under Wine."""
+    if exe.suffix.lower() == ".exe" and os.name != "nt":
+        return ["wine", str(exe)]
+    return [str(exe)]
+
+
+def environment() -> dict[str, str]:
+    """The processes' environment. Wine, quiet, and with no Mono or Gecko
+    to install: a prefix Wine sets up or updates would otherwise wait on a
+    prompt no one sees."""
+    env = dict(os.environ)
+    env.setdefault("WINEDEBUG", "-all")
+    env.setdefault("WINEDLLOVERRIDES", "mscoree,mshtml=")
+    return env
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 3:
+    if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2
     exe = Path(argv[0])
-    kind, port = argv[1], argv[2]
-    rest = argv[3:]
-    client_may_fail = "--client-may-fail" in rest
+    port = argv[1]
+    rest = argv[2:]
     extra = rest[rest.index("--") + 1 :] if "--" in rest else []
+    options = rest[: rest.index("--")] if "--" in rest else rest
+    client_may_fail = "--client-may-fail" in options
+    joiner_exe = exe
+    if "--joiner-exe" in options:
+        joiner_exe = Path(options[options.index("--joiner-exe") + 1])
 
     common = ["--mp-port", port, *extra]
-    host = subprocess.Popen([str(exe), f"--{kind}-host", *common])
-    # Give the host a moment to bind before the client connects.
+    env = environment()
+    host = subprocess.Popen([*command(exe), "--mp-host", *common], env=env)
+    # Give the host a moment to listen before the client joins (the joiner
+    # retries a refused join, but a refused connect costs Windows seconds).
     time.sleep(0.5)
-    client = subprocess.Popen([str(exe), f"--{kind}-join", "127.0.0.1", *common])
+    client = subprocess.Popen([*command(joiner_exe), "--mp-join", "127.0.0.1", *common], env=env)
 
     try:
         client_rc = client.wait(timeout=TIMEOUT_SECONDS)

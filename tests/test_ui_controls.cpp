@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "core/test_status.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "sim/sim_state.hpp"
@@ -300,6 +301,64 @@ TEST_CASE("UI events reach Lua with Moho's codes and modifiers", "[ui][lua][inpu
                   "and of_type('ButtonRelease')[1].event.Modifiers.Right"));
     CHECK(f.check("of_type('ButtonPress')[2].event.KeyCode == 2 "
                   "and of_type('ButtonPress')[2].event.Modifiers.Middle"));
+}
+
+namespace {
+
+/// Test-mode failure counting, on for a scope (and the tally cleared).
+struct CountingLuaFailures {
+    CountingLuaFailures() {
+        osc::test_status::reset();
+        osc::test_status::set_count_lua_failures(true);
+    }
+    ~CountingLuaFailures() {
+        osc::test_status::set_count_lua_failures(false);
+        osc::test_status::reset();
+    }
+    CountingLuaFailures(const CountingLuaFailures&) = delete;
+    CountingLuaFailures& operator=(const CountingLuaFailures&) = delete;
+};
+
+bool reported(const std::string& what, const std::string& error) {
+    for (const auto& m : osc::test_status::failure_messages())
+        if (m.find(what) != std::string::npos && m.find(error) != std::string::npos) return true;
+    return false;
+}
+
+} // namespace
+
+TEST_CASE("A dragger's script errors are reported, as other UI callbacks' are",
+          "[ui][lua][input]") {
+    // Retail's Button clicks through the Dragger it posts: an error there
+    // (the click's own handler, say) must not vanish.
+    InputFixture f;
+    CountingLuaFailures counting;
+    f.run(R"(
+        moves = 0
+        PostDragger(GetFrame(0), 1, {
+            OnMove = function() moves = moves + 1 error('moving') end,
+            OnRelease = function() error('letting go') end,
+        })
+    )");
+    f.dispatch.on_cursor_pos(10, 10);
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("moves == 1"));
+    CHECK(reported("Dragger OnMove", "moving"));
+    CHECK(reported("Dragger OnRelease", "letting go"));
+    CHECK(osc::test_status::failure_count() == 2);
+
+    // Let go all the same: the next release is the controls' again.
+    f.run("screen = box('screen', GetFrame(0), 0, 0, 100, 100, 1) handled = {}");
+    f.dispatch.on_mouse_button(GLFW_MOUSE_BUTTON_LEFT, GLFW_RELEASE, 0);
+    f.deliver();
+    CHECK(f.check("whos('ButtonRelease') == 'screen'"));
+
+    f.run("PostDragger(GetFrame(0), 1, { OnCancel = function() error('called off') end })");
+    f.dispatch.on_key(GLFW_KEY_ESCAPE, GLFW_PRESS, 0);
+    f.deliver();
+    CHECK(reported("Dragger OnCancel", "called off"));
+    CHECK(osc::test_status::failure_count() == 3);
 }
 
 TEST_CASE("An input capture takes the mouse and the keys, as Moho's", "[ui][lua][input]") {

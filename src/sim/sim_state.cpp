@@ -105,6 +105,7 @@ void SimState::on_entity_unregistered(Entity& entity) {
         auto& unit = static_cast<Unit&>(entity);
         unit.release_manipulators(L_);
         unit.release_weapon_scripts(L_);
+        unit.end_script_task(L_); // its OnDestroy, the unit still in reach (M206w)
         // A stored unit leaves its carrier's storage; a carrier's stored
         // units go with it (Moho's ~CAiTransportImpl), destroyed once this
         // unregistration is over (M206q).

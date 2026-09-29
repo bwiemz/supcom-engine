@@ -21,6 +21,7 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -305,6 +306,7 @@ TEST_CASE("A callback's one value survives the codec; older replays have none",
 
 TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][replay]") {
     std::vector<osc::u8> bytes;
+    size_t script_at = 0; // where the command's Script table sits in the file
     {
         CallbackSim rec;
         const osc::u32 unit = rec.spawn();
@@ -312,12 +314,25 @@ TEST_CASE("A v7 replay's callbacks load without the value byte", "[simcallback][
         rec.sim.tick();
         rec.sim.submit_callback(toggle(unit));
         rec.sim.tick();
-        bytes = rec.sim.recorded_replay().serialize();
+        const Replay& recorded = rec.sim.recorded_replay();
+        bytes = recorded.serialize();
+        // The command again, and with a Script table: the first byte they
+        // differ at is the table's (v11), which v7 didn't write either.
+        ScheduledCommand c = recorded.commands.back();
+        std::vector<osc::u8> plain, marked;
+        osc::sim::ByteWriter wp(plain), wm(marked);
+        osc::sim::write_command(wp, c);
+        c.command.script_args = "x";
+        osc::sim::write_command(wm, c);
+        const auto differ = std::mismatch(plain.begin(), plain.end(), marked.begin());
+        script_at = bytes.size() - plain.size() + static_cast<size_t>(differ.first - plain.begin());
     }
     // The callback is the last command, its "no value" byte the file's last:
-    // v7 wrote neither
+    // v7 wrote neither, nor its (empty) Script table
     REQUIRE(bytes.back() == 0);
     bytes.pop_back();
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(script_at),
+                bytes.begin() + static_cast<std::ptrdiff_t>(script_at) + 4);
     const osc::u32 v7 = 7;
     std::memcpy(bytes.data() + 4, &v7, 4); // after "OSCR"
     Replay back;
