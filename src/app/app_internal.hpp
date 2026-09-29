@@ -52,9 +52,12 @@ struct Options {
     std::string map_path;                      ///< --map, or the replay's scenario
     u32 tick_count = 0;                        ///< --ticks (0: not given)
     std::optional<sim::Replay> replay_to_play; ///< --replay
-    /// --load <file> in a headless run: the saved game, which catches up to
-    /// its saved tick and plays on.
+    /// --load <file> in a headless run: the saved game, which is restored
+    /// from its snapshot (or catches up to its saved tick) and plays on.
     std::optional<sim::SavedGame> save_to_load;
+    /// --load-by-replay: catch up from the history even when the save has a
+    /// snapshot (M208c: the oracle a restore is checked against).
+    bool load_by_replay = false;
     /// --load <file> otherwise: the window opens it as retail's Load dialog
     /// does (LoadSavedGame).
     std::string load_path;
@@ -144,7 +147,7 @@ extern u32 g_rng_trace_to;
 extern std::string g_record_path;
 bool write_recording(const sim::SimState& sim, const std::string& path);
 std::optional<sim::Replay> load_replay(const std::string& path);
-void issue_scripted_orders(sim::SimState& sim, sim::SimRandom& rng, u32 tick);
+void issue_scripted_orders(sim::SimState& sim, u32 tick);
 void issue_order_before_save(sim::SimState& sim);
 int play_replay(sim::SimState& sim, const sim::Replay& replay);
 u64 launch_seed(const std::string& seed_arg, bool reproducible);

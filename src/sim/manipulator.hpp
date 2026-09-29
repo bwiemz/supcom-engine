@@ -23,6 +23,7 @@ struct SCAData;
 /// Manipulators are lightweight C++ objects owned by Units, NOT entities.
 /// They use the _c_object lightuserdata pattern for Lua binding.
 class Manipulator : public Waitable {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     ~Manipulator() override = default;
 
@@ -76,6 +77,7 @@ protected:
 // RotateManipulator — rotates a bone around an axis
 // ---------------------------------------------------------------------------
 class RotateManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 dt) override;
     bool is_at_goal() const override;
@@ -110,6 +112,7 @@ private:
 // AnimManipulator — plays skeletal animations with SCA bone matrix computation
 // ---------------------------------------------------------------------------
 class AnimManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 dt) override;
     bool is_at_goal() const override;
@@ -174,6 +177,7 @@ private:
 // SlideManipulator — linear bone translation
 // ---------------------------------------------------------------------------
 class SlideManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 dt) override;
     bool is_at_goal() const override;
@@ -199,6 +203,7 @@ private:
 // AimManipulator — weapon turret aiming
 // ---------------------------------------------------------------------------
 class AimManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// Turn heading and pitch toward the target at the arc's slew speeds,
     /// within its limits; with no target, return to rest after the reset
@@ -269,6 +274,7 @@ private:
 // SlaverManipulator — slaves one bone's rotation to follow another
 // ---------------------------------------------------------------------------
 class SlaverManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 /*dt*/) override {} // slaving is resolved at render time
     bool is_at_goal() const override { return true; }
@@ -287,6 +293,7 @@ private:
 // CollisionDetectorManipulator — tracks bone positions for collision events
 // ---------------------------------------------------------------------------
 class CollisionDetectorManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 /*dt*/) override {} // collision checks deferred
     bool is_at_goal() const override { return true; }
@@ -307,6 +314,7 @@ private:
 // FootPlantManipulator — IK foot placement on terrain
 // ---------------------------------------------------------------------------
 class FootPlantManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     void tick(f32 /*dt*/) override {} // IK deferred
     bool is_at_goal() const override { return true; }
@@ -330,6 +338,7 @@ private:
 // fills (CreateStorageManip: storage buildings' tanks, pods and lifts)
 // ---------------------------------------------------------------------------
 class StorageManipulator : public Manipulator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// `empty` and `full`: the bone's offset, in its own frame, at empty and
     /// at full storage. It starts at `empty`.

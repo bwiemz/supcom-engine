@@ -95,6 +95,7 @@ enum class OrderStep : u8 {
 };
 
 class Unit : public Entity {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     bool is_unit() const override { return true; }
 
@@ -1181,6 +1182,8 @@ private:
     std::vector<Manipulator*> pose_order_;
     PoseLocals pose_locals_;
     void update_pose();
+    /// The renderer's matrices from pose_ (update_pose's end, and a load's).
+    void refresh_bone_matrices();
     // Transport system
     std::vector<u32> cargo_ids_;      // entity IDs of units loaded on this transport
     i32 storage_slots_ = 0;           // Transport.StorageSlots (M206q)

@@ -16,6 +16,7 @@ class SimState;
 class Unit;
 
 class Navigator {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// Idle: no goal. Moving: following a path. WaitingForPath: the per-tick
     /// pathfinding budget was spent; the goal is kept and callers retry

@@ -11,6 +11,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
+
 namespace osc::app {
 
 bool App::after_headless_tick() {
@@ -20,9 +22,17 @@ bool App::after_headless_tick() {
     }
     if (!opt.save_path.empty() && sim_state->tick_count() == opt.save_at) {
         if (opt.scripted_orders) issue_order_before_save(*sim_state);
+        const auto start = std::chrono::steady_clock::now();
         const auto save = osc::sim::save_game(*sim_state, "headless");
-        if (osc::lua::write_saved_game(save, opt.save_path)) save_written = true;
-        else osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
+        if (osc::lua::write_saved_game(save, opt.save_path)) {
+            save_written = true;
+            spdlog::info(
+                "Saved game: {} written in {:.0f} ms", opt.save_path,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                    .count());
+        } else {
+            osc::test_status::fail("[FAIL] saved game: cannot write {}", opt.save_path);
+        }
     }
     return true;
 }
@@ -44,13 +54,14 @@ int App::run_headless() {
         spdlog::info("=== AI-vs-AI Skirmish: up to {} ticks ({:.0f}s) ===", max_ticks,
                      max_ticks * osc::sim::SimState::SECONDS_PER_TICK);
 
-        osc::u32 ticks_run = 0;
+        // Up to tick max_ticks: a game restored from a save (M208c) starts
+        // at its saved tick.
+        osc::u32 ticks_run = sim_state->tick_count();
         osc::i32 result = 0;
         osc::u32 log_interval = 100; // log stats every 10 game seconds
 
-        osc::sim::SimRandom script_rng(0x5C817ED0);
-        for (osc::u32 i = 0; i < max_ticks; i++) {
-            if (opt.scripted_orders) issue_scripted_orders(*sim_state, script_rng, i);
+        for (osc::u32 i = ticks_run; i < max_ticks; i++) {
+            if (opt.scripted_orders) issue_scripted_orders(*sim_state, i);
             tick_headless();
             ticks_run++;
             if (!after_headless_tick()) break;
@@ -124,7 +135,7 @@ int App::run_headless() {
     if (!opt.ai_skirmish && !opt.map_path.empty() && opt.tick_count > 0) {
         spdlog::info("Running {} sim ticks ({:.1f}s game time)...", opt.tick_count,
                      opt.tick_count * osc::sim::SimState::SECONDS_PER_TICK);
-        for (osc::u32 i = 0; i < opt.tick_count; i++) {
+        for (osc::u32 i = sim_state->tick_count(); i < opt.tick_count; i++) {
             osc::Profiler::instance().begin_frame();
             tick_headless();
             osc::Profiler::instance().end_frame();

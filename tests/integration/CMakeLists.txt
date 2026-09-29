@@ -182,6 +182,28 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 1200)
+    # The same, each load catching up from the save's history (M208a): the
+    # path a save without a snapshot takes, and the oracle a restore
+    # matches.
+    add_test(NAME data.save_load_replay
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py --by-replay
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map ${OSC_TEST_MAP} --ai-skirmish --ai-armies 4 --ticks 1200
+                     --seed 4242 --scripted-orders)
+    set_tests_properties(data.save_load_replay PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
+    # A campaign operation's (M209): blips, the playable area, its platoons
+    # and objectives, restored with the rest.
+    add_test(NAME data.save_load_campaign
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/save_load.py
+                     $<TARGET_FILE:opensupcom> ${CMAKE_SOURCE_DIR}/tools/checksum_diff.py
+                     -- --map /maps/X1CA_001/X1CA_001_scenario.lua --ticks 1200)
+    set_tests_properties(data.save_load_campaign PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 1200)
 
     # M199b: retail's replay dialog path -- GetSpecialFiles lists the
     # recording, LaunchReplaySession opens it -- and the game plays it to

@@ -41,6 +41,10 @@ add_library(osc_sim STATIC
     lobby_net.cpp
     lan_discovery.cpp
     sim_state.cpp
+    sim_snapshot.cpp
+    state_io.cpp
+    state_io_entities.cpp
+    state_io_world.cpp
     work_range.cpp
     decal.cpp
     world_snapshot.cpp
@@ -57,7 +61,7 @@ add_library(osc::sim ALIAS osc_sim)
 target_include_directories(osc_sim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_sim
     PUBLIC osc::core osc::map osc::blueprints lua50
-    PRIVATE spdlog::spdlog osc::audio osc::vfs
+    PRIVATE spdlog::spdlog osc::audio osc::vfs ZLIB::ZLIB
 )
 
 # Winsock for the TCP transport (POSIX sockets need no extra link).

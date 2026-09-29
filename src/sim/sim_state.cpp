@@ -822,6 +822,15 @@ void SimState::queue_replay(const Replay& replay) {
     for (const auto& c : replay.commands) command_scheduler_.submit(c);
 }
 
+void SimState::adopt_history(const Replay& saved) {
+    recorded_replay_ = saved;
+    std::erase_if(recorded_replay_.commands,
+                  [&](const ScheduledCommand& c) { return c.exec_tick > saved.final_tick; });
+    recording_ = true;
+    playback_ = false;
+    resume_tick_ = 0;
+}
+
 void SimState::start_resume(const Replay& saved) {
     queue_replay(saved);
     const bool behind = saved.final_tick > tick_count_;

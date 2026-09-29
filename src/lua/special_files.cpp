@@ -144,10 +144,10 @@ int l_RemoveSpecialFile(lua_State* L) {
 }
 
 /// The game being played, or null.
-const sim::SimState* sim_of(lua_State* L) {
+sim::SimState* sim_of(lua_State* L) {
     lua_pushstring(L, "osc_sim_state");
     lua_rawget(L, LUA_REGISTRYINDEX);
-    const auto* sim = static_cast<const sim::SimState*>(lua_touserdata(L, -1));
+    auto* sim = static_cast<sim::SimState*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     return sim;
 }
@@ -203,7 +203,7 @@ int l_InternalSaveGame(lua_State* L) {
     const char* file = luaL_checkstring(L, 1);
     const char* name = luaL_checkstring(L, 2);
     const auto* files = get_special_files(L);
-    const auto* sim = sim_of(L);
+    auto* sim = sim_of(L); // a save's snapshot walks its Lua state
     const char* refused = nullptr;
     if (!sim || !sim->recording()) refused = "No session to save!";
     else if (mp_net_state().active()) refused = "A multiplayer game can't be saved.";

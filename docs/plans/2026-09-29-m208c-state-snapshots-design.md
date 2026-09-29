@@ -1,6 +1,7 @@
 # M208c: State Snapshots — Design
 
-**Status:** 2026-09-29. M208c-a (Lua persistence) implemented; M208c-b and M208c-c to come.
+**Status:** 2026-09-29. M208c-a (Lua persistence) and M208c-b (the C++ sim, headless loads)
+implemented; M208c-c (the game's own load, its fallback) to come.
 Roadmap Phase E (M208, save/load).
 
 ## Why
@@ -121,10 +122,12 @@ weakly held objects included:
   snapshot is tied to its build anyway (see Risks), so no permanents table is needed, and the
   engine's anonymous lambdas need no names. A C closure also writes its upvalues.
 - **Light userdata:** written through hooks the sim provides. Each `_c_object` address becomes
-  a (kind, id) pair and back again (see below). NULL stays NULL. An address the hooks can't
-  name fails the save. Host singletons (`osc_sim_state`, `osc_thread_mgr`, …) are re-pointed
-  on load.
-- **Full userdata:** their bytes as they are. The sim has none.
+  a (kind, id) pair and back again (see below). NULL stays NULL. The persister fails a save
+  on an address its hooks can't name. The sim's hooks name every address: a stale one as
+  NULL, counted in the log. Host singletons (`osc_sim_state`, `osc_thread_mgr`, …) are
+  re-pointed on load.
+- **Full userdata:** their bytes as they are. The exception is the io library's files, the
+  only full userdata the sim holds, which are written as the standard stream they are.
 - **Threads (the sim's coroutines):**
   - The thread's status and stack are written with its size.
   - The CallInfo chain is written with base, top, `savedpc` as an offset, and state flags. The
@@ -150,8 +153,10 @@ weakly held objects included:
 
 ### 2. The C++ sim
 
-Each system gets a serializer in its own file, written with the `ByteWriter`/`ByteReader`
-the replays use. Each field is written in declaration order, and each class carries a version.
+The serializers are `StateIO`'s (`src/sim/state_io*.cpp`), which each serialized class
+befriends. They use their own writer and reader, whose section tags fail a misaligned read
+where it happens. The replay codec drops the runtime fields of queued orders. Each field is
+written in declaration order; the snapshot as a whole carries a version and a hash.
 
 - **What's saved:** the fields the survey marks authoritative, about 600 across about 40
   classes. These include:
@@ -174,19 +179,48 @@ the replays use. Each field is written in declaration order, and each class carr
   never walked, so they are written sorted.
 - **Ids:** every allocator (entity, effect, platoon, thread serial, command id, scheduler
   sequence, task serial, snap serials) is saved, so the future hands out the same ids.
+- **Constants from blueprints are saved too.** A unit's drive, threats and transport layout
+  are saved rather than re-read. Re-reading them would mean replaying unit creation, which
+  calls `luaL_ref` and runs scripts. Only caches are rebuilt: bone and animation data,
+  projectile blueprint info, placement rules.
+- **Forgotten fields are caught.** `tools/check_state_io.py` (the `arch.state_io` test) reads
+  every serialized class's members from its header. It fails on any the serializers never
+  name, in code or in a comment that leaves the field out with its reason.
 
-**Pointer translation.** Lua's `_c_object` values name C++ objects by address. The persister
-asks the sim for each address's (kind, id): entity, weapon (unit, index), navigator (unit),
-manipulator (unit, index), platoon (army, index), brain (index), or economy event (index).
-The load asks the other way. `_c_sim_gen` fields are rewritten to the new generation. The
-light userdata in the per-type metatables and caches are re-pointed.
+**Pointer translation** (`src/sim/sim_snapshot.cpp`):
+
+- **Naming.** Lua's `_c_object` values name C++ objects by address. A save names each address
+  by what it is: an entity (id), a weapon (unit, index), a navigator (unit), a manipulator
+  (unit, index), an economy event (index), a brain (army) or a platoon (army, index). A load
+  finds the object that name is in the restored sim.
+- **Host singletons.** These are the sim, its thread manager, the VFS, the blueprint store,
+  the sound manager and the game-state manager. They are named by the registry or global
+  key that holds them, and a load takes the booted host's pointer under that key.
+- **Stale handles.** An address that names nothing live becomes NULL. A navigator table
+  outlives its unit, because nothing detaches it.
+- **After the load:**
+  - `_c_sim_gen` fields are rewritten to the new generation;
+  - each thread's coroutine is found again from its registry ref;
+  - the booted blueprint store's refs must equal the saved game's, since blueprint tables
+    are named by ref.
+- **The io library's files.** Their `FILE*` belongs to the saving process, so a file handle
+  is written as the standard stream it is. An open file fails the save.
+- **The old heap's finalizers don't run.** They would run the old heap's code against the
+  new registry.
 
 ### 3. The save file and the load
 
-- **The save file.** `SavedGame` gains an optional snapshot section, compressed, beside the
-  history. A save without one, such as an older save, still loads by catching up.
+- **The save file.** `SavedGame` (format 2) carries its snapshot, deflated with zlib at
+  fastest, beside the history. A save without one still loads by catching up. Saves only
+  load on the build that wrote them, so there are no older ones.
 - **Saving.** Snapshots are taken at a tick boundary, never inside one. The sim writes one
   when the UI's save request is processed; `InternalSaveGame` doesn't change.
+- **The restored game adopts the save's history as its recording** (`adopt_history`), so a
+  later save carries the whole game. The history drops the orders still to run: they're in
+  the restored scheduler, and are recorded again as they run.
+- **Headless loads restore since M208c-b.** `--load-by-replay` forces the catch-up, the
+  oracle a restore is checked against. The game's own load (the Load dialog, then a
+  relaunch) still catches up until M208c-c.
 - **Loading.**
   - Restore, then compare the restored state's checksum parts with the history's for the
     saved tick.
@@ -210,6 +244,28 @@ light userdata in the per-type metatables and caches are re-pointed.
 
 This runs at several T values (early, mid, late, and on a forced-collection tick), and in CI
 on a short game.
+
+**What M208c-b showed** (Release, Seton's Clutch, four AIs, seed 4242, `--scripted-orders`):
+
+- **Save points.** Saves at ticks 70 (a forced collection), 71 (its lazy sweep under way),
+  1402, 3000, 6000, 12000 and 17000 each played 500 ticks identically after a restore, in
+  every checksum domain.
+- **Entity traces.** After a restore at 600, the traces for ticks 601–700 are byte-identical:
+  571,658 lines each.
+- **The campaign.** X1CA_001, restored at tick 900, played its next 500 ticks identically.
+- **The ctest tests.**
+  - `data.save_load` loads a save, saves again in the loaded game, and loads that second
+    save.
+  - `data.save_load_replay` runs the same chain catching up, and reaches the same final
+    checksums.
+  - `data.save_load_campaign` runs the chain on the campaign.
+  - A unit test restores a sim without a map, so CI covers the snapshot too.
+- **Size and time.** At tick 18000 (30 minutes), the snapshot is 77 MB and takes 456 ms. The
+  file is 11.9 MB and is written in 683 ms. A restore takes 253 ms after the boot, where
+  catching up took about 100 s of sim.
+- **Scripted orders.** `--scripted-orders` now seeds its orders from the tick, so a restored
+  game is given the ones the saved game was. Headless runs go to `--ticks`' tick, not that
+  many ticks more.
 
 **Other checks:**
 
@@ -235,10 +291,15 @@ on a short game.
 1. **M208c-a, Lua persistence.** `lpersist.cpp`, light-userdata hooks, frozen tables and the
    lazy sweep, and the sim collecting only when forced. Tested by unit round trips, and by
    the sim's whole heap round-tripping in `--persist-test`.
-2. **M208c-b, the C++ sim.** Serializers, pointer translation, and the restore sequence.
-   Proved by the A/B oracle through test flags (`--snapshot-at T`, `--restore <file>`).
-3. **M208c-c, saves.** The snapshot in the save file, the load with its check and fallback,
-   the UI flow, and measurements.
+2. **M208c-b, the C++ sim.** Serializers, pointer translation, the restore sequence, the
+   snapshot in the save file, and headless loads that restore it. Proved by the A/B oracle:
+   saves loaded both ways (`--load`, `--load-by-replay`).
+3. **M208c-c, the game's loads.**
+   - The Load dialog's relaunch restores too.
+   - A failed restore reboots and catches up rather than exiting.
+   - Loaded C functions are checked against this build's (for shared saves).
+   - Ambient sounds restart, and the per-client registry values (the focus army) are
+     the loading client's.
 
 ## Risks
 

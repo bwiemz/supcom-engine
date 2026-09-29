@@ -2566,15 +2566,21 @@ void Unit::update_pose() {
                        ? locals.local[i]
                        : pose_compose(pose_[static_cast<size_t>(parent)], locals.local[i]);
     }
+    refresh_bone_matrices();
+}
+
+void Unit::refresh_bone_matrices() {
     // What the renderer skins with: each bone's posed transform times its
     // inverse bind pose (identity where a bone is at rest).
-    if (animated_bone_matrices_.size() == count) {
-        for (size_t i = 0; i < count; ++i) {
-            f32 posed[16];
-            pose_to_mat4(posed, pose_[i]);
-            mat4_multiply(animated_bone_matrices_[i].data(), posed,
-                          bd->bones[i].inverse_bind_pose.data());
-        }
+    const BoneData* bd = bone_data();
+    if (!bd || pose_.empty() || pose_.size() != bd->bones.size() ||
+        animated_bone_matrices_.size() != pose_.size())
+        return;
+    for (size_t i = 0; i < pose_.size(); ++i) {
+        f32 posed[16];
+        pose_to_mat4(posed, pose_[i]);
+        mat4_multiply(animated_bone_matrices_[i].data(), posed,
+                      bd->bones[i].inverse_bind_pose.data());
     }
 }
 

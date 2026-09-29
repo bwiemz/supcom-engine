@@ -28,6 +28,7 @@ struct ThreadEntry {
 class Waitable;
 
 class ThreadManager {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     // 0 = disabled. The original GPG engine had no per-resume instruction
     // budget.  FA's AI builder setup (ExecutePlan → SetupMainBase → AddBuilder

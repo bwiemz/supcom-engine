@@ -15,6 +15,7 @@ namespace osc::sim {
 class Entity;
 
 class EntityRegistry {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     static constexpr u32 CELL_SIZE = 32;
 
