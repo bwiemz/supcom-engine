@@ -71,26 +71,28 @@ find_package(Python3 COMPONENTS Interpreter)
 # ── Two-process multiplayer (data-free) ────────────────────────────────────
 if(Python3_Interpreter_FOUND)
     set(_run_pair ${CMAKE_CURRENT_SOURCE_DIR}/run_pair.py)
-    # Distinct ports so the tests can run in parallel.
+    # Distinct ports so the tests can run in parallel, below the ephemeral
+    # ranges (Linux 32768+, Windows 49152+) an outgoing connection may hold.
+    # Each pair hosts a lobby, launches, and plays in lockstep over its
+    # connections (the network a lobby's game plays over).
     add_test(NAME mp.lockstep_sync
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47711)
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29731)
     add_test(NAME mp.lockstep_desync_detected
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47712
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29732
                      -- --mp-desync)
-    add_test(NAME mp.lan_lobby_launch
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47713)
-    add_test(NAME mp.lan_peer_drop
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47714
+    add_test(NAME mp.lockstep_peer_drop
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29733
                      --client-may-fail -- --mp-drop-at 20)
-    set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected
-                         mp.lan_lobby_launch mp.lan_peer_drop
-                         PROPERTIES LABELS mp TIMEOUT 240)
+    # A joiner taking 200 ms a round (a slow machine) sets the game's pace:
+    # the host, twice as fast, waits for it rather than dropping it (M218h)
+    add_test(NAME mp.lockstep_slow_peer
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29734
+                     -- --mp-slow 200 --mp-frames 80)
+    set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
+                         mp.lockstep_slow_peer PROPERTIES LABELS mp TIMEOUT 240)
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
-
-add_test(NAME mp.lan_ui_globals COMMAND osc_integration --lan-ui-test)
-set_tests_properties(mp.lan_ui_globals PROPERTIES LABELS mp TIMEOUT 60)
 
 # ── Data-backed modes (need Forged Alliance) ───────────────────────────────
 set(OSC_TEST_MAP "/maps/SCMP_009/SCMP_009_scenario.lua"
@@ -221,6 +223,36 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
+    # M220a: a matchmaking client (this script, standing in for FAF's)
+    # launches the game over GPGNet: Idle, CreateLobby to a lobby, HostGame
+    # hosting it on the next port, and the game ending with the link.
+    add_test(NAME data.gpgnet_lobby
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_lobby.py
+                     $<TARGET_FILE:opensupcom> 29751)
+    set_tests_properties(data.gpgnet_lobby PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 300)
+    # M220b: the client drives two games through retail's auto-lobby, as
+    # FAF's matchmaker does (uids, /players, /team, a faction), to a launch;
+    # both play to tick 100 in lockstep. Ports 29753-29756.
+    add_test(NAME data.gpgnet_game
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_game.py
+                     $<TARGET_FILE:opensupcom> 29753)
+    set_tests_properties(data.gpgnet_game PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
+    # M220c: the same, each game reaching the other as through FAF's ICE
+    # adapter: a UDP relay standing for each player, losing 5% of what it
+    # carries. Ports 29771-29776.
+    add_test(NAME data.gpgnet_game_relayed
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_game.py
+                     $<TARGET_FILE:opensupcom> 29771 --relay-loss 0.05)
+    set_tests_properties(data.gpgnet_game_relayed PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────

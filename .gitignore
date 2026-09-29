@@ -8,3 +8,6 @@
 
 # Run artifacts written by the smoke / lobby-flow test modes
 smoke_report.txt
+
+# Python bytecode (a tool importing another, as cross_os_pairs.py does run_pair.py)
+__pycache__/
