@@ -56,6 +56,7 @@
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/sim_sync.hpp"
 
@@ -4233,7 +4234,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_stub("SetFocusArmy");
     set_nil_fn("GetFocusArmy");
     set_stub("ClearFrame");
-    set_stub("GpgNetSend");
     set_bool_fn("HasCommandLineArg2", false);
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
@@ -4309,6 +4309,9 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddInputCapture", l_AddInputCapture);
     state.register_function("RemoveInputCapture", l_RemoveInputCapture);
     state.register_function("AnyInputCapture", l_AnyInputCapture);
+
+    // The matchmaking client's link (M220a)
+    register_gpgnet_bindings(state);
     state.register_function("GetInputCapture", l_GetInputCapture);
 
     // Localization globals

@@ -201,8 +201,12 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !quit.empty() && quit.size() <= 6 &&
         quit.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_quit_at = static_cast<u32>(std::stoi(quit));
-    o.scripted_window =
-        request.windowed || o.replay_flow_test || o.load_flow_test || o.lan_game_test();
+    // /gpgnet host:port (Moho's spelling, as FAF's client passes it)
+    o.gpgnet_endpoint = parse_string_arg(argc, argv, "/gpgnet", "");
+    if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
+    o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
+    o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
+                        o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
