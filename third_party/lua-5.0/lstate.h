@@ -119,6 +119,9 @@ typedef struct global_State {
   GCObject **sweeppos;  /* NULL: no sweep under way */
   lu_mem sweepdead;  /* the collection's dead memory, for its threshold */
   lu_byte lazysweep;  /* sweep `rootgc' lazily (lua_setlazysweep) */
+  /* OpenSupCom (M208c): collect only when told (lua_setmanualgc) --
+     a collection leaves the threshold at MAX_LUMEM */
+  lu_byte manualgc;
   GCObject *frozengc;  /* frozen tables (lua_freeze): never swept */
   struct Table **frozenroots;  /* frozen tables the mark traverses */
   int nfrozenroots;

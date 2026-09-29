@@ -109,6 +109,7 @@ static void f_luaopen (lua_State *L, void *ud) {
   g->sweeppos = NULL;
   g->sweepdead = 0;
   g->lazysweep = 0;
+  g->manualgc = 0;
   g->frozengc = NULL;
   g->frozenroots = NULL;
   g->nfrozenroots = 0;

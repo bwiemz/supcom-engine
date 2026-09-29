@@ -573,8 +573,11 @@ public:
 
     static constexpr f64 SECONDS_PER_TICK = 0.1;
     /// Every this many ticks the sim forces a full collection of its Lua
-    /// state, as Moho's Sim::AdvanceBeat does (faf-re Sim.cpp); between,
-    /// Lua 5.0 collects when its heap doubles. The heap is mostly live
+    /// state, as Moho's Sim::AdvanceBeat does (faf-re Sim.cpp). From the
+    /// first tick these are its only collections (lua_setmanualgc, M208c):
+    /// Lua 5.0 also collects when its heap doubles, which the late game's
+    /// never did, and which would fall on different ticks on different
+    /// builds (see SimState::tick). The heap is mostly live
     /// (about 150 MB late in a four-AI game), and half of it is the
     /// blueprints: frozen (lua_freeze) and swept lazily, a collection costs
     /// about 30 ms there, not 70 (M224g).

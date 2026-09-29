@@ -1016,7 +1016,13 @@ void SimState::tick() {
     // no ticks, collects as it did):
     // - the blueprints, loaded and modded by now, freeze: half the live heap,
     //   which each collection would mark and sweep again;
-    // - the last collection's sweep runs a slice a tick.
+    // - the last collection's sweep runs a slice a tick;
+    // - the sim collects only on its schedule (M208c). Lua's own threshold
+    //   follows the heap's byte count, which isn't game state: it differs
+    //   between builds (Instruction is 8 bytes on Linux, 4 on Windows) and
+    //   between runs (where an address-hashed key lands decides when its
+    //   table grows), and a restored snapshot's differs again. A collection
+    //   it started would clear weak tables on different ticks on each peer.
     if (L_) {
         if (tick_count_ == 1) {
             lua_pushstring(L_, "__blueprints");
@@ -1024,6 +1030,7 @@ void SimState::tick() {
             if (lua_istable(L_, -1)) lua_freeze(L_, -1);
             lua_pop(L_, 1);
             lua_setlazysweep(L_, 1);
+            lua_setmanualgc(L_, 1);
         }
         lua_sweepstep(L_, LUA_SWEEP_SLICE);
     }
