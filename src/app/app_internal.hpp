@@ -71,6 +71,12 @@ struct Options {
     u16 lan_game_port = 47624;
     u32 lan_game_quit_at = 0; ///< --lan-game-quit-at: the joiner leaves then (M218e)
     bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
+    /// `/gpgnet host:port` (Moho's; also --gpgnet): the matchmaking client to
+    /// link to, instead of the front end (M220a).
+    std::string gpgnet_endpoint;
+    /// --gpgnet-scripted: that link's run is a test's: offscreen, counting
+    /// script errors, and over once the client closes the link.
+    bool gpgnet_scripted = false;
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;
@@ -82,7 +88,8 @@ struct Options {
     bool builder_debug = false;
     std::string ai_personality;
     size_t ai_army_count = 2;           ///< --ai-armies
-    std::set<std::string> cmdline_args; ///< for HasCommandLineArg
+    /// The command line, in order, for HasCommandLineArg and GetCommandLineArg
+    std::vector<std::string> cmdline_args;
     /// A checked run: headless, and its exit code is the checks' result.
     bool any_test = false;
     bool headless = false;
@@ -149,7 +156,6 @@ struct WorldInterp {
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
 void cancel_command_mode(lua_State* uiL);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);
-void lan_launch_session(lua_State* uL, const std::string& scenario);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on

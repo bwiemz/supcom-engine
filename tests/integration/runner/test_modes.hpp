@@ -37,10 +37,11 @@ private:
     std::optional<RenderDumpProbe> render_dump_;
 };
 
-/// The two-process LAN harnesses (lan_modes.cpp): --mp-host/--mp-join run a
-/// lockstep match, --lan-host/--lan-join the lobby handshake and a match.
-int run_mp_lan_test(bool is_host, const std::string& address, u16 port, u32 frames,
-                    bool inject_desync);
-int run_lan_lobby_test(bool is_host, const std::string& address, u16 port, u32 frames, u32 drop_at);
+/// The two-process multiplayer harness (lan_modes.cpp): --mp-host/--mp-join
+/// host and join a lobby, launch, and play a lockstep match over its
+/// connections; --mp-desync diverges the host, --mp-drop-at N makes the
+/// joiner leave at round N, --mp-slow MS makes each of its rounds take MS.
+int run_mp_lobby_test(bool is_host, const std::string& address, u16 port, u32 frames,
+                      bool inject_desync, u32 drop_at, u32 slow_ms);
 
 } // namespace osc::test

@@ -205,8 +205,12 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !quit.empty() && quit.size() <= 6 &&
         quit.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_quit_at = static_cast<u32>(std::stoi(quit));
+    // /gpgnet host:port (Moho's spelling, as FAF's client passes it)
+    o.gpgnet_endpoint = parse_string_arg(argc, argv, "/gpgnet", "");
+    if (o.gpgnet_endpoint.empty()) o.gpgnet_endpoint = parse_string_arg(argc, argv, "--gpgnet", "");
+    o.gpgnet_scripted = !o.gpgnet_endpoint.empty() && parse_flag(argc, argv, "--gpgnet-scripted");
     o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test ||
-                        o.mods_flow_test || o.lan_game_test();
+                        o.mods_flow_test || o.lan_game_test() || o.gpgnet_scripted;
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");
@@ -220,10 +224,8 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.ai_army_count = static_cast<size_t>(std::max(1, std::atoi(n.c_str())));
     }
 
-    // Collect all command-line args for HasCommandLineArg (M147d)
-    for (int i = 1; i < argc; ++i) {
-        o.cmdline_args.insert(argv[i]);
-    }
+    // The command line, for HasCommandLineArg (M147d) and GetCommandLineArg
+    for (int i = 1; i < argc; ++i) o.cmdline_args.emplace_back(argv[i]);
 
     // A checked run: headless, and its exit code is the checks' result (a
     // test mode, or an AI game whose script errors count).
@@ -269,8 +271,7 @@ const char* test_mode_flag(int argc, char* argv[]) {
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
                           arg != "--replay-flow-test" && arg != "--load-flow-test" &&
                           arg != "--mods-flow-test";
-        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
-            arg == "--lan-host" || arg == "--lan-join")
+        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }
     return nullptr;

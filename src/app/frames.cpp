@@ -283,47 +283,4 @@ void pump_ui_frames_with_controls(osc::lua::LuaState& ui_lua_state,
     }
 }
 
-// Build a fixed 1v1 human-vs-human sessionConfig for `scenario` and launch it via
-// the existing LaunchSinglePlayerSession global. Both LAN peers build the same
-// config (they differ only in which army is locally focused, decided by role).
-void lan_launch_session(lua_State* uL, const std::string& scenario) {
-    lua_pushstring(uL, "LaunchSinglePlayerSession");
-    lua_rawget(uL, LUA_GLOBALSINDEX);
-    if (!lua_isfunction(uL, -1)) {
-        lua_pop(uL, 1);
-        spdlog::warn("[lan] LaunchSinglePlayerSession not available");
-        return;
-    }
-    lua_newtable(uL); // config
-    lua_pushstring(uL, "ScenarioFile");
-    lua_pushstring(uL, scenario.c_str());
-    lua_rawset(uL, -3);
-    lua_pushstring(uL, "GameOptions");
-    lua_newtable(uL);
-    lua_pushstring(uL, "ScenarioFile");
-    lua_pushstring(uL, scenario.c_str());
-    lua_rawset(uL, -3);
-    lua_rawset(uL, -3);
-    lua_pushstring(uL, "PlayerOptions");
-    lua_newtable(uL);
-    auto push_slot = [&](int idx, const char* name, int faction, int team) {
-        lua_pushnumber(uL, idx);
-        lua_newtable(uL);
-        lua_pushstring(uL, "Human"); lua_pushboolean(uL, 1); lua_rawset(uL, -3);
-        lua_pushstring(uL, "PlayerName"); lua_pushstring(uL, name); lua_rawset(uL, -3);
-        lua_pushstring(uL, "Faction"); lua_pushnumber(uL, faction); lua_rawset(uL, -3);
-        lua_pushstring(uL, "Team"); lua_pushnumber(uL, team); lua_rawset(uL, -3);
-        lua_pushstring(uL, "StartSpot"); lua_pushnumber(uL, idx); lua_rawset(uL, -3);
-        lua_rawset(uL, -3);
-    };
-    push_slot(1, "Host", 1, 1);
-    push_slot(2, "Client", 2, 2);
-    lua_rawset(uL, -3); // config.PlayerOptions
-    if (lua_pcall(uL, 1, 0, 0) != 0) {
-        spdlog::warn("[lan] LaunchSinglePlayerSession error: {}",
-                     lua_tostring(uL, -1) ? lua_tostring(uL, -1) : "(unknown)");
-        lua_pop(uL, 1);
-    }
-}
-
 } // namespace osc::app

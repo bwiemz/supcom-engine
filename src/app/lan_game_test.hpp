@@ -10,7 +10,8 @@
 // In the game (M218d) each sees the session's two clients and their
 // sources; the host pauses (M218f) and every tick holds until the joiner
 // resumes it, both hearing OnPause and OnResume; and its chat to everyone
-// reaches both.
+// reaches both. The host's lobby makes the game's speed adjustable, and the
+// joiner, resuming, raises it to +2 (M218i): both hear it, and play on at it.
 //
 // With `quit_at` (M218e) the joiner leaves the game at that tick: the host
 // must drop it by the lockstep's agreement, defeat its army, show and close
@@ -61,6 +62,8 @@ private:
     void pause_frame(lua::LuaState& ui, const sim::SimState& sim);
     /// The UI heard the pause, from the host, and its end.
     void check_pause(lua::LuaState& ui);
+    /// The joiner's speed change heard, and the game at it (M218i).
+    void check_speed(lua::LuaState& ui);
     /// Whether retail's disconnect dialog is open (its file-local `parent`).
     bool disconnect_dialog_open(lua::LuaState& ui);
     void check_chat(lua::LuaState& ui);
