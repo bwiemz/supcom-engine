@@ -507,4 +507,4 @@ clang-tidy checks, the test layers and the engine's less obvious conventions.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE). It holds no game data, and its code is written anew: see [docs/provenance-and-compatibility.md](docs/provenance-and-compatibility.md) for what may enter the repository, and for what the engine promises to run and interoperate with.

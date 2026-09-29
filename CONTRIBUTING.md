@@ -4,6 +4,8 @@ OpenSupCom reimplements Moho, the engine of *Supreme Commander: Forged Alliance*
 
 ## The ground rules
 
+The full statement of what may enter the repository, where knowledge of the game may come from, and what the engine promises to run is [docs/provenance-and-compatibility.md](docs/provenance-and-compatibility.md). In short:
+
 - **Never commit game data.** FA's assets are proprietary. Keep them out of the repository, including extracted files, screenshots of game art and golden images (see *Goldens* below). Tests that need the game find it on the developer's machine and skip (exit 77) when it isn't there.
 - **FA's scripts decide; the engine provides.** When retail or FAF Lua implements a rule (victory, score, AI, UI, wrecks), the engine supplies the primitives Moho did and doesn't decide the outcome itself. Two referees disagree in subtle ways. Before adding engine logic, check whether a script, including one run through a hook, already does it.
 - **Match Moho, not a guess.** A binding should behave as Moho's does, as far as scripts can observe. Retail FA 3599 is the reference, and FAF must keep working. When unsure, read the retail Lua that calls the binding, check FAF's engine annotations, or run the real game.
