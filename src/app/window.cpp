@@ -376,11 +376,16 @@ std::optional<int> App::run_window() {
             }
         }
 
-        // --mods-flow-test: a skirmish with the player's mods (M221b)
+        // --mods-flow-test: a skirmish with mods (M221b), launched from the
+        // front end, through retail's lobby and its mod manager (M221c), or
+        // a recorded one watched
         std::optional<osc::app::ModsFlowTest> mods_flow;
         if (opt.mods_flow_test) {
-            mods_flow.emplace();
-            if (!mods_flow->start(ui_lua_state, opt.watch_path.empty())) {
+            using Launch = osc::app::ModsFlowTest::Launch;
+            mods_flow.emplace(!opt.watch_path.empty() ? Launch::Watch
+                              : opt.mods_flow_lobby   ? Launch::Lobby
+                                                      : Launch::Direct);
+            if (!mods_flow->start(ui_lua_state)) {
                 mods_flow->finish();
                 return finish_test_run("mods-flow-test");
             }
@@ -594,7 +599,9 @@ std::optional<int> App::run_window() {
             }
 
             if (lan_game) lan_game->frame(ui_lua_state, sim_state.get());
-            if (mods_flow) mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get());
+            if (mods_flow)
+                mods_flow->frame(ui_lua_state, sim_lua_state.get(), sim_state.get(),
+                                 renderer.ui_dispatch(), ui_registry);
 
             // --load-flow-test: the saved game catches up -- never a replay
             // meanwhile -- then plays on a little and is saved again.
