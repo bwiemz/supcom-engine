@@ -222,17 +222,25 @@ static int brain_GetArmyStartPos(lua_State* L) {
     return 2;
 }
 
+// The economy's rates as Moho reports them: a tick's worth (its CEconomy
+// keeps each tick's income, request and use). Retail's AI multiplies them by
+// 10 against per-second drains (EconomyBuildConditions), and its economy bar
+// by GetSimTicksPerSecond.
+static f64 per_tick(f64 per_second) {
+    return per_second * sim::SimState::SECONDS_PER_TICK;
+}
+
 static int brain_GetEconomyIncome(lua_State* L) {
     auto* brain = check_brain(L);
     const char* res = luaL_checkstring(L, 2);
-    lua_pushnumber(L, brain ? brain->get_economy_income(res) : 0.0);
+    lua_pushnumber(L, brain ? per_tick(brain->get_economy_income(res)) : 0.0);
     return 1;
 }
 
 static int brain_GetEconomyRequested(lua_State* L) {
     auto* brain = check_brain(L);
     const char* res = luaL_checkstring(L, 2);
-    lua_pushnumber(L, brain ? brain->get_economy_requested(res) : 0.0);
+    lua_pushnumber(L, brain ? per_tick(brain->get_economy_requested(res)) : 0.0);
     return 1;
 }
 
@@ -240,14 +248,15 @@ static int brain_GetEconomyRequested(lua_State* L) {
 static int brain_GetEconomyUsage(lua_State* L) {
     auto* brain = check_brain(L);
     const char* res = luaL_checkstring(L, 2);
-    lua_pushnumber(L, brain ? brain->get_economy_usage(res) : 0.0);
+    lua_pushnumber(L, brain ? per_tick(brain->get_economy_usage(res)) : 0.0);
     return 1;
 }
 
+// GetEconomyTrend = income less use (Moho's mIncome - mLastUseActual).
 static int brain_GetEconomyTrend(lua_State* L) {
     auto* brain = check_brain(L);
     const char* res = luaL_checkstring(L, 2);
-    lua_pushnumber(L, brain ? brain->get_economy_trend(res) : 0.0);
+    lua_pushnumber(L, brain ? per_tick(brain->get_economy_trend(res)) : 0.0);
     return 1;
 }
 
@@ -565,16 +574,16 @@ static int brain_GetEconomyOverTime(lua_State* L) {
     if (brain) {
         const auto& econ = brain->economy();
         lua_pushstring(L, "MassIncome");
-        lua_pushnumber(L, econ.mass.income);
+        lua_pushnumber(L, per_tick(econ.mass.income));
         lua_rawset(L, -3);
         lua_pushstring(L, "MassConsumed");
-        lua_pushnumber(L, econ.mass.requested);
+        lua_pushnumber(L, per_tick(econ.mass.requested));
         lua_rawset(L, -3);
         lua_pushstring(L, "EnergyIncome");
-        lua_pushnumber(L, econ.energy.income);
+        lua_pushnumber(L, per_tick(econ.energy.income));
         lua_rawset(L, -3);
         lua_pushstring(L, "EnergyConsumed");
-        lua_pushnumber(L, econ.energy.requested);
+        lua_pushnumber(L, per_tick(econ.energy.requested));
         lua_rawset(L, -3);
     }
     return 1;

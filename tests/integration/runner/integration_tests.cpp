@@ -295,6 +295,53 @@ void test_economy(TestContext& ctx) {
         spdlog::info("  Units: {} producing, {} consuming",
                      producing, consuming);
     }
+
+    // Scripts see the rates as Moho reports them: a tick's worth (retail's
+    // AI multiplies by 10 against per-second drains, its economy bar by the
+    // tick rate). Its trend is income less what it spent.
+    auto* brain = ctx.sim.army_at(0);
+    if (!brain) return;
+    for (int i = 0; i < 10; ++i) ctx.sim.tick(); // the commander's income counted
+    const auto ran = ctx.lua_state.do_string(R"(
+        local b = ArmyBrains[1]
+        __osc_econ = {
+            b:GetEconomyIncome('MASS'), b:GetEconomyRequested('ENERGY'),
+            b:GetEconomyUsage('ENERGY'), b:GetEconomyTrend('ENERGY'),
+            b:GetArmyStat('Economy_Income_Mass', 0).Value,
+        }
+    )");
+    std::array<double, 5> seen{};
+    if (ran) {
+        lua_State* L = ctx.lua_state.raw();
+        lua_pushstring(L, "__osc_econ");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        for (int i = 0; i < 5; ++i) {
+            lua_rawgeti(L, -1, i + 1);
+            seen[static_cast<size_t>(i)] = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    constexpr double kTick = osc::sim::SimState::SECONDS_PER_TICK;
+    const auto& econ = brain->economy();
+    const std::array<double, 5> want{econ.mass.income * kTick, econ.energy.requested * kTick,
+                                     brain->get_economy_usage("ENERGY") * kTick,
+                                     (econ.energy.income - brain->get_economy_usage("ENERGY")) *
+                                         kTick,
+                                     econ.mass.income * kTick};
+    bool same = static_cast<bool>(ran);
+    for (size_t i = 0; i < want.size(); ++i) same = same && std::abs(seen[i] - want[i]) < 1e-6;
+    if (same && econ.mass.income > 0) {
+        spdlog::info("[PASS] Economy test: scripts see a tick's worth (mass income {:.2f} a "
+                     "tick, {:.1f} a second)",
+                     seen[0], econ.mass.income);
+    } else {
+        osc::test_status::fail("[FAIL] Economy test: script rates {} {} {} {} {}, want {} {} {} "
+                               "{} {}{}",
+                               seen[0], seen[1], seen[2], seen[3], seen[4], want[0], want[1],
+                               want[2], want[3], want[4],
+                               ran ? "" : (" (" + ran.error().message + ")"));
+    }
 }
 
 // Build test: have entity #1 (ACU) build a T1 power gen nearby
@@ -12648,7 +12695,8 @@ void test_air_staging(TestContext& ctx) {
     const double ask_m = a->economy().dock_repair_mass;
     step();
     const float h2 = a->health();
-    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')");
+    // GetEconomyRequested is a tick's worth, as Moho's: ten to the second.
+    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY') * 10");
     const double asked_with = number("__osc_req");
     // Every docked, damaged plane (the gunship too, once it is aboard) asks
     // 50 energy a second.
@@ -12679,7 +12727,7 @@ void test_air_staging(TestContext& ctx) {
                       detach_tick - attach_tick, a->position().y - ground(*a)));
     for (int i = 0; i < 200 && !a->command_queue().empty(); ++i) step();
     for (int i = 0; i < 600 && !b_docked; ++i) step();
-    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY')");
+    lua("__osc_req = GetArmyBrain('ARMY_1'):GetEconomyRequested('ENERGY') * 10");
     check(asks >= 50.0 && std::abs(asked_with - number("__osc_req") - asks) < 0.01,
           fmt::format("its army pays for the repair ({:.2f} energy asked with {:.0f} for "
                       "repairs, {:.2f} after)",

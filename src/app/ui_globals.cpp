@@ -130,11 +130,15 @@ static int l_GetEconomyTotals(lua_State* L) {
         lua_rawset(L, -3); // set subtable on result
     };
 
-    push_resource_subtable("income", econ.mass.income, econ.energy.income);
+    // The rates are a tick's worth, as Moho's: retail's economy bar
+    // multiplies them by GetSimTicksPerSecond.
+    constexpr osc::f64 kPerTick = osc::sim::SimState::SECONDS_PER_TICK;
+    push_resource_subtable("income", econ.mass.income * kPerTick, econ.energy.income * kPerTick);
     push_resource_subtable("lastUseActual",
-        brain ? brain->get_economy_usage("MASS") : 0.0,
-        brain ? brain->get_economy_usage("ENERGY") : 0.0);
-    push_resource_subtable("lastUseRequested", econ.mass.requested, econ.energy.requested);
+                           brain ? brain->get_economy_usage("MASS") * kPerTick : 0.0,
+                           brain ? brain->get_economy_usage("ENERGY") * kPerTick : 0.0);
+    push_resource_subtable("lastUseRequested", econ.mass.requested * kPerTick,
+                           econ.energy.requested * kPerTick);
     push_resource_subtable("maxStorage", econ.mass.max_storage, econ.energy.max_storage);
     push_resource_subtable("stored", econ.mass.stored, econ.energy.stored);
     push_resource_subtable("reclaimed", 0.0, 0.0); // TODO: track cumulative reclaim
