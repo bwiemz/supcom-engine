@@ -4,6 +4,7 @@
 #include "sim/entity.hpp"
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -47,6 +48,13 @@ public:
     // Squad tracking (simplified: just store squad name per unit)
     void set_unit_squad(u32 entity_id, const std::string& squad);
     const std::string& get_unit_squad(u32 entity_id) const;
+    /// Moho's squad class of a squad name: 0 Unassigned (also no name), 1
+    /// Attack, 2 Artillery, 3 Guard, 4 Support, 5 Scout, or -1 for another
+    /// name. Moho reads the names in any case (retail asks for 'scout').
+    static int squad_class(std::string_view squad);
+    /// Whether `entity_id` is in squad `squad`: same class, in any case, or
+    /// the same name when it is no class.
+    bool in_squad(u32 entity_id, std::string_view squad) const;
 
     // The formation each unit was assigned with (AssignUnitsToPlatoon, a
     // template's fifth field); the override, if set, stands for all.

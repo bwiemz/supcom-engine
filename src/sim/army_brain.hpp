@@ -168,9 +168,10 @@ public:
     i32 current_enemy_index() const { return current_enemy_index_; }
     void set_current_enemy_index(i32 idx) { current_enemy_index_ = idx; }
 
-    /// SetUpAttackVectorsToArmy's result, which GetAttackVectors returns: a
-    /// point on each group of the target army's structures, and the heading
-    /// from this army's start to it.
+    /// SetUpAttackVectorsToArmy's result, which GetAttackVectors returns:
+    /// Moho's SPointVector, an arrow from the middle of a map cell without
+    /// the enemy (`position`) to one beside it with (`direction`, the offset
+    /// from one middle to the other).
     struct AttackVector {
         Vector3 position;
         Vector3 direction;

@@ -61,6 +61,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <limits>
 #include <map>
 #include <chrono>
 #include <cmath>
@@ -2194,77 +2195,338 @@ static int brain_RemoveArmyStatsTrigger(lua_State*) { return 0; }
 static int brain_RemoveEnergyDependingEntity(lua_State*) { return 0; }
 static int brain_PBMAddBuildLocation(lua_State*) { return 0; }
 static int brain_PBMRemoveBuildLocation(lua_State*) { return 0; }
-// brain:SetUpAttackVectorsToArmy([category]): attack vectors on the current
-// enemy (the AI sets itself as enemy to find its own bases). Its units of
-// the category -- STRUCTURE - MOBILE without one -- grouped into 32x32
-// cells, each group a point (its centre) and the heading from this army's
-// start to it. Groups in cell order: the list reaches the AI's scripts.
+// brain:SetUpAttackVectorsToArmy([category]): the attack vectors on the
+// current enemy, as Moho's CAiBrain::ProcessAttackVectors (faf-re): the map
+// in 32-unit cells, those holding one of the enemy's units in the category
+// (MOBILE - STRUCTURE without one) marked; from the middle of each unmarked
+// cell, at height 0, an arrow to the middle of each marked one of the 3x3
+// about it -- the frontier of the enemy's presence -- cell by cell, row by
+// row. None without an enemy.
 static int brain_SetUpAttackVectorsToArmy(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n < 1 || n > 2)
+        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
+                          "CAiBrain:SetUpAttackVectorsToArmy()", 1, 2, n);
     auto* brain = check_brain(L);
     auto* sim = get_sim(L);
     if (!brain || !sim) return 0;
-    const i32 enemy = brain->current_enemy_index();
     std::vector<sim::ArmyBrain::AttackVector> vectors;
-    if (enemy < 0) {
+    const i32 enemy = brain->current_enemy_index();
+    const auto* terrain = sim->terrain();
+    if (enemy < 0 || !terrain) {
         brain->set_attack_vectors({});
         return 0;
     }
-    const bool any = !lua_istable(L, 2);
-    const sim::CategoryExpr wanted = any ? sim::CategoryExpr{} : sim::compile_category(L, 2);
-    struct Group {
-        f64 x = 0, y = 0, z = 0;
-        u32 count = 0;
-    };
-    constexpr f32 kCell = 32.0f;
-    std::map<std::pair<i32, i32>, Group> groups;
+    const bool given = n > 1 && !lua_isnil(L, 2);
+    const osc::lua::CategoryMatcher wanted(L, 2);
+    constexpr i32 kCell = 32;
+    const i32 cols = static_cast<i32>(terrain->map_width()) / kCell;
+    const i32 rows = static_cast<i32>(terrain->map_height()) / kCell;
+    if (cols <= 0 || rows <= 0) {
+        brain->set_attack_vectors({});
+        return 0;
+    }
+    std::vector<sim::Vector3> at;
     sim->entity_registry().for_each_unit([&](sim::Entity& e) {
         if (e.destroyed() || e.army() != enemy) return;
         const auto& u = static_cast<const sim::Unit&>(e);
-        if (u.is_dying()) return;
-        const bool matches = any ? u.has_category("STRUCTURE") && !u.has_category("MOBILE")
-                                 : wanted.matches(u.categories());
-        if (!matches) return;
-        const auto& p = u.position();
-        auto& g = groups[{static_cast<i32>(std::floor(p.x / kCell)),
-                          static_cast<i32>(std::floor(p.z / kCell))}];
-        g.x += p.x;
-        g.y += p.y;
-        g.z += p.z;
-        ++g.count;
+        if (given ? wanted.matches(u.category_bits())
+                  : u.has_category("MOBILE") && !u.has_category("STRUCTURE"))
+            at.push_back(u.position());
     });
-    const sim::Vector3 home = brain->start_position();
-    for (const auto& [cell, g] : groups) {
-        const sim::Vector3 at{static_cast<f32>(g.x / g.count), static_cast<f32>(g.y / g.count),
-                              static_cast<f32>(g.z / g.count)};
-        const f32 dx = at.x - home.x;
-        const f32 dz = at.z - home.z;
-        const f32 len = std::sqrt(dx * dx + dz * dz);
-        vectors.push_back({at, len > 1e-3f ? sim::Vector3{dx / len, 0.0f, dz / len}
-                                           : sim::Vector3{0.0f, 0.0f, 1.0f}});
-    }
+    // A cell's bounds take its edges: a unit on one marks both cells.
+    const auto cell = [cols](i32 row, i32 col) {
+        return static_cast<size_t>(row) * static_cast<size_t>(cols) + static_cast<size_t>(col);
+    };
+    std::vector<u8> marked(cell(rows, 0), 0);
+    const f32 half = kCell * 0.5f;
+    for (i32 row = 0; row < rows; ++row)
+        for (i32 col = 0; col < cols; ++col) {
+            const f32 cx = half + static_cast<f32>(kCell * col);
+            const f32 cz = half + static_cast<f32>(kCell * row);
+            marked[cell(row, col)] = std::any_of(at.begin(), at.end(), [&](const sim::Vector3& p) {
+                return cx - half <= p.x && p.x <= cx + half && cz - half <= p.z && p.z <= cz + half;
+            });
+        }
+    const auto is_marked = [&](i32 row, i32 col) { return marked[cell(row, col)] != 0; };
+    for (i32 row = 0; row < rows; ++row)
+        for (i32 col = 0; col < cols; ++col) {
+            if (is_marked(row, col)) continue;
+            const sim::Vector3 from{half + static_cast<f32>(kCell * col), 0.0f,
+                                    half + static_cast<f32>(kCell * row)};
+            for (i32 r = std::max(row - 1, 0); r <= std::min(row + 1, rows - 1); ++r)
+                for (i32 c = std::max(col - 1, 0); c <= std::min(col + 1, cols - 1); ++c) {
+                    if (!is_marked(r, c)) continue;
+                    vectors.push_back({from,
+                                       {half + static_cast<f32>(kCell * c) - from.x, 0.0f,
+                                        half + static_cast<f32>(kCell * r) - from.z}});
+                }
+        }
     brain->set_attack_vectors(std::move(vectors));
     return 0;
 }
 
+/// An attack vector as Moho hands one to Lua (SCR_ToLua<SPointVector>).
+static void push_attack_vector(lua_State* L, const sim::ArmyBrain::AttackVector& v) {
+    lua_newtable(L);
+    const std::pair<const char*, f32> fields[] = {{"px", v.position.x},  {"py", v.position.y},
+                                                  {"pz", v.position.z},  {"vx", v.direction.x},
+                                                  {"vy", v.direction.y}, {"vz", v.direction.z}};
+    for (const auto& [key, value] : fields) {
+        lua_pushstring(L, key);
+        lua_pushnumber(L, value);
+        lua_rawset(L, -3);
+    }
+}
+
 // brain:GetAttackVectors() -> {{px, py, pz, vx, vy, vz}, ...}, as
-// SetUpAttackVectorsToArmy left them.
+// SetUpAttackVectorsToArmy left them; nil when there are none, as Moho's.
 static int brain_GetAttackVectors(lua_State* L) {
     auto* brain = check_brain(L);
+    if (!brain || brain->attack_vectors().empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
     lua_newtable(L);
-    if (!brain) return 1;
     int i = 1;
     for (const auto& v : brain->attack_vectors()) {
-        lua_newtable(L);
-        const std::pair<const char*, f32> fields[] = {
-            {"px", v.position.x},  {"py", v.position.y},  {"pz", v.position.z},
-            {"vx", v.direction.x}, {"vy", v.direction.y}, {"vz", v.direction.z}};
-        for (const auto& [key, value] : fields) {
-            lua_pushstring(L, key);
-            lua_pushnumber(L, value);
-            lua_rawset(L, -3);
-        }
+        push_attack_vector(L, v);
         lua_rawseti(L, -2, i++);
     }
+    return 1;
+}
+
+namespace {
+
+/// A name of Moho's that Lua gives in any case, with or without its prefix
+/// (gpg's REnumType::SetLexical); its index in `names`, or -1.
+template <size_t N>
+int parse_enum(std::string_view text, std::string_view prefix,
+               const std::array<std::string_view, N>& names) {
+    const auto same = [](std::string_view a, std::string_view b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    if (text.size() > prefix.size() && same(text.substr(0, prefix.size()), prefix))
+        text.remove_prefix(prefix.size());
+    for (size_t i = 0; i < N; ++i)
+        if (same(text, names[i])) return static_cast<int>(i);
+    return -1;
+}
+
+enum class Alliance { Neutral, Ally, Enemy };
+enum class Compare { Closest, Furthest, HighestValue, LeastDefended };
+
+f32 dist_sq(const sim::Vector3& a, const sim::Vector3& b) {
+    const f32 dx = a.x - b.x;
+    const f32 dy = a.y - b.y;
+    const f32 dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
+}
+
+/// Moho's func_GetUnitsAroundPoint: the live units whose footprints reach
+/// the square `reach` about `at`, of `alliance` to the brain's army, known
+/// to it (its own, or one it holds a blip of), in `category`.
+std::vector<const sim::Unit*> units_around(const sim::SimState& sim, i32 army,
+                                           const osc::lua::CategoryMatcher& category,
+                                           const sim::Vector3& at, f32 reach, Alliance alliance) {
+    std::vector<const sim::Unit*> out;
+    constexpr f32 kSlack = sim::EntityRegistry::COLLIDER_REACH;
+    for (const sim::Entity* e :
+         sim.entity_registry().units_in_radius(at.x, at.z, reach * 1.4143f + kSlack)) {
+        const auto& u = static_cast<const sim::Unit&>(*e);
+        if (u.destroyed() || u.is_dying()) continue;
+        const f32 hx = u.footprint_size_x() * 0.5f;
+        const f32 hz = u.footprint_size_z() * 0.5f;
+        const auto& p = u.position();
+        if (p.x + hx < at.x - reach || p.x - hx > at.x + reach || p.z + hz < at.z - reach ||
+            p.z - hz > at.z + reach)
+            continue;
+        const i32 other = u.army();
+        const Alliance is = other == army || sim.is_ally(army, other) ? Alliance::Ally
+                            : sim.is_enemy(army, other)               ? Alliance::Enemy
+                                                                      : Alliance::Neutral;
+        if (is != alliance) continue;
+        if (other != army &&
+            (army < 0 || !sim.get_blip_snapshot(u.entity_id(), static_cast<u32>(army))))
+            continue;
+        if (category.matches(u.category_bits())) out.push_back(&u);
+    }
+    return out;
+}
+
+} // namespace
+
+// brain:PickBestAttackVector(platoon, squad, alliance, compareType, category
+// [, scoreScript, scoreFunc]) -> {px, py, pz, vx, vy, vz} or nil: of the
+// attack vectors (SetUpAttackVectorsToArmy's), the one best for the squad,
+// as Moho's CAiBrain::PickBestAttackVector (faf-re). A vector is its point
+// stepped once along it, and counts where every unit of the squad could
+// stand (and the scorer, `import(scoreScript)[scoreFunc](squadX, squadZ,
+// x, z)`, if given, agrees). Closest and Furthest rank them from the squad
+// with no category; given one they take the first (Moho looks for a unit
+// of the army outside the category it gathered by, and so finds none).
+// HighestValue and LeastDefended score what stands about the squad --
+// every vector alike -- and fall back on Closest when that is nothing.
+// Nil with no current enemy, no such squad, or no vector.
+static int brain_PickBestAttackVector(lua_State* L) {
+    const int n = lua_gettop(L);
+    if (n < 6 || n > 8)
+        return luaL_error(L, "%s\n  expected between %d and %d args, but got %d",
+                          "CAiBrain:PickBestAttackVector(platoon, squad, alliance, "
+                          "compareType, category[, scoreScript, scoreFunc])",
+                          6, 8, n);
+    auto* brain = check_brain(L);
+    auto* platoon = check_platoon(L, 2);
+    auto* sim = get_sim(L);
+    const auto name_at = [L](int i) -> std::string_view {
+        if (lua_type(L, i) != LUA_TSTRING && lua_type(L, i) != LUA_TNUMBER) {
+            luaL_typerror(L, i, "string");
+            return {};
+        }
+        return lua_tostring(L, i);
+    };
+    const std::string squad{name_at(3)};
+    const int squad_class = sim::Platoon::squad_class(squad);
+    const int alliance = parse_enum(name_at(4), "ALLIANCE_",
+                                    std::array<std::string_view, 3>{"Neutral", "Ally", "Enemy"});
+    const int compare = parse_enum(
+        name_at(5), "COMPARE_",
+        std::array<std::string_view, 4>{"Closest", "Furthest", "HighestValue", "LeastDefended"});
+    if (squad_class < 0 || alliance < 0 || compare < 0)
+        return luaL_error(L, "Invalid enum value %s",
+                          squad_class < 0 ? squad.c_str()
+                          : alliance < 0  ? lua_tostring(L, 4)
+                                          : lua_tostring(L, 5));
+    if (n == 7)
+        spdlog::warn("CAiBrain::PickBestAttackVector: Expected 6 or 8 arguments, got 7 instead.");
+    const bool has_category = lua_istable(L, 6);
+    const osc::lua::CategoryMatcher category(L, 6);
+    int scorer = 0;
+    if (n == 8) {
+        const std::string script{name_at(7)};
+        const std::string func{name_at(8)};
+        lua_pushstring(L, "import");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        lua_pushstring(L, script.c_str());
+        if (lua_pcall(L, 1, 1, 0) != 0)
+            return luaL_error(L,
+                              "Error loading user-supplied callback in "
+                              "CAiBrain::PickBestAttackVector: %s",
+                              lua_tostring(L, -1));
+        lua_pushstring(L, func.c_str());
+        lua_gettable(L, -2);
+        lua_remove(L, -2);
+        scorer = lua_gettop(L);
+    }
+    if (!brain || !platoon || !sim || brain->current_enemy_index() < 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // The squad: its live units, and where they stand on average.
+    std::vector<const sim::Unit*> members;
+    sim::Vector3 centre{0, 0, 0};
+    for (u32 id : platoon->unit_ids()) {
+        const auto* e = sim->entity_registry().find(id);
+        if (!e || e->destroyed() || !e->is_unit()) continue;
+        if (sim::Platoon::squad_class(platoon->get_unit_squad(id)) != squad_class) continue;
+        members.push_back(static_cast<const sim::Unit*>(e));
+        centre.x += e->position().x;
+        centre.y += e->position().y;
+        centre.z += e->position().z;
+    }
+    if (members.empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const f32 count = static_cast<f32>(members.size());
+    centre = {centre.x / count, centre.y / count, centre.z / count};
+
+    const auto fits = [&](const sim::Vector3& at) {
+        const auto* grid = sim->pathfinding_grid();
+        if (!grid) return true;
+        u32 gx = 0;
+        u32 gz = 0;
+        grid->world_to_grid(at.x, at.z, gx, gz);
+        return std::all_of(members.begin(), members.end(), [&](const sim::Unit* u) {
+            return u->is_dying() || grid->is_passable_for(gx, gz, u->layer(), u->naval_draft(),
+                                                          u->is_amphibious() || u->is_hover());
+        });
+    };
+    const auto approves = [&](const sim::Vector3& at) {
+        if (scorer == 0) return true;
+        lua_pushvalue(L, scorer);
+        lua_pushnumber(L, centre.x);
+        lua_pushnumber(L, centre.z);
+        lua_pushnumber(L, at.x);
+        lua_pushnumber(L, at.z);
+        if (lua_pcall(L, 4, 1, 0) != 0)
+            luaL_error(L,
+                       "Error running user-supplied callback in "
+                       "CAiBrain::PickBestAttackVector: %s",
+                       lua_tostring(L, -1));
+        const bool yes = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return yes;
+    };
+    const auto value_about = [&](f32 reach) {
+        const auto units = units_around(*sim, brain->index(), category, centre, reach,
+                                        static_cast<Alliance>(alliance));
+        f32 sum = 0;
+        for (const sim::Unit* u : units)
+            sum += static_cast<f32>(u->build_cost_mass() + u->build_cost_energy());
+        return std::pair<f32, f32>{sum, static_cast<f32>(units.size())};
+    };
+
+    const auto pick = [&](Compare how) -> std::pair<const sim::ArmyBrain::AttackVector*, f32> {
+        const sim::ArmyBrain::AttackVector* best = nullptr;
+        f32 best_score = -1.0f;
+        for (const auto& v : brain->attack_vectors()) {
+            const sim::Vector3 at{v.position.x + v.direction.x, v.position.y + v.direction.y,
+                                  v.position.z + v.direction.z};
+            if (!fits(at) || !approves(at)) continue;
+            bool keep = false;
+            f32 score = 0;
+            switch (how) {
+            case Compare::Closest:
+            case Compare::Furthest:
+                score = has_category ? std::numeric_limits<f32>::infinity() : dist_sq(centre, at);
+                keep = best_score < 0.0f ||
+                       (how == Compare::Closest ? score < best_score : score > best_score);
+                break;
+            case Compare::HighestValue:
+                score = value_about(0.0f).first;
+                keep = score > best_score || best_score < 0.0f ||
+                       (best && score == best_score &&
+                        dist_sq(best->position, centre) > dist_sq(at, centre));
+                break;
+            case Compare::LeastDefended:
+                score = value_about(32.0f).second;
+                keep = score > best_score || best_score < 0.0f;
+                break;
+            }
+            if (keep) {
+                best = &v;
+                best_score = score;
+            }
+        }
+        return {best, best_score};
+    };
+    auto [best, score] = pick(static_cast<Compare>(compare));
+    if ((compare == static_cast<int>(Compare::HighestValue) ||
+         compare == static_cast<int>(Compare::LeastDefended)) &&
+        score == 0.0f)
+        best = pick(Compare::Closest).first;
+    // Moho hands back nothing for a vector at the origin.
+    if (!best || (best->position.x == 0 && best->position.y == 0 && best->position.z == 0)) {
+        lua_pushnil(L);
+        return 1;
+    }
+    push_attack_vector(L, *best);
     return 1;
 }
 static int brain_SetGreaterOf(lua_State*) { return 0; }
@@ -2374,6 +2636,7 @@ const MethodEntry aibrain_methods[] = {
     {"PBMAddBuildLocation",         brain_PBMAddBuildLocation},
     {"SetUpAttackVectorsToArmy",    brain_SetUpAttackVectorsToArmy},
     {"GetAttackVectors",            brain_GetAttackVectors},
+    {"PickBestAttackVector",        brain_PickBestAttackVector},
     {"FindPlaceToBuild",            brain_FindPlaceToBuild},
     {"CanBuildStructureAt",         brain_CanBuildStructureAt},
     {"CreateResourceBuildingNearest", brain_CreateResourceBuildingNearest},

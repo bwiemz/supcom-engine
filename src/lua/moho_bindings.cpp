@@ -1632,7 +1632,7 @@ static const MohoClassDef moho_classes[] = {
     {"EconomyEvent",            economy_event_methods,   nullptr},
     {"EntityCategory",          entity_category_methods, nullptr},
     {"CPrefetchSet",            empty_methods,           nullptr},
-    {"MotorFallDown",           empty_methods,           nullptr},
+    {"MotorFallDown",           motor_falldown_methods,  nullptr},
     {"PathDebugger_methods",    empty_methods,           nullptr},
 
     // Inherit from entity_methods
