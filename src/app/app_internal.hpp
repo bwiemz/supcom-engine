@@ -148,7 +148,6 @@ struct WorldInterp {
 bool mouse_over_ui(lua_State* uiL, f64 x, f64 y);
 void cancel_command_mode(lua_State* uiL);
 void sync_build_ghost(sim::SimState& sim, const renderer::CommandMode& m, bool& ghost_from_mode);
-void lan_launch_session(lua_State* uL, const std::string& scenario);
 
 // ui_globals.cpp
 /// Register the session's UI globals (FlushEvents, SessionIsReplay, ...) on

@@ -264,8 +264,7 @@ const char* test_mode_flag(int argc, char* argv[]) {
         const std::string_view arg = argv[i];
         const bool test = arg.size() > 7 && arg.starts_with("--") && arg.ends_with("-test") &&
                           arg != "--replay-flow-test" && arg != "--load-flow-test";
-        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join" ||
-            arg == "--lan-host" || arg == "--lan-join")
+        if (test || arg == "--render-dump" || arg == "--mp-host" || arg == "--mp-join")
             return argv[i];
     }
     return nullptr;

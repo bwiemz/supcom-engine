@@ -724,8 +724,7 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
 
     // The lobby's connections become the game's, seeded by the host's
     // time: every player has it from their welcome
-    const bool host = lobby.net->hosting();
-    if (host) lobby.net->stop_joining();
+    if (lobby.net->hosting()) lobby.net->stop_joining();
     lobby.responder.reset(); // no longer a game to find
     const u64 seed = lobby.net->hosted_time();
     const auto local = static_cast<u32>(mine - sources.owners.begin());
@@ -741,8 +740,8 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
         clients.push_back({uid, name.empty() ? "Player" : name});
     }
     mp_begin_lobby_game(
-        std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), host,
-        local, sources.armies, std::move(clients), seed);
+        std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), local,
+        sources.armies, std::move(clients), seed);
     // The session, as single-player's starts: the frame loop loads it
     lua_pushvalue(L, 2);
     if (lua_pcall(L, 1, 0, 0) != 0) {

@@ -381,7 +381,7 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     auto& mp = osc::lua::mp_net_state();
     REQUIRE(mp.transport_ready);
     REQUIRE(mp.lobby_transport);
-    CHECK(mp.role == osc::lua::MpNetState::Role::Join);
+    CHECK_FALSE(mp.lobby_game->net().hosting());
     CHECK(mp.local_source == 0);
     CHECK(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
     CHECK(mp.source_armies == std::vector<osc::i32>{0, 2, -1});
@@ -403,7 +403,7 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     auto bob = take_launched();
 
     REQUIRE(w.run("host:LaunchGame(GameInfo()) assert(host.launched)"));
-    CHECK(osc::lua::mp_net_state().role == osc::lua::MpNetState::Role::Host);
+    CHECK(osc::lua::mp_net_state().lobby_game->net().hosting());
     CHECK(osc::lua::mp_net_state().local_source == 1);
     CHECK(osc::lua::mp_net_state().local_army() == 2);
     CHECK(osc::lua::mp_net_state().seed == alice_net->net().hosted_time());
@@ -658,4 +658,16 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
         assert(clients[1].connected and table.getn(clients[1].ejectedBy) == 0, 'the host stays')
     )"));
     CHECK(osc::lua::mp_net_state().session->has_dropped(1));
+
+    // The game over, the next is single-player: nothing of this one stays
+    osc::lua::mp_teardown();
+    osc::lua::pump_disconnect_dialog(w.state.raw());
+    REQUIRE(w.run(R"(
+        assert(SessionIsMultiplayer() == false, 'single-player again')
+        local clients = GetSessionClients()
+        assert(table.getn(clients) == 1 and clients[1]['local'], 'one client, the local one')
+        local ok, err = pcall(EjectSessionClient, 2)
+        assert(not ok and string.find(err, 'must be >= 1 and <= 1'), err)
+        assert(__dialog == 1, "the dialog is a network game's")
+    )"));
 }

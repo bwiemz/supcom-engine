@@ -122,8 +122,7 @@ std::vector<size_t> chosen_clients(lua_State* L, int idx, size_t count) {
 } // namespace
 
 bool session_is_multiplayer() {
-    const auto& mp = mp_net_state();
-    return mp.active() || mp.lobby_transport != nullptr;
+    return mp_net_state().lobby_transport != nullptr;
 }
 
 size_t session_client_count(lua_State* L) {

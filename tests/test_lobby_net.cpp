@@ -195,6 +195,30 @@ TEST_CASE("A player leaving, and the host leaving (M218a)", "[lobby]") {
     CHECK(a.net.peers().empty());
 }
 
+TEST_CASE("The host survives sending to a player gone without a goodbye", "[lobby]") {
+    Side host("Host");
+    REQUIRE(host.net.host(0, 1));
+    auto a = std::make_unique<Side>("A");
+    REQUIRE(a->net.join("127.0.0.1", host.net.port()));
+    REQUIRE(pump({&host, a.get()}, [&] { return a->net.joined(); }));
+    const osc::u32 ua = a->net.local_uid();
+
+    a.reset(); // gone without a word (a crash, a cable pulled)
+
+    // The host sends before it reads the close: the first send draws the
+    // peer's reset, and the next fails with EPIPE. On POSIX that raises
+    // SIGPIPE, which by default kills the whole process. The host must
+    // neither die nor keep the player.
+    const std::vector<osc::u8> payload(1024, 7);
+    for (int i = 0; i < 5; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        host.net.broadcast(payload);
+        host.net.send_game(payload);
+    }
+    REQUIRE(pump({&host}, [&] { return host.saw(Kind::PeerLeft, ua); }));
+    CHECK(host.net.peers().empty());
+}
+
 TEST_CASE("Joining nowhere fails; pings measure the host (M218a)", "[lobby]") {
     // No address at all: refused at once
     Side nowhere("Nowhere");
