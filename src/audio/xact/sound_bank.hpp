@@ -40,6 +40,9 @@ struct PlayEvent {
     u8 loop_count = 0;        ///< extra plays; kLoopForever loops until stopped
     std::vector<WaveChoice> waves; ///< one without track variation
     VariationMode variation = VariationMode::Ordered;
+    /// Pick the wave again for each loop (the variation word's 0x40): FA's
+    /// Music/Base_Building and Music/Battle cycle their tracks so.
+    bool new_variation_on_loop = false;
     bool vary_pitch = false;  ///< pick pitch in [pitch_min, pitch_max] cents
     bool vary_volume = false; ///< pick volume in [volume_min_mb, volume_max_mb]
     i16 pitch_min = 0, pitch_max = 0;

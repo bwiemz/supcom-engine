@@ -73,6 +73,7 @@
 #include <sstream>
 #include <initializer_list>
 #include <string_view>
+#include <utility>
 #include <vector>
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -3754,6 +3755,25 @@ static int l_SetVolume(lua_State* L) {
     return 0;
 }
 
+// AudioSetLanguage(la): load the language's voice banks (EVA, campaign and
+// briefing VO, the movies' voices), as Moho makes its VO engines from
+// /sounds/voice/<la>. Retail's Localization.lua calls it at start.
+static int l_AudioSetLanguage(lua_State* L) {
+    if (auto* mgr = get_sound_mgr(L); mgr && lua_type(L, 1) == LUA_TSTRING)
+        mgr->set_voice_language(lua_tostring(L, 1));
+    return 0;
+}
+
+// HasLocalizedVO(la): whether the data holds the language's voice banks.
+static int l_HasLocalizedVO(lua_State* L) {
+    const auto* mgr = get_sound_mgr(L);
+    const bool has =
+        lua_type(L, 1) == LUA_TSTRING && (mgr ? mgr->has_voice_language(lua_tostring(L, 1))
+                                              : std::string_view(lua_tostring(L, 1)) == "us");
+    lua_pushboolean(L, has ? 1 : 0);
+    return 1;
+}
+
 /// GetVolume(category) -> 0..1
 static int l_GetVolume(lua_State* L) {
     auto* mgr = get_sound_mgr(L);
@@ -4262,9 +4282,14 @@ void register_front_end_fallback_bindings(LuaState& state) {
         lua_rawset(L, LUA_GLOBALSINDEX);
     };
 
-    set_stub("AudioSetLanguage");
     set_str("__language", "us");
-    set_bool_fn("HasLocalizedVO", false);
+    for (const auto& [name, fn] : {std::pair{"AudioSetLanguage", &l_AudioSetLanguage},
+                                   std::pair{"HasLocalizedVO", &l_HasLocalizedVO}}) {
+        if (global_is_defined(L, name)) continue;
+        lua_pushstring(L, name);
+        lua_pushcfunction(L, fn);
+        lua_rawset(L, LUA_GLOBALSINDEX);
+    }
     set_stub("ConExecute");
     set_stub("ConExecuteSave");
     set_stub("AddInputCapture");
@@ -4539,7 +4564,8 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SetVolume", l_SetVolume);
     state.register_function("GetVolume", l_GetVolume);
     state.register_function("WaitFor", l_ui_WaitFor);
-    state.register_function("AudioSetLanguage", [](lua_State*) -> int { return 0; });
+    state.register_function("AudioSetLanguage", l_AudioSetLanguage);
+    state.register_function("HasLocalizedVO", l_HasLocalizedVO);
 
     // Prefs table (M149a)
     {

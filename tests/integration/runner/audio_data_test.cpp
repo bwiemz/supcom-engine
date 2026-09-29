@@ -21,6 +21,20 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
     spdlog::info("[PASS] global settings: {} categories, {} variables, {} RPC curves",
                  gs->categories.size(), gs->variables.size(), gs->rpcs.size());
 
+    // The voice banks (EVA, campaign and briefing VO, the movies' voices)
+    // in sounds/Voice/US and its tutorials, as AudioSetLanguage('us') loads.
+    const auto voice =
+        audio::xact::child_any_case(audio::xact::child_any_case(sounds_dir, "voice"), "us");
+    if (!voice.empty()) {
+        registry.add_directory(voice);
+        if (const auto tutorials = audio::xact::child_any_case(voice, "tutorials");
+            !tutorials.empty())
+            registry.add_directory(tutorials);
+        if (registry.sound_bank("XGG") && registry.sound_bank("X_FMV"))
+            spdlog::info("[PASS] the voice banks load (XGG, X_FMV)");
+        else test_status::fail("[FAIL] no XGG or X_FMV voice bank in {}", voice.string());
+    }
+
     size_t banks = 0, cues = 0, waves = 0;
     int reported = 0;
     auto problem = [&](const std::string& what) {
@@ -74,6 +88,23 @@ void run_audio_data_test(const std::filesystem::path& sounds_dir) {
             if (cue_waves == 0) problem(where + ": plays no wave");
         }
     }
+    // Only Music's two game tracks pick a new wave for each loop (M216b).
+    std::set<std::string> repicking;
+    for (const auto& name : registry.sound_bank_names()) {
+        const auto* sb = registry.sound_bank(name);
+        if (!sb) continue;
+        for (const auto& cue : sb->cues) {
+            if (cue.sound >= sb->sounds.size()) continue;
+            for (const auto& track : sb->sounds[cue.sound].tracks)
+                for (const auto& play : track.plays)
+                    if (play.new_variation_on_loop) repicking.insert(name + "/" + cue.name);
+        }
+    }
+    if (repicking == std::set<std::string>{"Music/Base_Building", "Music/Battle"})
+        spdlog::info("[PASS] Music's Base_Building and Battle pick a new track each loop");
+    else
+        problem("the cues that pick a new wave each loop are not Music's two: " +
+                std::to_string(repicking.size()));
     if (reported > 25) spdlog::error("  ... {} more", reported - 25);
     spdlog::info("Audio data: {} sound banks, {} cues, {} wave references ({} wave banks read back)",
                  banks, cues, waves, read_back.size());

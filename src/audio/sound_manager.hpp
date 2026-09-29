@@ -62,6 +62,16 @@ public:
     /// FA's banks in the sounds directory, or nullptr when there is none.
     xact::BankRegistry* registry() { return registry_.get(); }
 
+    /// Load the voice banks of language `la` (sounds/Voice/<la> and its
+    /// tutorials, found in any case): EVA, the campaign's and briefings' VO,
+    /// the movies' voices. Moho's AudioSetLanguage makes its VO engines from
+    /// the same directories; retail's Localization.lua calls it in every
+    /// state at start. The first language loaded stays (its voices may be
+    /// playing); false when `la` has no voice banks or another is loaded.
+    bool set_voice_language(std::string_view la);
+    /// Whether FA's data has voice banks for `la` (HasLocalizedVO).
+    bool has_voice_language(std::string_view la) const;
+
     /// Play cue `cue` of sound bank `bank`: 2D, or at `pos` in the world.
     /// A LodCutoff variable (Sound{LodCutoff=...}) culls a positional
     /// sound further from the listener than the variable's value.
@@ -144,7 +154,8 @@ private:
 
     /// Decoded-ready (WAV-wrapped) data of a wave, cached.
     std::shared_ptr<const WaveData> wave_data(const XwbParser& bank, u32 index);
-    void start_event(CueInstance& inst, size_t track, const xact::PlayEvent& ev);
+    /// Start play event `ev` on the track; the voice started, or nullptr.
+    Voice* start_event(CueInstance& inst, size_t track, const xact::PlayEvent& ev);
     /// A new instance of the cue, admitted against its limits but not
     /// begun (nullptr: unknown, culled or over its limits).
     CueInstance* create(const std::string& bank, const std::string& cue, const sim::Vector3* pos,
@@ -162,6 +173,7 @@ private:
     u32 pick_wave(const xact::PlayEvent& ev);
 
     fs::path sounds_dir_;
+    std::string voice_language_; ///< lower case; empty until set_voice_language
     bool output_ = false;
     bool sim_clocked_ = false;
     bool world_enabled_ = true;

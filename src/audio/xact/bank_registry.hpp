@@ -19,6 +19,10 @@ namespace osc::audio::xact {
 /// lists are named by their *internal* name, which need not be a file name
 /// (`XAS_Weapons.xwb` is `XAS_Weapon`), and one sound bank may draw on
 /// several (retail's Interface bank uses five). Names match case-blind.
+/// The entry of `dir` named `name` in any case (FA's data is Windows-cased:
+/// sounds/Voice/US), or an empty path.
+fs::path child_any_case(const fs::path& dir, std::string_view name);
+
 class BankRegistry {
 public:
     /// Index `sounds_dir`: every wave bank's header and entry table is read
@@ -29,6 +33,10 @@ public:
     BankRegistry& operator=(const BankRegistry&) = delete;
 
     const fs::path& dir() const { return dir_; }
+
+    /// Index another directory's banks too (FA's voice banks sit in
+    /// sounds/Voice/<language>). A name already known keeps its first bank.
+    void add_directory(const fs::path& dir);
 
     /// The XACT global settings, or nullptr if the directory has none.
     const GlobalSettings* global_settings() const { return settings_ ? &*settings_ : nullptr; }

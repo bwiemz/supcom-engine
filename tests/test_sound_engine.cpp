@@ -28,14 +28,15 @@ struct Sounds {
     /// Optionally: Music's limit and behaviour, and Click's category and
     /// priority (Shot's priority is 7).
     explicit Sounds(u8 music_limit = 1, u8 music_behavior = 2, u16 click_category = 0,
-                    u8 click_priority = 0) {
+                    u8 click_priority = 0, bool new_variation_on_loop = false) {
         std::random_device rd;
         dir = fs::temp_directory_path() /
               ("osc_sound_engine_test_" + std::to_string(rd()) + std::to_string(rd()));
         fs::create_directories(dir);
         u32 rpc = 0;
         write(dir / "Game.xgs", make_xgs(&rpc, music_limit, music_behavior));
-        write(dir / "Test.xsb", make_xsb("TestWaves", rpc, click_category, click_priority));
+        write(dir / "Test.xsb", make_xsb("TestWaves", rpc, click_category, click_priority, 0x40,
+                                         new_variation_on_loop));
         write(dir / "TestWaves.xwb", make_xwb("TestWaves", 4, 2205)); // 0.1 s waves
     }
     ~Sounds() { fs::remove_all(dir); }
@@ -205,6 +206,57 @@ TEST_CASE("Sound engine: a prepared sound waits, silent, until started", "[audio
     CHECK_FALSE(sm.is_playing(shot));
     sm.update(0.0f);
     CHECK(sm.active_count() == 0);
+}
+
+TEST_CASE("Sound engine: a voice language loads sounds/Voice/<la> and its tutorials",
+          "[audio][engine]") {
+    // FA's VO banks (EVA's XGG, the campaign's, the movies' X_FMV) sit in
+    // sounds/Voice/US, Windows-cased; Moho loads them on AudioSetLanguage.
+    Sounds s;
+    u32 rpc = 0;
+    (void)make_xgs(&rpc);
+    const fs::path voice = s.dir / "Voice" / "US";
+    fs::create_directories(voice / "Tutorials");
+    write(voice / "VO.xsb", make_xsb("VOWaves", rpc));
+    write(voice / "VOWaves.xwb", make_xwb("VOWaves", 4, 2205));
+    write(voice / "Tutorials" / "Tut.xsb", make_xsb("VOWaves", rpc));
+    SoundManager sm(s.dir, /*output=*/false);
+    REQUIRE(sm.has_data());
+    CHECK(sm.play("VO", "Click") == INVALID_SOUND); // not loaded before
+    CHECK(sm.has_voice_language("us"));
+    CHECK(sm.has_voice_language("US"));
+    CHECK_FALSE(sm.has_voice_language("de"));
+    CHECK_FALSE(sm.set_voice_language("de"));
+    REQUIRE(sm.set_voice_language("us"));
+    CHECK(sm.set_voice_language("US")); // the same, again
+    CHECK(sm.play("VO", "Click") != INVALID_SOUND);
+    CHECK(sm.play("Tut", "Click") != INVALID_SOUND);
+    CHECK(sm.play("Test", "Click") != INVALID_SOUND); // the game's banks still there
+}
+
+TEST_CASE("Sound engine: a loop that picks a new wave each time keeps playing", "[audio][engine]") {
+    // FA's Music/Base_Building and Battle: loop forever, a new wave per loop.
+    Sounds s(1, 2, 0, 0, /*new_variation_on_loop=*/true);
+    SoundManager sm(s.dir, /*output=*/false);
+    const auto h = sm.play("Test", "Shot");
+    REQUIRE(h != INVALID_SOUND);
+    for (int i = 0; i < 40; ++i) sm.update(0.05f); // 2 s: some 18 of its 0.1 s waves
+    CHECK(sm.is_playing(h));
+    CHECK(sm.active_count() == 1);
+    sm.stop(h, /*immediate=*/true);
+    sm.update(0.0f);
+    CHECK_FALSE(sm.is_playing(h));
+
+    // Stopped with its 300 ms fade, it plays on across wave ends to the
+    // fade's end, not the current wave's.
+    const auto faded = sm.play("Test", "Shot");
+    REQUIRE(faded != INVALID_SOUND);
+    for (int i = 0; i < 10; ++i) sm.update(0.05f);
+    sm.stop(faded, /*immediate=*/false);
+    for (int i = 0; i < 5; ++i) sm.update(0.05f); // 0.25 s: two or more waves end
+    CHECK(sm.is_playing(faded));
+    sm.update(0.1f);
+    CHECK_FALSE(sm.is_playing(faded));
 }
 
 TEST_CASE("Sound engine: no sound data plays nothing", "[audio][engine]") {

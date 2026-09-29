@@ -98,9 +98,11 @@ inline std::vector<u8> make_xgs(u32* rpc_code = nullptr, u8 music_limit = 1,
 /// "Shot" (category Music, cue limit 2, 300 ms fade-out) plays a complex
 /// sound with RPC `rpc_code`, whose track picks one of waves 0-2 (no
 /// immediate repeat) with a pitch variation of +-200 cents, looping
-/// forever, 150 ms in.
+/// forever, 150 ms in. `variation_flags` is its 3.0 effect-variation byte
+/// (0x40 pitch, 0x80 volume); `new_variation_on_loop` picks a wave per loop.
 inline std::vector<u8> make_xsb(const std::string& wave_bank, u32 rpc_code = 1234,
-                                u16 click_category = 0, u8 click_priority = 0) {
+                                u16 click_category = 0, u8 click_priority = 0,
+                                u8 variation_flags = 0x40, bool new_variation_on_loop = false) {
     Bytes b;
     b.tag("SDBK").u16_(43).u16_(43).u16_(0).zeros(8).u8_(1);
     b.u16_(1).u16_(1).u16_(0).u16_(2); // simple, complex, unknown, total
@@ -127,8 +129,9 @@ inline std::vector<u8> make_xsb(const std::string& wave_bank, u32 rpc_code = 123
     b.u8_(1);                               // 1 event
     b.u32_(6u | (150u << 5)).u16_(0).u8_(0xFF);
     b.u8_(0).u8_(255).u16_(0).u16_(0);      // flags, loop forever, position, angle
-    b.u16_(static_cast<u16>(-200)).u16_(200).u8_(180).u8_(180).u8_(0x80); // 3.0 effect variation
-    b.u32_(3u | (3u << 16)).u32_(0);        // 3 waves, random without immediate repeat
+    b.u16_(static_cast<u16>(-200)).u16_(200).u8_(180).u8_(180).u8_(variation_flags); // 3.0 effect
+                                                                                     // variation
+    b.u32_(3u | ((new_variation_on_loop ? 0x43u : 3u) << 16)).u32_(0); // 3 waves, random, no repeat
     for (u16 w = 0; w < 3; ++w) b.u16_(w).u8_(0).u8_(0).u8_(255);
     b.patch_u16(length_at, static_cast<u16>(b.pos() - complex_sound));
     b.patch_u32(track_header + 1, static_cast<u32>(events));
