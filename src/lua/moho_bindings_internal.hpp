@@ -142,6 +142,7 @@ extern const MethodEntry navigator_methods[];
 extern const MethodEntry platoon_methods[];
 extern const MethodEntry projectile_methods[];
 extern const MethodEntry prop_methods[];
+extern const MethodEntry motor_falldown_methods[];
 extern const MethodEntry rotate_manipulator_methods[];
 extern const MethodEntry script_task_methods[];
 extern const MethodEntry shield_methods[];

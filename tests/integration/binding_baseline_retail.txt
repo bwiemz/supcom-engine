@@ -32,5 +32,4 @@ M OnApplyBuff
 M RecoilImpulse
 M SetDamageRadius
 M SetWeaponDisableByLabel
-M Whack
 M write
