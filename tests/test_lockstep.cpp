@@ -664,3 +664,214 @@ TEST_CASE("A drop report's frame number can't make a survivor work forever", "[l
     sa.receive_and_advance(); // returns: that is the test
     CHECK(sa.has_dropped(2));
 }
+
+// ── Pace (M218h) ──────────────────────────────────────────────────────────
+
+namespace {
+
+/// Peers on a line with latency: what one sends reaches the others `delay`
+/// rounds later (a round: every peer's send_frame and receive_and_advance).
+struct DelayedHub {
+    osc::u32 now = 0;
+    osc::u32 delay = 0;
+    std::vector<std::vector<std::pair<osc::u32, std::vector<osc::u8>>>> inboxes;
+    int add_endpoint() {
+        inboxes.emplace_back();
+        return static_cast<int>(inboxes.size()) - 1;
+    }
+};
+
+class DelayedTransport : public osc::sim::INetTransport {
+public:
+    DelayedTransport(DelayedHub& hub, int id) : hub_(hub), id_(id) {}
+    void broadcast(const std::vector<osc::u8>& msg) override {
+        for (size_t i = 0; i < hub_.inboxes.size(); ++i)
+            if (static_cast<int>(i) != id_)
+                hub_.inboxes[i].emplace_back(hub_.now + hub_.delay, msg);
+    }
+    std::vector<std::vector<osc::u8>> receive() override {
+        auto& inbox = hub_.inboxes[static_cast<size_t>(id_)];
+        std::vector<std::vector<osc::u8>> out;
+        auto due = std::stable_partition(inbox.begin(), inbox.end(),
+                                         [&](const auto& m) { return m.first <= hub_.now; });
+        for (auto it = inbox.begin(); it != due; ++it) out.push_back(std::move(it->second));
+        inbox.erase(inbox.begin(), due);
+        return out;
+    }
+
+private:
+    DelayedHub& hub_;
+    int id_;
+};
+
+/// Frames a peer has sent and not yet run.
+osc::u32 lead(const LockstepSession& s, const SimState& sim) {
+    return s.current_frame() - 1 - sim.tick_count();
+}
+
+} // namespace
+
+TEST_CASE("A peer runs at most two seconds of frames ahead of its sim, and a dead peer still "
+          "drops (M218h)",
+          "[lockstep][pace]") {
+    LoopbackHub hub;
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    LoopbackTransport ta(hub, hub.add_endpoint());
+    LoopbackTransport tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+    for (int r = 0; r < 3; ++r) {
+        sa.send_frame();
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+    hub.drain(1);
+
+    // B goes silent: A runs ahead to the cap, then only says it's there
+    for (osc::u32 r = 0; r < LockstepSession::kMaxLead + 5; ++r) {
+        sa.send_frame();
+        sa.receive_and_advance();
+        CHECK(lead(sa, a) <= LockstepSession::kMaxLead);
+    }
+    CHECK(lead(sa, a) == LockstepSession::kMaxLead);
+    int frames = 0, alive = 0;
+    for (const auto& msg : hub.drain(1)) {
+        frames += msg[0] == 0 ? 1 : 0;
+        alive += msg[0] == 3 ? 1 : 0;
+    }
+    CHECK(frames == static_cast<int>(LockstepSession::kMaxLead));
+    CHECK(alive == 5);
+    CHECK_FALSE(sa.has_dropped(1));
+
+    // Held at the cap, A still counts B's silence: past the timeout, B drops
+    for (int r = 0; r < 10 && !sa.has_dropped(1); ++r) {
+        sa.send_frame();
+        sa.receive_and_advance();
+    }
+    CHECK(sa.has_dropped(1));
+}
+
+TEST_CASE("Latency costs a local order's delay, not the game's pace (M218h)", "[lockstep][pace]") {
+    for (const osc::u32 delay : {4u, 30u}) {
+        DYNAMIC_SECTION("a delay of " << delay << " rounds") {
+            DelayedHub hub;
+            hub.delay = delay;
+            LuaGuard ga, gb;
+            SimState a(ga.L, nullptr), b(gb.L, nullptr);
+            const osc::u32 ida = spawn_mover(a, 5.0f);
+            spawn_mover(b, 5.0f);
+            DelayedTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint());
+            LockstepSession sa(a, ta, 0, {0, 1});
+            LockstepSession sb(b, tb, 1, {0, 1});
+            osc::u32 order_frame = 0, delay_seen = 0;
+            for (osc::u32 r = 1; r <= 300; ++r) {
+                hub.now = r;
+                if (r == 150) {
+                    order_frame = sa.current_frame();
+                    delay_seen = order_frame - a.tick_count();
+                    sa.submit_local({ida}, move_to(500.0f, 0.0f), true);
+                }
+                sa.send_frame();
+                sb.send_frame();
+                sa.receive_and_advance();
+                sb.receive_and_advance();
+                CHECK(lead(sa, a) <= LockstepSession::kMaxLead);
+            }
+            CHECK_FALSE(sa.has_dropped(1));
+            CHECK_FALSE(sb.has_dropped(0));
+            CHECK_FALSE(sa.desynced());
+            CHECK_FALSE(sb.desynced());
+            if (delay < LockstepSession::kMaxLead) {
+                // Frames lead the sim by the latency: an order waits for it,
+                // and the game still runs a tick a round
+                CHECK(delay_seen == delay + 1);
+                CHECK(a.tick_count() == 300 - delay);
+            } else {
+                // Past two seconds, the game slows rather than drops anyone
+                CHECK(delay_seen <= LockstepSession::kMaxLead + 1);
+                CHECK(a.tick_count() < 200);
+                CHECK(a.tick_count() > 50);
+            }
+            // The order ran on both, on its frame's tick
+            auto* ua = static_cast<Unit*>(a.entity_registry().find(ida));
+            auto* ub = static_cast<Unit*>(b.entity_registry().find(ida));
+            if (a.tick_count() > order_frame && b.tick_count() > order_frame) {
+                CHECK(ua->position().x > 0.0f);
+                CHECK(ub->position().x > 0.0f);
+            }
+        }
+    }
+}
+
+TEST_CASE("The slowest peer sets the game's pace, and isn't dropped (M218h)", "[lockstep][pace]") {
+    LoopbackHub hub;
+    LuaGuard ga, gb;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr);
+    const osc::u32 ida = spawn_mover(a, 5.0f);
+    spawn_mover(b, 5.0f);
+    LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1});
+    LockstepSession sb(b, tb, 1, {0, 1});
+
+    // B manages a round for every three of A's (a slow machine). Pacing by
+    // the clock alone, A would run ever further ahead and time B out.
+    osc::u32 most = 0;
+    for (int r = 0; r < 300; ++r) {
+        if (r == 100) sa.submit_local({ida}, move_to(500.0f, 0.0f), true);
+        sa.send_frame();
+        if (r % 3 == 0) sb.send_frame();
+        sa.receive_and_advance();
+        if (r % 3 == 0) sb.receive_and_advance();
+        most = std::max(most, lead(sa, a));
+    }
+    CHECK(most == LockstepSession::kMaxLead);
+    CHECK_FALSE(sa.has_dropped(1));
+    CHECK_FALSE(sb.has_dropped(0));
+    CHECK(a.tick_count() > 90); // B's pace: about a tick a round of its
+    CHECK(a.tick_count() < 110);
+    // Both run what both have sent, in step
+    for (int r = 0; r < 60 && a.tick_count() != b.tick_count(); ++r) {
+        sb.send_frame();
+        sa.receive_and_advance();
+        sb.receive_and_advance();
+    }
+    REQUIRE(a.tick_count() == b.tick_count());
+    CHECK(a.compute_sync_checksum() == b.compute_sync_checksum());
+    CHECK_FALSE(sa.desynced());
+    CHECK_FALSE(sb.desynced());
+}
+
+TEST_CASE("A peer held at the cap still says it's there, so a slow one isn't dropped (M218h)",
+          "[lockstep][pace]") {
+    // C, slower still, sends a frame every 29 of A's rounds: both A and B
+    // wait on it at the cap, and each sends a frame only as C's lets the
+    // sim move. B, slow too (a round in seven of A's), then sends one only
+    // on a round of its own after C's, 28 or 35 of A's apart: the 35 is
+    // past A's timeout. Its word each round it has keeps it in.
+    LuaGuard ga, gb, gc;
+    SimState a(ga.L, nullptr), b(gb.L, nullptr), c(gc.L, nullptr);
+    LoopbackHub hub;
+    LoopbackTransport ta(hub, hub.add_endpoint()), tb(hub, hub.add_endpoint()),
+        tc(hub, hub.add_endpoint());
+    LockstepSession sa(a, ta, 0, {0, 1, 2});
+    LockstepSession sb(b, tb, 1, {0, 1, 2});
+    LockstepSession sc(c, tc, 2, {0, 1, 2});
+    for (int r = 0; r < 600; ++r) {
+        sa.send_frame();
+        if (r % 7 == 0) sb.send_frame();
+        if (r % 29 == 0) sc.send_frame();
+        sa.receive_and_advance();
+        if (r % 7 == 0) sb.receive_and_advance();
+        if (r % 29 == 0) sc.receive_and_advance();
+    }
+    for (osc::u32 s : {0u, 1u, 2u}) {
+        CHECK_FALSE(sa.has_dropped(s));
+        CHECK_FALSE(sb.has_dropped(s));
+        CHECK_FALSE(sc.has_dropped(s));
+    }
+    CHECK(a.tick_count() > 15); // a tick for each of C's frames
+    CHECK_FALSE(sa.desynced());
+    CHECK_FALSE(sb.desynced());
+}

@@ -69,8 +69,17 @@ void LockstepSession::send_frame() {
     // Paused, no frames: each confirms a tick, and would run at once on
     // resuming (its commands wait in pending_)
     if (sim_.network_paused()) return;
+    ++round_;
     std::vector<u8> msg;
     ByteWriter w(msg);
+    // As far ahead of the sim as a peer runs: it waits for the others (its
+    // orders wait in pending_), saying only that it is still there
+    if (next_frame_ > sim_.tick_count() + kMaxLead) {
+        w.u8v(kAliveMessage);
+        w.u32v(local_source_);
+        transport_.broadcast(msg);
+        return;
+    }
     w.u8v(kFrameMessage);
     w.u32v(local_source_);
     w.u32v(next_frame_);
@@ -113,6 +122,12 @@ void LockstepSession::receive_and_advance() {
                 sim_.resume_pause(serial);
             continue;
         }
+        if (type == kAliveMessage) {
+            const u32 source = r.u32v();
+            auto heard = peer_heard_round_.find(source);
+            if (r.ok() && heard != peer_heard_round_.end()) heard->second = round_;
+            continue;
+        }
         if (type != kFrameMessage) continue;
         u32 source = r.u32v();
         // Ignore a source that is dropped or being dropped: late frames must
@@ -139,7 +154,8 @@ void LockstepSession::receive_and_advance() {
         for (const auto& c : commands) sim_.command_scheduler().submit(c);
         sim_.command_scheduler().confirm_frame(source, frame);
         u32& pc = peer_confirmed_[source];
-        if (frame > pc) pc = frame; // arms the drop timer after first contact
+        if (frame > pc) pc = frame;
+        peer_heard_round_[source] = round_; // arms the drop timer after first contact
         if (has_cs) note_peer_checksum(cs_tick, cs_parts);
         // Kept to relay, should this peer drop before every survivor has it.
         auto& kept = recent_frames_[source];
@@ -155,22 +171,23 @@ void LockstepSession::receive_and_advance() {
     // Paused: no frames flow, so none is late; nothing ticks
     if (sim_.network_paused()) return;
 
-    // A peer that has gone silent falls further behind each round (next_frame_
-    // keeps advancing while its confirmed frame is frozen). Past the timeout,
-    // this survivor reports it; the drop happens once every survivor has.
-    // Only sources that have confirmed at least one frame are armed, so a slow
-    // first frame at session start can't false-drop.
-    if (drop_timeout_frames_ > 0) {
+    // A peer silent for longer than the timeout, in rounds (each a tick's
+    // time: a peer held at kMaxLead still has them, with no frames), is
+    // reported by this survivor; the drop happens once every survivor has.
+    // Only sources that have sent a frame are armed: peers load the game at
+    // their own speed, so a slow first frame at session start can't
+    // false-drop. One that never sends one is left to the players, as
+    // Moho's: the disconnect dialog shows it, and they eject it.
+    if (drop_timeout_rounds_ > 0) {
         std::vector<u32> late;
-        for (const auto& [src, confirmed] : peer_confirmed_) {
+        for (const auto& [src, heard] : peer_heard_round_) {
             if (src == local_source_ || has_dropped(src) || dropping(src)) continue;
-            const u32 behind = next_frame_ > confirmed ? next_frame_ - confirmed : 0;
-            if (behind > drop_timeout_frames_) late.push_back(src);
+            if (round_ - heard > drop_timeout_rounds_) late.push_back(src);
         }
         std::sort(late.begin(), late.end());
         for (u32 src : late) {
-            spdlog::warn("[lockstep] peer source {} timed out ({} frames behind)", src,
-                         next_frame_ - peer_confirmed_[src]);
+            spdlog::warn("[lockstep] peer source {} timed out ({} rounds without a word)", src,
+                         round_ - peer_heard_round_[src]);
             begin_drop(src);
         }
     }
