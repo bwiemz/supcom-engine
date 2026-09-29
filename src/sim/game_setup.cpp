@@ -94,6 +94,7 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
     w.str(s.ai_personality);
     w.f64v(s.cheat_mult);
     w.f64v(s.build_mult);
+    w.str(s.mods);
 }
 
 bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
@@ -151,6 +152,7 @@ bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
     s.ai_personality = r.str();
     s.cheat_mult = r.f64v();
     s.build_mult = r.f64v();
+    if (version >= 10) s.mods = r.str(); // before: none
     return r.ok();
 }
 

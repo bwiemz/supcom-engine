@@ -55,6 +55,9 @@ private:
     std::vector<MountEntry> mounts_;
     std::vector<std::string> hook_dirs_;
 
+    /// Whether `mountpoint` lies below `directory` (both normalised).
+    static bool mounted_below(std::string_view mountpoint, std::string_view directory);
+
     /// Try to strip the mountpoint prefix from a path.
     /// Returns the remainder if path starts with mountpoint, nullopt otherwise.
     static std::optional<std::string> strip_mountpoint(

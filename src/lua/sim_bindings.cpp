@@ -2,6 +2,7 @@
 #include "core/dmath.hpp"
 #include "sim/blueprint_categories.hpp"
 #include "lua/category_utils.hpp"
+#include "lua/game_mods.hpp"
 #include "lua/lua_state.hpp"
 #include "core/game_state.hpp"
 #include "map/terrain.hpp"
@@ -6037,9 +6038,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         lua_pop(L, 1);
     }
 
-    // Active mods (empty table)
-    lua_newtable(L);
-    lua_setglobal(L, "__active_mods");
+    // The game's mods, which its launch set before the blueprints loaded
+    // (none if it didn't)
+    ensure_active_mods(L);
 
     // Empty tables needed by various init scripts
     state.set_global_table("__modules");

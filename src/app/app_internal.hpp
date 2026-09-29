@@ -63,6 +63,7 @@ struct Options {
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
     bool load_flow_test = false;
+    bool mods_flow_test = false;
     /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
     /// LAN lobby played to a game by two processes, offscreen (M218c).
     bool lan_game_host = false;
@@ -184,15 +185,18 @@ private:
     std::optional<int> boot_game();
     /// The UI state, up to the game's interface or the front end.
     std::optional<int> boot_ui();
-    /// A UI state's own setup: bindings, the App's objects, userInit.lua.
-    std::optional<int> init_ui_state();
+    /// A UI state's own setup: bindings, the App's objects, userInit.lua --
+    /// or, for a game's (`game_mods`: its mods, as sim::GameSetup::mods),
+    /// SessionInit.lua.
+    std::optional<int> init_ui_state(const std::string* game_mods = nullptr);
     /// start()'s part of it: the registries and managers the bindings use.
     void publish_session_objects();
     /// Replace the UI state with a fresh one, as Moho starts the front end
     /// and each game in a state of its own (M191 step 4). The old state's
     /// controls, threads, beat functions and key maps go with it; the
-    /// caller then runs SetupUI and the front end's or game's UI.
-    void reset_ui_state();
+    /// caller then runs SetupUI and the front end's or game's UI. A game's
+    /// state (`game_mods` given) is init_ui_state's for a game.
+    void reset_ui_state(const std::string* game_mods = nullptr);
     /// The session, the UI's registries, and the test modes' front end.
     std::optional<int> start();
 

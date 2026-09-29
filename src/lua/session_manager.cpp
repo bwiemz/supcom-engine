@@ -1,5 +1,6 @@
 #include "lua/session_manager.hpp"
 
+#include "lua/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
@@ -217,6 +218,25 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
         }
     }
     lua_settop(L, top);
+
+    // The game's mods (M221b): the lobby's GameMods, which retail's lobby
+    // sets to Mods.GetGameMods(...) just before its LaunchGame (Moho's
+    // CLobby reads it there), or a single-player launch's scenarioMods
+    // (WLD_SetupSessionInfo's).
+    for (const char* key : {"GameMods", "scenarioMods"}) {
+        lua_pushstring(L, key);
+        lua_rawget(L, table_idx);
+        const bool given = lua_istable(L, -1);
+        if (given) {
+            if (auto bytes = lua_to_bytes(L, -1)) setup.mods = std::move(*bytes);
+            else
+                spdlog::warn("Launch: its {} can't be carried (a table inside itself, or nested "
+                             "too deep); the game has no mods",
+                             key);
+        }
+        lua_pop(L, 1);
+        if (given) break;
+    }
     return setup;
 }
 

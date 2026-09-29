@@ -7,6 +7,7 @@
 
 #include "app/app.hpp"
 #include "renderer/input_handler.hpp"
+#include "sim/game_setup.hpp"
 
 #include <string>
 #include <unordered_set>
@@ -70,6 +71,13 @@ void submit_sim_callbacks(sim::SimCallbackQueue& queue, sim::SimState& sim);
 /// The random seed of a new game: `--seed` when given; else a fixed one when
 /// the run must repeat (tests, headless runs, captures); else a fresh one.
 u64 new_game_seed(const std::string& seed_arg, bool reproducible);
+
+/// A launch's game: the recorded game's own setup (`replay`), else the
+/// lobby's sessionConfig in FrontEndData -- which of the scenario's armies
+/// play, who plays each, the options, the mods -- with `scenario` and
+/// `seed`.
+sim::GameSetup launch_setup(lua_State* uiL, const sim::Replay* replay, const std::string& scenario,
+                            u64 seed);
 
 /// Replace the game with a new one of `launch_scenario` (or `replay`): a
 /// fresh sim Lua state and sim, its scenario, its boot and its session, and

@@ -1,4 +1,5 @@
 #include "lua/engine_bindings.hpp"
+#include "lua/game_mods.hpp"
 #include "sim/thread_manager.hpp"
 #include "core/color.hpp"
 #include "lua/lua_state.hpp"
@@ -534,7 +535,7 @@ void register_blueprint_bindings(LuaState& state) {
     // Pre-set globals expected by the Lua code
     state.set_global_table("__diskwatch");
     state.set_global_table("__modules");
-    state.set_global_table("__active_mods");
+    ensure_active_mods(state.raw()); // (a launch sets the game's first)
 }
 
 } // namespace osc::lua

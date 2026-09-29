@@ -200,6 +200,19 @@ if(Python3_Interpreter_FOUND)
         SKIP_RETURN_CODE 77
         TIMEOUT 900)
 
+    # M221b: a skirmish with the player's mods -- two test mods in a
+    # temporary Documents folder's mods folder and retail's Resource Rich,
+    # selected in its preferences -- launched from the front end as retail's
+    # lobby launches one. The sim and the game's UI must have their mods
+    # (hooks, blueprints, ModBlueprints), and its recording replay with them.
+    add_test(NAME data.mods_flow
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/mods_flow.py
+                     $<TARGET_FILE:opensupcom>)
+    set_tests_properties(data.mods_flow PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+
     # M218c: retail's LAN lobby (lobby.lua) from hosting to a game, by two
     # processes: one hosts, one joins, both ready, the host presses Launch,
     # and the game each launches plays in lockstep over the lobby's

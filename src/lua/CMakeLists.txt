@@ -31,6 +31,8 @@ add_library(osc_lua STATIC
     sim_loader.cpp
     sim_sync.cpp
     script_loader.cpp
+    lua_bytes.cpp
+    game_mods.cpp
     scenario_loader.cpp
     session_manager.cpp
     special_files.cpp

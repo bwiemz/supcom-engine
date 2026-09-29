@@ -243,6 +243,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     r.setup.options.restricted_categories = {"NUKE"};
     r.setup.ai_armies = {1};
     r.setup.cheat_mult = 2.0;
+    r.setup.mods = std::string("\x05\x01\x00\x00\x00mods", 9); // any bytes
     r.checksum_from = 1;
     r.checksums = {0xdeadbeef, 0x12345678};
 
@@ -266,6 +267,7 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     CHECK(out.setup.options.restricted_categories == std::vector<std::string>{"NUKE"});
     CHECK(out.setup.ai_armies == std::vector<int>{1});
     CHECK(out.setup.cheat_mult == 2.0);
+    CHECK(out.setup.mods == r.setup.mods); // the game's mods (version 10)
     CHECK(out.checksums == r.checksums);
 
     // Cut short anywhere, it is refused whole.
@@ -310,6 +312,7 @@ TEST_CASE("A version 8 replay's armies keep their own places", "[replay]") {
     REQUIRE(Replay::deserialize(bytes, out));
     REQUIRE(out.setup.slots.size() == 1);
     CHECK(out.setup.slots[0].slot == 0);
+    CHECK(out.setup.mods.empty()); // before version 10: none
     CHECK(osc::sim::session_army_names(out.setup, {"ARMY_1", "ARMY_2"}) ==
           std::vector<std::string>{"ARMY_1"});
 }
