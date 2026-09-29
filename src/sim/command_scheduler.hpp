@@ -43,6 +43,7 @@ struct ScheduledCommand {
 /// `confirm_frame` each tick (an explicit empty confirmation is allowed) before
 /// that tick may run — the classic "waiting for players" gate.
 class CommandScheduler {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// Submit a command. Its sequence is assigned here (monotonic) and its
     /// source is registered as a participant.

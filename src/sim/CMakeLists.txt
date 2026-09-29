@@ -41,6 +41,10 @@ add_library(osc_sim STATIC
     lobby_net.cpp
     lan_discovery.cpp
     sim_state.cpp
+    sim_snapshot.cpp
+    state_io.cpp
+    state_io_entities.cpp
+    state_io_world.cpp
     work_range.cpp
     decal.cpp
     world_snapshot.cpp

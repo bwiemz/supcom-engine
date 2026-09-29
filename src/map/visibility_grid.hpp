@@ -5,6 +5,10 @@
 #include <array>
 #include <vector>
 
+namespace osc::sim {
+struct StateIO;
+}
+
 namespace osc::map {
 
 class Terrain;
@@ -37,6 +41,7 @@ inline bool has_flag(VisFlag flags, VisFlag test) {
 /// Tracks Vision/Radar/Sonar/Omni/EverSeen per cell per army.
 /// Pure data structure — no sim dependencies.
 class VisibilityGrid {
+    friend struct osc::sim::StateIO; // snapshots (sim/state_io.hpp)
 public:
     static constexpr u32 CELL_SIZE = 16;
     static constexpr u32 MAX_ARMIES = 16;

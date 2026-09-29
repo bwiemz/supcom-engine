@@ -134,6 +134,18 @@ if(OSC_BUILD_TESTS)
         set_tests_properties(arch.literal_size arch.literal_size_self_test
                              PROPERTIES LABELS "arch" TIMEOUT 60)
 
+        # Every field of the sim's classes is in a snapshot serializer, or
+        # named there with why it isn't (M208c): a field forgotten is a
+        # silent desync after a load.
+        add_test(NAME arch.state_io
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_state_io.py
+                         ${CMAKE_SOURCE_DIR})
+        add_test(NAME arch.state_io_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_state_io.py
+                         --self-test)
+        set_tests_properties(arch.state_io arch.state_io_self_test
+                             PROPERTIES LABELS "arch" TIMEOUT 60)
+
         # The version is written in CMake, vcpkg.json and CHANGELOG.md, and
         # they agree; an install of this build runs on its own (M227a).
         add_test(NAME arch.version

@@ -10,6 +10,7 @@ struct lua_State;
 namespace osc::sim {
 
 class ArmorDefinition {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// Parse from Lua global "armordefinition" table (array of arrays).
     /// Each entry: [1] = armor type name, [2..n] = "DamageType multiplier".

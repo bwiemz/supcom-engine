@@ -63,6 +63,7 @@ struct CellRect {
 };
 
 class InfluenceMap {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// A map of `map_width` x `map_height` units, kept for `army_count`
     /// armies: cells of max(32, larger side / 16), as Moho's army makes it.

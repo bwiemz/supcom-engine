@@ -7,6 +7,7 @@ namespace osc::sim {
 /// Base class for objects that can be waited on via WaitFor().
 /// Both Manipulator and EconomyEvent inherit from this.
 class Waitable {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     virtual ~Waitable() = default;
 

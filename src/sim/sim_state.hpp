@@ -137,6 +137,7 @@ struct SimContext {
 };
 
 class SimState {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     SimState(lua_State* L, blueprints::BlueprintStore* store);
     ~SimState();
