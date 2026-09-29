@@ -117,6 +117,11 @@ void LockstepSession::receive_and_advance() {
             kept.erase(kept.begin());
     }
 
+    // Ejected, this peer's game is over: it neither ticks on nor drops the
+    // others (cut off from them, it would time them all out and play on
+    // alone), as Moho's ejected client waits
+    if (ejected_) return;
+
     // A peer that has gone silent falls further behind each round (next_frame_
     // keeps advancing while its confirmed frame is frozen). Past the timeout,
     // this survivor reports it; the drop happens once every survivor has.
@@ -207,9 +212,11 @@ void LockstepSession::take_drop_report(ByteReader& r) {
     }
     if (!r.ok() || reporter == local_source_ || reporter == source) return;
     if (source == local_source_) {
-        spdlog::error("[lockstep] peer {} reports this peer as dropped; the game can't "
-                      "continue in sync",
-                      reporter);
+        if (!ejected_)
+            spdlog::error("[lockstep] peer {} reports this peer as dropped; the game can't "
+                          "continue in sync",
+                          reporter);
+        ejected_ = true;
         return;
     }
     if (has_dropped(source) || has_dropped(reporter) || dropping(reporter)) return;
@@ -271,26 +278,56 @@ void LockstepSession::finalize_drop(u32 source, const DropVote& vote) {
     sim_.command_scheduler().confirm_frame(source, last);
     sim_.command_scheduler().remove_source(source);
     dropped_.push_back(source);
+    for (const auto& reporter : vote.last_frame) dropped_by_[source].push_back(reporter.first);
     newly_dropped_.push_back(source);
     recent_frames_.erase(source);
 
-    // Its army is defeated on the tick after its last frame, on every
-    // survivor, by the engine rather than any player.
+    // Its army -- the one its source plays, which a lobby's game numbers
+    // apart from its source (an observer's plays none) -- is defeated on the
+    // tick after its last frame, on every survivor, by the engine rather
+    // than any player.
+    const i32 army = sim_.army_of_source(source);
+    if (army < 0) {
+        spdlog::warn("[lockstep] peer source {} (watching) dropped after its frame {}", source,
+                     last);
+        return;
+    }
     ScheduledCommand defeat;
     defeat.exec_tick = last + 1;
     defeat.source = kEngineSource;
     defeat.callback = SimCallbackEntry{};
     defeat.callback->func_name = kDefeatArmyCallback;
-    defeat.callback->args["Army"] = static_cast<f64>(source);
+    defeat.callback->args["Army"] = static_cast<f64>(army);
     sim_.command_scheduler().submit(std::move(defeat));
-    spdlog::warn("[lockstep] peer source {} dropped after its frame {}; its army is defeated "
+    spdlog::warn("[lockstep] peer source {} dropped after its frame {}; its army {} is defeated "
                  "at tick {}",
-                 source, last, last + 1);
+                 source, last, army, last + 1);
 }
 
 std::vector<u32> LockstepSession::take_dropped() {
     std::vector<u32> out;
     out.swap(newly_dropped_);
+    return out;
+}
+
+bool LockstepSession::eject(u32 source) {
+    if (source == local_source_ || has_dropped(source) || dropping(source) ||
+        std::find(all_sources_.begin(), all_sources_.end(), source) == all_sources_.end())
+        return false;
+    spdlog::warn("[lockstep] ejecting peer source {}", source);
+    begin_drop(source);
+    finalize_drops(); // this peer may be its only survivor
+    return true;
+}
+
+std::vector<u32> LockstepSession::ejectors(u32 source) const {
+    std::vector<u32> out;
+    if (const auto vote = drop_votes_.find(source); vote != drop_votes_.end()) {
+        for (const auto& reporter : vote->second.last_frame) out.push_back(reporter.first);
+    } else if (const auto by = dropped_by_.find(source); by != dropped_by_.end()) {
+        out = by->second;
+    }
+    std::sort(out.begin(), out.end());
     return out;
 }
 

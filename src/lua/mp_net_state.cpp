@@ -145,6 +145,11 @@ bool mp_attach_session(osc::sim::SimState& sim) {
     return true;
 }
 
+void mp_disconnect_source(osc::u32 source) {
+    auto& s = mp_net_state();
+    if (s.lobby_game && source < s.clients.size()) s.lobby_game->disconnect(s.clients[source].uid);
+}
+
 void mp_teardown() {
     reset_session_chat(); // the game's chat not yet delivered goes with it
     auto& s = mp_net_state();

@@ -201,11 +201,23 @@ if(Python3_Interpreter_FOUND)
     # M218c: retail's LAN lobby (lobby.lua) from hosting to a game, by two
     # processes: one hosts, one joins, both ready, the host presses Launch,
     # and the game each launches plays in lockstep over the lobby's
-    # connections, offscreen, each as its own slot's army.
+    # connections, offscreen, each as its own slot's army. (Its ports are
+    # below the OSes' ephemeral ranges, where another test's socket could
+    # hold them.)
     add_test(NAME data.lan_game
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
-                     $<TARGET_FILE:opensupcom> 47741)
+                     $<TARGET_FILE:opensupcom> 29741)
     set_tests_properties(data.lan_game PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900)
+    # M218e: the joiner leaves at tick 120; the host drops it by the
+    # lockstep's agreement, defeats its army, shows and closes retail's
+    # disconnect dialog, and plays on alone.
+    add_test(NAME data.lan_game_quit
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/lan_game.py
+                     $<TARGET_FILE:opensupcom> 29742 -- --lan-game-quit-at 120)
+    set_tests_properties(data.lan_game_quit PROPERTIES
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 900)

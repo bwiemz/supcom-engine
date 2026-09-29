@@ -196,6 +196,11 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         !port.empty() && port.size() <= 5 &&
         port.find_first_not_of("0123456789") == std::string::npos)
         o.lan_game_port = static_cast<u16>(std::clamp(std::stoi(port), 1, 65535));
+    // --lan-game-quit-at <tick>: the joiner leaves the game then (M218e)
+    if (const auto quit = parse_string_arg(argc, argv, "--lan-game-quit-at", "");
+        !quit.empty() && quit.size() <= 6 &&
+        quit.find_first_not_of("0123456789") == std::string::npos)
+        o.lan_game_quit_at = static_cast<u32>(std::stoi(quit));
     o.scripted_window =
         request.windowed || o.replay_flow_test || o.load_flow_test || o.lan_game_test();
     o.no_fog = parse_flag(argc, argv, "--no-fog");

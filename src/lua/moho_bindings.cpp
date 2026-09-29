@@ -4159,6 +4159,13 @@ static int l_GetSessionClients(lua_State* L) {
     return push_session_clients(L);
 }
 
+/// EjectSessionClient(index) → the client's source dropped by the lockstep,
+/// as the survivors agree (M218e).
+static int l_EjectSessionClient(lua_State* L) {
+    eject_session_client(L);
+    return 0;
+}
+
 /// SessionIsMultiplayer() → a network game (a lobby's "UDP"/"TCP").
 static int l_SessionIsMultiplayer(lua_State* L) {
     lua_pushboolean(L, session_is_multiplayer() ? 1 : 0);
@@ -4593,6 +4600,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("GetChatHistory", l_GetChatHistory);
     state.register_function("GetSessionClients", l_GetSessionClients);
     state.register_function("SessionIsMultiplayer", l_SessionIsMultiplayer);
+    state.register_function("EjectSessionClient", l_EjectSessionClient);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

@@ -41,6 +41,15 @@ void send_session_chat(lua_State* L);
 /// interface (gamemain) isn't loaded.
 void pump_session_chat(lua_State* L);
 
+/// EjectSessionClient(index) (M218e): Lua errors as Moho's for an index the
+/// game hasn't or the local client; else the lockstep drops the client's
+/// source, as the survivors agree.
+void eject_session_client(lua_State* L);
+
+/// Each frame of a network game: retail's disconnect dialog looks at the
+/// clients (uimain.UpdateDisconnectDialog, as Moho's session calls it).
+void pump_disconnect_dialog(lua_State* L);
+
 /// The local client's chat not yet delivered, dropped: its game is over
 /// (a UI state resetting, a network game torn down), so none of it may
 /// reach the next.

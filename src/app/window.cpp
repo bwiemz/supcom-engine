@@ -368,7 +368,7 @@ std::optional<int> App::run_window() {
         if (opt.lan_game_test()) {
             lan_game.emplace(opt.lan_game_host,
                              opt.lan_game_join.empty() ? "127.0.0.1" : opt.lan_game_join,
-                             opt.lan_game_port);
+                             opt.lan_game_port, opt.lan_game_quit_at);
             if (!lan_game->start(ui_lua_state)) {
                 lan_game->finish(nullptr);
                 return finish_test_run("lan-game-test");
@@ -521,8 +521,10 @@ std::optional<int> App::run_window() {
                         // survivors agree on its last frame, and the session
                         // defeats its army on the same tick on every one of
                         // them (a command, so replays keep it).
-                        for (osc::u32 src : session->take_dropped())
+                        for (osc::u32 src : session->take_dropped()) {
                             spdlog::warn("[mp] peer {} dropped — its army is defeated", src);
+                            osc::lua::mp_disconnect_source(src); // M218e
+                        }
                     }
                 } else {
                     // At most 8 ticks per frame; a slower-than-real-time
@@ -673,6 +675,7 @@ std::optional<int> App::run_window() {
             // (M218a)
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
             osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
+            if (sim_state) osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
 
             // Resume UI coroutines
             ++ui_frame_count;

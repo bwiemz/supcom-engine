@@ -73,6 +73,18 @@ public:
     std::vector<u32> take_dropped();
     bool has_dropped(u32 src) const;
 
+    // --- Eject (EjectSessionClient, M218e) ---
+    /// This peer ejects `source`: it starts the drop a timeout would, and the
+    /// survivors agree it as they do one. False for this peer itself, one
+    /// dropped or being dropped already, or no participant.
+    bool eject(u32 source);
+    /// The survivors that have reported `source` dropped (Moho's
+    /// ejectedBy): while its drop is agreed, and once it is. Sorted.
+    std::vector<u32> ejectors(u32 source) const;
+    /// Whether a survivor reports this peer dropped: its game is over, and
+    /// it no longer ticks or drops anyone.
+    bool ejected() const { return ejected_; }
+
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
@@ -104,6 +116,8 @@ private:
     std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
     std::vector<u32> dropped_;                    // sources already declared dropped
     std::vector<u32> newly_dropped_;              // drained by take_dropped()
+    std::map<u32, std::vector<u32>> dropped_by_;  // a dropped source's reporters
+    bool ejected_ = false;                        // a survivor reports this peer dropped
 
     bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
     void begin_drop(u32 source);

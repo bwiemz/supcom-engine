@@ -13,7 +13,6 @@ G BaseManagerReclaimThread
 G ClearQueueGrid
 G ConTextMatches
 G ERROR
-G EjectSessionClient
 G ExecLuaInSim
 G FlushIntelInRect
 G GenerateArmyStart

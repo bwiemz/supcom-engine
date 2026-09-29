@@ -699,6 +699,8 @@ std::vector<std::vector<u8>> LobbyGameTransport::receive() {
             spdlog::warn("[mp] {} (uid {}) left the game", e.name, e.uid);
         else if (e.kind == LobbyEvent::Kind::ConnectionFailed)
             spdlog::warn("[mp] the connection to the host is gone");
+        else if (e.kind == LobbyEvent::Kind::Ejected)
+            spdlog::warn("[mp] the host ejected this player ({})", e.reason);
         else if (e.kind == LobbyEvent::Kind::Data) data_.push_back(std::move(e));
     }
     return net_->take_game();

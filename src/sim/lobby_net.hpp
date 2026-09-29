@@ -134,6 +134,11 @@ public:
     /// The game's messages outside the lockstep (chat, M218d): to one
     /// player, and what came since the last call (their Data events).
     void send_data(u32 to, const std::vector<u8>& payload) { net_->send(to, payload); }
+    /// The host: a player the game dropped is cut off (M218e), as Moho
+    /// closes an ejected client's connection.
+    void disconnect(u32 uid) {
+        if (net_->hosting()) net_->eject(uid, "KickedByHost");
+    }
     std::vector<LobbyEvent> take_data();
 
 private:
