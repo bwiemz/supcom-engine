@@ -2,12 +2,16 @@
 // (M192 step 2, moved from app.cpp).
 
 #include "app/app_internal.hpp"
+#include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
+#include "lua/mp_net_state.hpp"
 #include "map/terrain.hpp"
 
 extern "C" {
 #include <lua.h>
 }
+
+#include <vector>
 
 namespace osc::app {
 
@@ -28,6 +32,28 @@ static int l_SessionIsReplay(lua_State* L) {
     lua_pop(L, 1);
     lua_pushboolean(L, sim && sim->playback() && !sim->resuming() ? 1 : 0);
     return 1;
+}
+
+/// The game's options, the sim's ScenarioInfo.Options (a lobby's
+/// GameOptions, as Moho's are), copied into `L`; an empty table without.
+static void push_session_options(lua_State* L, const osc::sim::SimState& sim) {
+    lua_State* S = sim.lua_state();
+    std::vector<osc::u8> bytes;
+    if (S) {
+        const int top = lua_gettop(S);
+        lua_pushstring(S, "ScenarioInfo"); // raw: the sim's globals are strict
+        lua_rawget(S, LUA_GLOBALSINDEX);
+        if (lua_istable(S, -1)) {
+            lua_pushstring(S, "Options");
+            lua_rawget(S, -2);
+            if (lua_istable(S, -1)) bytes = osc::lua::encode_lobby_value(S, -1);
+        }
+        lua_settop(S, top);
+    }
+    if (bytes.empty() || !osc::lua::push_lobby_value(L, bytes) || !lua_istable(L, -1)) {
+        if (!bytes.empty()) lua_pop(L, 1);
+        lua_newtable(L);
+    }
 }
 
 static int l_SessionGetScenarioInfo(lua_State* L) {
@@ -63,6 +89,11 @@ static int l_SessionGetScenarioInfo(lua_State* L) {
     lua_pushnumber(L, 0); lua_rawseti(L, -2, 2);
     lua_pushnumber(L, sim->terrain()->map_width()); lua_rawseti(L, -2, 3);
     lua_pushnumber(L, sim->terrain()->map_height()); lua_rawseti(L, -2, 4);
+    lua_rawset(L, -3);
+
+    // Its options: retail's tabs reads Options.Timeouts in a network game
+    lua_pushstring(L, "Options");
+    push_session_options(L, *sim);
     lua_rawset(L, -3);
 
     return 1;
@@ -194,6 +225,27 @@ static int l_GetArmiesTable(lua_State* L) {
 
             lua_pushstring(L, "showScore");
             lua_pushboolean(L, brain->is_civilian() ? 0 : 1);
+            lua_rawset(L, -3);
+
+            // The command sources that play it (1-based), as chat.lua finds
+            // an army's clients by them: a network game's sources of the
+            // army, a single-player game's one player
+            lua_pushstring(L, "authorizedCommandSources");
+            lua_newtable(L);
+            {
+                const auto& mp = osc::lua::mp_net_state();
+                int n = 0;
+                if (mp.active() || !mp.clients.empty()) {
+                    for (const osc::u32 source : mp.all_sources)
+                        if (mp.army_of(source) == static_cast<int>(i)) {
+                            lua_pushnumber(L, static_cast<double>(source + 1));
+                            lua_rawseti(L, -2, ++n);
+                        }
+                } else if (brain->is_human() && !brain->is_civilian()) {
+                    lua_pushnumber(L, 1);
+                    lua_rawseti(L, -2, ++n);
+                }
+            }
             lua_rawset(L, -3);
 
             lua_rawseti(L, -2, static_cast<int>(i + 1));

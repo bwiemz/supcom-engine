@@ -26,6 +26,7 @@ add_library(osc_lua STATIC
     lan_lobby.cpp
     lobby_wire.cpp
     net_lobby.cpp
+    session_clients.cpp
     sim_bindings.cpp
     sim_loader.cpp
     sim_sync.cpp

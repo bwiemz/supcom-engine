@@ -4,10 +4,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "lua/lobby_wire.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/session_clients.hpp"
 #include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
 #include "sim/sim_state.hpp"
@@ -451,4 +453,149 @@ TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[l
     }
     CHECK(at_host == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
     CHECK(at_bob == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
+}
+
+namespace {
+
+/// gamemain.lua's ReceiveChat, as the game's interface has it loaded:
+/// what came, by sender.
+const char* kGameMain = R"(
+    __modules = __modules or {}
+    got = {}
+    __modules['/lua/ui/game/gamemain.lua'] = {
+        ReceiveChat = function(sender, data) table.insert(got, {sender = sender, data = data}) end,
+    }
+)";
+
+} // namespace
+
+TEST_CASE("A single-player game has one client, and chat comes back (M218d)", "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kGameMain));
+    REQUIRE(w.run(R"(
+        assert(SessionIsMultiplayer() == false)
+        local clients = GetSessionClients()
+        assert(table.getn(clients) == 1, 'one client')
+        local me = clients[1]
+        assert(me['local'] and me.connected and me.uid == '0', 'the local one')
+        assert(me.ping == 0 and me.quiet == 0 and me.maxSP == 50)
+        assert(me.authorizedCommandSources[1] == 1 and table.getn(me.ejectedBy) == 0)
+        assert(type(me.name) == 'string' and me.name ~= '')
+        __name = me.name
+
+        -- To everyone (the one client), and to client 1: next frame's
+        SessionSendChatMessage({Chat = true, text = 'all'})
+        SessionSendChatMessage(1, {Chat = true, text = 'one'})
+        SessionSendChatMessage({}, {Chat = true, text = 'nobody'})
+        assert(table.getn(got) == 0, 'not at once')
+        -- Moho's refusals
+        local ok, err = pcall(SessionSendChatMessage, 2, {text = 'x'})
+        assert(not ok and string.find(err, 'Invalid client index'), err)
+        ok, err = pcall(SessionSendChatMessage, {1e20, 0/0}, {text = 'x'})
+        assert(not ok and string.find(err, 'Invalid client index'), err)
+        ok, err = pcall(SessionSendChatMessage, {'one'}, {text = 'x'})
+        assert(not ok and string.find(err, 'Invalid value'), err)
+        ok, err = pcall(SessionSendChatMessage, {text = string.rep('x', 2000)})
+        assert(not ok and string.find(err, 'Message too long'), err)
+    )"));
+    osc::lua::pump_session_chat(w.state.raw());
+    REQUIRE(w.run(R"(
+        assert(table.getn(got) == 2, table.getn(got))
+        assert(got[1].sender == __name and got[1].data.text == 'all')
+        assert(got[2].data.text == 'one')
+        -- Sent as the game ends: never delivered to the next
+        SessionSendChatMessage({Chat = true, text = 'gg'})
+    )"));
+    osc::lua::reset_session_chat();
+    osc::lua::pump_session_chat(w.state.raw());
+    REQUIRE(w.run("assert(table.getn(got) == 2, 'chat from the game before came')"));
+}
+
+TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Alice', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'Alice'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto alice = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    REQUIRE(w.run(kGameMain));
+
+    // The host's view: two clients, by source
+    REQUIRE(w.run(R"(
+        assert(SessionIsMultiplayer() == true)
+        local clients = GetSessionClients()
+        assert(table.getn(clients) == 2)
+        assert(clients[1].name == 'Host' and clients[1].uid == '0' and clients[1]['local'])
+        assert(clients[2].name == 'Alice' and clients[2].uid == '1' and not clients[2]['local'])
+        assert(clients[2].connected and clients[2].authorizedCommandSources[1] == 2)
+        assert(type(clients[2].ping) == 'number' and type(clients[2].quiet) == 'number')
+        local names = SessionGetCommandSourceNames()
+        assert(names[1] == 'Host' and names[2] == 'Alice')
+        -- A network game doesn't pause alone (its frames would stop)
+        SessionRequestPause()
+        -- To Alice alone, and to everyone (the host too)
+        SessionSendChatMessage({2}, {Chat = true, text = 'to alice'})
+        SessionSendChatMessage({Chat = true, text = 'to all'})
+    )"));
+    // Alice has both, over the lobby's connections
+    auto* alice_game = static_cast<osc::sim::LobbyGameTransport*>(alice.get());
+    std::vector<std::string> texts;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline && texts.size() < 2) {
+        alice->receive();
+        for (auto& e : alice_game->take_data()) {
+            CHECK(e.uid == 0);
+            REQUIRE(osc::lua::push_lobby_value(w.state.raw(), e.payload));
+            lua_pushstring(w.state.raw(), "text");
+            lua_gettable(w.state.raw(), -2);
+            texts.emplace_back(lua_tostring(w.state.raw(), -1));
+            lua_pop(w.state.raw(), 2);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(texts == std::vector<std::string>{"to alice", "to all"});
+
+    // Alice's to the host: its ReceiveChat, from her
+    lua_newtable(w.state.raw());
+    lua_pushstring(w.state.raw(), "text");
+    lua_pushstring(w.state.raw(), "hi host");
+    lua_rawset(w.state.raw(), -3);
+    alice_game->send_data(0, osc::lua::encode_lobby_value(w.state.raw(), -1));
+    lua_pop(w.state.raw(), 1);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    bool heard = false;
+    while (std::chrono::steady_clock::now() < until && !heard) {
+        osc::lua::mp_net_state().lobby_game->receive();
+        osc::lua::pump_session_chat(w.state.raw());
+        REQUIRE(w.run("__heard = false for _, g in got do if g.sender == 'Alice' then __heard = "
+                      "true end end"));
+        lua_getglobal(w.state.raw(), "__heard");
+        heard = lua_toboolean(w.state.raw(), -1) != 0;
+        lua_pop(w.state.raw(), 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(heard);
+    // The host's own 'to all' came back to it, and Alice's to it
+    REQUIRE(w.run(R"(
+        local texts = {}
+        for _, g in got do texts[g.data.text] = g.sender end
+        assert(texts['to all'] == 'Host', 'its own, from itself')
+        assert(texts['hi host'] == 'Alice')
+        assert(texts['to alice'] == nil, 'not for the host')
+    )"));
 }

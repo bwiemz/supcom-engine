@@ -7,6 +7,9 @@
 // down and each launches, and the two play in lockstep over the lobby's
 // connections. It passes when each reaches kCheckTick in step (no desync),
 // playing its own slot's army with both armies human, and no script error.
+// In the game (M218d) each sees the session's two clients and their
+// sources; the host's pause is refused (the game plays on), and its chat
+// to everyone reaches both.
 
 #include "core/types.hpp"
 
@@ -46,6 +49,9 @@ public:
 private:
     void lobby_frame(lua::LuaState& ui);
     void check(lua::LuaState& ui, const sim::SimState& sim);
+    /// The game's chat heard (gamemain's RegisterChatFunc), and checked.
+    void listen_for_chat(lua::LuaState& ui);
+    void check_chat(lua::LuaState& ui);
     void fail(std::string why);
 
     bool host_;
@@ -53,6 +59,7 @@ private:
     u16 port_;
     u32 frames_ = 0;
     bool joined_ = false;           ///< the joiner's JoinGame went out
+    bool listening_ = false;        ///< the game's chat is heard
     u32 last_press_ = 0;            ///< the frame Launch was last pressed
     std::optional<u32> checked_at_; ///< the frame the check ran
     bool done_ = false;

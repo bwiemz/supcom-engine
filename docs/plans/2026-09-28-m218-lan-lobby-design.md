@@ -109,7 +109,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - `ValidateIPAddress`.
 
   Retail's Multiplayer → LAN screen then lists, hosts and joins games.
-- **M218c (this PR):**
+- **M218c (#192):**
   - `LaunchGame` checks the config as Moho's does (the scenario read as
     retail's `MapUtil.LoadScenario` reads it; "NoConfig", "StartSpots").
   - Command sources are numbered as Moho numbers them: 0, 1, ... per
@@ -125,8 +125,27 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - A lobby is known by its UI state (its registry), not the thread that
     calls it: retail calls `LaunchGame` from its countdown thread and
     `GetPeer` from its keepalive thread.
-- **M218d:** the in-game multiplayer UI (`GetSessionClients`,
-  `SessionIsMultiplayer`, chat to players, pause by source, connectivity);
+- **M218d (this PR):** the game's session, as retail's in-game UI sees it
+  (Moho's rules in memory: moho-session-semantics):
+  - `GetSessionClients`: one client per owner, numbered as its command
+    source: `name` (its lobby name), `uid` (a string), `connected`,
+    `ping`, `quiet` (from the lobby's connections), `local`, `maxSP`,
+    `authorizedCommandSources`, `ejectedBy`. A single-player game has one,
+    local; without a game, nil.
+  - `SessionIsMultiplayer` (a lobby's game); `SessionGetCommandSourceNames`
+    the clients' names; `GetArmiesTable`'s `authorizedCommandSources`.
+  - `SessionGetScenarioInfo().Options`: the game's (the sim's
+    `ScenarioInfo.Options`, a lobby's `GameOptions`). Retail's tabs reads
+    `Timeouts` in a network game; without it the game UI half-built.
+  - Chat: `SessionSendChatMessage([clients,] msg)` to everyone (the local
+    client too) or those chosen, with Moho's errors (a client the game
+    hasn't, over 1024 bytes). The local one's through a queue, others'
+    over the lobby's connections (the scripts' Data, free once the game
+    starts). Each frame's pump calls `gamemain.ReceiveChat(sender, msg)`.
+  - A network game's pause is refused (as Moho's with no timeouts left):
+    pausing alone would stop this player's frames and drop them.
+- **M218e:** pause by source through the lockstep (timeouts, `Sync.PausedBy`,
+  `OnPause`/`OnResume`), `EjectSessionClient` and the disconnect dialog;
   `LanHost`/`LanJoin` and their dialog go.
 
 Two fixes the launch found go separately, since single-player has them
@@ -201,3 +220,18 @@ too:
   human, and there's no script error. Spawn and factions are retail's
   defaults, random: the two armies are the slots taken, in order, and
   start apart, each at its slot's marker.
+
+## Tests (M218d)
+- **Unit (`test_net_lobby`):**
+  - a single-player game: one local client and its fields; chat to all,
+    to client 1 and to nobody comes back the next frame through
+    `ReceiveChat`, from the player; Moho's refusals;
+  - a lobby's game, as the host sees it: two clients by source, names,
+    uids, local, connection, the source names; the pause refused; chat to
+    Alice alone and to all reaches her over the lobby's connections, the
+    host's own comes back to it, and hers reaches it from her.
+- **`data.lan_game`:** in the game, each side sees the two clients by
+  source, the source names, its own source and each army's; the host's
+  pause is refused and the game plays on (both reach tick 150, no source
+  dropped); its chat to everyone reaches both (the host's own, looped
+  back).

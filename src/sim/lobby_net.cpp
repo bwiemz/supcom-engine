@@ -694,13 +694,20 @@ void LobbyGameTransport::broadcast(const std::vector<u8>& msg) {
 }
 
 std::vector<std::vector<u8>> LobbyGameTransport::receive() {
-    for (const LobbyEvent& e : net_->poll(clock_())) {
+    for (LobbyEvent& e : net_->poll(clock_())) {
         if (e.kind == LobbyEvent::Kind::PeerLeft)
             spdlog::warn("[mp] {} (uid {}) left the game", e.name, e.uid);
         else if (e.kind == LobbyEvent::Kind::ConnectionFailed)
             spdlog::warn("[mp] the connection to the host is gone");
+        else if (e.kind == LobbyEvent::Kind::Data) data_.push_back(std::move(e));
     }
     return net_->take_game();
+}
+
+std::vector<LobbyEvent> LobbyGameTransport::take_data() {
+    std::vector<LobbyEvent> data;
+    std::swap(data, data_);
+    return data;
 }
 
 std::string LobbyNet::valid_player_name(u32 uid, const std::string& name) const {

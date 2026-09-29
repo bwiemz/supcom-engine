@@ -131,9 +131,15 @@ public:
     std::vector<std::vector<u8>> receive() override;
     const LobbyNet& net() const { return *net_; }
 
+    /// The game's messages outside the lockstep (chat, M218d): to one
+    /// player, and what came since the last call (their Data events).
+    void send_data(u32 to, const std::vector<u8>& payload) { net_->send(to, payload); }
+    std::vector<LobbyEvent> take_data();
+
 private:
     std::unique_ptr<LobbyNet> net_;
     std::function<i64()> clock_;
+    std::vector<LobbyEvent> data_;
 };
 
 } // namespace osc::sim
