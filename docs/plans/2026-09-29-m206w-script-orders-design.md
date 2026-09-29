@@ -116,6 +116,12 @@ retail scripts (`ScriptTask.lua`, `EnhanceTask.lua`, `TargetLocation.lua`,
   object holds its unit's Lua object, so `GetUnit()` still answers in
   `OnDestroy` while the unit is being destroyed, as Moho's task reaches
   its unit then.
+- `IsUnitState` reads the states scripts set as well as the engine's own:
+  Moho keeps one set of unit states, written by its tasks and by
+  `SetUnitState`. `EnhanceTask` marks its unit `Enhancing` and
+  `Upgrading`, and retail's AI (`EnhanceAI`) waits while the unit is
+  `Upgrading`; reading only the engine's own enhancement flag, the AI
+  stopped waiting at once and let another platoon clear the upgrade.
 - The engine's own `CommandType::Enhance` stays for its own
   `IssueEnhancement` global (tests use it); retail never gives it.
 - Not done: `LUnitMove`/`LUnitMoveNear` (no retail script calls them).
@@ -126,8 +132,10 @@ retail scripts (`ScriptTask.lua`, `EnhanceTask.lua`, `TargetLocation.lua`,
   and when the order is cleared; a missing class falls back to
   `ScriptTask`; an error ends it; `GetUnit`/`SetAIResult`; the codec
   round-trips the table (and a version 10 replay has none); the
-  construction panel's `IssueCommand` gives a script order;
+  construction panel's `IssueCommand` gives a script order; `IsUnitState`
+  reads what `SetUnitState` set;
 - data: an ACU enhances through retail's `EnhanceTask`, as the
-  construction panel and retail's AI order it; the Eye of Rhianne's
+  construction panel and retail's AI order it, `Enhancing` and
+  `Upgrading` while it works; the Eye of Rhianne's
   `TargetLocation` reaches its `OnTargetLocation`; the enhance test and
   the determinism and replay gates hold.

@@ -2,7 +2,8 @@
 // Moho's CUnitScriptTask runs them.
 //
 // 1. The UEF ACU enhances (AdvancedEngineering) through IssueScript with
-//    retail's EnhanceTask, as retail's AI orders it: the work progresses,
+//    retail's EnhanceTask, as retail's AI orders it: the work progresses
+//    with the unit Enhancing and Upgrading (what the AI waits on), and
 //    ends with the enhancement, the Enhancing/Upgrading states gone, the
 //    order done and its AI result Success.
 // 2. Another enhancement, cleared midway: the task ends, retail's
@@ -75,7 +76,14 @@ void test_script_orders(TestContext& ctx) {
         ctx.sim.tick();
         auto* acu = acu_of(ctx.sim);
         if (!acu) break;
-        if (i == 300) midway = acu->work_progress();
+        if (i == 300) {
+            midway = acu->work_progress();
+            // What retail's AI waits on (platoon.lua's EnhanceAI)
+            run(ctx, "the states midway", R"(
+                if not __acu:IsUnitState('Enhancing') then error('not Enhancing') end
+                if not __acu:IsUnitState('Upgrading') then error('not Upgrading') end
+            )");
+        }
         done = acu->command_queue().empty() && !acu->has_script_task();
     }
     auto* acu = acu_of(ctx.sim);

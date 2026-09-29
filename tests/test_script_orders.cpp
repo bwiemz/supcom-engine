@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/test_status.hpp"
+#include "lua/lua_state.hpp"
+#include "lua/moho_bindings.hpp"
 #include "lua/moho_bindings_internal.hpp"
 #include "sim/command_codec.hpp"
 #include "sim/lua_bytes.hpp"
@@ -373,4 +375,30 @@ TEST_CASE("A version 10 replay's commands load without a Script table", "[script
     CHECK(back.commands[0].command.type == CommandType::Move);
     CHECK(back.commands[0].unit_ids == std::vector<osc::u32>{7});
     CHECK(back.commands[0].command.script_args.empty());
+}
+
+TEST_CASE("IsUnitState reads the states a script sets", "[script_orders][lua]") {
+    // Retail's EnhanceTask marks its unit Enhancing and Upgrading, and its AI
+    // (platoon.lua's EnhanceAI) waits while the unit is Upgrading.
+    osc::lua::LuaState lua;
+    SimState sim(lua.raw(), nullptr);
+    osc::lua::register_moho_bindings(lua, sim);
+    Unit unit;
+    lua_State* L = lua.raw();
+    lua_newtable(L);
+    lua_pushstring(L, "_c_object");
+    lua_pushlightuserdata(L, &unit);
+    lua_rawset(L, -3);
+    lua_setglobal(L, "unit");
+    const auto r = lua.do_string(R"(
+        local m = moho.unit_methods
+        for _, s in ipairs({ 'Enhancing', 'Upgrading' }) do
+            if m.IsUnitState(unit, s) then error(s .. ' before') end
+            m.SetUnitState(unit, s, true)
+            if not m.IsUnitState(unit, s) then error(s .. ' not set') end
+            m.SetUnitState(unit, s, false)
+            if m.IsUnitState(unit, s) then error(s .. ' still set') end
+        end
+    )");
+    if (!r) FAIL(r.error().message);
 }

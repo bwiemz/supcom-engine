@@ -264,12 +264,10 @@ static int unit_IsUnitState(lua_State* L) {
             result = u->is_paused();
         else if (std::strcmp(state, "Attached") == 0)
             result = u->is_loaded();
-        else if (std::strcmp(state, "TransportLoading") == 0)
-            result = u->has_unit_state("TransportLoading");
-        else if (std::strcmp(state, "TransportUnloading") == 0)
-            result = u->has_unit_state("TransportUnloading");
-        else
-            result = u->has_unit_state(state);
+        // Moho keeps one set of states, which its tasks and scripts'
+        // SetUnitState both write: retail's EnhanceTask sets Enhancing and
+        // Upgrading, and its AI waits on Upgrading.
+        result = result || u->has_unit_state(state);
     }
     lua_pushboolean(L, result ? 1 : 0);
     return 1;
