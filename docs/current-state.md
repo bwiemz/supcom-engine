@@ -45,13 +45,15 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
   games (UDP discovery on port 15000), and retail's `lobby.lua` hosts, joins and
   launches over the engine's `CLobby` (`sim::LobbyNet`, TCP through the host).
   `LaunchGame` hands the lobby's connections to the game, which plays in lockstep
-  over them: pause (with the lobby's timeouts), chat, `GetSessionClients`,
+  over them: pause (with the lobby's timeouts), the game's speed (as the lobby
+  sets it, and players agree it), chat, `GetSessionClients`,
   `EjectSessionClient` and retail's disconnect dialog work as Moho's. See
   `docs/plans/2026-09-28-m218-lan-lobby-design.md`.
   - `data.lan_game` and `data.lan_game_quit` (need FA data) play retail's lobby
     in two processes from hosting to a game of 150 ticks: in step, pausing and
-    resuming, chatting; and with the joiner leaving at tick 120, dropped by
-    agreement, its army defeated, the dialog shown and closed.
+    resuming, chatting, the joiner raising the game's speed (adjustable in the
+    lobby) and both following; and with the joiner leaving at tick 120, dropped
+    by agreement, its army defeated, the dialog shown and closed.
   - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`,
     `mp.lockstep_peer_drop` and `mp.lockstep_slow_peer` host and join a lobby
     over TCP, launch, and play minimal sims in lockstep through the game's own

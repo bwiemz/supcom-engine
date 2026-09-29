@@ -8,6 +8,8 @@
 // one through a queue, and each frame's pump hands what came to
 // gamemain.lua's ReceiveChat(sender, msg), as Moho's client manager does.
 
+#include "core/types.hpp"
+
 #include <cstddef>
 
 struct lua_State;
@@ -59,6 +61,19 @@ bool session_resume(lua_State* L);
 /// SessionIsPaused in a network game: whether the lockstep's pause holds.
 /// False (`paused` untouched) in single-player.
 bool session_is_paused(lua_State* L, bool& paused);
+
+/// SetGameSpeed, WLD_GameSpeed and the WLD_*SimRate commands in a network
+/// game (M218i): a player asks the lockstep for the speed, which changes
+/// only if the lobby made it adjustable; an observer can't. False (nothing
+/// done) in single-player, where the caller sets its own.
+bool session_request_speed(i32 rate);
+
+/// GetGameSpeed in a network game: the game's speed. False in single-player.
+bool session_speed(i32& rate);
+
+/// Each frame of a network game: uimain.NoteGameSpeedChanged(client, speed)
+/// for each change the lockstep applied, as Moho's client manager calls it.
+void pump_speed_changes(lua_State* L);
 
 /// Each frame of a network game: gamemain.OnPause(pausedBy,
 /// timeoutsRemaining) as a pause starts, OnResume() as it ends (Moho's

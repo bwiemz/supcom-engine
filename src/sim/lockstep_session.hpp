@@ -104,12 +104,34 @@ public:
     /// This peer resumes the pause (any peer may); false if not paused.
     bool request_resume();
 
+    // --- Game speed (M218i) ---
+    // Moho's: the lobby's GameSpeed fixes it ('normal' +0, 'fast' +4) or
+    // lets the players change it ('adjustable'). A change is a message every
+    // peer applies, the newest (by its clock) winning, a tie going to the
+    // lower source, so all come to the same speed. A round is a tick's time
+    // at that speed: the lead cap and the drop timeout are counted in rounds
+    // scaled to it, so they keep their times.
+    /// The game's speed option: its speed, and whether players may change it.
+    void set_speed_option(i32 rate, bool adjustable);
+    /// This peer asks for `rate` (-10 to +50): false if the speed is fixed.
+    bool request_speed(i32 rate);
+    /// The game's speed: 10^(speed/10) times normal.
+    i32 speed() const { return speed_; }
+    struct SpeedChange {
+        u32 source; ///< who asked
+        i32 rate;
+    };
+    /// The changes this peer applied since the last call (Moho's
+    /// NoteGameSpeedChanged), drained.
+    std::vector<SpeedChange> take_speed_changes();
+
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
     static constexpr u8 kResumeMessage = 2;
     /// A peer held at kMaxLead sends no frame: this says it is still there.
     static constexpr u8 kAliveMessage = 3;
+    static constexpr u8 kSpeedMessage = 4;
     /// How many of a peer's latest frames are kept to relay if it drops.
     static constexpr u32 kRelayFrames = 256;
 
@@ -142,6 +164,17 @@ private:
     std::vector<u32> newly_dropped_;              // drained by take_dropped()
     std::map<u32, std::vector<u32>> dropped_by_;  // a dropped source's reporters
     bool ejected_ = false;                        // a survivor reports this peer dropped
+    i32 speed_ = 0;
+    bool adjustable_speed_ = false;
+    u32 speed_clock_ = 0;     // the applied change's clock (Moho's mGameSpeedClock)
+    u32 speed_requester_ = 0; // and who asked for it
+    std::vector<SpeedChange> speed_changes_;
+
+    /// Apply a change if it is the newest (a tie: the lower source's).
+    void apply_speed(u32 clock, u32 source, i32 rate);
+    /// kMaxLead and the drop timeout, in rounds at the game's speed.
+    u32 lead_cap() const;
+    u32 drop_timeout() const;
 
     bool dropping(u32 source) const { return drop_votes_.count(source) > 0; }
     void begin_drop(u32 source);

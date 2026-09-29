@@ -3429,18 +3429,31 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
 // Speed/pause control bindings (M145d)
 // ====================================================================
 
+/// Ask for game speed `rate`: in a network game, of the lockstep (M218i);
+/// else this game's own.
+static void set_game_speed(lua_State* L, i32 rate) {
+    if (session_request_speed(rate)) return;
+    if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(rate);
+}
+
+/// The game speed: a network game's, or this game's own.
+static i32 game_speed(lua_State* L) {
+    i32 rate = 0;
+    if (session_speed(rate)) return rate;
+    auto* mgr = get_game_state_mgr(L);
+    return mgr ? mgr->sim_rate() : 0;
+}
+
 /// SetGameSpeed(rate): the sim rate (Moho's: an integer game speed, -10 to
 /// +50; retail's cutscenes set 0, normal speed).
 static int l_SetGameSpeed(lua_State* L) {
-    if (auto* mgr = get_game_state_mgr(L))
-        mgr->set_sim_rate(static_cast<i32>(luaL_checknumber(L, 1)));
+    set_game_speed(L, static_cast<i32>(luaL_checknumber(L, 1)));
     return 0;
 }
 
 /// GetGameSpeed() -> the sim rate.
 static int l_GetGameSpeed(lua_State* L) {
-    auto* mgr = get_game_state_mgr(L);
-    lua_pushnumber(L, mgr ? mgr->sim_rate() : 0);
+    lua_pushnumber(L, game_speed(L));
     return 1;
 }
 
@@ -3533,18 +3546,17 @@ void register_console_commands(ui::Console& console) {
             spdlog::info("WLD_GameSpeed <int> - set current game speed");
             return;
         }
-        if (auto* mgr = get_game_state_mgr(L))
-            mgr->set_sim_rate(
-                static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
+        set_game_speed(L, static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
     });
+    // As Moho's: one step, within -10..+50; asking for the speed it has is nothing
     console.add("WLD_IncreaseSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() + 1);
+        if (const i32 rate = game_speed(L); rate < 50) set_game_speed(L, rate + 1);
     });
     console.add("WLD_DecreaseSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() - 1);
+        if (const i32 rate = game_speed(L); rate > -10) set_game_speed(L, rate - 1);
     });
     console.add("WLD_ResetSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(0);
+        if (game_speed(L) != 0) set_game_speed(L, 0);
     });
 }
 

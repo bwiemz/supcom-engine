@@ -491,12 +491,12 @@ std::optional<int> App::run_window() {
                     // at the sim tick rate; the session only advances the
                     // sim once every peer has confirmed the next frame
                     // (the classic "waiting for players" stall otherwise).
-                    // A round is a tick's time, whatever this player's
-                    // speed: the drop timer counts them, and the game's
-                    // speed is every peer's (M218h; Moho negotiates it,
-                    // which the engine doesn't yet).
-                    sim_accumulator += dt;
+                    // A round is a tick's time at the game's speed, which
+                    // is every peer's (M218i): the local speed follows it
                     auto* session = osc::lua::mp_net_state().session.get();
+                    if (game_state_mgr.sim_rate() != session->speed())
+                        game_state_mgr.set_sim_rate(session->speed());
+                    sim_accumulator += dt * game_state_mgr.speed();
                     int guard = 0;
                     while (sim_accumulator >= osc::sim::SimState::SECONDS_PER_TICK && guard++ < 4) {
                         sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
@@ -664,6 +664,7 @@ std::optional<int> App::run_window() {
             if (sim_state) {
                 osc::lua::pump_disconnect_dialog(ui_lua_state.raw()); // M218e
                 osc::lua::pump_pause_state(ui_lua_state.raw());       // M218f
+                osc::lua::pump_speed_changes(ui_lua_state.raw());     // M218i
             }
 
             // Resume UI coroutines

@@ -230,6 +230,23 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     that never sends one (it died loading) is left to the players, as in
     Moho: the disconnect dialog shows it, and they eject it.
 
+- **M218i:** a network game's speed, as Moho's client manager negotiates
+  it. The lobby's `GameSpeed` fixes it (`normal` +0, `fast` +4) or lets
+  the players change it (`adjustable`). A player's `SetGameSpeed`,
+  `WLD_GameSpeed` or `WLD_Increase/Decrease/ResetSimRate` goes to every
+  peer as a message with a clock (Moho's `CLIMSG_AdjustSimSpeed`); each
+  applies the newest, a tie going to the lower source, so all come to the
+  same speed. An observer can't (Moho's `WLD_CanAdjustSimRate`). Each change
+  reaches `uimain.NoteGameSpeedChanged(client, speed)` on every machine.
+  - A round is a tick's time at that speed, so the lead cap and the drop
+    timeout are counted in rounds scaled to it (their scale held to 0.1–10:
+    the frame loop runs a few rounds a frame at most), keeping two and three
+    seconds.
+  - Not done: Moho also caps the speed at the slowest client's measured
+    rate (`maxSP`); here the lead cap does the same work, waiting for it.
+  - Single-player keeps its own speed, adjustable whatever the option
+    (retail fixes it at `normal` unless the lobby says `adjustable`).
+
 Two fixes the launch found go separately, since single-player has them
 too:
 - random spawn (FA's default) leaves the slots sparse (players in 1 and 5,
@@ -385,3 +402,20 @@ too:
   end in sync. The pairs' processes now answer for a second after their
   last round before closing: a socket closed with data unread resets the
   connection, and the other side lost its last frame.
+
+## Tests (M218i)
+- **Unit (`test_lockstep`, `[speed]`):** a fixed speed refuses a change; an
+  adjustable one: a request applies at once for its asker and on the other
+  once the message comes, both hearing it; two at the same clock settle on
+  the lower source's, a newer one wins, one out of range is held to
+  -10..+50, and one older than the applied (delayed on its way) changes
+  nothing; at +10 a peer runs 200 frames ahead and drops a silent one after
+  300 rounds, at -10 after 2 and 3.
+- **Unit (`test_net_lobby`):** a lobby's game at `fast` is at +4 and
+  refuses `SetGameSpeed`; at `Adjustable` (any case) a player's
+  `SetGameSpeed(3)` is its speed and reaches `NoteGameSpeedChanged(1, 3)`;
+  an observer's changes nothing.
+- **`data.lan_game`, `data.lan_game_quit`:** the host's lobby makes the
+  speed adjustable (retail's `SetGameOption`); the joiner, resuming the
+  pause, asks for +2; both machines hear it (retail prints "LanJoiner:
+  adjusting game speed to +2") and end at +2.

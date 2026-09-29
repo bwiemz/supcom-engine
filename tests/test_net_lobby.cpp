@@ -671,3 +671,65 @@ TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)
         assert(__dialog == 1, "the dialog is a network game's")
     )"));
 }
+
+TEST_CASE("A lobby's game has the speed its lobby set; players change it, observers can't (M218i)",
+          "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Alice', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'Alice'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto alice = take_launched();
+    REQUIRE(w.run(R"(
+        host:LaunchGame(GameInfo())
+        __heard = {}
+        __modules = __modules or {}
+        __modules['/lua/ui/uimain.lua'] = {NoteGameSpeedChanged = function(client, speed)
+            table.insert(__heard, client .. ':' .. speed)
+        end}
+        -- The lobby's GameSpeed, as the game's options have it
+        rawset(_G, 'ScenarioInfo', {Options = {GameSpeed = 'fast'}})
+    )"));
+
+    // 'fast': fixed at +4
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    REQUIRE(w.run(R"(
+        assert(GetGameSpeed() == 4, GetGameSpeed())
+        SetGameSpeed(7)
+        assert(GetGameSpeed() == 4, 'fixed')
+    )"));
+    osc::lua::pump_speed_changes(w.state.raw());
+    REQUIRE(w.run("assert(table.getn(__heard) == 0, 'nothing changed')"));
+
+    // 'adjustable': a player's is taken, and heard as Moho's client
+    // manager tells it
+    REQUIRE(w.run("ScenarioInfo.Options.GameSpeed = 'Adjustable'"));
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    REQUIRE(w.run(R"(
+        assert(GetGameSpeed() == 0, GetGameSpeed())
+        SetGameSpeed(3)
+        assert(GetGameSpeed() == 3, GetGameSpeed())
+    )"));
+    osc::lua::pump_speed_changes(w.state.raw());
+    REQUIRE(w.run("assert(table.getn(__heard) == 1 and __heard[1] == '1:3', __heard[1])"));
+
+    // An observer's isn't (Moho's WLD_CanAdjustSimRate)
+    osc::lua::mp_net_state().source_armies[osc::lua::mp_net_state().local_source] = -1;
+    REQUIRE(w.run(R"(
+        SetGameSpeed(8)
+        assert(GetGameSpeed() == 3, 'an observer asked')
+    )"));
+}

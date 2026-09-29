@@ -298,6 +298,32 @@ bool session_is_paused(lua_State* L, bool& paused) {
     return true;
 }
 
+bool session_request_speed(i32 rate) {
+    if (!session_is_multiplayer()) return false;
+    // A player may, an observer not (Moho's WLD_CanAdjustSimRate); the
+    // lockstep takes it only if the lobby made the speed adjustable
+    const auto& mp = mp_net_state();
+    if (mp.session && mp.local_army() >= 0) mp.session->request_speed(rate);
+    return true;
+}
+
+bool session_speed(i32& rate) {
+    if (!session_is_multiplayer()) return false;
+    const auto& mp = mp_net_state();
+    rate = mp.session ? mp.session->speed() : 0;
+    return true;
+}
+
+void pump_speed_changes(lua_State* L) {
+    auto* session = mp_net_state().session.get();
+    if (!session_is_multiplayer() || !session) return;
+    for (const sim::LockstepSession::SpeedChange& change : session->take_speed_changes()) {
+        lua_pushnumber(L, static_cast<double>(change.source + 1)); // its client
+        lua_pushnumber(L, static_cast<double>(change.rate));
+        core::call_ui_callback(L, core::kUiMainModule, "NoteGameSpeedChanged", 2);
+    }
+}
+
 void pump_pause_state(lua_State* L) {
     // What the UI was last told, for the game it was told of: known by the
     // sim's generation (each new game's sim has its own), not its address,
