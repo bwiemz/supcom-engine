@@ -1,13 +1,11 @@
 #include "sim/build_info.hpp"
 
-#ifndef OSC_BUILD_ID
-#define OSC_BUILD_ID "unknown"
-#endif
+#include "core/version.hpp"
 
 namespace osc::sim {
 
 const char* build_id() {
-    return OSC_BUILD_ID;
+    return core::build_id();
 }
 
 } // namespace osc::sim

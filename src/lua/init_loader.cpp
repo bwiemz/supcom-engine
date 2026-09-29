@@ -4,6 +4,7 @@
 #include "lua/engine_bindings.hpp"
 #include "lua/blueprint_bindings.hpp"
 #include "core/log.hpp"
+#include "core/version.hpp"
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/directory_mount.hpp"
 #include "vfs/zip_mount.hpp"
@@ -11,6 +12,7 @@
 #include "blueprints/blueprint_store.hpp"
 
 #include <algorithm>
+#include <string>
 #include <spdlog/spdlog.h>
 
 extern "C" {
@@ -62,7 +64,8 @@ Result<void> InitLoader::execute_init(LuaState& state,
     state.set_global_string("fa_path", fa_path_str.c_str());
 
     // Version globals
-    state.set_global_string("ClientVersion", "OpenSupCom 0.1.0");
+    state.set_global_string("ClientVersion",
+                            (std::string("OpenSupCom ") + core::version()).c_str());
     state.set_global_string("GameVersion", "3831");
     state.set_global_string("GameType", "faf");
 

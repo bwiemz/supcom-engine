@@ -1,5 +1,6 @@
 #include "core/log.hpp"
 #include "core/test_status.hpp"
+#include "core/version.hpp"
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -25,7 +26,7 @@ void init(const std::filesystem::path& log_file) {
     logger->flush_on(spdlog::level::warn);
 
     spdlog::set_default_logger(logger);
-    spdlog::info("OpenSupCom v0.1.0");
+    spdlog::info("{}", core::version_line());
 }
 
 void shutdown() {

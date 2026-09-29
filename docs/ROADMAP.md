@@ -294,8 +294,8 @@ In order of how much they change what the player feels:
 
 | # | Milestone | Scope |
 |---|---|---|
-| M227 | Packaging | Linux AppImage (Flatpak later) and a Windows zip or installer; semantic versioning and a changelog. |
-| M228 | First run | Install detection UI, a settings file under XDG or AppData, and a "collect logs" crash bundle. |
+| M227 | Packaging | Linux AppImage (Flatpak later) and a Windows zip or installer; semantic versioning and a changelog. Design: `docs/plans/2026-09-29-m227-m228-release-design.md`. **M227a ✅** The build says which it is, and installs:<br>• `--version` prints `OpenSupCom <version> (<revision>)`, before logging starts.<br>• The revision (`git describe`) is taken at every build, not only at configure time. The build id replays and saves carry had gone stale as commits landed, so two builds could share one.<br>• `cmake --install` lays out the game and its documents; on Linux, a desktop entry and an original icon; on Windows, flat, with its DLLs.<br>• `CHANGELOG.md` and SemVer (0.x until M230). `arch.version` holds CMake, vcpkg.json and the changelog to one version, and `arch.install` runs an installed build's `--version` on every CI platform. |
+| M228 | First run | Install detection UI, a settings file under XDG or AppData, and a "collect logs" crash bundle. Design: `docs/plans/2026-09-29-m227-m228-release-design.md`. |
 | M229 | Steam integration docs | Launching via Steam (launch options, Steam Deck/SteamOS through the Linux build). |
 | M230 | 1.0 criteria | Retail and FAF skirmish plus LAN MP on both OSes, all phases' exit tests green, and the performance budgets met. |
 
