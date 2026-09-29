@@ -31,6 +31,7 @@ add_executable(osc_tests
     test_transport_unload.cpp
     test_special_files.cpp
     test_binding_coverage.cpp
+    test_lua_persist.cpp
     test_lua_state.cpp
     test_sim_sync.cpp
     test_init_loader.cpp

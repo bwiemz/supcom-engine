@@ -132,6 +132,7 @@ constexpr Mode kModesBefore[] = {
     {"--map-parse-test", test_map_parse, false},
     {"--terrain-glow-test", test_terrain_glow, false},
     {"--campaign-test", test_campaign, false},
+    {"--persist-test", test_persist, false},
     {"--wave-test", test_waves, false},
     {"--strata-test", test_strata, false},
     {"--meshless-test", test_meshless, false},
@@ -319,6 +320,7 @@ void IntegrationModes::print_usage() const {
               << "  --map-parse-test   Every map's .scmap read to its last byte\n"
               << "  --terrain-glow-test TTerrainGlow's lava (Varga Pass, M212f)\n"
               << "  --campaign-test    FA's first operation boots and runs a minute (M209)\n"
+              << "  --persist-test     The sim's Lua heap saves and loads to the same bytes (M208c-a)\n"
               << "  --wave-test        The shoreline's waves (M213c)\n"
               << "  --strata-test      The terrain's strata blend as FA's (sharpened masks, upper stratum)\n"
               << "  --meshless-test    Entities without a mesh: nothing for effect carriers, a cube for units\n"
@@ -437,8 +439,8 @@ app::TestRequest IntegrationModes::parse(int argc, char* argv[]) {
     app::TestRequest request;
     request.headless = !given_.empty();
     request.windowed = interp_ || !render_dump_path_.empty();
-    request.ai_army_2 =
-        has("--ai-test") || has("--platoon-test") || has("--threat-test") || has("--combat-test");
+    request.ai_army_2 = has("--ai-test") || has("--platoon-test") || has("--threat-test") ||
+                        has("--combat-test") || has("--persist-test");
     request.world_ui = has("--gameui-test") || has("--victory-test") || has("--keymap-test") ||
                        has("--session-command-test") || has("--keyboard-test") ||
                        has("--camera-moves-test") || has("--window-test") || has("--options-test");
