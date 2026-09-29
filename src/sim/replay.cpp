@@ -44,7 +44,7 @@ bool Replay::deserialize(const std::vector<u8>& bytes, Replay& out) {
     if (out.version >= 4) {
         out.build = r.str();
         out.has_setup = r.u8v() != 0;
-        if (out.has_setup) read_game_setup(r, out.setup);
+        if (out.has_setup) read_game_setup(r, out.setup, out.version);
         out.checksum_from = r.u32v();
         const u32 trail = r.u32v();
         for (u32 i = 0; i < trail && r.ok(); ++i) out.checksums.push_back(r.u32v());

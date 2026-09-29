@@ -217,8 +217,9 @@ too:
 - **`data.lan_game` (gate):** two processes play retail's `lobby.lua` to a
   game (host, join, ready, Launch and the countdown), then 150 ticks in
   lockstep with no desync. Each plays its own slot's army, both armies are
-  human, and there's no script error. It fixes spawn and faction (UEF)
-  until the two fixes above land.
+  human, and there's no script error. Spawn and factions are retail's
+  defaults, random: the two armies are the slots taken, in order, and
+  start apart, each at its slot's marker.
 
 ## Tests (M218d)
 - **Unit (`test_net_lobby`):**

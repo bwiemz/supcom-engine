@@ -230,9 +230,11 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     human.team = 2;
     human.start_spot = 2;
     human.player_color = -1;
+    human.slot = 2;
     osc::sim::ArmySlotConfig ai = human;
     ai.human = false;
     ai.ai_personality = "rush";
+    ai.slot = 5;
     r.setup.slots = {human, ai};
     r.setup.options.configured = true;
     r.setup.options.set_string("Victory", "demoralization");
@@ -255,6 +257,8 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
     CHECK(out.setup.slots[0].player_color == -1);
     CHECK_FALSE(out.setup.slots[1].human);
     CHECK(out.setup.slots[1].ai_personality == "rush");
+    CHECK(out.setup.slots[0].slot == 2); // their lobby slots (version 9)
+    CHECK(out.setup.slots[1].slot == 5);
     REQUIRE(out.setup.options.values.size() == 3);
     CHECK(out.setup.options.values[1].first == "UnitCap");
     CHECK(out.setup.options.values[1].second.number_value == 500);
@@ -270,6 +274,44 @@ TEST_CASE("A replay carries the game's setup", "[replay]") {
         std::vector<osc::u8> part(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(cut));
         CHECK_FALSE(Replay::deserialize(part, out));
     }
+}
+
+TEST_CASE("A version 8 replay's armies keep their own places", "[replay]") {
+    // Before version 9 a setup's slots carried no lobby slot
+    std::vector<osc::u8> bytes;
+    osc::sim::ByteWriter w(bytes);
+    for (char c : {'O', 'S', 'C', 'R'}) w.u8v(static_cast<osc::u8>(c));
+    w.u32v(8);  // version
+    w.u32v(12); // final tick
+    w.u32v(0);  // command delay
+    w.u64v(77); // seed
+    w.str("domination");
+    w.str("build");
+    w.u8v(1); // has a setup
+    w.str("/maps/x/x_scenario.lua");
+    w.u64v(77);
+    w.u32v(1); // army count
+    w.u32v(1); // one slot:
+    w.u8v(1);  //   configured
+    w.u8v(1);  //   human
+    for (osc::u32 v : {1u, 1u, 1u, 0xFFFFFFFFu, 0xFFFFFFFFu, 0u}) w.u32v(v);
+    w.str(""); //   AI personality
+    w.u8v(0);  // options
+    w.u32v(0);
+    w.u32v(0);
+    w.u32v(0); // AI armies
+    w.str("adaptive");
+    w.f64v(1.0);
+    w.f64v(1.0);
+    w.u32v(0); // checksum trail
+    w.u32v(0);
+    w.u32v(0); // commands
+    Replay out;
+    REQUIRE(Replay::deserialize(bytes, out));
+    REQUIRE(out.setup.slots.size() == 1);
+    CHECK(out.setup.slots[0].slot == 0);
+    CHECK(osc::sim::session_army_names(out.setup, {"ARMY_1", "ARMY_2"}) ==
+          std::vector<std::string>{"ARMY_1"});
 }
 
 TEST_CASE("A version 3 replay still loads, without a setup", "[replay]") {

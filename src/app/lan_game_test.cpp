@@ -73,10 +73,9 @@ bool listening(const std::string& address, u16 port) {
     return ok;
 }
 
-/// This player's slot made UEF and readied; the humans and how many are
-/// ready counted, and whether retail's launch countdown runs. (UEF: the
-/// game UI's faction index is off by one until its fix lands, and a
-/// random Seraphim would find no faction.)
+/// This player's slot readied; the humans and how many are ready counted,
+/// and whether retail's launch countdown runs. (Spawn and factions stay
+/// retail's defaults, random.)
 constexpr const char* kLobbyStep = R"(
     local lobby = import('/lua/ui/lobby/lobby.lua')
     local info = __osc_upvalue(lobby.IsLocallyOwned, 'gameInfo')
@@ -87,20 +86,10 @@ constexpr const char* kLobbyStep = R"(
         if p.Human then
             __osc_lan_humans = __osc_lan_humans + 1
             if p.Ready then __osc_lan_ready = __osc_lan_ready + 1 end
-            if p.OwnerID == me and p.Faction ~= 1 then lobby.SetPlayerOption(slot, 'Faction', 1) end
             if p.OwnerID == me and not p.Ready then lobby.SetPlayerOption(slot, 'Ready', true) end
         end
     end
     if __osc_upvalue(lobby.CancelLaunch, 'launchThread') then __osc_lan_counting = 1 end
-)";
-
-/// The host's spawn fixed: each player starts at their slot. (Random
-/// spawn, FA's default, leaves the slots sparse, which the engine's
-/// session doesn't yet take as Moho does.)
-constexpr const char* kFixSpawn = R"(
-    local lobby = import('/lua/ui/lobby/lobby.lua')
-    local info = __osc_upvalue(lobby.IsLocallyOwned, 'gameInfo')
-    if info and info.GameOptions.TeamSpawn ~= 'fixed' then lobby.SetGameOption('TeamSpawn', 'fixed') end
 )";
 
 /// The host's Launch button, pressed.
@@ -215,11 +204,6 @@ void LanGameTest::lobby_frame(lua::LuaState& ui) {
         return;
     }
     if (!host_) return;
-    if (auto f = ui.do_string(kFixSpawn); !f) {
-        fail("fixing the spawn: " + f.error().message);
-        done_ = true;
-        return;
-    }
     lua_State* L = ui.raw();
     const bool everyone_ready =
         number_global(L, "__osc_lan_humans") == 2 && number_global(L, "__osc_lan_ready") == 2;
@@ -246,16 +230,27 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
         for (const std::string& d : mp.session->desync_domains()) domains += " " + d;
         fail(fmt::format("desynced at tick {} (domains:{})", mp.session->desync_tick(), domains));
     }
-    // The host took slot 1, the joiner slot 2: armies 0 and 1, both human
-    const i32 want = host_ ? 0 : 1;
-    if (mp.local_army() != want)
-        fail(fmt::format("plays army {}, not its slot's {}", mp.local_army(), want));
+    // Random spawn: the two slots taken, in order, are armies 0 and 1 (each
+    // side's by where retail's shuffle put it), both human, each starting at
+    // the marker of its slot's army, apart
+    const i32 want = mp.local_army();
+    if (want != 0 && want != 1) fail(fmt::format("plays army {}, not 0 or 1", want));
     const auto human = [&](size_t i) {
         const sim::ArmyBrain* brain = sim.army_at(i);
         return brain && brain->is_human();
     };
-    if (sim.army_count() != 2 || !human(0) || !human(1))
+    if (sim.army_count() != 2 || !human(0) || !human(1)) {
         fail(fmt::format("{} armies, not the lobby's two humans", sim.army_count()));
+    } else {
+        const sim::ArmyBrain& a = *sim.army_at(0);
+        const sim::ArmyBrain& b = *sim.army_at(1);
+        if (a.name() == b.name() || a.name().rfind("ARMY_", 0) != 0 ||
+            b.name().rfind("ARMY_", 0) != 0)
+            fail(fmt::format("the armies are {} and {}", a.name(), b.name()));
+        if (a.start_position().x == b.start_position().x &&
+            a.start_position().z == b.start_position().z)
+            fail(fmt::format("{} and {} start at the same place", a.name(), b.name()));
+    }
     // The session (M218d): its two clients, by source, and their sources;
     // the host's pause refused (pausing alone would stall the other), and
     // its chat to everyone

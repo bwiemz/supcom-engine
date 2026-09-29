@@ -2,6 +2,8 @@
 
 #include "sim/command_codec.hpp"
 
+#include <algorithm>
+
 namespace osc::sim {
 
 namespace {
@@ -14,6 +16,45 @@ int read_int(ByteReader& r) {
 }
 
 } // namespace
+
+std::vector<std::string> session_army_names(const GameSetup& setup,
+                                            const std::vector<std::string>& scenario_armies) {
+    std::vector<std::string> names;
+    if (setup.slots.empty()) {
+        const size_t count = setup.army_count > 0 ? std::min(static_cast<size_t>(setup.army_count),
+                                                             scenario_armies.size())
+                                                  : scenario_armies.size();
+        names.assign(scenario_armies.begin(),
+                     scenario_armies.begin() + static_cast<std::ptrdiff_t>(count));
+        return names;
+    }
+    names.resize(setup.slots.size());
+    const auto taken = [&](const std::string& name) {
+        return std::find(names.begin(), names.end(), name) != names.end();
+    };
+    // First each slot's own army...
+    for (size_t i = 0; i < setup.slots.size(); ++i) {
+        const int slot = setup.slots[i].slot;
+        if (slot >= 1 && slot <= static_cast<int>(scenario_armies.size()) &&
+            !taken(scenario_armies[static_cast<size_t>(slot - 1)]))
+            names[i] = scenario_armies[static_cast<size_t>(slot - 1)];
+    }
+    // ...then the first army free for one with none, or one the scenario
+    // hasn't (the lobby offers only its armies'), so no slot loses its own
+    // to it. (Replays before version 9 have no slots: their armies are the
+    // scenario's, in order.)
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (!names[i].empty()) continue;
+        const auto free = std::find_if(scenario_armies.begin(), scenario_armies.end(),
+                                       [&](const std::string& n) { return !taken(n); });
+        if (free == scenario_armies.end()) {
+            names.resize(i); // none left: the armies from here on don't play
+            break;
+        }
+        names[i] = *free;
+    }
+    return names;
+}
 
 void write_game_setup(ByteWriter& w, const GameSetup& s) {
     w.str(s.scenario);
@@ -31,6 +72,7 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
         write_int(w, slot.army_color);
         write_int(w, slot.handicap);
         w.str(slot.ai_personality);
+        write_int(w, slot.slot);
     }
 
     w.u8v(s.options.configured ? 1 : 0);
@@ -54,7 +96,7 @@ void write_game_setup(ByteWriter& w, const GameSetup& s) {
     w.f64v(s.build_mult);
 }
 
-bool read_game_setup(ByteReader& r, GameSetup& s) {
+bool read_game_setup(ByteReader& r, GameSetup& s, u32 version) {
     s = GameSetup{};
     s.scenario = r.str();
     s.seed = r.u64v();
@@ -74,6 +116,7 @@ bool read_game_setup(ByteReader& r, GameSetup& s) {
         slot.army_color = read_int(r);
         slot.handicap = read_int(r);
         slot.ai_personality = r.str();
+        if (version >= 9) slot.slot = read_int(r); // before: none
         s.slots.push_back(std::move(slot));
     }
 
