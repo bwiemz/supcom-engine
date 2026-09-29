@@ -193,8 +193,16 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     timeoutsRemaining)` and `OnResume()` as the pause starts and ends
     (Moho's `Sync.PausedBy`), `OnUserPause(bool)` at once for the player
     who asked, and `SessionIsPaused` true while it holds.
-- **M218g:** `LanHost`/`LanJoin` and their dialog go (the peer-drop CI
-  test moves to the lobby's path).
+- **M218g:** the fixed LAN handshake goes, now that retail's own screens
+  host, find, join and launch games: the engine's "LAN Game" button and
+  dialog on the main menu, the `LanHost`/`LanJoin`/`LanNetStatus` globals,
+  `--lan-window-host`/`--lan-window-join`, and beneath them `LanLobby`, the
+  `MuxTransport` it shared a connection with, and `TcpTransport`. A game's
+  network is its lobby's connections, and nothing else.
+  - The data-free CI pairs (`mp.*`) play over the lobby's connections: each
+    hosts a lobby, joins it, launches as `LaunchGame` does
+    (`mp_begin_lobby_game`, `mp_attach_session`) and plays minimal sims in
+    lockstep: in sync, a divergence caught, a player gone mid-game dropped.
 
 Two fixes the launch found go separately, since single-player has them
 too:
@@ -319,3 +327,17 @@ too:
   `OnPause` (the host's source, 2 of the lobby's 3 timeouts left) and
   `OnResume`; both still reach tick 150 in step. `data.lan_game_quit` too,
   before the joiner leaves.
+
+## Tests (M218g)
+- **`mp.lockstep_sync`, `mp.lockstep_desync_detected`,
+  `mp.lockstep_peer_drop`** (two processes, no game data, CI): a lobby
+  hosted and joined over TCP, the joiner seeded by the host's time from its
+  welcome, launched, then 60 rounds in lockstep with the host's scripted
+  orders. In sync, both reach the same checksum; with a local-only order on
+  the host, both report the desync; with the joiner gone at round 20
+  without a word, the host drops it (exactly one) and plays on.
+- **Unit (`test_lobby_net`):** the host survives sending to a player gone
+  without a goodbye (POSIX's SIGPIPE), and loses it. This was
+  `TcpTransport`'s test; the lobby's connections share its send path.
+- **Unit (`test_wire_framing`):** the framing tests, kept from
+  `test_tcp_transport`.

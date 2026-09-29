@@ -11,7 +11,6 @@
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/factory_queue.hpp"
-#include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
@@ -156,22 +155,6 @@ std::optional<int> App::run_window() {
         int fps_frames = 0;
         double display_fps = 0.0;
         std::unordered_set<osc::u32> prev_selection;
-
-        // Windowed LAN entry: create the transport up front so the front-end
-        // can host/join while it renders; the game loop then drives the lobby
-        // handshake to launch. Same networking path as --lan-host/--lan-join
-        // (verified headless). Absent these flags, single-player is untouched.
-        bool lan_launch_fired = false;
-        bool lan_host_cfg_set = false;
-        {
-            std::string lwp = parse_string_arg(argc, argv, "--mp-port", "47624");
-            auto lport = static_cast<osc::u16>(std::strtoul(lwp.c_str(), nullptr, 10));
-            if (parse_flag(argc, argv, "--lan-window-host")) {
-                osc::lua::mp_begin_host(lport);
-            }
-            std::string lwj = parse_string_arg(argc, argv, "--lan-window-join", "");
-            if (!lwj.empty()) osc::lua::mp_begin_join(lwj, lport);
-        }
 
         // --screenshot <png> [--screenshot-frame N]: render N frames on a
         // fixed 60 Hz clock (so frame N is identical run to run), capture
@@ -513,7 +496,6 @@ std::optional<int> App::run_window() {
                     int guard = 0;
                     while (sim_accumulator >= osc::sim::SimState::SECONDS_PER_TICK && guard++ < 4) {
                         sim_accumulator -= osc::sim::SimState::SECONDS_PER_TICK;
-                        osc::lua::mp_pump(); // drain mux game channel + peers
                         session->send_frame();
                         session->receive_and_advance();
                         // A timed-out peer is defeated so the match resolves
@@ -790,32 +772,6 @@ std::optional<int> App::run_window() {
                     break;
                 }
                 lua_pop(uiL, 1);
-            }
-
-            // LAN lobby: drive the host/client handshake during the
-            // front-end and fire the launch barrier. Inert unless a LAN
-            // transport exists (only when the LAN window flags were set).
-            {
-                auto& mpn = osc::lua::mp_net_state();
-                auto* lob = osc::lua::mp_lobby();
-                if (lob && !mpn.active() && !lan_launch_fired) {
-                    if (lob->role() == osc::lua::LanLobby::Role::Host && !lan_host_cfg_set) {
-                        lob->set_host_config(osc::lua::LanSessionConfig{
-                            "/maps/SCMP_009/SCMP_009_scenario.lua", mpn.seed});
-                        lan_host_cfg_set = true;
-                    }
-                    osc::lua::mp_pump();
-                    lob->poll();
-                    if (lob->role() == osc::lua::LanLobby::Role::Host &&
-                        lob->state() == osc::lua::LanLobby::State::Ready) {
-                        lob->request_launch();
-                    }
-                    if (lob->launch_ready()) {
-                        lan_launch_fired = true;
-                        mpn.seed = lob->config().seed;
-                        lan_launch_session(ui_lua_state.raw(), lob->config().scenario);
-                    }
-                }
             }
 
             // Check for game launch request from lobby (M148a)

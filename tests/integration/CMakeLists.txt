@@ -71,26 +71,23 @@ find_package(Python3 COMPONENTS Interpreter)
 # ── Two-process multiplayer (data-free) ────────────────────────────────────
 if(Python3_Interpreter_FOUND)
     set(_run_pair ${CMAKE_CURRENT_SOURCE_DIR}/run_pair.py)
-    # Distinct ports so the tests can run in parallel.
+    # Distinct ports so the tests can run in parallel, below the ephemeral
+    # ranges (Linux 32768+, Windows 49152+) an outgoing connection may hold.
+    # Each pair hosts a lobby, launches, and plays in lockstep over its
+    # connections (the network a lobby's game plays over).
     add_test(NAME mp.lockstep_sync
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47711)
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29731)
     add_test(NAME mp.lockstep_desync_detected
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> mp 47712
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29732
                      -- --mp-desync)
-    add_test(NAME mp.lan_lobby_launch
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47713)
-    add_test(NAME mp.lan_peer_drop
-             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> lan 47714
+    add_test(NAME mp.lockstep_peer_drop
+             COMMAND ${Python3_EXECUTABLE} ${_run_pair} $<TARGET_FILE:osc_integration> 29733
                      --client-may-fail -- --mp-drop-at 20)
-    set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected
-                         mp.lan_lobby_launch mp.lan_peer_drop
+    set_tests_properties(mp.lockstep_sync mp.lockstep_desync_detected mp.lockstep_peer_drop
                          PROPERTIES LABELS mp TIMEOUT 240)
 else()
     message(STATUS "Python3 not found: two-process multiplayer tests not registered")
 endif()
-
-add_test(NAME mp.lan_ui_globals COMMAND osc_integration --lan-ui-test)
-set_tests_properties(mp.lan_ui_globals PROPERTIES LABELS mp TIMEOUT 60)
 
 # ── Data-backed modes (need Forged Alliance) ───────────────────────────────
 set(OSC_TEST_MAP "/maps/SCMP_009/SCMP_009_scenario.lua"

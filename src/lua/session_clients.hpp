@@ -14,8 +14,7 @@ struct lua_State;
 
 namespace osc::lua {
 
-/// Whether the game is a network game: a lobby's ("UDP"/"TCP"), or the
-/// fixed LAN handshake's.
+/// Whether the game is a network game: a lobby's ("UDP"/"TCP").
 bool session_is_multiplayer();
 
 /// How many clients the game has (0: no game).
