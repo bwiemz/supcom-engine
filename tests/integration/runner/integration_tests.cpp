@@ -16151,6 +16151,37 @@ void test_gameui(TestContext& ctx, const std::function<void(int)>& pump_frames,
                                    acu_name(), nickname);
     }
 
+    // 6d. Each army's faction as the UI indexes factions.lua's list
+    //     (Factions[faction + 1]): 0-based, the sim's GetFactionIndex less
+    //     one. (1-based, a UEF player wore the Aeon skin, and a Seraphim
+    //     army found no faction at all.)
+    if (lua_ok("Test 6d: read the armies' factions", R"(
+            local factions = import('/lua/factions.lua').Factions
+            __osc_test_factions = {}
+            for i, army in GetArmiesTable().armiesTable do
+                if not factions[army.faction + 1] then
+                    error('army ' .. i .. ' has no faction ' .. tostring(army.faction))
+                end
+                __osc_test_factions[i] = army.faction
+            end
+        )")) {
+        lua_pushstring(L, "__osc_test_factions");
+        lua_rawget(L, LUA_GLOBALSINDEX);
+        std::string wrong;
+        for (size_t i = 0; i < ctx.sim.army_count(); ++i) {
+            const auto* brain = ctx.sim.army_at(i);
+            lua_rawgeti(L, -1, static_cast<int>(i + 1));
+            const int ui = lua_isnumber(L, -1) ? static_cast<int>(lua_tonumber(L, -1)) : -99;
+            lua_pop(L, 1);
+            if (brain && ui != brain->faction() - 1)
+                wrong += fmt::format(" army {} (UI {}, sim {})", i + 1, ui, brain->faction());
+        }
+        lua_pop(L, 1);
+        if (wrong.empty())
+            spdlog::info("[PASS] Test 6d: each army's UI faction is its sim faction less one");
+        else osc::test_status::fail("[FAIL] Test 6d: the UI's factions are off:{}", wrong);
+    }
+
     // 7. Pausing reaches gamemain.OnPause(pausedBy, timeouts) / OnResume,
     //    running retail's own handlers (pause banner, tabs). A local pause
     //    is by this client's command source.

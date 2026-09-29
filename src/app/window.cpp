@@ -2,6 +2,7 @@
 // UI's frames (M192 step 2b, moved from run()).
 
 #include "app/app_internal.hpp"
+#include "app/lan_game_test.hpp"
 #include "app/window_commands.hpp"
 #include "core/fixed_step.hpp"
 #include "core/image.hpp"
@@ -360,6 +361,19 @@ std::optional<int> App::run_window() {
             }
         }
 
+        // --lan-game-host / --lan-game-join: retail's LAN lobby, from here
+        // to a game in lockstep with the other process (M218c).
+        std::optional<osc::app::LanGameTest> lan_game;
+        if (opt.lan_game_test()) {
+            lan_game.emplace(opt.lan_game_host,
+                             opt.lan_game_join.empty() ? "127.0.0.1" : opt.lan_game_join,
+                             opt.lan_game_port);
+            if (!lan_game->start(ui_lua_state)) {
+                lan_game->finish(nullptr);
+                return finish_test_run("lan-game-test");
+            }
+        }
+
         // --load-flow-test, once the loaded game has played on: save it again
         // as retail's Save dialog does, and check what saving refuses.
         auto save_again_in_load_flow = [&] {
@@ -409,7 +423,7 @@ std::optional<int> App::run_window() {
         };
 
         while (!renderer.should_close() && !screenshot_done && !(tests && tests->frames_done()) &&
-               !replay_flow_done && !load_flow_done) {
+               !replay_flow_done && !load_flow_done && !(lan_game && lan_game->done())) {
             osc::Profiler::instance().begin_frame();
             // A resized window: the UI's root frame follows it (M217h)
             if (renderer.take_resized()) {
@@ -563,6 +577,8 @@ std::optional<int> App::run_window() {
                 } else if (replay_flow_frames > 40000)
                     replay_flow_done = true; // stuck: reported below
             }
+
+            if (lan_game) lan_game->frame(ui_lua_state, sim_state.get());
 
             // --load-flow-test: the saved game catches up -- never a replay
             // meanwhile -- then plays on a little and is saved again.
@@ -913,10 +929,10 @@ std::optional<int> App::run_window() {
                         if (sim_state && !active_playback &&
                             osc::lua::mp_attach_session(*sim_state)) {
                             // Each peer plays its own source's army, and
-                            // sees the world through its intel (M215a).
-                            osc::lua::set_focus_army(
-                                sim_lua_state ? sim_lua_state->raw() : nullptr, uiL,
-                                static_cast<int>(osc::lua::mp_net_state().local_source));
+                            // sees the world through its intel (M215a); an
+                            // observer, all of it.
+                            osc::lua::set_focus_army(sim_lua_state ? sim_lua_state->raw() : nullptr,
+                                                     uiL, osc::lua::mp_net_state().local_army());
                         }
 
                         // Re-install instrument harness on new sim VM (M166)
@@ -1039,6 +1055,10 @@ std::optional<int> App::run_window() {
                              load_flow_resumes[0], load_flow_resumes[1], load_flow_resumes[2]);
             }
             return finish_test_run("load-flow-test");
+        }
+        if (lan_game) {
+            lan_game->finish(sim_state.get());
+            return finish_test_run("lan-game-test");
         }
         if (opt.replay_flow_test) {
             auto is_replay = ui_lua_state.do_string(

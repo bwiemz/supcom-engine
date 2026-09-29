@@ -176,8 +176,10 @@ static int l_GetArmiesTable(lua_State* L) {
             lua_pushboolean(L, brain->is_defeated() ? 1 : 0);
             lua_rawset(L, -3);
 
+            // 0-based (UEF 0), as the UI indexes factions.lua's list with
+            // faction + 1; the brain's is the sim's 1-based GetFactionIndex
             lua_pushstring(L, "faction");
-            lua_pushnumber(L, brain->faction());
+            lua_pushnumber(L, brain->faction() - 1);
             lua_rawset(L, -3);
 
             // Color as ARGB hex string (e.g. "ffFF8000")

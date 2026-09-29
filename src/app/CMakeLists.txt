@@ -7,6 +7,7 @@ add_library(osc_app STATIC
     cli.cpp
     frames.cpp
     headless.cpp
+    lan_game_test.cpp
     reload.cpp
     session.cpp
     ui_globals.cpp
