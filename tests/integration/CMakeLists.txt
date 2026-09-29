@@ -233,6 +233,16 @@ if(Python3_Interpreter_FOUND)
         LABELS "data;gate"
         SKIP_RETURN_CODE 77
         TIMEOUT 300)
+    # M220b: the client drives two games through retail's auto-lobby, as
+    # FAF's matchmaker does (uids, /players, /team, a faction), to a launch;
+    # both play to tick 100 in lockstep. Ports 29753-29756.
+    add_test(NAME data.gpgnet_game
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/gpgnet_game.py
+                     $<TARGET_FILE:opensupcom> 29753)
+    set_tests_properties(data.gpgnet_game PROPERTIES
+        LABELS "data;gate"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 600)
 endif()
 
 # ── Golden images (need Forged Alliance + a Vulkan display) ────────────────
