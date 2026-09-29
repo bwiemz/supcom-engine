@@ -130,6 +130,7 @@ struct BoneData; // forward decl
 class EntityRegistry; // forward decl for grid auto-notify
 
 class Entity {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     Entity() = default;
     virtual ~Entity() = default;

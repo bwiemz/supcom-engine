@@ -12,6 +12,7 @@ namespace osc::sim {
 class EntityRegistry;
 
 class Platoon {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     u32 platoon_id() const { return platoon_id_; }
     void set_platoon_id(u32 id) { platoon_id_ = id; }

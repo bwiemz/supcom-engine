@@ -7,6 +7,7 @@
 #include "sim/manipulator.hpp"
 #include "sim/replay.hpp"
 #include "sim/saved_game.hpp"
+#include "sim/sim_snapshot.hpp"
 #include "sim/sim_state.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -210,4 +211,69 @@ TEST_CASE("A game saved before its first tick is the player's at once", "[savega
     b.tick();
     a.tick();
     CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
+}
+
+TEST_CASE("A game restored from its snapshot plays on as the saved one did", "[savegame][sync]") {
+    // --- The game, saved at tick 10 with a player's order still to run ---
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    a.set_seed(31);
+    const auto ids = setup(a);
+    a.set_recording(true);
+    a.schedule_command(0, {ids[0]}, move_to(300.0f, 0.0f), true);
+    for (int i = 0; i < 10; ++i) a.tick();
+    player_order(a, ids[1], move_to(0.0f, 300.0f)); // runs at tick 11
+    const SavedGame save = osc::sim::save_game(a, "mid-game");
+    REQUIRE_FALSE(save.snapshot.empty());
+    SavedGame loaded;
+    REQUIRE(SavedGame::deserialize(save.serialize(), loaded) == SaveLoadError::None);
+    CHECK(loaded.snapshot == save.snapshot); // through the file's compression
+    for (int i = 0; i < 20; ++i) {
+        if (a.tick_count() == 15) player_order(a, ids[2], move_to(-200.0f, 40.0f));
+        a.tick();
+    }
+
+    // --- Restored into a sim booted for the same game ---
+    LuaGuard gb;
+    SimState b(gb.L, nullptr);
+    b.set_seed(loaded.game.seed);
+    REQUIRE(setup(b) == ids);
+    const std::string err = osc::sim::load_snapshot(b, loaded.snapshot);
+    INFO(err);
+    REQUIRE(err.empty());
+    b.set_recording(true);
+    b.adopt_history(loaded.game);
+    CHECK(b.tick_count() == 10);
+    CHECK(b.compute_sync_checksum() == loaded.game.checksums.back());
+    for (int i = 0; i < 20; ++i) {
+        if (b.tick_count() == 15) player_order(b, ids[2], move_to(-200.0f, 40.0f));
+        b.tick();
+    }
+    CHECK(b.compute_sync_checksum() == a.compute_sync_checksum());
+    // Its recording is the whole game, so it saves and loads again.
+    CHECK(b.recorded_replay().checksums == a.recorded_replay().checksums);
+    CHECK(b.recorded_replay().commands.size() == a.recorded_replay().commands.size());
+}
+
+TEST_CASE("A damaged snapshot is refused before anything loads", "[savegame]") {
+    LuaGuard ga;
+    SimState a(ga.L, nullptr);
+    setup(a);
+    for (int i = 0; i < 5; ++i) a.tick();
+    std::vector<osc::u8> snap;
+    REQUIRE(osc::sim::save_snapshot(a, snap).empty());
+    for (size_t at : {size_t{3}, snap.size() / 3, snap.size() / 2, snap.size() - 9}) {
+        auto bad = snap;
+        bad[at] ^= 0x10;
+        LuaGuard gb;
+        SimState b(gb.L, nullptr);
+        setup(b);
+        CHECK_FALSE(osc::sim::load_snapshot(b, bad).empty());
+        CHECK(b.tick_count() == 0); // untouched
+    }
+    LuaGuard gc;
+    SimState c(gc.L, nullptr);
+    setup(c);
+    c.tick();
+    CHECK_FALSE(osc::sim::load_snapshot(c, snap).empty()); // only into a sim that hasn't run
 }

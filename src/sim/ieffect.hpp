@@ -44,6 +44,7 @@ enum class EffectType : u8 {
 /// Uses _c_object lightuserdata pattern for Lua binding.
 /// Currently state-tracking only; rendering comes in a later milestone.
 class IEffect {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     u32 id() const { return id_; }
     void set_id(u32 i) { id_ = i; }
@@ -195,6 +196,7 @@ inline void IEffect::end_after(f64 lifetime, f64 seconds_per_tick) {
 /// Scripts refer to effects by id (never by pointer): gc() frees destroyed
 /// effects while trash bags may still Destroy() their handles.
 class IEffectRegistry {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// Create a new IEffect with auto-incremented ID.
     IEffect* create() {

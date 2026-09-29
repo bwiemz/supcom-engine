@@ -1,0 +1,518 @@
+// The sim's C++ state: the registry of entities, SimState's own fields,
+// and the snapshot around them (M208c-b; see state_io.hpp).
+
+#include "sim/state_io.hpp"
+
+#include "map/pathfinder.hpp"
+#include "map/pathfinding_grid.hpp"
+#include "map/visibility_grid.hpp"
+#include "sim/army_brain.hpp"
+#include "sim/bone_cache.hpp"
+#include "sim/entity_registry.hpp"
+#include "sim/manipulator.hpp"
+#include "sim/projectile.hpp"
+#include "sim/prop.hpp"
+#include "sim/shield.hpp"
+#include "sim/sim_state.hpp"
+#include "sim/unit.hpp"
+
+#include <algorithm>
+#include <functional>
+
+namespace osc::sim {
+
+namespace {
+
+constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
+constexpr u32 kVersion = 1;
+
+// Past any game's ids (entities_ is indexed by id: a late game's runs to a
+// few million, projectiles included).
+constexpr u32 kMaxEntityId = 1u << 26;
+
+// An entity's class, in the stream.
+enum class EntityKind : u8 { Entity = 1, Unit, Projectile, Prop, Shield };
+
+template <typename E> void enum8(StateWriter& w, E e) {
+    w.u8v(static_cast<u8>(e));
+}
+template <typename E> E enum8(StateReader& r) {
+    return static_cast<E>(r.u8v());
+}
+
+void save_ids(StateWriter& w, const std::vector<u32>& ids) {
+    w.size(ids.size());
+    for (u32 id : ids) w.u32v(id);
+}
+std::vector<u32> load_ids(StateReader& r) {
+    std::vector<u32> ids(r.size(4));
+    for (u32& id : ids) id = r.u32v();
+    return ids;
+}
+
+// A map keyed by id, in id order (an unordered one sorted first).
+template <typename Map, typename Save> void save_by_id(StateWriter& w, const Map& map, Save save) {
+    std::vector<u32> ids;
+    ids.reserve(map.size());
+    for (const auto& kv : map) ids.push_back(kv.first);
+    std::sort(ids.begin(), ids.end());
+    w.size(ids.size());
+    for (u32 id : ids) {
+        w.u32v(id);
+        save(map.at(id));
+    }
+}
+
+} // namespace
+
+// --------------------------------------------------------- EntityRegistry
+
+void StateIO::save(StateWriter& w, const EntityRegistry& reg) {
+    w.tag("REGY");
+    // entities_ in id order, each with its class; live_, order_,
+    // unit_order_, the grids and large_colliders_ follow from them.
+    // graveyard_ is empty between ticks, removed_slots_ is order_'s own.
+    std::vector<std::reference_wrapper<const Entity>> live;
+    live.reserve(reg.live_count_);
+    for (const auto& e : reg.entities_)
+        if (e) live.emplace_back(*e);
+    w.size(live.size());
+    for (const Entity& e : live) {
+        if (const auto* u = dynamic_cast<const Unit*>(&e)) {
+            enum8(w, EntityKind::Unit);
+            save(w, *u);
+        } else if (const auto* p = dynamic_cast<const Projectile*>(&e)) {
+            enum8(w, EntityKind::Projectile);
+            save(w, *p);
+        } else if (const auto* pr = dynamic_cast<const Prop*>(&e)) {
+            enum8(w, EntityKind::Prop);
+            save(w, *pr);
+        } else if (const auto* s = dynamic_cast<const Shield*>(&e)) {
+            enum8(w, EntityKind::Shield);
+            save(w, *s);
+        } else {
+            enum8(w, EntityKind::Entity);
+            save(w, e);
+        }
+    }
+    w.u32v(reg.next_id_);
+    // default_random_, sim_random_: the sim's generator (SimState's);
+    // walking_: no walk is under way between ticks; unregister_hook_: the
+    // sim's; grid_initialized_, grid_width_, grid_height_: the map's
+}
+
+void StateIO::load(StateReader& r, EntityRegistry& reg, SimState& sim) {
+    r.tag("REGY");
+    // What the boot made goes, unannounced: nothing of it was ever the
+    // saved game's.
+    reg.entities_.clear();
+    reg.live_.clear();
+    reg.live_count_ = 0;
+    reg.order_.clear();
+    reg.unit_order_.clear();
+    reg.removed_slots_ = 0;
+    reg.graveyard_.clear();
+    reg.large_colliders_.clear();
+    for (auto& cell : reg.grid_cells_) cell.clear();
+    for (auto& cell : reg.unit_cells_) cell.clear();
+
+    const size_t n = r.size(64);
+    u32 last_id = 0;
+    for (size_t i = 0; i < n && r.ok(); ++i) {
+        std::unique_ptr<Entity> e;
+        switch (enum8<EntityKind>(r)) {
+        case EntityKind::Unit: {
+            auto u = std::make_unique<Unit>();
+            load(r, *u, sim);
+            e = std::move(u);
+            break;
+        }
+        case EntityKind::Projectile: {
+            auto p = std::make_unique<Projectile>();
+            load(r, *p);
+            p->set_blueprint_info(sim.projectile_blueprint_info(p->blueprint_id()));
+            e = std::move(p);
+            break;
+        }
+        case EntityKind::Prop: {
+            auto p = std::make_unique<Prop>();
+            load(r, *p);
+            if (auto* bones = sim.bone_cache())
+                p->set_bone_data(bones->get(p->blueprint_id(), sim.lua_state()));
+            e = std::move(p);
+            break;
+        }
+        case EntityKind::Shield: {
+            auto s = std::make_unique<Shield>();
+            load(r, *s);
+            e = std::move(s);
+            break;
+        }
+        case EntityKind::Entity: {
+            e = std::make_unique<Entity>();
+            load(r, *e);
+            break;
+        }
+        default: return r.fail("an entity of an unknown kind");
+        }
+        if (!r.ok()) return;
+        const u32 id = e->entity_id();
+        if (id <= last_id) return r.fail("entities out of id order");
+        if (id > kMaxEntityId) return r.fail("an entity id past any game's");
+        last_id = id;
+        // As register_entity takes one, at its own id
+        e->set_registry(&reg);
+        e->set_grid_cell(-1, -1);
+        reg.order_.push_back({id, e.get()});
+        if (e->is_unit()) reg.unit_order_.push_back({id, e.get()});
+        if (reg.entities_.size() <= id) reg.entities_.resize(id + 1);
+        reg.live_.insert(e.get());
+        reg.entities_[id] = std::move(e);
+        ++reg.live_count_;
+        Entity& placed = *reg.entities_[id];
+        reg.notify_collision_shape_changed(placed);
+        if (reg.grid_initialized_) {
+            i32 cx = 0, cz = 0;
+            reg.world_to_cell(placed.position().x, placed.position().z, cx, cz);
+            reg.grid_insert(placed, cx, cz);
+            placed.set_grid_cell(cx, cz);
+        }
+    }
+    reg.next_id_ = r.u32v();
+    if (r.ok() && reg.next_id_ <= last_id) r.fail("an entity id past the next one");
+}
+
+// ------------------------------------------------------------ SimState
+
+void StateIO::save(StateWriter& w, const SimState& sim) {
+    w.tag("SIMS");
+    // L_: the host's; seed_: the setup's (and the recording's)
+    w.u64v(sim.sim_random_.state());
+    w.u64v(sim.seed_);
+    save(w, sim.entity_registry_);
+    save(w, sim.thread_manager_);
+    // blueprint_store_: the host's; projectile_info_: a cache
+    save_ids(w, sim.collision_beams_);
+    save_ids(w, sim.ferry_beacons_);
+    // checksum_trace_header_: the host's; tick_checksum_, tick_checksum_tick_,
+    // tick_checksum_valid_: a memo
+    w.size(sim.source_armies_.size());
+    for (const auto& [source, army] : sim.source_armies_) {
+        w.u32v(source);
+        w.i32v(army);
+    }
+    w.i32v(sim.paused_by_);
+    w.u32v(sim.pause_serial_);
+    w.u32v(sim.resumed_serial_);
+    w.size(sim.pause_timeouts_.size());
+    for (const auto& [client, left] : sim.pause_timeouts_) {
+        w.u32v(client);
+        w.i32v(left);
+    }
+    // pause_holds_: the host's; terrain_: the map's; pathfinding_grid_ and
+    // pathfinder_: the map's, with occupied_footprints_ marked
+    save_by_id(w, sim.occupied_footprints_, [&](const SimState::Footprint& f) {
+        w.f32v(f.x);
+        w.f32v(f.z);
+        w.f32v(f.size_x);
+        w.f32v(f.size_z);
+    });
+    // stored_to_destroy_: empty between ticks
+    if (sim.visibility_grid_) { // (a sim without a map has none)
+        const auto& cells = sim.visibility_grid_->cells_;
+        w.size(cells.size());
+        for (const auto& army : cells) {
+            w.size(army.size());
+            if (!army.empty()) w.raw(army.data(), army.size());
+        }
+    } else {
+        w.size(0);
+    }
+    // sound_manager_, tick_observer_, checksum_trace_, entity_trace_,
+    // rng_trace_, rng_trace_from_, rng_trace_to_, rng_trace_draws_,
+    // entity_trace_from_, entity_trace_to_: the host's; bone_cache_,
+    // anim_cache_: caches. Of the visibility grid, cells_ (every flag): its
+    // grid_width_, grid_height_, map_width_, map_height_ and height_grid_
+    // are the map's
+    {
+        std::vector<std::string> armor;
+        armor.reserve(sim.armor_def_.table_.size());
+        for (const auto& kv : sim.armor_def_.table_) armor.push_back(kv.first);
+        std::sort(armor.begin(), armor.end());
+        w.size(armor.size());
+        for (const auto& type : armor) {
+            w.str(type);
+            const auto& row = sim.armor_def_.table_.at(type);
+            std::vector<std::pair<std::string, f32>> sorted(row.begin(), row.end());
+            std::sort(sorted.begin(), sorted.end());
+            w.size(sorted.size());
+            for (const auto& [damage, mult] : sorted) {
+                w.str(damage);
+                w.f32v(mult);
+            }
+        }
+    }
+    save(w, sim.effect_registry_);
+    save(w, sim.economy_events_);
+    w.size(sim.armies_.size());
+    for (const auto& a : sim.armies_) save(w, *a);
+    w.u32v(sim.tick_count_);
+    // game_time_: tick_count_'s
+    save(w, sim.command_scheduler_);
+    w.u32v(sim.command_delay_);
+    // local_command_sink_, local_callback_sink_, human_input_active_: the
+    // host's; recorded_replay_, recording_, playback_, resume_tick_: the
+    // host's too (a load adopts the saved game's history: adopt_history)
+    w.size(sim.temp_visions_.size());
+    for (const auto& v : sim.temp_visions_) {
+        w.u32v(v.army);
+        w.f32v(v.x);
+        w.f32v(v.z);
+        w.f32v(v.radius);
+        w.i32v(v.remaining_ticks);
+    }
+    w.size(sim.entity_intel_.size());
+    for (const auto& [id, intel] : sim.entity_intel_) {
+        w.u32v(id);
+        w.i32v(intel.army);
+        w.size(intel.sources.size());
+        for (const auto& [type, src] : intel.sources) {
+            w.str(type);
+            w.f32v(src.radius);
+            w.b(src.enabled);
+        }
+    }
+    w.u32v(sim.next_command_id_);
+    w.b(sim.game_ended_);
+    w.b(sim.script_victory_);
+    w.str(sim.victory_condition_);
+    enum8(w, sim.victory_mode_);
+    w.str(sim.share_condition_);
+    enum8(w, sim.share_mode_);
+    enum8(w, sim.fog_mode_);
+    w.f32v(sim.no_rush_seconds_);
+    w.f32v(sim.no_rush_radius_);
+    w.b(sim.common_army_);
+    w.b(sim.team_share_overflow_);
+    // camera_shake_events_, death_events_: the renderer's, emptied each tick
+    w.size(sim.resource_deposits_.size());
+    for (const ResourceDeposit& d : sim.resource_deposits_) {
+        w.f32v(d.x);
+        w.f32v(d.y);
+        w.f32v(d.z);
+        w.f32v(d.size);
+        enum8(w, d.type);
+    }
+    // build_ghost_bp_, build_ghost_foot_x_, build_ghost_foot_z_: the UI's
+    w.f32v(sim.playable_x0_);
+    w.f32v(sim.playable_z0_);
+    w.f32v(sim.playable_x1_);
+    w.f32v(sim.playable_z1_);
+    w.b(sim.has_playable_rect_);
+    // placement_rules_: a cache; s_sim_generation_: the process's
+    save_by_id(w, sim.prev_entity_vis_, [&](const auto& snaps) {
+        for (const SimState::EntityVisSnapshot& s : snaps) {
+            w.b(s.vision);
+            w.b(s.radar);
+            w.b(s.sonar);
+            w.b(s.omni);
+        }
+    });
+    save_by_id(w, sim.los_ever_, [&](u32 bits) { w.u32v(bits); });
+    save_by_id(w, sim.blip_cache_, [&](const auto& snaps) {
+        for (const BlipSnapshot& s : snaps) {
+            w.vec3(s.last_known_position);
+            w.str(s.blueprint_id);
+            w.i32v(s.entity_army);
+            w.b(s.entity_dead);
+        }
+    });
+    w.size(sim.blip_objects_.size());
+    for (u32 id : sim.blip_objects_) w.u32v(id);
+}
+
+void StateIO::load(StateReader& r, SimState& sim) {
+    r.tag("SIMS");
+    sim.sim_random_.seed(r.u64v());
+    sim.seed_ = r.u64v();
+    sim.projectile_info_.clear(); // (the projectiles fill it again as they load)
+    load(r, sim.entity_registry_, sim);
+    load(r, sim.thread_manager_);
+    sim.collision_beams_ = load_ids(r);
+    sim.ferry_beacons_ = load_ids(r);
+    sim.tick_checksum_valid_ = false;
+    sim.source_armies_.clear();
+    const size_t sources = r.size(8);
+    for (size_t i = 0; i < sources; ++i) {
+        const u32 source = r.u32v();
+        sim.source_armies_[source] = r.i32v();
+    }
+    sim.paused_by_ = r.i32v();
+    sim.pause_serial_ = r.u32v();
+    sim.resumed_serial_ = r.u32v();
+    sim.pause_timeouts_.clear();
+    const size_t timeouts = r.size(8);
+    for (size_t i = 0; i < timeouts; ++i) {
+        const u32 client = r.u32v();
+        sim.pause_timeouts_[client] = r.i32v();
+    }
+    // The boot's structures come off the pathfinding grid, the saved
+    // game's go on.
+    if (sim.pathfinding_grid_)
+        for (const auto& [id, f] : sim.occupied_footprints_)
+            sim.pathfinding_grid_->clear_obstacle(f.x, f.z, f.size_x, f.size_z);
+    sim.occupied_footprints_.clear();
+    const size_t footprints = r.size(20);
+    for (size_t i = 0; i < footprints; ++i) {
+        const u32 id = r.u32v();
+        SimState::Footprint f{};
+        f.x = r.f32v();
+        f.z = r.f32v();
+        f.size_x = r.f32v();
+        f.size_z = r.f32v();
+        sim.occupied_footprints_.emplace(id, f);
+        if (sim.pathfinding_grid_)
+            sim.pathfinding_grid_->mark_obstacle(f.x, f.z, f.size_x, f.size_z);
+    }
+    if (sim.pathfinding_grid_)
+        sim.pathfinder_ = std::make_unique<map::Pathfinder>(*sim.pathfinding_grid_);
+    sim.stored_to_destroy_.clear();
+    {
+        const size_t armies = r.size(4);
+        if (!sim.visibility_grid_) {
+            if (armies != 0) return r.fail("a visibility grid, and no map");
+        } else {
+            auto& cells = sim.visibility_grid_->cells_;
+            if (armies != cells.size())
+                return r.fail("a visibility grid for another count of armies");
+            for (auto& army : cells) {
+                if (r.size(1) != army.size())
+                    return r.fail("a visibility grid of another map's size");
+                if (!army.empty()) r.raw(army.data(), army.size());
+            }
+        }
+    }
+    sim.armor_def_.table_.clear();
+    const size_t armor = r.size(8);
+    for (size_t i = 0; i < armor && r.ok(); ++i) {
+        auto& row = sim.armor_def_.table_[r.str()];
+        const size_t damages = r.size(8);
+        for (size_t k = 0; k < damages; ++k) {
+            std::string damage = r.str();
+            row[damage] = r.f32v();
+        }
+    }
+    load(r, sim.effect_registry_);
+    load(r, sim.economy_events_);
+    if (r.size(64) != sim.armies_.size()) return r.fail("another count of armies");
+    for (auto& a : sim.armies_) load(r, *a, sim);
+    sim.tick_count_ = r.u32v();
+    sim.game_time_ = sim.tick_count_ * SimState::SECONDS_PER_TICK;
+    load(r, sim.command_scheduler_);
+    sim.command_delay_ = r.u32v();
+    sim.temp_visions_.resize(r.size(20));
+    for (auto& v : sim.temp_visions_) {
+        v.army = r.u32v();
+        v.x = r.f32v();
+        v.z = r.f32v();
+        v.radius = r.f32v();
+        v.remaining_ticks = r.i32v();
+    }
+    sim.entity_intel_.clear();
+    const size_t intel = r.size(12);
+    for (size_t i = 0; i < intel && r.ok(); ++i) {
+        auto& e = sim.entity_intel_[r.u32v()];
+        e.army = r.i32v();
+        const size_t n = r.size(9);
+        for (size_t k = 0; k < n; ++k) {
+            auto& src = e.sources[r.str()];
+            src.radius = r.f32v();
+            src.enabled = r.b();
+        }
+    }
+    sim.next_command_id_ = r.u32v();
+    sim.game_ended_ = r.b();
+    sim.script_victory_ = r.b();
+    sim.victory_condition_ = r.str();
+    sim.victory_mode_ = enum8<VictoryMode>(r);
+    sim.share_condition_ = r.str();
+    sim.share_mode_ = enum8<ShareMode>(r);
+    sim.fog_mode_ = enum8<FogMode>(r);
+    sim.no_rush_seconds_ = r.f32v();
+    sim.no_rush_radius_ = r.f32v();
+    sim.common_army_ = r.b();
+    sim.team_share_overflow_ = r.b();
+    sim.camera_shake_events_.clear();
+    sim.death_events_.clear();
+    sim.resource_deposits_.resize(r.size(17));
+    for (ResourceDeposit& d : sim.resource_deposits_) {
+        d.x = r.f32v();
+        d.y = r.f32v();
+        d.z = r.f32v();
+        d.size = r.f32v();
+        d.type = enum8<ResourceDeposit::Type>(r);
+    }
+    sim.playable_x0_ = r.f32v();
+    sim.playable_z0_ = r.f32v();
+    sim.playable_x1_ = r.f32v();
+    sim.playable_z1_ = r.f32v();
+    sim.has_playable_rect_ = r.b();
+    sim.placement_rules_.clear();
+    sim.prev_entity_vis_.clear();
+    const size_t vis = r.size(4 + 4 * SimState::MAX_VIS_ARMIES);
+    for (size_t i = 0; i < vis && r.ok(); ++i) {
+        auto& snaps = sim.prev_entity_vis_[r.u32v()];
+        for (SimState::EntityVisSnapshot& s : snaps) {
+            s.vision = r.b();
+            s.radar = r.b();
+            s.sonar = r.b();
+            s.omni = r.b();
+        }
+    }
+    sim.los_ever_.clear();
+    const size_t los = r.size(8);
+    for (size_t i = 0; i < los; ++i) {
+        const u32 id = r.u32v();
+        sim.los_ever_[id] = r.u32v();
+    }
+    sim.blip_cache_.clear();
+    const size_t blips = r.size(4 + 21 * SimState::MAX_VIS_ARMIES);
+    for (size_t i = 0; i < blips && r.ok(); ++i) {
+        auto& snaps = sim.blip_cache_[r.u32v()];
+        for (BlipSnapshot& s : snaps) {
+            s.last_known_position = r.vec3();
+            s.blueprint_id = r.str();
+            s.entity_army = r.i32v();
+            s.entity_dead = r.b();
+        }
+    }
+    sim.blip_objects_.clear();
+    const size_t blip_objects = r.size(4);
+    for (size_t i = 0; i < blip_objects; ++i) sim.blip_objects_.insert(r.u32v());
+}
+
+// ------------------------------------------------------------- Snapshot
+
+std::vector<u8> save_sim_state(const SimState& sim) {
+    std::vector<u8> out;
+    StateWriter w(out);
+    w.raw(kMagic, sizeof kMagic);
+    w.u32v(kVersion);
+    StateIO::save(w, sim);
+    w.tag("END.");
+    return out;
+}
+
+std::string load_sim_state(SimState& sim, const std::vector<u8>& bytes) {
+    StateReader r(bytes);
+    char magic[sizeof kMagic] = {};
+    r.raw(magic, sizeof magic);
+    if (!r.ok() || std::memcmp(magic, kMagic, sizeof kMagic) != 0) return "not a sim snapshot";
+    if (r.u32v() != kVersion) return "a sim snapshot of another version";
+    StateIO::load(r, sim);
+    r.tag("END.");
+    if (r.ok() && !r.at_end()) r.fail("bytes after the snapshot");
+    return r.ok() ? std::string() : r.error();
+}
+
+} // namespace osc::sim

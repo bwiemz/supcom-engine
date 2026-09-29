@@ -1,21 +1,24 @@
-"""A saved game loads and plays on as the game did (CTest: data.save_load).
+"""A saved game loads and plays on as the game did (CTest: data.save_load,
+and data.save_load_replay).
 
 Three processes, each writing `--checksum-trace`:
 
   A  plays the game and saves it after tick SAVE_1 (`--save-at`).
-  B  loads A's save (`--load`), catches up, plays on, and saves again after
-     tick SAVE_2: a save made in a loaded game.
+  B  loads A's save (`--load`), plays on, and saves again after tick SAVE_2:
+     a save made in a loaded game.
   C  loads B's save and plays on.
 
-With `--scripted-orders`, each save is made with one of the player's orders
-still to run, which only the save carries. B checks every tick it catches up
-against the checksums in A's save, and C against B's; either exits non-zero
-on the first difference. Then B's trace must match A's up to SAVE_2 (after
-it, B gave an order A never did), and C's must match B's throughout: domain
-by domain, with tools/checksum_diff.py.
+A load restores the save's snapshot (M208c), whose checksum must be the one
+the save's history holds for its tick; with `--by-replay` it catches up from
+the history instead, checking every tick against it. Either exits non-zero
+on a difference. With `--scripted-orders`, each save is made with one of the
+player's orders still to run, which only the save carries. Then B's trace
+must match A's from SAVE_1 to SAVE_2 (after it, B gave an order A never did),
+and C's must match B's after SAVE_2: domain by domain, with
+tools/checksum_diff.py.
 
 Usage:
-    save_load.py <opensupcom> <checksum_diff.py> -- <game args...>
+    save_load.py [--by-replay] <opensupcom> <checksum_diff.py> -- <game args...>
 
 The game args must include `--ticks` past SAVE_2. Exits 77 (skipped) when
 the game has no data to run on.
@@ -59,11 +62,12 @@ def load_args(game_args: list[str]) -> list[str]:
     return kept
 
 
-def head(trace: Path, last_tick: int, out: Path) -> Path:
-    """`trace` up to and including `last_tick`."""
+def between(trace: Path, first_tick: int, last_tick: int, out: Path) -> Path:
+    """`trace` from `first_tick` to `last_tick`, both included (a restored
+    game's trace starts after its saved tick)."""
     lines: list[str] = []
     for line in trace.read_text().splitlines():
-        if line.startswith("#") or int(line.split()[0]) <= last_tick:
+        if line.startswith("#") or first_tick <= int(line.split()[0]) <= last_tick:
             lines.append(line)
     _ = out.write_text("\n".join(lines) + "\n")
     return out
@@ -89,11 +93,15 @@ def loaded(proc: subprocess.CompletedProcess[str], name: str, tick: int) -> bool
 
 
 def main(argv: list[str]) -> int:
+    by_replay = bool(argv) and argv[0] == "--by-replay"
+    if by_replay:
+        argv = argv[1:]
     if len(argv) < 3 or "--" not in argv:
         print(__doc__, file=sys.stderr)
         return 2
     exe, diff_tool = Path(argv[0]), Path(argv[1])
     game_args = argv[argv.index("--") + 1 :]
+    load_mode = ["--load-by-replay"] if by_replay else []
     with tempfile.TemporaryDirectory(prefix="osc-save-load-") as tmp:
         d = Path(tmp)
         save_1, save_2 = d / "one.oscsave", d / "two.oscsave"
@@ -123,6 +131,7 @@ def main(argv: list[str]) -> int:
                 str(exe),
                 "--load",
                 str(save_1),
+                *load_mode,
                 *load_args(game_args),
                 "--save",
                 str(save_2),
@@ -139,6 +148,7 @@ def main(argv: list[str]) -> int:
                 str(exe),
                 "--load",
                 str(save_2),
+                *load_mode,
                 *load_args(game_args),
                 "--checksum-trace",
                 str(trace["c"]),
@@ -147,13 +157,22 @@ def main(argv: list[str]) -> int:
         if not loaded(c, "C", SAVE_2):
             return 1
 
+        end = 1 << 31
         same = compare(
             diff_tool,
-            head(trace["a"], SAVE_2, d / "a_head.txt"),
-            head(trace["b"], SAVE_2, d / "b_head.txt"),
-            f"A and B to tick {SAVE_2}",
+            between(trace["a"], SAVE_1 + 1, SAVE_2, d / "a_part.txt"),
+            between(trace["b"], SAVE_1 + 1, SAVE_2, d / "b_part.txt"),
+            f"A and B from tick {SAVE_1 + 1} to {SAVE_2}",
         )
-        same = compare(diff_tool, trace["b"], trace["c"], "B and C") and same
+        same = (
+            compare(
+                diff_tool,
+                between(trace["b"], SAVE_2 + 1, end, d / "b_tail.txt"),
+                between(trace["c"], SAVE_2 + 1, end, d / "c_tail.txt"),
+                f"B and C after tick {SAVE_2}",
+            )
+            and same
+        )
         return 0 if same else 1
 
 
