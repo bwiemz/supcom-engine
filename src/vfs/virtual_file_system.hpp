@@ -38,8 +38,8 @@ public:
 
     /// Hook directories from the init script's `hook` table (retail and FAF
     /// both use {'/schook'}). When a script /a/b.lua is run through doscript,
-    /// each <hook>/a/b.lua that exists runs afterwards in the same
-    /// environment. Stored normalised, in init-script order.
+    /// each <hook>/a/b.lua that exists joins its chunk, after it
+    /// (lua::run_vfs_script). Stored normalised, in init-script order.
     void set_hook_dirs(const std::vector<std::string>& dirs);
     const std::vector<std::string>& hook_dirs() const { return hook_dirs_; }
 
