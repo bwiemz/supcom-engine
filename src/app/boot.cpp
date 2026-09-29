@@ -158,13 +158,11 @@ std::optional<int> App::boot_game() {
             }
             scenario_meta = meta_result.value();
 
-            // The setup's armies (all of the scenario's when it doesn't say)
-            const size_t army_limit = game_setup.army_count > 0
-                                          ? static_cast<size_t>(game_setup.army_count)
-                                          : scenario_meta.armies.size();
-            for (size_t i = 0; i < std::min(army_limit, scenario_meta.armies.size()); i++) {
-                sim_state->add_army(scenario_meta.armies[i], scenario_meta.armies[i]);
-            }
+            // The setup's armies (all of the scenario's when it doesn't say;
+            // a lobby's slots taken, each its slot's army)
+            for (const std::string& name :
+                 osc::sim::session_army_names(game_setup, scenario_meta.armies))
+                sim_state->add_army(name, name);
             if (opt.ai_skirmish && !opt.replay_to_play && !opt.save_to_load) {
                 for (size_t a = 0; a < sim_state->army_count(); ++a)
                     game_setup.ai_armies.push_back(static_cast<int>(a));

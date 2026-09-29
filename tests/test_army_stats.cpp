@@ -665,6 +665,98 @@ TEST_CASE("Sandbox victory option suppresses automatic army defeat", "[session][
     CHECK(sim.player_result() == 0);
 }
 
+TEST_CASE("A lobby's slots taken are the armies, in order, each its slot's", "[session][config]") {
+    // Random spawn leaves gaps: slots 2, 5 and 7 taken (a table this Lua
+    // iterates 7, 5, 2)
+    osc::lua::LuaState lua;
+    auto made = lua.do_string(R"(
+        config = {PlayerOptions = {}}
+        config.PlayerOptions[7] = {Human = true, Faction = 4}
+        config.PlayerOptions[5] = {Human = true, Faction = 2}
+        config.PlayerOptions[2] = {Human = false, AIPersonality = 'rush'}
+    )");
+    REQUIRE(made.ok());
+    lua_getglobal(lua.raw(), "config");
+    const auto setup = osc::lua::read_session_config(lua.raw(), lua_gettop(lua.raw()));
+    lua_pop(lua.raw(), 1);
+
+    REQUIRE(setup.slots.size() == 3);
+    CHECK(setup.army_count == 3);
+    CHECK(setup.slots[0].slot == 2);
+    CHECK_FALSE(setup.slots[0].human);
+    CHECK(setup.slots[1].slot == 5);
+    CHECK(setup.slots[1].faction == 2);
+    CHECK(setup.slots[2].slot == 7);
+    CHECK(setup.slots[2].faction == 4);
+    CHECK(setup.ai_armies == std::vector<int>{0}); // the army, not the slot
+    CHECK(setup.slots[1].team == 5);               // FFA: each its own
+
+    // Named for their slots, as Moho's LaunchGame names them
+    const std::vector<std::string> eight = {"ARMY_1", "ARMY_2", "ARMY_3", "ARMY_4",
+                                            "ARMY_5", "ARMY_6", "ARMY_7", "ARMY_8"};
+    CHECK(osc::sim::session_army_names(setup, eight) ==
+          std::vector<std::string>{"ARMY_2", "ARMY_5", "ARMY_7"});
+    // A slot the scenario hasn't takes its first free army, in its place
+    CHECK(osc::sim::session_army_names(setup, {"ARMY_1", "ARMY_2", "ARMY_3", "ARMY_4", "ARMY_5"}) ==
+          std::vector<std::string>{"ARMY_2", "ARMY_5", "ARMY_1"});
+    // A key that is no slot takes the first army free, after the slots
+    // have their own (never a real slot's)
+    osc::sim::GameSetup odd;
+    odd.slots.resize(2);
+    odd.slots[0].slot = 0;
+    odd.slots[1].slot = 1;
+    CHECK(osc::sim::session_army_names(odd, eight) == std::vector<std::string>{"ARMY_2", "ARMY_1"});
+    // Without a lobby: the scenario's first armies
+    osc::sim::GameSetup plain;
+    plain.army_count = 2;
+    CHECK(osc::sim::session_army_names(plain, eight) ==
+          std::vector<std::string>{"ARMY_1", "ARMY_2"});
+    plain.army_count = 0;
+    CHECK(osc::sim::session_army_names(plain, eight).size() == 8);
+}
+
+TEST_CASE("Each army starts at the marker bearing its name", "[session]") {
+    osc::lua::LuaState lua;
+    osc::sim::SimState sim(lua.raw(), nullptr);
+    osc::lua::SessionManager mgr;
+    osc::lua::ScenarioMetadata meta;
+    meta.armies = {"ARMY_1", "ARMY_2", "ARMY_3", "ARMY_4"};
+    // A lobby's players in slots 2 and 4
+    sim.add_army("ARMY_2", "ARMY_2");
+    sim.add_army("ARMY_4", "ARMY_4");
+    std::vector<osc::lua::ArmySlotConfig> slots(2);
+    for (auto& slot : slots) {
+        slot.configured = true;
+        slot.start_spot = 1; // retail's lobby leaves it 1: not where they start
+    }
+    slots[0].slot = 2;
+    slots[1].slot = 4;
+    mgr.set_army_slot_configs(slots);
+    auto setup = lua.do_string(R"(
+        ScenarioInfo = {}
+        Scenario = {MasterChain = {_MASTERCHAIN_ = {Markers = {
+            ARMY_1 = {position = {10, 1, 10}},
+            ARMY_2 = {position = {20, 2, 20}},
+            ARMY_4 = {position = {40, 4, 40}},
+            Mass_01 = {position = {5, 0, 5}},
+        }}}}
+    )");
+    REQUIRE(setup.ok());
+    REQUIRE(mgr.start_session(lua, osc::vfs::VirtualFileSystem{}, sim, meta).ok());
+
+    CHECK(sim.get_army(0)->start_position().x == 20.0f);
+    CHECK(sim.get_army(0)->start_position().y == 2.0f);
+    CHECK(sim.get_army(1)->start_position().x == 40.0f);
+    // ArmySetup: the game's armies, by name, in order
+    auto result = lua.do_string(R"(
+        local setup = ScenarioInfo.ArmySetup
+        assert(setup.ARMY_2 and setup.ARMY_2.ArmyIndex == 1, 'ARMY_2')
+        assert(setup.ARMY_4 and setup.ARMY_4.ArmyIndex == 2, 'ARMY_4')
+        assert(setup.ARMY_1 == nil and setup.ARMY_3 == nil, 'only the armies that play')
+    )");
+    CHECK(result.ok());
+}
+
 TEST_CASE("A lobby's sessionConfig becomes the game's setup", "[session][config][replay]") {
     osc::lua::LuaState lua;
     auto made = lua.do_string(R"(
