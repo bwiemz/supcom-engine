@@ -40,6 +40,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 ## Verified Locally
 
 - `build/linux-debug/tests/osc_tests` passes (see the metrics above); `build/linux-debug/opensupcom --help` lists the CLI surface, including every `--*-test` mode.
+- **Windows and Linux in one game (CI):** the `cross-os-play` job plays the data-free lockstep pairs with the Linux build hosting the Windows build under Wine and the other way round (`tests/integration/cross_os_pairs.py`): in sync, a divergence caught, a vanished joiner dropped, a slow joiner setting the pace.
 - **Cross-OS determinism on real data:** `tools/cross_os_replay.py --run-id <CI run>` plays a recorded four-AI game with the CI's Windows build (under Wine) and a Linux build; each Phase E PR has matched at every tick.
 - **Multiplayer (LAN), retail's own screens to a game:** Multiplayer → LAN finds
   games (UDP discovery on port 15000), and retail's `lobby.lua` hosts, joins and
