@@ -199,7 +199,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
         pos.x += osc::dmath::sin(heading) * speed * step;
         pos.z += osc::dmath::cos(heading) * speed * step;
         if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
-        if (sim_) pos = sim_->clamp_to_playable(pos);
+        if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
         unit.set_position(pos);
         unit.note_drive(speed, 0, max_speed, Unit::MotionTurn::Straight);
         return true;
@@ -311,7 +311,7 @@ bool Navigator::drive(Unit& unit, f32 max_speed, f64 dt, const map::Terrain* ter
     pos.x += osc::dmath::sin(heading) * speed * step;
     pos.z += osc::dmath::cos(heading) * speed * step;
     if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
-    if (sim_) pos = sim_->clamp_to_playable(pos);
+    if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
     unit.set_position(pos);
     unit.set_orientation(euler_to_quat(heading, 0.0f, 0.0f));
     unit.note_drive(speed, stopping ? 0.0f : target, top, turning);
@@ -345,7 +345,7 @@ bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain*
                 pos.x = wp.x;
                 pos.z = wp.z;
                 if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
-                if (sim_) pos = sim_->clamp_to_playable(pos);
+                if (sim_) pos = sim_->clamp_to_playable(pos, entity.army());
                 entity.set_position(pos);
                 status_ = Status::Idle;
                 waypoints_.clear();
@@ -366,7 +366,7 @@ bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain*
             step -= dist;
             if (is_final) {
                 if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
-                if (sim_) pos = sim_->clamp_to_playable(pos);
+                if (sim_) pos = sim_->clamp_to_playable(pos, entity.army());
                 entity.set_position(pos);
                 status_ = Status::Idle;
                 waypoints_.clear();
@@ -388,7 +388,7 @@ bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain*
     // treat as arrived to avoid one-tick stale is_moving
     if (waypoint_index_ >= waypoints_.size()) {
         if (terrain) pos.y = terrain->get_surface_height(pos.x, pos.z);
-        if (sim_) pos = sim_->clamp_to_playable(pos);
+        if (sim_) pos = sim_->clamp_to_playable(pos, entity.army());
         entity.set_position(pos);
         status_ = Status::Idle;
         waypoints_.clear();
@@ -400,7 +400,7 @@ bool Navigator::slide(Entity& entity, f32 max_speed, f64 dt, const map::Terrain*
     if (terrain) {
         pos.y = terrain->get_surface_height(pos.x, pos.z);
     }
-    if (sim_) pos = sim_->clamp_to_playable(pos);
+    if (sim_) pos = sim_->clamp_to_playable(pos, entity.army());
     entity.set_position(pos);
     return true;
 }
@@ -493,7 +493,7 @@ bool Navigator::update_air(Unit& unit, f64 dt,
     unit.set_orientation(euler_to_quat(heading, pitch, cur_bank));
 
     // --- 8. Clamp to playable area ---
-    if (sim_) pos = sim_->clamp_to_playable(pos);
+    if (sim_) pos = sim_->clamp_to_playable(pos, unit.army());
     unit.set_position(pos);
 
     // --- 9. Check waypoint arrival (2D distance) ---

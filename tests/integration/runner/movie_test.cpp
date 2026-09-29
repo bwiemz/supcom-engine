@@ -400,6 +400,26 @@ void drawing(MovieTest& m) {
     r.shutdown();
 }
 
+// GetMovieDuration (Moho's MOV_GetDuration): a movie's length from its
+// Sofdec header; 0 for a file that is missing or not a movie. Scenario
+// scripts fall back to AllyCom.sfd on 0.
+void durations(MovieTest& m) {
+    Tally& t = m.t;
+    const f64 gpg = m.num("GetMovieDuration('/movies/gpglogo.sfd')");
+    const f64 ally = m.num("GetMovieDuration('/movies/AllyCom.sfd')");
+    t.check(std::abs(gpg - 167.0 / 30.0) < 1e-4 && std::abs(ally - 150.0 / 29.97) < 1e-4,
+            fmt::format("Test 22: GetMovieDuration reads a movie's frames and rate from its "
+                        "header (gpglogo {:.4f} s, AllyCom {:.4f} s)",
+                        gpg, ally));
+    const f64 missing = m.num("GetMovieDuration('/movies/no_such_movie.sfd')");
+    const f64 not_movie = m.num("GetMovieDuration('/lua/maui/movie.lua')");
+    const bool arity = m.truth("not pcall(GetMovieDuration)");
+    t.check(missing == 0 && not_movie == 0 && arity,
+            fmt::format("Test 23: a missing file or one not a movie is 0 long ({} and {}), and "
+                        "the file must be given (error {})",
+                        missing, not_movie, arity));
+}
+
 } // namespace
 
 void run_movie_test(app::Engine& e) {
@@ -409,6 +429,7 @@ void run_movie_test(app::Engine& e) {
     playback(m);
     sounds(m);
     drawing(m);
+    durations(m);
     spdlog::info("Movie test: {}/{} passed", m.t.pass, m.t.pass + m.t.fail);
 }
 

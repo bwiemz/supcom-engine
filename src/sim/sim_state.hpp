@@ -678,6 +678,17 @@ public:
         return it != los_ever_.end() && army < 32 && ((it->second >> army) & 1u) != 0;
     }
 
+    /// `pos` kept to where a unit of `army` may go: the playable area, or
+    /// the whole map for an army that ignores it (M209,
+    /// SetIgnorePlayableRect). No army (-1): the playable area.
+    Vector3 clamp_to_playable(const Vector3& pos, i32 army) const;
+
+    bool is_valid_teleport_destination(const Unit& unit,
+                                       const Vector3& destination) const;
+
+private:
+    /// `pos` kept to the playable area (clamp_to_playable(pos, army)'s
+    /// case for an army that keeps to it).
     Vector3 clamp_to_playable(const Vector3& pos) const {
         if (!has_playable_rect_) return pos;
         Vector3 clamped = pos;
@@ -688,10 +699,6 @@ public:
         return clamped;
     }
 
-    bool is_valid_teleport_destination(const Unit& unit,
-                                       const Vector3& destination) const;
-
-private:
     void update_economies();
     /// Pool mass/energy across allied teams (Common Army). No-op unless enabled.
     void share_team_economy();

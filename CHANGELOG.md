@@ -25,6 +25,10 @@ Everything so far: there has been no release yet. The first will be 0.1.0.
 - **Retail and FAF:** unmodified retail FA (Steam) and FAF's game code run from
   the front end through the lobby to a skirmish and its score screen. Retail's
   AI plays full games.
+- **Campaign:** FA's operations launch as the game's campaign launches them
+  (`--map` an operation's scenario, `--difficulty 1-3`) and play their
+  scripts: NIS camera work, dialogue, the faction pick, objectives with their
+  arrows and strategic-icon rings.
 - **Determinism:** one seeded random stream, portable floating-point math, and
   entity order by id. Windows and Linux builds play a game identically, checked
   by per-tick checksums split by domain.

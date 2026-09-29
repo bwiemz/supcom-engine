@@ -12,6 +12,11 @@ namespace osc::video {
 /// 2 KiB block. -1 if it has none.
 i32 sofdec_frame_count(const u8* data, size_t size);
 
+/// A Sofdec file's length in seconds, from its header (Moho's
+/// MOV_GetDuration): the header's frame count over the first MPEG
+/// sequence header's frame rate. 0 if either is missing.
+f32 sofdec_duration(const u8* data, size_t size);
+
 /// Moho's CMovie: a movie played on its own clock, as Sofdec plays one.
 /// It opens paused on its first frame. Unpaused, its clock runs, and the
 /// frame shown is the one due at the clock: frame n from n / rate. It has

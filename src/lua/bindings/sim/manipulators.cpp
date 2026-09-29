@@ -360,6 +360,13 @@ static int anim_SetAnimationTime(lua_State* L) {
 
 // --- SlideManipulator methods ---
 
+/// BeenDestroyed(): CSlideManipulator's (build effects check it before
+/// moving a slider again): its Destroy has run, or its unit took it along.
+static int slide_BeenDestroyed(lua_State* L) {
+    lua_pushboolean(L, check_manip_base(L) == nullptr ? 1 : 0);
+    return 1;
+}
+
 static int slide_SetGoal(lua_State* L) {
     auto* m = check_manip_base(L);
     if (m) {
@@ -557,6 +564,7 @@ const MethodEntry slide_manipulator_methods[] = {
     {"SetSpeed",                slide_SetSpeed},
     {"SetAccel",                slide_SetAccel},
     {"SetWorldUnits",           slide_SetWorldUnits},
+    {"BeenDestroyed",           slide_BeenDestroyed},
     {nullptr, nullptr},
 };
 // clang-format on

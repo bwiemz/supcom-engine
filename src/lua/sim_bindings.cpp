@@ -1968,6 +1968,8 @@ static void setup_categories(lua_State* L) {
 // Damage system
 // ====================================================================
 
+static void push_vec3(lua_State* L, f32 x, f32 y, f32 z);
+
 // Damage(instigator, target, amount, damageType)
 // or: Damage(instigator, target, amount, vector, damageType)
 // FA canonical signature. Calls target:OnDamage(instigator, amount, vector, damageType).
@@ -1999,13 +2001,9 @@ static int l_Damage(lua_State* L) {
                                  : nullptr;
         lua_pop(L, 1);
         if (located && target) {
-            lua_newtable(L);
-            const f32 d[3] = {target->position().x - lx, target->position().y - ly,
-                              target->position().z - lz};
-            for (int i = 0; i < 3; ++i) {
-                lua_pushnumber(L, d[i]);
-                lua_rawseti(L, -2, i + 1);
-            }
+            // A vector, as Moho pushes it: shield.lua reads its .x/.y/.z
+            push_vec3(L, target->position().x - lx, target->position().y - ly,
+                      target->position().z - lz);
         } else {
             lua_pushnil(L);
         }
@@ -2119,7 +2117,6 @@ static bool is_object_handle(lua_State* L, int idx) {
 
 // Helper: call OnDamage on a target entity via its Lua table registry ref.
 // Returns true if the call succeeded (regardless of whether OnDamage existed).
-static void push_vec3(lua_State* L, f32 x, f32 y, f32 z);
 
 /// Area damage's direction: from the blast's centre to the target, level
 /// and of unit length (straight up at the centre). Trees fall along it.
@@ -4342,16 +4339,32 @@ static int l_Trace(lua_State*) { return 0; }
 // Army / Alliance / Session — real implementations
 // ====================================================================
 
+/// An alliance's script name ("Ally", "Neutral", else "Enemy").
+static sim::Alliance parse_alliance(const char* type) {
+    if (std::strcmp(type, "Ally") == 0) return sim::Alliance::Ally;
+    if (std::strcmp(type, "Neutral") == 0) return sim::Alliance::Neutral;
+    return sim::Alliance::Enemy;
+}
+
 static int l_SetAlliance(lua_State* L) {
     auto* sim = get_sim(L);
     if (!sim) return 0;
     i32 a1 = resolve_army(L, 1, sim);
     i32 a2 = resolve_army(L, 2, sim);
-    const char* type = luaL_checkstring(L, 3);
-    sim::Alliance alliance = sim::Alliance::Enemy;
-    if (std::strcmp(type, "Ally") == 0) alliance = sim::Alliance::Ally;
-    else if (std::strcmp(type, "Neutral") == 0) alliance = sim::Alliance::Neutral;
-    sim->set_alliance(a1, a2, alliance);
+    sim->set_alliance(a1, a2, parse_alliance(luaL_checkstring(L, 3)));
+    return 0;
+}
+
+/// SetAllianceOneWay(army1, army2, alliance): how the first army stands to
+/// the second, that way only (faf-re cfunc_SetAllianceOneWayL). A campaign's
+/// armies set their custom alliances so (ScenarioUtilities).
+static int l_SetAllianceOneWay(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    const i32 a1 = resolve_army(L, 1, sim);
+    const i32 a2 = resolve_army(L, 2, sim);
+    const sim::Alliance alliance = parse_alliance(luaL_checkstring(L, 3));
+    if (auto* brain = sim->get_army(a1)) brain->set_alliance(a2, alliance);
     return 0;
 }
 
@@ -4571,13 +4584,18 @@ static int l_InitializeArmyAI(lua_State* L) {
     return 0;
 }
 
+/// SetArmyFactionIndex(army, index): the army's faction, 0-based as Moho
+/// keeps it (faf-re cfunc_SetArmyFactionIndexL; GetFactionIndex answers it
+/// + 1). The brain keeps it 1-based, as the lobby gives it (M209: the
+/// campaign's AI armies got the faction before theirs, 0 for the UEF, whose
+/// AIPlansList has no entry).
 static int l_SetArmyFactionIndex(lua_State* L) {
     auto* sim = get_sim(L);
     i32 army = resolve_army(L, 1, sim);
     i32 faction = static_cast<i32>(luaL_checknumber(L, 2));
     if (sim) {
         auto* brain = sim->get_army(army);
-        if (brain) brain->set_faction(faction);
+        if (brain) brain->set_faction(faction + 1);
     }
     return 0;
 }
@@ -4643,6 +4661,37 @@ static int l_SetArmyStart(lua_State* L) {
         const f32 y = sim->terrain() ? sim->terrain()->get_surface_height(x, z) : 0.0f;
         if (brain) brain->set_start_position({x, y, z});
     }
+    return 0;
+}
+
+/// GenerateArmyStart(army): a start for an army with no marker (a
+/// campaign's), as Moho's CArmyImpl::GenerateArmyStart: two draws of the
+/// sim's random stream put it in the middle 80% of the map on each axis
+/// (faf-re: the draw's scale is 0.8/2^32, then + 0.1), on the surface.
+static int l_GenerateArmyStart(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    auto* brain = sim->get_army(resolve_army(L, 1, sim));
+    if (!brain) return 0;
+    constexpr f32 kSpan = 0.8f / 4294967296.0f; // 0.8 of a u32's range
+    constexpr f32 kMargin = 0.1f;
+    const f32 fx = static_cast<f32>(sim->random().next_u32()) * kSpan + kMargin;
+    const f32 fz = static_cast<f32>(sim->random().next_u32()) * kSpan + kMargin;
+    const auto* terrain = sim->terrain();
+    const f32 x = terrain ? static_cast<f32>(terrain->map_width()) * fx : 0.0f;
+    const f32 z = terrain ? static_cast<f32>(terrain->map_height()) * fz : 0.0f;
+    const f32 y = terrain ? terrain->get_surface_height(x, z) : 0.0f;
+    brain->set_start_position({x, y, z});
+    return 0;
+}
+
+/// SetIgnorePlayableRect(army, flag): the army's units may go anywhere on
+/// the map (faf-re cfunc_SetIgnorePlayableRectL, CArmyImpl::UseWholeMap).
+static int l_SetIgnorePlayableRect(lua_State* L) {
+    auto* sim = get_sim(L);
+    if (!sim) return 0;
+    if (auto* brain = sim->get_army(resolve_army(L, 1, sim)))
+        brain->set_use_whole_map(lua_toboolean(L, 2) != 0);
     return 0;
 }
 
@@ -5865,6 +5914,9 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
 
     // Army — real implementations
     state.register_function("SetAlliance", l_SetAlliance);
+    state.register_function("SetAllianceOneWay", l_SetAllianceOneWay);
+    state.register_function("GenerateArmyStart", l_GenerateArmyStart);
+    state.register_function("SetIgnorePlayableRect", l_SetIgnorePlayableRect);
     state.register_function("IsAlly", l_IsAlly);
     state.register_function("IsEnemy", l_IsEnemy);
     state.register_function("IsNeutral", l_IsNeutral);

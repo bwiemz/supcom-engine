@@ -3466,6 +3466,42 @@ void test_stub(TestContext& ctx) {
                 LOG('STUB TEST 9 FAILED: CreateProjectile returned nil')
             end
 
+            -- Test 10: GetUnitsInRect reads a Rect by its x0/y0/x1/y1 fields,
+            -- as Moho does (campaign scripts pass ScenarioUtils.AreaToRect's)
+            local ap = acu:GetPosition()
+            local function has_acu(units)
+                for _, u in units or {} do
+                    if u == acu then return true end
+                end
+                return false
+            end
+            local around = Rect(ap[1] - 5, ap[3] - 5, ap[1] + 5, ap[3] + 5)
+            local away = Rect(ap[1] + 50, ap[3] + 50, ap[1] + 60, ap[3] + 60)
+            if has_acu(GetUnitsInRect(around)) and not has_acu(GetUnitsInRect(away))
+                and has_acu(GetUnitsInRect(ap[1] - 5, ap[3] - 5, ap[1] + 5, ap[3] + 5)) then
+                LOG('STUB TEST 10 PASSED: GetUnitsInRect finds the ACU in a Rect around it, not in one away')
+            else
+                LOG('STUB TEST 10 FAILED: GetUnitsInRect with a Rect')
+            end
+
+            -- Test 11: GetCollisionExtents, the world box around a shape
+            -- (objective arrows sit on its top)
+            local tank = CreateUnitHPR('uel0201', 'ARMY_1', ap[1] + 20, ap[2], ap[3], 0, 0, 0)
+            local tp = tank:GetPosition()
+            local ext = tank:GetCollisionExtents()
+            tank:SetCollisionShape('Sphere', 0, 1, 0, 2)
+            local ball = tank:GetCollisionExtents()
+            tank:SetCollisionShape('None')
+            local none = tank:GetCollisionExtents()
+            if ext and ext.Min.x < tp[1] and ext.Max.x > tp[1] and ext.Max.y > tp[2]
+                and ball and math.abs(ball.Max.y - (tp[2] + 3)) < 1e-3 and math.abs(ball.Min.x - (tp[1] - 2)) < 1e-3
+                and none == nil then
+                LOG('STUB TEST 11 PASSED: GetCollisionExtents: a box around the tank, a sphere, nil for none')
+            else
+                LOG('STUB TEST 11 FAILED: GetCollisionExtents ' .. tostring(ext) .. ' ' .. tostring(ball) .. ' ' .. tostring(none))
+            end
+            tank:Destroy()
+
             LOG('STUB TEST: all tests complete')
         end)
     )");
@@ -6651,20 +6687,36 @@ void test_projectile(TestContext& ctx) {
         Damage(nil, tank:GetPosition(), tank, 50, 'Normal')
         if tank:GetHealth() >= before then error('health ' .. tank:GetHealth()) end
     )");
+    // Moho's OnDamage vector is a vector (shield.lua's impact effect reads
+    // its .x/.y/.z), from the origin to the target.
+    lua_check("Test 7: the hit's vector is a vector, from the origin to the target", R"(
+        local tank = __osc_test_tank
+        local seen
+        tank.OnDamage = function(self, instigator, amount, vector, type) seen = vector end
+        local p = tank:GetPosition()
+        Damage(nil, {p[1] - 3, p[2], p[3] + 4}, tank, 1, 'Normal')
+        tank.OnDamage = nil
+        if not seen then error('no vector') end
+        if math.abs(seen.x - 3) > 1e-3 or math.abs(seen.y) > 1e-3 or math.abs(seen.z + 4) > 1e-3 then
+            error(string.format('vector (%s, %s, %s)', tostring(seen.x), tostring(seen.y), tostring(seen.z)))
+        end
+        local length = import('/lua/utilities.lua').GetVectorLength(seen)
+        if math.abs(length - 5) > 1e-3 then error('length ' .. length) end
+    )");
     // A commander's death weapon fires a script projectile and passes it its
     // damage (it errored while projectiles had no class). Its errors would
     // be script errors, which fail the run.
     const int failures_before = osc::test_status::failure_count();
-    lua_check("Test 7: a commander dies (its death weapon fires)", R"(
+    lua_check("Test 8: a commander dies (its death weapon fires)", R"(
         ArmyBrains[2]:GetListOfUnits(categories.COMMAND, false)[1]:Kill()
     )");
     for (int i = 0; i < 20; ++i) ctx.sim.tick();
     if (osc::test_status::failure_count() == failures_before) {
         pass++;
-        spdlog::info("[PASS] Test 8: the death weapon ran without script errors");
+        spdlog::info("[PASS] Test 9: the death weapon ran without script errors");
     } else {
         fail++;
-        osc::test_status::fail("[FAIL] Test 8: script errors after the commander died");
+        osc::test_status::fail("[FAIL] Test 9: script errors after the commander died");
     }
 
     spdlog::info("Projectile test: {}/{} passed", pass, pass + fail);

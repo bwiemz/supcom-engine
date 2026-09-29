@@ -350,7 +350,7 @@ void resolve(SimState& sim, Unit& owner, i32 now, PathCache& cache) {
             return;
         }
     }
-    point = sim.clamp_to_playable(point);
+    point = sim.clamp_to_playable(point, owner.army());
     nav.sidestep(point);
 }
 

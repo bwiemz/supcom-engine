@@ -811,6 +811,52 @@ static int l_GetMouseWorldPos(lua_State* L) {
     return 1;
 }
 
+// --- SyncPlayableRect global (M209) ---
+/// SyncPlayableRect(rect): the user side of the sim's playable rect (Moho's
+/// CWldSession::SyncPlayableRect), which usercamera.lua applies from the
+/// campaign's CAMERA_SYNC_PLAYABLE_RECT request. Kept to the map as the
+/// sim's is, the camera keeps to it, and the meshes outside it now hide
+/// until the next.
+static int l_SyncPlayableRect(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "SyncPlayableRect(rect)\n  expected 1 args, but got %d",
+                          lua_gettop(L));
+    luaL_checktype(L, 1, LUA_TTABLE);
+    // A Rect's fields, its y the map's z
+    const auto field = [L](const char* name) {
+        lua_pushstring(L, name);
+        lua_gettable(L, 1);
+        const auto v = static_cast<i32>(lua_tonumber(L, -1));
+        lua_pop(L, 1);
+        return v;
+    };
+    const renderer::PlayableRect rect{field("x0"), field("y0"), field("x1"), field("y1")};
+    auto* sim = get_sim(L);
+    auto* r = get_renderer(L);
+    if (!sim || !sim->terrain() || !r) return 0;
+    const auto kept =
+        renderer::clamp_playable_rect(rect, static_cast<i32>(sim->terrain()->map_width()),
+                                      static_cast<i32>(sim->terrain()->map_height()));
+    if (!kept) {
+        spdlog::warn("Attempting to set an invalid playable rect");
+        return 0;
+    }
+    r->camera().set_playable_rect(static_cast<f32>(kept->x0), static_cast<f32>(kept->z0),
+                                  static_cast<f32>(kept->x1), static_cast<f32>(kept->z1));
+    r->playable_rect().sync(*kept);
+    return 0;
+}
+
+/// RenderOverlayEconomy(on): the session's economy overlay flag (Moho's
+/// DisplayEconomyOverlay), which the MFD's toggle sets and a NIS clears.
+static int l_RenderOverlayEconomy(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "RenderOverlayEconomy(bool)\n  expected 1 args, but got %d",
+                          lua_gettop(L));
+    if (auto* r = get_renderer(L)) r->set_economy_overlay(lua_toboolean(L, 1) != 0);
+    return 0;
+}
+
 // --- GetCamera global (M136a) ---
 // FA calls GetCamera(cameraName) and gets back a camera object with methods.
 static int l_GetCamera(lua_State* L) {
@@ -1360,6 +1406,8 @@ void register_user_bindings(LuaState& state) {
     state.register_function("GetMouseWorldPos", l_GetMouseWorldPos);
     state.register_function("UnProject", l_UnProject);
     state.register_function("GetCamera", l_GetCamera);
+    state.register_function("SyncPlayableRect", l_SyncPlayableRect);
+    state.register_function("RenderOverlayEconomy", l_RenderOverlayEconomy);
     set_ui_wait_hook(L, ui_wait_camera); // WaitFor(camera) (M217g)
     state.register_function("GetSelectedUnits", l_GetSelectedUnits);
     state.register_function("SelectUnits", l_SelectUnits);

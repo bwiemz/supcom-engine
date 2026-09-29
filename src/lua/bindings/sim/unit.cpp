@@ -831,6 +831,21 @@ static int unit_GetBlip(lua_State* L) {
     return 1;
 }
 
+/// SetStrategicUnderlay(icon): an icon drawn beneath the unit's strategic
+/// icon, by its name under the strategic icons' directory (SimObjectives
+/// marks targets 'icon_objective_primary'/'_secondary'; "" clears it).
+static int unit_SetStrategicUnderlay(lua_State* L) {
+    if (lua_gettop(L) != 2)
+        return luaL_error(L, "SetStrategicUnderlay(icon)\n  expected 2 args, but got %d",
+                          lua_gettop(L));
+    auto* unit = check_unit(L);
+    std::string icon = luaL_checkstring(L, 2);
+    std::transform(icon.begin(), icon.end(), icon.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (unit) unit->set_strategic_underlay(std::move(icon));
+    return 0;
+}
+
 // unit:GetWeapon(index) — 1-based Lua index → 0-based C++
 static int unit_GetWeapon(lua_State* L) {
     auto* unit = check_unit(L);
@@ -2474,6 +2489,7 @@ const MethodEntry unit_methods[] = {
     {"PlayFxRollOffEnd",             stub_noop},
     {"SetupBuildBones",              stub_noop},
     {"GetBlip",                      unit_GetBlip},
+    {"SetStrategicUnderlay",         unit_SetStrategicUnderlay},
     {"GetVeterancyLevel",           unit_GetVeterancyLevel},
     {"SetVeterancyLevel",           unit_SetVeterancyLevel},
     {"AddXP",                       unit_AddXP},

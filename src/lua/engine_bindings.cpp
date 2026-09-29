@@ -9,6 +9,7 @@
 #include "vfs/virtual_file_system.hpp"
 #include "vfs/path_utils.hpp"
 #include "platform/paths.hpp"
+#include "video/movie_player.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -431,6 +432,28 @@ static int l_STR_xtoi(lua_State* L) {
     return 1;
 }
 
+/// GetMovieDuration(localFileName) — Moho's MOV_GetDuration: a movie's
+/// length in seconds from its Sofdec header, 0 (with a warning) if the file
+/// is missing or not an SFD. Scenario scripts fall back to AllyCom.sfd on 0.
+static int l_GetMovieDuration(lua_State* L) {
+    if (lua_gettop(L) != 1)
+        return luaL_error(L, "GetMovieDuration(localFileName)\n  expected 1 args, but got %d",
+                          lua_gettop(L));
+    const std::string path = luaL_checkstring(L, 1);
+    auto* vfs = LuaState::get_vfs(L);
+    auto file = vfs ? vfs->read_file(path) : std::nullopt;
+    if (!file) {
+        spdlog::warn("Movie file \"{}\" doesn't exist.", path);
+        lua_pushnumber(L, 0);
+        return 1;
+    }
+    const f32 seconds =
+        video::sofdec_duration(reinterpret_cast<const u8*>(file->data()), file->size());
+    if (seconds <= 0.0f) spdlog::warn("{} is not a valid SFD file.", path);
+    lua_pushnumber(L, seconds);
+    return 1;
+}
+
 /// EnumColorNames() — the colour names colours may be given by, in Moho's
 /// order.
 static int l_EnumColorNames(lua_State* L) {
@@ -525,6 +548,9 @@ void register_blueprint_bindings(LuaState& state) {
     state.register_function("STR_itox", l_STR_itox);
     state.register_function("STR_xtoi", l_STR_xtoi);
     state.register_function("EnumColorNames", l_EnumColorNames);
+
+    // Movies
+    state.register_function("GetMovieDuration", l_GetMovieDuration);
 
     // Misc stubs
     state.register_function("Trace", l_Trace);

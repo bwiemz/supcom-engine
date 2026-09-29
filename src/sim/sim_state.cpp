@@ -327,6 +327,18 @@ void SimState::set_no_rush(f32 seconds, f32 radius) {
     if (radius > 0.0f) no_rush_radius_ = radius;
 }
 
+Vector3 SimState::clamp_to_playable(const Vector3& pos, i32 army) const {
+    const ArmyBrain* brain = army >= 0 ? army_at(static_cast<size_t>(army)) : nullptr;
+    if (!brain || !brain->use_whole_map()) return clamp_to_playable(pos);
+    if (!terrain_) return pos;
+    Vector3 clamped = pos;
+    const auto width = static_cast<f32>(terrain_->map_width());
+    const auto height = static_cast<f32>(terrain_->map_height());
+    clamped.x = std::clamp(clamped.x, 0.0f, width);
+    clamped.z = std::clamp(clamped.z, 0.0f, height);
+    return clamped;
+}
+
 bool SimState::is_valid_teleport_destination(
     const Unit& unit, const Vector3& destination) const {
     f32 half_x = std::max(unit.footprint_size_x(), 1.0f) * 0.5f;
@@ -1559,7 +1571,7 @@ void SimState::separate_ground_units() {
         }
         // On the surface as it drives; a submarine keeps its depth.
         if (terrain_ && !bodies[i].sub) p.y = terrain_->get_surface_height(p.x, p.z);
-        u.set_position(clamp_to_playable(p));
+        u.set_position(clamp_to_playable(p, u.army()));
         u.set_jostled(true);
     }
 }

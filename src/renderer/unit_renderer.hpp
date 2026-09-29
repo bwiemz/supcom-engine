@@ -24,6 +24,7 @@ namespace osc::renderer {
 
 class Camera;       // forward
 class ReconView;    // forward
+class UserPlayableRect; // forward
 class TextureCache; // forward
 
 /// Per-instance data for cube fallback (old format).
@@ -81,6 +82,10 @@ public:
     /// The player's intel, which hides what it doesn't see and freezes the
     /// structures it remembers (null: everything seen; M215a).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+
+    /// The user side's playable rect, whose last sync hid the meshes then
+    /// outside it (null: none hidden).
+    void set_playable_rect(const UserPlayableRect* rect) { playable_rect_ = rect; }
 
     /// Pre-load GPU meshes for these blueprints (sim::world_blueprints).
     void preload_meshes(const std::vector<std::string>& bp_ids, MeshCache& mesh_cache,
@@ -160,6 +165,7 @@ private:
 
     sim::GameColors game_colors_;
     const ReconView* recon_ = nullptr;
+    const UserPlayableRect* playable_rect_ = nullptr;
 
     /// When each entity's mesh instance was made: FA makes one when an
     /// entity appears or changes mesh, stamped with the tick (material.x).

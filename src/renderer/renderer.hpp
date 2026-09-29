@@ -18,6 +18,7 @@
 #include "renderer/profile_overlay.hpp"
 #include "renderer/selection_info_renderer.hpp"
 #include "ui/ui_dispatch.hpp"
+#include "renderer/playable_rect.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/unit_renderer.hpp"
 #include "renderer/sky_renderer.hpp"
@@ -166,6 +167,9 @@ public:
     i32 player_army() const { return player_army_; }
     /// What the player's army sees of the world as of the last frame (M215a).
     const ReconView& recon() const { return recon_; }
+    /// The user side's playable rect, which SyncPlayableRect syncs (M209).
+    UserPlayableRect& playable_rect() { return playable_rect_; }
+    const UserPlayableRect& playable_rect() const { return playable_rect_; }
     /// The effects' emitters and particles (tests read them).
     const ParticleSystem& particle_system() const { return particle_system_; }
     /// The meshes this frame draws, in their groups (M211k's tests).
@@ -195,6 +199,11 @@ public:
     bool fog_enabled() const { return fog_enabled_; }
     void set_decals_enabled(bool enabled) { decals_enabled_ = enabled; }
     bool decals_enabled() const { return decals_enabled_; }
+    /// The session's economy overlay flag (Moho's DisplayEconomyOverlay,
+    /// RenderOverlayEconomy): the MFD's economy toggle, off during a NIS.
+    /// Nothing draws the overlay yet.
+    void set_economy_overlay(bool on) { economy_overlay_ = on; }
+    bool economy_overlay() const { return economy_overlay_; }
     void set_bloom_enabled(bool b) { bloom_enabled_ = b; }
     /// ui_AlwaysRenderStrategicIcons (M217i).
     void set_icons_always(bool on) { strategic_icon_renderer_.set_always(on); }
@@ -504,8 +513,10 @@ private:
     Camera camera_;
     i32 player_army_ = 0;
     ReconView recon_;
+    UserPlayableRect playable_rect_;
     bool fog_enabled_ = true;
     bool decals_enabled_ = true;
+    bool economy_overlay_ = false;
 
     // The map's decals, projected and lit (M212b): each draws the terrain's
     // own triangles under it, a range of decal_indices_ over the terrain's

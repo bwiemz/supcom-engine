@@ -1,6 +1,7 @@
 #include "renderer/unit_renderer.hpp"
 #include "renderer/army_colors.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/playable_rect.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/texture_cache.hpp"
 #include "renderer/vk_types.hpp"
@@ -267,6 +268,8 @@ void UnitRenderer::update(const sim::FrameView& view, MeshCache& mesh_cache,
         // depth fill and its impacts, script entities given one by SetMesh.
         const bool script_mesh = !entity.is_unit && !entity.is_prop && !entity.is_projectile;
         if (script_mesh && entity.mesh_override.empty()) return;
+        // Outside the playable rect when the scripts last synced it.
+        if (playable_rect_ && playable_rect_->hides(entity.id)) return;
 
         // The entity's mesh instance, made when it appeared or changed mesh
         // (whether or not it is in view).

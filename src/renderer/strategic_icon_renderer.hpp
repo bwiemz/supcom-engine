@@ -65,6 +65,7 @@ public:
     /// the next game's may differ (a scene rebuilt for it).
     void forget_blueprints() {
         icon_blueprints_.clear();
+        underlay_textures_.clear();
         generic_loaded_ = false;
     }
 
@@ -130,6 +131,9 @@ private:
         f32 fade_in_zoom = 0;       ///< its mesh's IconFadeInZoom
     };
     const IconBlueprint& icon_blueprint(const std::string& id, lua_State* L);
+    /// An underlay's texture (Unit:SetStrategicUnderlay's name, as a
+    /// strategic icon's: under the icons' directory unless absolute).
+    const std::string& underlay_texture(const std::string& name);
     /// strategicIcons.lua's GenericIcons and StunnedIcons, read once.
     void load_generic_icons(lua_State* L);
 
@@ -153,6 +157,7 @@ private:
     std::vector<Group> groups_;
 
     std::unordered_map<std::string, IconBlueprint> icon_blueprints_;
+    std::unordered_map<std::string, std::string> underlay_textures_;
     bool generic_loaded_ = false;
     std::string generic_structure_, generic_land_, generic_naval_, generic_air_, stunned_;
 
