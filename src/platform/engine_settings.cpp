@@ -42,6 +42,14 @@ fs::path engine_settings_path(const EnvLookup& env) {
     return known_folder(KnownFolder::Config, env) / "opensupcom" / "settings.json";
 }
 
+fs::path engine_log_file(const EnvLookup& env) {
+    return known_folder(KnownFolder::State, env) / "opensupcom" / "logs" / "opensupcom.log";
+}
+
+fs::path engine_crash_dir(const EnvLookup& env) {
+    return known_folder(KnownFolder::State, env) / "opensupcom" / "crashes";
+}
+
 EngineSettings load_engine_settings(const fs::path& file) {
     EngineSettings settings;
     const auto json = read_object(file);

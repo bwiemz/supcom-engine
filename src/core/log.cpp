@@ -2,8 +2,10 @@
 #include "core/test_status.hpp"
 #include "core/version.hpp"
 
-#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+
+#include <string>
+#include <system_error>
 
 extern "C" {
 #include <lua.h>
@@ -12,13 +14,50 @@ extern "C" {
 
 namespace osc::log {
 
-void init(const std::filesystem::path& log_file) {
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
-        log_file.string(), true);
+namespace {
 
-    auto logger = std::make_shared<spdlog::logger>(
-        "osc", spdlog::sinks_init_list{console_sink, file_sink});
+std::shared_ptr<DeferredFileSink> g_file_sink;
+
+} // namespace
+
+bool DeferredFileSink::open(const std::filesystem::path& file) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    if (open_) return true;
+    try {
+        file_.open(file.string(), /*truncate=*/true);
+    } catch (const spdlog::spdlog_ex&) {
+        return false;
+    }
+    open_ = true;
+    file_.write(held_);
+    held_ = spdlog::memory_buf_t();
+    file_.flush();
+    return true;
+}
+
+bool DeferredFileSink::is_open() {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return open_;
+}
+
+void DeferredFileSink::sink_it_(const spdlog::details::log_msg& msg) {
+    spdlog::memory_buf_t formatted;
+    formatter_->format(msg, formatted);
+    if (open_) file_.write(formatted);
+    else if (held_.size() + formatted.size() <= kHeldMax)
+        held_.append(formatted.data(), formatted.data() + formatted.size());
+}
+
+void DeferredFileSink::flush_() {
+    if (open_) file_.flush();
+}
+
+void init() {
+    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    g_file_sink = std::make_shared<DeferredFileSink>();
+
+    auto logger =
+        std::make_shared<spdlog::logger>("osc", spdlog::sinks_init_list{console_sink, g_file_sink});
     logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] %v");
     logger->set_level(spdlog::level::debug);
     // Warnings and errors reach the file immediately, so a crash (whose
@@ -29,8 +68,38 @@ void init(const std::filesystem::path& log_file) {
     spdlog::info("{}", core::version_line());
 }
 
+bool open_file(const std::filesystem::path& file) {
+    if (!g_file_sink) return false;
+    std::error_code ec;
+    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path(), ec);
+    if (g_file_sink->open(file)) return true;
+    spdlog::warn("Can't write the log to {}: it stays on the console", file.string());
+    return false;
+}
+
+bool file_open() {
+    return g_file_sink && g_file_sink->is_open();
+}
+
+void rotate(const std::filesystem::path& file, int keep) {
+    namespace fs = std::filesystem;
+    const auto numbered = [&](int n) {
+        fs::path p = file;
+        p.replace_filename(file.stem().string() + "." + std::to_string(n) +
+                           file.extension().string());
+        return p;
+    };
+    std::error_code ec;
+    if (!fs::exists(file, ec)) return; // no run to keep: leave the older ones be
+    for (int n = keep; n >= 1; --n) {
+        const fs::path from = n == 1 ? file : numbered(n - 1);
+        if (fs::exists(from, ec)) fs::rename(from, numbered(n), ec);
+    }
+}
+
 void shutdown() {
     spdlog::shutdown();
+    g_file_sink.reset();
 }
 
 /// Concatenate all Lua arguments into a single string, mimicking the original

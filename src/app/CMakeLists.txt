@@ -8,6 +8,7 @@ add_library(osc_app STATIC
     frames.cpp
     headless.cpp
     lan_game_test.cpp
+    log_bundle.cpp
     reload.cpp
     session.cpp
     ui_globals.cpp
@@ -21,5 +22,5 @@ target_include_directories(osc_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(osc_app
     PUBLIC osc::platform osc::core osc::vfs osc::sim osc::map osc::audio osc::video osc::ui
            osc::renderer osc::lua osc::lua_user osc::blueprints
-    PRIVATE osc::warnings
+    PRIVATE osc::warnings unofficial::minizip::minizip
 )

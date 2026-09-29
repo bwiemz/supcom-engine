@@ -126,16 +126,46 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
 
 ## M228b — Logs and bug reports
 
-- The log goes to `<State>/opensupcom/logs/opensupcom.log`, and the previous five
-  runs are kept (`opensupcom.1.log` …). `--log <file>` overrides it (tests, and
-  anyone who wants the old behaviour).
-- The crash handler also writes its report to
-  `<State>/opensupcom/crashes/crash-<unix time>.txt`. It uses a path prepared when
-  the handler is installed, and `open`/`write` only (async-signal-safe).
-- `--collect-logs [file.zip]` bundles the logs, crash reports, `settings.json` and a
-  `system.txt` (version, build id, OS, and the GPU and driver from the last log)
-  with minizip, and prints where it put the file. Game.prefs is left out: it holds
-  the player's name.
+- **Where the log goes.** A player's game (`may_ask_player`: windowed, not a capture
+  or scripted window) logs to `<State>/opensupcom/logs/opensupcom.log`, keeping the
+  last five runs (`opensupcom.1.log` …; a run with no log yet moves nothing).
+  - Every other run (headless, captures, the flow tests and LAN games that run the
+    game binary, the multiplayer pair tests) logs to `opensupcom.log` in the working
+    directory, as before. So tests never churn a player's logs, and parallel test
+    processes never race on rotation.
+  - `--log <file>` overrides both, and the integration runner keeps its
+    working-directory log.
+- **The deferred file sink.** Which kind of run it is is known only once the options
+  are parsed, after the first lines are logged. So the log starts with the console
+  and a `DeferredFileSink` that holds its lines (up to 8 MiB) until
+  `log::open_file` gives it a file, then writes them first. Nothing from the start of
+  a run is lost. A file that can't be opened keeps the log on the console, with a
+  warning.
+- **Crash reports.** In a player's game the crash handler also writes its report to
+  `<State>/opensupcom/crashes/crash-<unix time>-<pid>.txt`.
+  - The report is headed by the build and the log's path, and holds the signal (or
+    exception) and the backtrace.
+  - The folder and header are prepared when the game starts. The signal handler only
+    calls `clock_gettime`, `getpid`, `open`, `write` and `backtrace_symbols_fd`
+    (async-signal-safe), and says on stderr where the report went.
+  - A fault address is printed only for real faults (`si_code > 0`), not for a signal
+    sent by `raise` or `kill`.
+- **`--simulate-crash`** crashes on purpose after that setup, so the whole path can be
+  checked from a package. It's not `--crash-test`: the game refuses every `--*-test`
+  flag as an integration-runner mode.
+- **`--collect-logs [file.zip]`** runs before logging starts, so the last game's log
+  isn't rotated away. It zips:
+  - `logs/opensupcom*.log`, `crashes/crash-*.txt` and `settings.json`;
+  - a `system.txt`: the version line, the build id, the OS (`uname` and os-release's
+    `PRETTY_NAME`, or `RtlGetVersion`), and the GPU from the latest log that names
+    one.
+
+  It uses minizip, streaming each file in 64 KiB pieces, and prints the zip's path.
+  Game.prefs is left out: it holds the player's name.
+- Known gap (Windows): vcpkg's spdlog opens log files by narrow name. A
+  `%LOCALAPPDATA%` outside the system code page can't be opened, and the log falls
+  back to `./opensupcom.log` with a warning. Crash reports use the wide name
+  (`CreateFileW`), so they aren't affected.
 
 ## Order and exits
 
@@ -144,7 +174,7 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
 | M227a | `opensupcom --version` from an installed prefix, in CI |
 | M227b | A PR touching packaging builds both packages in CI, and each runs `--version`; the local AppImage plays a headless skirmish |
 | M228a | Scripted first-run tests; by hand, a start with no FA found asks, and the next start doesn't |
-| M228b | A forced crash (`--crash-test`) leaves a report in the State folder; `--collect-logs` makes a zip that holds it |
+| M228b | A forced crash (`--simulate-crash`) leaves a report in the State folder; `--collect-logs` makes a zip that holds it (done by hand and in unit tests) |
 
 ## Non-goals
 

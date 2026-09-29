@@ -485,6 +485,20 @@ tests/         # Catch2 unit tests
 tools/         # Formatting check and clang-tidy ratchet (see CONTRIBUTING.md)
 ```
 
+## Reporting Bugs
+
+A player's game logs to `~/.local/state/opensupcom/logs/` (`%LOCALAPPDATA%`
+on Windows), keeping the last five runs, and a crash leaves a report in
+`crashes/` beside it. To send them with a bug report:
+
+```bash
+opensupcom --collect-logs            # -> ./opensupcom-logs-<date>-<time>.zip
+```
+
+The zip holds the logs, crash reports, the engine's settings and a
+`system.txt` (build, OS, GPU); FA's `Game.prefs`, which holds your player
+name, is left out. `--log <file>` puts a run's log somewhere else.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, the formatting and
