@@ -164,7 +164,7 @@ static int platoon_GetSquadPosition(lua_State* L) {
         for (u32 id : platoon->unit_ids()) {
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed()) continue;
-            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
             sum.x += e->position().x;
             sum.y += e->position().y;
             sum.z += e->position().z;
@@ -192,7 +192,7 @@ static int platoon_CanAttackTarget(lua_State* L) {
         const u8 target_bit =
             sim::layer_to_bit(static_cast<sim::Unit*>(target)->layer());
         for (u32 id : platoon->unit_ids()) {
-            if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+            if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
             auto* e = sim->entity_registry().find(id);
             if (!e || e->destroyed() || !e->is_unit()) continue;
             for (const auto& w : static_cast<sim::Unit*>(e)->weapons()) {
@@ -231,7 +231,7 @@ static int platoon_GetSquadUnits(lua_State* L) {
     for (u32 id : platoon->unit_ids()) {
         auto* e = sim->entity_registry().find(id);
         if (!e || e->destroyed() || e->lua_table_ref() < 0) continue;
-        if (!squad.empty() && platoon->get_unit_squad(id) != squad) continue;
+        if (!squad.empty() && !platoon->in_squad(id, squad)) continue;
         lua_pushnumber(L, idx++);
         lua_rawgeti(L, LUA_REGISTRYINDEX, e->lua_table_ref());
         lua_rawset(L, result);

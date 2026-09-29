@@ -2,6 +2,8 @@
 #include "sim/entity_registry.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 
 namespace osc::sim {
 
@@ -59,6 +61,29 @@ static const std::string empty_squad;
 const std::string& Platoon::get_unit_squad(u32 entity_id) const {
     auto it = squad_map_.find(entity_id);
     return (it != squad_map_.end()) ? it->second : empty_squad;
+}
+
+int Platoon::squad_class(std::string_view squad) {
+    static constexpr std::array<std::string_view, 6> kClasses = {
+        "Unassigned", "Attack", "Artillery", "Guard", "Support", "Scout"};
+    if (squad.empty()) return 0;
+    for (size_t i = 0; i < kClasses.size(); ++i) {
+        const std::string_view name = kClasses[i];
+        if (name.size() == squad.size() &&
+            std::equal(name.begin(), name.end(), squad.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) ==
+                       std::tolower(static_cast<unsigned char>(b));
+            }))
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool Platoon::in_squad(u32 entity_id, std::string_view squad) const {
+    const std::string& mine = get_unit_squad(entity_id);
+    const int a = squad_class(mine);
+    const int b = squad_class(squad);
+    return a >= 0 || b >= 0 ? a == b : mine == squad;
 }
 
 } // namespace osc::sim
