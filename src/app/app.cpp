@@ -1,16 +1,25 @@
 #include "app/app_internal.hpp"
 #include "core/log.hpp"
 #include "core/test_status.hpp"
+#include "core/version.hpp"
 #include "lua/smoke_test.hpp"
 #include "platform/crash_handler.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <spdlog/spdlog.h>
 
 namespace osc::app {
 
 int run(int argc, char* argv[], TestModes* tests) {
+    // Before the log starts, so the one line is all a script reads
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--version") == 0) {
+            std::printf("%s\n", osc::core::version_line());
+            return 0;
+        }
+    }
     osc::log::init();
     osc::platform::install_crash_handler();
 

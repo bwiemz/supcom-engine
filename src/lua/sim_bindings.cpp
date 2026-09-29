@@ -20,6 +20,7 @@
 #include "sim/prop.hpp"
 #include "sim/prop_script.hpp"
 #include "core/test_status.hpp"
+#include "core/version.hpp"
 #include "sim/shield.hpp"
 #include "sim/unit.hpp"
 #include "sim/unit_command.hpp"
@@ -5955,7 +5956,7 @@ void register_sim_bindings(LuaState& state, sim::SimState& sim) {
         return 0;
     });
     state.register_function("GetVersion", [](lua_State* L) -> int {
-        lua_pushstring(L, "OpenSupCom 0.1.0");
+        lua_pushstring(L, (std::string("OpenSupCom ") + core::version()).c_str());
         return 1;
     });
     state.register_function("GetMapSize", [](lua_State* L) -> int {

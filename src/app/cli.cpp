@@ -2,6 +2,7 @@
 // step 2, moved from app.cpp).
 
 #include "app/app_internal.hpp"
+#include "core/version.hpp"
 #include "platform/game_install.hpp"
 
 #include <algorithm>
@@ -15,7 +16,7 @@ namespace osc::app {
 void print_usage() {
     // The option table is laid out by hand.
     // clang-format off
-    std::cout << "OpenSupCom v0.1.0\n"
+    std::cout << osc::core::version_line() << "\n"
               << "Open-source engine reimplementation for Supreme Commander: "
                  "Forged Alliance\n\n"
               << "Usage:\n"
@@ -67,6 +68,7 @@ void print_usage() {
               << "                     more just before --save-at's save\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
+              << "  --version          Print the version and exit\n"
               << "  --help             Show this help message\n";
     // clang-format on
 }
