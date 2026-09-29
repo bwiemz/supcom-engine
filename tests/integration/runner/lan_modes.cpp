@@ -106,8 +106,10 @@ std::unique_ptr<sim::LobbyNet> lobby_to_launch(bool is_host, const std::string& 
 // identical minimal sims in lockstep. The host issues scripted player orders
 // through the same route_command path the game uses. Each side reports its
 // final tick and checksum; desynced=0 on both processes is a synced match.
+// --mp-slow <ms>: the joiner takes that long a round, and must set the
+// game's pace rather than be dropped (M218h).
 int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, osc::u32 frames,
-                      bool inject_desync, osc::u32 drop_at) {
+                      bool inject_desync, osc::u32 drop_at, osc::u32 slow_ms) {
     using namespace osc;
     namespace chrono = std::chrono;
 
@@ -168,6 +170,8 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
     // if one side bailed the moment it noticed, it would starve the other of the
     // frame carrying the mismatching checksum.
     for (u32 round = 0; round < frames; ++round) {
+        // --mp-slow: the joiner is a slow machine, a round taking this long
+        if (!is_host && slow_ms > 0) std::this_thread::sleep_for(chrono::milliseconds(slow_ms));
         // --mp-drop-at: the joiner leaves mid-match, without a goodbye.
         if (!is_host && drop_at > 0 && round == drop_at) {
             spdlog::warn("[mp] joiner leaving at round {} (--mp-drop-at)", round);
@@ -221,6 +225,24 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
 
     const u32 final_tick = sim->tick_count();
     const u32 checksum = sim->compute_sync_checksum();
+    // Done, but the other side may not be: it may still want this side's
+    // last frame, which closing now could lose (a socket closed with data
+    // unread resets the connection, and the peer loses what it had yet to
+    // read). So go on answering for a second -- well inside the drop
+    // timeout -- before closing.
+    if (!stalled) {
+        const auto until = chrono::steady_clock::now() + chrono::seconds(1);
+        auto last_send = chrono::steady_clock::now();
+        while (chrono::steady_clock::now() < until) {
+            session->receive_and_advance();
+            if (chrono::steady_clock::now() - last_send >= chrono::milliseconds(100)) {
+                session->send_frame();
+                last_send = chrono::steady_clock::now();
+            }
+            std::this_thread::sleep_for(chrono::milliseconds(1));
+        }
+        dropped_count += static_cast<u32>(session->take_dropped().size());
+    }
     const bool desynced = session->desynced();
     spdlog::info("[mp] {} RESULT: tick={} checksum={:#010x} rng={:#010x} desynced={} dropped={}",
                  is_host ? "HOST" : "JOINER", final_tick, checksum, rng_probe, desynced,
@@ -244,9 +266,12 @@ int run_mp_lobby_test(bool is_host, const std::string& address, osc::u16 port, o
         return (desynced && !stalled) ? 0 : 3;
     }
     if (desynced || stalled) return 2;
-    // --mp-drop-at: the host must have dropped the joiner, and played on
-    if (is_host && drop_at > 0 && dropped_count != 1) {
-        spdlog::error("[mp] host: the joiner left, but {} peers were dropped", dropped_count);
+    // --mp-drop-at: the host must have dropped the joiner, and played on;
+    // else no one may be dropped (a slow joiner sets the pace)
+    const u32 want_dropped = is_host && drop_at > 0 ? 1 : 0;
+    if (dropped_count != want_dropped) {
+        spdlog::error("[mp] {} dropped {} peers, not {}", is_host ? "host" : "joiner",
+                      dropped_count, want_dropped);
         return 4;
     }
     return 0;

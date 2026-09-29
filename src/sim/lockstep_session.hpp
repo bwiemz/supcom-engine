@@ -57,10 +57,18 @@ public:
     u32 desync_tick() const { return desync_tick_; }
     const std::vector<std::string>& desync_domains() const { return desync_domains_; }
 
+    // --- Pace (M218h) ---
+    /// How many frames a peer runs ahead of its sim: two seconds' worth, as
+    /// Moho's issue thread. Frames go out a round at a time, so their lead
+    /// over the sim is the network's latency (the delay of a local order
+    /// adapts to it); past this, a peer waits for the others, and the game
+    /// runs at the slowest peer's pace rather than dropping it.
+    static constexpr u32 kMaxLead = 20;
+
     // --- Peer drop, by agreement (M198b) ---
-    // A peer more than `frames` command frames behind in confirmations
-    // (default 30 ≈ 3s at 10 Hz; 0 disables detection) is dropped -- but not
-    // by one survivor alone: survivors may hold different last frames from
+    // A peer silent for more than `rounds` rounds (send_frame calls, one
+    // each tick's time: default 30 ≈ 3s at 10 Hz; 0 disables detection) is
+    // dropped -- but not by one survivor alone: survivors may hold different last frames from
     // it (it died mid-broadcast), and each notices at its own moment. So a
     // survivor that times it out stops taking its frames and reports the last
     // one it holds, with the peer's recent frames; a report from another
@@ -68,7 +76,7 @@ public:
     // furthest frame reported as the peer's last, apply any of its frames they
     // missed (relayed in the reports), release it from the gate, and defeat
     // its army on the tick after -- the same tick on every survivor.
-    void set_drop_timeout(u32 frames) { drop_timeout_frames_ = frames; }
+    void set_drop_timeout(u32 rounds) { drop_timeout_rounds_ = rounds; }
     /// Sources newly declared dropped since the last call (drained on return).
     std::vector<u32> take_dropped();
     bool has_dropped(u32 src) const;
@@ -100,6 +108,8 @@ private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
     static constexpr u8 kResumeMessage = 2;
+    /// A peer held at kMaxLead sends no frame: this says it is still there.
+    static constexpr u8 kAliveMessage = 3;
     /// How many of a peer's latest frames are kept to relay if it drops.
     static constexpr u32 kRelayFrames = 256;
 
@@ -124,8 +134,10 @@ private:
     u32 desync_tick_ = 0;
     std::vector<std::string> desync_domains_;
     bool desynced_ = false;
-    u32 drop_timeout_frames_ = 30;
-    std::unordered_map<u32, u32> peer_confirmed_; // source -> last confirmed frame
+    u32 drop_timeout_rounds_ = 30;
+    u32 round_ = 0;                                 // send_frame calls, while not paused
+    std::unordered_map<u32, u32> peer_confirmed_;   // source -> last confirmed frame
+    std::unordered_map<u32, u32> peer_heard_round_; // source -> round last heard from
     std::vector<u32> dropped_;                    // sources already declared dropped
     std::vector<u32> newly_dropped_;              // drained by take_dropped()
     std::map<u32, std::vector<u32>> dropped_by_;  // a dropped source's reporters

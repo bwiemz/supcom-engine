@@ -491,7 +491,11 @@ std::optional<int> App::run_window() {
                     // at the sim tick rate; the session only advances the
                     // sim once every peer has confirmed the next frame
                     // (the classic "waiting for players" stall otherwise).
-                    sim_accumulator += dt * game_state_mgr.speed();
+                    // A round is a tick's time, whatever this player's
+                    // speed: the drop timer counts them, and the game's
+                    // speed is every peer's (M218h; Moho negotiates it,
+                    // which the engine doesn't yet).
+                    sim_accumulator += dt;
                     auto* session = osc::lua::mp_net_state().session.get();
                     int guard = 0;
                     while (sim_accumulator >= osc::sim::SimState::SECONDS_PER_TICK && guard++ < 4) {
