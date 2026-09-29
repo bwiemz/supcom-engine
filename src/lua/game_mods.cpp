@@ -1,6 +1,6 @@
 #include "lua/game_mods.hpp"
 
-#include "lua/lua_bytes.hpp"
+#include "sim/lua_bytes.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -13,7 +13,7 @@ namespace osc::lua {
 void set_active_mods(lua_State* L, const std::string& mods) {
     lua_pushstring(L, "__active_mods");
     bool read = false;
-    if (!mods.empty() && push_lua_bytes(L, mods)) {
+    if (!mods.empty() && sim::push_lua_bytes(L, mods)) {
         read = lua_istable(L, -1);
         if (!read) lua_pop(L, 1); // a value, but no list
     }

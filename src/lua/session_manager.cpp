@@ -1,10 +1,10 @@
 #include "lua/session_manager.hpp"
 
-#include "lua/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
 #include "lua/sim_loader.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/game_colors.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/platoon.hpp"
 #include "sim/prop_script.hpp"
 #include "sim/sim_state.hpp"
@@ -228,7 +228,7 @@ sim::GameSetup read_session_config(lua_State* L, int table_idx) {
         lua_rawget(L, table_idx);
         const bool given = lua_istable(L, -1);
         if (given) {
-            if (auto bytes = lua_to_bytes(L, -1)) setup.mods = std::move(*bytes);
+            if (auto bytes = sim::lua_to_bytes(L, -1)) setup.mods = std::move(*bytes);
             else
                 spdlog::warn("Launch: its {} can't be carried (a table inside itself, or nested "
                              "too deep); the game has no mods",

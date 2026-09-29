@@ -1,7 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include "lua/lua_bytes.hpp"
 #include "lua/lua_state.hpp"
+#include "sim/lua_bytes.hpp"
 #include "sim/command_codec.hpp"
 
 #include <limits>
@@ -12,7 +12,8 @@ extern "C" {
 #include <lua.h>
 }
 
-using namespace osc::lua;
+using namespace osc::sim;
+using osc::lua::LuaState;
 
 namespace {
 
