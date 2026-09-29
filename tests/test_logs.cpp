@@ -44,11 +44,14 @@ void write_file(const fs::path& p, const std::string& contents) {
     std::ofstream(p, std::ios::binary) << contents;
 }
 
+/// A file's text, its line ends as "\n" (spdlog writes "\r\n" on Windows).
 std::string read_file(const fs::path& p) {
     std::ifstream in(p, std::ios::binary);
     std::ostringstream text;
     text << in.rdbuf();
-    return text.str();
+    std::string s = text.str();
+    std::erase(s, '\r');
+    return s;
 }
 
 /// A logger writing its messages alone to `sink`.
