@@ -12,6 +12,7 @@
 #include "lua/session_clients.hpp"
 #include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
+#include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -598,4 +599,62 @@ TEST_CASE("A lobby's game has its clients, and chat crosses to them (M218d)", "[
         assert(texts['hi host'] == 'Alice')
         assert(texts['to alice'] == nil, 'not for the host')
     )"));
+}
+
+TEST_CASE("Ejecting a client: Moho's refusals, and the lockstep drops it (M218e)", "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    // Single-player: the one client is this one
+    REQUIRE(w.run(R"(
+        local ok, err = pcall(EjectSessionClient, 1)
+        assert(not ok and string.find(err, "Can't eject ourselves"), err)
+        ok, err = pcall(EjectSessionClient, 2)
+        assert(not ok and string.find(err, 'Invalid client index 2, must be >= 1 and <= 1'), err)
+        ok, err = pcall(EjectSessionClient, 0/0)
+        assert(not ok and string.find(err, 'Invalid client index'), err)
+        -- The disconnect dialog is a network game's
+        __dialog = 0
+        __modules = __modules or {}
+        __modules['/lua/ui/uimain.lua'] = {UpdateDisconnectDialog = function() __dialog = __dialog + 1 end}
+    )"));
+    osc::lua::pump_disconnect_dialog(w.state.raw());
+    REQUIRE(w.run("assert(__dialog == 0, 'not in single-player')"));
+
+    // A lobby's game: the host ejects Alice
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. host:GetLocalPort(), 'Alice', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1'"));
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            return Config('/maps/two/two_scenario.lua', {
+                {Human = true, OwnerID = '0', PlayerName = 'Host'},
+                {Human = true, OwnerID = '1', PlayerName = 'Alice'},
+            })
+        end
+        a:LaunchGame(GameInfo())
+    )"));
+    auto alice = take_launched();
+    REQUIRE(w.run("host:LaunchGame(GameInfo())"));
+    REQUIRE(osc::lua::mp_attach_session(w.sim));
+    osc::lua::pump_disconnect_dialog(w.state.raw());
+    REQUIRE(w.run(R"(
+        assert(__dialog == 1, 'a network game updates it each frame')
+        local ok, err = pcall(EjectSessionClient, 1)
+        assert(not ok and string.find(err, "Can't eject ourselves"), err)
+        local clients = GetSessionClients()
+        assert(clients[2].connected and table.getn(clients[2].ejectedBy) == 0)
+        EjectSessionClient(2)
+        clients = GetSessionClients()
+        -- Dropped (the host its only survivor), by the host
+        assert(not clients[2].connected, 'Alice is gone')
+        assert(table.getn(clients[2].ejectedBy) == 1 and clients[2].ejectedBy[1] == 1, 'by the host')
+        assert(table.getn(clients[2].authorizedCommandSources) == 0, 'her source goes')
+        assert(clients[2].quiet == -1 and clients[2].ping == 0, 'no connection, as Moho closes it')
+        assert(clients[1].connected and table.getn(clients[1].ejectedBy) == 0, 'the host stays')
+    )"));
+    CHECK(osc::lua::mp_net_state().session->has_dropped(1));
 }

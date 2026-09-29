@@ -96,6 +96,10 @@ void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport
 // (making it multiplayer). No-op in single-player. Returns true if a session was attached.
 bool mp_attach_session(osc::sim::SimState& sim);
 
+// A lobby's game dropped `source` (a timeout or an eject): the host closes
+// its connection, as Moho closes an ejected client's (M218e).
+void mp_disconnect_source(osc::u32 source);
+
 // Tear down any active lobby + session + transport (game end / return to lobby).
 void mp_teardown();
 

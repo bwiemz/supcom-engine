@@ -5,6 +5,7 @@
 #include "lua/net_lobby.hpp"
 #include "sim/army_brain.hpp"
 #include "sim/lobby_net.hpp"
+#include "sim/lockstep_session.hpp"
 #include "sim/sim_state.hpp"
 
 extern "C" {
@@ -149,7 +150,16 @@ int push_session_clients(lua_State* L) {
             uid = mp.clients[i].uid;
             if (!local && mp.lobby_game) peer = mp.lobby_game->net().peer(uid);
         }
-        const bool connected = local || peer || mp.clients.empty();
+        // Dropped or being dropped (ejected, or timed out), it is no longer
+        // connected; the survivors that reported it ejected it (Moho's
+        // ejectedBy: the dialog waits until all still in have)
+        const sim::LockstepSession* session = mp.session.get();
+        const auto source = static_cast<u32>(i);
+        const std::vector<u32> ejectors = session ? session->ejectors(source) : std::vector<u32>{};
+        const bool dropped = session && session->has_dropped(source);
+        const bool connected =
+            !dropped && ejectors.empty() &&
+            (local ? !(session && session->ejected()) : peer || mp.clients.empty());
         lua_newtable(L);
         lua_pushstring(L, "name");
         lua_pushstring(L, client_name(L, i).c_str());
@@ -159,23 +169,28 @@ int push_session_clients(lua_State* L) {
         lua_rawset(L, -3);
         set_bool(L, "connected", connected);
         set_bool(L, "local", local);
-        set_number(L, "ping", peer ? static_cast<double>(peer->ping_ms) : 0.0);
-        // ms since anything came (-1: nothing yet); the local client's 0
+        // ms since anything came (-1: nothing yet, or no connection: Moho
+        // closes an ejected client's); the local client's 0
+        const bool heard = connected && peer && peer->last_heard_ms >= 0;
+        set_number(L, "ping", heard ? static_cast<double>(peer->ping_ms) : 0.0);
         set_number(L, "quiet",
-                   local ? 0.0
-                   : peer && peer->last_heard_ms >= 0
-                       ? static_cast<double>(now - peer->last_heard_ms)
-                       : -1.0);
+                   local   ? 0.0
+                   : heard ? static_cast<double>(now - peer->last_heard_ms)
+                           : -1.0);
         set_number(L, "maxSP", kMaxSimRate);
         lua_pushstring(L, "authorizedCommandSources");
         lua_newtable(L);
-        if (connected) {
+        if (!dropped) {
             lua_pushnumber(L, static_cast<double>(i + 1));
             lua_rawseti(L, -2, 1);
         }
         lua_rawset(L, -3);
         lua_pushstring(L, "ejectedBy");
         lua_newtable(L);
+        for (size_t k = 0; k < ejectors.size(); ++k) {
+            lua_pushnumber(L, static_cast<double>(ejectors[k] + 1));
+            lua_rawseti(L, -2, static_cast<int>(k + 1));
+        }
         lua_rawset(L, -3);
         lua_rawseti(L, -2, static_cast<int>(i + 1));
     }
@@ -214,6 +229,41 @@ void send_session_chat(lua_State* L) {
             mp.lobby_game->send_data(mp.clients[i].uid, bytes);
         }
     }
+}
+
+void eject_session_client(lua_State* L) {
+    const size_t count = session_client_count(L);
+    const double k = luaL_checknumber(L, 1);
+    if (!(k >= 1 && k <= static_cast<double>(count))) {
+        const int shown = !(k == k)  ? 0
+                          : k > 1e9  ? 1000000000
+                          : k < -1e9 ? -1000000000
+                                     : static_cast<int>(k);
+        luaL_error(L, "Invalid client index %d, must be >= 1 and <= %d", shown,
+                   static_cast<int>(count));
+    }
+    const auto index = static_cast<size_t>(k) - 1;
+    if (is_local(index)) luaL_error(L, "Can't eject ourselves!");
+    auto& mp = mp_net_state();
+    if (mp.session) mp.session->eject(static_cast<u32>(index));
+}
+
+void pump_disconnect_dialog(lua_State* L) {
+    if (!session_is_multiplayer()) return; // one local client: never shown
+    const int top = lua_gettop(L);
+    lua_pushstring(L, "__modules");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "/lua/ui/uimain.lua");
+        lua_rawget(L, -2);
+        if (lua_istable(L, -1)) {
+            lua_pushstring(L, "UpdateDisconnectDialog");
+            lua_gettable(L, -2);
+            if (lua_isfunction(L, -1) && lua_pcall(L, 0, 0, 0) != 0)
+                spdlog::warn("UpdateDisconnectDialog: {}", lua_tostring(L, -1));
+        }
+    }
+    lua_settop(L, top);
 }
 
 void reset_session_chat() {

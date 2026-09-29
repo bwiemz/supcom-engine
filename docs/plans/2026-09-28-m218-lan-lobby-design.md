@@ -125,7 +125,7 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
   - A lobby is known by its UI state (its registry), not the thread that
     calls it: retail calls `LaunchGame` from its countdown thread and
     `GetPeer` from its keepalive thread.
-- **M218d (this PR):** the game's session, as retail's in-game UI sees it
+- **M218d (#194):** the game's session, as retail's in-game UI sees it
   (Moho's rules in memory: moho-session-semantics):
   - `GetSessionClients`: one client per owner, numbered as its command
     source: `name` (its lobby name), `uid` (a string), `connected`,
@@ -144,9 +144,37 @@ The rules come from faf-re (`CLobby.cpp`, `CDiscoveryService.cpp`,
     starts). Each frame's pump calls `gamemain.ReceiveChat(sender, msg)`.
   - A network game's pause is refused (as Moho's with no timeouts left):
     pausing alone would stop this player's frames and drop them.
-- **M218e:** pause by source through the lockstep (timeouts, `Sync.PausedBy`,
-  `OnPause`/`OnResume`), `EjectSessionClient` and the disconnect dialog;
-  `LanHost`/`LanJoin` and their dialog go.
+- **M218e (this PR):** ejecting players, and retail's disconnect dialog:
+  - `EjectSessionClient(i)` (Moho's errors: an index the game hasn't, the
+    local client) starts the lockstep's drop of the client's source, the
+    one a timeout starts: the survivors agree its last frame and defeat
+    its army on the same tick. `LockstepSession::eject`, `ejectors` (who
+    reported it: `ejectedBy`) and `ejected` (a survivor reports this peer
+    dropped).
+  - A dropped (or being dropped) client is `connected = false`, with no
+    `authorizedCommandSources`, and reads as having no connection (ping 0,
+    quiet -1), as Moho closes an ejected client's; the host closes its
+    lobby connection too.
+  - Each frame of a network game calls retail's
+    `uimain.UpdateDisconnectDialog()`, as Moho's session does: the dialog
+    shows for a quiet player (over 5 s) or one gone and not yet dropped by
+    all still in, and closes once they have.
+  - An ejected player's game is over: once a survivor reports it dropped,
+    its session ticks no further and drops no one. Cut off from the host
+    (the star's hub), it would otherwise time every other player out and
+    play on alone; Moho's ejected client waits, its dialog showing everyone
+    gone.
+  - Found on the way: a drop defeated army `source`, where a lobby's game
+    numbers sources by owner (M218c); it now defeats the source's own army,
+    and none for an observer's.
+  - The two-process tests' ports (29741, 29742) sit below the OSes'
+    ephemeral ranges: in them, another test's socket took one and the host
+    couldn't listen. When one process fails, `lan_game.py` stops the other.
+- **M218f:** pause by source through the lockstep (timeouts,
+  `Sync.PausedBy`, `OnPause`/`OnResume`): frames must be able to carry
+  commands without advancing the sim, else resuming fast-forwards;
+  `LanHost`/`LanJoin` and their dialog go (the peer-drop CI test moves to
+  the lobby's path).
 
 Two fixes the launch found go separately, since single-player has them
 too:
@@ -235,3 +263,20 @@ too:
   pause is refused and the game plays on (both reach tick 150, no source
   dropped); its chat to everyone reaches both (the host's own, looped
   back).
+
+## Tests (M218e)
+- **Unit (`test_lockstep`):**
+  - a player ejects another still playing: its vote first, then the other
+    survivor's; both drop it on the same tick, in sync, its army defeated
+    and not another's; the ejected one knows (`ejected`) and neither ticks
+    on nor drops anyone; refusals (itself, no such player, twice);
+  - a player alone with the one it ejects drops it at once;
+  - a dropped player's own army is defeated, not the one numbered as its
+    source, and a dropped observer defeats none.
+- **Unit (`test_net_lobby`):** `EjectSessionClient`'s refusals in
+  single-player; the dialog isn't updated there; in a lobby's game the host
+  ejects Alice: she is disconnected, ejected by the host, without sources,
+  and the dialog is updated each frame.
+- **`data.lan_game_quit` (gate):** the joiner leaves at tick 120; the host
+  drops it by agreement, defeats its army, shows retail's disconnect dialog
+  and closes it, and plays on alone to tick 150 with no script error.
