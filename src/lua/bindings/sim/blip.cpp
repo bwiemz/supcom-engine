@@ -245,14 +245,12 @@ static int blip_IsSeenEver(lua_State* L) {
     i32 army = lua_isnumber(L, 2) ? static_cast<i32>(lua_tonumber(L, 2)) - 1
                                   : -1;
     auto* sim = get_sim(L);
-    if (sim && sim->visibility_grid() && army >= 0) {
-        auto& pos = e->position();
-        lua_pushboolean(
-            L, sim->visibility_grid()->ever_seen(pos.x, pos.z,
-                                                 static_cast<u32>(army)) ? 1 : 0);
-    } else {
-        lua_pushboolean(L, 0);
-    }
+    // Moho's LOSEver: the army has had the unit itself in sight (not merely
+    // its ground), and no FlushIntelInRect has taken that since.
+    const bool ever =
+        sim && army >= 0 &&
+        (army == e->army() || sim->ever_in_sight(e->entity_id(), static_cast<u32>(army)));
+    lua_pushboolean(L, ever ? 1 : 0);
     return 1;
 }
 

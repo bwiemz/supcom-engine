@@ -14,7 +14,6 @@ G ClearQueueGrid
 G ConTextMatches
 G ERROR
 G ExecLuaInSim
-G FlushIntelInRect
 G GenerateBuildTemplateFromSelection
 G GetArmy
 G IN_ClearKeyMap

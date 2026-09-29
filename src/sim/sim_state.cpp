@@ -1216,6 +1216,7 @@ void SimState::tick() {
     // next one).
     death_events_.clear();
     camera_shake_events_.clear();
+    intel_flush_events_.clear();
     // A loaded game has caught up: the player's orders count from here.
     if (resume_tick_ != 0 && tick_count_ >= resume_tick_) {
         resume_tick_ = 0;
@@ -1976,6 +1977,51 @@ void SimState::fire_on_intel_change(u32 entity_id, u32 army_idx,
     }
 
     lua_pop(L_, 1); // pop brain_tbl
+}
+
+void SimState::flush_intel_in_rect(i32 x0, i32 z0, i32 x1, i32 z1) {
+    const auto inside = [&](const Vector3& p) {
+        return p.x >= static_cast<f32>(x0) && p.x <= static_cast<f32>(x1) &&
+               p.z >= static_cast<f32>(z0) && p.z <= static_cast<f32>(z1);
+    };
+    IntelFlushEvent event{x0, z0, x1, z1, {}};
+    std::vector<u32> ids;
+    ids.reserve(blip_cache_.size());
+    for (const auto& entry : blip_cache_) ids.push_back(entry.first);
+    std::sort(ids.begin(), ids.end());
+    std::map<u32, u32> forgotten; // id -> armies
+    const u32 n = static_cast<u32>(std::min(army_count(), static_cast<size_t>(MAX_VIS_ARMIES)));
+    // Army by army, as Moho flushes each army's recon in turn. Looked up
+    // afresh each time: OnIntelChange runs scripts.
+    for (u32 a = 0; a < n; ++a) {
+        for (const u32 id : ids) {
+            const auto it = blip_cache_.find(id);
+            if (it == blip_cache_.end()) continue;
+            BlipSnapshot& snap = it->second[a];
+            if (snap.entity_army < 0 || !inside(snap.last_known_position)) continue;
+            if (const auto* e = entity_registry_.find(id); e && e->is_unit()) {
+                const std::string& layer = static_cast<const Unit*>(e)->layer();
+                if (layer == "Sub" || layer == "None" || layer.empty()) continue;
+            }
+            snap = BlipSnapshot{};
+            forgotten[id] |= 1u << a;
+            if (const auto ever = los_ever_.find(id); ever != los_ever_.end()) {
+                ever->second &= ~(1u << a);
+                if (ever->second == 0) los_ever_.erase(ever);
+            }
+            EntityVisSnapshot was;
+            if (const auto vis = prev_entity_vis_.find(id); vis != prev_entity_vis_.end()) {
+                was = vis->second[a];
+                vis->second[a] = EntityVisSnapshot{};
+            }
+            if (was.vision) fire_on_intel_change(id, a, "LOSNow", false);
+            if (was.radar) fire_on_intel_change(id, a, "Radar", false);
+            if (was.sonar) fire_on_intel_change(id, a, "Sonar", false);
+            if (was.omni) fire_on_intel_change(id, a, "Omni", false);
+        }
+    }
+    event.forgotten.assign(forgotten.begin(), forgotten.end());
+    intel_flush_events_.push_back(std::move(event));
 }
 
 void SimState::fire_on_detected_by(u32 entity_id, u32 army_idx) {

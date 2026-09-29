@@ -2347,7 +2347,8 @@ void Renderer::render(const sim::FrameView& view, sim::WorldEvents& events,
 
     // What the player's army sees this tick (everything, with the fog off)
     recon_.set_focus_army(fog_enabled_ ? player_army_ : -1);
-    recon_.update(view);
+    recon_.update(view, events.intel_flushes);
+    events.intel_flushes.clear();
     // A playable rect the scripts synced since: what's outside it now hides
     playable_rect_.apply(view);
 

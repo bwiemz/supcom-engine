@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::sim {
@@ -231,13 +232,21 @@ struct ShakeEventRecord {
     f32 max_shake = 1;
     f32 min_shake = 0;
 };
+/// A FlushIntelInRect (SimState::IntelFlushEvent): the rect, and each unit
+/// whose blips were lost, with a bit per army that lost one, in id order.
+struct IntelFlushRecord {
+    i32 x0 = 0, z0 = 0, x1 = 0, z1 = 0;
+    std::vector<std::pair<u32, u32>> forgotten;
+};
 /// Events of every tick captured since the renderer last took them.
 struct WorldEvents {
     std::vector<DeathEventRecord> deaths;
     std::vector<ShakeEventRecord> shakes;
+    std::vector<IntelFlushRecord> intel_flushes;
     void clear() {
         deaths.clear();
         shakes.clear();
+        intel_flushes.clear();
     }
 };
 

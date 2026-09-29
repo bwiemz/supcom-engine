@@ -389,6 +389,8 @@ void WorldHistory::capture(const SimState& sim) {
         events_.deaths.push_back({d.x, d.y, d.z, d.scale, d.army});
     for (const auto& s : sim.camera_shake_events())
         events_.shakes.push_back({s.x, s.z, s.radius, s.max_shake, s.min_shake});
+    for (const auto& f : sim.intel_flush_events())
+        events_.intel_flushes.push_back({f.x0, f.z0, f.x1, f.z1, f.forgotten});
 }
 
 void WorldHistory::clear() {

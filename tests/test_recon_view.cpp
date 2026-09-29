@@ -4,6 +4,10 @@
 #include "renderer/recon_view.hpp"
 #include "sim/world_snapshot.hpp"
 
+#include <span>
+#include <utility>
+#include <vector>
+
 using namespace osc;
 using map::VisFlag;
 using renderer::ReconView;
@@ -52,8 +56,9 @@ struct World {
     /// to counter (no cloak, stealth or water); off, a test sets its own.
     bool derive_masks = true;
 
-    /// The next tick, as `recon` sees it.
-    void tick(ReconView& recon) {
+    /// The next tick, as `recon` sees it (with the FlushIntelInRects since
+    /// the last).
+    void tick(ReconView& recon, std::span<const sim::IntelFlushRecord> flushes = {}) {
         ++snap.tick;
         if (derive_masks && snap.visibility)
             for (auto& e : snap.entities) {
@@ -70,7 +75,7 @@ struct World {
                         e.detected |= 1u << a;
                 }
             }
-        recon.update(sim::FrameView(&snap, &snap, 1.0f));
+        recon.update(sim::FrameView(&snap, &snap, 1.0f), flushes);
     }
 };
 
@@ -352,6 +357,43 @@ TEST_CASE("ReconView: a structure gone unseen is maybe dead, until its spot is s
     CHECK(recon.ghosts().size() == 1);
     recon.set_focus_army(2);
     CHECK(recon.ghosts().empty());
+}
+
+TEST_CASE("ReconView: a FlushIntelInRect forgets what it took from the player's army",
+          "[renderer][recon]") {
+    World w;
+    w.unit(1, 1, 100, 100, false); // a structure the flush takes from army 0
+    w.unit(2, 1, 140, 100, false); // one it took from army 1 alone
+    w.unit(3, 1, 200, 200, false); // one that dies unseen, in the rect
+    w.unit(4, 1, 240, 100, false); // one outside it
+    ReconView recon;
+    recon.set_focus_army(0);
+    for (const auto& [x, z] :
+         {std::pair{100.0f, 100.0f}, {140.0f, 100.0f}, {200.0f, 200.0f}, {240.0f, 100.0f}})
+        w.snap.visibility->paint_circle(0, x, z, 12.0f, VisFlag::Vision);
+    w.tick(recon);
+    w.sense(0, 0, VisFlag::None);
+    w.tick(recon);
+    std::erase_if(w.snap.entities, [](const sim::EntityRecord& e) { return e.id == 3; });
+    w.tick(recon);
+    REQUIRE(recon.ghosts().size() == 1);
+    CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
+
+    const sim::IntelFlushRecord flush{90, 90, 210, 210, {{1, 1u << 0}, {2, 1u << 1}}};
+    w.tick(recon, {&flush, 1});
+    CHECK(recon.sight(*w.find(1)) == Sight::Hidden);
+    CHECK(recon.frozen_pose(1) == nullptr);
+    CHECK(recon.sight(*w.find(2)) == Sight::Remembered);
+    CHECK(recon.sight(*w.find(4)) == Sight::Remembered);
+    CHECK(recon.ghosts().empty());
+    CHECK_FALSE(recon.maybe_dead(3));
+
+    // Seen again, it is remembered again.
+    w.sense(100, 100, VisFlag::Vision);
+    w.tick(recon);
+    w.sense(0, 0, VisFlag::None);
+    w.tick(recon);
+    CHECK(recon.sight(*w.find(1)) == Sight::Remembered);
 }
 
 TEST_CASE("ReconView: effects show where the player's army sees", "[renderer][recon]") {
