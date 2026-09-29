@@ -77,6 +77,8 @@ void print_usage() {
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
               << "                     more just before --save-at's save\n"
+              << "  --bench <file>     With --ticks or --ai-skirmish: write each tick's time\n"
+              << "                     and the game's checksum as JSON (tools/bench.py)\n"
               << "  --profile          Enable performance profiling (prints summary at exit)\n"
               << "  --instrument       Interactive instrumented mode (smoke report on exit)\n"
               << "  --log <file>       Write the log there (default: a player's game logs to\n"
@@ -244,6 +246,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.map_path = o.replay_to_play->setup.scenario;
     }
     o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
+    o.bench_report = parse_string_arg(argc, argv, "--bench", "");
     // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
     // --watch <file>: open a replay in the game, as the replay dialog does.
     // --replay-flow-test: the dialog's own path (the first replay

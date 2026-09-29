@@ -145,8 +145,10 @@ if(OSC_BUILD_TESTS)
         add_test(NAME arch.install
                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/check_install.py
                          ${CMAKE_BINARY_DIR} $<CONFIG> ${PROJECT_VERSION})
+        add_test(NAME arch.bench_self_test
+                 COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/bench.py --self-test)
         set_tests_properties(arch.version arch.version_self_test arch.install
-                             PROPERTIES LABELS "arch" TIMEOUT 120)
+                             arch.bench_self_test PROPERTIES LABELS "arch" TIMEOUT 120)
     endif()
 endif()
 

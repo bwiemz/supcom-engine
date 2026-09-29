@@ -7,7 +7,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <psapi.h>
 #else
+#include <sys/resource.h>
 #include <sys/utsname.h>
 
 #include <fstream>
@@ -39,6 +41,13 @@ std::string os_description() {
     return text;
 }
 
+unsigned long long peak_memory_bytes() {
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (!K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) return 0;
+    return counters.PeakWorkingSetSize;
+}
+
 #else
 
 std::string os_description() {
@@ -59,6 +68,13 @@ std::string os_description() {
         break;
     }
     return text;
+}
+
+unsigned long long peak_memory_bytes() {
+    rusage usage{};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) return 0;
+    // Linux gives kilobytes (macOS would give bytes)
+    return static_cast<unsigned long long>(usage.ru_maxrss) * 1024ULL;
 }
 
 #endif

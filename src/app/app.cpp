@@ -125,7 +125,10 @@ App::App(int arg_count, char* arg_values[], TestModes* test_modes, lua::InitConf
              beat_registry,
              game_state_mgr,
              wld_provider,
-             sound} {}
+             sound} {
+    // Loading counts from here
+    if (!opt.bench_report.empty()) bench.emplace(opt.bench_report);
+}
 
 App::~App() = default;
 
