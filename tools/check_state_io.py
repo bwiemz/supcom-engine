@@ -92,7 +92,7 @@ SERIALIZERS = [
     "src/sim/sim_snapshot.cpp",
 ]
 
-_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
+_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
 _WORD = re.compile(r"[A-Za-z_]\w*")
 
 
@@ -105,7 +105,9 @@ def find_block(text: str, name: str) -> tuple[int, int] | None:
     as (start after the brace, end at the matching brace)."""
     lo, hi = 0, len(text)
     for part in name.split("::"):
-        m = re.compile(r"\b(?:class|struct)\s+" + re.escape(part) + r"\b[^;{]*\{").search(text, lo, hi)
+        m = re.compile(r"\b(?:class|struct)\s+" + re.escape(part) + r"\b[^;{]*\{").search(
+            text, lo, hi
+        )
         if not m:
             return None
         depth, i = 1, m.end()
@@ -121,7 +123,9 @@ def find_block(text: str, name: str) -> tuple[int, int] | None:
 
 def split_top(s: str, sep: str) -> list[str]:
     """`s` split on `sep` outside (), <>, [] and {}."""
-    parts, depth, cur = [], 0, []
+    parts: list[str] = []
+    cur: list[str] = []
+    depth = 0
     for c in s:
         if c in "(<[{":
             depth += 1
@@ -196,9 +200,9 @@ def check(root: Path) -> list[str]:
         for name, at in members(text[block[0] : block[1]]):
             if name not in io_words:
                 problems.append(
-                    f"{header}:{base_line + at}: {type_name}::{name} is in no snapshot serializer "
-                    "(src/sim/state_io*.cpp): write it, or name it in its class's serializer "
-                    "with why it isn't"
+                    f"{header}:{base_line + at}: {type_name}::{name} is in no snapshot serializer"
+                    + " (src/sim/state_io*.cpp): write it, or name it in its class's serializer"
+                    + " with why it isn't"
                 )
     return problems
 
