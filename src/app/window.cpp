@@ -9,6 +9,7 @@
 #include "core/profiler.hpp"
 #include "core/test_status.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/session_clients.hpp"
 #include "lua/factory_queue.hpp"
 #include "lua/lan_lobby.hpp"
 #include "lua/moho_bindings.hpp"
@@ -671,6 +672,7 @@ std::optional<int> App::run_window() {
             // The lobbies' networks: what has come, into their callbacks
             // (M218a)
             osc::lua::pump_net_lobbies(ui_lua_state.raw(), osc::lua::net_lobby_clock_ms());
+            osc::lua::pump_session_chat(ui_lua_state.raw()); // M218d
 
             // Resume UI coroutines
             ++ui_frame_count;

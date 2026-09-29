@@ -57,6 +57,7 @@
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/session_clients.hpp"
 #include "lua/sim_sync.hpp"
 
 #include <algorithm>
@@ -2364,6 +2365,8 @@ static int l_SessionGetLocalCommandSource(lua_State* L) {
 /// SessionGetCommandSourceNames() -> player name per command source: the
 /// human armies' nicknames in army order (AIs have no command source).
 static int l_SessionGetCommandSourceNames(lua_State* L) {
+    // A network game's: its clients', by source (M218d)
+    if (push_network_source_names(L)) return 1;
     lua_newtable(L);
     auto* sim = get_sim(L);
     if (!sim) return 1;
@@ -3586,6 +3589,13 @@ void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {
 
 /// SessionRequestPause() — request the sim to pause
 static int l_SessionRequestPause(lua_State* L) {
+    // A network game's pause goes through the lockstep (M218e); until then
+    // it is refused, as Moho's is with no timeouts left: pausing alone
+    // would stop this player's frames and drop them from the game
+    if (session_is_multiplayer()) {
+        spdlog::info("SessionRequestPause: a network game can't pause yet");
+        return 0;
+    }
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->set_paused(true, L);
     return 0;
@@ -3593,6 +3603,7 @@ static int l_SessionRequestPause(lua_State* L) {
 
 /// SessionResume() — resume the sim
 static int l_SessionResume(lua_State* L) {
+    if (session_is_multiplayer()) return 0; // (never paused: see above)
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->set_paused(false, L);
     return 0;
@@ -4102,12 +4113,15 @@ static void dispatch_chat_message(lua_State* L, int msg_idx, const char* warning
     }
 }
 
-/// SessionSendChatMessage(clients, msgTable) — send a chat message.
-/// In single-player, echoes to the registered chat function.
+/// SessionSendChatMessage([clients,] msg) — Moho's (M218d): to every client
+/// or those chosen, each receiving it through gamemain.lua's ReceiveChat.
+/// The engine's own chat (RegisterChatFunc, GetChatHistory) hears it too.
 static int l_SessionSendChatMessage(lua_State* L) {
-    if (!lua_istable(L, 2)) return 0;
-    append_chat_history(L, 2);
-    dispatch_chat_message(L, 2, "ChatFunc");
+    send_session_chat(L);
+    const int msg = lua_gettop(L) >= 2 ? 2 : 1;
+    if (!lua_istable(L, msg)) return 0;
+    append_chat_history(L, msg);
+    dispatch_chat_message(L, msg, "ChatFunc");
     return 0;
 }
 
@@ -4138,15 +4152,16 @@ static int l_GetChatHistory(lua_State* L) {
     return 1;
 }
 
-/// GetSessionClients() → table of connected players.
-/// In single-player, returns just the local player.
+/// GetSessionClients() → the game's clients (nil without a game), as
+/// Moho's (M218d): name, uid, connected, ping, quiet, local, maxSP,
+/// authorizedCommandSources, ejectedBy.
 static int l_GetSessionClients(lua_State* L) {
-    lua_newtable(L);
-    lua_newtable(L); // client 1
-    lua_pushstring(L, "id"); lua_pushstring(L, "0"); lua_rawset(L, -3);
-    lua_pushstring(L, "name"); lua_pushstring(L, "Player"); lua_rawset(L, -3);
-    lua_pushstring(L, "army"); lua_pushnumber(L, 0); lua_rawset(L, -3);
-    lua_rawseti(L, -2, 1);
+    return push_session_clients(L);
+}
+
+/// SessionIsMultiplayer() → a network game (a lobby's "UDP"/"TCP").
+static int l_SessionIsMultiplayer(lua_State* L) {
+    lua_pushboolean(L, session_is_multiplayer() ? 1 : 0);
     return 1;
 }
 
@@ -4577,6 +4592,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("SendSystemMessage", l_SendSystemMessage);
     state.register_function("GetChatHistory", l_GetChatHistory);
     state.register_function("GetSessionClients", l_GetSessionClients);
+    state.register_function("SessionIsMultiplayer", l_SessionIsMultiplayer);
 
     // Engine state queries (M144c)
     state.register_function("GetCurrentUIState", l_GetCurrentUIState);

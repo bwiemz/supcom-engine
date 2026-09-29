@@ -1,6 +1,8 @@
 #include "lua/mp_net_state.hpp"
 
 #include "lua/lan_lobby.hpp"
+#include "lua/session_clients.hpp"
+#include "sim/lobby_net.hpp"
 #include "sim/lockstep_session.hpp"
 #include "sim/mux_transport.hpp"
 #include "sim/net_transport.hpp"
@@ -23,8 +25,10 @@ void MpNetState::reset() {
     lobby.reset();
     session.reset();
     mux.reset();
+    lobby_game = nullptr;
     lobby_transport.reset();
     source_armies.clear();
+    clients.clear();
     host_tcp = nullptr;
     transport_ready = false;
 }
@@ -90,8 +94,9 @@ void mp_pump() {
 
 LanLobby* mp_lobby() { return mp_net_state().lobby.get(); }
 
-void mp_begin_lobby_game(std::unique_ptr<osc::sim::INetTransport> transport, bool host,
-                         osc::u32 local_source, std::vector<osc::i32> armies, osc::u64 seed) {
+void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport, bool host,
+                         osc::u32 local_source, std::vector<osc::i32> armies,
+                         std::vector<SessionClient> clients, osc::u64 seed) {
     auto& s = mp_net_state();
     s.reset(); // a LAN transport set up before (LanHost/LanJoin) goes
     s.role = host ? MpNetState::Role::Host : MpNetState::Role::Join;
@@ -100,6 +105,8 @@ void mp_begin_lobby_game(std::unique_ptr<osc::sim::INetTransport> transport, boo
     for (osc::u32 source = 0; source < armies.size(); ++source) s.all_sources.push_back(source);
     s.source_armies = std::move(armies);
     s.seed = seed;
+    s.clients = std::move(clients);
+    s.lobby_game = transport.get();
     s.lobby_transport = std::move(transport);
     s.transport_ready = true;
     spdlog::info("[mp] a lobby's game: {} command sources, this player's {} (army {}), seed "
@@ -139,12 +146,15 @@ bool mp_attach_session(osc::sim::SimState& sim) {
 }
 
 void mp_teardown() {
+    reset_session_chat(); // the game's chat not yet delivered goes with it
     auto& s = mp_net_state();
     s.lobby.reset();     // holds a reference into the mux
     s.session.reset();   // holds a reference into the mux (or the lobby's transport)
     s.mux.reset();       // owns the transport
+    s.lobby_game = nullptr;
     s.lobby_transport.reset();
     s.source_armies.clear();
+    s.clients.clear();
     s.host_tcp = nullptr;
     s.transport_ready = false;
     s.role = MpNetState::Role::None;

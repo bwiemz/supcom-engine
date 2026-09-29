@@ -590,9 +590,10 @@ std::optional<size_t> ffa_army_count(lua_State* L, int info) {
 /// A launch's command sources, as Moho's LaunchGame assigns them: one per
 /// owner, the humans' by slot and then the observers'.
 struct LaunchSources {
-    std::vector<u32> owners; ///< source s's owner (a lobby uid)
-    std::vector<i32> armies; ///< source s's army (-1: an observer's)
-    size_t players = 0;      ///< PlayerOptions' entries, AIs too
+    std::vector<u32> owners;        ///< source s's owner (a lobby uid)
+    std::vector<i32> armies;        ///< source s's army (-1: an observer's)
+    std::vector<std::string> names; ///< source s's PlayerName in the config
+    size_t players = 0;             ///< PlayerOptions' entries, AIs too
 };
 
 LaunchSources read_launch_sources(lua_State* L, int cfg) {
@@ -601,6 +602,7 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
         bool human = true;
         bool owned = false;
         u32 owner = 0;
+        std::string name;
     };
     // Each entry of the table at cfg[field] that is a table: its key, and
     // Human and OwnerID
@@ -626,6 +628,10 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
                     lua_gettable(L, -2);
                     e.owned = parse_uid(L, lua_gettop(L), e.owner);
                     lua_pop(L, 1);
+                    lua_pushstring(L, "PlayerName");
+                    lua_gettable(L, -2);
+                    if (lua_type(L, -1) == LUA_TSTRING) e.name = lua_tostring(L, -1);
+                    lua_pop(L, 1);
                     entries.push_back(e);
                 }
                 lua_pop(L, 1);
@@ -640,10 +646,11 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
         return entries;
     };
     LaunchSources out;
-    const auto add = [&](u32 owner, i32 army) {
+    const auto add = [&](u32 owner, i32 army, const std::string& name) {
         if (std::find(out.owners.begin(), out.owners.end(), owner) != out.owners.end()) return;
         out.owners.push_back(owner);
         out.armies.push_back(army);
+        out.names.push_back(name);
     };
     const std::vector<Entry> players = read("PlayerOptions");
     out.players = players.size();
@@ -652,11 +659,11 @@ LaunchSources read_launch_sources(lua_State* L, int cfg) {
     i32 army = 0;
     for (const Entry& e : players) {
         const bool slot = e.key != std::numeric_limits<double>::infinity();
-        if (e.human && e.owned) add(e.owner, slot ? army : -1);
+        if (e.human && e.owned) add(e.owner, slot ? army : -1, e.name);
         if (slot) ++army;
     }
     for (const Entry& e : read("Observers"))
-        if (e.owned) add(e.owner, -1);
+        if (e.owned) add(e.owner, -1, e.name);
     return out;
 }
 
@@ -722,9 +729,20 @@ int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
     lobby.responder.reset(); // no longer a game to find
     const u64 seed = lobby.net->hosted_time();
     const auto local = static_cast<u32>(mine - sources.owners.begin());
+    // Each client by its lobby name, as Moho's are (the config's, for one
+    // the lobby no longer has)
+    std::vector<SessionClient> clients;
+    for (size_t s = 0; s < sources.owners.size(); ++s) {
+        const u32 uid = sources.owners[s];
+        const sim::LobbyPeer* peer = lobby.net->peer(uid);
+        std::string name = uid == lobby.net->local_uid() ? lobby.net->local_name()
+                           : peer                        ? peer->name
+                                                         : sources.names[s];
+        clients.push_back({uid, name.empty() ? "Player" : name});
+    }
     mp_begin_lobby_game(
         std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), host,
-        local, sources.armies, seed);
+        local, sources.armies, std::move(clients), seed);
     // The session, as single-player's starts: the frame loop loads it
     lua_pushvalue(L, 2);
     if (lua_pcall(L, 1, 0, 0) != 0) {

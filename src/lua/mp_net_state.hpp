@@ -8,6 +8,7 @@
 
 namespace osc::sim {
 class INetTransport;
+class LobbyGameTransport;
 class TcpTransport;
 class MuxTransport;
 class LockstepSession;
@@ -17,6 +18,12 @@ class SimState;
 namespace osc::lua {
 
 class LanLobby;
+
+/// A client of a lobby's game (M218d): one per owner, by command source.
+struct SessionClient {
+    osc::u32 uid = 0; ///< its lobby uid
+    std::string name; ///< its lobby name
+};
 
 // Process-wide multiplayer network state. Populated by the lobby HostGame /
 // JoinGame bindings (which create the TcpTransport, wrap it in a MuxTransport,
@@ -43,7 +50,10 @@ struct MpNetState {
     // source_armies[s] (-1: an observer's). Without them source s plays
     // army s, as the fixed 1v1 LAN handshake assumes.
     std::unique_ptr<osc::sim::INetTransport> lobby_transport;
+    osc::sim::LobbyGameTransport* lobby_game = nullptr; ///< non-owning: lobby_transport
     std::vector<osc::i32> source_armies;
+    /// The clients, by client index (= command source), M218d
+    std::vector<SessionClient> clients;
 
     bool active() const { return session != nullptr; }
     /// The army `source` plays (-1: none).
@@ -76,8 +86,10 @@ LanLobby* mp_lobby();
 // owners by slot, then the observers); `armies[s]` is source s's army (-1:
 // an observer's), and `local_source` this player's. Replaces any LAN
 // transport set up before.
-void mp_begin_lobby_game(std::unique_ptr<osc::sim::INetTransport> transport, bool host,
-                         osc::u32 local_source, std::vector<osc::i32> armies, osc::u64 seed);
+/// `clients[s]`: source s's owner and name.
+void mp_begin_lobby_game(std::unique_ptr<osc::sim::LobbyGameTransport> transport, bool host,
+                         osc::u32 local_source, std::vector<osc::i32> armies,
+                         std::vector<SessionClient> clients, osc::u64 seed);
 
 // At game launch: if a transport is ready, build the LockstepSession over the
 // lobby's connections or the mux game channel, install SimState's command sink, and seed the sim
