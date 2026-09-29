@@ -38,6 +38,7 @@
 #include "ltable.h"
 #include "lzio.h"
 
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -78,6 +79,39 @@ enum Flag : std::uint8_t {
   F_FIXED = 1,   // a string the collector never frees (luaS_fix)
   F_FROZEN = 1,  // a frozen table (lua_freeze)
 };
+
+// A full userdata's payload, in the stream.
+enum Payload : std::uint8_t {
+  U_RAW = 0,   // its bytes as they are
+  U_IOFILE,    // an io library file: which standard stream it is
+};
+
+// liolib.c's FileHandle (its metatable is registry["FILE*"]). Its FILE*
+// is the process's own, so a snapshot names the standard stream it is:
+// 0 closed, 1 stdin, 2 stdout, 3 stderr; any other open file can't be
+// saved.
+struct IoFile {
+  FILE *f;
+  int ispipe;
+};
+
+// The io library's file metatable, if the state has one: found without
+// making a string (a save changes nothing).
+Table *io_file_meta(lua_State *L) {
+  Table *reg = hvalue(registry(L));
+  for (int i = 0; i < sizenode(reg); ++i) {
+    Node *n = gnode(reg, i);
+    if (ttisstring(gkey(n)) && ttistable(gval(n)) &&
+        std::strcmp(getstr(tsvalue(gkey(n))), "FILE*") == 0)
+      return hvalue(gval(n));
+  }
+  return nullptr;
+}
+
+bool is_io_file(lua_State *L, Table *io_meta, const Udata *u) {
+  (void)L;
+  return io_meta != nullptr && u->uv.metatable == io_meta && u->uv.len == sizeof(IoFile);
+}
 
 // A table whose keys all hash by value is written slot by slot and comes
 // back in the same slots, iterating as it did; one with a key that hashes
@@ -188,6 +222,7 @@ class Persister {
     if (L_->ci != L_->base_ci || L_->top != L_->base || L_->openupval != nullptr)
       return "the main thread is not at rest (its stack holds values)";
     collect_strings();
+    io_meta_ = io_file_meta(L_);
     // The roots, as the collector's mark has them (lgc.c's markroot).
     visit(registry(L_));
     visit(gt(L_));
@@ -487,7 +522,20 @@ class Persister {
       case LUA_TUSERDATA: {
         Udata *u = gcotou(o);
         object(u->uv.metatable != hvalue(defaultmeta(L_)) ? valtogco(u->uv.metatable) : nullptr);
-        w_.raw(u + 1, u->uv.len);
+        if (is_io_file(L_, io_meta_, u)) {
+          const IoFile *file = reinterpret_cast<const IoFile *>(u + 1);
+          std::uint8_t stream = 0;
+          if (file->f == stdin) stream = 1;
+          else if (file->f == stdout) stream = 2;
+          else if (file->f == stderr) stream = 3;
+          else if (file->f != nullptr && err_.empty()) err_ = "a file open in the io library";
+          w_.u8(U_IOFILE);
+          w_.u8(stream);
+          w_.i32(file->ispipe);
+        } else {
+          w_.u8(U_RAW);
+          w_.raw(u + 1, u->uv.len);
+        }
         break;
       }
     }
@@ -566,6 +614,7 @@ class Persister {
   std::unordered_map<const GCObject *, std::uint32_t> index_;
   std::unordered_set<const GCObject *> strings_;
   std::unordered_map<const UpVal *, std::pair<std::uint32_t, std::int32_t>> open_;
+  Table *io_meta_ = nullptr;
 };
 
 // ----------------------------------------------------------------- loading
@@ -657,6 +706,10 @@ class Unpersister {
     // collection. The collection leaves the threshold as the saved state's
     // mode has it.
     for (const Created &c : objs_) c.o->gch.marked |= 1;
+    // The old heap's userdata go without their finalizers: those would run
+    // the old heap's code against the new registry.
+    for (GCObject *o = g_->rootudata; o != nullptr; o = o->gch.next)
+      if (!(o->gch.marked & 1)) gcotou(o)->uv.metatable = hvalue(defaultmeta(L_));
     g_->lazysweep = 0;
     g_->manualgc = manual ? 1 : 0;
     luaC_collectgarbage(L_);
@@ -938,7 +991,20 @@ class Unpersister {
       case K_USERDATA: {
         Udata *u = gcotou(c.o);
         u->uv.metatable = metatable();
-        r_.raw(u + 1, u->uv.len);
+        const std::uint8_t payload = r_.u8();
+        if (payload == U_RAW) {
+          r_.raw(u + 1, u->uv.len);
+        } else if (payload == U_IOFILE) {
+          if (u->uv.len != sizeof(IoFile)) return fail("an io file of another size");
+          IoFile *file = reinterpret_cast<IoFile *>(u + 1);
+          const std::uint8_t stream = r_.u8();
+          file->ispipe = r_.i32();
+          FILE *const streams[4] = {nullptr, stdin, stdout, stderr};
+          if (stream > 3) return fail("an io file of no stream");
+          file->f = streams[stream];
+        } else {
+          return fail("a userdata of an unknown kind");
+        }
         break;
       }
     }
@@ -1069,7 +1135,10 @@ std::string lua_unpersist(lua_State *L, std::string_view in, const lua_PersistHo
   LoadCall call{&u};
   const lu_mem threshold = G(L)->GCthreshold;
   const int status = luaD_rawrunprotected(L, load_protected, &call);
-  if (status != 0 && u.err.empty()) u.err = "out of memory, or a Lua error, while loading";
+  if (status != 0 && u.err.empty()) {
+    u.err = status == LUA_ERRMEM ? "out of memory while loading" : "a Lua error while loading";
+    if (lua_type(L, -1) == LUA_TSTRING) u.err += std::string(": ") + lua_tostring(L, -1);
+  }
   if (!u.err.empty() && !u.committed) {
     u.discard();
     G(L)->GCthreshold = threshold;

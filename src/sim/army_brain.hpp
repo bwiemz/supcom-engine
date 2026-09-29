@@ -46,6 +46,7 @@ struct EconomyState {
 /// The C++ backing object for moho.aibrain_methods.
 /// Each army in the game has one ArmyBrain.
 class ArmyBrain {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     // --- Identity ---
     i32 index() const { return index_; }

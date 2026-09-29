@@ -15,6 +15,7 @@ namespace osc::sim {
 /// weapons with EnergyRequired (OverCharge).
 /// Pattern: CreateEconomyEvent → WaitFor → RemoveEconomyEvent
 class EconomyEvent : public Waitable {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     EconomyEvent(u32 unit_id, f64 mass_drain, f64 energy_drain, f64 duration)
         : unit_id_(unit_id)
@@ -83,6 +84,7 @@ private:
 
 /// Owns all active economy events.
 class EconomyEventRegistry {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     EconomyEvent* create(u32 unit_id, f64 mass, f64 energy, f64 duration) {
         auto evt = std::make_unique<EconomyEvent>(unit_id, mass, energy, duration);

@@ -26,6 +26,7 @@ struct TransportLayout {
 /// an attach size, that many small "hook" bones nearest the point; it holds
 /// every one of them until it is released.
 class TransportSlots {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     /// A unit's slot: the transport bone it hangs from, its own bone it
     /// hangs by (-1: its centre), and the bones it holds.

@@ -19,6 +19,7 @@ namespace osc::sim {
 /// SetWeaponPriorities reuses and clears its table right after calling
 /// SetTargetingPriorities), so compiling at that moment matches it.
 class CategoryExpr {
+    friend struct StateIO; // snapshots (state_io.hpp)
 public:
     enum class Op : unsigned char { None, All, Name, Union, Intersection, Difference };
 
