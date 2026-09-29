@@ -239,6 +239,23 @@ opensupcom --version                 # OpenSupCom 0.1.0 (<git revision>)
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
+**Packages** (what a release carries; `.github/workflows/release.yml` builds
+them on a `v*` tag):
+
+```bash
+# Linux: an AppImage (runs on glibc 2.35+, e.g. Ubuntu 22.04, SteamOS) and a tarball
+cmake --preset linux-release -DOSC_BUILD_TESTS=OFF -DOSC_STATIC_RUNTIME=ON
+cmake --build build/linux-release --target opensupcom
+tools/package/appimage.sh build/linux-release dist
+(cd build/linux-release && cpack -G TGZ -B ../../dist)
+tools/package/check_linux_package.sh dist   # MAX_GLIBC=<yours> on a newer distro
+
+# Windows: a zip with the game, its DLLs and the Visual C++ runtime
+cmake --preset default -DOSC_BUILD_TESTS=OFF
+cmake --build build --config Release --target opensupcom
+cd build && cpack -G ZIP -C Release -B ../dist
+```
+
 ### Dependencies (managed by vcpkg)
 
 | Package | Purpose |

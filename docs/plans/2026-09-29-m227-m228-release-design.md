@@ -47,7 +47,8 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
   `share/icons/hicolor/scalable/apps/opensupcom.svg` (an original geometric icon,
   with nothing from FA's art or branding); `share/doc/opensupcom/` gets README,
   LICENSE and CHANGELOG. The test runners and tools are not installed.
-- `CHANGELOG.md` (Keep a Changelog). 0.1.0 summarises the phases so far.
+- `CHANGELOG.md` (Keep a Changelog). `[Unreleased]` summarises the work so far;
+  the first release will be 0.1.0.
   Versioning follows SemVer, 0.x until the 1.0 criteria (M230). A release bumps
   `project(VERSION)` and vcpkg.json's version together; a lint test checks that they
   agree.
@@ -56,16 +57,25 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
 
 ## M227b — Packages and the release workflow
 
-- `OSC_STATIC_RUNTIME` (default OFF): `-static-libstdc++ -static-libgcc` on Linux,
-  and the static MSVC runtime on Windows (vcpkg triplet `x64-windows-static`). This
-  gives one self-contained executable per OS. Vulkan's loader stays the system's:
-  every driver installs one, and a bundled one would bypass the user's ICDs.
-- A `release` preset per OS: Release, static runtime, tests off.
+- `OSC_STATIC_RUNTIME` (default OFF): `-static-libstdc++ -static-libgcc` on Linux.
+  The game then asks a player's system for only glibc and the Vulkan loader. Vulkan's
+  loader stays the system's: every driver installs one, and a bundled one would
+  bypass the user's ICDs.
+- Windows keeps the dynamic vcpkg triplet CI already builds and caches. A static
+  triplet would mean a second full dependency build. Instead, the install puts the
+  vcpkg DLLs (M227a) and the Visual C++ runtime (`InstallRequiredSystemLibraries`)
+  beside the game, so no redistributable needs installing. Windows 10 and later carry
+  the universal CRT.
 - `tools/package/appimage.sh <build> <out>`: installs to an AppDir, adds AppRun, the
-  desktop file and the icon, and runs a pinned `appimagetool` (download checked
-  against a sha256) → `OpenSupCom-<ver>-x86_64.AppImage`. CPack also makes a plain
-  `.tar.gz`.
-- Windows: CPack ZIP → `OpenSupCom-<ver>-win64.zip` (the exe, docs).
+  desktop file and the icon, and packs it with a pinned `appimagetool` (1.9.1) and
+  type-2 runtime (20251108). Each download is checked against its sha256, and the
+  runtime's signature was verified against its release key when it was pinned. The
+  result is `OpenSupCom-<ver>-x86_64.AppImage`. CPack also makes a plain
+  `OpenSupCom-<ver>-linux-x86_64.tar.gz`.
+- Windows: CPack ZIP → `OpenSupCom-<ver>-win64.zip` (the exe, its DLLs, the docs).
+- `tools/package/check_linux_package.sh <dist>` runs both Linux packages' `--version`.
+  It also checks that the game needs nothing from the system beyond the Vulkan loader
+  and glibc, and no glibc newer than 2.35 (Ubuntu 22.04's).
 - `.github/workflows/release.yml`:
   - on `v*` tags: builds both packages on ubuntu-22.04 (an older glibc, so the
     AppImage runs on older distributions and SteamOS) and windows-2022, runs each
@@ -74,7 +84,10 @@ or when started from a desktop menu, may be unwritable or somewhere unexpected.)
   - on pull requests that touch packaging: the same, minus the release, so a
     packaging change is proven before a tag needs it.
 - Verified locally: build the AppImage, run `--version`, `--print-install`, and a
-  short headless skirmish from it against the Steam install.
+  short headless skirmish from it against the Steam install. CI builds on 22.04 with
+  GCC 13 from the toolchain PPA (22.04's own GCC 11 is older than any compiler CI
+  tests the project with); the static C++ runtime keeps GCC 13's libstdc++ from
+  becoming a requirement.
 
 ## M228a — First run: finding FA
 
