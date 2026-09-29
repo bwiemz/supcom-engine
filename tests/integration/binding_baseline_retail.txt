@@ -34,7 +34,5 @@ M PickBestAttackVector
 M RecoilImpulse
 M SetDamageRadius
 M SetWeaponDisableByLabel
-M UnloadAllAtLocation
-M UseFerryBeacon
 M Whack
 M write
