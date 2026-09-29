@@ -30,7 +30,8 @@ const char* save_load_error_name(SaveLoadError error);
 /// SimState::start_resume); since a replay plays back identically on the
 /// build that recorded it, the loaded game is the saved one.
 struct SavedGame {
-    static constexpr u32 kVersion = 1;
+    /// 2: the game's snapshot (M208c)
+    static constexpr u32 kVersion = 2;
 
     u32 version = kVersion;
     /// The build that saved it: only that build is known to replay it as it
@@ -39,6 +40,10 @@ struct SavedGame {
     std::string build;
     std::string name; ///< the name the player gave it
     u32 tick = 0;     ///< the tick it was saved on: the game resumes after it
+    /// The game's state at `tick` (sim_snapshot.hpp; M208c): a load restores
+    /// it at once, where the history would take as long as the game did.
+    /// Empty when it couldn't be taken: the load catches up instead.
+    std::vector<u8> snapshot;
     Replay game;
 
     std::vector<u8> serialize() const;
@@ -47,7 +52,8 @@ struct SavedGame {
 };
 
 /// The game `sim` is playing, saved as it stands between ticks. `sim` must
-/// be recording (SimState::set_recording) since its first tick.
-SavedGame save_game(const SimState& sim, std::string name);
+/// be recording (SimState::set_recording) since its first tick. With
+/// `snapshot`, the save carries the game's state too.
+SavedGame save_game(SimState& sim, std::string name, bool snapshot = true);
 
 } // namespace osc::sim

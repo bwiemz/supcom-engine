@@ -87,9 +87,11 @@ std::optional<osc::sim::Replay> load_replay(const std::string& path) {
 /// --scripted-orders: army 1 also takes a player's orders, routed as a
 /// player's so a recording holds them: moves, now and then a fire state or
 /// a pause (SimCallbacks) and a Stop. Picked from their own random stream,
-/// never the sim's.
-void issue_scripted_orders(osc::sim::SimState& sim, osc::sim::SimRandom& rng, osc::u32 tick) {
+/// never the sim's, seeded by the tick: they follow from the game as it
+/// stands, so a game restored from a save (M208c) is given the same ones.
+void issue_scripted_orders(osc::sim::SimState& sim, osc::u32 tick) {
     if (tick % 40 != 20 || !sim.terrain()) return;
+    osc::sim::SimRandom rng(0x5C817ED0ull ^ (static_cast<osc::u64>(tick) * 0x9E3779B97F4A7C15ull));
     std::vector<osc::u32> movers, all; // army 1's live units, in id order
     sim.entity_registry().for_each([&](const osc::sim::Entity& e) {
         if (!e.is_unit() || e.destroyed() || e.army() != 0) return;

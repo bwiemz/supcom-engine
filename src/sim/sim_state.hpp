@@ -423,6 +423,11 @@ public:
     /// again. Orders it holds for later ticks (given before the save, not
     /// yet run) run when they fall due.
     void start_resume(const Replay& saved);
+    /// A loaded game restored from its snapshot (M208c): the save's history
+    /// up to its tick is this game's recording, as if it had been played
+    /// here. Its orders for later ticks are the restored scheduler's: they
+    /// join the recording as they run.
+    void adopt_history(const Replay& saved);
     /// Catching up a loaded game. It is not a replay: the UI's
     /// SessionIsReplay() stays false.
     bool resuming() const { return resume_tick_ != 0; }

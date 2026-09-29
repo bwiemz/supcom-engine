@@ -77,8 +77,10 @@ void print_usage() {
               << "  --replay <file>    Play a recorded game headlessly, checking every tick's\n"
               << "                     checksum against the recording (exit 1 on divergence)\n"
               << "  --load <file>      Load a saved game: with --ticks or --ai-skirmish it\n"
-              << "                     catches up headlessly (exit 1 on divergence) and plays\n"
-              << "                     on; else the game opens it\n"
+              << "                     restores its snapshot (or catches up; exit 1 on\n"
+              << "                     divergence) headlessly and plays on; else the game\n"
+              << "                     opens it\n"
+              << "  --load-by-replay   ...catching up from its history even with a snapshot\n"
               << "  --save <file> --save-at <tick>  Headless: save the game after that tick\n"
               << "  --scripted-orders  With --ai-skirmish: army 1 also takes a player's\n"
               << "                     orders (moves, pauses, fire states, stops), and one\n"
@@ -252,6 +254,7 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
         o.map_path = o.replay_to_play->setup.scenario;
     }
     o.scripted_orders = parse_flag(argc, argv, "--scripted-orders");
+    o.load_by_replay = parse_flag(argc, argv, "--load-by-replay");
     o.bench_report = parse_string_arg(argc, argv, "--bench", "");
     // Scripted runs of the windowed loop: offscreen, silent, fixed clock.
     // --watch <file>: open a replay in the game, as the replay dialog does.

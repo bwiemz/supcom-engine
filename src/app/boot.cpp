@@ -2,6 +2,7 @@
 // (M192 step 2b, moved from run()).
 
 #include "app/app_internal.hpp"
+#include "sim/sim_snapshot.hpp"
 #include "core/profiler.hpp"
 #include "lua/net_lobby.hpp"
 #include "lua/session_clients.hpp"
@@ -31,6 +32,8 @@ extern "C" {
 #include <memory>
 #include <random>
 #include <spdlog/spdlog.h>
+
+#include <chrono>
 
 namespace osc::app {
 
@@ -724,9 +727,25 @@ std::optional<int> App::start() {
         // Recorded for --record, an interactive game for its LastGame, and
         // a game that will be saved (a loaded one too: its recording grows
         // back to the whole game as it catches up).
-        // A save first: its orders queue, with its command delay, before
-        // the recording starts from the sim's.
-        if (opt.save_to_load) {
+        // A save first: its snapshot restored (M208c), or its orders
+        // queued, with its command delay, before the recording starts from
+        // the sim's.
+        const bool restore =
+            opt.save_to_load && !opt.save_to_load->snapshot.empty() && !opt.load_by_replay;
+        if (restore) {
+            const auto& save = *opt.save_to_load;
+            const auto start = std::chrono::steady_clock::now();
+            if (std::string err = osc::sim::load_snapshot(*sim_state, save.snapshot);
+                !err.empty()) {
+                spdlog::error("Saved game '{}': its snapshot didn't load: {}", save.name, err);
+                std::printf("LOAD failed tick=%u\n", save.tick);
+                return 1;
+            }
+            spdlog::info(
+                "Saved game '{}': restored at tick {} in {:.0f} ms", save.name, save.tick,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+                    .count());
+        } else if (opt.save_to_load) {
             catch_up.emplace(opt.save_to_load->game);
             catch_up->resume(*sim_state);
             spdlog::info("Saved game '{}': catching up to tick {}", opt.save_to_load->name,
@@ -734,6 +753,25 @@ std::optional<int> App::start() {
         }
         if (!g_record_path.empty() || opt.interactive || !opt.save_path.empty() || opt.save_to_load)
             sim_state->set_recording(true);
+        if (restore) {
+            // The restored game is the saved one: its history is its
+            // recording, and its checksum is the one that history holds for
+            // the saved tick.
+            const auto& save = *opt.save_to_load;
+            sim_state->adopt_history(save.game);
+            const u32 tick = save.tick;
+            const auto& sums = save.game.checksums;
+            const u64 at =
+                tick >= save.game.checksum_from ? tick - save.game.checksum_from : sums.size();
+            if (at >= sums.size() || sim_state->compute_sync_checksum() != sums[at]) {
+                spdlog::error(
+                    "Saved game '{}': restored, but not as it was saved (tick {} checksum)",
+                    save.name, tick);
+                std::printf("LOAD diverged tick=%u\n", tick);
+                return 1;
+            }
+            std::printf("LOAD resumed tick=%u\n", tick);
+        }
         if (opt.replay_to_play) return play_replay(*sim_state, *opt.replay_to_play);
     }
 
