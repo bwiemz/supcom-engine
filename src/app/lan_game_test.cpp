@@ -150,12 +150,46 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
         lobby_frame(ui);
         return;
     }
+    if (!listening_ && sim->tick_count() >= 1) listen_for_chat(ui);
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
     }
-    if (checked_at_ && (sim->tick_count() >= kEndTick || frames_ - *checked_at_ > kWindDownFrames))
+    if (checked_at_ &&
+        (sim->tick_count() >= kEndTick || frames_ - *checked_at_ > kWindDownFrames)) {
+        // Both play to the end together: the lockstep lets neither stop
+        // short (a player who paused alone would stall the other, and be
+        // dropped)
+        if (sim->tick_count() < kEndTick)
+            fail(fmt::format("stalled at tick {}, short of {}", sim->tick_count(), kEndTick));
+        const auto& mp = lua::mp_net_state();
+        for (const u32 source : mp.all_sources)
+            if (mp.session && mp.session->has_dropped(source))
+                fail(fmt::format("the lockstep dropped source {}", source));
+        check_chat(ui);
         done_ = true;
+    }
+}
+
+void LanGameTest::listen_for_chat(lua::LuaState& ui) {
+    listening_ = true;
+    auto r = ui.do_string(R"(
+        import('/lua/ui/game/gamemain.lua').RegisterChatFunc(function(sender, data)
+            __osc_lan_chat = sender .. ': ' .. tostring(data.text)
+        end, 'LanGameTest')
+    )");
+    if (!r) fail("hearing chat: " + r.error().message);
+}
+
+void LanGameTest::check_chat(lua::LuaState& ui) {
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_lan_chat");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string heard = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    if (heard != "LanHost: glhf")
+        fail(fmt::format("the host's chat to everyone came as '{}'",
+                         heard.empty() ? "nothing" : heard));
 }
 
 void LanGameTest::lobby_frame(lua::LuaState& ui) {
@@ -222,6 +256,33 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
     };
     if (sim.army_count() != 2 || !human(0) || !human(1))
         fail(fmt::format("{} armies, not the lobby's two humans", sim.army_count()));
+    // The session (M218d): its two clients, by source, and their sources;
+    // the host's pause refused (pausing alone would stall the other), and
+    // its chat to everyone
+    auto session = ui.do_string(fmt::format(R"(
+        local host = {}
+        assert(SessionIsMultiplayer(), 'not a network game')
+        local clients = GetSessionClients()
+        assert(table.getn(clients) == 2, 'clients: ' .. table.getn(clients))
+        assert(clients[1].name == 'LanHost' and clients[1].uid == '0', 'client 1')
+        assert(clients[2].name == 'LanJoiner' and clients[2].uid == '1', 'client 2')
+        assert(clients[host and 1 or 2]['local'] and not clients[host and 2 or 1]['local'],
+               'the local client')
+        assert(clients[1].connected and clients[2].connected, 'connected')
+        local names = SessionGetCommandSourceNames()
+        assert(names[1] == 'LanHost' and names[2] == 'LanJoiner', 'source names')
+        assert(SessionGetLocalCommandSource() == (host and 1 or 2), 'the local source')
+        local armies = GetArmiesTable().armiesTable
+        assert(armies[1].authorizedCommandSources[1] == 1, 'army 1 source')
+        assert(armies[2].authorizedCommandSources[1] == 2, 'army 2 source')
+        if host then
+            SessionRequestPause()
+            SessionSendChatMessage({{LanGameTest = true, text = 'glhf'}})
+        end
+    )",
+                                            host_ ? "true" : "false"));
+    if (!session) fail("the session: " + session.error().message);
+
     // The UI watches its own army (1-based)
     if (auto r = ui.do_string("__osc_lan_focus = GetFocusArmy()"); !r)
         fail("GetFocusArmy: " + r.error().message);
