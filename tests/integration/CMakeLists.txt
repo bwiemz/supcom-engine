@@ -224,7 +224,7 @@ if(Python3_Interpreter_FOUND)
 
     # M223: the sim benchmark. A pinned four-AI game on Seton's Clutch, timed
     # tick by tick (--bench) and held to this machine's baseline in
-    # $OSC_GOLDEN_DIR/bench (recorded on the first run): sim time, the mean
+    # the goldens' folder, bench/ (recorded on the first run): sim time, the mean
     # and p99 tick and peak memory within 15%, the same game (checksum).
     # Label `bench` alone (not `data`): timing wants a quiet machine, so they
     # run one at a time, and a Release build (`ctest -L bench`).

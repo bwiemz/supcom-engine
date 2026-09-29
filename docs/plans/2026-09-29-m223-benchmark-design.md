@@ -31,15 +31,17 @@ as a slower sim, not as errors").
     the runs all played one game;
   - `compare` holds a report to a baseline: sim time, the mean and p99 tick, and peak
     memory, each within `--tolerance` (15%);
-  - `check` does both against `$OSC_GOLDEN_DIR/bench/<scenario>-<build type>.json`,
-    recording the baseline when there is none (or with `--update`). A failing run
-    leaves its report beside the baseline (`.new.json`) to look at or adopt.
+  - `check` does both against `<golden dir>/bench/<scenario>-<build type>.json`,
+    recording the baseline when there is none (or with `--update`). The golden dir
+    is the goldens' folder, as `--golden` finds it: `$OSC_GOLDEN_DIR`, else
+    `<State>/opensupcom/golden`. A failing run leaves its report beside the
+    baseline (`.new.json`) to look at or adopt.
 - **The scenarios:** four AIs on Seton's Clutch, seed 4242. `early` is 6,000 ticks (10
   game minutes); `late` is 18,000 ticks (30 minutes), where the AI's queries and Lua's
   collections grow.
 - **CTest:**
   - `bench.early` and `bench.late`, label `bench`, `RUN_SERIAL`, skipped (77) without
-    game data or `$OSC_GOLDEN_DIR`;
+    game data;
   - `arch.bench_self_test`, data-free, on every CI platform: the comparison rules.
 
 ## Decisions

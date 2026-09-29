@@ -15,12 +15,13 @@ reports:
       end), can't be compared: the game changed, so time it against the
       previous build's binary, or record a new baseline.
   check <opensupcom> [--scenario S] [--repeat N] [--update]
-      run, then compare with $OSC_GOLDEN_DIR/bench/<scenario>-<build type>.json,
+      run, then compare with <golden dir>/bench/<scenario>-<build type>.json
+      (the goldens' folder: $OSC_GOLDEN_DIR, else <State>/opensupcom/golden),
       recording it when there is none (or with --update). CTest's bench.*.
   --self-test
 
-Exit codes: 0 ok, 1 slower, 2 usage or not comparable, 77 no game data or
-no $OSC_GOLDEN_DIR (skipped).
+Exit codes: 0 ok, 1 slower, 2 usage or not comparable, 77 no game data
+(skipped).
 
 Benchmarks want a quiet machine: CTest runs them one at a time (RUN_SERIAL),
 and a Release build (Debug is several times slower, and its own baseline).
@@ -169,6 +170,18 @@ def run(exe: Path, scenario: str, repeat: int) -> tuple[int, Report | None]:
     return 0, best
 
 
+def golden_dir() -> Path:
+    """Where baselines live: the goldens' folder, as --golden finds it
+    ($OSC_GOLDEN_DIR, else <State>/opensupcom/golden)."""
+    if golden := os.environ.get("OSC_GOLDEN_DIR"):
+        return Path(golden)
+    if sys.platform == "win32":
+        state = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        state = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
+    return state / "opensupcom" / "golden"
+
+
 def option(args: list[str], name: str, default: str) -> str:
     if name in args:
         at = args.index(name)
@@ -237,10 +250,7 @@ def main(argv: list[str]) -> int:
         return code
 
     if command == "check":
-        golden = os.environ.get("OSC_GOLDEN_DIR")
-        if not golden:
-            print("no $OSC_GOLDEN_DIR for the baseline: skipped")
-            return SKIPPED
+        golden = golden_dir()
         code, best = run(exe, scenario, repeat)
         if best is None:
             return code
