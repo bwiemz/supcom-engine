@@ -29,7 +29,6 @@ G errro
 M AddOnKilledCallback
 M GiveUnitOrder
 M OnApplyBuff
-M PickBestAttackVector
 M RecoilImpulse
 M SetDamageRadius
 M SetWeaponDisableByLabel
