@@ -50,6 +50,22 @@ void eject_session_client(lua_State* L);
 /// clients (uimain.UpdateDisconnectDialog, as Moho's session calls it).
 void pump_disconnect_dialog(lua_State* L);
 
+/// SessionRequestPause / SessionResume in a network game (M218f): through
+/// the lockstep (SimState::request_pause), and gamemain.OnUserPause(bool)
+/// at once for this player, as Moho's. False in single-player (the caller
+/// pauses the game locally).
+bool session_request_pause(lua_State* L);
+bool session_resume(lua_State* L);
+
+/// SessionIsPaused in a network game: whether the lockstep's pause holds.
+/// False (`paused` untouched) in single-player.
+bool session_is_paused(lua_State* L, bool& paused);
+
+/// Each frame of a network game: gamemain.OnPause(pausedBy,
+/// timeoutsRemaining) as a pause starts, OnResume() as it ends (Moho's
+/// Sync.PausedBy).
+void pump_pause_state(lua_State* L);
+
 /// The local client's chat not yet delivered, dropped: its game is over
 /// (a UI state resetting, a network game torn down), so none of it may
 /// reach the next.

@@ -3182,8 +3182,12 @@ static int l_GameTime(lua_State* L) {
 
 /// SessionIsPaused() -> boolean
 static int l_SessionIsPaused(lua_State* L) {
-    auto* mgr = get_game_state_mgr(L);
-    lua_pushboolean(L, mgr && mgr->paused() ? 1 : 0);
+    bool paused = false;
+    if (!session_is_paused(L, paused)) {
+        auto* mgr = get_game_state_mgr(L);
+        paused = mgr && mgr->paused();
+    }
+    lua_pushboolean(L, paused ? 1 : 0);
     return 1;
 }
 
@@ -3589,13 +3593,9 @@ void load_key_mappings(lua_State* L, ui::KeyMapRegistry& key_map) {
 
 /// SessionRequestPause() — request the sim to pause
 static int l_SessionRequestPause(lua_State* L) {
-    // A network game's pause goes through the lockstep (M218e); until then
-    // it is refused, as Moho's is with no timeouts left: pausing alone
-    // would stop this player's frames and drop them from the game
-    if (session_is_multiplayer()) {
-        spdlog::info("SessionRequestPause: a network game can't pause yet");
-        return 0;
-    }
+    // A network game's pause goes through the lockstep (M218f): pausing
+    // alone would stop this player's frames and drop them from the game
+    if (session_request_pause(L)) return 0;
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->set_paused(true, L);
     return 0;
@@ -3603,7 +3603,7 @@ static int l_SessionRequestPause(lua_State* L) {
 
 /// SessionResume() — resume the sim
 static int l_SessionResume(lua_State* L) {
-    if (session_is_multiplayer()) return 0; // (never paused: see above)
+    if (session_resume(L)) return 0;
     auto* mgr = get_game_state_mgr(L);
     if (mgr) mgr->set_paused(false, L);
     return 0;

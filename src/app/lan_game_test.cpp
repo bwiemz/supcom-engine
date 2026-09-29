@@ -25,6 +25,8 @@ namespace {
 
 /// Frames the flow may take in all before it counts as stuck.
 constexpr u32 kMaxFrames = 30000;
+/// Frames the joiner leaves the host's pause before resuming it.
+constexpr u32 kResumeAfterFrames = 60;
 /// Frames the joiner waits for its host to listen.
 constexpr u32 kMaxHostWaitFrames = 6000;
 /// Frames between presses of Launch, while no countdown runs.
@@ -147,11 +149,13 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
     if (!host_ && quit_at_ > 0 && checked_at_ && sim->tick_count() >= quit_at_) {
         spdlog::info("[lan-game] the joiner leaves at tick {}", sim->tick_count());
         check_chat(ui);
+        check_pause(ui);
         left_ = true;
         done_ = true;
         return;
     }
     if (host_ && quit_at_ > 0 && checked_at_ && disconnect_dialog_open(ui)) dialog_seen_ = true;
+    if (checked_at_) pause_frame(ui, *sim);
     if (!checked_at_ && sim->tick_count() >= kCheckTick) {
         check(ui, *sim);
         checked_at_ = frames_;
@@ -191,7 +195,43 @@ void LanGameTest::frame(lua::LuaState& ui, const sim::SimState* sim) {
             if (disconnect_dialog_open(ui)) fail("retail's disconnect dialog stayed open");
         }
         check_chat(ui);
+        check_pause(ui);
         done_ = true;
+    }
+}
+
+void LanGameTest::check_pause(lua::LuaState& ui) {
+    lua_State* L = ui.raw();
+    lua_pushstring(L, "__osc_lan_paused");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    const std::string heard = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : "";
+    lua_pop(L, 1);
+    // The host's source (its client's place, by slot) with 2 of the lobby's
+    // 3 timeouts left
+    const std::string want = fmt::format("{}/2", number_global(L, "__osc_lan_host_source"));
+    if (!saw_pause_) fail("the host's pause never held here");
+    if (heard != want)
+        fail(fmt::format("OnPause heard '{}', not '{}'", heard.empty() ? "nothing" : heard, want));
+    if (number_global(L, "__osc_lan_resumed") < 1) fail("OnResume never came");
+}
+
+void LanGameTest::pause_frame(lua::LuaState& ui, const sim::SimState& sim) {
+    // The host paused at the check: while it holds, no tick runs here; the
+    // joiner resumes it after a while (any player may)
+    auto r = ui.do_string("__osc_lan_is_paused = SessionIsPaused() and 1 or 0");
+    const bool paused = r && number_global(ui.raw(), "__osc_lan_is_paused") != 0;
+    if (!paused) {
+        paused_tick_.reset();
+        return;
+    }
+    if (!paused_tick_) {
+        paused_tick_ = sim.tick_count();
+        saw_pause_ = true;
+    } else if (sim.tick_count() != *paused_tick_) {
+        fail(fmt::format("ticked from {} to {} while paused", *paused_tick_, sim.tick_count()));
+    }
+    if (!host_ && ++paused_frames_ == kResumeAfterFrames) {
+        if (auto s = ui.do_string("SessionResume()"); !s) fail("resuming: " + s.error().message);
     }
 }
 
@@ -210,12 +250,24 @@ void LanGameTest::listen_for_chat(lua::LuaState& ui) {
     lua_pushstring(L, "__osc_upvalue");
     lua_pushcfunction(L, l_upvalue);
     lua_rawset(L, LUA_GLOBALSINDEX);
+    // The chat, and what the UI hears of pauses (M218f)
     auto r = ui.do_string(R"(
-        import('/lua/ui/game/gamemain.lua').RegisterChatFunc(function(sender, data)
+        local gamemain = import('/lua/ui/game/gamemain.lua')
+        gamemain.RegisterChatFunc(function(sender, data)
             __osc_lan_chat = sender .. ': ' .. tostring(data.text)
         end, 'LanGameTest')
+        __osc_lan_resumed = 0 -- (the UI's globals are strict: set before read)
+        local onPause, onResume = gamemain.OnPause, gamemain.OnResume
+        gamemain.OnPause = function(pausedBy, timeouts)
+            __osc_lan_paused = tostring(pausedBy) .. '/' .. tostring(timeouts)
+            return onPause(pausedBy, timeouts)
+        end
+        gamemain.OnResume = function()
+            __osc_lan_resumed = __osc_lan_resumed + 1
+            return onResume()
+        end
     )");
-    if (!r) fail("hearing chat: " + r.error().message);
+    if (!r) fail("hearing chat and pauses: " + r.error().message);
 }
 
 void LanGameTest::check_chat(lua::LuaState& ui) {
@@ -305,9 +357,8 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
             fail(fmt::format("{} and {} start at the same place", a.name(), b.name()));
     }
     // The session (M218d): its two clients, by source -- in slot order,
-    // whoever hosted, since spawn is random -- and their sources; the host's
-    // pause refused (pausing alone would stall the other), and its chat to
-    // everyone
+    // whoever hosted, since spawn is random -- and their sources; the host
+    // pauses (M218f: the joiner resumes it) and chats to everyone
     lua_State* L = ui.raw();
     lua_pushstring(L, "__osc_lan_me");
     lua_pushstring(L, host_ ? "LanHost" : "LanJoiner");
@@ -326,6 +377,7 @@ void LanGameTest::check(lua::LuaState& ui, const sim::SimState& sim) {
             end
         end
         assert(clients[1].name ~= clients[2].name, 'two players')
+        __osc_lan_host_source = clients[1].name == 'LanHost' and 1 or 2
         assert(mine and clients[mine].name == __osc_lan_me, 'the local client')
         local names = SessionGetCommandSourceNames()
         assert(names[1] == clients[1].name and names[2] == clients[2].name, 'source names')

@@ -21,6 +21,27 @@ LockstepSession::LockstepSession(SimState& sim, INetTransport& transport, u32 lo
     sim_.command_scheduler().set_lockstep(true);
     for (u32 s : all_sources) sim_.command_scheduler().add_source(s);
     sim_.command_scheduler().add_source(local_source);
+    sim_.set_pause_holds(true); // until a peer resumes it
+}
+
+void LockstepSession::request_pause() {
+    if (sim_.network_paused()) return; // (Moho's sim ignores it too)
+    SimCallbackEntry pause;
+    pause.func_name = kRequestPauseCallback;
+    submit_local_callback(std::move(pause));
+}
+
+bool LockstepSession::request_resume() {
+    if (!sim_.network_paused()) return false;
+    const u32 serial = sim_.pause_serial();
+    std::vector<u8> msg;
+    ByteWriter w(msg);
+    w.u8v(kResumeMessage);
+    w.u32v(local_source_);
+    w.u32v(serial);
+    transport_.broadcast(msg);
+    sim_.resume_pause(serial);
+    return true;
 }
 
 void LockstepSession::submit_local(const std::vector<u32>& unit_ids,
@@ -45,6 +66,9 @@ void LockstepSession::submit_local_callback(SimCallbackEntry callback) {
 }
 
 void LockstepSession::send_frame() {
+    // Paused, no frames: each confirms a tick, and would run at once on
+    // resuming (its commands wait in pending_)
+    if (sim_.network_paused()) return;
     std::vector<u8> msg;
     ByteWriter w(msg);
     w.u8v(kFrameMessage);
@@ -80,6 +104,13 @@ void LockstepSession::receive_and_advance() {
         const u8 type = r.u8v();
         if (type == kDropMessage) {
             take_drop_report(r);
+            continue;
+        }
+        if (type == kResumeMessage) {
+            const u32 source = r.u32v();
+            const u32 serial = r.u32v();
+            if (r.ok() && source != local_source_ && !has_dropped(source))
+                sim_.resume_pause(serial);
             continue;
         }
         if (type != kFrameMessage) continue;
@@ -121,6 +152,8 @@ void LockstepSession::receive_and_advance() {
     // others (cut off from them, it would time them all out and play on
     // alone), as Moho's ejected client waits
     if (ejected_) return;
+    // Paused: no frames flow, so none is late; nothing ticks
+    if (sim_.network_paused()) return;
 
     // A peer that has gone silent falls further behind each round (next_frame_
     // keeps advancing while its confirmed frame is frozen). Past the timeout,
@@ -143,8 +176,9 @@ void LockstepSession::receive_and_advance() {
     }
     finalize_drops();
 
-    // Advance as far as every peer's confirmations allow.
-    while (sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
+    // Advance as far as every peer's confirmations allow (a pause taken on
+    // a tick holds before the next).
+    while (!sim_.network_paused() && sim_.command_scheduler().ready_to_run(sim_.tick_count() + 1)) {
         sim_.tick();
         record_local_checksum(sim_.tick_count(), sim_.tick_checksum().values());
     }

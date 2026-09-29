@@ -8,8 +8,9 @@
 // connections. It passes when each reaches kCheckTick in step (no desync),
 // playing its own slot's army with both armies human, and no script error.
 // In the game (M218d) each sees the session's two clients and their
-// sources; the host's pause is refused (the game plays on), and its chat
-// to everyone reaches both.
+// sources; the host pauses (M218f) and every tick holds until the joiner
+// resumes it, both hearing OnPause and OnResume; and its chat to everyone
+// reaches both.
 //
 // With `quit_at` (M218e) the joiner leaves the game at that tick: the host
 // must drop it by the lockstep's agreement, defeat its army, show and close
@@ -55,6 +56,11 @@ private:
     void check(lua::LuaState& ui, const sim::SimState& sim);
     /// The game's chat heard (gamemain's RegisterChatFunc), and checked.
     void listen_for_chat(lua::LuaState& ui);
+    /// While the host's pause holds (M218f): no tick runs; the joiner
+    /// resumes it after a while.
+    void pause_frame(lua::LuaState& ui, const sim::SimState& sim);
+    /// The UI heard the pause, from the host, and its end.
+    void check_pause(lua::LuaState& ui);
     /// Whether retail's disconnect dialog is open (its file-local `parent`).
     bool disconnect_dialog_open(lua::LuaState& ui);
     void check_chat(lua::LuaState& ui);
@@ -69,6 +75,9 @@ private:
     bool listening_ = false;        ///< the game's chat is heard
     bool left_ = false;             ///< the joiner left at quit_at_
     bool dialog_seen_ = false;      ///< the host saw retail's disconnect dialog open
+    bool saw_pause_ = false;        ///< the host's pause held here
+    std::optional<u32> paused_tick_; ///< the tick the pause holds on
+    u32 paused_frames_ = 0;          ///< frames the joiner has seen it hold
     u32 last_press_ = 0;            ///< the frame Launch was last pressed
     std::optional<u32> checked_at_; ///< the frame the check ran
     std::optional<u32> over_at_;    ///< the frame the game reached its end

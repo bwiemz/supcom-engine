@@ -280,6 +280,30 @@ public:
     /// frame is checked only against its sender). Unmapped sources (the
     /// single-player player, the engine) are not limited.
     void set_source_army(u32 source, i32 army) { source_armies_[source] = army; }
+
+    // --- A network game's pause (M218f), as Moho's sim takes it ---
+    /// `source` asks to pause, at a tick every peer shares: taken unless
+    /// the game is paused already or the source's timeouts are spent; a
+    /// taken pause spends one. The sim finishes the tick and holds until the
+    /// pause is resumed -- at once outside a lockstep game (pause_holds).
+    void request_pause(u32 source);
+    /// Pause `serial` resumed: now, or (this peer not there yet) the moment
+    /// it pauses.
+    void resume_pause(u32 serial);
+    /// Paused: the source that paused (-1: not paused).
+    i32 paused_by() const { return paused_by_; }
+    bool network_paused() const { return paused_by_ >= 0; }
+    /// The pauses taken so far: the current one's serial, while paused.
+    u32 pause_serial() const { return pause_serial_; }
+    /// A source's pause timeouts (-1: unlimited, the default).
+    void set_pause_timeouts(u32 source, i32 timeouts) { pause_timeouts_[source] = timeouts; }
+    i32 pause_timeouts(u32 source) const {
+        const auto it = pause_timeouts_.find(source);
+        return it == pause_timeouts_.end() ? -1 : it->second;
+    }
+    /// Whether a pause holds until resumed (a lockstep game) or resumes at
+    /// once (a replay playing one back).
+    void set_pause_holds(bool holds) { pause_holds_ = holds; }
     /// The army `source` plays (-1: none, an observer's); unmapped, the
     /// army numbered as it.
     i32 army_of_source(u32 source) const {
@@ -743,6 +767,11 @@ private:
     mutable u32 tick_checksum_tick_ = 0;
     mutable bool tick_checksum_valid_ = false;
     std::map<u32, i32> source_armies_; // see set_source_army
+    i32 paused_by_ = -1;               // see request_pause
+    u32 pause_serial_ = 0;
+    u32 resumed_serial_ = 0; // the latest pause resumed
+    std::map<u32, i32> pause_timeouts_;
+    bool pause_holds_ = false;
     std::unique_ptr<map::Terrain> terrain_;
     std::unique_ptr<map::PathfindingGrid> pathfinding_grid_;
     /// Footprints this sim has marked on the grid, by entity id (lookup only;

@@ -85,9 +85,21 @@ public:
     /// it no longer ticks or drops anyone.
     bool ejected() const { return ejected_; }
 
+    // --- Pause (M218f) ---
+    // A pause is a command, run by every peer on the same tick (the sim
+    // takes or refuses it: SimState::request_pause); then no peer sends
+    // frames or ticks until it is resumed. Resuming is a message with the
+    // pause's serial, since no tick runs to carry a command; every peer is
+    // held on the same tick, so each resumes at the same place.
+    /// This peer asks to pause (nothing while paused already).
+    void request_pause();
+    /// This peer resumes the pause (any peer may); false if not paused.
+    bool request_resume();
+
 private:
     static constexpr u8 kFrameMessage = 0;
     static constexpr u8 kDropMessage = 1;
+    static constexpr u8 kResumeMessage = 2;
     /// How many of a peer's latest frames are kept to relay if it drops.
     static constexpr u32 kRelayFrames = 256;
 
