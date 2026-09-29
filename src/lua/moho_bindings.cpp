@@ -8,7 +8,6 @@
 #include "video/video_decoder.hpp"
 #include "map/scmap_parser.hpp"
 #include "lua/factory_queue.hpp"
-#include "lua/lan_dialog_ui.hpp"
 #include "ui/console.hpp"
 #include "lua/order_helpers.hpp"
 #include "lua/lua_state.hpp"
@@ -58,6 +57,7 @@
 #include "lua/beat_system.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "lua/session_clients.hpp"
 #include "lua/sim_sync.hpp"
 
@@ -1470,8 +1470,16 @@ static int l_InternalCreateLobby(lua_State* L) {
         const double port = lua_type(L, 3) == LUA_TNUMBER ? lua_tonumber(L, 3) : 0.0;
         const double max_connections = lua_type(L, 4) == LUA_TNUMBER ? lua_tonumber(L, 4) : 8.0;
         const std::string name = lua_type(L, 5) == LUA_TSTRING ? lua_tostring(L, 5) : "Player";
+        // The player's uid, a matchmaking client's (GPGNet: "42"); retail's
+        // LAN screens give none, and the host numbers its players (M220b)
+        std::optional<u32> uid;
+        if (lua_isnumber(L, 6)) { // a number, or a string of one
+            const double v = lua_tonumber(L, 6);
+            if (v >= 0 && v < 4294967295.0 && v == static_cast<double>(static_cast<u32>(v)))
+                uid = static_cast<u32>(v);
+        }
         make_net_lobby(L, -1, protocol, static_cast<u16>(std::clamp(port, 0.0, 65535.0)),
-                       static_cast<u32>(std::max(0.0, max_connections)), name);
+                       static_cast<u32>(std::max(0.0, max_connections)), name, uid);
     }
 
     spdlog::debug("InternalCreateLobby: created ({})", protocol);
@@ -1514,20 +1522,15 @@ static void run_ui_chunk(lua_State* L, const char* code, const char* what) {
 /// EngineStartFrontEndUI(): Moho's UI_StartFrontEnd, in this Lua state (the
 /// splash screen leaves through it). The input capture and the dragger let
 /// go and the root frame is emptied, as Moho's new frames start, then
-/// uimain.lua's StartFrontEndUI shows the main menu, with the engine's LAN
-/// dialog on it.
+/// uimain.lua's StartFrontEndUI shows the main menu.
 static int l_EngineStartFrontEndUI(lua_State* L) {
     if (auto* reg = get_ui_registry(L)) reg->clear_input_capture();
     lua_pushstring(L, "__osc_active_dragger");
     lua_pushnil(L);
     lua_rawset(L, LUA_REGISTRYINDEX);
-    // The LAN dialog, built on the root frame, goes with it.
-    run_ui_chunk(
-        L, "moho.control_methods.Destroy(GetFrame(0)) rawset(_G, '__osc_lan_dialog_built', nil)",
-        "the root frame's reset");
+    run_ui_chunk(L, "moho.control_methods.Destroy(GetFrame(0))", "the root frame's reset");
     run_ui_chunk(L, "import('/lua/ui/uimain.lua').StartFrontEndUI()",
                  "'/lua/ui/uimain.lua:StartFrontEndUI'");
-    run_ui_chunk(L, kLanDialogLua, "the LAN dialog");
     return 0;
 }
 
@@ -3427,18 +3430,31 @@ static int l_ui_SessionGetScenarioInfo(lua_State* L) {
 // Speed/pause control bindings (M145d)
 // ====================================================================
 
+/// Ask for game speed `rate`: in a network game, of the lockstep (M218i);
+/// else this game's own.
+static void set_game_speed(lua_State* L, i32 rate) {
+    if (session_request_speed(rate)) return;
+    if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(rate);
+}
+
+/// The game speed: a network game's, or this game's own.
+static i32 game_speed(lua_State* L) {
+    i32 rate = 0;
+    if (session_speed(rate)) return rate;
+    auto* mgr = get_game_state_mgr(L);
+    return mgr ? mgr->sim_rate() : 0;
+}
+
 /// SetGameSpeed(rate): the sim rate (Moho's: an integer game speed, -10 to
 /// +50; retail's cutscenes set 0, normal speed).
 static int l_SetGameSpeed(lua_State* L) {
-    if (auto* mgr = get_game_state_mgr(L))
-        mgr->set_sim_rate(static_cast<i32>(luaL_checknumber(L, 1)));
+    set_game_speed(L, static_cast<i32>(luaL_checknumber(L, 1)));
     return 0;
 }
 
 /// GetGameSpeed() -> the sim rate.
 static int l_GetGameSpeed(lua_State* L) {
-    auto* mgr = get_game_state_mgr(L);
-    lua_pushnumber(L, mgr ? mgr->sim_rate() : 0);
+    lua_pushnumber(L, game_speed(L));
     return 1;
 }
 
@@ -3531,18 +3547,17 @@ void register_console_commands(ui::Console& console) {
             spdlog::info("WLD_GameSpeed <int> - set current game speed");
             return;
         }
-        if (auto* mgr = get_game_state_mgr(L))
-            mgr->set_sim_rate(
-                static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
+        set_game_speed(L, static_cast<i32>(std::strtod(args[1].c_str(), nullptr))); // Moho: atof
     });
+    // As Moho's: one step, within -10..+50; asking for the speed it has is nothing
     console.add("WLD_IncreaseSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() + 1);
+        if (const i32 rate = game_speed(L); rate < 50) set_game_speed(L, rate + 1);
     });
     console.add("WLD_DecreaseSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(mgr->sim_rate() - 1);
+        if (const i32 rate = game_speed(L); rate > -10) set_game_speed(L, rate - 1);
     });
     console.add("WLD_ResetSimRate", [](lua_State* L, const Args&) {
-        if (auto* mgr = get_game_state_mgr(L)) mgr->set_sim_rate(0);
+        if (game_speed(L) != 0) set_game_speed(L, 0);
     });
 }
 
@@ -3830,13 +3845,55 @@ static int l_SetFrontEndData(lua_State* L) {
 // ====================================================================
 
 /// HasCommandLineArg(arg) -> boolean
-static int l_HasCommandLineArg(lua_State* L) {
-    const char* arg = luaL_checkstring(L, 1);
+/// Moho's CFG_GetArgOption: the `count` arguments after `option` on the
+/// command line (the first time it is there, case aside, with that many
+/// after it), or nothing.
+static std::optional<std::vector<std::string>>
+command_line_option(lua_State* L, const std::string& option, size_t count) {
     lua_pushstring(L, "__osc_cmdline_args");
     lua_rawget(L, LUA_REGISTRYINDEX);
-    auto* args = static_cast<std::set<std::string>*>(lua_touserdata(L, -1));
+    const auto* args = static_cast<const std::vector<std::string>*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    lua_pushboolean(L, args && args->count(arg) > 0 ? 1 : 0);
+    if (!args || option.empty()) return std::nullopt;
+    const auto same = [](const std::string& a, const std::string& b) {
+        return a.size() == b.size() &&
+               std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+                   return std::tolower(static_cast<unsigned char>(x)) ==
+                          std::tolower(static_cast<unsigned char>(y));
+               });
+    };
+    for (size_t i = 0; i < args->size(); ++i) {
+        if (!same((*args)[i], option) || args->size() - i - 1 < count) continue;
+        return std::vector<std::string>(args->begin() + static_cast<long>(i + 1),
+                                        args->begin() + static_cast<long>(i + 1 + count));
+    }
+    return std::nullopt;
+}
+
+/// HasCommandLineArg(option): whether it is on the command line (Moho's
+/// CFG_GetArgOption, case aside).
+static int l_HasCommandLineArg(lua_State* L) {
+    lua_pushboolean(L, command_line_option(L, luaL_checkstring(L, 1), 0) ? 1 : 0);
+    return 1;
+}
+
+/// GetCommandLineArg(option, count): the `count` arguments after it, as
+/// strings, or false (not there, or with fewer after it). FAF's client
+/// passes the lobby's /players, /team, /uef... this way (M220b).
+static int l_GetCommandLineArg(lua_State* L) {
+    const char* option = luaL_checkstring(L, 1);
+    const double count = luaL_checknumber(L, 2);
+    const auto values =
+        command_line_option(L, option, count > 0 && count < 1024 ? static_cast<size_t>(count) : 0);
+    if (!values) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_newtable(L);
+    for (size_t i = 0; i < values->size(); ++i) {
+        lua_pushstring(L, (*values)[i].c_str());
+        lua_rawseti(L, -2, static_cast<int>(i + 1));
+    }
     return 1;
 }
 
@@ -4219,7 +4276,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
     set_stub("SetFocusArmy");
     set_nil_fn("GetFocusArmy");
     set_stub("ClearFrame");
-    set_stub("GpgNetSend");
     set_bool_fn("HasCommandLineArg2", false);
     set_bool_fn("SessionIsActive", false);
     set_bool_fn("SessionIsMultiplayer", false);
@@ -4246,58 +4302,6 @@ void register_front_end_fallback_bindings(LuaState& state) {
         lua_rawseti(L, -2, 1);
         lua_rawset(L, LUA_GLOBALSINDEX);
     }
-}
-
-// Read an optional Lua port arg, clamped to [0, 65535] (casting an out-of-range
-// double straight to u16 would be undefined behavior; these globals are
-// script-callable, so a bad value must not trip UB).
-static u16 lan_port_arg(lua_State* L, int idx, u16 dflt) {
-    if (!lua_isnumber(L, idx)) return dflt;
-    double p = lua_tonumber(L, idx);
-    if (p < 0.0) p = 0.0;
-    if (p > 65535.0) p = 65535.0;
-    return static_cast<u16>(p);
-}
-
-// LanHost([port]) -> bool : start hosting a LAN game (default port 47624).
-static int l_LanHost(lua_State* L) {
-    if (mp_net_state().transport_ready) { lua_pushboolean(L, 0); return 1; }
-    bool ok = mp_begin_host(lan_port_arg(L, 1, 47624));
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-
-// LanJoin(ip[, port]) -> bool : connect to a LAN host at ip[:port].
-static int l_LanJoin(lua_State* L) {
-    if (mp_net_state().transport_ready) { lua_pushboolean(L, 0); return 1; }
-    if (lua_type(L, 1) != LUA_TSTRING) { lua_pushboolean(L, 0); return 1; }
-    std::string ip = lua_tostring(L, 1);
-    size_t a = ip.find_first_not_of(" \t");
-    size_t b = ip.find_last_not_of(" \t");
-    ip = (a == std::string::npos) ? std::string() : ip.substr(a, b - a + 1);
-    if (ip.empty()) { lua_pushboolean(L, 0); return 1; }
-    bool ok = mp_begin_join(ip, lan_port_arg(L, 2, 47624));
-    lua_pushboolean(L, ok ? 1 : 0);
-    return 1;
-}
-
-// LanNetStatus() -> string : short status for the LAN dialog to display.
-static int l_LanNetStatus(lua_State* L) {
-    auto& s = mp_net_state();
-    const char* status;
-    if (s.session) status = "in game";
-    else if (!s.transport_ready) status = "idle";
-    else if (s.role == MpNetState::Role::Host)
-        status = "hosting: waiting for player";
-    else status = "connecting";
-    lua_pushstring(L, status);
-    return 1;
-}
-
-void register_lan_ui_bindings(LuaState& state) {
-    state.register_function("LanHost", l_LanHost);
-    state.register_function("LanJoin", l_LanJoin);
-    state.register_function("LanNetStatus", l_LanNetStatus);
 }
 
 void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
@@ -4347,10 +4351,10 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     state.register_function("AddInputCapture", l_AddInputCapture);
     state.register_function("RemoveInputCapture", l_RemoveInputCapture);
     state.register_function("AnyInputCapture", l_AnyInputCapture);
-    state.register_function("GetInputCapture", l_GetInputCapture);
 
-    // LAN multiplayer globals (LanHost/LanJoin/LanNetStatus)
-    register_lan_ui_bindings(state);
+    // The matchmaking client's link (M220a)
+    register_gpgnet_bindings(state);
+    state.register_function("GetInputCapture", l_GetInputCapture);
 
     // Localization globals
     state.register_function("LOC", l_LOC);
@@ -4497,11 +4501,7 @@ void register_ui_bindings(LuaState& state, ui::UIControlRegistry& registry) {
     // HasCommandLineArg (M147d)
     state.register_function("HasCommandLineArg", l_HasCommandLineArg);
 
-    // GetCommandLineArg(name, count) → array of count values after the named arg, or nil
-    state.register_function("GetCommandLineArg", [](lua_State* L) -> int {
-        lua_pushnil(L); // no FA-style command line args in our engine
-        return 1;
-    });
+    state.register_function("GetCommandLineArg", l_GetCommandLineArg);
 
     // MATH_Lerp(t, t0, t1, v0, v1) → v0 + (v1-v0) * (t-t0) / (t1-t0)
     state.register_function("MATH_Lerp", [](lua_State* L) -> int {

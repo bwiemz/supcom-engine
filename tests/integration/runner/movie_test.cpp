@@ -168,10 +168,9 @@ void splash(MovieTest& m) {
     auto* back = m.movie_of("/movies/main_menu.sfd");
     t.check(!m.truth("AnyInputCapture()") && intro && intro->destroyed() &&
                 !m.e.sound.is_cue_playing("FMV_BG", "X_FMV_Intro") && back &&
-                back->movie_playing() && back->movie_looping() &&
-                m.truth("rawget(_G, '__osc_lan_dialog_built') == true"),
+                back->movie_playing() && back->movie_looping(),
             "Test 7: Escape again leaves for the main menu (EngineStartFrontEndUI): the capture "
-            "and the intro are gone, the menu's movie loops behind it, the LAN dialog is on it");
+            "and the intro are gone, the menu's movie loops behind it");
 
     // EngineStartFrontEndUI lets go of any capture, and starts the menu anew.
     m.run("AddInputCapture(GetFrame(0)) EngineStartFrontEndUI()");

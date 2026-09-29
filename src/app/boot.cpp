@@ -8,6 +8,7 @@
 #include "lua/binding_coverage.hpp"
 #include "lua/engine_bindings.hpp"
 #include "lua/game_mods.hpp"
+#include "lua/gpgnet_session.hpp"
 #include "lua/moho_bindings.hpp"
 #include "lua/script_loader.hpp"
 #include "lua/session_manager.hpp"
@@ -425,7 +426,6 @@ std::optional<int> App::init_ui_state(const std::string* game_mods) {
         set_stub("SetFocusArmy");                 // army focus
         set_nil_fn("GetFocusArmy");               // army focus
         set_stub("ClearFrame");                   // UI cleanup
-        set_stub("GpgNetSend");                   // multiplayer
         set_bool_fn("HasCommandLineArg2", false); // command line
         // Session functions
         set_bool_fn("SessionIsActive", false);
@@ -518,6 +518,18 @@ std::optional<int> App::boot_ui() {
     // State transition: INIT → GAME or INIT → FRONT_END
     if (!opt.map_path.empty()) {
         osc::core::call_setup_ui(ui_lua_state.raw());
+    } else if (!opt.gpgnet_endpoint.empty()) {
+        // /gpgnet: the matchmaking client drives the game (M220a). As Moho's
+        // CScApp: link to it, and show gpgnet.lua's screen until it makes a
+        // lobby; an endpoint that isn't one ends the run.
+        osc::core::call_setup_ui(ui_lua_state.raw());
+        if (!osc::lua::gpgnet_attach(opt.gpgnet_endpoint)) {
+            spdlog::error("Invalid address:port for connecting to the gpg.net client: \"{}\".",
+                          opt.gpgnet_endpoint);
+            return 1;
+        }
+        if (auto r = ui_lua_state.do_string("import('/lua/multiplayer/gpgnet.lua').CreateUI()"); !r)
+            spdlog::warn("GPGNet: {}", r.error().message);
     } else {
         // No map: the front end, after SetupUI (the cursor, the skin). A
         // player's starts as Moho's does, with FA's splash screens

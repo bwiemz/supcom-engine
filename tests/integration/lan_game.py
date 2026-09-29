@@ -33,7 +33,7 @@ def report(name: str, log: Path, code: int | None) -> None:
     for line in marked:
         print(f"  {line}")
     if code != 0:
-        print(f"  --- the last lines of its log ---")
+        print("  --- the last lines of its log ---")
         for line in lines[-40:]:
             print(f"  {line}")
 

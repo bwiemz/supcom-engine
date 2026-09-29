@@ -40,47 +40,32 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 ## Verified Locally
 
 - `build/linux-debug/tests/osc_tests` passes (see the metrics above); `build/linux-debug/opensupcom --help` lists the CLI surface, including every `--*-test` mode.
+- **Launched by a matchmaking client (GPGNet, M220a):** `opensupcom /gpgnet 127.0.0.1:<port>` connects to the client and carries out its commands (`CreateLobby` through retail's `onlineprovider.lua`, `HostGame`, `JoinGame`, `ConnectToPeer`...), telling it `GameState Idle` and `Lobby`; `data.gpgnet_lobby` checks it against a stand-in client, and `data.gpgnet_game` has the stand-in drive two games through retail's auto-lobby, as FAF's matchmaker does, to a launched game both play in lockstep; `data.gpgnet_game_relayed` does it with the two reaching each other through a UDP relay standing in for FAF's ICE adapter, losing 5% of what it carries. FAF's own client and ICE adapter aren't tested here (none is installed).
+- **Windows and Linux in one game (CI):** the `cross-os-play` job plays the data-free lockstep pairs with the Linux build hosting the Windows build under Wine and the other way round (`tests/integration/cross_os_pairs.py`): in sync, a divergence caught, a vanished joiner dropped, a slow joiner setting the pace.
 - **Cross-OS determinism on real data:** `tools/cross_os_replay.py --run-id <CI run>` plays a recorded four-AI game with the CI's Windows build (under Wine) and a Linux build; each Phase E PR has matched at every tick.
-- **Multiplayer (LAN lockstep), verified across two OS processes over localhost TCP:**
-  `opensupcom.exe --mp-host` + `opensupcom.exe --mp-join 127.0.0.1` reach identical
-  sync checksums with `desynced=0` through scripted player orders (incl. a mid-move
-  Stop); adding `--mp-desync` makes both peers correctly report `desynced=1` for an
-  injected divergence. Command routing (`SimState::route_command`) sends local human
-  orders to the `LockstepSession` in multiplayer and applies them directly in
-  single-player (unchanged). See `docs/plans/2026-07-03-multiplayer-networking-design.md`.
-- **LAN lobby lifecycle, verified across two OS processes:** `opensupcom.exe
-  --lan-host` + `opensupcom.exe --lan-join 127.0.0.1` run the real lobby handshake
-  (host advertises scenario + RNG seed, client applies + readies, host fires the
-  launch barrier) over a `MuxTransport` that carries both the lobby channel and the
-  lockstep channel on one connection, then play a synced lockstep match. Both print
-  matching scenario, seed, an RNG probe (proving the shared seed reached each sim —
-  the fix for `weapon.cpp`'s previously non-deterministic firing randomness), and
-  final checksum with `desynced=0`. Windowed reachability: `--lan-window-host` /
-  `--lan-window-join <ip>` create the transport at startup and the game loop drives
-  the same handshake to launch (a two-window play verified only by logic-equivalence
-  to the headless run). See
-  `docs/superpowers/specs/2026-07-04-windowed-lan-lobby-design.md`.
-- **Player-drop / timeout handling, verified across two OS processes:** if a peer
-  disconnects or freezes, `LockstepSession` declares it dropped after ~3s (30
-  command frames) of missing confirmations, removes it from the scheduler gate so
-  the survivor un-stalls, and reports it; the game loop defeats the dropped army
-  (`SimState::defeat_army`, reusing the share-rule dispose path) so the match
-  resolves instead of hanging. Verified: `--lan-join ... --mp-drop-at 20` makes the
-  client leave mid-match; the host logs `peer source 1 timed out (31 frames behind)
-  — dropped`, continues to completion (`stalled=0 dropped=1`), while a normal
-  no-drop match still syncs (`dropped=0`). Once the game has ended a quiet peer
-  is only a player leaving the score screen (`SessionEndGame` stops that
-  client's sim), so `defeat_army` leaves the result alone. See
-  `docs/superpowers/specs/2026-07-04-mp-player-drop-design.md`.
-- **LAN IP-entry UI:** a front-end "LAN Game" button opens a dialog (host-IP field +
-  Host/Join/Close + status) that calls the `LanHost([port])` / `LanJoin(ip[, port])` /
-  `LanNetStatus()` engine globals over the LAN lifecycle above. `--lan-ui-test`
-  verifies the globals headlessly (`LanHost` creates a listening transport,
-  `LanJoin("")` is rejected) and that the dialog Lua snippet parses + `pcall`-degrades
-  gracefully. The dialog is built with FA `maui`/`UIUtil`; its actual rendering/click
-  is verified only in a live window (no GUI automation in CI) and is fully
-  `pcall`-guarded so any UI mismatch logs a warning rather than breaking the menu.
-  See `docs/superpowers/specs/2026-07-04-lan-ip-entry-ui-design.md`.
+- **Multiplayer (LAN), retail's own screens to a game:** Multiplayer → LAN finds
+  games (UDP discovery on port 15000), and retail's `lobby.lua` hosts, joins and
+  launches over the engine's `CLobby` (`sim::LobbyNet`, through the host; Moho's "UDP" lobby over reliable UDP streams since M220c, "TCP" over TCP).
+  `LaunchGame` hands the lobby's connections to the game, which plays in lockstep
+  over them: pause (with the lobby's timeouts), the game's speed (as the lobby
+  sets it, and players agree it), chat, `GetSessionClients`,
+  `EjectSessionClient` and retail's disconnect dialog work as Moho's. See
+  `docs/plans/2026-09-28-m218-lan-lobby-design.md`.
+  - `data.lan_game` and `data.lan_game_quit` (need FA data) play retail's lobby
+    in two processes from hosting to a game of 150 ticks: in step, pausing and
+    resuming, chatting, the joiner raising the game's speed (adjustable in the
+    lobby) and both following; and with the joiner leaving at tick 120, dropped
+    by agreement, its army defeated, the dialog shown and closed.
+  - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`,
+    `mp.lockstep_peer_drop` and `mp.lockstep_slow_peer` host and join a lobby
+    over UDP, launch, and play minimal sims in lockstep through the game's own
+    `route_command` path: in sync; an injected local divergence reported by
+    both; a joiner that vanishes at round 20 dropped (after ~3 s, 30 rounds,
+    without a word from it) while the host plays on; a joiner taking 200 ms a
+    round setting the game's pace, with no one dropped (a peer runs at most two
+    seconds of frames ahead of its sim, then waits). Once the game has ended a
+    quiet peer is only a player leaving the score screen (`SessionEndGame` stops
+    that client's sim), so `defeat_army` leaves the result alone.
 - `osc_integration --full-smoke-test --map "/maps/SCMP_009/SCMP_009_scenario.lua"` completes the lifecycle: front-end, lobby/reload, game, score, return-to-front-end. Its lobby phase now launches through an `InternalCreateLobby` instance and `lobby:LaunchGame(config)`.
 - `osc_integration --lobby-flow-test` boots the no-map front-end, triggers the real `ButtonSkirmish()` path, pumps UI control frames, and verifies hosted-lobby callbacks fire.
 - `smoke_report.txt` is clean after the full-smoke run: 0 unique issues, 0 total occurrences.

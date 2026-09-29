@@ -1,9 +1,9 @@
 #pragma once
 
-// The sockets the engine's networking shares (the lockstep's TcpTransport,
-// the lobby's LobbyNet): POSIX or Winsock, blocking sends of whole buffers,
-// and the u32-length framing of extract_wire_frames. Include only from .cpp
-// files: it brings in the platform's socket headers.
+// The sockets the engine's networking shares (the lobby's LobbyNet, LAN
+// discovery): POSIX or Winsock, blocking sends of whole buffers, and the
+// u32-length framing of extract_wire_frames. Include only from .cpp files:
+// it brings in the platform's socket headers.
 
 #include "core/types.hpp"
 
