@@ -258,7 +258,16 @@ static int platoon_GetPlatoonPosition(lua_State* L) {
 }
 
 static int platoon_GetBrain(lua_State* L) {
-    auto* platoon = check_platoon(L);
+    // A platoon being destroyed still has its brain: its OnDestroy hands
+    // it to the destroy callbacks (platoon.lua's DoDestroyCallbacks), as
+    // Moho's does. Afterwards the handle holds no object.
+    sim::Platoon* platoon = nullptr;
+    if (lua_istable(L, 1)) {
+        lua_pushstring(L, "_c_object");
+        lua_rawget(L, 1);
+        if (lua_isuserdata(L, -1)) platoon = static_cast<sim::Platoon*>(lua_touserdata(L, -1));
+        lua_pop(L, 1);
+    }
     auto* sim = get_sim(L);
     if (!platoon || !sim) { lua_pushnil(L); return 1; }
 
@@ -794,8 +803,48 @@ static int platoon_CalculatePlatoonThreatAroundPosition(lua_State* L) {
     return 1;
 }
 
+namespace {
+
+/// A platoon template squad's unit filter, as Moho's CanFormPlatoon and
+/// FormPlatoon read it: a blueprint id (any case; campaign templates name
+/// their units so) or a category. They take only live, finished units.
+class SquadFilter {
+public:
+    SquadFilter(lua_State* L, int idx) {
+        if (lua_type(L, idx) == LUA_TSTRING) bp_id_ = lua_tostring(L, idx);
+        else if (lua_istable(L, idx)) category_.emplace(L, idx);
+    }
+
+    /// A blueprint id or a category (other squads are skipped).
+    bool valid() const { return bp_id_.has_value() || category_.has_value(); }
+
+    const sim::Unit* take(const sim::Entity* e) const {
+        if (!e || e->destroyed() || !e->is_unit()) return nullptr;
+        const auto* unit = static_cast<const sim::Unit*>(e);
+        if (unit->is_dying() || unit->is_being_built()) return nullptr;
+        if (bp_id_) {
+            const std::string& id = unit->blueprint_id();
+            const auto lower = [](char c) {
+                return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            };
+            const bool same = id.size() == bp_id_->size() &&
+                              std::equal(id.begin(), id.end(), bp_id_->begin(),
+                                         [&](char a, char b) { return lower(a) == lower(b); });
+            return same ? unit : nullptr;
+        }
+        return category_->matches(unit->category_bits()) ? unit : nullptr;
+    }
+
+private:
+    std::optional<std::string> bp_id_;
+    std::optional<osc::lua::CategoryMatcher> category_;
+};
+
+} // namespace
+
 // platoon:CanFormPlatoon(template, count, location, radius)
-// template = {name, plan, {category_expr, min, max, squad, formation}, ...}
+// template = {name, plan, {filter, min, max, squad, formation}, ...}, a
+// squad's filter a blueprint id or a category
 // count = multiplier for min/max counts
 // location = optional {x, y, z} position
 // radius = optional search radius
@@ -829,17 +878,19 @@ static int platoon_CanFormPlatoon(lua_State* L) {
     }
 
     // Iterate template sub-tables starting at index 3
+    int total = 0;
     for (int i = 3; ; i++) {
         lua_rawgeti(L, tmpl, i);
         if (lua_isnil(L, -1)) { lua_pop(L, 1); break; }
         if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
         int sub = lua_gettop(L);
 
-        // sub[1] = category expression (Lua table)
+        // sub[1] = the unit filter
         lua_rawgeti(L, sub, 1);
-        int cat_idx = lua_gettop(L);
-        if (!lua_istable(L, cat_idx)) {
-            lua_pop(L, 2); // cat + sub
+        const SquadFilter filter(L, lua_gettop(L));
+        lua_pop(L, 1);
+        if (!filter.valid()) {
+            lua_pop(L, 1); // sub
             continue;
         }
 
@@ -851,14 +902,10 @@ static int platoon_CanFormPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         // Count matching units in pool
-        const osc::lua::CategoryMatcher category(L, cat_idx);
         int matched = 0;
         for (u32 id : platoon->unit_ids()) {
-            auto* e = sim->entity_registry().find(id);
-            if (!e || e->destroyed() || !e->is_unit()) continue;
-            auto* unit = static_cast<sim::Unit*>(e);
-
-            if (!category.matches(unit->category_bits())) continue;
+            const sim::Unit* unit = filter.take(sim->entity_registry().find(id));
+            if (!unit) continue;
 
             if (has_location) {
                 auto pos = unit->position();
@@ -869,8 +916,8 @@ static int platoon_CanFormPlatoon(lua_State* L) {
 
             matched++;
         }
+        total += matched;
 
-        lua_pop(L, 1); // cat_idx
         lua_pop(L, 1); // sub
 
         if (matched < min_count) {
@@ -879,7 +926,8 @@ static int platoon_CanFormPlatoon(lua_State* L) {
         }
     }
 
-    lua_pushboolean(L, 1);
+    // As Moho's: a platoon that would take no unit at all can't be formed.
+    lua_pushboolean(L, total > 0 ? 1 : 0);
     return 1;
 }
 
@@ -940,11 +988,12 @@ static int platoon_FormPlatoon(lua_State* L) {
         if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
         int sub = lua_gettop(L);
 
-        // sub[1] = category expression
+        // sub[1] = the unit filter
         lua_rawgeti(L, sub, 1);
-        int cat_idx = lua_gettop(L);
-        if (!lua_istable(L, cat_idx)) {
-            lua_pop(L, 2); // cat + sub
+        const SquadFilter filter(L, lua_gettop(L));
+        lua_pop(L, 1);
+        if (!filter.valid()) {
+            lua_pop(L, 1); // sub
             continue;
         }
 
@@ -976,7 +1025,6 @@ static int platoon_FormPlatoon(lua_State* L) {
         lua_pop(L, 1);
 
         // Find matching units and transfer
-        const osc::lua::CategoryMatcher category(L, cat_idx);
         int taken = 0;
         for (u32 id : pool_ids) {
             if (taken >= max_count) break;
@@ -988,11 +1036,8 @@ static int platoon_FormPlatoon(lua_State* L) {
             }
             if (already) continue;
 
-            auto* e = sim->entity_registry().find(id);
-            if (!e || e->destroyed() || !e->is_unit()) continue;
-            auto* unit = static_cast<sim::Unit*>(e);
-
-            if (!category.matches(unit->category_bits())) continue;
+            const sim::Unit* unit = filter.take(sim->entity_registry().find(id));
+            if (!unit) continue;
 
             if (has_location) {
                 auto pos = unit->position();
@@ -1008,7 +1053,6 @@ static int platoon_FormPlatoon(lua_State* L) {
             taken++;
         }
 
-        lua_pop(L, 1); // cat_idx
         lua_pop(L, 1); // sub
     }
 

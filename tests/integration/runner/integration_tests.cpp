@@ -1401,6 +1401,38 @@ void test_platoon(TestContext& ctx) {
     reap_check("Platoon test: its AI thread no longer runs", R"(
         if __osc_doomed_ticks ~= __osc_doomed_seen then error('its thread still runs') end
     )");
+
+    // Templates may name a squad's units by blueprint id, in any case, as
+    // the campaign's base managers do (Moho's CanFormPlatoon/FormPlatoon).
+    reap_check("Platoon test: a template squad names its units by blueprint id", R"(
+        local brain = ArmyBrains[2]
+        local pool = brain:GetPlatoonUniquelyNamed('ArmyPool')
+        for i = 1, 2 do
+            CreateUnitHPR('uel0101', 'ARMY_2', 600 + 6 * i, GetTerrainHeight(600 + 6 * i, 150), 150, 0, 0, 0)
+        end
+        local two = {'Scouts', 'none', {'UEL0101', 2, 2, 'Scout', 'None'}}
+        if not pool:CanFormPlatoon(two, 1) then error('two scouts, named in capitals: not formable') end
+        if pool:CanFormPlatoon({'Scouts', 'none', {'uel0101', 3, 3, 'Scout', 'None'}}, 1) then
+            error('three scouts formable from two')
+        end
+        local scouts = pool:FormPlatoon(two, 1)
+        local units = scouts:GetPlatoonUnits()
+        if table.getn(units) ~= 2 then error('formed with ' .. table.getn(units) .. ' units') end
+        for _, u in units do
+            if u:GetBlueprint().BlueprintId ~= 'uel0101' then error('took a ' .. u:GetBlueprint().BlueprintId) end
+        end
+    )");
+    reap_check("Platoon test: a template that would take no unit is not formable", R"(
+        local pool = ArmyBrains[2]:GetPlatoonUniquelyNamed('ArmyPool')
+        -- The scouts are gone from the pool; a squad of at least none finds none.
+        if pool:CanFormPlatoon({'Scouts', 'none', {'uel0101', 0, 1, 'Scout', 'None'}}, 1) then
+            error('formable with no unit to take')
+        end
+        -- A category squad still counts.
+        if not pool:CanFormPlatoon({'Boss', 'none', {categories.COMMAND, 1, 1, 'Attack', 'None'}}, 1) then
+            error('the ACU, by category: not formable')
+        end
+    )");
 }
 
 // Repair test: ACU builds pgen, damage it, repair it
