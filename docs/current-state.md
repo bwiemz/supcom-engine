@@ -40,12 +40,12 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
 ## Verified Locally
 
 - `build/linux-debug/tests/osc_tests` passes (see the metrics above); `build/linux-debug/opensupcom --help` lists the CLI surface, including every `--*-test` mode.
-- **Launched by a matchmaking client (GPGNet, M220a):** `opensupcom /gpgnet 127.0.0.1:<port>` connects to the client and carries out its commands (`CreateLobby` through retail's `onlineprovider.lua`, `HostGame`, `JoinGame`, `ConnectToPeer`...), telling it `GameState Idle` and `Lobby`; `data.gpgnet_lobby` checks it against a stand-in client, and `data.gpgnet_game` has the stand-in drive two games through retail's auto-lobby, as FAF's matchmaker does, to a launched game both play in lockstep. FAF's own client and ICE adapter aren't tested here (none is installed).
+- **Launched by a matchmaking client (GPGNet, M220a):** `opensupcom /gpgnet 127.0.0.1:<port>` connects to the client and carries out its commands (`CreateLobby` through retail's `onlineprovider.lua`, `HostGame`, `JoinGame`, `ConnectToPeer`...), telling it `GameState Idle` and `Lobby`; `data.gpgnet_lobby` checks it against a stand-in client, and `data.gpgnet_game` has the stand-in drive two games through retail's auto-lobby, as FAF's matchmaker does, to a launched game both play in lockstep; `data.gpgnet_game_relayed` does it with the two reaching each other through a UDP relay standing in for FAF's ICE adapter, losing 5% of what it carries. FAF's own client and ICE adapter aren't tested here (none is installed).
 - **Windows and Linux in one game (CI):** the `cross-os-play` job plays the data-free lockstep pairs with the Linux build hosting the Windows build under Wine and the other way round (`tests/integration/cross_os_pairs.py`): in sync, a divergence caught, a vanished joiner dropped, a slow joiner setting the pace.
 - **Cross-OS determinism on real data:** `tools/cross_os_replay.py --run-id <CI run>` plays a recorded four-AI game with the CI's Windows build (under Wine) and a Linux build; each Phase E PR has matched at every tick.
 - **Multiplayer (LAN), retail's own screens to a game:** Multiplayer → LAN finds
   games (UDP discovery on port 15000), and retail's `lobby.lua` hosts, joins and
-  launches over the engine's `CLobby` (`sim::LobbyNet`, TCP through the host).
+  launches over the engine's `CLobby` (`sim::LobbyNet`, through the host; Moho's "UDP" lobby over reliable UDP streams since M220c, "TCP" over TCP).
   `LaunchGame` hands the lobby's connections to the game, which plays in lockstep
   over them: pause (with the lobby's timeouts), the game's speed (as the lobby
   sets it, and players agree it), chat, `GetSessionClients`,
@@ -58,7 +58,7 @@ The code runs against real FA/FAF data via the VFS and currently boots Seton's C
     by agreement, its army defeated, the dialog shown and closed.
   - The data-free CI pairs `mp.lockstep_sync`, `mp.lockstep_desync_detected`,
     `mp.lockstep_peer_drop` and `mp.lockstep_slow_peer` host and join a lobby
-    over TCP, launch, and play minimal sims in lockstep through the game's own
+    over UDP, launch, and play minimal sims in lockstep through the game's own
     `route_command` path: in sync; an injected local divergence reported by
     both; a joiner that vanishes at round 20 dropped (after ~3 s, 30 rounds,
     without a word from it) while the host plays on; a joiner taking 200 ms a
