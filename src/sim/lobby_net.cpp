@@ -28,6 +28,7 @@ enum class Msg : u8 {
     Ping = 7,       ///< stamp
     Pong = 8,       ///< the stamp pinged
     Kick = 9,       ///< host: reason
+    Game = 10,      ///< from, payload: a launched game's frame (the host relays a client's)
 };
 
 /// Moho caps a player's name at 24 characters.
@@ -221,6 +222,7 @@ struct LobbyNet::Impl {
     i64 join_started = -1;
     std::vector<LobbyPeer> peers;
     std::vector<LobbyEvent> pending; ///< events from calls between polls
+    std::vector<std::vector<u8>> game_inbox; ///< game frames, for take_game
 
     ~Impl() {
         for (Conn& c : conns) c.close();
@@ -348,6 +350,23 @@ bool LobbyNet::eject(u32 uid, const std::string& reason) {
     return true;
 }
 
+void LobbyNet::send_game(const std::vector<u8>& payload) {
+    const std::vector<u8> msg = Writer(Msg::Game).u32v(impl_->local_uid).bytes(payload).out();
+    if (impl_->is_host) impl_->tell_others(kEveryone, msg);
+    else if (!impl_->conns.empty() && impl_->welcomed) impl_->conns.front().send(msg);
+}
+
+std::vector<std::vector<u8>> LobbyNet::take_game() {
+    std::vector<std::vector<u8>> frames;
+    std::swap(frames, impl_->game_inbox);
+    return frames;
+}
+
+void LobbyNet::stop_joining() {
+    net::close_socket(impl_->listen_fd);
+    impl_->listen_fd = kInvalidSocket;
+}
+
 std::vector<LobbyEvent> LobbyNet::poll(i64 now_ms) {
     std::vector<LobbyEvent> events;
     std::swap(events, impl_->pending);
@@ -357,8 +376,8 @@ std::vector<LobbyEvent> LobbyNet::poll(i64 now_ms) {
 }
 
 void LobbyNet::Impl::host_poll(i64 now, std::vector<LobbyEvent>& events) {
-    // Accept whoever is waiting
-    for (;;) {
+    // Accept whoever is waiting (until the game starts)
+    while (listen_fd != kInvalidSocket) {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(listen_fd, &fds);
@@ -459,6 +478,14 @@ void LobbyNet::Impl::host_frame(Conn& c, const std::vector<u8>& f, i64 now,
         if (*to == kEveryone) tell_others(from, relay);
         else if (*to != 0)
             if (Conn* target = conn_of(*to)) target->send(relay);
+        return;
+    }
+    case Msg::Game: {
+        (void)r.u32v(); // as Data: the connection says who
+        const auto payload = r.bytes();
+        if (!payload || c.uid == kEveryone) return;
+        game_inbox.push_back(*payload);
+        tell_others(c.uid, Writer(Msg::Game).u32v(c.uid).bytes(*payload).out());
         return;
     }
     case Msg::Ping: {
@@ -589,6 +616,12 @@ void LobbyNet::Impl::client_poll(i64 now, std::vector<LobbyEvent>& events) {
                 events.push_back({LobbyEvent::Kind::Data, *from, name_of(*from), {}, *payload});
             break;
         }
+        case Msg::Game: {
+            (void)r.u32v();
+            const auto payload = r.bytes();
+            if (payload) game_inbox.push_back(*payload);
+            break;
+        }
         case Msg::Ping: {
             const auto stamp = r.u64v();
             if (stamp) host.send(Writer(Msg::Pong).u64v(*stamp).out());
@@ -623,7 +656,7 @@ void LobbyNet::Impl::client_poll(i64 now, std::vector<LobbyEvent>& events) {
 }
 
 bool LobbyNet::hosting() const {
-    return impl_->is_host && impl_->listen_fd != kInvalidSocket;
+    return impl_->is_host;
 }
 bool LobbyNet::joined() const {
     return !impl_->is_host && impl_->welcomed && !impl_->done;
@@ -651,6 +684,23 @@ const LobbyPeer* LobbyNet::peer(u32 uid) const {
     for (const LobbyPeer& p : impl_->peers)
         if (p.uid == uid) return &p;
     return nullptr;
+}
+
+LobbyGameTransport::LobbyGameTransport(std::unique_ptr<LobbyNet> net, std::function<i64()> clock)
+    : net_(std::move(net)), clock_(std::move(clock)) {}
+
+void LobbyGameTransport::broadcast(const std::vector<u8>& msg) {
+    net_->send_game(msg);
+}
+
+std::vector<std::vector<u8>> LobbyGameTransport::receive() {
+    for (const LobbyEvent& e : net_->poll(clock_())) {
+        if (e.kind == LobbyEvent::Kind::PeerLeft)
+            spdlog::warn("[mp] {} (uid {}) left the game", e.name, e.uid);
+        else if (e.kind == LobbyEvent::Kind::ConnectionFailed)
+            spdlog::warn("[mp] the connection to the host is gone");
+    }
+    return net_->take_game();
 }
 
 std::string LobbyNet::valid_player_name(u32 uid, const std::string& name) const {

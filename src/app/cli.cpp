@@ -188,7 +188,16 @@ std::optional<Options> parse_options(int argc, char* argv[], const TestRequest& 
     // --load-flow-test: the Load dialog's path (the first saved game
     // GetSpecialFiles lists), caught up and saved again, offscreen.
     o.load_flow_test = parse_flag(argc, argv, "--load-flow-test");
-    o.scripted_window = request.windowed || o.replay_flow_test || o.load_flow_test;
+    // --lan-game-host / --lan-game-join <address> (--mp-port <port>): two
+    // processes play retail's LAN lobby to a game.
+    o.lan_game_host = parse_flag(argc, argv, "--lan-game-host");
+    o.lan_game_join = parse_string_arg(argc, argv, "--lan-game-join", "");
+    if (const auto port = parse_string_arg(argc, argv, "--mp-port", "");
+        !port.empty() && port.size() <= 5 &&
+        port.find_first_not_of("0123456789") == std::string::npos)
+        o.lan_game_port = static_cast<u16>(std::clamp(std::stoi(port), 1, 65535));
+    o.scripted_window =
+        request.windowed || o.replay_flow_test || o.load_flow_test || o.lan_game_test();
     o.no_fog = parse_flag(argc, argv, "--no-fog");
     o.legacy_hud = parse_flag(argc, argv, "--legacy-hud");
     o.no_decals = parse_flag(argc, argv, "--no-decals");

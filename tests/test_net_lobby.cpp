@@ -6,8 +6,10 @@
 
 #include "lua/lua_state.hpp"
 #include "lua/moho_bindings.hpp"
+#include "lua/mp_net_state.hpp"
 #include "lua/net_lobby.hpp"
 #include "sim/lan_discovery.hpp"
+#include "sim/lobby_net.hpp"
 #include "sim/sim_state.hpp"
 #include "ui/ui_control.hpp"
 
@@ -16,8 +18,10 @@ extern "C" {
 }
 
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 using osc::lua::LuaState;
 
@@ -186,7 +190,7 @@ TEST_CASE("LAN lobby data, ejection, departures and failures (M218a)", "[lobby][
     REQUIRE(w.until("d.failed ~= nil"));
     REQUIRE(w.run("assert(d.failed == 'HostLeft')"));
 
-    // A networked game can't be launched yet (M218c): the scripts hear so
+    // A config naming no scenario can't be launched: the scripts hear so
     REQUIRE(w.run(R"(
         e = NewLobby('Eve') e:HostGame() e:LaunchGame({})
         assert(e.launch_failed == '')
@@ -272,4 +276,179 @@ TEST_CASE("The Steam build's calls, with no Steam; ValidateIPAddress (M218b)", "
         assert(ValidateIPAddress('1..2.3:4') == nil)
         assert(ValidateIPAddress('1.2.3.99999999999:5') == nil)
     )"));
+}
+
+namespace {
+
+/// The launch's scenarios, as doscript would read them: one for two
+/// players, and one with no standard configuration.
+const char* kScenarios = R"(
+    Scenarios = {
+        ['/maps/two/two_scenario.lua'] = {
+            Configurations = {standard = {teams = {{name = 'ffa', armies = {'ARMY_1', 'ARMY_2', 'ARMY_3'}}}}},
+        },
+        ['/maps/bare/bare_scenario.lua'] = {Configurations = {}},
+    }
+    function doscript(path, env)
+        if path == '/lua/dataInit.lua' then return end
+        if not Scenarios[path] then error('no such file: ' .. path) end
+        env.ScenarioInfo = Scenarios[path]
+    end
+    -- As retail's lobby.lua: the launched game takes over, the lobby goes
+    TestComm.GameLaunched = function(self) self.launched = true self:Destroy() end
+    function Config(scenario, players, observers)
+        return {GameOptions = {ScenarioFile = scenario}, PlayerOptions = players,
+                Observers = observers or {}}
+    end
+)";
+
+/// Whatever a launch left in the process-wide multiplayer state goes.
+struct MpGuard {
+    MpGuard() { osc::lua::mp_teardown(); }
+    ~MpGuard() { osc::lua::mp_teardown(); }
+    MpGuard(const MpGuard&) = delete;
+    MpGuard& operator=(const MpGuard&) = delete;
+};
+
+/// The lobby transport a launch left, taken out of the multiplayer state.
+std::unique_ptr<osc::sim::INetTransport> take_launched() {
+    auto& mp = osc::lua::mp_net_state();
+    auto t = std::move(mp.lobby_transport);
+    osc::lua::mp_teardown();
+    return t;
+}
+
+} // namespace
+
+TEST_CASE("LaunchGame starts the game over the lobby's connections (M218c)", "[lobby][lua]") {
+    MpGuard guard;
+    World w;
+    REQUIRE(w.run(kScenarios));
+    REQUIRE(w.run("host = NewLobby('Host') host:HostGame()"));
+    REQUIRE(w.until("host.hosted"));
+    REQUIRE(w.run(R"(
+        port = host:GetLocalPort()
+        a = NewLobby('Alice') a:JoinGame('127.0.0.1:' .. port, 'Alice', nil)
+        b = NewLobby('Bob') b:JoinGame('127.0.0.1:' .. port, 'Bob', nil)
+    )"));
+    REQUIRE(w.until("a.me == '1' and b.me == '2'"));
+
+    // What can't launch: the lobby stays
+    REQUIRE(w.run(R"(
+        two = '/maps/two/two_scenario.lua'
+        local both = {{Human = true, OwnerID = '0'}, {Human = true, OwnerID = '1'}}
+        a:LaunchGame(Config('/maps/none_scenario.lua', both))
+        assert(a.launch_failed == '', 'no such scenario')
+        a:LaunchGame(Config('/maps/bare/bare_scenario.lua', both))
+        assert(a.launch_failed == 'NoConfig', a.launch_failed)
+        local four = {{Human = true, OwnerID = '0'}, {Human = true, OwnerID = '1'},
+                      {Human = false}, {Human = false}}
+        a:LaunchGame(Config(two, four))
+        assert(a.launch_failed == 'StartSpots', a.launch_failed)
+        a.launch_failed = nil
+        a:LaunchGame(Config(two, {{Human = true, OwnerID = '0'}}))
+        assert(a.launch_failed == '', 'Alice is neither playing nor watching')
+        assert(not a.launched and a:GetLocalPlayerID() == '1')
+    )"));
+    CHECK_FALSE(osc::lua::mp_net_state().transport_ready);
+
+    // The game: Alice in slot 1, an AI in 2, the host in 3 (built out of
+    // order), Bob watching
+    REQUIRE(w.run(R"(
+        function GameInfo()
+            local players = {}
+            players[3] = {Human = true, OwnerID = '0', PlayerName = 'Host'}
+            players[2] = {Human = false, AIPersonality = 'adaptive'}
+            players[1] = {Human = true, OwnerID = 1, PlayerName = 'Alice'}
+            return Config(two, players, {{OwnerID = '2', PlayerName = 'Bob'}})
+        end
+        -- From a thread, as retail's keepalive and launch countdown call
+        -- them: the networked lobby still (not the single-player loopback's)
+        a.launch_failed = nil
+        local co = coroutine.create(function()
+            local hostPeer = a:GetPeer('0')
+            assert(hostPeer and hostPeer.name == 'Host' and type(hostPeer.quiet) == 'number')
+            a:LaunchGame(GameInfo())
+        end)
+        local ok, err = coroutine.resume(co)
+        assert(ok, err)
+        assert(a.launched and a.launch_failed == nil)
+    )"));
+    // Sources: Alice's (army 0), the host's (army 2), then Bob's (none)
+    auto& mp = osc::lua::mp_net_state();
+    REQUIRE(mp.transport_ready);
+    REQUIRE(mp.lobby_transport);
+    CHECK(mp.role == osc::lua::MpNetState::Role::Join);
+    CHECK(mp.local_source == 0);
+    CHECK(mp.all_sources == std::vector<osc::u32>{0, 1, 2});
+    CHECK(mp.source_armies == std::vector<osc::i32>{0, 2, -1});
+    CHECK(mp.local_army() == 0);
+    // Seeded by the host's time, which the welcome brought
+    const auto* alice_net = static_cast<osc::sim::LobbyGameTransport*>(mp.lobby_transport.get());
+    CHECK(mp.seed == alice_net->net().hosted_time());
+    CHECK(mp.seed != 0);
+    // The session starts as single-player's does, with the frame loop
+    lua_pushstring(w.state.raw(), "__osc_launch_requested");
+    lua_rawget(w.state.raw(), LUA_REGISTRYINDEX);
+    CHECK(lua_toboolean(w.state.raw(), -1) != 0);
+    lua_pop(w.state.raw(), 1);
+    auto alice = take_launched();
+
+    REQUIRE(w.run("b:LaunchGame(GameInfo()) assert(b.launched)"));
+    CHECK(osc::lua::mp_net_state().local_source == 2);
+    CHECK(osc::lua::mp_net_state().local_army() == -1); // watching
+    auto bob = take_launched();
+
+    REQUIRE(w.run("host:LaunchGame(GameInfo()) assert(host.launched)"));
+    CHECK(osc::lua::mp_net_state().role == osc::lua::MpNetState::Role::Host);
+    CHECK(osc::lua::mp_net_state().local_source == 1);
+    CHECK(osc::lua::mp_net_state().local_army() == 2);
+    CHECK(osc::lua::mp_net_state().seed == alice_net->net().hosted_time());
+    auto host = take_launched();
+
+    // Slots 2, 5 and 7 taken, the rest empty (random spawn leaves gaps):
+    // the armies are the slots taken, in order, as Moho packs them, however
+    // the table iterates (these keys sit in its hash part)
+    {
+        auto transport = std::move(host);
+        REQUIRE(w.run(R"(
+            gap = NewLobby('Gap') gap:HostGame()
+            Scenarios['/maps/eight/eight_scenario.lua'] = {Configurations = {standard = {teams = {
+                {name = 'FFA', armies = {'ARMY_1', 'ARMY_2', 'ARMY_3', 'ARMY_4', 'ARMY_5',
+                                         'ARMY_6', 'ARMY_7', 'ARMY_8'}}}}}}
+        )"));
+        REQUIRE(w.until("gap.hosted"));
+        REQUIRE(w.run(R"(
+            local players = {}
+            players[7] = {Human = false, AIPersonality = 'adaptive'}
+            players[5] = {Human = false, AIPersonality = 'adaptive'}
+            players[2] = {Human = true, OwnerID = '0', PlayerName = 'Gap'}
+            local order = {}
+            for slot in players do table.insert(order, slot) end
+            __osc_gap_order = table.concat(order, ',')
+            gap:LaunchGame(Config('/maps/eight/eight_scenario.lua', players))
+            assert(gap.launched)
+        )"));
+        lua_getglobal(w.state.raw(), "__osc_gap_order");
+        UNSCOPED_INFO("the table iterates its slots as " << lua_tostring(w.state.raw(), -1));
+        lua_pop(w.state.raw(), 1);
+        CHECK(osc::lua::mp_net_state().source_armies == std::vector<osc::i32>{0});
+        take_launched();
+        host = std::move(transport);
+    }
+    // The lobbies are gone (GameLaunched destroyed them); their pump is quiet
+    osc::lua::pump_net_lobbies(w.state.raw(), osc::lua::net_lobby_clock_ms());
+
+    // The connections carry the game: Alice's frame reaches both others
+    alice->broadcast({1, 2, 3});
+    std::vector<std::vector<osc::u8>> at_host;
+    std::vector<std::vector<osc::u8>> at_bob;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline && (at_host.empty() || at_bob.empty())) {
+        for (auto& f : host->receive()) at_host.push_back(f);
+        for (auto& f : bob->receive()) at_bob.push_back(f);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    CHECK(at_host == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
+    CHECK(at_bob == std::vector<std::vector<osc::u8>>{{1, 2, 3}});
 }

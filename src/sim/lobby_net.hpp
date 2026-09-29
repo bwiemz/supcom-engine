@@ -11,7 +11,9 @@
 // frames); each is a type byte, then its fields.
 
 #include "core/types.hpp"
+#include "sim/net_transport.hpp"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -79,6 +81,15 @@ public:
     /// player, or not hosting.
     bool eject(u32 uid, const std::string& reason);
 
+    /// A launched game's lockstep frames (M218c), apart from the scripts'
+    /// data: to every other player (the host relays a client's).
+    void send_game(const std::vector<u8>& payload);
+    /// The game frames poll() has read since the last call, in order.
+    std::vector<std::vector<u8>> take_game();
+    /// The host, once the game starts: no more joins (the port stops
+    /// listening, as Moho's connector goes to the game).
+    void stop_joining();
+
     /// Accept, read, relay and keep alive; what happened since the last
     /// call. `now_ms`: a monotonic clock in milliseconds.
     std::vector<LobbyEvent> poll(i64 now_ms);
@@ -105,6 +116,24 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+/// A launched game's connections (M218c): the lobby's, carrying the
+/// lockstep's frames, as Moho's LaunchGame hands its peers' connections to
+/// the game. Receiving polls the lobby, which keeps its keepalive going;
+/// what the lobby reports (a player gone, late chat) is only logged, since
+/// the lockstep notices a silent player itself.
+class LobbyGameTransport : public INetTransport {
+public:
+    /// `clock`: poll's monotonic milliseconds.
+    LobbyGameTransport(std::unique_ptr<LobbyNet> net, std::function<i64()> clock);
+    void broadcast(const std::vector<u8>& msg) override;
+    std::vector<std::vector<u8>> receive() override;
+    const LobbyNet& net() const { return *net_; }
+
+private:
+    std::unique_ptr<LobbyNet> net_;
+    std::function<i64()> clock_;
 };
 
 } // namespace osc::sim

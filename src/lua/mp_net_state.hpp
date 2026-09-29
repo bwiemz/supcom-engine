@@ -38,8 +38,18 @@ struct MpNetState {
     std::unique_ptr<LanLobby> lobby;             // lobby-phase handshake
     std::unique_ptr<osc::sim::LockstepSession> session; // built at game launch
     bool transport_ready = false;              // a transport exists, awaiting launch
+    // A game retail's lobby launched (M218c): its connections carry the
+    // lockstep in place of the mux, and source s plays army
+    // source_armies[s] (-1: an observer's). Without them source s plays
+    // army s, as the fixed 1v1 LAN handshake assumes.
+    std::unique_ptr<osc::sim::INetTransport> lobby_transport;
+    std::vector<osc::i32> source_armies;
 
     bool active() const { return session != nullptr; }
+    /// The army `source` plays (-1: none).
+    osc::i32 army_of(osc::u32 source) const;
+    /// The army this player plays (-1: an observer).
+    osc::i32 local_army() const { return army_of(local_source); }
     void reset();
 };
 
@@ -61,9 +71,17 @@ void mp_pump();
 // The active lobby handshake, or nullptr if no LAN transport was set up.
 LanLobby* mp_lobby();
 
+// A lobby's LaunchGame (M218c): the game will play over `transport`, the
+// lobby's connections. Command sources are 0, 1, ... (Moho's: the humans'
+// owners by slot, then the observers); `armies[s]` is source s's army (-1:
+// an observer's), and `local_source` this player's. Replaces any LAN
+// transport set up before.
+void mp_begin_lobby_game(std::unique_ptr<osc::sim::INetTransport> transport, bool host,
+                         osc::u32 local_source, std::vector<osc::i32> armies, osc::u64 seed);
+
 // At game launch: if a transport is ready, build the LockstepSession over the
-// mux game channel, install SimState's command sink, and seed the sim (making it
-// multiplayer). No-op in single-player. Returns true if a session was attached.
+// lobby's connections or the mux game channel, install SimState's command sink, and seed the sim
+// (making it multiplayer). No-op in single-player. Returns true if a session was attached.
 bool mp_attach_session(osc::sim::SimState& sim);
 
 // Tear down any active lobby + session + transport (game end / return to lobby).

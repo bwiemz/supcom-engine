@@ -63,6 +63,12 @@ struct Options {
     std::string watch_path; ///< --watch
     bool replay_flow_test = false;
     bool load_flow_test = false;
+    /// --lan-game-host / --lan-game-join <address>, on --mp-port: retail's
+    /// LAN lobby played to a game by two processes, offscreen (M218c).
+    bool lan_game_host = false;
+    std::string lan_game_join;
+    u16 lan_game_port = 47624;
+    bool lan_game_test() const { return lan_game_host || !lan_game_join.empty(); }
     /// A scripted run of the windowed loop: offscreen, silent, fixed clock.
     bool scripted_window = false;
     bool no_fog = false;

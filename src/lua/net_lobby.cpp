@@ -1,6 +1,7 @@
 #include "lua/net_lobby.hpp"
 
 #include "lua/lobby_wire.hpp"
+#include "lua/mp_net_state.hpp"
 #include "sim/lan_discovery.hpp"
 #include "sim/lobby_net.hpp"
 
@@ -12,15 +13,26 @@ extern "C" {
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace osc::lua {
 
 struct NetLobby {
+    /// Its UI state: the state's registry, which its threads share (a
+    /// method may come from a thread, as retail's launch countdown calls
+    /// LaunchGame)
+    const void* state = nullptr;
+    /// The thread to call back on: the pump's, or a method's caller while
+    /// the method runs
     lua_State* L = nullptr;
     int self_ref = LUA_NOREF; ///< the scripts' object, for its callbacks
     u16 port = 0;
@@ -35,7 +47,8 @@ struct NetLobby {
 };
 
 struct NetDiscovery {
-    lua_State* L = nullptr;
+    const void* state = nullptr; ///< as NetLobby's
+    lua_State* L = nullptr;      ///< as NetLobby's
     int self_ref = LUA_NOREF;
     sim::LanDiscovery finder;
     NetDiscovery(const std::string& address, u16 port) : finder(address, port) {}
@@ -45,6 +58,19 @@ namespace {
 
 /// Moho caps a game's name at 32 characters and a player's at 24.
 constexpr size_t kMaxPlayerName = 24;
+
+/// The UI state `L` (or one of its threads) belongs to.
+const void* state_of(lua_State* L) {
+    return lua_topointer(L, LUA_REGISTRYINDEX);
+}
+
+/// The object at 1 no longer a networked one (its C++ side is gone).
+void forget_object(lua_State* L) {
+    if (!lua_istable(L, 1)) return;
+    lua_pushstring(L, "_c_object");
+    lua_pushnil(L);
+    lua_rawset(L, 1);
+}
 
 std::vector<std::unique_ptr<NetLobby>>& lobbies() {
     static std::vector<std::unique_ptr<NetLobby>> all;
@@ -320,7 +346,10 @@ NetLobby* net_lobby_of(lua_State* L, int idx) {
     auto* p = static_cast<NetLobby*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     for (const auto& l : lobbies())
-        if (l.get() == p && l->L == L) return p;
+        if (l.get() == p && l->state == state_of(L)) {
+            p->L = L; // callbacks during the method: on its caller's thread
+            return p;
+        }
     return nullptr;
 }
 
@@ -328,6 +357,7 @@ void make_net_lobby(lua_State* L, int idx, const std::string& protocol, u16 port
                     u32 max_connections, const std::string& player_name) {
     if (idx < 0) idx = lua_gettop(L) + idx + 1;
     auto lobby = std::make_unique<NetLobby>();
+    lobby->state = state_of(L);
     lobby->L = L;
     lobby->protocol = protocol == "TCP" ? 1 : 2;
     lobby->port = port;
@@ -472,15 +502,238 @@ int net_lobby_MakeValidPlayerName(lua_State* L, NetLobby& lobby) {
     return 1;
 }
 
+namespace {
+
+/// The scenario at `path`, as the lobby's LaunchGame reads it (Moho's
+/// WLD_LoadScenarioInfo; retail's MapUtil.LoadScenario does the same): its
+/// ScenarioInfo left on the stack, or nil.
+void push_scenario_info(lua_State* L, const std::string& path) {
+    // (A function of the path: Lua 5.0's main chunks take no `...`)
+    static const char* const kLoad = R"(
+        return function(path)
+            local env = {}
+            doscript('/lua/dataInit.lua', env)
+            doscript(path, env)
+            return env.ScenarioInfo
+        end
+    )";
+    if (luaL_loadbuffer(L, kLoad, std::strlen(kLoad), "=LaunchGame") != 0 ||
+        lua_pcall(L, 0, 1, 0) != 0) {
+        spdlog::error("lobby LaunchGame: the scenario reader: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        return;
+    }
+    lua_pushstring(L, path.c_str());
+    if (lua_pcall(L, 1, 1, 0) != 0) {
+        spdlog::warn("lobby LaunchGame: can't read {}: {}", path, lua_tostring(L, -1));
+        lua_pop(L, 1);
+        lua_pushnil(L);
+    }
+}
+
+bool is_ffa(const char* name) {
+    return name && std::strlen(name) == 3 &&
+           std::toupper(static_cast<unsigned char>(name[0])) == 'F' &&
+           std::toupper(static_cast<unsigned char>(name[1])) == 'F' &&
+           std::toupper(static_cast<unsigned char>(name[2])) == 'A';
+}
+
+/// How many armies the scenario's FFA team has (ScenarioInfo at `info`);
+/// none without an FFA team, nullopt without its standard configuration's
+/// teams (Moho's "NoConfig").
+std::optional<size_t> ffa_army_count(lua_State* L, int info) {
+    const int top = lua_gettop(L);
+    lua_pushvalue(L, info);
+    for (const char* key : {"Configurations", "standard", "teams"}) {
+        if (!lua_istable(L, -1)) {
+            lua_settop(L, top);
+            return std::nullopt;
+        }
+        lua_pushstring(L, key);
+        lua_gettable(L, -2);
+    }
+    if (!lua_istable(L, -1)) {
+        lua_settop(L, top);
+        return std::nullopt;
+    }
+    const int teams = lua_gettop(L);
+    size_t count = 0;
+    lua_pushnil(L);
+    while (lua_next(L, teams) != 0) {
+        if (lua_istable(L, -1)) {
+            const int team = lua_gettop(L);
+            lua_pushstring(L, "name");
+            lua_gettable(L, team);
+            const bool ffa = lua_type(L, -1) == LUA_TSTRING && is_ffa(lua_tostring(L, -1));
+            lua_pop(L, 1);
+            if (ffa) {
+                lua_pushstring(L, "armies");
+                lua_gettable(L, team);
+                if (lua_istable(L, -1)) {
+                    const int armies = lua_gettop(L);
+                    lua_pushnil(L);
+                    while (lua_next(L, armies) != 0) {
+                        if (lua_type(L, -1) == LUA_TSTRING) ++count;
+                        lua_pop(L, 1);
+                    }
+                }
+                break; // the first FFA team
+            }
+        }
+        lua_pop(L, 1);
+    }
+    lua_settop(L, top);
+    return count;
+}
+
+/// A launch's command sources, as Moho's LaunchGame assigns them: one per
+/// owner, the humans' by slot and then the observers'.
+struct LaunchSources {
+    std::vector<u32> owners; ///< source s's owner (a lobby uid)
+    std::vector<i32> armies; ///< source s's army (-1: an observer's)
+    size_t players = 0;      ///< PlayerOptions' entries, AIs too
+};
+
+LaunchSources read_launch_sources(lua_State* L, int cfg) {
+    struct Entry {
+        double key = 0; ///< the slot (the observer's place)
+        bool human = true;
+        bool owned = false;
+        u32 owner = 0;
+    };
+    // Each entry of the table at cfg[field] that is a table: its key, and
+    // Human and OwnerID
+    const auto read = [&](const char* field) {
+        std::vector<Entry> entries;
+        const int top = lua_gettop(L);
+        lua_pushstring(L, field);
+        lua_gettable(L, cfg);
+        if (lua_istable(L, -1)) {
+            const int t = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, t) != 0) {
+                if (lua_istable(L, -1)) {
+                    Entry e;
+                    e.key = lua_type(L, -2) == LUA_TNUMBER
+                                ? lua_tonumber(L, -2)
+                                : std::numeric_limits<double>::infinity();
+                    lua_pushstring(L, "Human");
+                    lua_gettable(L, -2);
+                    e.human = lua_toboolean(L, -1) != 0;
+                    lua_pop(L, 1);
+                    lua_pushstring(L, "OwnerID");
+                    lua_gettable(L, -2);
+                    e.owned = parse_uid(L, lua_gettop(L), e.owner);
+                    lua_pop(L, 1);
+                    entries.push_back(e);
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_settop(L, top);
+        // In their places: every peer orders them alike, however its copy
+        // of the table was built
+        std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) {
+            return a.key < b.key || (a.key == b.key && a.owner < b.owner);
+        });
+        return entries;
+    };
+    LaunchSources out;
+    const auto add = [&](u32 owner, i32 army) {
+        if (std::find(out.owners.begin(), out.owners.end(), owner) != out.owners.end()) return;
+        out.owners.push_back(owner);
+        out.armies.push_back(army);
+    };
+    const std::vector<Entry> players = read("PlayerOptions");
+    out.players = players.size();
+    // The armies are the slots taken, in order (Moho's: players in slots 1
+    // and 5 play armies 0 and 1); a slot that is no number plays none
+    i32 army = 0;
+    for (const Entry& e : players) {
+        const bool slot = e.key != std::numeric_limits<double>::infinity();
+        if (e.human && e.owned) add(e.owner, slot ? army : -1);
+        if (slot) ++army;
+    }
+    for (const Entry& e : read("Observers"))
+        if (e.owned) add(e.owner, -1);
+    return out;
+}
+
+} // namespace
+
 int net_lobby_LaunchGame(lua_State* L, NetLobby& lobby) {
-    (void)L;
-    // Starting a networked game is M218c's; until then the scripts hear
-    // that it failed rather than each player starting a game of their own.
-    spdlog::warn("lobby: a networked game can't be launched yet");
-    callback(lobby, "LaunchFailed", [](lua_State* s) {
-        lua_pushstring(s, "");
-        return 1;
-    });
+    // What's wrong, as LaunchFailed(reason) tells it
+    const auto fail = [&](const char* reason) {
+        callback(lobby, "LaunchFailed", [&](lua_State* s) {
+            lua_pushstring(s, reason);
+            return 1;
+        });
+        return 0;
+    };
+    if (!lobby.net || !(lobby.net->hosting() || lobby.net->joined()) || !lua_istable(L, 2)) {
+        spdlog::warn("lobby LaunchGame: not in a lobby, or no config");
+        return fail("");
+    }
+    // The scenario: GameOptions.ScenarioFile
+    std::string scenario;
+    lua_pushstring(L, "GameOptions");
+    lua_gettable(L, 2);
+    if (lua_istable(L, -1)) {
+        lua_pushstring(L, "ScenarioFile");
+        lua_gettable(L, -2);
+        if (lua_type(L, -1) == LUA_TSTRING) scenario = lua_tostring(L, -1);
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    if (scenario.empty()) {
+        spdlog::warn("lobby LaunchGame: the config names no GameOptions.ScenarioFile");
+        return fail("");
+    }
+    push_scenario_info(L, scenario);
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return fail("");
+    }
+    const std::optional<size_t> spots = ffa_army_count(L, lua_gettop(L));
+    lua_pop(L, 1);
+    if (!spots) return fail("NoConfig");
+    const LaunchSources sources = read_launch_sources(L, 2);
+    if (sources.players > *spots) return fail("StartSpots");
+    const auto mine =
+        std::find(sources.owners.begin(), sources.owners.end(), lobby.net->local_uid());
+    if (mine == sources.owners.end()) {
+        spdlog::warn("lobby LaunchGame: this player (uid {}) has no slot and isn't observing",
+                     lobby.net->local_uid());
+        return fail("");
+    }
+    lua_pushstring(L, "LaunchSinglePlayerSession");
+    lua_rawget(L, LUA_GLOBALSINDEX);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        spdlog::warn("lobby LaunchGame: no session to launch (LaunchSinglePlayerSession)");
+        return fail("");
+    }
+
+    // The lobby's connections become the game's, seeded by the host's
+    // time: every player has it from their welcome
+    const bool host = lobby.net->hosting();
+    if (host) lobby.net->stop_joining();
+    lobby.responder.reset(); // no longer a game to find
+    const u64 seed = lobby.net->hosted_time();
+    const auto local = static_cast<u32>(mine - sources.owners.begin());
+    mp_begin_lobby_game(
+        std::make_unique<sim::LobbyGameTransport>(std::move(lobby.net), net_lobby_clock_ms), host,
+        local, sources.armies, seed);
+    // The session, as single-player's starts: the frame loop loads it
+    lua_pushvalue(L, 2);
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        spdlog::warn("lobby LaunchGame: {}", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    // Last: the scripts tear their lobby down here (retail's destroys this
+    // object), so nothing after may touch it
+    callback0(lobby, "GameLaunched");
     return 0;
 }
 
@@ -491,6 +744,7 @@ int net_lobby_Destroy(lua_State* L, NetLobby& lobby) {
     if (it == all.end()) return 0;
     luaL_unref(L, LUA_REGISTRYINDEX, lobby.self_ref);
     all.erase(it); // its sockets close
+    forget_object(L);
     return 0;
 }
 
@@ -510,10 +764,11 @@ int net_lobby_DebugDump(lua_State* L, NetLobby& lobby) {
 void pump_net_lobbies(lua_State* L, i64 now_ms) {
     std::vector<NetLobby*> mine;
     for (const auto& l : lobbies())
-        if (l->L == L) mine.push_back(l.get());
+        if (l->state == state_of(L)) mine.push_back(l.get());
     for (NetLobby* lobby : mine) {
         // A callback may destroy any lobby: check each still is
         if (!alive(lobby)) continue;
+        lobby->L = L;
         if (lobby->hosting_pending) {
             lobby->hosting_pending = false;
             callback0(*lobby, "Hosting");
@@ -537,9 +792,10 @@ void pump_net_lobbies(lua_State* L, i64 now_ms) {
     }
     std::vector<NetDiscovery*> finders;
     for (const auto& d : discoveries())
-        if (d->L == L) finders.push_back(d.get());
+        if (d->state == state_of(L)) finders.push_back(d.get());
     for (NetDiscovery* d : finders) {
         if (!alive(d)) continue;
+        d->L = L;
         const std::vector<sim::DiscoveryEvent> events = d->finder.poll(now_ms);
         for (const sim::DiscoveryEvent& e : events) {
             if (!alive(d)) break;
@@ -551,7 +807,7 @@ void pump_net_lobbies(lua_State* L, i64 now_ms) {
 void close_net_lobbies(lua_State* L) {
     auto& all = lobbies();
     for (auto it = all.begin(); it != all.end();) {
-        if ((*it)->L == L) {
+        if ((*it)->state == state_of(L)) {
             luaL_unref(L, LUA_REGISTRYINDEX, (*it)->self_ref);
             it = all.erase(it);
         } else {
@@ -560,7 +816,7 @@ void close_net_lobbies(lua_State* L) {
     }
     auto& finders = discoveries();
     for (auto it = finders.begin(); it != finders.end();) {
-        if ((*it)->L == L) {
+        if ((*it)->state == state_of(L)) {
             luaL_unref(L, LUA_REGISTRYINDEX, (*it)->self_ref);
             it = finders.erase(it);
         } else {
@@ -576,7 +832,10 @@ NetDiscovery* net_discovery_of(lua_State* L, int idx) {
     auto* p = static_cast<NetDiscovery*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
     for (const auto& d : discoveries())
-        if (d.get() == p && d->L == L) return p;
+        if (d.get() == p && d->state == state_of(L)) {
+            p->L = L;
+            return p;
+        }
     return nullptr;
 }
 
@@ -584,6 +843,7 @@ void make_net_discovery(lua_State* L, int idx) {
     if (idx < 0) idx = lua_gettop(L) + idx + 1;
     auto d = std::make_unique<NetDiscovery>(discovery_address(), discovery_port());
     if (!d->finder.open()) spdlog::warn("discovery: no socket to ask the LAN with");
+    d->state = state_of(L);
     d->L = L;
     lua_pushvalue(L, idx);
     d->self_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -614,6 +874,7 @@ int net_discovery_Destroy(lua_State* L, NetDiscovery& d) {
     if (it == all.end()) return 0;
     luaL_unref(L, LUA_REGISTRYINDEX, d.self_ref);
     all.erase(it);
+    forget_object(L);
     return 0;
 }
 
