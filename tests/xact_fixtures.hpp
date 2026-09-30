@@ -53,23 +53,26 @@ struct Bytes {
 };
 
 /// A global settings file: categories Global > Music (limit 1, replace
-/// oldest, 200 ms fade-out), variables Distance (per cue) and TestCutoff
-/// (global, 100), and one linear volume curve over Distance (0 mB at 0,
-/// -2000 mB from 1000). `rpc_code` receives the curve's code.
-inline std::vector<u8> make_xgs(u32* rpc_code = nullptr, u8 music_limit = 1,
-                                u8 music_behavior = 2) {
+/// oldest, 200 ms fade-out, `music_fade_in_ms` fade-in), variables Distance
+/// (per cue), TestCutoff (global, 100), Duck and DuckLength (global, 0 and
+/// 0.5), and one linear volume curve over Distance (0 mB at 0, -2000 mB
+/// from 1000). `rpc_code` receives the curve's code.
+inline std::vector<u8> make_xgs(u32* rpc_code = nullptr, u8 music_limit = 1, u8 music_behavior = 2,
+                                u16 music_fade_in_ms = 0) {
     Bytes b;
     b.tag("XGSF").u16_(43).u16_(42).u16_(0).zeros(8).u8_(3);
-    b.u16_(2).u16_(2).u16_(0).u16_(0).u16_(1).u16_(0).u16_(0); // counts
+    b.u16_(2).u16_(4).u16_(0).u16_(0).u16_(1).u16_(0).u16_(0); // counts
     const size_t offs = b.pos();
     b.zeros(11 * 4); // offsets, patched below
     const size_t categories = b.pos();
     b.u8_(255).u16_(0).u16_(0).u8_(0).u16_(0xFFFF).u8_(180).u8_(2);      // Global
-    b.u8_(music_limit).u16_(0).u16_(200).u8_(static_cast<u8>(music_behavior << 3));
+    b.u8_(music_limit).u16_(music_fade_in_ms).u16_(200).u8_(static_cast<u8>(music_behavior << 3));
     b.u16_(0).u8_(160).u8_(3); // Music
     const size_t variables = b.pos();
     b.u8_(0x0D).f32_(0).f32_(0).f32_(10000);                             // Distance (per cue)
     b.u8_(0x01).f32_(100).f32_(-1).f32_(10000);                          // TestCutoff (global)
+    b.u8_(0x01).f32_(0).f32_(0).f32_(1);                                 // Duck (global)
+    b.u8_(0x01).f32_(0.5f).f32_(0).f32_(10);                             // DuckLength (global)
     const size_t rpcs = b.pos();
     if (rpc_code) *rpc_code = static_cast<u32>(rpcs);
     b.u16_(0).u8_(2).u16_(0);                                            // Distance -> volume
@@ -82,10 +85,18 @@ inline std::vector<u8> make_xgs(u32* rpc_code = nullptr, u8 music_limit = 1,
     b.cstr("Distance");
     const size_t cutoff_name = b.pos();
     b.cstr("TestCutoff");
+    const size_t duck_name = b.pos();
+    b.cstr("Duck");
+    const size_t duck_length_name = b.pos();
+    b.cstr("DuckLength");
     const size_t cat_index = b.pos();
     b.u32_(static_cast<u32>(cat_names)).u16_(0xFF).u32_(static_cast<u32>(music_name)).u16_(0xFF);
     const size_t var_index = b.pos();
     b.u32_(static_cast<u32>(var_name)).u16_(0xFF).u32_(static_cast<u32>(cutoff_name)).u16_(0xFF);
+    b.u32_(static_cast<u32>(duck_name))
+        .u16_(0xFF)
+        .u32_(static_cast<u32>(duck_length_name))
+        .u16_(0xFF);
     const u32 table[11] = {static_cast<u32>(categories), static_cast<u32>(variables), 0,
                            static_cast<u32>(cat_index),  0, static_cast<u32>(var_index),
                            0, 0, static_cast<u32>(rpcs), 0, 0};
