@@ -101,6 +101,7 @@ EmitterBlueprintData parse(lua_State* L, int t) {
     bp.blendmode = static_cast<i32>(blueprint_number(
         L, t, "Blendmode", blueprint_number(L, t, "BlendMode", static_cast<f32>(bp.blendmode))));
     bp.lod_cutoff = blueprint_number(L, t, "LODCutoff", bp.lod_cutoff);
+    bp.fidelity = blueprint_fidelity(L, t);
     bp.sort_order = blueprint_number(L, t, "SortOrder", bp.sort_order);
     bp.local_velocity = flag(L, t, "LocalVelocity", bp.local_velocity);
     bp.local_acceleration = flag(L, t, "LocalAcceleration", bp.local_acceleration);

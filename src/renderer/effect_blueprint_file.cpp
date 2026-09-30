@@ -81,6 +81,19 @@ f32 blueprint_number(lua_State* L, int idx, const char* key, f32 fallback) {
     return v;
 }
 
+u8 blueprint_fidelity(lua_State* L, int idx) {
+    u8 mask = 0;
+    const char* const keys[] = {"LowFidelity", "MedFidelity", "HighFidelity"};
+    for (u32 i = 0; i < 3; ++i) {
+        lua_pushstring(L, keys[i]);
+        lua_rawget(L, idx);
+        const bool off = lua_type(L, -1) == LUA_TBOOLEAN && lua_toboolean(L, -1) == 0;
+        lua_pop(L, 1);
+        if (!off) mask = static_cast<u8>(mask | (1u << i));
+    }
+    return mask;
+}
+
 std::string blueprint_path(lua_State* L, int idx, const char* key) {
     lua_pushstring(L, key);
     lua_rawget(L, idx);

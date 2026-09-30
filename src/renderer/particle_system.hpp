@@ -53,6 +53,9 @@ public:
     /// player's army sees, and a CreateIfVisible one it doesn't see made is
     /// never made (null: everything seen; M215b).
     void set_recon(const ReconView* recon) { recon_ = recon; }
+    /// graphics_Fidelity (0 low, 1 medium, 2 high): an emitter whose
+    /// blueprint leaves it out is never made, as Moho destroys it on making.
+    void set_fidelity(int fidelity) { fidelity_ = fidelity; }
 
     /// A particle from outside an emitter: a shoreline wave (M213c). It
     /// joins at the next update, born at that frame's render time, as
@@ -102,8 +105,9 @@ public:
     /// Whether effect `id` is an emitter it draws (the overlay leaves those
     /// to it).
     bool draws_effect(u32 id) const { return emitters_.count(id) > 0; }
-    /// Whether effect `id` is a CreateIfVisible emitter the player didn't
-    /// see made, which it never draws: the overlay leaves those be too.
+    /// Whether effect `id` is an emitter it never made (CreateIfVisible and
+    /// unseen, or left out at this fidelity) and so never draws: the overlay
+    /// leaves those be too.
     bool unmade(u32 id) const { return unmade_.count(id) > 0; }
 
     u32 particle_count() const { return static_cast<u32>(particles_.size()); }
@@ -174,7 +178,9 @@ private:
     const ReconView* recon_ = nullptr;
     std::unordered_map<u32, Emitter> emitters_;
     std::unordered_set<u32> unknown_; ///< effects with no emitter blueprint
-    std::unordered_set<u32> unmade_;  ///< CreateIfVisible ones the player didn't see made
+    std::unordered_set<u32>
+        unmade_; ///< never made: unseen CreateIfVisible, or not at this fidelity
+    int fidelity_ = 2;
     std::vector<Particle> particles_;
     std::vector<Particle> added_; ///< waves, born at the next update
     std::optional<u32> last_tick_;

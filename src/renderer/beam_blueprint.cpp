@@ -33,6 +33,7 @@ BeamBlueprintData parse(lua_State* L, int t) {
     color_field(L, t, "StartColor", bp.start_color);
     color_field(L, t, "EndColor", bp.end_color);
     bp.lod_cutoff = blueprint_number(L, t, "LODCutoff", bp.lod_cutoff);
+    bp.fidelity = blueprint_fidelity(L, t);
     bp.repeat_rate = blueprint_number(L, t, "RepeatRate", bp.repeat_rate);
     bp.blendmode =
         static_cast<i32>(blueprint_number(L, t, "Blendmode", static_cast<f32>(bp.blendmode)));

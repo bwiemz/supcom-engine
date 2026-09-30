@@ -60,9 +60,14 @@ public:
     const std::vector<Drawn>& drawn() const { return drawn_; }
 
     /// Whether it drew effect `id`, or a beam on entity `id` (a collision
-    /// beam's): the overlay leaves those to it.
+    /// beam's), or left it out at this fidelity: the overlay leaves those to
+    /// it.
     bool drew_effect(u32 id) const { return drawn_effects_.count(id) > 0; }
     bool drew_on_entity(u32 id) const { return drawn_entities_.count(id) > 0; }
+    /// graphics_Fidelity (0 low, 1 medium, 2 high). Beams are drawn afresh
+    /// each frame, so one its blueprint leaves out is left out while the
+    /// fidelity does (Moho decides as it makes the beam).
+    void set_fidelity(int fidelity) { fidelity_ = fidelity; }
 
     static constexpr u32 MAX_BEAMS = 4096;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
@@ -87,6 +92,7 @@ private:
     std::vector<Group> groups_;
     std::vector<Drawn> drawn_;
     std::unordered_set<u32> drawn_effects_, drawn_entities_;
+    int fidelity_ = 2;
 };
 
 } // namespace osc::renderer

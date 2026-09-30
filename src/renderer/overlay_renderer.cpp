@@ -688,10 +688,13 @@ void OverlayRenderer::update(const sim::FrameView& view, sim::WorldEvents& event
                 continue;
             // And beams the beam renderer draws as FA does (M214a).
             if (beams_ && beams_->drew_effect(fx_ptr->id)) continue;
-            // And trails the trail renderer draws (M214b).
-            if (trails_ && trails_->draws_effect(fx_ptr->id)) continue;
+            // And trails the trail renderer draws, or left out at this
+            // fidelity (M214b).
+            if (trails_ && (trails_->draws_effect(fx_ptr->id) || trails_->unmade(fx_ptr->id)))
+                continue;
             // And emitters the particle system draws (M214c).
-            // (A CreateIfVisible one it never made shows nothing at all.)
+            // (One it never made, CreateIfVisible or left out at this
+            // fidelity, shows nothing at all.)
             if (particles_ &&
                 (particles_->draws_effect(fx_ptr->id) || particles_->unmade(fx_ptr->id)))
                 continue;

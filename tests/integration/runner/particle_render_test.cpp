@@ -167,6 +167,8 @@ void test_particle_render(TestContext& ctx) {
     emitter_bp("mod.bp", "    Blendmode = 1,\n" + big);
     emitter_bp("under.bp", "    Blendmode = 3, SortOrder = -1,\n" + big, "red");
     emitter_bp("over.bp", "    Blendmode = 3,\n" + big, "red");
+    emitter_bp("lowoff.bp", "    LowFidelity = false,\n" + curve("EmitRateCurve", 1) +
+                                curve("LifetimeCurve", 20));
     ctx.vfs.mount(kRoot, std::make_unique<vfs::DirectoryMount>(dir));
     const auto bp = [](const char* file) { return fmt::format("{}/{}", kRoot, file); };
 
@@ -669,6 +671,27 @@ void test_particle_render(TestContext& ctx) {
             all && clock == "4",
             fmt::format("Test 13: after a 3-tick frame, {} particles (4, aged 1-4), clock {} (4)",
                         ps.size(), clock));
+    }
+
+    // Test 14: graphics_Fidelity. At low, an emitter whose blueprint says
+    // LowFidelity = false is never made (Moho destroys it as it makes it),
+    // and stays unmade once the fidelity is raised; one made at high draws.
+    {
+        r.video_options().graphics_fidelity = 0;
+        const u32 low_fx = make("__osc_pt_low", "AtEntity", "__osc_pt_q", bp("lowoff.bp"));
+        const u32 every_fx = make("__osc_pt_every", "AtEntity", "__osc_pt_q", bp("still.bp"));
+        for (int i = 0; i < 2; ++i) step();
+        const bool left_out = particles_of(r, low_fx).empty() &&
+                              r.particle_system().unmade(low_fx) &&
+                              !particles_of(r, every_fx).empty();
+        r.video_options().graphics_fidelity = 2;
+        const u32 high_fx = make("__osc_pt_high", "AtEntity", "__osc_pt_q", bp("lowoff.bp"));
+        for (int i = 0; i < 2; ++i) step();
+        const bool stays = particles_of(r, low_fx).empty() && !particles_of(r, high_fx).empty();
+        t.check(left_out && stays,
+                fmt::format("Test 14: at low fidelity a LowFidelity = false emitter is never "
+                            "made {}, nor once raised {}; made at high, it draws",
+                            left_out, stays));
     }
 
     spdlog::info("Particle test: {}/{} passed", t.pass, t.pass + t.fail);

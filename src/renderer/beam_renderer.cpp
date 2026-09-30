@@ -2,6 +2,7 @@
 
 #include "renderer/beam_blueprint.hpp"
 #include "renderer/camera.hpp"
+#include "renderer/effect_blueprint_file.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/shader_utils.hpp"
 #include "renderer/texture_cache.hpp"
@@ -245,6 +246,11 @@ void BeamRenderer::update(const sim::FrameView& view, const Camera& camera,
         if (fx.beam == sim::EffectRecord::BeamReach::None || strips.size() >= MAX_BEAMS) continue;
         const BeamBlueprintData* bp = blueprints.get(fx.blueprint_path, L);
         if (!bp) continue; // an emitter's, not a beam's
+        if (!fidelity_allows(bp->fidelity, fidelity_)) { // Moho destroys it on making
+            drawn_effects_.insert(fx.id);
+            if (fx.entity_id) drawn_entities_.insert(fx.entity_id);
+            continue;
+        }
         Vector3 start;
         Vector3 end;
         if (!ends_of(fx, bp->length, start, end)) continue;

@@ -76,6 +76,11 @@ public:
     /// Whether effect `id` is a trail it draws (one with a blueprint): the
     /// overlay leaves those to it.
     bool draws_effect(u32 id) const { return emitters_.count(id) > 0; }
+    /// Whether effect `id` is a trail its blueprint leaves out at this
+    /// fidelity, never made: the overlay leaves those be too.
+    bool unmade(u32 id) const { return unmade_.count(id) > 0; }
+    /// graphics_Fidelity (0 low, 1 medium, 2 high), as the particles take it.
+    void set_fidelity(int fidelity) { fidelity_ = fidelity; }
 
     static constexpr u32 MAX_SEGMENTS = 16384;
     static constexpr u32 FRAMES_IN_FLIGHT = 2;
@@ -136,6 +141,8 @@ private:
 
     std::unordered_map<u32, Emitter> emitters_;
     std::unordered_set<u32> unknown_;       ///< trail effects without a readable blueprint
+    std::unordered_set<u32> unmade_;        ///< trails left out at the fidelity they came at
+    int fidelity_ = 2;
     std::unordered_set<std::string> names_; ///< blueprint paths the segments point at
     std::vector<Segment> segments_;
     std::optional<u32> last_tick_;

@@ -1,6 +1,7 @@
 #include "renderer/trail_renderer.hpp"
 
 #include "renderer/camera.hpp"
+#include "renderer/effect_blueprint_file.hpp"
 #include "renderer/frustum.hpp"
 #include "renderer/recon_view.hpp"
 #include "renderer/shader_utils.hpp"
@@ -237,12 +238,16 @@ void TrailRenderer::advance(const sim::FrameView& view, const Vector3& eye, cons
     for (const sim::EffectRecord& fx : snap.effects) {
         if (fx.type != sim::EffectType::TRAIL_EMITTER) continue;
         live.insert(fx.id);
-        if (!fx.anchored || unknown_.count(fx.id)) continue;
+        if (!fx.anchored || unknown_.count(fx.id) || unmade_.count(fx.id)) continue;
         auto it = emitters_.find(fx.id);
         if (it == emitters_.end()) {
             const TrailBlueprintData* bp = blueprints.get(fx.blueprint_path, L);
             if (!bp) {
                 unknown_.insert(fx.id);
+                continue;
+            }
+            if (!fidelity_allows(bp->fidelity, fidelity_)) { // as the particles'
+                unmade_.insert(fx.id);
                 continue;
             }
             Emitter e;
@@ -280,8 +285,9 @@ void TrailRenderer::advance(const sim::FrameView& view, const Vector3& eye, cons
     // Trails gone from the world stop; their segments stay theirs.
     for (auto it = emitters_.begin(); it != emitters_.end();)
         it = live.count(it->first) ? std::next(it) : emitters_.erase(it);
-    for (auto it = unknown_.begin(); it != unknown_.end();)
-        it = live.count(*it) ? std::next(it) : unknown_.erase(it);
+    for (auto* set : {&unknown_, &unmade_})
+        for (auto it = set->begin(); it != set->end();)
+            it = live.count(*it) ? std::next(it) : set->erase(it);
     last_tick_ = tick;
 }
 
@@ -424,6 +430,7 @@ void TrailRenderer::render(VkCommandBuffer cmd, u32 viewport_w, u32 viewport_h,
 void TrailRenderer::clear() {
     emitters_.clear();
     unknown_.clear();
+    unmade_.clear();
     segments_.clear();
     names_.clear();
     last_tick_.reset();
