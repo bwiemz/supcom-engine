@@ -705,12 +705,33 @@ u32 SimState::route_command(const std::vector<u32>& unit_ids, const UnitCommand&
         // it matches the old IssueStop's immediate clear_commands() semantics.
         if (cmd.type == CommandType::Stop) {
             stop_unit(*unit);
-        } else if (!apply_silo_build(*unit, cmd)) {
+        } else if (!apply_silo_build(*unit, cmd) && takes_command(*unit, cmd)) {
             unit->push_command(cmd, clear_existing);
             queued = true;
         }
     }
     return queued ? issued.command_id : 0;
+}
+
+bool SimState::takes_command(const Unit& unit, const UnitCommand& command) const {
+    if (command.type != CommandType::Guard) return true;
+    // A pod, or a unit a carrier holds, guards nothing; nor does a unit
+    // without the order.
+    const Entity* by = unit.transport_id() ? entity_registry_.find(unit.transport_id()) : nullptr;
+    if (by && by->is_unit() &&
+        (static_cast<const Unit*>(by)->has_category("CARRIER") || unit.has_category("POD")))
+        return false;
+    if (!unit.has_command_cap("RULEUCC_Guard")) return false;
+    const Entity* e = command.target_id ? entity_registry_.find(command.target_id) : nullptr;
+    const Unit* target = e && e->is_unit() ? static_cast<const Unit*>(e) : nullptr;
+    if (!target) return unit.is_mobile(); // a place to guard: only a mobile unit goes
+    // Never itself, a factory only a factory, and never a unit guarding it:
+    // scripts walk guard chains until they end (FAF's roll-off point), and a
+    // unit guarding itself, which a campaign's base manager asks for, left
+    // one walking forever.
+    if (target == &unit) return false;
+    if (unit.has_category("FACTORY") && !target->has_category("FACTORY")) return false;
+    return target->guarded_unit_id() != unit.entity_id();
 }
 
 bool SimState::command_queued(u32 command_id) const {
@@ -975,6 +996,7 @@ void SimState::dispatch_due_commands() {
             }
             // Each selected unit independently replaces (fresh order) or
             // appends (queued/shift) — matching the Issue* bindings.
+            if (!takes_command(*unit, cmd)) continue;
             unit->push_command(cmd, sc.clear_existing);
         }
     });
