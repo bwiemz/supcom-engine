@@ -102,6 +102,8 @@ bool Renderer::init(u32 width, u32 height, const std::string& title,
     // Offscreen keeps a hidden window (input and timing code expect one) but
     // never shows it: GLFW's show waits for the compositor to map the window.
     glfwWindowHint(GLFW_VISIBLE, offscreen ? GLFW_FALSE : GLFW_TRUE);
+    // An offscreen capture is its size in pixels, unscaled on a Retina display
+    glfwWindowHint(GLFW_SCALE_FRAMEBUFFER, offscreen ? GLFW_FALSE : GLFW_TRUE);
     window_ = glfwCreateWindow(static_cast<int>(width),
                                static_cast<int>(height),
                                title.c_str(), nullptr, nullptr);
