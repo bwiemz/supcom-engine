@@ -183,27 +183,34 @@ public:
     int lua_table_ref() const { return lua_table_ref_; }
     void set_lua_table_ref(int ref) { lua_table_ref_ = ref; }
 
-    /// Looping sounds on this entity, by name: a unit's blueprint Audio
-    /// entry (ConstructLoop and ActiveLoop can both play), or SetAmbientSound's
-    /// slots. They follow the entity and stop when it goes.
+    /// The loops this entity wants, by name: a unit's blueprint Audio entry
+    /// (ConstructLoop and ActiveLoop can both play), or SetAmbientSound's
+    /// slots. Sim state, saved with the game: the audio side starts and
+    /// stops them (Moho's entity loops, begun when the entity is in view;
+    /// app/window_frame.cpp) and nothing here depends on whether they play.
     struct AmbientSound {
         std::string name;
-        u32 handle = 0; ///< audio::SoundHandle
+        std::string bank;
+        std::string cue;
+        std::string lod_cutoff; ///< its Sound{LodCutoff=...} variable, if any
     };
     const std::vector<AmbientSound>& ambient_sounds() const { return ambient_sounds_; }
-    /// The handle playing under `name`, or 0.
-    u32 ambient_sound(std::string_view name) const {
+    /// The loop wanted under `name`, or null.
+    const AmbientSound* ambient_sound(std::string_view name) const {
         for (const auto& a : ambient_sounds_)
-            if (a.name == name) return a.handle;
-        return 0;
+            if (a.name == name) return &a;
+        return nullptr;
     }
-    /// Set (0: forget) the handle under `name`.
-    void set_ambient_sound(std::string_view name, u32 handle) {
+    /// Want `bank`/`cue` under `name` (an empty cue: want none there).
+    void set_ambient_sound(std::string_view name, std::string bank, std::string cue,
+                           std::string lod_cutoff = {}) {
         std::erase_if(ambient_sounds_, [&](const AmbientSound& a) { return a.name == name; });
-        if (handle != 0) ambient_sounds_.push_back({std::string(name), handle});
+        if (!cue.empty())
+            ambient_sounds_.push_back(
+                {std::string(name), std::move(bank), std::move(cue), std::move(lod_cutoff)});
     }
-    /// Take every ambient handle (to stop them), leaving none.
-    std::vector<AmbientSound> take_ambient_sounds() { return std::exchange(ambient_sounds_, {}); }
+    /// Want no loops.
+    void clear_ambient_sounds() { ambient_sounds_.clear(); }
 
     const BoneData* bone_data() const { return bone_data_; }
     void set_bone_data(const BoneData* bd) { bone_data_ = bd; }

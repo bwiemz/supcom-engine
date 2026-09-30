@@ -3,6 +3,7 @@
 #include "app/window_loop.hpp"
 #include "lua/gpgnet_session.hpp"
 #include "app/window_commands.hpp"
+#include "app/world_sounds.hpp"
 #include "core/fixed_step.hpp"
 #include "core/profiler.hpp"
 #include "lua/net_lobby.hpp"
@@ -10,7 +11,12 @@
 #include "lua/moho_bindings.hpp"
 #include "lua/mp_net_state.hpp"
 #include "lua/sim_sync.hpp"
+#include "renderer/frustum.hpp"
 #include "sim/lockstep_session.hpp"
+
+#include <algorithm>
+#include <string>
+#include <vector>
 
 namespace osc::app {
 
@@ -85,12 +91,54 @@ void App::Window::update_audio(double dt) {
         const osc::f32 fy = cam.focus_y() - ey;
         const osc::f32 fz = cam.focus_z() - ez;
         const osc::f32 len = std::max(1e-3f, std::sqrt(fx * fx + fy * fy + fz * fz));
-        sound.set_listener({ex, ey, ez}, {fx / len, fy / len, fz / len});
+        // Moho's listener stands over the focus at the target zoom's height,
+        // less 4, facing the view; its right is the screen's (the view
+        // matrix's first row). Each cue's Angle is its own (SoundManager).
+        const auto view = cam.view();
+        sound.set_listener({cam.focus_x(), cam.focus_y() + cam.zoom() - 4.0f, cam.focus_z()},
+                           {fx / len, fy / len, fz / len}, {view[0], view[4], view[8]});
         sound.set_global_variable("CameraDistance", cam.zoom());
         sound.set_global_variable("ZoomPercent", cam.zoom() / cam.max_zoom() * 100.0f);
-        sound.set_global_variable("Angle", cam.pitch() * 57.29578f);
+        update_world_sounds();
         sound.update(static_cast<osc::f32>(dt));
     }
+}
+
+void App::Window::update_world_sounds() {
+    // What the player hears of the world: Moho's CUserSoundManager, once a
+    // frame. A point sounds where the player's army (or an ally) sees it
+    // (FilterSound; everywhere for an observer or with the fog off). Moho
+    // asks its water-vision grid for a sub's or seabed unit's sound; the
+    // engine paints WaterVision into its one Vision grid, so that test is
+    // this one (a little kinder: surface sight counts too).
+    const osc::sim::FrameView view = world_interp.view();
+    const auto& recon = renderer.recon();
+    const osc::audio::SoundManager::Hearing hears = [&recon, &view](const osc::sim::Vector3& p,
+                                                                    bool /*underwater*/) {
+        return recon.sees_at(view, -1, p.x, p.z);
+    };
+    // The ticks' one-shots, in order.
+    auto& events = world_interp.history.events();
+    for (const auto& s : events.sounds)
+        sound.play_world({s.bank, s.cue, s.lod_cutoff, s.pos, s.underwater, s.tick}, hears);
+    events.sounds.clear();
+
+    // The entities' wanted loops: where they are drawn, and whether they're
+    // in the world camera's view.
+    std::vector<osc::audio::SoundManager::EntityLoop> loops;
+    if (sim_state) {
+        const auto& cam = renderer.camera();
+        const osc::f32 aspect = renderer.height() > 0 ? static_cast<osc::f32>(renderer.width()) /
+                                                            static_cast<osc::f32>(renderer.height())
+                                                      : 1.0f;
+        const osc::renderer::Frustum frustum(cam.view_proj(aspect));
+        loops = gather_entity_loops(
+            *sim_state, [&view](const osc::sim::Entity& e) { return view.position(e); },
+            [&frustum](const osc::sim::Vector3& at, osc::f32 radius) {
+                return frustum.is_sphere_visible(at.x, at.y, at.z, radius);
+            });
+    }
+    sound.sync_entity_loops(loops, hears);
 }
 
 void App::Window::count_fps(double dt) {

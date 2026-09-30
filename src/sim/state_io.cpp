@@ -24,7 +24,7 @@ namespace osc::sim {
 namespace {
 
 constexpr char kMagic[8] = {'O', 'S', 'C', 'S', 'I', 'M', '0', '1'};
-constexpr u32 kVersion = 1;
+constexpr u32 kVersion = 2; // 2: entities' wanted loops (M216b)
 
 // Past any game's ids (entities_ is indexed by id: a late game's runs to a
 // few million, projectiles included).
@@ -294,8 +294,8 @@ void StateIO::save(StateWriter& w, const SimState& sim) {
     w.f32v(sim.no_rush_radius_);
     w.b(sim.common_army_);
     w.b(sim.team_share_overflow_);
-    // camera_shake_events_, death_events_, intel_flush_events_: the renderer's,
-    // emptied each tick
+    // camera_shake_events_, death_events_, intel_flush_events_,
+    // sound_requests_: the renderer's and the audio's, emptied each tick
     w.size(sim.resource_deposits_.size());
     for (const ResourceDeposit& d : sim.resource_deposits_) {
         w.f32v(d.x);
@@ -446,6 +446,7 @@ void StateIO::load(StateReader& r, SimState& sim) {
     sim.camera_shake_events_.clear();
     sim.death_events_.clear();
     sim.intel_flush_events_.clear();
+    sim.sound_requests_.clear();
     sim.resource_deposits_.resize(r.size(17));
     for (ResourceDeposit& d : sim.resource_deposits_) {
         d.x = r.f32v();

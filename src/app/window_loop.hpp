@@ -60,6 +60,9 @@ private:
     double begin_frame();
     /// The camera as the sound's listener.
     void update_audio(double dt);
+    /// The world's sounds for this frame: the ticks' one-shots and the
+    /// entities' loops, through Moho's filter (M216b).
+    void update_world_sounds();
     void count_fps(double dt);
     /// The sim's ticks for this frame: a loaded game catching up, a
     /// lockstep game's rounds, or the local clock's.

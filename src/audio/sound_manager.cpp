@@ -82,7 +82,8 @@ struct SoundManager::CueInstance {
     std::string bank_name;
     bool positional = false;
     sim::Vector3 pos{};
-    bool paused = false; ///< held by a paused category
+    bool paused = false;             ///< held by a paused category
+    f32 pan_left = 1, pan_right = 1; ///< a positional sound's stereo gains
     f64 started = 0;
     f64 fade_in = 0; ///< seconds
     State state = State::Playing;
@@ -255,6 +256,8 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
         release_variable_ = gs->find_variable("ReleaseTime");
         cue_instances_variable_ = gs->find_variable("NumCueInstances");
         duck_variable_ = gs->find_variable("Duck");
+        angle_variable_ = gs->find_variable("Angle");
+        camera_distance_variable_ = gs->find_variable("CameraDistance");
         duck_length_variable_ = gs->find_variable("DuckLength");
         paused_.assign(gs->categories.size(), 0);
     }
@@ -268,7 +271,6 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
     }
     engine_->initialized = true;
     output_ = true;
-    ma_engine_listener_set_world_up(&engine_->engine, 0, 0, 1, 0);
     spdlog::info("Audio engine initialized");
 }
 
@@ -381,7 +383,6 @@ f32 SoundManager::category_gain(int category) const {
     for (int depth = 0; depth < kMaxCategoryDepth && c >= 0 &&
                         static_cast<size_t>(c) < gs->categories.size();
          ++depth) {
-        if (c == world_category_ && !world_enabled_) return 0.0f;
         gain *= xact::millibels_to_gain(gs->categories[static_cast<size_t>(c)].volume_mb) *
                 user_volume_[static_cast<size_t>(c)];
         const u16 parent = gs->categories[static_cast<size_t>(c)].parent;
@@ -406,6 +407,7 @@ f32 SoundManager::volume_mb(const CueInstance& inst, size_t track) const {
     auto variable = [&](u16 v) -> f32 {
         const int i = v;
         if (i == distance_variable_) return distance(inst);
+        if (i == angle_variable_ && inst.positional) return cue_angle_degrees(inst.pos, listener_);
         if (i == attack_variable_) return static_cast<f32>((clock_ - inst.started) * 1000.0);
         if (i == release_variable_)
             return inst.state == CueInstance::State::Releasing
@@ -500,8 +502,7 @@ void SoundManager::fade_out(CueInstance& inst, f64 seconds) {
 }
 
 SoundManager::CueInstance* SoundManager::create(const std::string& bank, const std::string& cue,
-                                                const sim::Vector3* pos,
-                                                std::string_view lod_cutoff) {
+                                                const sim::Vector3* pos) {
     if (!registry_) return nullptr;
     const xact::SoundBank* sb = registry_->sound_bank(bank);
     const xact::Cue* cue_def = sb ? sb->find_cue(cue) : nullptr;
@@ -520,14 +521,6 @@ SoundManager::CueInstance* SoundManager::create(const std::string& bank, const s
     if (pos) inst->pos = *pos;
     inst->started = clock_;
 
-    // A LodCutoff variable culls a sound beyond its value (-1: never).
-    if (pos && !lod_cutoff.empty()) {
-        if (const auto* gs = registry_->global_settings()) {
-            const int v = gs->find_variable(lod_cutoff);
-            const f32 cutoff = v >= 0 ? globals_[static_cast<size_t>(v)] : -1.0f;
-            if (cutoff >= 0 && distance(*inst) > cutoff) return nullptr;
-        }
-    }
     // Only a replacement fades in: a play otherwise starts at full volume
     // (retail's Ambient category's 1 s fade-in is for its crossfades).
     if (!admit(*sb, *cue_def, sound, inst->fade_in)) return nullptr;
@@ -564,15 +557,15 @@ void SoundManager::begin(CueInstance& inst) {
 }
 
 SoundHandle SoundManager::play(const std::string& bank, const std::string& cue,
-                               const sim::Vector3* pos, std::string_view lod_cutoff) {
-    CueInstance* inst = create(bank, cue, pos, lod_cutoff);
+                               const sim::Vector3* pos) {
+    CueInstance* inst = create(bank, cue, pos);
     if (!inst) return INVALID_SOUND;
     begin(*inst);
     return inst->handle;
 }
 
 SoundHandle SoundManager::prepare(const std::string& bank, const std::string& cue) {
-    CueInstance* inst = create(bank, cue, nullptr, {});
+    CueInstance* inst = create(bank, cue, nullptr);
     if (!inst) return INVALID_SOUND;
     inst->prepared = true;
     return inst->handle;
@@ -620,10 +613,11 @@ SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
             if (ma_sound_init_from_data_source(&engine_->engine, &v->decoder, 0, nullptr, &v->sound) ==
                 MA_SUCCESS) {
                 v->sound_init = true;
-                ma_sound_set_spatialization_enabled(&v->sound, inst.positional ? MA_TRUE : MA_FALSE);
-                // XACT's RPC curves do distance attenuation; miniaudio pans.
-                ma_sound_set_attenuation_model(&v->sound, ma_attenuation_model_none);
-                if (inst.positional) ma_sound_set_position(&v->sound, inst.pos.x, inst.pos.y, inst.pos.z);
+                // XACT's RPC curves attenuate and apply() pans, as X3DAudio's
+                // matrix does; miniaudio's spatializer is off (its model
+                // without attenuation doesn't pan either).
+                ma_sound_set_spatialization_enabled(&v->sound, MA_FALSE);
+                ma_sound_set_pan_mode(&v->sound, ma_pan_mode_balance);
                 ma_sound_set_looping(&v->sound,
                                      v->loops_left == kForever && !v->repick ? MA_TRUE : MA_FALSE);
                 ma_sound_set_pitch(&v->sound, static_cast<float>(std::pow(2.0, cents / 1200.0)));
@@ -646,15 +640,29 @@ void SoundManager::apply(CueInstance& inst) {
     if (inst.state == CueInstance::State::FadingOut && inst.stop_duration > 0)
         fade *= static_cast<f32>(std::max(0.0, 1.0 - (clock_ - inst.stop_started) / inst.stop_duration));
     const f32 cat = category_gain(category_of(inst));
+    // A positional sound's stereo matrix, as miniaudio's balance pan (which
+    // scales one side) times the louder side's gain. A 2D mono sound plays
+    // at [1, 1], XAudio2's default.
+    f32 pan = 0;
+    f32 side = 1;
+    if (inst.positional) {
+        const auto [l, r] = stereo_gains(
+            {inst.pos.x - listener_.x, inst.pos.y - listener_.y, inst.pos.z - listener_.z},
+            listener_forward_, listener_right_);
+        inst.pan_left = l;
+        inst.pan_right = r;
+        side = std::max(l, r);
+        pan = side <= 0 ? 0.0f : r >= l ? 1.0f - l / r : r / l - 1.0f;
+    }
     f32 loudest = 0;
     for (size_t t = 0; t < inst.tracks.size(); ++t) {
         const f32 base_mb = volume_mb(inst, t);
         for (auto& v : inst.tracks[t].voices) {
-            const f32 gain = xact::millibels_to_gain(base_mb + v->variation_mb) * cat * fade;
+            const f32 gain = xact::millibels_to_gain(base_mb + v->variation_mb) * cat * fade * side;
             loudest = std::max(loudest, gain);
             if (!v->sound_init) continue;
             ma_sound_set_volume(&v->sound, gain);
-            if (inst.positional) ma_sound_set_position(&v->sound, inst.pos.x, inst.pos.y, inst.pos.z);
+            ma_sound_set_pan(&v->sound, pan);
         }
     }
     inst.gain = loudest;
@@ -834,16 +842,53 @@ bool SoundManager::position(SoundHandle handle, sim::Vector3& out) const {
     return true;
 }
 
-void SoundManager::set_listener(const sim::Vector3& pos, const sim::Vector3& forward) {
+void SoundManager::set_listener(const sim::Vector3& pos, const sim::Vector3& forward,
+                                const sim::Vector3& right) {
     listener_ = pos;
     listener_forward_ = forward;
-    if (!output_) return;
-    ma_engine_listener_set_position(&engine_->engine, 0, pos.x, pos.y, pos.z);
-    ma_engine_listener_set_direction(&engine_->engine, 0, forward.x, forward.y, forward.z);
+    if (right.x != 0 || right.y != 0 || right.z != 0) {
+        listener_right_ = right;
+    } else { // forward x up
+        listener_right_ = {-forward.z, 0.0f, forward.x};
+    }
 }
 
-void SoundManager::set_listener_position(const sim::Vector3& pos) {
-    set_listener(pos, listener_forward_);
+std::array<f32, 2> SoundManager::stereo_gains(const sim::Vector3& dir, const sim::Vector3& forward,
+                                              const sim::Vector3& right) {
+    const f32 x = dir.x * right.x + dir.y * right.y + dir.z * right.z;
+    const f32 z = dir.x * forward.x + dir.y * forward.y + dir.z * forward.z;
+    if (std::abs(x) < 1e-6f && std::abs(z) < 1e-6f) return {0.5f, 0.5f};
+    // Azimuth from straight ahead, right positive; right's share runs
+    // linearly from 0 at -90 degrees to 1 at +90, and back behind.
+    constexpr f32 kPi = 3.14159265358979f;
+    f32 az = std::atan2(x, z); // [-pi, pi]
+    f32 r = 0;
+    if (az >= -kPi / 2 && az <= kPi / 2) {
+        r = (az + kPi / 2) / kPi;
+    } else {
+        if (az < 0) az += 2 * kPi; // (pi/2, 3pi/2)
+        r = (1.5f * kPi - az) / kPi;
+    }
+    r = std::clamp(r, 0.0f, 1.0f);
+    return {1.0f - r, r};
+}
+
+f32 SoundManager::cue_angle_degrees(const sim::Vector3& emitter, const sim::Vector3& listener) {
+    const f32 dx = emitter.x - listener.x;
+    const f32 dy = emitter.y - listener.y;
+    const f32 dz = emitter.z - listener.z;
+    // faf-re's ComputeCueAngleDegrees is 90 - pitch, its pitch the
+    // vertical over the horizontal; Moho's world is Y-up.
+    const f32 pitch = std::atan2(dy, std::sqrt(dx * dx + dz * dz));
+    return 90.0f - pitch * (180.0f / 3.14159265358979f);
+}
+
+bool SoundManager::stereo(SoundHandle handle, f32& left, f32& right) const {
+    auto it = instances_.find(handle);
+    if (it == instances_.end() || it->second->ended || !it->second->positional) return false;
+    left = it->second->pan_left;
+    right = it->second->pan_right;
+    return true;
 }
 
 void SoundManager::set_global_variable(std::string_view name, f32 value) {
@@ -876,6 +921,91 @@ f32 SoundManager::category_volume(std::string_view category) const {
 
 void SoundManager::set_world_enabled(bool enabled) {
     world_enabled_ = enabled;
+}
+
+f32 SoundManager::camera_distance() const {
+    return camera_distance_variable_ >= 0 ? globals_[static_cast<size_t>(camera_distance_variable_)]
+                                          : 0.0f;
+}
+
+SoundManager::Filter SoundManager::filter(std::string_view lod_cutoff, const sim::Vector3& pos,
+                                          bool underwater, const Hearing& hears) const {
+    if (!lod_cutoff.empty()) {
+        const auto* gs = registry_->global_settings();
+        const int v = gs ? gs->find_variable(lod_cutoff) : -1;
+        if (v >= 0) {
+            const f32 cutoff = globals_[static_cast<size_t>(v)];
+            if (cutoff > -1.0f && camera_distance() > cutoff) return Filter::Distance;
+        }
+    }
+    if (hears && !hears(pos, underwater)) return Filter::Hearing;
+    return Filter::Pass;
+}
+
+SoundHandle SoundManager::play_world(const WorldSound& sound, const Hearing& hears) {
+    if (!registry_ || !world_enabled_) return INVALID_SOUND;
+    if (filter(sound.lod_cutoff, sound.pos, sound.underwater, hears) != Filter::Pass)
+        return INVALID_SOUND;
+    // One of each cue a beat (Moho's recent one-shot keys).
+    if (sound.beat != dedupe_beat_) {
+        dedupe_beat_ = sound.beat;
+        dedupe_.clear();
+    }
+    for (const auto& [bank, cue] : dedupe_)
+        if (iequals(bank, sound.bank) && cue == sound.cue) return INVALID_SOUND;
+    dedupe_.emplace_back(sound.bank, sound.cue);
+    return play(sound.bank, sound.cue, &sound.pos);
+}
+
+void SoundManager::sync_entity_loops(const std::vector<EntityLoop>& wanted, const Hearing& hears) {
+    if (!registry_ || !world_enabled_) return;
+    // The one kept for a key: its first entry.
+    std::map<u64, const EntityLoop*> by_key;
+    for (const auto& w : wanted) by_key.emplace(w.key, &w);
+    for (auto it = entity_loops_.begin(); it != entity_loops_.end();) {
+        const auto want = by_key.find(it->first);
+        const bool same = want != by_key.end() && iequals(want->second->bank, it->second.bank) &&
+                          want->second->cue == it->second.cue;
+        if (!same) {
+            stop(it->second.handle, false); // Moho's StopLoop: the release
+            it = entity_loops_.erase(it);
+            continue;
+        }
+        if (!is_playing(it->second.handle)) { // its cue ended: forgotten
+            it = entity_loops_.erase(it);
+            continue;
+        }
+        const EntityLoop& w = *want->second;
+        switch (filter(w.lod_cutoff, w.pos, w.underwater, hears)) {
+        case Filter::Distance:
+            stop(it->second.handle, true);
+            it = entity_loops_.erase(it);
+            continue;
+        case Filter::Hearing:
+            stop(it->second.handle, false);
+            it = entity_loops_.erase(it);
+            continue;
+        case Filter::Pass: break;
+        }
+        set_position(it->second.handle, w.pos);
+        ++it;
+    }
+    // New loops start only near and in view (Moho's frustum pass, its 200
+    // CameraDistance cutoff).
+    constexpr f32 kLoopStartCameraDistance = 200.0f;
+    if (camera_distance() > kLoopStartCameraDistance) return;
+    for (const auto& [key, w] : by_key) {
+        if (!w->in_view || entity_loops_.count(key) != 0) continue;
+        if (filter(w->lod_cutoff, w->pos, w->underwater, hears) != Filter::Pass) continue;
+        const SoundHandle h = play(w->bank, w->cue, &w->pos);
+        if (h != INVALID_SOUND) entity_loops_.emplace(key, PlayingLoop{w->bank, w->cue, h});
+    }
+}
+
+SoundHandle SoundManager::entity_loop(u64 key) const {
+    const auto it = entity_loops_.find(key);
+    return it != entity_loops_.end() && is_playing(it->second.handle) ? it->second.handle
+                                                                      : INVALID_SOUND;
 }
 
 f32 SoundManager::current_gain(SoundHandle handle) const {
