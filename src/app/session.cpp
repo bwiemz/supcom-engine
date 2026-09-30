@@ -19,6 +19,10 @@ int finish_test_run(const char* mode, osc::u32 smoke_issues) {
         osc::test_status::record_failure(
             fmt::format("{} smoke issue(s) reported (see smoke report)", smoke_issues));
     }
+    // With the validation layer on (as in Debug builds), any of its errors
+    if (const u32 errors = osc::renderer::Renderer::validation_error_count(); errors > 0) {
+        osc::test_status::record_failure(fmt::format("{} Vulkan validation error(s)", errors));
+    }
     const int failures = osc::test_status::failure_count();
     if (failures == 0) {
         spdlog::info("=== {}: PASS ===", mode);

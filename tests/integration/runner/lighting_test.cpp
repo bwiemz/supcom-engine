@@ -288,12 +288,6 @@ void test_lighting(TestContext& ctx) {
         t.check(false, "Test 9: glint frames captured");
     }
 
-    // Test 10: all of it without a Vulkan validation error (when the layers
-    // are on, as in Debug builds): the frames draw with bloom off.
-    t.check(renderer::Renderer::validation_error_count() == 0,
-            fmt::format("Test 10: {} Vulkan validation errors",
-                        renderer::Renderer::validation_error_count()));
-
     spdlog::info("Lighting test: {}/{} passed", t.pass, t.pass + t.fail);
 }
 
