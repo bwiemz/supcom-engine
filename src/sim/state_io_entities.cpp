@@ -179,7 +179,13 @@ void StateIO::save(StateWriter& w, const Entity& e) {
     w.b(e.destroyed_);
     w.str(e.blueprint_id_);
     w.i32v(e.lua_table_ref_);
-    // ambient_sounds_: the host's sound handles (a load starts silent)
+    w.size(e.ambient_sounds_.size());
+    for (const auto& a : e.ambient_sounds_) {
+        w.str(a.name);
+        w.str(a.bank);
+        w.str(a.cue);
+        w.str(a.lod_cutoff);
+    }
     // bone_data_: from the bone cache (load_unit / load_prop)
     w.b(e.do_not_target_);
     w.b(e.reclaimable_);
@@ -239,6 +245,13 @@ void StateIO::load(StateReader& r, Entity& e) {
     e.destroyed_ = r.b();
     e.blueprint_id_ = r.str();
     e.lua_table_ref_ = r.i32v();
+    e.ambient_sounds_.resize(r.size(16));
+    for (auto& a : e.ambient_sounds_) {
+        a.name = r.str();
+        a.bank = r.str();
+        a.cue = r.str();
+        a.lod_cutoff = r.str();
+    }
     e.do_not_target_ = r.b();
     e.reclaimable_ = r.b();
     e.custom_name_ = r.str();

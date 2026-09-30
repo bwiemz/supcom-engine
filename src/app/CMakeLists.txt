@@ -20,6 +20,7 @@ add_library(osc_app STATIC
     window_load_flow.cpp
     window_session.cpp
     window_mode.cpp
+    world_sounds.cpp
 )
 add_library(osc::app ALIAS osc_app)
 

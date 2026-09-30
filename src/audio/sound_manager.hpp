@@ -5,6 +5,7 @@
 
 #include <array>
 #include <functional>
+#include <map>
 #include <list>
 #include <memory>
 #include <random>
@@ -74,11 +75,45 @@ public:
     bool has_voice_language(std::string_view la) const;
 
     /// Play cue `cue` of sound bank `bank`: 2D, or at `pos` in the world.
-    /// A LodCutoff variable (Sound{LodCutoff=...}) culls a positional
-    /// sound further from the listener than the variable's value.
-    /// INVALID_SOUND when the cue is unknown, culled or over its limits.
+    /// INVALID_SOUND when the cue is unknown or over its limits.
     SoundHandle play(const std::string& bank, const std::string& cue,
-                     const sim::Vector3* pos = nullptr, std::string_view lod_cutoff = {});
+                     const sim::Vector3* pos = nullptr);
+
+    /// Whether the player hears a world point: the focus army's (or an
+    /// ally's) sight there, as Moho's FilterSound asks UserArmy::CanSeePoint.
+    /// Empty: everywhere (no player army, the fog off).
+    using Hearing = std::function<bool(const sim::Vector3& pos, bool underwater)>;
+
+    /// A sim's one-shot world sound (its SoundRequest), from sim tick `beat`.
+    struct WorldSound {
+        std::string bank, cue, lod_cutoff;
+        sim::Vector3 pos{};
+        bool underwater = false;
+        u32 beat = 0;
+    };
+    /// Moho's UpdateSoundRequests for a one-shot: dropped while world
+    /// sounds are off, beyond its LodCutoff (against CameraDistance), out of
+    /// the player's hearing, or when the same cue already played this beat;
+    /// else played at its point. INVALID_SOUND when it doesn't play.
+    SoundHandle play_world(const WorldSound& sound, const Hearing& hears = {});
+
+    /// An entity's wanted loop this frame (Entity::ambient_sounds).
+    struct EntityLoop {
+        u64 key = 0; ///< the entity and the slot
+        std::string bank, cue, lod_cutoff;
+        sim::Vector3 pos{};
+        bool underwater = false;
+        bool in_view = false; ///< in the world camera's frustum
+    };
+    /// Moho's entity loops, once a frame: a playing loop no longer wanted
+    /// stops (its release); one filtered out stops too (at once when beyond
+    /// its LodCutoff); one that ended (a one-shot cue) is forgotten; the rest
+    /// follow their entities. A wanted loop not playing starts if its entity
+    /// is in view, CameraDistance is at most 200, and it passes the filter.
+    /// Nothing changes while world sounds are off.
+    void sync_entity_loops(const std::vector<EntityLoop>& wanted, const Hearing& hears = {});
+    /// The loop playing for `key`, or INVALID_SOUND.
+    SoundHandle entity_loop(u64 key) const;
 
     /// Prepare a 2D cue without starting it (XACT's preload-only play,
     /// retail's PlaySound(sound, true)): it takes its place against the
@@ -163,7 +198,9 @@ public:
     /// 1 for an unknown category.
     f32 category_volume(std::string_view category) const;
 
-    /// Mute or restore the World category (retail does it for movies).
+    /// Take world sounds, or not (Enable/DisableWorldSounds: retail's score
+    /// screen and movies). Moho gates new requests and its loops' upkeep;
+    /// what already plays goes on.
     void set_world_enabled(bool enabled);
 
     /// Advance by `dt` seconds: fire track events, end finished waves, run
@@ -196,8 +233,7 @@ private:
     Voice* start_event(CueInstance& inst, size_t track, const xact::PlayEvent& ev);
     /// A new instance of the cue, admitted against its limits but not
     /// begun (nullptr: unknown, culled or over its limits).
-    CueInstance* create(const std::string& bank, const std::string& cue, const sim::Vector3* pos,
-                        std::string_view lod_cutoff);
+    CueInstance* create(const std::string& bank, const std::string& cue, const sim::Vector3* pos);
     /// Begin an instance: its events scheduled from now, those at 0 started.
     void begin(CueInstance& inst);
     void end_instance(CueInstance& inst);
@@ -206,6 +242,12 @@ private:
     /// replacing limit's fade-in (0 when nothing was replaced).
     bool admit(const xact::SoundBank& sb, const xact::Cue& cue, const xact::Sound& sound,
                f64& fade_in);
+    enum class Filter : u8 { Pass, Distance, Hearing };
+    /// Moho's FilterSound: a LodCutoff variable against CameraDistance, then
+    /// the player's hearing.
+    Filter filter(std::string_view lod_cutoff, const sim::Vector3& pos, bool underwater,
+                  const Hearing& hears) const;
+    f32 camera_distance() const;
     /// Fade out over `seconds` (0: end now).
     void fade_out(CueInstance& inst, f64 seconds);
     int category_of(const CueInstance& inst) const;
@@ -247,6 +289,15 @@ private:
     int release_variable_ = -1, attack_variable_ = -1, distance_variable_ = -1;
     int cue_instances_variable_ = -1;
     int angle_variable_ = -1;
+    int camera_distance_variable_ = -1;
+
+    struct PlayingLoop {
+        std::string bank, cue;
+        SoundHandle handle = INVALID_SOUND;
+    };
+    std::map<u64, PlayingLoop> entity_loops_; ///< by EntityLoop::key
+    u32 dedupe_beat_ = 0xFFFFFFFF;
+    std::vector<std::pair<std::string, std::string>> dedupe_; ///< this beat's one-shots
 
     struct VariationState {
         u32 last = 0xFFFFFFFF;

@@ -94,17 +94,12 @@ static sim::Unit* check_weapon_unit(lua_State* L, int idx = 1) {
 
 /// weapon:PlaySound(sound) -- a one-shot at the weapon's unit
 static int weapon_PlaySound(lua_State* L) {
-    auto* mgr = get_sound_mgr(L);
-    if (!mgr) return 0;
-
     auto* unit = check_weapon_unit(L);
     if (!unit || unit->destroyed()) return 0;
 
     std::string bank, cue, lod;
     if (!extract_sound_table(L, 2, bank, cue, &lod)) return 0;
-
-    auto pos = unit->position();
-    mgr->play(bank, cue, &pos, lod);
+    request_world_sound(L, *unit, std::move(bank), std::move(cue), std::move(lod));
     return 0;
 }
 

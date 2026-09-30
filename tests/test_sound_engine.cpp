@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace osc;
 using namespace osc::test::xact_fixtures;
@@ -203,17 +204,110 @@ TEST_CASE("Sound engine: the player's category volumes scale their subtree", "[a
     CHECK(sm.category_volume("Music") == 1.0f);
 }
 
-TEST_CASE("Sound engine: a LOD cutoff culls distant sounds", "[audio][engine]") {
+TEST_CASE("Sound engine: a world one-shot is filtered as Moho's FilterSound does",
+          "[audio][engine]") {
+    // Its LodCutoff against CameraDistance (not the emitter's distance),
+    // then the player's hearing; one of each cue a beat; none while world
+    // sounds are off.
     Sounds s;
     SoundManager sm(s.dir, false);
-    sm.set_listener({0, 0, 0}, {0, 0, 1});
-    const sim::Vector3 far{200, 0, 0}, near{50, 0, 0};
-    CHECK(sm.play("Test", "Click", &far, "TestCutoff") == INVALID_SOUND); // cutoff 100
-    CHECK(sm.play("Test", "Click", &near, "TestCutoff") != INVALID_SOUND);
-    sm.set_global_variable("TestCutoff", 500);
-    CHECK(sm.global_variable("TestCutoff") == 500.0f);
-    CHECK(sm.play("Test", "Click", &far, "TestCutoff") != INVALID_SOUND);
-    CHECK(sm.play("Test", "Click", nullptr, "TestCutoff") != INVALID_SOUND); // 2D: never culled
+    using WS = SoundManager::WorldSound;
+    const sim::Vector3 far{5000, 0, 0};
+    // CameraDistance 100, TestCutoff 100: not beyond.
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 1}) != INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 2}) == INVALID_SOUND);
+    sm.set_global_variable("TestCutoff", -1); // never culls
+    CHECK(sm.play_world(WS{"Test", "Click", "TestCutoff", far, false, 3}) != INVALID_SOUND);
+
+    const SoundManager::Hearing deaf_west = [](const sim::Vector3& p, bool) { return p.x >= 0; };
+    CHECK(sm.play_world(WS{"Test", "Click", "", {-10, 0, 0}, false, 4}, deaf_west) ==
+          INVALID_SOUND);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {10, 0, 0}, false, 4}, deaf_west) != INVALID_SOUND);
+    // Again in beat 4 (a bank named in another case): deduped; beat 5 plays.
+    CHECK(sm.play_world(WS{"test", "Click", "", {20, 0, 0}, false, 4}) == INVALID_SOUND);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {20, 0, 0}, false, 5}) != INVALID_SOUND);
+
+    sm.set_world_enabled(false);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {0, 0, 0}, false, 6}) == INVALID_SOUND);
+    sm.set_world_enabled(true);
+    CHECK(sm.play_world(WS{"Test", "Click", "", {0, 0, 0}, false, 6}) != INVALID_SOUND);
+}
+
+TEST_CASE("Sound engine: entity loops start in view and near, and stop as Moho's do",
+          "[audio][engine]") {
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    using EL = SoundManager::EntityLoop;
+    std::vector<EL> want{EL{1, "Test", "Shot", "", {0, 0, 0}, false, /*in_view=*/false}};
+    sm.sync_entity_loops(want);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND); // out of view: not started
+    want[0].in_view = true;
+    sm.set_global_variable("CameraDistance", 250); // too far out to start one
+    sm.sync_entity_loops(want);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    sm.sync_entity_loops(want);
+    const auto h = sm.entity_loop(1);
+    REQUIRE(h != INVALID_SOUND);
+    sm.update(0.2f); // Shot's wave starts at 150 ms
+
+    // Playing, it follows its entity, in view or not, near or far.
+    want[0].pos = {30, 0, 0};
+    want[0].in_view = false;
+    sm.set_global_variable("CameraDistance", 400);
+    sm.sync_entity_loops(want);
+    sim::Vector3 at{};
+    REQUIRE(sm.position(h, at));
+    CHECK(at.x == 30.0f);
+    CHECK(sm.entity_loop(1) == h);
+
+    // Out of hearing: released (Shot's 300 ms fade), and forgotten.
+    const SoundManager::Hearing deaf = [](const sim::Vector3&, bool) { return false; };
+    sm.sync_entity_loops(want, deaf);
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.update(0.1f);
+    CHECK(sm.is_playing(h));
+    sm.update(0.3f);
+    CHECK_FALSE(sm.is_playing(h));
+
+    // No longer wanted: released.
+    sm.set_global_variable("CameraDistance", 50);
+    want[0].in_view = true;
+    sm.sync_entity_loops(want);
+    const auto again = sm.entity_loop(1);
+    REQUIRE(again != INVALID_SOUND);
+    sm.sync_entity_loops({});
+    CHECK(sm.entity_loop(1) == INVALID_SOUND);
+    sm.update(0.4f);
+    CHECK_FALSE(sm.is_playing(again));
+
+    // Beyond its LodCutoff: stopped at once.
+    want[0].lod_cutoff = "TestCutoff"; // 100
+    sm.sync_entity_loops(want);
+    const auto culled = sm.entity_loop(1);
+    REQUIRE(culled != INVALID_SOUND);
+    sm.set_global_variable("CameraDistance", 150);
+    sm.sync_entity_loops(want);
+    sm.update(0.0f);
+    CHECK_FALSE(sm.is_playing(culled));
+
+    // A one-shot cue in a loop slot plays out, then starts again in view.
+    sm.set_global_variable("CameraDistance", 50);
+    const std::vector<EL> once{EL{2, "Test", "Click", "", {0, 0, 0}, false, true}};
+    sm.sync_entity_loops(once);
+    const auto first = sm.entity_loop(2);
+    REQUIRE(first != INVALID_SOUND);
+    sm.update(0.11f); // Click's 0.1 s wave ends
+    sm.sync_entity_loops(once);
+    const auto second = sm.entity_loop(2);
+    CHECK(second != INVALID_SOUND);
+    CHECK(second != first);
+
+    // World sounds off: loops are left as they are.
+    sm.set_world_enabled(false);
+    sm.sync_entity_loops({});
+    CHECK(sm.entity_loop(2) == second);
 }
 
 TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[audio][engine]") {
