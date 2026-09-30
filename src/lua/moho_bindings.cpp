@@ -657,6 +657,20 @@ void create_lazyvar(lua_State* L, int self_idx, const char* name) {
     lua_pop(L, 1); // pop LazyVar
 }
 
+void call_on_init(lua_State* L, int self_idx, const char* what) {
+    lua_pushstring(L, "OnInit");
+    lua_gettable(L, self_idx);
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    lua_pushvalue(L, self_idx);
+    if (lua_pcall(L, 1, 0, 0) != 0) {
+        spdlog::warn("{}: OnInit error: {}", what, lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+}
+
 /// InternalCreateGroup(self, parent)
 static int l_InternalCreateGroup(lua_State* L) {
     auto* reg = get_ui_registry(L);
@@ -694,19 +708,7 @@ static int l_InternalCreateGroup(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit if it exists (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateGroup: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateGroup");
 
     spdlog::debug("InternalCreateGroup: control #{}", id);
     return 0;
@@ -745,19 +747,7 @@ static int l_InternalCreateFrame(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateFrame: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateFrame");
 
     spdlog::debug("InternalCreateFrame: control #{}", id);
     return 0;
@@ -800,19 +790,7 @@ static int l_InternalCreateBitmap(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateBitmap: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateBitmap");
 
     spdlog::debug("InternalCreateBitmap: control #{}", id);
     return 0;
@@ -866,19 +844,7 @@ static int l_InternalCreateText(lua_State* L) {
     update_text_advance(ctrl);
     push_font_lazyvars(L, 1, ctrl);
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateText: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateText");
 
     spdlog::debug("InternalCreateText: control #{}", id);
     return 0;
@@ -922,19 +888,7 @@ static int l_InternalCreateEdit(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateEdit: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateEdit");
 
     spdlog::debug("InternalCreateEdit: control #{}", id);
     return 0;
@@ -978,19 +932,7 @@ static int l_InternalCreateItemList(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateItemList: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateItemList");
 
     spdlog::debug("InternalCreateItemList: control #{}", id);
     return 0;
@@ -1038,19 +980,7 @@ static int l_InternalCreateScrollbar(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Call OnInit (lua_gettable for metatable lookup)
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("InternalCreateScrollbar: OnInit error: {}",
-                         lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "InternalCreateScrollbar");
 
     spdlog::debug("InternalCreateScrollbar: control #{}", id);
     return 0;
@@ -1108,6 +1038,8 @@ static int l_InternalCreateBorder(lua_State* L) {
     // Border-specific LazyVars
     create_lazyvar(L, 1, "BorderWidth");
     create_lazyvar(L, 1, "BorderHeight");
+
+    call_on_init(L, 1, "InternalCreateBorder");
 
     spdlog::debug("InternalCreateBorder: control #{}", id);
     return 0;
@@ -1213,6 +1145,8 @@ static int l_InternalCreateMovie(lua_State* L) {
     // so they don't intercept mouse events from interactive controls above.
     ctrl->set_hit_test_disabled(true);
 
+    call_on_init(L, 1, "InternalCreateMovie");
+
     spdlog::debug("InternalCreateMovie: control #{}", id);
     return 0;
 }
@@ -1279,6 +1213,8 @@ static int create_map_preview_control(lua_State* L, int self_idx, int parent_idx
     create_lazyvar(L, self_idx, "Height");
     create_lazyvar(L, self_idx, "Depth");
 
+    call_on_init(L, self_idx, "InternalCreateMapPreview");
+
     spdlog::debug("MapPreview: control #{}", id);
     return 0;
 }
@@ -1328,6 +1264,8 @@ static int l_InternalCreateHistogram(lua_State* L) {
     create_lazyvar(L, 1, "Width");
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
+
+    call_on_init(L, 1, "InternalCreateHistogram");
 
     spdlog::debug("InternalCreateHistogram: control #{}", id);
     return 0;

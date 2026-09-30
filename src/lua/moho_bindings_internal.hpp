@@ -52,6 +52,8 @@ void push_unit_for_ui(lua_State* L, sim::Entity* entity);
 bool push_entity_blueprint(lua_State* L, const sim::Entity* e);
 /// A LazyVar field `name` on the table at `self_idx`.
 void create_lazyvar(lua_State* L, int self_idx, const char* name);
+/// Run a new control's OnInit, as Moho's constructors do.
+void call_on_init(lua_State* L, int self_idx, const char* what);
 /// Call LazyVar:Set(value) on self[name] (errors ignored).
 void set_lazyvar_value(lua_State* L, int self_idx, const char* name, f32 value);
 /// A table {x, y, z} (or {x, z}) at `idx`: its x and z.

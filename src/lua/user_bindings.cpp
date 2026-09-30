@@ -246,18 +246,7 @@ static int worldview_init(lua_State* L) {
     create_lazyvar(L, 1, "Height");
     create_lazyvar(L, 1, "Depth");
 
-    // Control.OnInit: MAUI's default layout, and Depth = parent's + 1.
-    lua_pushstring(L, "OnInit");
-    lua_gettable(L, 1);
-    if (lua_isfunction(L, -1)) {
-        lua_pushvalue(L, 1);
-        if (lua_pcall(L, 1, 0, 0) != 0) {
-            spdlog::warn("UIWorldView.__init: OnInit error: {}", lua_tostring(L, -1));
-            lua_pop(L, 1);
-        }
-    } else {
-        lua_pop(L, 1);
-    }
+    call_on_init(L, 1, "UIWorldView.__init");
 
     bind_world_view(L, wv_ptr);
     spdlog::debug("UIWorldView.__init: WorldView control #{}, camera='{}'", id, cam_name);
