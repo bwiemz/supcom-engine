@@ -1,5 +1,6 @@
 #include "renderer/ui_renderer.hpp"
 #include "ui/lazyvar.hpp"
+#include "ui/scroll.hpp"
 #include "ui/ui_layout.hpp"
 #include "ui/world_view.hpp"
 
@@ -353,68 +354,48 @@ void UIRenderer::emit_scrollbar_quads(lua_State* L, ui::UIControl* ctrl,
         }
     }
 
-    // Query scrollable for scroll position (range_min, range_max, visible, top)
-    f32 range_min = 0, range_max = 1, visible = 1, scroll_pos = 0;
-    int sref = ctrl->scrollable_ref();
-    if (sref >= 0) {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, sref);
-        if (lua_istable(L, -1)) {
-            lua_pushstring(L, "GetScrollValues");
-            lua_gettable(L, -2);
-            if (lua_isfunction(L, -1)) {
-                lua_pushvalue(L, -2); // self
-                lua_pushstring(L, ctrl->scroll_axis().c_str());
-                if (lua_pcall(L, 2, 4, 0) == 0) {
-                    range_min = static_cast<f32>(lua_tonumber(L, -4));
-                    range_max = static_cast<f32>(lua_tonumber(L, -3));
-                    visible = static_cast<f32>(lua_tonumber(L, -2));
-                    scroll_pos = static_cast<f32>(lua_tonumber(L, -1));
-                    lua_pop(L, 4);
-                } else {
-                    lua_pop(L, 1); // error
-                }
-            } else {
-                lua_pop(L, 1);
-            }
+    // The thumb: its caps at their textures' heights, its middle between
+    const GPUTexture* cap_top =
+        ctrl->sb_thumb_top().empty() ? nullptr : tex_cache.get(ctrl->sb_thumb_top());
+    const GPUTexture* cap_bottom =
+        ctrl->sb_thumb_bot().empty() ? nullptr : tex_cache.get(ctrl->sb_thumb_bot());
+    const GPUTexture* middle =
+        ctrl->sb_thumb_mid().empty() ? nullptr : tex_cache.get(ctrl->sb_thumb_mid());
+    const auto cap_len = [&](const GPUTexture* tex) {
+        return tex ? static_cast<f32>(is_vert ? tex->height : tex->width) : 0.0f;
+    };
+    const f32 top_len = cap_len(cap_top);
+    const f32 bottom_len = cap_len(cap_bottom);
+    const ui::ThumbSpan span = ui::thumb_span(ui::scroll_values(L, *ctrl), is_vert ? height : width,
+                                              std::max(top_len + bottom_len, 16.0f));
+
+    const auto emit = [&](const GPUTexture* tex, f32 from, f32 length) {
+        if (!tex || length <= 0 || quad_count_ >= MAX_UI_QUADS) {
+            return;
         }
-        lua_pop(L, 1); // scrollable table
-    }
-
-    // Compute thumb position and size
-    f32 range = range_max - range_min;
-    if (range <= 0) range = 1;
-    f32 thumb_frac = std::min(visible / range, 1.0f);
-    f32 pos_frac = (scroll_pos - range_min) / range;
-
-    f32 track_len = is_vert ? height : width;
-    f32 thumb_len = std::max(thumb_frac * track_len, 16.0f);
-    f32 thumb_pos = pos_frac * (track_len - thumb_len);
-
-    // Thumb middle texture
-    if (!ctrl->sb_thumb_mid().empty() && quad_count_ < MAX_UI_QUADS) {
-        const GPUTexture* tex = tex_cache.get(ctrl->sb_thumb_mid());
-        if (tex) {
-            QuadEntry thumb{};
-            thumb.texture_ds = tex->descriptor_set;
-            thumb.clip = clip;
-            thumb.depth = depth;
-            if (is_vert) {
-                thumb.inst.rect[0] = left;
-                thumb.inst.rect[1] = top + thumb_pos;
-                thumb.inst.rect[2] = width;
-                thumb.inst.rect[3] = thumb_len;
-            } else {
-                thumb.inst.rect[0] = left + thumb_pos;
-                thumb.inst.rect[1] = top;
-                thumb.inst.rect[2] = thumb_len;
-                thumb.inst.rect[3] = height;
-            }
-            std::memcpy(thumb.inst.uv, full_uv, sizeof(full_uv));
-            std::memcpy(thumb.inst.color, white, sizeof(white));
-            quads_.push_back(thumb);
-            quad_count_++;
+        QuadEntry quad{};
+        quad.texture_ds = tex->descriptor_set;
+        quad.clip = clip;
+        quad.depth = depth;
+        if (is_vert) {
+            quad.inst.rect[0] = left;
+            quad.inst.rect[1] = top + from;
+            quad.inst.rect[2] = width;
+            quad.inst.rect[3] = length;
+        } else {
+            quad.inst.rect[0] = left + from;
+            quad.inst.rect[1] = top;
+            quad.inst.rect[2] = length;
+            quad.inst.rect[3] = height;
         }
-    }
+        std::memcpy(quad.inst.uv, full_uv, sizeof(full_uv));
+        std::memcpy(quad.inst.color, white, sizeof(white));
+        quads_.push_back(quad);
+        quad_count_++;
+    };
+    emit(cap_top, span.start, top_len);
+    emit(middle, span.start + top_len, span.length - top_len - bottom_len);
+    emit(cap_bottom, span.start + span.length - bottom_len, bottom_len);
 }
 
 void UIRenderer::collect_control(lua_State* L, ui::UIControl* ctrl,
