@@ -41,9 +41,12 @@ ZipMount::ZipMount(const std::filesystem::path& archive_path)
         // Skip directories (entries ending with /)
         if (!name.empty() && name.back() != '/') {
             ZipEntryInfo entry;
-            entry.original_name = name;
             entry.uncompressed_size = file_info.uncompressed_size;
-            entries_[normalize_key(name)] = std::move(entry);
+            unz64_file_pos pos;
+            unzGetFilePos64(static_cast<unzFile>(zip_handle_), &pos);
+            entry.dir_offset = pos.pos_in_zip_directory;
+            entry.file_index = pos.num_of_file;
+            entries_[normalize_key(name)] = entry;
         }
 
         ret = unzGoToNextFile(static_cast<unzFile>(zip_handle_));
@@ -72,9 +75,9 @@ std::optional<std::vector<char>> ZipMount::read_file(
     // Lock for the entire locate→open→read→close sequence (zip_handle_ is stateful)
     std::lock_guard<std::mutex> lock(zip_mutex_);
 
-    // Locate file in the ZIP by its original name
-    if (unzLocateFile(static_cast<unzFile>(zip_handle_),
-                      it->second.original_name.c_str(), 2) != UNZ_OK) {
+    // Straight to its entry: unzLocateFile scans the central directory, a read per entry
+    unz64_file_pos pos{it->second.dir_offset, it->second.file_index};
+    if (unzGoToFilePos64(static_cast<unzFile>(zip_handle_), &pos) != UNZ_OK) {
         return std::nullopt;
     }
 
