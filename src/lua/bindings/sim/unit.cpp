@@ -144,7 +144,7 @@ static int unit_PlayUnitAmbientSound(lua_State* L) {
     lua_pop(L, 3);
     if (ok) {
         auto pos = e->position();
-        e->set_ambient_sound(name, mgr->play_loop(bank, cue, &pos));
+        e->set_ambient_sound(name, mgr->play(bank, cue, &pos)); // as authored
     }
     lua_pushboolean(L, ok ? 1 : 0);
     return 1;

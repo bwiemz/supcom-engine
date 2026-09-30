@@ -79,10 +79,6 @@ public:
     SoundHandle play(const std::string& bank, const std::string& cue,
                      const sim::Vector3* pos = nullptr, std::string_view lod_cutoff = {});
 
-    /// play(), looping even if the cue does not (entity ambient sounds).
-    SoundHandle play_loop(const std::string& bank, const std::string& cue,
-                          const sim::Vector3* pos = nullptr);
-
     /// Prepare a 2D cue without starting it (XACT's preload-only play,
     /// retail's PlaySound(sound, true)): it takes its place against the
     /// cue's limits and waits, silent, until start(). A stop ends it.
@@ -92,11 +88,35 @@ public:
     /// Whether the sound is prepared and not yet started.
     bool is_prepared(SoundHandle handle) const;
 
-    /// Stop a sound. Not immediate: fade out (the cue's or its category's
-    /// fade) or run the sound's release curve; with neither, stop now.
+    /// Stop a sound. Not immediate: run the sound's release curve, else the
+    /// cue's fade-out; with neither, stop now (XACT's Stop(0), as FAudio
+    /// reads it; a category's fade is for replacements alone).
     void stop(SoundHandle handle, bool immediate = true);
-    /// Stop everything, at once.
+    /// Stop everything, each as stop(h, false) (Moho stops the Global
+    /// category so, for the score screen), and drop the duck.
     void stop_all();
+
+    /// Pause or resume a category and its subtree (PauseSound, PauseVoice:
+    /// retail pauses World and Music with the game, and VO in briefings).
+    /// A paused sound holds its place; its fades and curves wait too. A
+    /// sound started into a paused category waits, silent; stopped, it ends
+    /// at once (its fade could never run).
+    void pause_category(std::string_view category, bool paused);
+    /// Whether a playing sound is held by a paused category.
+    bool is_paused(SoundHandle handle) const;
+    /// Resume every category (a new game starts unpaused, whatever the
+    /// last one was left in).
+    void resume_all();
+
+    /// The duck (PlayVoice's): the Duck variable ramps to 1 over DuckLength
+    /// when the first ducking voice starts, and back to 0 over DuckLength
+    /// when the last ends -- Moho's CUserSoundManager::PushDuck/PopDuck and
+    /// UpdateDuck. Setting a volume or stopping everything drops it at once.
+    void push_duck();
+    void pop_duck();
+    void reset_duck();
+    /// Bumped by reset_duck(): a pop owed from before a reset is not owed.
+    u32 duck_generation() const { return duck_generation_; }
 
     /// Whether the sound is still playing (a fading or releasing sound is;
     /// a prepared one is not yet).
@@ -163,8 +183,19 @@ private:
     /// Begin an instance: its events scheduled from now, those at 0 started.
     void begin(CueInstance& inst);
     void end_instance(CueInstance& inst);
-    bool admit(const xact::SoundBank& sb, const xact::Cue& cue, const xact::Sound& sound);
+    /// Whether a new instance may play against the cue's and category's
+    /// limits, replacing one if their behaviour says so; `fade_in` gets the
+    /// replacing limit's fade-in (0 when nothing was replaced).
+    bool admit(const xact::SoundBank& sb, const xact::Cue& cue, const xact::Sound& sound,
+               f64& fade_in);
+    /// Fade out over `seconds` (0: end now).
+    void fade_out(CueInstance& inst, f64 seconds);
     int category_of(const CueInstance& inst) const;
+    /// Whether `category` or a category above it is paused.
+    bool category_paused(int category) const;
+    /// Hold or release a sound's voices for a pause.
+    void set_voices_running(CueInstance& inst, bool running);
+    void update_duck(f32 dt);
     f32 category_gain(int category) const;
     f32 distance(const CueInstance& inst) const;
     f32 volume_mb(const CueInstance& inst, size_t track) const;
@@ -186,6 +217,13 @@ private:
     sim::Vector3 listener_forward_{0, 0, 1};
     std::vector<f32> globals_;         ///< per XGS variable (global ones)
     std::vector<f32> user_volume_;     ///< per category, the player's 0..1
+    std::vector<u8> paused_;           ///< per category, PauseSound's
+    enum class DuckMode : u8 { None, Up, Down };
+    DuckMode duck_mode_ = DuckMode::None;
+    int duck_count_ = 0;   ///< ducking voices playing
+    f32 duck_elapsed_ = 0; ///< seconds into the ramp
+    u32 duck_generation_ = 0;
+    int duck_variable_ = -1, duck_length_variable_ = -1;
     int world_category_ = -1;
     int release_variable_ = -1, attack_variable_ = -1, distance_variable_ = -1;
     int cue_instances_variable_ = -1;

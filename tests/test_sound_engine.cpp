@@ -160,14 +160,140 @@ TEST_CASE("Sound engine: a LOD cutoff culls distant sounds", "[audio][engine]") 
     CHECK(sm.play("Test", "Click", nullptr, "TestCutoff") != INVALID_SOUND); // 2D: never culled
 }
 
-TEST_CASE("Sound engine: stop_all ends every sound", "[audio][engine]") {
+TEST_CASE("Sound engine: stop_all stops every sound as a plain stop does", "[audio][engine]") {
+    // Moho stops the Global category without IMMEDIATE (the score screen):
+    // Shot fades over its cue's 300 ms, Click (no fade) ends at once.
     Sounds s;
     SoundManager sm(s.dir, false);
     sm.play("Test", "Shot");
+    sm.update(0.2f); // Shot's wave starts at 150 ms
     sm.play("Test", "Click");
+    sm.push_duck();
     CHECK(sm.active_count() == 2);
     sm.stop_all();
+    CHECK(sm.active_count() == 1);
+    CHECK(sm.global_variable("Duck") == 0.0f);
+    sm.update(0.31f);
     CHECK(sm.active_count() == 0);
+}
+
+TEST_CASE("Sound engine: a paused category holds its subtree's sounds", "[audio][engine]") {
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    const auto click = sm.play("Test", "Click"); // Global, a 0.1 s wave
+    const auto shot = sm.play("Test", "Shot");   // Music, under Global
+    sm.update(0.05f);
+    sm.pause_category("Music", true); // a child: Click plays on
+    CHECK(sm.is_paused(shot));
+    CHECK_FALSE(sm.is_paused(click));
+    sm.update(0.06f);
+    CHECK_FALSE(sm.is_playing(click));
+
+    const auto held = sm.play("Test", "Click");
+    sm.pause_category("Global", true); // the root: everything under it
+    CHECK(sm.is_paused(held));
+    sm.update(1.0f);
+    CHECK(sm.is_playing(held));                 // its wave's time waits
+    const auto late = sm.play("Test", "Click"); // started into the pause: waits
+    CHECK(sm.is_paused(late));
+    sm.update(1.0f);
+    CHECK(sm.is_playing(late));
+
+    sm.pause_category("Global", false);
+    CHECK_FALSE(sm.is_paused(held));
+    CHECK(sm.is_paused(shot)); // Music is still paused itself
+    sm.update(0.05f);
+    CHECK(sm.is_playing(held));
+    sm.update(0.06f);
+    CHECK_FALSE(sm.is_playing(held));
+    CHECK_FALSE(sm.is_playing(late));
+    sm.pause_category("Music", false);
+    CHECK(sm.is_playing(shot));
+    sm.pause_category("NoSuchCategory", true); // ignored
+}
+
+TEST_CASE("Sound engine: a paused sound stopped, or replaced, ends at once", "[audio][engine]") {
+    // Its fade could never run while its clock is held.
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    const auto shot = sm.play("Test", "Shot"); // a 300 ms cue fade-out
+    sm.update(0.2f);
+    sm.pause_category("Music", true);
+    sm.stop(shot, /*immediate=*/false);
+    sm.update(0.0f);
+    CHECK_FALSE(sm.is_playing(shot));
+
+    const auto a = sm.play("Test", "Shot");
+    sm.update(0.2f);
+    const auto click = sm.play("Test", "Click");
+    CHECK(sm.is_paused(a));
+    sm.stop_all();
+    sm.update(0.0f);
+    CHECK_FALSE(sm.is_playing(a));
+    CHECK_FALSE(sm.is_playing(click));
+    CHECK(sm.active_count() == 0);
+
+    // Music is still paused; a new game resumes everything.
+    const auto b = sm.play("Test", "Shot");
+    CHECK(sm.is_paused(b));
+    sm.resume_all();
+    CHECK_FALSE(sm.is_paused(b));
+    sm.update(0.2f);
+    CHECK(sm.is_playing(b));
+}
+
+TEST_CASE("Sound engine: the duck ramps over DuckLength, and a volume drops it",
+          "[audio][engine]") {
+    // Moho's PushDuck/PopDuck/UpdateDuck: 0 -> 1 over DuckLength (0.5 s)
+    // for the first ducking voice, 1 -> 0 after the last; SetVolume resets.
+    Sounds s;
+    SoundManager sm(s.dir, false);
+    const auto duck = [&] { return sm.global_variable("Duck"); };
+    sm.push_duck();
+    CHECK(duck() == 0.0f);
+    sm.update(0.25f);
+    CHECK(duck() == 0.5f);
+    sm.push_duck(); // a second voice: no new ramp
+    sm.update(0.5f);
+    CHECK(duck() == 1.0f);
+    sm.pop_duck(); // one still ducking
+    sm.update(0.1f);
+    CHECK(duck() == 1.0f);
+    sm.pop_duck();
+    sm.update(0.125f);
+    CHECK(duck() == 0.75f);
+    sm.update(1.0f);
+    CHECK(duck() == 0.0f);
+
+    sm.push_duck();
+    sm.update(1.0f);
+    const u32 generation = sm.duck_generation();
+    sm.set_category_volume("Music", 0.5f);
+    CHECK(duck() == 0.0f);
+    CHECK(sm.duck_generation() != generation);
+    sm.pop_duck(); // nothing left to pop
+    sm.update(1.0f);
+    CHECK(duck() == 0.0f);
+}
+
+TEST_CASE("Sound engine: only a replacement fades in", "[audio][engine]") {
+    // XACT's category and cue fade-ins are the instance-limit crossfade:
+    // retail's Ambient category (1 s) must not fade in every play.
+    Sounds s;
+    u32 rpc = 0;
+    write(s.dir / "Game.xgs", make_xgs(&rpc, 1, 2, /*music_fade_in_ms=*/400));
+    SoundManager sm(s.dir, false);
+    const auto first = sm.play("Test", "Shot");
+    sm.update(0.2f);
+    const f32 full = sm.current_gain(first);
+    REQUIRE(full > 0.0f);
+    const auto second = sm.play("Test", "Shot"); // replaces first (Music holds one)
+    sm.update(0.2f);                             // half of the 400 ms fade-in
+    const f32 half = sm.current_gain(second);
+    CHECK(half > 0.25f * full);
+    CHECK(half < 0.75f * full);
+    sm.update(0.3f);
+    CHECK(sm.current_gain(second) == full);
 }
 
 TEST_CASE("Sound engine: a prepared sound waits, silent, until started", "[audio][engine]") {

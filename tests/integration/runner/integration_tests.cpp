@@ -3603,7 +3603,7 @@ void test_audio(TestContext& ctx) {
 
         // Test 2: Play and stop looping sound
         {
-            auto handle = mgr->play_loop("UEL", "UEL0101_Move_Loop");
+            auto handle = mgr->play("UEL", "UEL0101_Move_Loop") /* a looping cue */;
             if (handle != 0 || mgr->is_headless()) {
                 mgr->stop(handle);
                 spdlog::info("[PASS] Test 2: Loop + stop (handle={})",

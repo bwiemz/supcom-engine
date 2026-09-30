@@ -114,7 +114,9 @@ static int entity_SetAmbientSound(lua_State* L) {
         std::string bank, cue;
         if (mgr && extract_sound_table(L, 2 + i, bank, cue)) {
             auto pos = e->position();
-            e->set_ambient_sound(slots[i], mgr->play_loop(bank, cue, &pos));
+            // As authored: a looping cue loops, a one-shot plays once (Moho
+            // drops an entity loop whose cue has stopped).
+            e->set_ambient_sound(slots[i], mgr->play(bank, cue, &pos));
         }
     }
     return 0;

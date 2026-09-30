@@ -82,7 +82,7 @@ struct SoundManager::CueInstance {
     std::string bank_name;
     bool positional = false;
     sim::Vector3 pos{};
-    bool force_loop = false;
+    bool paused = false; ///< held by a paused category
     f64 started = 0;
     f64 fade_in = 0; ///< seconds
     State state = State::Playing;
@@ -254,6 +254,9 @@ SoundManager::SoundManager(const fs::path& sounds_dir, bool output)
         attack_variable_ = gs->find_variable("AttackTime");
         release_variable_ = gs->find_variable("ReleaseTime");
         cue_instances_variable_ = gs->find_variable("NumCueInstances");
+        duck_variable_ = gs->find_variable("Duck");
+        duck_length_variable_ = gs->find_variable("DuckLength");
+        paused_.assign(gs->categories.size(), 0);
     }
     if (!output) return;
 
@@ -433,9 +436,14 @@ f32 SoundManager::pitch_cents(const CueInstance& inst, size_t /*track*/) const {
 }
 
 bool SoundManager::admit(const xact::SoundBank& /*sb*/, const xact::Cue& cue,
-                         const xact::Sound& sound) {
+                         const xact::Sound& sound, f64& fade_in) {
+    fade_in = 0;
     const auto* gs = registry_->global_settings();
-    auto enforce = [&](u8 limit, xact::LimitBehavior behavior, auto&& same) {
+    // A replacement fades the old sound out, and the new one in, over the
+    // limit's own fades -- the cue's or the category's, whichever limited
+    // (XACT's instance-limit crossfade; FAudio handle_instance_limit).
+    auto enforce = [&](u8 limit, xact::LimitBehavior behavior, u16 fade_in_ms, u16 fade_out_ms,
+                       auto&& same) {
         if (limit == 0xFF) return true;
         std::vector<CueInstance*> live;
         for (auto& [h, inst] : instances_)
@@ -464,19 +472,31 @@ bool SoundManager::admit(const xact::SoundBank& /*sb*/, const xact::Cue& cue,
             return false;
         }
         if (!victim) return false;
-        stop(victim->handle, false);
+        fade_out(*victim, fade_out_ms / 1000.0);
+        fade_in = std::max(fade_in, fade_in_ms / 1000.0);
         return true;
     };
-    if (!enforce(cue.instance_limit, cue.limit_behavior,
+    if (!enforce(cue.instance_limit, cue.limit_behavior, cue.fade_in_ms, cue.fade_out_ms,
                  [&](const CueInstance& i) { return i.cue == &cue; }))
         return false;
     if (gs && sound.category < gs->categories.size()) {
         const auto& cat = gs->categories[sound.category];
-        if (!enforce(cat.instance_limit, cat.limit_behavior,
+        if (!enforce(cat.instance_limit, cat.limit_behavior, cat.fade_in_ms, cat.fade_out_ms,
                      [&](const CueInstance& i) { return i.sound->category == sound.category; }))
             return false;
     }
     return true;
+}
+
+void SoundManager::fade_out(CueInstance& inst, f64 seconds) {
+    // A paused sound is silent and its clock held: nothing to fade.
+    if (seconds <= 0 || inst.prepared || inst.paused) {
+        end_instance(inst);
+        return;
+    }
+    inst.state = CueInstance::State::FadingOut;
+    inst.stop_started = clock_;
+    inst.stop_duration = seconds;
 }
 
 SoundManager::CueInstance* SoundManager::create(const std::string& bank, const std::string& cue,
@@ -508,13 +528,9 @@ SoundManager::CueInstance* SoundManager::create(const std::string& bank, const s
             if (cutoff >= 0 && distance(*inst) > cutoff) return nullptr;
         }
     }
-    if (!admit(*sb, *cue_def, sound)) return nullptr;
-
-    const auto* gs = registry_->global_settings();
-    u16 fade_in_ms = cue_def->fade_in_ms;
-    if (fade_in_ms == 0 && gs && sound.category < gs->categories.size())
-        fade_in_ms = gs->categories[sound.category].fade_in_ms;
-    inst->fade_in = fade_in_ms / 1000.0;
+    // Only a replacement fades in: a play otherwise starts at full volume
+    // (retail's Ambient category's 1 s fade-in is for its crossfades).
+    if (!admit(*sb, *cue_def, sound, inst->fade_in)) return nullptr;
     inst->tracks.resize(sound.tracks.size());
 
     const SoundHandle handle = next_handle_++;
@@ -528,6 +544,7 @@ SoundManager::CueInstance* SoundManager::create(const std::string& bank, const s
 void SoundManager::begin(CueInstance& inst) {
     inst.prepared = false;
     inst.started = clock_;
+    inst.paused = category_paused(category_of(inst));
     const xact::Sound& sound = *inst.sound;
     for (size_t t = 0; t < sound.tracks.size(); ++t) {
         for (const auto& ev : sound.tracks[t].plays) {
@@ -567,20 +584,6 @@ void SoundManager::start(SoundHandle handle) {
     begin(*it->second);
 }
 
-SoundHandle SoundManager::play_loop(const std::string& bank, const std::string& cue,
-                                    const sim::Vector3* pos) {
-    const SoundHandle h = play(bank, cue, pos);
-    if (auto it = instances_.find(h); it != instances_.end()) {
-        it->second->force_loop = true;
-        for (auto& ts : it->second->tracks)
-            for (auto& v : ts.voices) {
-                v->loops_left = kForever;
-                if (v->sound_init) ma_sound_set_looping(&v->sound, MA_TRUE);
-            }
-    }
-    return h;
-}
-
 SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
                                                const xact::PlayEvent& ev) {
     if (ev.waves.empty()) return nullptr;
@@ -592,9 +595,7 @@ SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
 
     auto v = std::make_unique<Voice>();
     v->data = std::move(data);
-    v->loops_left = (inst.force_loop || ev.loop_count == xact::PlayEvent::kLoopForever)
-                        ? kForever
-                        : ev.loop_count;
+    v->loops_left = ev.loop_count == xact::PlayEvent::kLoopForever ? kForever : ev.loop_count;
     if (ev.new_variation_on_loop && ev.waves.size() > 1 && v->loops_left > 0) v->repick = &ev;
     // A range of one value is a fixed offset: retail's pitched UI stacks
     // (UI_Menu_Rollover's tracks at +800 and +1200 cents) are authored so.
@@ -632,7 +633,7 @@ SoundManager::Voice* SoundManager::start_event(CueInstance& inst, size_t track,
     }
     Voice* started = v.get();
     inst.tracks[track].voices.push_back(std::move(v));
-    if (output_ && started->sound_init) {
+    if (output_ && started->sound_init && !inst.paused) {
         apply(inst);
         ma_sound_start(&started->sound);
     }
@@ -664,9 +665,12 @@ void SoundManager::stop(SoundHandle handle, bool immediate) {
     if (it == instances_.end()) return;
     CueInstance& inst = *it->second;
     if (inst.ended) return;
-    if (!immediate && !inst.prepared && inst.state == CueInstance::State::Playing) {
+    // A paused sound is silent and its clock held: it ends now.
+    if (!immediate && !inst.prepared && !inst.paused && inst.state == CueInstance::State::Playing) {
         // A release curve (on ReleaseTime) fades the sound itself; else the
-        // cue's or its category's fade-out.
+        // cue's fade-out. Which comes first for a cue with both (retail's
+        // Music: 200 ms fade, 6 s release) is open (M216b design doc); the
+        // release keeps UserMusic's peace transition as retail times it.
         f64 release = 0;
         if (const auto* gs = registry_->global_settings()) {
             auto scan = [&](const std::vector<u32>& codes) {
@@ -684,13 +688,8 @@ void SoundManager::stop(SoundHandle handle, bool immediate) {
                 inst.stop_duration = release;
                 return;
             }
-            u16 fade_ms = inst.cue->fade_out_ms;
-            if (fade_ms == 0 && inst.sound->category < gs->categories.size())
-                fade_ms = gs->categories[inst.sound->category].fade_out_ms;
-            if (fade_ms > 0) {
-                inst.state = CueInstance::State::FadingOut;
-                inst.stop_started = clock_;
-                inst.stop_duration = fade_ms / 1000.0;
+            if (inst.cue->fade_out_ms > 0) {
+                fade_out(inst, inst.cue->fade_out_ms / 1000.0);
                 return;
             }
         }
@@ -706,8 +705,101 @@ void SoundManager::end_instance(CueInstance& inst) {
 }
 
 void SoundManager::stop_all() {
-    for (auto& [h, inst] : instances_) end_instance(*inst);
+    for (auto& [h, inst] : instances_) stop(h, false);
+    reset_duck();
     update(0.0f);
+}
+
+bool SoundManager::category_paused(int category) const {
+    const auto* gs = registry_ ? registry_->global_settings() : nullptr;
+    for (int depth = 0; gs && depth < kMaxCategoryDepth && category >= 0 &&
+                        static_cast<size_t>(category) < gs->categories.size();
+         ++depth) {
+        if (paused_[static_cast<size_t>(category)] != 0) return true;
+        const u16 parent = gs->categories[static_cast<size_t>(category)].parent;
+        category = parent == 0xFFFF ? -1 : parent;
+    }
+    return false;
+}
+
+void SoundManager::pause_category(std::string_view category, bool paused) {
+    const auto* gs = registry_ ? registry_->global_settings() : nullptr;
+    const int c = gs ? gs->find_category(category) : -1;
+    if (c < 0) return;
+    paused_[static_cast<size_t>(c)] = paused ? 1 : 0;
+    for (auto& [h, inst] : instances_) {
+        if (inst->ended || inst->prepared) continue;
+        const bool now = category_paused(category_of(*inst));
+        if (now == inst->paused) continue;
+        inst->paused = now;
+        set_voices_running(*inst, !now);
+    }
+}
+
+void SoundManager::resume_all() {
+    std::fill(paused_.begin(), paused_.end(), u8{0});
+    for (auto& [h, inst] : instances_) {
+        if (!inst->paused) continue;
+        inst->paused = false;
+        if (!inst->ended && !inst->prepared) set_voices_running(*inst, true);
+    }
+}
+
+bool SoundManager::is_paused(SoundHandle handle) const {
+    auto it = instances_.find(handle);
+    return it != instances_.end() && !it->second->ended && it->second->paused;
+}
+
+void SoundManager::set_voices_running(CueInstance& inst, bool running) {
+    if (!output_) return;
+    if (running) apply(inst);
+    for (auto& ts : inst.tracks)
+        for (auto& v : ts.voices) {
+            if (!v->sound_init) continue;
+            // Stopped, a miniaudio sound keeps its cursor: it resumes there.
+            if (running) {
+                if (!ma_sound_at_end(&v->sound)) ma_sound_start(&v->sound);
+            } else {
+                ma_sound_stop(&v->sound);
+            }
+        }
+}
+
+void SoundManager::push_duck() {
+    if (duck_count_++ == 0 && duck_length_variable_ >= 0) {
+        duck_elapsed_ = 0;
+        duck_mode_ = DuckMode::Up;
+    }
+}
+
+void SoundManager::pop_duck() {
+    if (duck_count_ == 0) return;
+    if (--duck_count_ == 0 && duck_length_variable_ >= 0) {
+        duck_elapsed_ = 0;
+        duck_mode_ = DuckMode::Down;
+    }
+}
+
+void SoundManager::reset_duck() {
+    duck_count_ = 0;
+    duck_mode_ = DuckMode::None;
+    ++duck_generation_;
+    if (duck_variable_ >= 0) globals_[static_cast<size_t>(duck_variable_)] = 0.0f;
+}
+
+void SoundManager::update_duck(f32 dt) {
+    if (duck_mode_ == DuckMode::None || duck_variable_ < 0 || duck_length_variable_ < 0) return;
+    const f32 length = globals_[static_cast<size_t>(duck_length_variable_)];
+    if (length <= 0) {
+        globals_[static_cast<size_t>(duck_variable_)] = duck_mode_ == DuckMode::Up ? 1.0f : 0.0f;
+        duck_mode_ = DuckMode::None;
+        return;
+    }
+    duck_elapsed_ = std::min(duck_elapsed_ + dt, length);
+    // Moho's UpdateDuck: down runs from 1 whatever the way up had reached.
+    const f32 t = duck_elapsed_ / length;
+    globals_[static_cast<size_t>(duck_variable_)] = duck_mode_ == DuckMode::Up ? t : 1.0f - t;
+    if (duck_elapsed_ >= length) duck_mode_ = DuckMode::None;
 }
 
 bool SoundManager::is_playing(SoundHandle handle) const {
@@ -773,6 +865,7 @@ void SoundManager::set_category_volume(std::string_view category, f32 volume) {
     const auto* gs = registry_ ? registry_->global_settings() : nullptr;
     const int c = gs ? gs->find_category(category) : -1;
     if (c >= 0) user_volume_[static_cast<size_t>(c)] = std::clamp(volume, 0.0f, 1.0f);
+    reset_duck(); // Moho's SetVolume drops the duck
 }
 
 f32 SoundManager::category_volume(std::string_view category) const {
@@ -799,10 +892,22 @@ bool SoundManager::is_cue_playing(std::string_view bank, std::string_view cue) c
 }
 
 void SoundManager::update(f32 dt) {
-    clock_ += std::max(0.0f, dt);
+    dt = std::max(0.0f, dt);
+    clock_ += dt;
+    update_duck(dt);
     for (auto& [h, ptr] : instances_) {
         CueInstance& inst = *ptr;
         if (inst.ended || inst.prepared) continue;
+        if (inst.paused) {
+            // Held: its clocks wait with it, so nothing fires, ends or fades.
+            inst.started += dt;
+            inst.stop_started += dt;
+            for (auto& ts : inst.tracks) {
+                for (size_t i = ts.next; i < ts.fire_at.size(); ++i) ts.fire_at[i] += dt;
+                for (auto& v : ts.voices) v->ends += dt;
+            }
+            continue;
+        }
         bool pending = false;
         for (size_t t = 0; t < inst.tracks.size(); ++t) {
             auto& ts = inst.tracks[t];
